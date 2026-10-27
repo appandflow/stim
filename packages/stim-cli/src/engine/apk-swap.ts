@@ -1,13 +1,21 @@
+import type { StimContext } from '@stim-cli/core';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { constants, existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+import { copyFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, waitForChild } from '../process-output.ts';
+import { runOperationFile } from './operation-exec.ts';
+import { bundleInvocation } from './node-cli.ts';
+import { spawnDeclared } from './spawn-claims.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { killOnAbort } from '../workspace/git-read.ts';
+import { operationState } from './operation-state.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import {
   assetDiffReason,
   compareAssetManifests,
@@ -17,6 +25,7 @@ import {
 } from './asset-manifest.ts';
 import { detectEntryFile, refreshUpdatesManifestFile, UPDATES_MANIFEST_NAME } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
+import { defaultAndroidLayout, realpathInside, type AndroidLayout } from '../workspace/settings.ts';
 
 export const ANDROID_BUNDLE_NAME = 'index.android.bundle';
 
@@ -34,12 +43,20 @@ export function hermesEnabledFromGradleProperties(text: unknown): boolean {
   return value === null || value.toLowerCase() !== 'false';
 }
 
-export function readAndroidHermesEnabled(root: string): boolean {
-  try {
-    return hermesEnabledFromGradleProperties(readFileSync(join(root, 'android', 'gradle.properties'), 'utf-8'));
-  } catch {
-    return true;
+export function readAndroidHermesEnabled(
+  root: string,
+  { gradleRoot, moduleDir, custom }: AndroidLayout = defaultAndroidLayout(root),
+): boolean {
+  for (const dir of custom ? [moduleDir, gradleRoot] : [gradleRoot]) {
+    let text: string;
+    try {
+      text = readFileSync(join(dir, 'gradle.properties'), 'utf-8');
+    } catch {
+      continue;
+    }
+    if (/^\s*hermesEnabled\s*[=:]/m.test(text)) return hermesEnabledFromGradleProperties(text);
   }
+  return true;
 }
 
 export function hermescBinDir(platform: string = process.platform): string {
@@ -151,29 +168,47 @@ export function zipalignArgs({
   return [...(buildToolsMajor >= 35 ? ['-P', '16'] : ['-p']), '-f', '-v', '4', input, output];
 }
 
+export const KEYSTORE_PASSWORD_ENV = 'STIM_KEYSTORE_PASSWORD';
+
 export interface KeystoreConfig {
   path: string;
   pass: string;
+  password: string | null;
 }
 
-export function keystorePassArg(value: unknown): string {
+export function keystorePassArg(value: unknown): { pass: string; password: string | null } {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (text === '') return 'pass:android';
-  if (/^(?:pass|file|env):/.test(text) || text === 'stdin') return text;
-  return `pass:${text}`;
+  if (text === '') return { pass: 'pass:android', password: null };
+  if (/^(?:file|env):/.test(text) || text === 'stdin') return { pass: text, password: null };
+  return { pass: `env:${KEYSTORE_PASSWORD_ENV}`, password: text.startsWith('pass:') ? text.slice(5) : text };
 }
 
-export function resolveKeystore(root: string, settings: SettingsObject | null | undefined): KeystoreConfig {
+export function resolveKeystore(
+  root: string,
+  settings: SettingsObject | null | undefined,
+  layout: AndroidLayout = defaultAndroidLayout(root),
+  containedIn: string | null = null,
+): KeystoreConfig {
   const android = settings?.['android'];
   const bag = android && typeof android === 'object' && !Array.isArray(android) ? (android as SettingsObject) : {};
   const configured = bag['keystore'];
-  const path =
+  let path =
     typeof configured === 'string' && configured.trim() !== ''
       ? isAbsolute(configured.trim())
         ? configured.trim()
         : join(root, configured.trim())
-      : join(root, 'android', 'app', 'debug.keystore');
-  return { path, pass: keystorePassArg(bag['keystorePassword']) };
+      : join(layout.moduleDir, 'debug.keystore');
+  if (containedIn !== null && typeof configured === 'string' && configured.trim() !== '') {
+    try {
+      path = realpathInside(containedIn, path);
+    } catch (error) {
+      throw new Error(
+        `Could not use android.keystore ${configured.trim()} from the committed .stim.json: ${String((error as Error)?.message || error)}`,
+        { cause: error },
+      );
+    }
+  }
+  return { path, ...keystorePassArg(bag['keystorePassword']) };
 }
 
 export function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
@@ -198,6 +233,7 @@ export type ApkSwapResult = {
 };
 
 export async function swapApkBundle({
+  context,
   root,
   isExpo,
   cachedApkPath,
@@ -208,6 +244,7 @@ export async function swapApkBundle({
   mkdtemp = () => makeTemporaryDirectory(cachedApkPath, 'stim-apk-swap-'),
   exists = existsSync,
   hermesEnabled = null,
+  layout = defaultAndroidLayout(root),
   buildTools = null,
   findTool = findBuildTool,
   storedAssets = null,
@@ -217,6 +254,7 @@ export async function swapApkBundle({
   onHeartbeat = (line: string) => console.error(line),
   platform = process.platform,
 }: {
+  context?: StimContext;
   root: string;
   isExpo: boolean;
   cachedApkPath: string;
@@ -227,6 +265,7 @@ export async function swapApkBundle({
   mkdtemp?: () => string;
   exists?: (p: string) => boolean;
   hermesEnabled?: boolean | null;
+  layout?: AndroidLayout;
   buildTools?: BuildToolsEntry | null;
   findTool?: typeof findBuildTool;
   storedAssets?: AssetManifest | null;
@@ -258,7 +297,7 @@ export async function swapApkBundle({
     const base = basename(cachedApkPath);
     work = join(tmp, `unaligned-${base}`);
     final = join(tmp, base);
-    copyApk(e, cachedApkPath, work, platform);
+    await copyApk(context, e, cachedApkPath, work, platform);
   } catch (err) {
     return fail('copy', `could not copy ${cachedApkPath} aside: ${describe(err)}`);
   }
@@ -292,11 +331,15 @@ export async function swapApkBundle({
   };
   let child: ChildProcess;
   try {
-    child = spawn(command.file, command.args, {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
+    const invocation = bundleInvocation(root, isExpo, command.args.slice(1));
+    child = spawnDeclared(context, () =>
+      spawn(invocation.file, invocation.args, {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
+      }),
+    );
+    killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);
   } catch (err) {
     return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(err)}`);
   }
@@ -336,7 +379,7 @@ export async function swapApkBundle({
 
   let hermes = false;
   let note: string | undefined;
-  const wantsHermes = hermesEnabled ?? readAndroidHermesEnabled(root);
+  const wantsHermes = hermesEnabled ?? readAndroidHermesEnabled(root, layout);
   if (wantsHermes) {
     const hermesc = androidHermescPath(root);
     if (!exists(hermesc)) {
@@ -344,7 +387,9 @@ export async function swapApkBundle({
     } else {
       const hbc = `${bundleOutput}.hbc`;
       try {
-        e.runFile(hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }));
+        await runOperationFile(context, e, hermesc, androidHermescArgs({ bundle: bundleOutput, out: hbc }), {
+          timeoutMs: 'unbounded',
+        });
         renameSync(hbc, bundleOutput);
         hermes = true;
       } catch (err) {
@@ -373,10 +418,13 @@ export async function swapApkBundle({
   const diff = compareAssetManifests(fresh, storedAssets);
   if (!diff.same) return refuse(assetDiffReason(diff), diff);
 
-  const jar = jarPath();
+  const jar = jarPath({ javaHome: (context?.env ?? process.env).JAVA_HOME ?? '' });
   const updatesManifest = join(stage, 'assets', UPDATES_MANIFEST_NAME);
   try {
-    e.runFile(jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], { cwd: stage });
+    await runOperationFile(context, e, jar, ['--extract', '--file', work, `assets/${UPDATES_MANIFEST_NAME}`], {
+      cwd: stage,
+      timeoutMs: 'unbounded',
+    });
     if (exists(updatesManifest)) refreshUpdatesManifestFile(updatesManifest, now());
   } catch (err) {
     return fail('updates', `could not refresh the expo-updates manifest from ${work}: ${describe(err)}`);
@@ -387,7 +435,9 @@ export async function swapApkBundle({
     // runtime can mmap it straight out of the APK, and a deflated entry fails to
     // load. jar --update keeps every other entry's method and replaces the
     // staged assets/ entries in place.
-    e.runFile(jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
+    await runOperationFile(context, e, jar, ['--update', '--file', work, '--no-compress', '-C', stage, 'assets'], {
+      timeoutMs: 'unbounded',
+    });
   } catch (err) {
     return fail('zip', `${jar} --update ${work} failed: ${describe(err)}`);
   }
@@ -400,7 +450,15 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(tools.path, zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }));
+    await runOperationFile(
+      context,
+      e,
+      tools.path,
+      zipalignArgs({ buildToolsMajor: tools.major, input: work, output: final }),
+      {
+        timeoutMs: 'unbounded',
+      },
+    );
   } catch (err) {
     return fail('zipalign', `zipalign failed on ${work}: ${describe(err)}`);
   }
@@ -415,7 +473,33 @@ export async function swapApkBundle({
     );
   }
   try {
-    e.runFile(signer.path, apksignerArgs({ keystore, apkPath: final }));
+    let signerFile = signer.path;
+    const signerArgs = apksignerArgs({ keystore, apkPath: final });
+    if (platform === 'win32') {
+      const javaHome = ((context?.env ?? process.env).JAVA_HOME ?? '').replaceAll('"', '');
+      signerFile = javaHome ? join(javaHome, 'bin', 'java.exe') : 'java.exe';
+      const fallbackJar = join(dirname(signer.path), '..', 'framework', 'apksigner.jar');
+      const signerJar =
+        [join(dirname(signer.path), 'apksigner.jar'), join(dirname(signer.path), 'lib', 'apksigner.jar')].find(
+          exists,
+        ) ?? fallbackJar;
+      // Android SDK apksigner.bat uses these heap/stack defaults and jar search paths.
+      // https://android.googlesource.com/platform/tools/apksig/+/5889dfb13b754dc723e3c906e927ce3e8faab917/etc/apksigner.bat
+      signerArgs.unshift('-Xmx1024M', '-Xss1m', '-jar', signerJar);
+    }
+    await runOperationFile(
+      context,
+      e,
+      signerFile,
+      signerArgs,
+      keystore.password === null
+        ? { timeoutMs: 'unbounded' }
+        : {
+            timeoutMs: 'unbounded',
+            env: { [KEYSTORE_PASSWORD_ENV]: keystore.password },
+            redact: [keystore.password],
+          },
+    );
   } catch (err) {
     return fail('apksigner', `apksigner sign failed on ${final} with ${keystore.path}: ${describe(err)}`);
   }
@@ -431,16 +515,26 @@ export async function swapApkBundle({
   return result;
 }
 
-// libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFileSync reads
+// libuv implements COPYFILE_FICLONE only on Linux; on macOS copyFile reads
 // and writes every byte, while cp -c clones the APK on APFS in constant time.
-function copyApk(e: Executor, from: string, to: string, platform: NodeJS.Platform): void {
+async function copyApk(
+  context: StimContext | undefined,
+  e: Executor,
+  from: string,
+  to: string,
+  platform: NodeJS.Platform,
+): Promise<void> {
   if (platform === 'darwin') {
     try {
-      e.runFile('cp', ['-c', from, to]);
+      await runOperationFile(context, e, 'cp', ['-c', from, to], { timeoutMs: 'unbounded' });
       return;
-    } catch {}
+    } catch {
+      throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
+    }
   }
-  copyFileSync(from, to, constants.COPYFILE_FICLONE);
+  throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
+  await copyFile(from, to, constants.COPYFILE_FICLONE);
+  throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'APK swap');
 }
 
 function describe(err: unknown): string {

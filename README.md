@@ -73,6 +73,11 @@ stim guide settings
 - [`@stim-cli/core`](./packages/core) contains shared internal cache contracts.
 - [`@stim-cli/server`](./packages/server) serves Stim status to paired
   read-only clients, such as the phone app, over Tailscale.
+- [`@stim-cli/transport`](./packages/transport) is the contract for the
+  transports that carry clients to stim-server, and
+  [`@stim-cli/transport-tailscale`](./packages/transport-tailscale) and
+  [`@stim-cli/transport-local`](./packages/transport-local) are its Tailscale
+  and local network transports.
 
 ## Development
 

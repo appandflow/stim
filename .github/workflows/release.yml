@@ -20,11 +20,27 @@ permissions:
   contents: read
 
 jobs:
+  tag-on-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::$GITHUB_REF_NAME is not on main. Tag a commit from main."
+            exit 1
+          fi
+
   windows-full:
+    needs: tag-on-main
     uses: ./.github/workflows/windows-full.yml
 
   publish:
-    needs: windows-full
+    needs: tag-on-main
     runs-on: ubuntu-latest
     environment: release
     permissions:
@@ -33,7 +49,7 @@ jobs:
     outputs:
       dist_tag: ${{ steps.dist-tag.outputs.dist_tag }}
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli ci server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
@@ -70,7 +86,7 @@ jobs:
             mv "$tarball" "$RUNNER_TEMP/tarballs/$p.tgz"
             tar -xzOf "$RUNNER_TEMP/tarballs/$p.tgz" package/package.json > "$RUNNER_TEMP/tarballs/$p.package.json"
           done
-      - name: Packed manifests name the tag, not a workspace range
+      - name: Packed manifests name the exact tag, not a range
         run: |
           tag="${GITHUB_REF_NAME#v}"
           for p in $PACKAGE_DIRS; do
@@ -81,7 +97,7 @@ jobs:
             node -e '
               const manifest = require(process.argv[1]);
               const tag = process.argv[2];
-              const accepted = new Set([tag, `^${tag}`, `~${tag}`]);
+              const accepted = new Set([tag]);
               const groups = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
               let bad = manifest.version === tag ? 0 : 1;
               if (bad) console.log(`${manifest.name} is ${manifest.version} but the tag is ${tag}`);
@@ -138,6 +154,30 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/cache.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
+      - name: Publish @stim-cli/cache-s3
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/cache-s3.package.json').version")
+          if npm view "@stim-cli/cache-s3@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/cache-s3@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/cache-s3.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/agent-driver
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/agent-driver.package.json').version")
+          if npm view "@stim-cli/agent-driver@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/agent-driver@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/agent-driver.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/agent-driver-agent-device
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/agent-driver-agent-device.package.json').version")
+          if npm view "@stim-cli/agent-driver-agent-device@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/agent-driver-agent-device@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/agent-driver-agent-device.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
       - name: Publish @stim-cli/metro
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/metro.package.json').version")
@@ -170,6 +210,30 @@ jobs:
           else
             npm publish "$RUNNER_TEMP/tarballs/ci.tgz" --provenance --access public --tag "$DIST_TAG"
           fi
+      - name: Publish @stim-cli/transport
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport.package.json').version")
+          if npm view "@stim-cli/transport@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/transport-tailscale
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport-tailscale.package.json').version")
+          if npm view "@stim-cli/transport-tailscale@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport-tailscale@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport-tailscale.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
+      - name: Publish @stim-cli/transport-local
+        run: |
+          version=$(node -p "require('$RUNNER_TEMP/tarballs/transport-local.package.json').version")
+          if npm view "@stim-cli/transport-local@$version" version >/dev/null 2>&1; then
+            echo "@stim-cli/transport-local@$version is already published"
+          else
+            npm publish "$RUNNER_TEMP/tarballs/transport-local.tgz" --provenance --access public --tag "$DIST_TAG"
+          fi
       - name: Publish @stim-cli/server
         run: |
           version=$(node -p "require('$RUNNER_TEMP/tarballs/server.package.json').version")
@@ -191,7 +255,7 @@ jobs:
     permissions:
       contents: read
     env:
-      PACKAGE_DIRS: core cache metro expo-build-cache stim-cli ci server
+      PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
       DIST_TAG: ${{ needs.publish.outputs.dist_tag }}
       npm_config_prefer_online: 'true'
     steps:

@@ -73,6 +73,51 @@ test('drops a series once its last reading is older than 10 minutes', () => {
     payload([owner({ kind: 'simulator', workspace: '/w/app', id: 'U', cpuPercent: 5, memoryMb: 1 })]),
     T0,
   );
+  recorder.record(payload([]), T0 + 1000);
   expect(recorder.history(T0 + 590_000)?.devices[0]?.cpuPercent[0]).toBe(5);
   expect(recorder.history(T0 + 600_000)).toBeNull();
+});
+
+describe('slots between payloads, as status --watch prints no line while usage stays within a step', () => {
+  const metro = (cpuPercent: number) =>
+    owner({ kind: 'metro', workspace: '/w/app', id: '8081', cpuPercent, memoryMb: 600 });
+
+  test('repeat the reading of a series that stays in the latest payload, up to now', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(2)]), T0);
+    recorder.record(payload([metro(9)]), T0 + 60_000);
+    expect(recorder.history(T0 + 120_000)!.environments[0]!.cpuPercent.slice(-9)).toEqual([2, 2, 2, 2, 9, 9, 9, 9, 9]);
+  });
+
+  test('repeat the reading up to the payload that drops the series, then stay empty', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(2)]), T0);
+    recorder.record(payload([]), T0 + 60_000);
+    const cpu = recorder.history(T0 + 150_000)!.environments[0]!.cpuPercent;
+    expect(cpu.slice(-11)).toEqual([2, 2, 2, 2, null, null, null, null, null, null, null]);
+  });
+
+  test('stay empty while a series was absent, even when it returns later', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(7)]), T0);
+    recorder.record(payload([]), T0 + 45_000);
+    recorder.record(payload([metro(7)]), T0 + 300_000);
+    const cpu = recorder.history(T0 + 300_000)!.environments[0]!.cpuPercent;
+    expect(cpu.slice(-21)).toEqual([7, 7, 7, ...Array(17).fill(null), 7]);
+  });
+
+  test('keep the reading of a series still in the latest payload after ten minutes without a line', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(4)]), T0);
+    expect(recorder.history(T0 + 20 * 60_000)!.environments[0]!.cpuPercent.every((value) => value === 4)).toBe(true);
+  });
+
+  test('leave the time nobody listened empty after pause, instead of repeating a stale reading', () => {
+    const recorder = new UsageRecorder();
+    recorder.record(payload([metro(7)]), T0);
+    recorder.pause();
+    recorder.record(payload([]), T0 + 5 * 60_000);
+    const cpu = recorder.history(T0 + 5 * 60_000)!.environments[0]!.cpuPercent;
+    expect(cpu.slice(-21)).toEqual([7, ...Array(20).fill(null)]);
+  });
 });

@@ -1,19 +1,22 @@
 import { statSync } from 'node:fs';
 import { workspaceStateFile } from '../workspace/paths.ts';
-import { createMetroGateway, type MetroBridge } from '@stim-cli/core';
 import {
-  HOSTED_METRO_GATEWAYS_KEY,
+  HOSTED_METRO_LINKS_KEY,
   hostedMetroRequests,
-  hostedMetroGateways,
+  hostedMetroLinks,
   hostedIosPlacements,
   hostedAndroidPlacements,
   HOSTED_METRO_REQUESTS_KEY,
   type HostedMetroRequest,
-  type HostedMetroGateway,
+  type HostedMetroLinks,
 } from '@stim-cli/core/state';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 import { probeHostedSession } from '../device-host/hosted-client.ts';
-import { clearHostedMetro } from '../device-host/metro-gateway.ts';
+import { clearHostedMetro } from '../device-host/metro-request.ts';
+import { parseMachine } from '../offload/tailnet.ts';
+import { openAgentRelay } from './agent-relay.ts';
+import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
+import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
 
 export function reconcileHostedMetro(
   requests: Record<string, HostedMetroRequest>,
@@ -28,16 +31,18 @@ export function reconcileHostedMetro(
 
 export function watchHostedMetro(root: string, metroPort: number, processToken: string): () => Promise<void> {
   const active: Record<string, HostedMetroRequest> = {};
-  const bridges = new Map<string, MetroBridge>();
+  const pools = new Map<string, MetroLinkPool>();
   let closed = false;
   let running: Promise<void> = Promise.resolve();
   let probingAt = 0;
   let probing = false;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
   let stamp = '';
   let cached: ReturnType<typeof readWorkspaceState> = null;
+  let queued = false;
   updateWorkspaceState(root, (state) =>
     state.supervisor?.processToken === processToken
-      ? { ...state, supervisor: { ...state.supervisor, hostedMetro: true } }
+      ? { ...state, supervisor: { ...state.supervisor, hostedMetroLinks: true } }
       : state,
   );
   const readState = () => {
@@ -49,16 +54,36 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     }
     return cached;
   };
-  const publish = (session: string, gateway: HostedMetroGateway | null) =>
-    updateWorkspaceState(root, (state) => {
-      const gateways = { ...hostedMetroGateways(state) };
-      if (state.supervisor?.processToken !== processToken) return state;
-      if (gateway) gateways[session] = gateway;
-      else delete gateways[session];
-      return { ...state, [HOSTED_METRO_GATEWAYS_KEY]: gateways };
-    });
+  const unpublished = new Map<string, HostedMetroLinks | null>();
+  let republish: ReturnType<typeof setTimeout> | undefined;
+  const flush = () => {
+    clearTimeout(republish);
+    for (const [session, links] of unpublished) {
+      try {
+        updateWorkspaceState(root, (state) => {
+          const published = { ...hostedMetroLinks(state) };
+          if (state.supervisor?.processToken !== processToken) return state;
+          if (links) published[session] = links;
+          else delete published[session];
+          return { ...state, [HOSTED_METRO_LINKS_KEY]: published };
+        });
+      } catch {
+        if (closed) return;
+        republish = setTimeout(flush, 1000);
+        republish.unref();
+        return;
+      }
+      unpublished.delete(session);
+    }
+  };
+  const publish = (session: string, links: HostedMetroLinks | null) => {
+    unpublished.delete(session);
+    unpublished.set(session, links);
+    flush();
+  };
   const reconcile = async () => {
     if (closed) return;
+    observer.refresh();
     const state = readState();
     if (state?.supervisor?.processToken !== processToken) return;
     const placements = [
@@ -89,39 +114,51 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
     }
     const actions = reconcileHostedMetro(requests, active);
     for (const session of actions.close) {
-      await bridges.get(session)?.close();
-      bridges.delete(session);
+      pools.get(session)?.close();
+      pools.delete(session);
       delete active[session];
       publish(session, null);
     }
     for (const session of actions.open) {
       const request = requests[session]!;
       active[session] = request;
-      const bridge = createMetroGateway({ metroPort, peer: request.peer, secret: request.secret });
-      bridges.set(session, bridge);
-      try {
-        const saved = hostedMetroGateways(state)[session];
-        await new Promise<void>((resolve, reject) => {
-          bridge.server.once('error', reject);
-          bridge.server.listen(saved?.id === request.id ? (saved.port ?? 0) : 0, request.address, () => {
-            bridge.server.removeListener('error', reject);
-            resolve();
-          });
-        });
-        const address = bridge.server.address();
-        if (!address || typeof address === 'string') throw new Error('No gateway port.');
-        publish(session, { id: request.id, processToken, port: address.port });
-      } catch {
-        await bridge.close();
-        bridges.delete(session);
-        publish(session, {
-          id: request.id,
-          processToken,
-          error: `Could not bind the private Metro gateway for ${request.machine}. Check Tailscale, then restart Metro.`,
-        });
-      }
+      const relay =
+        parseMachine(request.machine)?.transport === 'local'
+          ? openAgentRelay({ machine: request.machine, session, port: hostedMetroLinks(state)[session]?.agentPort })
+          : null;
+      let agentPort: number | undefined;
+      const listening = relay ? relay.port.then((port) => void (agentPort = port)).catch(() => {}) : Promise.resolve();
+      let ready = false;
+      const pool = openMetroLinks({
+        machine: request.machine,
+        session,
+        metroPort,
+        onReady: async () => {
+          ready = true;
+          await listening;
+          if (active[session] === request && ready)
+            publish(session, { id: request.id, processToken, ready: true, ...(agentPort ? { agentPort } : {}) });
+        },
+        onLost: () => {
+          ready = false;
+          if (active[session] === request)
+            publish(session, { id: request.id, processToken, ...(agentPort ? { agentPort } : {}) });
+        },
+        onError: (message) => {
+          ready = false;
+          if (active[session] === request)
+            publish(session, { id: request.id, processToken, error: message, ...(agentPort ? { agentPort } : {}) });
+        },
+      });
+      pools.set(session, {
+        close: () => {
+          pool.close();
+          relay?.close();
+        },
+      });
     }
     if (!probing && Date.now() >= probingAt) {
+      clearTimeout(probeTimer);
       probingAt = Date.now() + 10_000;
       probing = true;
       void Promise.all(
@@ -133,19 +170,34 @@ export function watchHostedMetro(root: string, metroPort: number, processToken: 
         .catch(() => {})
         .finally(() => {
           probing = false;
+          if (!closed) {
+            probeTimer = setTimeout(tick, Math.max(0, probingAt - Date.now()));
+            probeTimer.unref();
+          }
         });
     }
   };
   const tick = () => {
-    running = running.then(reconcile).catch(() => {});
+    if (closed || queued) return;
+    queued = true;
+    running = running
+      .then(() => {
+        queued = false;
+        return reconcile();
+      })
+      .catch(() => {});
   };
-  const timer = setInterval(tick, 500);
+  const observer = watchWorkspaceState(root, tick);
+  const timer = setInterval(tick, 10_000);
   timer.unref();
   tick();
   return async () => {
     closed = true;
+    observer.close();
+    clearTimeout(probeTimer);
+    clearTimeout(republish);
     clearInterval(timer);
     await running;
-    await Promise.all([...bridges.values()].map((bridge) => bridge.close()));
+    for (const pool of pools.values()) pool.close();
   };
 }

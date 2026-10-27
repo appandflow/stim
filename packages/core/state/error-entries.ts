@@ -13,7 +13,11 @@ function isError(record: NdjsonRecord): boolean {
 }
 
 function isExpoLine(record: NdjsonRecord): boolean {
-  return record.src === 'metro' && record.raw === true && record.event === 'expo_stdout';
+  return (
+    record.src === 'metro' &&
+    record.raw === true &&
+    (record.event === 'expo_stdout' || record.event === 'command_stdout')
+  );
 }
 
 /**

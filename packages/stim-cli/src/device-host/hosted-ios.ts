@@ -1,6 +1,5 @@
-import type { HostedIosChoice, HostedIosPlacement, HostedDeviceSelectors } from '@stim-cli/core/state';
+import type { HostedIosChoice, HostedIosPlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
 import { prepareHostedNative, placeHostedNative, stopHostedNative, type HostedNativeTarget } from './hosted-native.ts';
-export { iosAgentRemoteConfig } from './hosted-native.ts';
 export interface HostedIosTarget extends HostedNativeTarget {
   choice: HostedIosChoice;
 }
@@ -8,13 +7,14 @@ export async function prepareHostedIos(
   machine: string,
   selectors: HostedDeviceSelectors,
   recorded?: HostedIosPlacement,
+  mode?: HostedAppOffer['mode'],
 ): Promise<HostedIosTarget> {
-  return (await prepareHostedNative(machine, selectors, recorded, 'ios')) as HostedIosTarget;
+  return (await prepareHostedNative(machine, selectors, recorded, 'ios', false, mode)) as HostedIosTarget;
 }
 export async function placeHostedIos(
   target: HostedIosTarget,
   options: Omit<Parameters<typeof placeHostedNative>[1], 'platform' | 'reserved'> & {
-    reserved: (placement: HostedIosPlacement) => void;
+    reserved: (placement: HostedIosPlacement) => unknown;
   },
 ): Promise<{ placement: HostedIosPlacement; launched: true | 'unverified' }> {
   return (await placeHostedNative(target, {
@@ -23,4 +23,4 @@ export async function placeHostedIos(
     reserved: (placement) => options.reserved(placement as HostedIosPlacement),
   })) as { placement: HostedIosPlacement; launched: true | 'unverified' };
 }
-export const stopHostedIos: (root: string, slot?: string) => Promise<void> = stopHostedNative;
+export const stopHostedIos: (root: string, slot?: string, signal?: AbortSignal) => Promise<void> = stopHostedNative;

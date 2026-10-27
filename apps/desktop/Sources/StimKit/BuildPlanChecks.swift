@@ -24,6 +24,8 @@ public final class BuildPlanChecks: ObservableObject {
   public static let freshFor: TimeInterval = 60
 
   @Published public private(set) var entries: [String: Entry] = [:]
+  /// Delivers a cancelled check's refusal independently of preview freshness and replacement checks.
+  public var onCancelledRefusal: ((String, String, CommandRefusal) -> Void)?
   private var tasks: [String: Task<Void, Never>] = [:]
   private var queues: [String: Task<Void, Never>] = [:]
   private let planner: Planner
@@ -65,7 +67,10 @@ public final class BuildPlanChecks: ObservableObject {
         } catch {
           state = .failed(error.localizedDescription)
         }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+          if case .done(.refused(let refusal)) = state { self.onCancelledRefusal?(workspace, platform, refusal) }
+          return
+        }
         self.entries[key] = Entry(state: state, buildKey: buildKey, checkedAt: self.now())
         self.tasks[key] = nil
       }

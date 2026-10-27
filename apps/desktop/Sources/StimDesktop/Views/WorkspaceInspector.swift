@@ -25,7 +25,6 @@ struct Inspector: View {
             cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
           )
-          .tutorialAnchor(.buildSection, workspace: env.path)
           .id(env.path)
         }
 
@@ -121,7 +120,7 @@ struct BuildCacheStatCard: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Text(title).foregroundStyle(Palette.secondary)
         if let subtitle { Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary) }
-        Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
+        Text("\(Format.int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
         StimProgressBar(value: platform.hitRate)
         Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
         Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)

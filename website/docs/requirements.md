@@ -51,17 +51,21 @@ version. The tools Stim starts inherit the override.
   need an installed iOS Simulator runtime.
 - A compatible Ruby and CocoaPods setup when the project uses pods. Install
   Bundler when the project pins CocoaPods in `Gemfile.lock`.
-- From Linux or Windows, iOS runs through an EAS build and an EAS Simulator
-  session: `stim ios --remote eas --eas-profile <profile>`. See
+- From Linux or Windows, a React Native or Expo app builds and runs on a paired
+  Mac approved for builds and hosted simulators:
+  `stim ios --remote <mac> --remote-build <mac>`. See
+  [Remote machines](./remote-machines.md#requirements). It can also run through
+  an EAS build and an EAS Simulator session:
+  `stim ios --remote eas --eas-profile <profile>`. See
   [From Windows or Linux](./owned-devices.md#from-windows-or-linux).
 
 ## Android
 
 - macOS, Linux or Windows with the Android SDK. Stim reads its location from
-  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` (the
-  macOS Android Studio default) or `%LOCALAPPDATA%\Android\Sdk` on Windows, and
-  passes that path to Gradle as `ANDROID_HOME` when neither variable is set.
-  On Linux, set `ANDROID_HOME`.
+  `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then Android Studio's default:
+  `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux or
+  `%LOCALAPPDATA%\Android\Sdk` on Windows. It passes that path to Gradle as
+  `ANDROID_HOME` when neither variable is set.
   With no SDK there and no `android/local.properties`, `stim doctor --platform
 android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
   before Gradle runs.
@@ -70,11 +74,17 @@ android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
 - A working Java and Gradle setup for the project.
 - On Windows, a project root short enough for the NDK's object paths: its
   ninja cannot open a path of 260 characters or more, and a React Native
-  codegen object path only fits when CMake can shorten it. `stim doctor
---platform android` reports a root that leaves no room and `stim android`
-  refuses it with `STIM_PATH_TOO_LONG` before Gradle runs; `subst X: "<root>"`
-  and working from `X:\` is the usual fix. The check assumes the default native
-  staging path and may also refuse a shorter custom `buildStagingDirectory`.
+  codegen object path only fits when CMake can shorten it. A project with
+  react-native-gesture-handler 3 fits a root of at most 24 characters for an
+  x86_64 emulator build and 21 for arm64-v8a, such as `C:\src\trailhead`;
+  other projects fit about twice that. `stim doctor --platform android`
+  reports a root that leaves no room and `stim android` refuses it with
+  `STIM_PATH_TOO_LONG` before it prepares the emulator, even when a cached build
+  would have installed. Move or clone the project under a
+  short real path such as `C:\src\<name>`. A `subst` drive does not work: Node
+  and Expo autolinking resolve it back to the long path. The check
+  assumes the default native staging path and may also refuse a shorter
+  custom `buildStagingDirectory`.
 
 ## Windows
 
@@ -90,8 +100,7 @@ is no local Xcode path. Requirements on top of the Android list:
 - Emulator acceleration: WHPX (Windows Hypervisor Platform) or the Android
   Emulator hypervisor driver. `emulator -accel-check` reports which is active.
 - JDK 17 on `JAVA_HOME` or `PATH`.
-- A short project path or a `subst` drive, as described in the Android path
-  requirement above.
+- A short project path, as described in the Android path requirement above.
 
 On Windows, `stim doctor --platform android` checks path room, and `stim doctor
 --platform ios` points at `--remote eas` for iOS.

@@ -1,11 +1,12 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { ensurePrivateDir } from '@stim-cli/core';
 import {
   createdDevicesFile,
   createdDevicesLock,
   readCreatedDevices,
   type CreatedDevicePlatform,
 } from '@stim-cli/core/state';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
@@ -27,7 +28,7 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
       };
       const file = createdDevicesFile();
       const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
       try {
         renameSync(tmp, file);
       } catch (error) {
@@ -35,7 +36,7 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
         throw error;
       }
     },
-    { ensureParent: () => mkdirSync(dir, { recursive: true }) },
+    { ensureParent: () => ensurePrivateDir(dir) },
   );
 }
 
@@ -45,4 +46,27 @@ export function recordCreatedDevice(platform: CreatedDevicePlatform, id: string)
 
 export function forgetCreatedDevice(platform: CreatedDevicePlatform, id: string): void {
   update(platform, (entries) => entries.delete(id));
+}
+
+/** Waits asynchronously for the ledger lock, then records the device. */
+export function recordCreatedDeviceAsync(platform: CreatedDevicePlatform, id: string): Promise<void> {
+  return withDirLockAsync(createdDevicesLock(), () => recordCreatedDevice(platform, id), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+  });
+}
+
+/** Waits asynchronously for the ledger lock, then atomically forgets the device. The synchronous transaction decides whether to commit the removal; cancellation stops admission. */
+export function forgetCreatedDeviceAsync(
+  platform: CreatedDevicePlatform,
+  id: string,
+  signal?: AbortSignal,
+  transaction: (forget: () => void) => boolean = (forget) => {
+    forget();
+    return true;
+  },
+): Promise<boolean> {
+  return withDirLockAsync(createdDevicesLock(), () => transaction(() => forgetCreatedDevice(platform, id)), {
+    ensureParent: () => ensurePrivateDir(getConfigDir()),
+    signal,
+  });
 }

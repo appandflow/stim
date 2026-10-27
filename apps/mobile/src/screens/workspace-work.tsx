@@ -17,6 +17,7 @@ import { useNow } from '@/hooks/use-now';
 import { archivedPage } from '@/lib/archived-page';
 import { formatDuration } from '@/intl/format';
 import { agentWebUrl } from '@/lib/agents';
+import { isGitHubPullUrl } from '@/lib/github';
 import { checksSummary, checksTone } from '@/lib/workspace-view';
 import { worktreeApps, worktreeSessions } from '@/lib/worktree-page';
 import { workspaceTitleAt } from '@/lib/workspace-names';
@@ -48,7 +49,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const onlyAgentHasLink = sessions.length === 1 && agentWebUrl(sessions[0]!) !== null;
   const livePr = archiveId ? null : worktree?.pullRequest;
   const checks = livePr ? checksTone(livePr.checks) : null;
-  const checkedAt = livePr ? Date.parse(livePr.checkedAt) : NaN;
+  const checkedAt = livePr?.checkedAt ? Date.parse(livePr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
   return (
     <SheetScreen
@@ -146,7 +147,9 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
       ) : null}
       {pr ? (
         <>
-          <Button title={t`Open in GitHub`} onPress={() => void Linking.openURL(pr.url)} />
+          {isGitHubPullUrl(pr.url) ? (
+            <Button title={t`Open in GitHub`} onPress={() => void Linking.openURL(pr.url)} />
+          ) : null}
           {Number.isFinite(checkedAt) ? (
             <Text variant="footnote" tone="tertiary" style={styles.center}>
               {t`Checked ${sinceChecked} ago`}

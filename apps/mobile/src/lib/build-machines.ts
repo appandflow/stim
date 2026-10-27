@@ -26,7 +26,7 @@ function pairingState(state: string): State {
     case 'lapsed':
       return { title: t`Request lapsed`, tone: 'error' };
     case 'node-changed':
-      return { title: t`Different Mac`, tone: 'error' };
+      return { title: t`Different machine`, tone: 'error' };
     case 'not-on-tailnet':
       return { title: t`Not on the tailnet`, tone: 'warning' };
     case 'tailscale-off':
@@ -48,9 +48,11 @@ function knownProblem(code: string): [string, string | null] | undefined {
     case 'checkout':
       return [t`Not a git checkout`, t`run Stim from a git checkout`];
     case 'stim-build':
-      return [t`Stim build differs`, t`update the build machine`];
+      return [t`Stim build differs`, t`update the remote machine`];
     case 'arch':
       return [t`Other CPU`, t`use a Mac with the same CPU`];
+    case 'platform':
+      return [t`Not a Mac`, t`iOS and macOS builds need a Mac`];
     case 'xcode':
       return [t`Xcode differs`, t`select the same Xcode on both`];
     case 'simulator-sdk':
@@ -198,7 +200,7 @@ export function buildPlacements(stats: Record<string, unknown> | null | undefine
 export function placementTitle(entry: Placement): string {
   const name = entry.machine ? machineName(entry.machine) : null;
   if (entry.decision === 'here') return t`Built here`;
-  if (entry.decision === 'offloaded') return name ? t`Built on ${name}` : t`Built on a build machine`;
+  if (entry.decision === 'offloaded') return name ? t`Built on ${name}` : t`Built on a remote machine`;
   return name ? t`Built here after ${name}` : t`Built here after offloading`;
 }
 

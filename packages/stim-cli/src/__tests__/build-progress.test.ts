@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -8,6 +8,7 @@ import {
   activeBuildState,
   buildReport,
   buildStatusLine,
+  bundlingActivity,
   completedPhaseDurations,
   estimateBuild,
   parseActiveBuild,
@@ -22,16 +23,9 @@ import {
   readBuildDetail,
   readBuildHistory,
   readLastBuilds,
-} from '@stim-cli/core/state';
-import {
-  emptyStats,
   HISTORY_LIMIT,
-  readStats,
-  recordRunStats,
-  updateStats,
-  type RunHistory,
-  type StatsRun,
-} from '../engine/stats.ts';
+} from '@stim-cli/core/state';
+import { emptyStats, readStats, recordRunStats, updateStats, type RunHistory, type StatsRun } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const T0 = Date.parse('2026-09-24T10:00:00.000Z');
@@ -165,7 +159,7 @@ describe('active build record', () => {
     }
   });
 
-  test('reports where the build runs: local, then the remote Mac and its phase there, then local again', () => {
+  test('reports where the build runs: local, then the remote machine and its phase there, then local again', () => {
     const claim = takeClaim();
     let now = T0;
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
@@ -213,6 +207,37 @@ describe('active build record', () => {
     progress.waitingOn('/w/app-a');
     progress.step('device');
     expect(report().waitingOn).toBeUndefined();
+    progress.clear();
+    releaseClaim(claim);
+  });
+
+  test('the launch activity takes Metro percent only for its own request and ends with the phase', () => {
+    const claim = takeClaim();
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
+    progress.step('launch');
+    now += 4_000;
+    progress.activity('bundling', T0 + 3_000);
+    const startedAt = new Date(T0 + 3_000).toISOString();
+    expect(report().activity).toEqual({ name: 'bundling', startedAt });
+
+    const own = { bundling: true, platform: 'ios' as const, startedAt, percent: 45 };
+    expect(bundlingActivity(report().activity, 'ios', own)).toEqual({ name: 'bundling', startedAt, percent: 45 });
+    const prefetch = { ...own, startedAt: new Date(T0 + 1_000).toISOString() };
+    expect(bundlingActivity(report().activity, 'ios', prefetch)).toEqual({ name: 'bundling', startedAt });
+    expect(bundlingActivity(report().activity, 'ios', { ...own, platform: 'android' })?.percent).toBeUndefined();
+    expect(
+      buildStatusLine({ ...report(), activity: bundlingActivity(report().activity, 'ios', own) }, now + 2_000),
+    ).toBe('build: ios launch (bundling JS 45%, 3s), 6s elapsed');
+
+    progress.activity('waiting-ready');
+    expect(buildStatusLine(report(), now)).toBe('build: ios launch (waiting for app ready, 0s), 4s elapsed');
+    progress.activity(null);
+    expect(report().activity).toBeUndefined();
+    progress.activity('bundling');
+    progress.step('device');
+    expect(report().activity).toBeUndefined();
     progress.clear();
     releaseClaim(claim);
   });
@@ -421,6 +446,29 @@ describe('build history', () => {
     releaseClaim(second);
 
     expect(readBuildHistory(readWorkspaceState(root)).ios!.map((entry) => entry.result)).toEqual(['succeeded']);
+  });
+  test("a build-only result joins history without replacing the running app's build or device record", () => {
+    const running = finished('2026-09-24T09:00:00.000Z', { appPath: '/runtime/App.app', cacheKey: 'runtime-key' });
+    recordFinishedBuild(root, running);
+    const device = { deviceUdid: 'booted', devicePlacement: { machine: 'mini' } };
+    writeWorkspaceState(root, { ...readWorkspaceState(root), ios: device });
+
+    const claim = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => T0 });
+    recordFinishedBuild(root, finished('2026-09-24T10:00:00.000Z', { appPath: '/artifacts/App.app' }), {
+      artifactOnly: true,
+    });
+    releaseClaim(claim);
+    const next = takeClaim();
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: next, now: () => T0 + 60_000 }).clear();
+    releaseClaim(next);
+
+    const state = readWorkspaceState(root);
+    expect(state).toMatchObject({ lastBuild: running, lastIosBuild: running, ios: device });
+    expect(readBuildHistory(state).ios!.map(({ result, startedAt }) => [result, startedAt])).toEqual([
+      ['succeeded', '2026-09-24T10:00:00.000Z'],
+      ['succeeded', '2026-09-24T09:00:00.000Z'],
+    ]);
   });
 });
 
@@ -856,3 +904,29 @@ test.each(['default', 'tablet'])(
     }
   },
 );
+
+test('STIM_TRACE records each build phase the run enters under the name stats.json uses', () => {
+  const file = join(home, 'build-trace.json');
+  process.env.STIM_TRACE = file;
+  const claim = takeClaim();
+  try {
+    let now = T0;
+    const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, now: () => now });
+    for (const phase of ['cache-lookup', 'compile', 'install'] as const) {
+      now += 1000;
+      progress.step(phase);
+    }
+    const durations = progress.durations();
+    progress.clear();
+    const events: { name: string; cat?: string }[] = JSON.parse(
+      `${readFileSync(file, 'utf8').trimEnd().replace(/,$/, '')}]`,
+    );
+    const spans = events.filter((event) => event.cat === 'phase');
+    expect(spans.map((event) => event.name)).toEqual(['prepare', 'cache-lookup', 'compile', 'install']);
+    expect(Object.keys(durations)).toEqual(spans.map((event) => event.name));
+  } finally {
+    releaseClaim(claim);
+    delete process.env.STIM_TRACE;
+    delete process.env.STIM_TRACE_OWNER;
+  }
+});

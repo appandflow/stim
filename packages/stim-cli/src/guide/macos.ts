@@ -4,7 +4,7 @@ export default {
 
 If Stim is not installed globally, replace stim with npx stim.
 
-ios --remote <machine> shares remote.machines and its separate device-host
+ios --remote <placement> shares remote.machines and its separate device-host
 approval. Read guide lifecycle hosted-ios for simulator placement and Metro.
 
 Run from the directory containing Package.swift. This prototype builds one
@@ -56,37 +56,82 @@ executables, including Stim Desktop's sim-fold helper, are not built.
   stim logs --errors
   stim stop               # stop this workspace's owned app and supervisor
 
-Each invocation stops its previous owned app, rebuilds and launches. SwiftPM
+Each invocation validates the project settings, development plist and resource
+entries before stopping its previous owned app, rebuilding and launching. SwiftPM
 keeps incremental outputs in the workspace's runtime directory under STIM_HOME.
 Every process running an app bundle from that directory is the workspace's
 owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. For
+a hosted session the same rule covers every app bundle the session received, so
+stop and a replacement launch also end a copy that LaunchServices started from
+an earlier attempt.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
 activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
-macOS artifacts are not cached. This prototype has no --slot or reload command.
+This prototype has no --slot or reload command.
+Completed app caching is opt-in with macos.artifactInputs:
+
+  { "macos": { "artifactInputs": { "complete": true,
+      "ignored": [], "outputs": [], "localFiles": [], "environment": [] } } }
+
+complete declares pinned, repeatable build inputs and an app that runs after its
+original checkout and scratch directory are gone. Do not enable it for mutable
+dependencies, build-time network data, undeclared environment or local inputs,
+or code that needs its original absolute source paths (including #filePath).
+Stim hashes Git-visible repository source, Package.resolved even when ignored,
+the development plist, declared resources, Swift/Xcode/SDK identity and CPU
+architecture. ignored names exact Git-ignored repository-relative input files;
+outputs names generated repository-relative directories already ignored by Git.
+localFiles names exact additional private files, relative to the package or
+absolute; environment names additional build-time variables. Values and private
+file contents are hashed locally and are not included in the shared receipt.
+Symbolic links in source inventories are currently ineligible for caching.
+Without a valid declaration Stim compiles normally and keeps SwiftPM incremental
+reuse. optimizations.buildCache and optimizations.remoteBuildCache also apply.
+The completed bundle uses the ordinary shared build cache and an optional
+cache.provider's files capability, including S3. A hit avoids compiler slots and
+placement, then gets this workspace's identifier and name on a re-signed copy.
+Corrupt or incompatible entries fall back to compilation. Inputs changed during
+compilation prevent publication. Compiler and package scratch state is not shared.
+An enabled paired worker with swiftpm-peer-cache can retain a completed archive
+after verifying its actual source, private inputs and toolchain before and after
+compilation. After local/provider misses, an exact peer hit skips source upload
+and compiler admission, even while that worker is busy. Private values stay on
+the worker; its opaque identity is not used as this Mac's local cache key.
+Ignored bundle files must be declared in ignored or localFiles for peer reuse.
+The worker rechecks private inputs before offer and fetch; deleting its checkout
+does not discard an archive whose private inputs remain valid. Toolchain versions and command selection are
+checked from the package directory. After checkout removal, only verified direct
+Apple Swift, xcrun and xcodebuild selections can be reproduced; custom launchers
+require the checkout and otherwise miss safely. SWIFT_EXEC and SWIFT_EXEC_MANIFEST
+compiler overrides are resolved and versioned separately and require the checkout.
+The SDK selected by SDKROOT or SWIFTPM_SDKROOT_macosx is checked by real path and build version. Explicit local placement,
+disabled pool members and remoteBuildCache
+false skip peer lookup. Older workers keep their normal compilation path.
 --plan validates the Swift Package directory, macos settings, development plist
-and declared resources without building, signing, staging, stopping or launching
+and declared resources without building, signing, stopping or launching
 an app, writing workspace state or claiming a build slot. It does not execute
 Package.swift, so it cannot validate the executable product or package dependencies.
 --remote-build is respected, including named-machine setup refusals; no worker
 is contacted and live worker availability is unknown. --remote is launch-only
 and refuses with --plan. The JSON plan has platform "macos", product and
-buildMachine; fingerprint, cacheKey, provider, prebuild, outcome and expectedMs
-are null, cacheHit and cacheSkipped are false, and basis is 0. SwiftPM decides
-incremental compile work when a build runs; the plan predicts no cache outcome
-or duration. Desktop checks automatically while build details are visible,
+buildMachine. An eligible cache identity supplies fingerprint and cacheKey;
+cacheHit reports a verified local completed artifact, checked in a disposable
+temporary copy. Providers and workers are not contacted. cacheSkipped is true
+when artifact caching is disabled or ineligible. provider, prebuild, outcome
+and expectedMs remain null, and basis is 0. SwiftPM decides incremental compile
+work when a build runs; the plan predicts no duration. Desktop checks automatically while build details are visible,
 reusing a completed build or check for 60 seconds and skipping running builds.
 A failed build records its error and compiler output without launching an app.
 While it runs, stim status --json reports it as environments[].build with
 platform "macos": phase prepare, compile, install, then launch, and during
 compile detail.unit "steps" with SwiftPM's [done / total] counts (fetching and
-planning are detail.step "configure"). It has no cache lookup, so outcome and
+planning are detail.step "configure"). outcome and
 plannedPhases are null; finished runs and their phase times are in
 environments[].builds.macos, where phases includes launch once the launch step finishes
 and compileSteps is SwiftPM's step total. An offloaded build reports the worker's
@@ -98,21 +143,21 @@ line instead of when the app exits.
 
 BUILD OFFLOAD
 
---remote-build <auto|local|name> overrides STIM_REMOTE_BUILD and the
+--remote-build <local|auto|remote|remote-only|name> overrides STIM_REMOTE_BUILD and the
 machine setting remote.build (default auto). local builds here; a name
-requires the matching configured and paired remote Mac, ignoring remote.buildMode
-and this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
+requires the matching configured and paired remote Mac, ignoring this Mac's capacity. Any failure is STIM_OFFLOAD_REFUSED without a local xcodebuild, Gradle or
 SwiftPM compile or another machine. Invalid, unlisted or unpaired selections
 refuse before stopping the app or changing its build record. See stim guide errors STIM_OFFLOAD_REFUSED.
 
-With remote.build auto, remote.buildMode places these SwiftPM Debug builds:
-auto builds here while this Mac has capacity, force uses an approved build
-machine when one accepts, and off builds here when local remains in the automatic
-build pool. remote.buildPoolDisabled excludes members from automatic placement,
+remote.build places these SwiftPM Debug builds: auto builds here while this Mac has
+capacity, remote uses the first approved build machine in remote.machines order that
+accepts and otherwise builds here, remote-only never builds here and refuses when none
+accepts, and local builds here. remote.buildPoolDisabled excludes members from automatic placement,
 including its local fallback. Explicit local or named placement bypasses membership.
 Configure remote.machines
 and approve build access as described in stim guide settings. The worker needs
-matching Stim, CPU architecture, Xcode and macOS SDK, plus network access to
+matching Stim, CPU architecture, Xcode and macOS SDK (except for an app built and run on
+the same Mac, below), plus network access to
 fetch package dependencies the first time. It keeps SwiftPM dependencies in a
 per-client cache and incremental outputs per repository. It runs fixed swift
 build commands without JavaScript installs, prebuild or pods. It receives only
@@ -120,11 +165,17 @@ the files git lists (tracked and untracked, not ignored). Resource and catalog
 sources must be among those files. The client sends resolved sources relative
 to the repository root; the worker resolves them inside its checkout.
 
+With --remote <machine> and --remote-build naming the same machine (the same
+paired node), the app is built and run there, so this Mac's Xcode, macOS SDK and
+CPU architecture do not have to match: the worker needs the same Stim build
+compatibility version and its own Xcode and macOS SDK. This Mac's cache is skipped and the worker's cache
+identity comes from the worker's toolchain. Any other combination keeps the match.
+
 The client validates the development plist and resource entries before asking a machine. It verifies
 the returned archive's sha256, bundle identifier, executable, declared resources
 and ad hoc signature
-before replacing the owned bundle, then launches locally as usual. With auto, every offload
-failure falls back to the local build, including force. Failed staging preserves
+before replacing the owned bundle, then launches locally as usual. With auto or remote, every offload
+failure falls back to the local build. Failed staging preserves
 the previous bundle. No failed artifact is promoted or cached. The build record
 is unchanged by invalid, unlisted or unpaired setup refusals. It
 carries buildMachine (selected) and builtOn (here or the machine, absent until
@@ -133,8 +184,11 @@ attempt falls back here. Placement and failure reasons are in build logs.
 
 AGENT ACTIONS
 
-Launch through stim macos first. Use its isolated bundleId from the JSON
-launch record or status --json:
+Launch through stim macos first. Use its isolated bundleId from the JSON launch
+record or status --json. stim macos waits, for up to 20 seconds, until macOS
+LaunchServices lists the app, so agent-device open attaches to it instead of
+starting a second copy. If it is still unlisted, stim macos warns and returns;
+wait before opening. A --remote launch skips the wait:
 
   agent-device open <bundleId> --platform macos --surface app --foreground
   agent-device click <ref> --settle
@@ -283,19 +337,44 @@ used.
 
 ON ANOTHER MAC
 
-stim macos --remote <machine> builds the Debug app on this Mac and runs it on an
-approved remote Mac over the tailnet, without SSH. The machine must be listed
-in remote.machines and approved: stim doctor --fix asks it, a person on that
-Mac runs stim-server devices grant <id> --device-host or stim-server setup
-with that client node, ticket and expiry (guide settings), and stim doctor then
-records the approval. Stim connects only to the machine's pinned tailnet node.
-A refusal or an unreachable host fails the command; it never launches here
+stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
+approved remote Mac over the tailnet, without SSH. The Mac must be listed
+in remote.machines and approved: stim doctor --fix makes a setup ticket, a
+person on that Mac runs stim-server setup with that ticket and expiry (guide
+settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+only with the stim-server that proves it holds that key.
+A refusal or an unreachable host fails the command; with a named Mac it never launches here
 instead.
 
-The --remote value is a remote Mac name from remote.machines. macOS refuses
-eas and proxy because it has neither backend. It also refuses auto until
-automatic placement ships. These reserved names are case-insensitive and
-trimmed; they refuse with STIM_BAD_ARG before state access or a connection.
+The --remote flag and the macos.remote setting take the placement words of
+ios.remote and a remote Mac name from remote.machines; the flag overrides the
+setting:
+
+  local        launch here (the default when neither is set)
+  auto         launch here unless this Mac is busy (host memory pressure or load
+               per core at or above server.maxLoadPerCore), then on the first
+               approved Mac in remote.machines order that has room
+  remote       on the first approved Mac in remote.machines order that has room
+               and a load per core under its own server.maxLoadPerCore, here only
+               when none does
+  remote-only  the same, never here, so a macOS app never takes focus on this Mac:
+               when every Mac that answered is only full or loaded it waits up to
+               600 seconds for one with room and then refuses with STIM_AT_CAPACITY;
+               with no Mac that could ever take it (none configured, unreachable,
+               declined for another reason) it refuses at once with
+               STIM_HOSTING_REFUSED and the reason each Mac was skipped
+  <machine>    exactly that Mac, with no fallback
+
+A placement word picks the Mac on a new launch and keeps the recorded one while an
+app runs there, until stim stop. The command prints a placement: line with the
+choice and the skipped Macs. macOS refuses eas and proxy because it has neither
+backend. Reserved names are case-insensitive and trimmed; they refuse with
+STIM_BAD_ARG before state access or a connection. The device pool switches
+(remote.devicePoolDisabled) also apply to automatic macOS placement.
+
+A hosted app is not kept forever: the idle workspace stop ends its hosted session
+after maintenance.idleStopHours without activity, and stim-server stops a session
+whose client has been gone that long (guide cleanup, IDLE STOP).
 
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same
@@ -347,7 +426,7 @@ approved host that lacks them. A server started by Stim Desktop uses Desktop's
 grants.
 
 Hosted delivery carries the staged bundle with declared resources and compiled assets.
-When offload built it on the host's own tailnet node, the host copies the files
+When offload built it on the host's own stim-server, the host copies the files
 from the build it kept for this Mac instead of receiving them again, admitting
 only bytes that match the bundle's digests here. That needs both the build and
 the device-host approval for this Mac. Files the host cannot take, an older
@@ -382,6 +461,12 @@ method the relay does not forward, is refused with an agent-device UNAUTHORIZED
 error whose details.reason is STIM_AGENT_REQUEST_REFUSED and whose message names
 the refused command or method; do not retry it.
 
+longpress, swipe, back and the other gestures are not in that list; the
+longpress and swipe that stim guide lifecycle lists belong to hosted Android and
+iOS sessions. click <ref> --button secondary reaches agent-device, but its native
+macOS backend, which the lease requires, answers UNSUPPORTED_OPERATION, so a
+hosted macOS app has no right click or context menu yet.
+
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:
 
@@ -390,16 +475,25 @@ script such as mini-desktop.sh use these instead:
   launch                     the same command; the host launches it under the
                              session's own home
   shot <out.png>             agent-device screenshot --remote-config <path>
-  click, rclick, key, type   agent-device click, press or type --remote-config <path>
+  click, key, type           agent-device click, press or type --remote-config <path>
+  rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
   clean                      stim worktree remove
-  3 concurrent slots         concurrency.maxDevices on the host; one bundle id
-                             slot per session
-
-The host's own owned devices count toward concurrency.maxDevices.
+  3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
+                             on the host, counted apart from simulators and
+                             emulators; one bundle id slot per session
 
 The agent-device rows work once the host's agent field names agent-device.
+
+On macOS 27, agent-device screenshot of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app
+window. macOS adds that small window to the app while something captures the
+app, and agent-device picks it as the front window (callstack/agent-device#3961).
+snapshot -i lists it as an axdialog named "Window" with a
+WindowSharingSessionButton before the real window. Read the UI with snapshot
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as scroll, may also target the indicator.
 
 DESKTOP DOGFOOD
 

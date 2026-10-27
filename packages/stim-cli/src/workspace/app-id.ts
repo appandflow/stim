@@ -2,10 +2,26 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from 'fs';
 import { join } from 'path';
 import { readProjectConfig } from '../engine/remote-cache.ts';
 import { readAppConfigText, readAppJson } from './project.ts';
+import { DEFAULT_IOS_PROJECT_PATH, defaultAndroidLayout } from './settings.ts';
 
 interface AppIds {
   bundleId: string | null;
   androidPackage: string | null;
+  androidPackageProblem: string | null;
+}
+
+const ANDROID_PACKAGE_NAME = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)+$/;
+
+type AndroidPackageFilter = (id: string | null, source: string) => string | null;
+
+function androidPackageFilter(problems: string[]): AndroidPackageFilter {
+  return (id, source) => {
+    if (id === null || ANDROID_PACKAGE_NAME.test(id)) return id;
+    problems.push(
+      `Invalid Android package ${JSON.stringify(id)} in ${source}. Expected dot-separated letters, digits and underscores, such as com.example.app.`,
+    );
+    return null;
+  };
 }
 
 function configString(config: unknown, platform: 'ios' | 'android', key: string): string | null {
@@ -22,8 +38,11 @@ function literalString(text: string | null, key: string): string | null {
   return text?.match(new RegExp(`${key}\\s*:\\s*["']([^"']+)["']`))?.[1] ?? null;
 }
 
-function idsFromConfig(projectRoot: string): AppIds {
-  const read = readProjectConfig(projectRoot);
+async function idsFromConfig(
+  projectRoot: string,
+  options: Parameters<typeof readProjectConfig>[1],
+): Promise<Pick<AppIds, 'bundleId' | 'androidPackage'>> {
+  const read = await readProjectConfig(projectRoot, options);
   if (!read.unavailable) {
     return {
       bundleId: configString(read.config, 'ios', 'bundleIdentifier'),
@@ -38,24 +57,39 @@ function idsFromConfig(projectRoot: string): AppIds {
   };
 }
 
-export function detectAppIds(projectRoot: string): AppIds {
-  const ids = idsFromConfig(projectRoot);
+export async function detectAppIds(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+  config: Parameters<typeof readProjectConfig>[1] = {},
+): Promise<AppIds> {
+  const ids = await idsFromConfig(projectRoot, config);
+  const problems: string[] = [];
+  const accept = androidPackageFilter(problems);
   return {
-    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(projectRoot),
-    androidPackage: ids.androidPackage ?? detectAndroidPackageFromGradle(projectRoot),
+    bundleId: ids.bundleId ?? detectBundleIdFromPbxproj(iosDir),
+    androidPackage:
+      accept(ids.androidPackage, 'the Expo config android.package') ??
+      detectAndroidPackageFromGradle(androidModuleDir, accept),
+    androidPackageProblem: problems.length > 0 ? problems.join(' ') : null,
   };
 }
 
-export function detectBundleId(projectRoot: string): string | null {
-  return detectAppIds(projectRoot).bundleId;
+export async function detectBundleId(
+  projectRoot: string,
+  iosDir: string = join(projectRoot, DEFAULT_IOS_PROJECT_PATH),
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, iosDir)).bundleId;
 }
 
-export function detectAndroidPackage(projectRoot: string): string | null {
-  return detectAppIds(projectRoot).androidPackage;
+export async function detectAndroidPackage(
+  projectRoot: string,
+  androidModuleDir: string = defaultAndroidLayout(projectRoot).moduleDir,
+): Promise<string | null> {
+  return (await detectAppIds(projectRoot, undefined, androidModuleDir)).androidPackage;
 }
 
-function detectBundleIdFromPbxproj(projectRoot: string): string | null {
-  const iosDir = join(projectRoot, 'ios');
+function detectBundleIdFromPbxproj(iosDir: string): string | null {
   if (!existsSync(iosDir)) return null;
   let entries: Dirent[];
   try {
@@ -93,20 +127,22 @@ function detectBundleIdFromPbxproj(projectRoot: string): string | null {
   return null;
 }
 
-function detectAndroidPackageFromGradle(projectRoot: string): string | null {
-  const gradle = join(projectRoot, 'android', 'app', 'build.gradle');
-  if (!existsSync(gradle)) return null;
+function detectAndroidPackageFromGradle(moduleDir: string, accept: AndroidPackageFilter): string | null {
+  const gradle = [join(moduleDir, 'build.gradle'), join(moduleDir, 'build.gradle.kts')].find((file) =>
+    existsSync(file),
+  );
+  if (!gradle) return null;
   let text: string;
   try {
     text = readFileSync(gradle, 'utf-8');
   } catch {
     return null;
   }
-  const ns = text.match(/namespace\s+["']([^"']+)["']/);
+  const ns = text.match(/namespace\s*=?\s*["']([^"']+)["']/);
   const nsId = ns?.[1];
-  if (nsId) return nsId;
-  const app = text.match(/applicationId\s+["']([^"']+)["']/);
+  const namespace = nsId ? accept(nsId, gradle) : null;
+  if (namespace) return namespace;
+  const app = text.match(/applicationId\s*=?\s*["']([^"']+)["']/);
   const appId = app?.[1];
-  if (appId) return appId;
-  return null;
+  return appId ? accept(appId, gradle) : null;
 }

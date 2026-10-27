@@ -18,6 +18,8 @@ struct Notice: Identifiable {
     var perform: @MainActor () -> Void
   }
   var secondaryAction: Action?
+
+  var newWorkspace: String? { key == workspacePath.map(WorkspaceArrivals.cardKey) ? workspacePath : nil }
 }
 
 @MainActor
@@ -26,18 +28,36 @@ final class NoticeCenter: ObservableObject {
 
   @Published private(set) var notices: [Notice] = []
   @Published private(set) var index = 0
+  var arrivals = WorkspaceArrivals()
+  private let workspaceLifetime: TimeInterval
+  private let defaults: UserDefaults
+  private var timers: [Notice.ID: Timer] = [:]
+
+  init(workspaceLifetime: TimeInterval = 60, defaults: UserDefaults = .standard) {
+    self.workspaceLifetime = workspaceLifetime
+    self.defaults = defaults
+  }
 
   var current: Notice? { notices.indices.contains(index) ? notices[index] : nil }
 
-  func show(_ notice: Notice) {
-    if let key = notice.key { notices.removeAll { $0.key == key } }
+  @discardableResult
+  func show(_ notice: Notice) -> Bool {
+    if notice.newWorkspace != nil, !AppPreferences.showsWorkspaceCards(defaults) { return false }
+    if let key = notice.key { remove(key: key) }
     notices.insert(notice, at: 0)
     index = 0
-    guard NSWorkspace.shared.isVoiceOverEnabled else { return }
+    if notice.newWorkspace != nil {
+      let id = notice.id
+      timers[id] = Timer.scheduledTimer(withTimeInterval: workspaceLifetime, repeats: false) { [weak self] _ in
+        MainActor.assumeIsolated { self?.remove(id) }
+      }
+    }
+    guard NSWorkspace.shared.isVoiceOverEnabled else { return true }
     let text = [notice.title, notice.detail, "Action: \(notice.actionTitle)"].compactMap { $0 }.joined(separator: ". ")
     NSAccessibility.post(
       element: NSApp as Any, notification: .announcementRequested,
       userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.high.rawValue])
+    return true
   }
 
   func step(_ offset: Int) {
@@ -46,6 +66,7 @@ final class NoticeCenter: ObservableObject {
   }
 
   func remove(_ id: Notice.ID) {
+    timers.removeValue(forKey: id)?.invalidate()
     guard let position = notices.firstIndex(where: { $0.id == id }) else { return }
     notices.remove(at: position)
     if position < index { index -= 1 }
@@ -53,6 +74,8 @@ final class NoticeCenter: ObservableObject {
   }
 
   func removeAll() {
+    for timer in timers.values { timer.invalidate() }
+    timers.removeAll()
     notices = []
     index = 0
   }
@@ -61,6 +84,11 @@ final class NoticeCenter: ObservableObject {
     let onDismiss = notices.first { $0.id == id }?.onDismiss
     remove(id)
     onDismiss?()
+  }
+
+  func update(key: String, detail: String) {
+    guard let position = notices.firstIndex(where: { $0.key == key }), notices[position].detail != detail else { return }
+    notices[position].detail = detail
   }
 
   func remove(key: String) {
@@ -81,18 +109,8 @@ struct NoticeStack: View {
   var body: some View {
     ZStack(alignment: .bottom) {
       if let notice = center.current {
-        let behind = min(center.notices.count - 1, 2)
-        ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
-          Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
-            Color.clear
-          }
-          .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
-          .padding(.horizontal, CGFloat(depth + 1) * Space.md)
-          .frame(height: 40)
-          .offset(y: CGFloat(depth + 1) * Space.md)
-          .accessibilityHidden(true)
-        }
         NoticeCard(notice: notice, center: center)
+          .background(alignment: .bottom) { edges }
           .id(notice.id)
           .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
       }
@@ -103,6 +121,22 @@ struct NoticeStack: View {
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.notices.map(\.id))
     .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: center.index)
   }
+
+  private var edges: some View {
+    let behind = min(center.notices.count - 1, 2)
+    return ZStack(alignment: .bottom) {
+      ForEach(Array((0..<behind).reversed()), id: \.self) { depth in
+        Card(fill: Palette.raised, border: Palette.separator, clipsContent: false) {
+          Color.clear
+        }
+        .shadow(color: .black.opacity(0.12), radius: 4, y: 1)
+        .padding(.horizontal, CGFloat(depth + 1) * Space.md)
+        .frame(height: 40)
+        .offset(y: CGFloat(depth + 1) * Space.md)
+        .accessibilityHidden(true)
+      }
+    }
+  }
 }
 
 private struct NoticeCard: View {
@@ -110,14 +144,39 @@ private struct NoticeCard: View {
   @ObservedObject var center: NoticeCenter
 
   var body: some View {
-    Banner(tone: notice.tone, icon: notice.icon, style: .floating, onDismiss: { center.dismiss(notice.id) }) {
-      if center.notices.count > 1 { stepper }
-      Text(notice.title).font(.stim(.headline)).lineLimit(2)
-      if let detail = notice.detail {
-        Text(detail).foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+    VStack(alignment: .leading, spacing: Space.md) {
+      HStack(spacing: Space.sm) {
+        Image(systemName: notice.icon).iconFont(IconSize.large).foregroundStyle(Color(notice.tone))
+        Text(notice.key == "stim-update" ? "Update available" : "Notification")
+          .textStyle(.caption, weight: .semibold)
+          .foregroundStyle(Palette.secondary)
+        Spacer(minLength: Space.sm)
+        Button {
+          center.dismiss(notice.id)
+        } label: {
+          Image(systemName: "xmark").iconFont(IconSize.compact, weight: .semibold)
+            .foregroundStyle(Palette.tertiary)
+        }
+        .buttonStyle(.hoverRow(outset: Space.xs))
+        .help("Dismiss")
+        .accessibilityLabel("Dismiss")
+      }
+      if center.notices.count > 1 {
+        stepper
+      }
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Text(notice.title).font(.stim(.headline)).fixedSize(horizontal: false, vertical: true)
+        if let detail = notice.detail {
+          Text(detail).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+        }
       }
       actions
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
+    .padding(Space.lg + Space.xxs)
+    .background(RoundedRectangle(cornerRadius: Radius.card).fill(.regularMaterial))
+    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+    .shadow(color: .black.opacity(0.28), radius: 20, y: 6)
     .accessibilityElement(children: .contain)
   }
 
@@ -151,13 +210,18 @@ private struct NoticeCard: View {
     .padding(.top, Space.xxs)
   }
 
-  private var primary: some View {
-    Button(notice.actionTitle) {
+  @ViewBuilder private var primary: some View {
+    let button = Button(notice.actionTitle) {
       center.remove(notice.id)
       notice.perform()
     }
     .buttonStyle(.stim(.primary))
     .fixedSize()
+    if let path = notice.newWorkspace {
+      button.tutorialAnchor(.workspaceNoticeShow, workspace: path)
+    } else {
+      button
+    }
   }
 
   private func secondary(_ action: Notice.Action) -> some View {
@@ -187,6 +251,7 @@ private struct NoticeCard: View {
       Image(systemName: symbol).iconFont(IconSize.compact, weight: .semibold).foregroundStyle(Palette.tertiary)
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
+    .disabled(center.notices.count < 2)
     .help(label)
     .accessibilityLabel(label)
   }

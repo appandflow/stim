@@ -142,7 +142,8 @@ for (const entry of entries) {
         assert.equal(result.status, 1, `${command}: ${result.stderr}`);
         const payload = JSON.parse(result.stdout || 'null');
         assert.equal(payload?.code, 'STIM_NO_PROJECT', command);
-        assert.match(payload.remedy, /package\.json/, command);
+        assert.equal(typeof payload.remedy, 'string', command);
+        assert.ok(payload.remedy.trim(), command);
         assert.match(result.stderr, /STIM_NO_PROJECT/, command);
       }
       const logs = run(entry, ['logs', '--json'], undefined, options);

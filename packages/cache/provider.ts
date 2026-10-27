@@ -100,7 +100,29 @@ export interface BuildCacheCapability {
   store(input: BuildStoreInput): string | null | void | Promise<string | null | void>;
 }
 
+export interface FileCacheResolveInput {
+  key: string;
+  destinationDir: string;
+  signal: AbortSignal;
+}
+
+export interface FileCacheStoreInput {
+  key: string;
+  sourcePath: string;
+  overwrite: boolean;
+  signal: AbortSignal;
+}
+
+/** Opaque, complete files. Downloads are materialized inside destinationDir; a miss leaves it empty. */
+export interface FileCacheCapability {
+  resolve(input: FileCacheResolveInput): Promise<string | null>;
+  store(input: FileCacheStoreInput): Promise<void>;
+  /** Checks presence without downloading; the bytes still need verification when fetched. */
+  stat?(input: Pick<FileCacheResolveInput, 'key' | 'signal'>): Promise<{ size: number } | null>;
+}
+
 export interface CacheProvider {
+  files?: FileCacheCapability;
   metro?: MetroCacheCapability;
   builds?: BuildCacheCapability;
 }
@@ -114,6 +136,7 @@ export interface CacheProviderModule {
   createCacheProvider(input: {
     projectRoot: string;
     options: Record<string, unknown>;
+    env?: NodeJS.ProcessEnv;
   }): CacheProvider | Promise<CacheProvider>;
 }
 
@@ -148,6 +171,10 @@ function moduleCandidate(namespace: unknown): unknown {
 }
 
 function capabilityError(provider: CacheProvider): string | null {
+  const files = provider.files;
+  if (files !== undefined && (typeof files?.resolve !== 'function' || typeof files?.store !== 'function')) {
+    return 'the files capability must implement resolve() and store()';
+  }
   const metro = provider.metro;
   if (metro !== undefined && (typeof metro?.get !== 'function' || typeof metro?.set !== 'function')) {
     return 'the metro capability must implement get() and set()';
@@ -156,8 +183,8 @@ function capabilityError(provider: CacheProvider): string | null {
   if (builds !== undefined && (typeof builds?.resolve !== 'function' || typeof builds?.store !== 'function')) {
     return 'the builds capability must implement resolve() and store()';
   }
-  if (metro === undefined && builds === undefined) {
-    return 'the provider advertises neither a metro nor a builds capability';
+  if (metro === undefined && builds === undefined && files === undefined) {
+    return 'the provider advertises no files, metro or builds capability';
   }
   return null;
 }
@@ -165,16 +192,22 @@ function capabilityError(provider: CacheProvider): string | null {
 export async function loadCacheProvider({
   projectRoot,
   config,
+  env,
   timeoutMs = timeoutFromEnv(PROVIDER_LOAD_TIMEOUT_ENV, PROVIDER_LOAD_TIMEOUT_MS),
 }: {
   projectRoot: string;
   config?: CacheProviderConfig | null;
+  env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
 }): Promise<LoadCacheProviderResult> {
   const reference = typeof config?.provider === 'string' ? config.provider.trim() : '';
   if (!config || reference === '') return { none: true };
 
-  const outcome = await callWithTimeout(() => importCacheProvider({ projectRoot, config, reference }), timeoutMs);
+  const environment = env === undefined ? undefined : { ...env };
+  const outcome = await callWithTimeout(
+    () => importCacheProvider({ projectRoot, config, reference, env: environment }),
+    timeoutMs,
+  );
   if (outcome.timedOut) {
     return { name: reference, unavailable: `the module did not load within ${timeoutMs}ms` };
   }
@@ -186,10 +219,12 @@ async function importCacheProvider({
   projectRoot,
   config,
   reference,
+  env,
 }: {
   projectRoot: string;
   config: CacheProviderConfig;
   reference: string;
+  env?: NodeJS.ProcessEnv | undefined;
 }): Promise<LoadCacheProviderResult> {
   const options = isRecord(config.options) ? config.options : {};
   const baseDir = typeof config.baseDir === 'string' && config.baseDir !== '' ? config.baseDir : projectRoot;
@@ -217,7 +252,11 @@ async function importCacheProvider({
 
   let provider: unknown;
   try {
-    provider = await (candidate as unknown as CacheProviderModule).createCacheProvider({ projectRoot, options });
+    provider = await (candidate as unknown as CacheProviderModule).createCacheProvider({
+      projectRoot,
+      options,
+      ...(env === undefined ? {} : { env: { ...env } }),
+    });
   } catch (error) {
     return { name: reference, unavailable: `createCacheProvider() failed: ${reason(error)}` };
   }
@@ -233,8 +272,12 @@ async function importCacheProvider({
 export async function callWithTimeout<T>(
   call: (signal: AbortSignal) => T | Promise<T>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<ProviderCallResult<T>> {
+  signal?.throwIfAborted();
   const controller = new AbortController();
+  const abort = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', abort, { once: true });
   let timer: NodeJS.Timeout | null = null;
   // The timer stays referenced on purpose: an unreferenced one lets Node exit
   // while a provider call is pending, so the deadline never fires and the
@@ -248,15 +291,20 @@ export async function callWithTimeout<T>(
   try {
     const outcome = await Promise.race([
       Promise.resolve()
-        .then(() => call(controller.signal))
+        .then(() => {
+          signal?.throwIfAborted();
+          return call(controller.signal);
+        })
         .then(
           (value) => ({ value }) as ProviderCallResult<T>,
           (error: unknown) => ({ failed: reason(error) }) as ProviderCallResult<T>,
         ),
       expired,
     ]);
+    signal?.throwIfAborted();
     return outcome === 'timeout' ? { timedOut: true } : outcome;
   } finally {
+    signal?.removeEventListener('abort', abort);
     if (timer) clearTimeout(timer);
   }
 }

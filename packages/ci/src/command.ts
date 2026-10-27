@@ -17,6 +17,7 @@ export async function runCommand({
   cwd,
   env,
   artifactsDir,
+  logName = 'test',
   signal,
   onOutput,
 }: {
@@ -24,13 +25,14 @@ export async function runCommand({
   cwd: string;
   env: NodeJS.ProcessEnv;
   artifactsDir: string;
+  logName?: 'test' | 'artifact';
   signal?: AbortSignal;
   onOutput?: (event: { stream: 'stdout' | 'stderr'; message: string }) => void;
 }): Promise<CommandResult> {
   signal?.throwIfAborted();
   const started = Date.now();
-  const stdout = join(artifactsDir, 'test.stdout.log');
-  const stderr = join(artifactsDir, 'test.stderr.log');
+  const stdout = join(artifactsDir, `${logName}.stdout.log`);
+  const stderr = join(artifactsDir, `${logName}.stderr.log`);
   const out = openSync(stdout, 'w');
   let err: number | undefined;
   try {
@@ -106,7 +108,9 @@ export async function runCommand({
             groupError ??= String(caught);
           }
           if (Date.now() >= deadline) {
-            error ??= groupError ?? `Test process group ${child.pid} did not exit after termination`;
+            error ??=
+              groupError ??
+              `${logName === 'artifact' ? 'Artifact export' : 'Test'} process group ${child.pid} did not exit after termination`;
             break;
           }
           await delay(20);

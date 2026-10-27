@@ -1,7 +1,9 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { configDir } from '../index.ts';
+import { loadConfig } from './config.ts';
 import { isJsonObject } from './json-file.ts';
+import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
 import {
   hostedMacosAppSlot,
   parseHostedMacosChoice,
@@ -11,6 +13,31 @@ import {
   type HostedMacosDevice,
 } from './hosted-macos.ts';
 export type HostedDevicePlatform = 'ios' | 'android' | 'macos';
+
+/** Deadlines stim-server gives each hosted worker run. Clients derive their waits from these. */
+export interface DeviceHostLimits {
+  prepareMs: number;
+  offerMs: number;
+  stopMs: number;
+  logsMs: number;
+  killGraceMs: number;
+}
+
+export const DEVICE_HOST_LIMITS: Readonly<DeviceHostLimits> = {
+  prepareMs: 5 * 60_000,
+  offerMs: 30_000,
+  stopMs: 90_000,
+  logsMs: 15_000,
+  killGraceMs: 5000,
+};
+
+/** How many parked sessions one reserve inspects, and possibly retires, before it creates a device. */
+export const HOSTED_PARKED_CANDIDATES: number = 3;
+
+/** How long a cancelled hosted worker run can take to settle: SIGTERM, SIGKILL after the grace, then it is abandoned. */
+export function hostedWorkerSettleMs(limits: Pick<DeviceHostLimits, 'killGraceMs'> = DEVICE_HOST_LIMITS): number {
+  return limits.killGraceMs * 2;
+}
 
 export interface HostedIosChoice {
   deviceTypeId: string;
@@ -55,11 +82,14 @@ export type HostedNativeOffer = {
     cpus: number;
     /** Five-minute system load divided by available CPU count. */
     loadPerCore: number;
+    maxLoadPerCore?: number;
     memoryFreeBytes: number;
     memoryPressure: 'normal' | 'warning' | 'critical' | null;
     /** Available bytes on the Stim home volume, not necessarily the Android AVD volume. */
     workerDiskFreeBytes: number | null;
     localDevices?: number | { unknown: string };
+    /** Local owned simulators and emulators by platform; `localDevices` is their sum. Read by the server, never sent to clients. */
+    localPlatforms?: HostedLocalPlatformCounts | { unknown: string };
   };
   declined: string | null;
 } & (
@@ -67,6 +97,19 @@ export type HostedNativeOffer = {
   | { platform: 'android'; choice: HostedAndroidChoice | null }
   | { platform: 'macos'; choice: HostedMacosChoice | null }
 );
+
+/** Why a host's memory pressure refuses a hosted session, or null when it is `normal`. A missing sample is its own reason. */
+export function hostedMemoryRefusal(pressure: unknown): string | null {
+  if (pressure === 'normal') return null;
+  return pressure === 'warning' || pressure === 'critical'
+    ? `Host memory pressure is ${pressure}; hosted sessions wait until it is normal.`
+    : 'Host memory pressure could not be read; retry shortly.';
+}
+
+export interface HostedLocalPlatformCounts {
+  ios: number;
+  android: number;
+}
 
 export type HostedDeviceOffer = HostedNativeOffer & {
   capacity: { running: number; max: number; available: number | null; local?: number | { unknown: string } };
@@ -89,11 +132,52 @@ export interface HostedDeviceSession extends HostedDeviceRequest {
   appSlot?: number;
   createdAt: string;
   parked?: { at: string };
+  /** Milliseconds this server ran with no connection from the session's client since it was last connected. */
+  clientAbsentMs?: number;
+  /** Set when stim-server stopped this session because its client was gone for maintenance.idleStopHours. */
+  idleStop?: { at: string; reason: string };
   notice?: string;
   appAttempt?: string;
   agent?: HostedAgentGrant;
   metroPort?: number;
   clientMetroPort?: number;
+}
+
+function machineSetting(key: string, env: NodeJS.ProcessEnv): { value: unknown } | { invalid: string } {
+  const setting = settingDefinition(key);
+  if (!setting?.env) return { invalid: `${key} is not in the settings registry` };
+  const raw = env[setting.env];
+  const fromEnv = raw !== undefined && raw !== '';
+  let value: unknown;
+  if (fromEnv) value = coerceSettingText(setting, raw);
+  else if (env.STIM_HOME && setting.scopedHomeValue !== undefined) value = setting.scopedHomeValue;
+  else if (env.CI && setting.ciValue !== undefined) value = setting.ciValue;
+  else {
+    const [group = '', name = ''] = key.split('.');
+    const container = loadConfig()?.[group];
+    if (container !== undefined && !isJsonObject(container))
+      return { invalid: `${group} in the config is not an object` };
+    const configured = container?.[name];
+    value = configured === undefined ? setting.default : configured;
+  }
+  const error = settingValueError(setting, value);
+  return error ? { invalid: `${fromEnv ? setting.env : key} is invalid: expected ${error}` } : { value };
+}
+
+/**
+ * The window after which stim-server stops a hosted session whose client is gone: the machine-scope
+ * `maintenance.idleStopHours` of the home it runs in, 0 unless `maintenance.mode` is on. An invalid value is reported
+ * so the caller stops nothing.
+ */
+export function hostedIdleStopHours(env: NodeJS.ProcessEnv): { hours: number } | { invalid: string } {
+  const mode = machineSetting('maintenance.mode', env);
+  if ('invalid' in mode) return mode;
+  if (mode.value !== 'on') return { hours: 0 };
+  const hours = machineSetting('maintenance.idleStopHours', env);
+  if ('invalid' in hours) return hours;
+  return typeof hours.value === 'number'
+    ? { hours: hours.value }
+    : { invalid: 'maintenance.idleStopHours is not a number' };
 }
 
 export function deviceHostRoot(): string {
@@ -107,38 +191,48 @@ export function deviceHostArea(id: string): string {
 
 export function parseHostedChoice(value: unknown): HostedIosChoice | null {
   if (!isJsonObject(value)) return null;
+  const { deviceTypeId, runtimeId, deviceType, runtime, architecture } = value;
   if (
-    !['deviceTypeId', 'runtimeId', 'deviceType', 'runtime'].every((key) => typeof value[key] === 'string' && value[key])
+    typeof deviceTypeId !== 'string' ||
+    !deviceTypeId ||
+    typeof runtimeId !== 'string' ||
+    !runtimeId ||
+    typeof deviceType !== 'string' ||
+    !deviceType ||
+    typeof runtime !== 'string' ||
+    !runtime ||
+    (architecture !== 'arm64' && architecture !== 'x86_64')
   )
     return null;
-  if (value.architecture !== 'arm64' && value.architecture !== 'x86_64') return null;
-  return value as unknown as HostedIosChoice;
+  return { deviceTypeId, runtimeId, deviceType, runtime, architecture };
 }
 
 export function parseHostedDevice(value: unknown): HostedIosDevice | null {
-  if (!isJsonObject(value) || value.avdName !== undefined || !parseHostedChoice(value)) return null;
-  if (typeof value.udid !== 'string' || !/^[a-fA-F0-9-]{36}$/.test(value.udid) || typeof value.name !== 'string')
-    return null;
-  return value as unknown as HostedIosDevice;
+  if (!isJsonObject(value) || value.avdName !== undefined) return null;
+  const choice = parseHostedChoice(value);
+  const { udid, name } = value;
+  if (!choice || typeof udid !== 'string' || !/^[a-fA-F0-9-]{36}$/.test(udid) || typeof name !== 'string') return null;
+  return { ...choice, udid, name };
 }
 
 export function parseHostedAndroidDevice(value: unknown): HostedAndroidDevice | null {
   if (!isJsonObject(value)) return null;
+  const { avdName, consolePort, systemImage, deviceProfile, architecture } = value;
   if (
     value.udid !== undefined ||
-    typeof value.avdName !== 'string' ||
-    !/^stim-[A-Za-z0-9._-]+$/.test(value.avdName) ||
-    !hostedConsolePort(value.consolePort) ||
-    value.serial !== `emulator-${value.consolePort}` ||
-    typeof value.systemImage !== 'string' ||
-    !/^system-images;android-\d+;[^;\s]+;(arm64-v8a|x86_64)$/.test(value.systemImage) ||
-    typeof value.deviceProfile !== 'string' ||
-    !value.deviceProfile ||
-    (value.architecture !== 'arm64-v8a' && value.architecture !== 'x86_64') ||
-    !value.systemImage.endsWith(`;${value.architecture}`)
+    typeof avdName !== 'string' ||
+    !/^stim-[A-Za-z0-9._-]+$/.test(avdName) ||
+    !hostedConsolePort(consolePort) ||
+    value.serial !== `emulator-${consolePort}` ||
+    typeof systemImage !== 'string' ||
+    !/^system-images;android-\d+;[^;\s]+;(arm64-v8a|x86_64)$/.test(systemImage) ||
+    typeof deviceProfile !== 'string' ||
+    !deviceProfile ||
+    (architecture !== 'arm64-v8a' && architecture !== 'x86_64') ||
+    !systemImage.endsWith(`;${architecture}`)
   )
     return null;
-  return value as unknown as HostedAndroidDevice;
+  return { avdName, serial: `emulator-${consolePort}`, consolePort, systemImage, deviceProfile, architecture };
 }
 
 /** Android Emulator -help-port defines the supported even console ports as 5554 through 5584. */
@@ -215,11 +309,23 @@ export function parseHostedLocalDeviceCount(value: unknown): number | { unknown:
   return null;
 }
 
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+
+export function parseHostedLocalPlatformCounts(value: unknown): HostedLocalPlatformCounts | { unknown: string } | null {
+  if (isJsonObject(value) && isCount(value.ios) && isCount(value.android))
+    return { ios: value.ios, android: value.android };
+  if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown)
+    return { unknown: value.unknown.slice(0, 4000) };
+  return null;
+}
+
 export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null {
   if (!isJsonObject(value) || !isJsonObject(value.resources)) return null;
   const { resources } = value;
   const local = parseHostedLocalDeviceCount(resources.localDevices);
   if (resources.localDevices !== undefined && local === null) return null;
+  const localPlatforms = parseHostedLocalPlatformCounts(resources.localPlatforms);
+  if (resources.localPlatforms !== undefined && localPlatforms === null) return null;
   if (
     (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos') ||
     (value.declined !== null &&
@@ -280,10 +386,16 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
     resources: {
       cpus: resources.cpus,
       loadPerCore: resources.loadPerCore,
+      ...(typeof resources.maxLoadPerCore === 'number' &&
+      Number.isFinite(resources.maxLoadPerCore) &&
+      resources.maxLoadPerCore > 0
+        ? { maxLoadPerCore: resources.maxLoadPerCore }
+        : {}),
       memoryFreeBytes: resources.memoryFreeBytes,
       memoryPressure: resources.memoryPressure,
       workerDiskFreeBytes: resources.workerDiskFreeBytes,
       ...(local !== null ? { localDevices: local } : {}),
+      ...(localPlatforms !== null ? { localPlatforms } : {}),
     },
   } as HostedNativeOffer;
 }
@@ -337,6 +449,15 @@ export function readHostedSessions(): HostedDeviceSession[] {
           new Date(entry.parked.at).toISOString() !== entry.parked.at ||
           entry.state !== 'stopped' ||
           entry.platform === 'macos')) ||
+      (entry.clientAbsentMs !== undefined &&
+        (typeof entry.clientAbsentMs !== 'number' ||
+          !Number.isFinite(entry.clientAbsentMs) ||
+          entry.clientAbsentMs < 0)) ||
+      (entry.idleStop !== undefined &&
+        (!isJsonObject(entry.idleStop) ||
+          typeof entry.idleStop.at !== 'string' ||
+          !Number.isFinite(Date.parse(entry.idleStop.at)) ||
+          typeof entry.idleStop.reason !== 'string')) ||
       (entry.notice !== undefined && typeof entry.notice !== 'string') ||
       (entry.appAttempt !== undefined &&
         (typeof entry.appAttempt !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(entry.appAttempt))) ||

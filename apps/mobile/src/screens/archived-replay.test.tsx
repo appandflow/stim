@@ -15,6 +15,7 @@ jest.mock('expo-router', () => ({
   useLocalSearchParams: () => mockParams,
   useIsFocused: () => true,
 }));
+jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('@/hooks/app-foreground', () => ({ useAppForeground: () => true }));
 jest.mock('@/hooks/machines', () => ({
   useStatus: () => ({ archived: mockArchives }),

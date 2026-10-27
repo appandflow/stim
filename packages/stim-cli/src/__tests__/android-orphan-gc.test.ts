@@ -86,7 +86,7 @@ beforeEach(() => {
     if (cmd === 'adb devices') return 'List of devices attached\n';
     if (cmd.includes('delete avd')) {
       if (deleteRegistration) {
-        const name = /-n "([^"]+)"/.exec(cmd)![1]!;
+        const name = /-n (\S+)/.exec(cmd)![1]!;
         rmSync(join(avdRoot, `${name}.ini`));
         listed = listed.filter((entry) => entry !== name);
       }
@@ -97,7 +97,8 @@ beforeEach(() => {
   setExecutor({
     run,
     runQuiet: () => null,
-    runFile(file, args, options) {
+    runFile(file, args = [], options) {
+      if (file === 'adb' || file === 'emulator' || file === 'avdmanager') return run([file, ...args].join(' '));
       if (file === 'du') return real.runFile(file, args, options);
       if (file === 'xcrun') return JSON.stringify({ devices: {}, devicetypes: [] });
       throw new Error(`Unexpected command: ${file}`);
@@ -178,23 +179,23 @@ test.each(['scoped', 'no-config'])('orphan discovery preserves the %s GC sweep g
   expect(existsSync(directory)).toBe(true);
 });
 
-test('stop keeps unregistered data and delete refuses user-created names', () => {
+test('stop keeps unregistered data and delete refuses user-created names', async () => {
   const directory = orphan();
   const personal = orphan('Personal_Phone');
-  expect(teardownOwnedAvd('stim-orphan').status).toBe('skipped');
-  expect(teardownOwnedAvd('Personal_Phone', { del: true }).kind).toBe('not-owned');
+  expect((await teardownOwnedAvd('stim-orphan')).status).toBe('skipped');
+  expect((await teardownOwnedAvd('Personal_Phone', { del: true })).kind).toBe('not-owned');
   expect(existsSync(directory)).toBe(true);
   expect(existsSync(personal)).toBe(true);
 });
 
-test.each(['live', 'unverifiable'])('orphan deletion refuses a %s emulator process lock', (state) => {
+test.each(['live', 'unverifiable'])('orphan deletion refuses a %s emulator process lock', async (state) => {
   const directory = orphan();
   writeAvdProcessLock(directory, state === 'live' ? String(process.pid) : 'not-a-pid');
-  expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
+  expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('failed');
   expect(existsSync(directory)).toBe(true);
 });
 
-test('orphan deletion refuses a directory replaced by a symlink after survey', () => {
+test('orphan deletion refuses a directory replaced by a symlink after survey', async () => {
   const directory = orphan();
   const candidate = listOrphanedAvdDirectories()[0]!;
   const outside = join(home, 'outside');
@@ -203,35 +204,40 @@ test('orphan deletion refuses a directory replaced by a symlink after survey', (
   writeFileSync(join(outside, 'config.ini'), 'disk.dataPartition.size=8589934592\n');
   rmSync(directory, { recursive: true });
   symlinkSync(outside, directory);
-  expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+  expect((await teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
   expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('mine');
 });
 
-test.each(['registration', 'workspace', 'pool'])('GC refuses an orphan that gained a %s after survey', (reference) => {
-  const directory = orphan();
-  const candidate = listOrphanedAvdDirectories()[0]!;
-  if (reference === 'registration') register('stim-orphan', directory);
-  else {
-    upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
-    if (reference === 'pool')
-      parkSim({
-        platform: 'android',
-        projectPath: home,
-        max: 1,
-        record: {
-          udid: 'stim-orphan',
-          name: 'stim-orphan',
-          systemImage: 'image',
-          configuration: 'config',
-          parkedAt: new Date().toISOString(),
-        },
-      });
-  }
-  expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toMatch(/failed|skipped/);
-  expect(existsSync(directory)).toBe(true);
-});
+test.each(['registration', 'workspace', 'pool'])(
+  'GC refuses an orphan that gained a %s after survey',
+  async (reference) => {
+    const directory = orphan();
+    const candidate = listOrphanedAvdDirectories()[0]!;
+    if (reference === 'registration') register('stim-orphan', directory);
+    else {
+      upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
+      if (reference === 'pool')
+        parkSim({
+          platform: 'android',
+          projectPath: home,
+          max: 1,
+          record: {
+            udid: 'stim-orphan',
+            name: 'stim-orphan',
+            systemImage: 'image',
+            configuration: 'config',
+            parkedAt: new Date().toISOString(),
+          },
+        });
+    }
+    expect((await teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate })).status).toMatch(
+      /failed|skipped/,
+    );
+    expect(existsSync(directory)).toBe(true);
+  },
+);
 
-test('detachment holds the config lock and deletion cannot remove a new AVD at the original name', () => {
+test('detachment holds the config lock and deletion cannot remove a new AVD at the original name', async () => {
   const directory = orphan();
   race.afterRename = (from) => {
     if (from !== directory) return;
@@ -240,7 +246,7 @@ test('detachment holds the config lock and deletion cannot remove a new AVD at t
     register('stim-orphan', replacement);
     upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
   };
-  expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('torn-down');
+  expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('torn-down');
   expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
   expect(existsSync(join(avdRoot, 'stim-orphan.ini'))).toBe(true);
   expect(getProject(home)?.platforms?.android?.avdName).toBe('stim-orphan');
@@ -249,7 +255,7 @@ test('detachment holds the config lock and deletion cannot remove a new AVD at t
 
 test.each(['workspace', 'pool'])(
   'a partial SDK deletion preserves the %s record and its retry removes the leftover data',
-  (owner) => {
+  async (owner) => {
     const directory = orphan();
     register('stim-orphan', directory);
     upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
@@ -271,14 +277,14 @@ test.each(['workspace', 'pool'])(
       owner === 'pool'
         ? teardownParkedAvd('stim-orphan')
         : teardownOwnedAvd('stim-orphan', { del: true, owner: { projectPath: home } });
-    expect(teardown()).toMatchObject({ status: 'failed', reason: expect.stringContaining('data remains') });
+    expect(await teardown()).toMatchObject({ status: 'failed', reason: expect.stringContaining('data remains') });
     expect(existsSync(directory)).toBe(true);
     const records = () =>
       owner === 'pool'
         ? readParked('android').map((entry) => entry.name)
         : [getProject(home)?.platforms?.android?.avdName];
     expect(records()).toEqual(['stim-orphan']);
-    expect(teardown().status).toBe('torn-down');
+    expect((await teardown()).status).toBe('torn-down');
     expect(existsSync(directory)).toBe(false);
     expect(records()).toEqual(owner === 'pool' ? [] : ['stim-orphan']);
   },
@@ -357,7 +363,7 @@ test.each(['absolute', 'relative', 'symlink'])(
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
-    expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+    expect((await teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
     expect(readFileSync(join(directory, 'userdata.img')).length).toBe(8192);
   },
 );
@@ -374,7 +380,7 @@ describe.skipIf(process.getuid?.() === 0)('unverifiable registrations', () => {
       const report = await collectGcReport({}, deps);
       expect(report.orphanedDevices).toEqual([]);
       expect(report.deviceSweepNotices.join('\n')).toContain('android data sweep skipped');
-      expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
+      expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('failed');
       expect(existsSync(directory)).toBe(true);
     },
   );
@@ -386,7 +392,7 @@ describe.skipIf(process.getuid?.() === 0)('unverifiable registrations', () => {
     const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
     expect(report.deviceSweepNotices.join('\n')).toContain('android data sweep skipped');
-    expect(teardownOwnedAvd('stim-orphan', { del: true }).status).toBe('failed');
+    expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('failed');
     expect(existsSync(directory)).toBe(true);
   });
 });
@@ -407,7 +413,7 @@ test.each(['ANDROID_USER_HOME', 'ANDROID_EMULATOR_HOME', 'ANDROID_SDK_HOME'])(
     vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const report = await collectGcReport({}, deps);
     expect(report.orphanedDevices).toEqual([]);
-    expect(teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+    expect((await teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
     expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
   },
 );
@@ -427,6 +433,6 @@ test('a relative alias registration in a symlinked root protects its data when t
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const report = await collectGcReport({}, deps);
   expect(report.orphanedDevices).toEqual([]);
-  expect(teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate }).status).toBe('failed');
+  expect((await teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
   expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
 });

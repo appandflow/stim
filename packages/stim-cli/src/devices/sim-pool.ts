@@ -1,3 +1,6 @@
+import type { StimContext } from '@stim-cli/core';
+import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { assignSlotDevice, deviceSlotPlatforms, removeSlotDevice } from './device-slots.ts';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -8,9 +11,10 @@ import {
   loadConfig,
   saveConfig,
   withConfigLock,
+  withConfigLockAsync,
 } from '../workspace/config.ts';
 import { clearClaimChild, markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { getParkedMax, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
+import { getParkedMax, isJsonObject, type ParkedMax, type Config, type DeviceRecord } from '@stim-cli/core/state';
 export type { ParkedMax } from '@stim-cli/core/state';
 
 export type PoolPlatform = 'ios' | 'android';
@@ -40,8 +44,6 @@ export interface ParkedAvd extends ParkedRecord {
 
 type PoolRecords = { ios: ParkedSim; android: ParkedAvd };
 
-export const DEFAULT_PARKED_MAX = 3;
-
 export const POOL_SETTING_REMEDY: string =
   'Run `stim guide settings` for the device pool bounds and where it can be set.';
 
@@ -53,8 +55,8 @@ export function parkedMaxSetting(
 }
 
 function isParkedRecord(value: unknown, platform: PoolPlatform): value is PoolRecords[PoolPlatform] {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return false;
+  const record = value;
   return (
     typeof record.udid === 'string' &&
     typeof record.name === 'string' &&
@@ -171,7 +173,7 @@ export function parkSim<P extends PoolPlatform>({
   });
 }
 
-export function adoptParked<P extends PoolPlatform>({
+export async function adoptParked<P extends PoolPlatform>({
   platform,
   projectPath,
   slot = 'default',
@@ -183,11 +185,11 @@ export function adoptParked<P extends PoolPlatform>({
   slot?: string;
   udid: string;
   device: DeviceRecord;
-}): PoolRecords[P] | null {
+}): Promise<PoolRecords[P] | null> {
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
   try {
-    return withConfigLock(() => {
+    return await withConfigLockAsync(() => {
       const cfg = ensureConfig();
       const records = readParked(platform, { config: cfg });
       const taken = records.find((r) => r.udid === udid);
@@ -228,17 +230,19 @@ function claimParkedOperation(platform: PoolPlatform, udid: string) {
 export function removeParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  beforeRemove: (record: PoolRecords[P]) => void,
-): PoolRecords[P] | null {
-  return settleParkedAfter(platform, udid, beforeRemove, null);
+  beforeRemove: (record: PoolRecords[P]) => void | Promise<void>,
+  operation?: StimContext,
+): Promise<PoolRecords[P] | null> {
+  return settleParkedAfter(platform, udid, beforeRemove, null, operation);
 }
 
 export function eraseParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  erase: (record: PoolRecords[P], eraseStarted: () => void) => void,
-): PoolRecords[P] | null {
-  return settleParkedAfter(platform, udid, erase, erasedRecord);
+  erase: (record: PoolRecords[P], eraseStarted: () => void) => void | Promise<void>,
+  operation?: StimContext,
+): Promise<PoolRecords[P] | null> {
+  return settleParkedAfter(platform, udid, erase, erasedRecord, operation);
 }
 
 function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
@@ -250,16 +254,20 @@ function erasedRecord<T extends PoolRecords[PoolPlatform]>(record: T): T {
   return erased;
 }
 
-function settleParkedAfter<P extends PoolPlatform>(
+async function settleParkedAfter<P extends PoolPlatform>(
   platform: P,
   udid: string,
-  action: (record: PoolRecords[P], destructiveStarted: () => void) => void,
+  action: (record: PoolRecords[P], destructiveStarted: () => void) => void | Promise<void>,
   keep: ((record: PoolRecords[P]) => PoolRecords[P]) | null,
-): PoolRecords[P] | null {
+  operation?: StimContext,
+): Promise<PoolRecords[P] | null> {
+  operation?.signal.throwIfAborted();
   const claim = claimParkedOperation(platform, udid);
   if (!claim) return null;
+  let retained = false;
+  if (operation) declareSpawnsOn(operation, claim);
   try {
-    const claimed = withConfigLock(() => {
+    const claimed = await withConfigLockAsync(() => {
       const cfg = loadConfig();
       if (!cfg) return null;
       const records = readParked(platform, { config: cfg });
@@ -283,46 +291,62 @@ function settleParkedAfter<P extends PoolPlatform>(
       );
       saveConfig(cfg);
       return { record, marked };
-    });
+    }, operation?.signal);
     if (!claimed) return null;
     let completed = false;
     let started = false;
     let settled: PoolRecords[P] | null = null;
     try {
+      operation?.signal.throwIfAborted();
       markClaimChildPending(claim);
       try {
-        action(claimed.record, () => {
+        await action(claimed.record, () => {
           started = true;
         });
+      } catch (cause) {
+        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause)) {
+          retained = true;
+          throw Object.assign(
+            new WorkspaceProcessCleanupError(
+              [...new Set([claim, ...(cause instanceof WorkspaceProcessCleanupError ? cause.claims : [])])],
+              cause.message,
+              'Verify the parked-device operation and its descendants have stopped.',
+            ),
+            { reportCleanup: true },
+          );
+        }
+        throw cause;
       } finally {
-        clearClaimChild(claim);
+        if (!retained) clearClaimChild(claim);
       }
       completed = true;
     } finally {
-      withConfigLock(() => {
-        const cfg = loadConfig();
-        if (!cfg) return;
-        const records = readParked(platform, { config: cfg });
-        const current = records.find((candidate) => candidate.udid === udid);
-        if (!isDeepStrictEqual(current, claimed.marked)) return;
-        const after = (completed || started) && keep ? keep(claimed.record) : claimed.record;
-        writeParked(
-          cfg,
-          platform,
-          completed && !keep
-            ? records.filter((candidate) => candidate.udid !== udid)
-            : records.map((candidate) => (candidate.udid === udid ? after : candidate)),
-        );
-        saveConfig(cfg);
-        if (completed) settled = claimed.record;
-      });
+      if (!retained)
+        await withConfigLockAsync(() => {
+          const cfg = loadConfig();
+          if (!cfg) return;
+          const records = readParked(platform, { config: cfg });
+          const current = records.find((candidate) => candidate.udid === udid);
+          if (!isDeepStrictEqual(current, claimed.marked)) return;
+          const after = (completed || started) && keep ? keep(claimed.record) : claimed.record;
+          writeParked(
+            cfg,
+            platform,
+            completed && !keep
+              ? records.filter((candidate) => candidate.udid !== udid)
+              : records.map((candidate) => (candidate.udid === udid ? after : candidate)),
+          );
+          saveConfig(cfg);
+          if (completed) settled = claimed.record;
+        });
     }
     return settled;
   } finally {
-    releaseClaim(claim);
+    if (operation) stopDeclaringSpawnsOn(operation, claim);
+    if (!retained) releaseClaim(claim);
   }
 }
 
-export function dropParked(platform: PoolPlatform, udid: string): boolean {
-  return removeParkedAfter(platform, udid, () => {}) !== null;
+export async function dropParked(platform: PoolPlatform, udid: string, operation?: StimContext): Promise<boolean> {
+  return (await removeParkedAfter(platform, udid, () => {}, operation)) !== null;
 }

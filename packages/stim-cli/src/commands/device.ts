@@ -2,6 +2,9 @@ import { deviceSlotKey, parseDeviceSlotOption, projectDeviceSlots } from '../dev
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
+import { registerDeviceTools } from './device-tools.ts';
+import { runProvision, type ProvisionOptions } from './device-provision.ts';
+import { runProcessOperation } from '../cli-operation.ts';
 import {
   fileLeaseIo,
   parseLeaseDuration,
@@ -24,10 +27,10 @@ import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import {
   androidPoolCandidates,
-  getAvdNameForSerial,
+  getAvdNameForSerialAsync,
   androidPoolNoCandidatesRefusal,
-  listAdbDevices,
-  memoizeEmulatorProbe,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolvePhysicalDevice,
@@ -38,9 +41,9 @@ const DEFAULT_FOR = '5m';
 export interface DeviceDeps {
   findProjectRoot: typeof findProjectRoot;
   getProject: (root: string) => ProjectRecord | null;
-  avdNameOf: (serial: string) => string | null;
+  avdNameOf: (serial: string) => Promise<string | null>;
   listIosDevices: typeof listIosDevices;
-  listAdbDevices: typeof listAdbDevices;
+  listAdbDevices: typeof listAdbDevicesAsync;
   physicalDeviceModel: typeof physicalDeviceModel;
   probeEmulatorSerial: typeof probeEmulatorSerial;
   takeLease: typeof takeLease;
@@ -57,9 +60,9 @@ export interface DeviceDeps {
 const DEFAULT_DEPS: DeviceDeps = {
   findProjectRoot,
   getProject,
-  avdNameOf: getAvdNameForSerial,
+  avdNameOf: getAvdNameForSerialAsync,
   listIosDevices,
-  listAdbDevices,
+  listAdbDevices: listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   takeLease,
@@ -126,35 +129,38 @@ interface ResolvedDevice {
   deviceName: string | null;
 }
 
-function resolveDevice(
+async function resolveDevice(
   platform: LeasePlatform,
   requested: string | null,
   d: DeviceDeps,
-): ResolvedDevice | DeviceFailure {
+): Promise<ResolvedDevice | DeviceFailure> {
   if (platform === 'ios') {
-    const resolved = resolveIosPhysicalDevice(requested, d.listIosDevices());
+    const resolved = resolveIosPhysicalDevice(requested, await d.listIosDevices());
     if (!resolved.udid) {
       return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
     }
     return { id: resolved.udid, deviceName: resolved.name ?? resolved.udid };
   }
-  const resolved = resolvePhysicalDevice(requested, d.listAdbDevices(), d.probeEmulatorSerial);
+  const adb = await d.listAdbDevices();
+  const resolved = await emulatorProbeSession(d.probeEmulatorSerial)((isEmulator) =>
+    resolvePhysicalDevice(requested, adb, isEmulator),
+  );
   if (!resolved.serial) {
     return { code: 'STIM_NO_DEVICE', message: resolved.error as string, remedy: resolved.remedy ?? null };
   }
-  return { id: resolved.serial, deviceName: d.physicalDeviceModel(resolved.serial) ?? resolved.serial };
+  return { id: resolved.serial, deviceName: (await d.physicalDeviceModel(resolved.serial)) ?? resolved.serial };
 }
 
 interface OwnedVirtualDevice extends ResolvedDevice {
   slot: string;
 }
 
-function findOwnedVirtualDevice(
+async function findOwnedVirtualDevice(
   project: ProjectRecord | null,
   platform: LeasePlatform,
   id: string,
-  avdNameOf: (serial: string) => string | null,
-): OwnedVirtualDevice | null {
+  avdNameOf: (serial: string) => Promise<string | null>,
+): Promise<OwnedVirtualDevice | null> {
   let running: { name: string | null } | undefined;
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     if (platform === 'ios') {
@@ -166,7 +172,7 @@ function findOwnedVirtualDevice(
     }
     const emulator = platforms.android;
     if (!emulator?.owned || !emulator.avdName || !/^emulator-\d+$/.test(id)) continue;
-    running ??= { name: avdNameOf(id) };
+    running ??= { name: await avdNameOf(id) };
     if (running.name === emulator.avdName) return { id, deviceName: emulator.deviceName ?? emulator.avdName, slot };
   }
   return null;
@@ -185,25 +191,31 @@ async function poolDevice(
   d: DeviceDeps,
   slot?: string,
 ): Promise<ResolvedDevice | DeviceFailure> {
-  const isEmulator = memoizeEmulatorProbe(d.probeEmulatorSerial);
+  const probed = emulatorProbeSession(d.probeEmulatorSerial);
   const pooled = await d.selectFromPool({
     ...(slot ? { slot } : {}),
     root,
     platform,
     idLabel,
-    list: () =>
-      platform === 'ios'
-        ? iosPoolCandidates(d.listIosDevices()).map((entry) => ({
-            id: entry.udid,
-            name: entry.name,
-            fallback: isWirelessIosDevice(entry),
-          }))
-        : androidPoolCandidates(d.listAdbDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
-    noCandidates: () => {
-      const resolved =
-        platform === 'ios'
-          ? iosPoolNoCandidatesRefusal(d.listIosDevices())
-          : androidPoolNoCandidatesRefusal(d.listAdbDevices(), isEmulator);
+    list: async () => {
+      if (platform === 'ios') {
+        return iosPoolCandidates(await d.listIosDevices()).map((entry) => ({
+          id: entry.udid,
+          name: entry.name,
+          fallback: isWirelessIosDevice(entry),
+        }));
+      }
+      const adb = await d.listAdbDevices();
+      const candidates = await probed((isEmulator) => androidPoolCandidates(adb, isEmulator));
+      return candidates.map((entry) => ({ id: entry.serial }));
+    },
+    noCandidates: async () => {
+      let resolved;
+      if (platform === 'ios') resolved = iosPoolNoCandidatesRefusal(await d.listIosDevices());
+      else {
+        const adb = await d.listAdbDevices();
+        resolved = await probed((isEmulator) => androidPoolNoCandidatesRefusal(adb, isEmulator));
+      }
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,
@@ -222,7 +234,8 @@ async function poolDevice(
     };
   }
   const name =
-    pooled.candidate.name ?? (platform === 'ios' ? pooled.candidate.id : d.physicalDeviceModel(pooled.candidate.id));
+    pooled.candidate.name ??
+    (platform === 'ios' ? pooled.candidate.id : await d.physicalDeviceModel(pooled.candidate.id));
   return { id: pooled.candidate.id, deviceName: name ?? pooled.candidate.id };
 }
 
@@ -287,7 +300,7 @@ export async function runLock(
   const deadline = d.now() + wait.seconds * 1000;
   const lastLine: { at: number | null } = { at: null };
 
-  const owned = idArg ? findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
+  const owned = idArg ? await findOwnedVirtualDevice(d.getProject(root), platform, idArg, d.avdNameOf) : null;
   if (owned && opts.slot && opts.slot !== owned.slot) {
     return report({
       code: 'STIM_BAD_ARG',
@@ -307,7 +320,7 @@ export async function runLock(
   const device = owned
     ? owned
     : idArg
-      ? resolveDevice(platform, idArg, d)
+      ? await resolveDevice(platform, idArg, d)
       : await poolDevice(platform, idLabel, wait.seconds, deadline, root, d, opts.slot);
   if (isFailure(device)) return report(device);
 
@@ -414,7 +427,9 @@ export async function runUnlock(
 export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {}): void {
   const device = program
     .command('device')
-    .description('Lease a connected physical device to this workspace, and give it back');
+    .description(
+      "Lease a connected physical device to this workspace, give it back, provision iOS signing for it, or change the workspace's own simulator or emulator",
+    );
 
   device
     .command('lock')
@@ -453,6 +468,29 @@ export function registerDevice(program: Command, deps: Partial<DeviceDeps> = {})
       const result = await runUnlock(platform, opts, deps);
       if (!Array.isArray(result)) process.exit(1);
     });
+
+  device
+    .command('provision')
+    .argument('<platform>', 'ios')
+    .argument('[udid]', 'the connected iPhone or iPad to provision for; required when more than one is connected')
+    .description(
+      "Register a connected iPhone with the project's Apple Developer team and create or refresh its iOS App " +
+        'Development profile, through xcodebuild -allowProvisioningUpdates. It lists the account changes and asks ' +
+        'first; no build ever does this.',
+    )
+    .option('--scheme <name>', 'Xcode scheme whose signed targets to provision (default: ios.scheme, then detected)')
+    .option('--configuration <name>', 'build configuration to provision (default: ios.configuration, then Debug)')
+    .option('--yes', 'confirm the listed Apple Developer account changes without a prompt')
+    .option('--json', 'print the plan and result, or the refusal, as JSON on stdout')
+    .action(async (platform: string, udid: string | undefined, opts: ProvisionOptions) => {
+      const root = findProjectRoot(process.cwd()) ?? process.cwd();
+      const { value: result, interrupted } = await runProcessOperation(root, (operation) =>
+        runProvision(platform, udid, opts, { operation }),
+      );
+      if ('code' in result) process.exit(interrupted ?? 1);
+    });
+
+  registerDeviceTools(device);
 }
 
 export default function deviceCommand(program: Command): void {

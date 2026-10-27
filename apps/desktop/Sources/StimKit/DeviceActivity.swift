@@ -12,7 +12,7 @@ public struct DeviceActivity: Decodable, Hashable, Sendable {
   public var driver: Driver?
   public var lastActivityAt: String?
   public var basis: [String]
-  /// When each kind of evidence in `basis` last happened; absent from an older `stim`.
+  /// When each kind of evidence in `basis` last happened; absent without `lastActivityAt`.
   public var recent: [String: String]?
 }
 

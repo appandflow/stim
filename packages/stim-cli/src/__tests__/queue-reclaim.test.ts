@@ -56,7 +56,7 @@ beforeEach(() => {
     .mockImplementation((config) => devices.filter((device) => Boolean(config?.projects[device.project])));
   vi.mocked(teardownOwnedIosSim)
     .mockReset()
-    .mockImplementation((id) => {
+    .mockImplementation(async (id) => {
       devices = devices.filter((device) => device.id !== id);
       return { status: 'torn-down', label: `stim-${id}` };
     });
@@ -110,6 +110,26 @@ test('reclaims exactly the longest-idle eligible device across workspaces and re
   expect(entries).toMatchObject([
     { event: 'device_idle_shutdown', msg: expect.stringContaining('reclaimed for a waiting run') },
   ]);
+});
+
+test('a platform filter reclaims only a device of that platform even when another platform has idled longer', async () => {
+  add('ios-young', 20);
+  const android = add('android-old', 60);
+  android.kind = 'android';
+  await expect(reclaimIdleDevice(waiter, 10 * MINUTE, out, () => NOW, skipped, 'ios')).resolves.toBe(1);
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('ios-young', expect.anything());
+  expect(teardownOwnedAvd).not.toHaveBeenCalled();
+});
+
+test('the reclaim line names which worktree held a device when projects share a name', async () => {
+  const victim = add('first', 25, join(home, 'trees', 'qa-b-p2', 'mobile'));
+  add('second', 5, join(home, 'trees', 'qa-b-p3', 'mobile'));
+  upsertProject(victim.project, { label: undefined });
+  upsertProject(join(home, 'trees', 'qa-b-p3', 'mobile'), { label: undefined });
+  await expect(reclaim()).resolves.toBe(1);
+  expect(out).toHaveBeenCalledWith(
+    'device      reclaimed iOS simulator stim-first (workspace mobile (qa-b-p2), idle 25m) for this waiting run',
+  );
 });
 
 test('driven, locked, building, viewed, recent and unavailable-workspace devices stay up', async () => {
@@ -188,7 +208,7 @@ test('ownership refusal and teardown errors leave no shutdown record and do not 
   const refused = add('refused', 40);
   const failed = add('failed', 20);
   vi.mocked(teardownOwnedIosSim)
-    .mockReturnValueOnce({
+    .mockResolvedValueOnce({
       status: 'skipped',
       kind: 'not-owned',
       reason: 'simulator ownership changed before shutdown',
@@ -224,7 +244,7 @@ test('an older Android device in a named slot is shut down and recorded in its t
     platforms: {},
     deviceSlots: { fold: { android: { avdName: android.id, owned: true } } },
   });
-  vi.mocked(teardownOwnedAvd).mockReturnValueOnce({ status: 'torn-down', label: android.name });
+  vi.mocked(teardownOwnedAvd).mockResolvedValueOnce({ status: 'torn-down', label: android.name });
   await expect(reclaim()).resolves.toBe(1);
   expect(teardownOwnedIosSim).not.toHaveBeenCalled();
   expect(teardownOwnedAvd).toHaveBeenCalledWith(android.id, {

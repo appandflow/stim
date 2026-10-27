@@ -599,12 +599,13 @@ function overseeMerge(run: Run, { env, entry, notify }: WorkspaceLook, prev: Wor
  * handles is left out. The allowance returns when the workspace stops being idle or has no item left.
  */
 function overseeAttention(run: Run, { env, entry, notify }: WorkspaceLook, prev: WorkspaceEntry | undefined): void {
-  const items = workspaceItems(env, {
+  const { items, wakeAt } = workspaceAttention(env, {
     now: run.now,
     stuckMinutes: run.prefs.stuckMinutes,
     easSessionMinutes: EAS_SESSION_MINUTES,
     ownLeases: run.input.ownLeases,
   });
+  if (wakeAt !== null) wake(run, wakeAt);
   const pending: { item: NeedsAttentionItem; target: OversightTarget }[] = [];
   for (const item of items) {
     if (item.category !== 'attention') continue;
@@ -816,13 +817,14 @@ export const STALE_MS: number = 24 * 60 * 60 * 1000;
 const recent = (env: OversightEnvironment, at: string | null | undefined, now: number) =>
   env.live || now - time(at) < STALE_MS;
 
-function workspaceItems(
+function workspaceAttention(
   env: OversightEnvironment,
   input: Pick<NeedsAttentionInput, 'now' | 'stuckMinutes' | 'easSessionMinutes' | 'ownLeases'>,
   format: AttentionFormatter = attentionBody,
-): NeedsAttentionItem[] {
+): { items: NeedsAttentionItem[]; wakeAt: number | null } {
   const { now } = input;
   const items: NeedsAttentionItem[] = [];
+  let wakeAt: number | null = null;
   for (const issue of env.issues ?? []) {
     if (issue.severity === 'info' || !PERSON_ISSUES.has(issue.code)) continue;
     items.push({
@@ -866,7 +868,9 @@ function workspaceItems(
     }
   }
   for (const device of env.physicalDevices ?? []) {
-    if (!(time(device.lease.expiresAt) <= now)) continue;
+    const expiresAt = time(device.lease.expiresAt);
+    if (expiresAt > now) wakeAt = Math.min(wakeAt ?? expiresAt, expiresAt);
+    if (!(expiresAt <= now)) continue;
     const slot = device.slot === 'default' ? '' : ` --slot ${device.slot}`;
     items.push({
       id: `lease-${device.platform}-${device.slot}:${env.path}`,
@@ -881,7 +885,10 @@ function workspaceItems(
   const driven = devices.find((d) => d.running && agentDriven(d, input.ownLeases ?? []));
   for (const session of env.remoteDevices ?? []) {
     const started = time(session.startedAt);
-    if (driven || !(now - started >= input.easSessionMinutes * 60_000)) continue;
+    const due = started + input.easSessionMinutes * 60_000;
+    if (driven) continue;
+    if (due > now) wakeAt = Math.min(wakeAt ?? due, due);
+    if (!(due <= now)) continue;
     items.push({
       id: `eas-${session.sessionId}:${env.path}`,
       category: 'attention',
@@ -912,7 +919,7 @@ function workspaceItems(
       remedy: null,
     });
   }
-  return items;
+  return { items, wakeAt };
 }
 
 const severityRank = (item: NeedsAttentionItem) => (item.severity === 'error' ? 0 : 1);
@@ -944,7 +951,7 @@ export function needsAttention(
     });
   }
   for (const env of input.environments) {
-    for (const item of workspaceItems(env, input, format)) ranked.push({ item, scope: env.live ? 1 : 2 });
+    for (const item of workspaceAttention(env, input, format).items) ranked.push({ item, scope: env.live ? 1 : 2 });
   }
   const order = ranked.map((entry, index) => ({ entry, index }));
   order.sort(

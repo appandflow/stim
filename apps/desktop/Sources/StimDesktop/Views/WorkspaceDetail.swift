@@ -30,6 +30,7 @@ struct WorkspaceDetail: View {
   @ObservedObject private var server = ServerSession.shared
   @Environment(\.windowSize) private var windowSize
   @Environment(\.tutorialHint) private var tutorialHint
+  @Environment(\.tutorialLogsHighlight) private var tutorialLogsHighlight
   @State private var logsResizeStart: CGFloat?
   @AppStorage(AppPreferences.Key.logsDrawerHeight) private var logsHeight = Double(WorkspaceDetail.defaultLogsHeight)
   @AppStorage(AppPreferences.Key.showsLogs) private var showsLogs = false
@@ -151,7 +152,6 @@ struct WorkspaceDetail: View {
       }
       .environmentObject(actions)
       .environmentObject(checks)
-      .environment(\.tutorialHint, tutorialHint)
     }
     .confirmationDialog(
       "Delete \(archive?.title ?? "archive") (\(archive?.removedLabel(now: fixtureDate ?? Date()) ?? ""))?",
@@ -189,6 +189,11 @@ struct WorkspaceDetail: View {
     .onQuitRequested {
       viewing = nil
       buildSheet = nil
+    }
+    .onReceive(OpenRequests.shared.$viewer) { request in
+      guard let request, page.apps.contains(where: { $0.path == request.workspace }) else { return }
+      OpenRequests.shared.viewer = nil
+      viewing = request
     }
     .onAppear {
       if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
@@ -242,14 +247,6 @@ struct WorkspaceDetail: View {
             openBuild: { buildSheet = $0 }
           )
         }
-        if !showsLogs, tutorialHint?.path == workspace.path,
-          ["logs", "refresh"].contains(tutorialHint?.step ?? "")
-        {
-          LogsToggleButton(isShown: false, errors: workspace.logs?.errorsSinceMarker ?? 0) {
-            showsLogs = true
-          }
-          .tutorialAnchor(.logsTab, workspace: workspace.path)
-        }
       }
       .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
@@ -290,10 +287,15 @@ struct WorkspaceDetail: View {
                 moment: $logMoment,
                 page: page.isUnified ? page : nil, selectedApp: $logWorkspacePath, archive: archive
               )
-              .tutorialAnchor(.logsTab, workspace: workspace.path)
+              .task(id: archive == nil ? (page.isUnified ? logsApp : workspace).path : nil) {
+                if archive == nil, tutorialHint?.step == "logs" {
+                  TutorialViewerEvents.shared.logsOpened((page.isUnified ? logsApp : workspace).path)
+                }
+              }
               .frame(height: Self.clampedLogsHeight(logsHeight, contentHeight: contentHeight))
             }
           }
+          .tutorialDestinationGlow(trigger: tutorialLogsHighlight)
 
         }
       }
@@ -516,10 +518,7 @@ struct WorkspaceDetail: View {
     _ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat, owner: Workspace? = nil, project: String? = nil
   ) -> some View {
     let workspace = owner ?? self.workspace
-    let canControl =
-      device.isInteractive
-      && ((!device.isPhysical && device.hostedMachine == nil)
-        || PhysicalScreen(device: device, link: server.link, now: Date()).canControl)
+    let canControl = OwnedDevice(owner: .local, ref: device).offersControl(link: server.link, now: Date())
     let build = workspace.runningBuild(for: device)
     let status = DeviceTileStatus(device: device, canControl: canControl, building: build != nil)
     let tile = DeviceTile(
@@ -536,7 +535,6 @@ struct WorkspaceDetail: View {
     )
     return
       tile
-      .tutorialAnchor(.deviceTile, workspace: workspace.path)
       .background {
         Button {
           focusedID = device.id

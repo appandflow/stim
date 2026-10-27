@@ -10,9 +10,10 @@ import {
   rmSync,
   statSync,
 } from 'node:fs';
+import { chmod, lstat, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { buildCacheRoot } from '@stim-cli/core';
+import { ambientEnv, buildCacheRoot } from '@stim-cli/core';
 import { getConfigDir, loadConfig } from './workspace/config.ts';
 
 function existingPath(path: string): { existing: string; resolved: string } {
@@ -48,7 +49,7 @@ function inside(parent: string, path: string): boolean {
 export function temporaryRoot(near: string): string {
   const reference = existingPath(near);
   const insideReference = (path: string) => inside(reference.resolved, path);
-  const override = process.env.STIM_TMPDIR ?? loadConfig()?.tempDir;
+  const override = ambientEnv().STIM_TMPDIR ?? loadConfig()?.tempDir;
   if (override !== undefined) {
     if (typeof override !== 'string' || !isAbsolute(override)) {
       throw new Error('STIM_TMPDIR / tempDir must be an absolute directory path.');
@@ -105,4 +106,21 @@ export function removeTemporaryEntry(path: string): void {
     }
   }
   rmSync(path, { recursive: true, force: true });
+}
+
+export async function removeTemporaryEntryAsync(path: string, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
+  const info = await lstat(path).catch((error: unknown) => {
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null;
+    throw error;
+  });
+  if (info?.isDirectory()) {
+    await chmod(path, info.mode | 0o700);
+    for (const entry of await readdir(path, { withFileTypes: true })) {
+      if (entry.isDirectory()) await removeTemporaryEntryAsync(join(path, entry.name), signal);
+    }
+  }
+  signal?.throwIfAborted();
+  await rm(path, { recursive: true, force: true });
+  signal?.throwIfAborted();
 }

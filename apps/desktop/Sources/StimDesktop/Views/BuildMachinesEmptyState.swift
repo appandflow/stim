@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The artwork for "no remote Macs": a Mac badge with the two things a remote Mac does for this Mac.
+/// The artwork for "no remote machines": a Mac badge with the two things a remote Mac does for this Mac.
 struct BuildMachineArt: View {
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @State private var floating = false
@@ -33,7 +33,7 @@ struct BuildMachineArt: View {
   }
 }
 
-/// What the Remote Macs tab and the Machine page show while `remote.machines` is empty.
+/// What the Remote Machines tab and the Machine page show while `remote.machines` is empty.
 struct BuildMachinesEmptyState: View {
   var add: () -> Void
   var addDisabled = false
@@ -52,20 +52,20 @@ struct BuildMachinesEmptyState: View {
         } else {
           BuildMachineArt()
         }
-        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Macs").font(.stim(.headline))
+        Text(tailscaleOff ? "Tailscale Is Off" : "No Remote Machines").font(.stim(.headline))
         Text(
           tailscaleOff
-            ? "Turn on Tailscale on this Mac. Remote Macs reach it over your tailnet, and they show up here once it is connected."
+            ? "Turn on Tailscale on this Mac. Remote machines reach it over your tailnet, and they show up here once it is connected."
             : needsTailscale
-              ? "Remote Macs need Tailscale on both Macs, signed in to the same tailnet. No other Mac is on this tailnet yet. It shows up here once both are connected."
-              : "A remote Mac is another Mac on your tailnet that compiles your apps and hosts simulators for this Mac."
+              ? "Remote machines need Tailscale on both machines, signed in to the same tailnet. No other Mac, Linux or Windows machine is on this tailnet yet. It shows up here once both are connected."
+              : "A remote machine is another Mac, Linux or Windows machine on your tailnet that compiles your apps for this Mac. A Mac can also host simulators."
         )
         .foregroundStyle(Palette.secondary)
         .multilineTextAlignment(.center)
         .frame(maxWidth: 380)
       }
       if checking || !needsTailscale || tailscaleOff {
-        Button("Add Remote Mac\u{2026}", action: add)
+        Button("Add Remote Machine\u{2026}", action: add)
           .buttonStyle(.stim(.primary, .regular))
           .disabled(addDisabled)
       }

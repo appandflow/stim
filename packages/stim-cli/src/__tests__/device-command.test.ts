@@ -42,8 +42,8 @@ function harness(over: Partial<DeviceDeps> = {}) {
     io,
     findProjectRoot: () => root,
     getProject: () => null,
-    avdNameOf: () => null,
-    listIosDevices: () => [
+    avdNameOf: async () => null,
+    listIosDevices: async () => [
       {
         udid: PHONE,
         name: 'Old iPhone',
@@ -53,9 +53,9 @@ function harness(over: Partial<DeviceDeps> = {}) {
         transportType: 'wired',
       },
     ],
-    listAdbDevices: () => ({ emulators: [], physical: [{ serial: SERIAL }], unhealthy: [] }),
-    physicalDeviceModel: () => 'SM-G996W',
-    probeEmulatorSerial: () => false,
+    listAdbDevices: async () => ({ emulators: [], physical: [{ serial: SERIAL }], unhealthy: [] }),
+    physicalDeviceModel: async () => 'SM-G996W',
+    probeEmulatorSerial: async () => false,
     now: () => clock,
     sleep: async (ms: number) => {
       clock += ms;
@@ -105,7 +105,7 @@ describe('stim device lock', () => {
   test("leases the workspace's own simulator by UDID, in its slot, without asking devicectl", async () => {
     const h = harness({
       getProject: () => OWNED_PROJECT,
-      listIosDevices: () => {
+      listIosDevices: async () => {
         throw new Error('devicectl must not be asked about an owned simulator');
       },
     });
@@ -119,7 +119,11 @@ describe('stim device lock', () => {
   });
 
   test('refuses ids the workspace does not own as simulators or emulators', async () => {
-    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'Pixel_9_user', listIosDevices: () => [] });
+    const h = harness({
+      getProject: () => OWNED_PROJECT,
+      avdNameOf: async () => 'Pixel_9_user',
+      listIosDevices: async () => [],
+    });
     expect(await runLock('ios', 'USER-UDID', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
     expect(await runLock('android', 'emulator-5554', { wait: '0' }, h.deps)).toMatchObject({ code: 'STIM_NO_DEVICE' });
     expect(listLeaseFiles()).toEqual([]);
@@ -134,7 +138,7 @@ describe('stim device lock', () => {
   });
 
   test("leases the workspace's own emulator by serial, and refuses a --slot it is not in", async () => {
-    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: () => 'stim-app' });
+    const h = harness({ getProject: () => OWNED_PROJECT, avdNameOf: async () => 'stim-app' });
     const facts = await runLock('android', 'emulator-5728', {}, h.deps);
     assert(!('code' in facts));
     expect(facts).toMatchObject({ id: 'emulator-5728', deviceName: 'stim-app' });
@@ -221,7 +225,7 @@ describe('stim device lock', () => {
 
   test('locking another device of the same platform releases the first one', async () => {
     const h = harness({
-      listIosDevices: () =>
+      listIosDevices: async () =>
         [PHONE, 'SECOND-PHONE'].map((udid) => ({
           udid,
           name: udid === PHONE ? 'Old iPhone' : 'New iPhone',
@@ -241,7 +245,7 @@ describe('stim device lock', () => {
   });
 
   test('a device that fails the resolver is refused with the resolver own message, and nothing is written', async () => {
-    const h = harness({ listIosDevices: () => [] });
+    const h = harness({ listIosDevices: async () => [] });
     const failure = await runLock('ios', undefined, {}, h.deps);
     assert('code' in failure);
     expect(failure.code).toBe('STIM_NO_DEVICE');
@@ -252,7 +256,7 @@ describe('stim device lock', () => {
 
   test('an unpaired phone is refused with the pairing remedy', async () => {
     const h = harness({
-      listIosDevices: () => [
+      listIosDevices: async () => [
         {
           udid: PHONE,
           name: 'Old iPhone',
@@ -309,7 +313,7 @@ describe('stim device lock', () => {
 
   test('with no id, the first free device in id order is leased', async () => {
     const h = harness({
-      listIosDevices: () =>
+      listIosDevices: async () =>
         ['00008120-BBB', '00008030-AAA'].map((udid) => ({
           udid,
           name: `name-${udid}`,
@@ -329,7 +333,7 @@ describe('stim device lock', () => {
 
   test('with no id and several android serials, the pool picks and adb names it', async () => {
     const h = harness({
-      listAdbDevices: () => ({
+      listAdbDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
@@ -344,7 +348,7 @@ describe('stim device lock', () => {
   test('with no id and two unhealthy cabled iOS phones, the refusal names each one own reason', async () => {
     const SECOND = '00008120-000A11223C44201E';
     const h = harness({
-      listIosDevices: () => [
+      listIosDevices: async () => [
         {
           udid: PHONE,
           name: 'Old iPhone',
@@ -373,12 +377,12 @@ describe('stim device lock', () => {
 
   test('with no id and two emulator-probed android serials, the refusal names each one own reason', async () => {
     const h = harness({
-      listAdbDevices: () => ({
+      listAdbDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'ZY224' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
       }),
-      probeEmulatorSerial: () => true,
+      probeEmulatorSerial: async () => true,
     });
     const failure = await runLock('android', undefined, {}, h.deps);
     assert('code' in failure);
@@ -400,7 +404,7 @@ describe('stim device lock', () => {
 
   test('every connected device leased elsewhere refuses under --wait 0, naming all of them', async () => {
     const h = harness({
-      listIosDevices: () =>
+      listIosDevices: async () =>
         [PHONE, '00008120-BBB'].map((udid) => ({
           udid,
           name: 'Old iPhone',
@@ -425,7 +429,7 @@ describe('stim device lock', () => {
   test('a bad platform, --for and --wait are all STIM_BAD_ARG, before any device is listed', async () => {
     const listed: number[] = [];
     const h = harness({
-      listIosDevices: () => {
+      listIosDevices: async () => {
         listed.push(1);
         return [];
       },
@@ -456,8 +460,8 @@ describe('stim device lock', () => {
     expect(failure.code).toBe('STIM_NO_PROJECT');
     expect(JSON.parse(h.out[0] as string)).toEqual({
       code: 'STIM_NO_PROJECT',
-      message: 'Not in a React Native project (no package.json found).',
-      remedy: 'Run this from the app directory -- the one holding package.json.',
+      message: 'No supported app project was found from this directory.',
+      remedy: 'Run this from the directory of a supported app.',
     });
   });
 });
@@ -546,12 +550,20 @@ describe('stim device unlock', () => {
 });
 
 describe('the command surface', () => {
-  test('lock and unlock are registered under device, with the flags the guide lists', () => {
+  test('lock, unlock, provision and the device tools are registered under device, with the flags the guide lists', () => {
     const program = new Command();
     registerDevice(program);
     const device = program.commands.find((command) => command.name() === 'device');
     assert(device);
-    expect(device.commands.map((command) => command.name()).toSorted()).toEqual(['lock', 'unlock']);
+    expect(device.commands.map((command) => command.name()).toSorted()).toEqual([
+      'location',
+      'lock',
+      'network',
+      'permission',
+      'provision',
+      'push',
+      'unlock',
+    ]);
 
     const lock = device.commands.find((command) => command.name() === 'lock');
     assert(lock);
@@ -562,6 +574,16 @@ describe('the command surface', () => {
     assert(unlock);
     expect(unlock.options.map((option) => option.long)).toEqual(['--slot', '--json']);
     expect(unlock.usage()).toMatch(/\[platform\]/);
+
+    const provision = device.commands.find((command) => command.name() === 'provision');
+    assert(provision);
+    expect(provision.options.map((option) => option.long).toSorted()).toEqual([
+      '--configuration',
+      '--json',
+      '--scheme',
+      '--yes',
+    ]);
+    expect(provision.usage()).toMatch(/<platform> \[udid\]/);
   });
 
   test('an invalid --slot is a commander usage error on every command that takes one', async () => {

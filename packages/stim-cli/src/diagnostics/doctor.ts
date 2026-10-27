@@ -1,44 +1,63 @@
+import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { reportSignal, trackReportResource } from '../report-runtime.ts';
+import type { StimContext } from '@stim-cli/core';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
-import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'path';
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { rm } from 'fs/promises';
+import { createRequire } from 'module';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { plural, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
+import { probeSigningIdentities } from '../engine/ios-signing.ts';
+import type { SigningIdentity } from '../engine/ios-profile.ts';
+import { gitQuietAsync } from '../workspace/git.ts';
 import {
   isJsonObject,
   readJsonObject,
+  LAST_BUILD_KEYS,
+  readBuildHistory,
   readStats,
   type StatsPlacement,
   type SettingsObject,
+  type WorkspaceState,
 } from '@stim-cli/core/state';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { realIo } from '../offload/tailnet.ts';
 import { makeTemporaryDirectory } from '../temporary.ts';
 import { checkStorageLayout } from './doctor-storage.ts';
-import { inspectIosDebugArchitectures } from './doctor-ios-architectures.ts';
-import { appProjectProblem, detectIsExpo, isPackageResolvable } from '../workspace/project.ts';
+import { appProjectProblem, detectIsExpo, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
 import { CHROME_INSTALL_REMEDY, findChrome } from '../web/chrome.ts';
 import * as expoFingerprint from '@expo/fingerprint';
 import { diffFingerprintSources, fingerprintProject } from '../cache/build-cache.ts';
 import type { DebugInfoDir, FingerprintSource } from '@expo/fingerprint';
 import {
   dirtyFingerprintFiles,
-  gitCommonDir,
-  listWorktrees,
-  resolveSourceCheckout,
-  locallyKnownUpstream,
+  gitCommonDirAsync,
+  listWorktreesAsync,
+  resolveSourceCheckoutAsync,
+  locallyKnownUpstreamAsync,
   repoRoot,
+  repoRootAsync,
   type UpstreamState,
 } from '../workspace/worktree.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
+import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
-import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import {
+  type ConcurrencyLimits,
+  getConcurrencyLimits,
+  getPlatformDeviceLimits,
+  loadConfig,
+  type PlatformDeviceLimits,
+} from '../workspace/config.ts';
+import { ccacheInstallCommand } from '../engine/ccache.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
-import { countLiveOwnedDevices } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevices, countLiveOwnedDevicesAsync } from '../engine/device-capacity.ts';
 import { simslimIsOnPath } from '../engine/simslim.ts';
-import { readHostMemoryPressure, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
+import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryPressure } from '../host-memory.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { COMPILATION_CACHE_MIN_XCODE, detectXcodeMajor, parseXcodeMajor } from '../engine/xcode.ts';
+import { COMPILATION_CACHE_MIN_XCODE } from '../engine/xcode.ts';
 import { androidHome, hostSystemImageArch } from '../devices/android.ts';
 import {
   type EasAuthResult,
@@ -48,27 +67,32 @@ import {
   resolveEasCliBin,
 } from '../engine/remote-cache.ts';
 import {
+  DEFAULT_IOS_PROJECT_PATH,
+  defaultAndroidLayout,
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  type AndroidLayout,
+  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
+  projectSettingsContext,
   remoteAndroidSetting,
   remoteIosSetting,
+  webSettings,
   resolveSettings,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
-  webSettings,
+  settingValueAt,
 } from '../workspace/settings.ts';
-import { readInstalledEasCliVersion, type RemoteDeviceBackend } from '../engine/device-remote.ts';
+import { readInstalledEasCliVersionAsync, type RemoteDeviceBackend } from '../engine/device-remote.ts';
 import { easCliSupport, easCliUpgradeRemedy, MIN_EAS_CLI_SIMULATOR_VERSION } from '../engine/eas-simulator.ts';
 import { MIN_EAS_CLI_BUILD_DOWNLOAD_VERSION } from '../engine/eas-build.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { androidPathRoom, androidPathRoomMessage, androidPathRoomRemedy } from '../engine/android-path-limit.ts';
 import { androidSdkRefusal } from '../engine/gradle.ts';
 import { readCxxLauncherStates, type CxxLauncherState } from './doctor-cxx.ts';
-import { checkMachineSettings, readMachineSettings } from './doctor-config.ts';
-export { parseCmakeCacheLauncher } from './doctor-cxx.ts';
+import { checkMachineSettings, readMachineSettings, type MachineSettings } from './doctor-config.ts';
 
 type AnyJson = Record<string, unknown>;
-
-export { detectXcodeMajor, parseXcodeMajor };
 
 export interface Finding {
   code?: string;
@@ -82,6 +106,36 @@ export type DoctorPlatform = 'ios' | 'android';
 
 function finding(level: 'cost' | 'note', title: string, detail: string, fix: string | null): Finding {
   return { level, title, detail, fix };
+}
+
+const isDeviceCacheKey = (key: unknown): boolean => typeof key === 'string' && /-device(?:-|$)/.test(key);
+
+/** Whether this workspace has run, or is set up for, `ios --device`: a device build in its history or an iOS signing or LAN setting. */
+export function deviceWorkflowPlausible(state: WorkspaceState | null, settings: SettingsObject): boolean {
+  const last = state?.[LAST_BUILD_KEYS.ios];
+  if (last && typeof last === 'object' && 'cacheKey' in last && isDeviceCacheKey(last.cacheKey)) return true;
+  if ((readBuildHistory(state).ios ?? []).some((entry) => isDeviceCacheKey(entry.cacheKey))) return true;
+  return ['ios.signingIdentity', 'ios.signingIdentitySha1', 'ios.lanHost'].some(
+    (key) => settingValueAt(settings, key) !== undefined,
+  );
+}
+
+export function checkDeviceSigning(identities: readonly SigningIdentity[] | null): Finding | null {
+  if (identities === null) {
+    return finding(
+      'note',
+      'Could not list code signing identities',
+      '`security find-identity -v -p codesigning` failed, so doctor cannot tell whether `stim ios --device` can sign a build for a phone.',
+      'Run `security find-identity -v -p codesigning` to see the error; a locked login keychain is the usual cause (`security unlock-keychain`).',
+    );
+  }
+  if (identities.length > 0) return null;
+  return finding(
+    'note',
+    'No code signing identity for iOS device builds',
+    '`security find-identity -v -p codesigning` lists no identity on this Mac, so `stim ios --device` cannot sign a build for a phone. Simulator runs are unaffected.',
+    'With the phone connected, run `stim device provision ios`: it lists the Apple Developer account changes (register the phone, create or refresh its Development profile, create an Apple Development certificate) and asks before making them; an agent runs it only with your go-ahead. Or sign in under Xcode > Settings > Accounts and build once from Xcode to the phone.',
+  );
 }
 
 export function checkOffloadCandidate(
@@ -109,14 +163,18 @@ export function checkOffloadCandidate(
     code: 'offload-candidate',
     ...finding(
       'note',
-      'Builds could run on another Mac',
+      'Builds could run on another machine',
       `Cold builds averaged ~${Math.round(average / 60_000)} min over ${cold.length} builds this week.`,
-      'In Stim Desktop, open Settings > Remote Macs > Add.',
+      'In Stim Desktop, open Settings > Remote Machines > Add.',
     ),
   };
 }
 
-function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: NodeJS.Platform): Finding | null {
+async function readOffloadCandidate(
+  tailnetStatus: () => unknown,
+  now: number,
+  host: NodeJS.Platform,
+): Promise<Finding | null> {
   if (host !== 'darwin') return null;
   try {
     const entries = loadConfig()?.remote?.machines;
@@ -125,7 +183,7 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
       : [];
     const placements = readStats().record?.placements ?? [];
     if (machines.length || placements.length < 3) return null;
-    const status = tailnetStatus();
+    const status = await tailnetStatus();
     const peers = isJsonObject(status) && isJsonObject(status.Peer) ? Object.values(status.Peer) : [];
     return checkOffloadCandidate(placements, machines, peers, now);
   } catch {
@@ -133,11 +191,11 @@ function readOffloadCandidate(tailnetStatus: () => unknown, now: number, host: N
   }
 }
 
-function mainCheckoutProjectRoot(projectRoot: string): string {
-  const currentRepoRoot = repoRoot(projectRoot);
+export async function mainCheckoutProjectRoot(projectRoot: string): Promise<string> {
+  const currentRepoRoot = await repoRootAsync(projectRoot);
   if (!currentRepoRoot) return projectRoot;
   try {
-    const source = resolveSourceCheckout(currentRepoRoot);
+    const source = await resolveSourceCheckoutAsync(currentRepoRoot);
     if ('refusal' in source) return projectRoot;
     const projectRel = relative(currentRepoRoot, realpathSync(projectRoot));
     if (projectRel.startsWith('..')) return projectRoot;
@@ -147,9 +205,11 @@ function mainCheckoutProjectRoot(projectRoot: string): string {
   }
 }
 
-function brokenPodLinks(podsRoot: string): string[] {
+async function brokenPodLinks(podsRoot: string): Promise<string[]> {
   try {
-    const output = getExecutor().runFile('find', ['-L', podsRoot, '-type', 'l', '-print'], { timeoutMs: 10_000 });
+    const output = await getExecutor().runFileAsync('find', ['-L', podsRoot, '-type', 'l', '-print'], {
+      timeoutMs: 10_000,
+    });
     return output
       .split('\n')
       .map((line) => line.trim())
@@ -159,8 +219,8 @@ function brokenPodLinks(podsRoot: string): string[] {
   }
 }
 
-function hasIosWarmOutput(root: string): boolean {
-  if (existsSync(join(root, 'ios', 'build'))) return true;
+function hasIosWarmOutput(root: string, iosRoot: string): boolean {
+  if (existsSync(join(iosRoot, 'build'))) return true;
   const derivedData = workspaceDerivedData(root);
   if (existsSync(join(derivedData, 'Build', 'Products'))) return true;
   try {
@@ -172,53 +232,52 @@ function hasIosWarmOutput(root: string): boolean {
   }
 }
 
-function hasLinkedWorktree(projectRoot: string): boolean {
-  const root = repoRoot(projectRoot);
+async function hasLinkedWorktree(projectRoot: string): Promise<boolean> {
+  const root = await repoRootAsync(projectRoot);
   if (!root) return false;
-  return listWorktrees(root).filter((entry) => !entry.prunable && !entry.bare).length > 1;
+  return (await listWorktreesAsync(root)).filter((entry) => !entry.prunable && !entry.bare).length > 1;
 }
 
-function headBranch(root: string): string | null {
-  const ref = getExecutor().runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', 'HEAD'])?.trim();
+async function headBranch(root: string): Promise<string | null> {
+  const ref = (await gitQuietAsync(root, ['symbolic-ref', '--quiet', 'HEAD']))?.trim();
   return ref?.startsWith('refs/heads/') ? ref.slice('refs/heads/'.length) : null;
 }
 
-function mainOperation(root: string): 'rebase' | 'merge' | null {
-  const gitDir = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])
-    ?.trim();
+async function mainOperation(root: string): Promise<'rebase' | 'merge' | null> {
+  const gitDir = (await gitQuietAsync(root, ['rev-parse', '--path-format=absolute', '--git-dir']))?.trim();
   if (!gitDir) return null;
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
   return existsSync(join(gitDir, 'MERGE_HEAD')) ? 'merge' : null;
 }
 
-function dirtyTrackedPaths(root: string): string[] {
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
+async function dirtyTrackedPaths(root: string): Promise<string[]> {
+  const out = await gitQuietAsync(root, ['diff', '--name-only', 'HEAD']);
   return (out ?? '')
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
 }
 
-function resolveDefaultBranch(root: string): string | null {
-  const settings = resolveSettings({ gitCommonDir: gitCommonDir(root), repoRoot: repoRoot(root) ?? root });
+async function resolveDefaultBranch(root: string): Promise<string | null> {
+  const settings = resolveSettings({
+    gitCommonDir: await gitCommonDirAsync(root),
+    repoRoot: (await repoRootAsync(root)) ?? root,
+  });
   const worktree = settings.worktree;
   const configured =
     worktree && typeof worktree === 'object' && !Array.isArray(worktree)
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = (await gitQuietAsync(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']))?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
 }
 
-function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding[] {
+async function seedFindings(mainRoot: string, upstream: UpstreamState | null): Promise<Finding[]> {
   const findings: Finding[] = [];
-  const root = repoRoot(mainRoot);
+  const root = await repoRootAsync(mainRoot);
   const quotedRoot = quotedPath(root ?? mainRoot);
 
   if (upstream && upstream.behind > 0 && upstream.ahead === 0) {
@@ -233,7 +292,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
   }
   if (root === null) return findings;
 
-  const operation = mainOperation(root);
+  const operation = await mainOperation(root);
   if (operation) {
     findings.push(
       finding(
@@ -246,7 +305,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     return findings;
   }
 
-  const dirty = dirtyTrackedPaths(root);
+  const dirty = await dirtyTrackedPaths(root);
   if (dirty.length) {
     findings.push(
       finding(
@@ -258,7 +317,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     );
   }
 
-  const branch = headBranch(root);
+  const branch = await headBranch(root);
   if (branch === null) {
     findings.push(
       finding(
@@ -282,7 +341,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
     );
   }
 
-  const defaultBranch = resolveDefaultBranch(root);
+  const defaultBranch = await resolveDefaultBranch(root);
   if (defaultBranch !== null && defaultBranch !== branch) {
     findings.push(
       finding(
@@ -297,7 +356,7 @@ function seedFindings(mainRoot: string, upstream: UpstreamState | null): Finding
   return findings;
 }
 
-export function checkMainCheckout(
+export async function checkMainCheckout(
   projectRoot: string,
   {
     npmTreeValid,
@@ -306,6 +365,8 @@ export function checkMainCheckout(
     linkedWorktrees = undefined,
     platform,
     localIos = platform !== 'android',
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = defaultAndroidLayout(projectRoot),
   }: {
     npmTreeValid?: boolean | null;
     brokenPods?: string[];
@@ -313,11 +374,18 @@ export function checkMainCheckout(
     linkedWorktrees?: boolean;
     platform?: DoctorPlatform;
     localIos?: boolean;
+    iosProjectPath?: string;
+    androidLayout?: AndroidLayout;
   } = {},
-): Finding[] {
-  const mainRoot = mainCheckoutProjectRoot(projectRoot);
+): Promise<Finding[]> {
+  const mainRoot = await mainCheckoutProjectRoot(projectRoot);
+  const mainAndroid = {
+    ...androidLayout,
+    gradleRoot: join(mainRoot, relative(projectRoot, androidLayout.gradleRoot)),
+    moduleDir: join(mainRoot, relative(projectRoot, androidLayout.moduleDir)),
+  };
   const findings: Finding[] = [];
-  const dependencies = dependencyState(mainRoot);
+  const dependencies = dependencyState(mainRoot, (await repoRootAsync(mainRoot)) ?? mainRoot);
 
   if (dependencies) {
     const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
@@ -332,7 +400,7 @@ export function checkMainCheckout(
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
-      const valid = npmTreeValid === undefined ? installedNpmTreeIsValid(dependencies.root) : npmTreeValid;
+      const valid = npmTreeValid === undefined ? await installedNpmTreeIsValidAsync(dependencies.root) : npmTreeValid;
       if (valid === false) {
         findings.push(
           finding(
@@ -346,9 +414,10 @@ export function checkMainCheckout(
     }
   }
 
-  const podfileLock = join(mainRoot, 'ios', 'Podfile.lock');
-  const podManifest = join(mainRoot, 'ios', 'Pods', 'Manifest.lock');
-  const podsRoot = join(mainRoot, 'ios', 'Pods');
+  const iosRoot = join(mainRoot, iosProjectPath);
+  const podfileLock = join(iosRoot, 'Podfile.lock');
+  const podManifest = join(iosRoot, 'Pods', 'Manifest.lock');
+  const podsRoot = join(iosRoot, 'Pods');
   if (localIos && existsSync(podfileLock)) {
     let podsState: 'missing' | 'stale' | null = null;
     if (!existsSync(podManifest)) podsState = 'missing';
@@ -360,8 +429,7 @@ export function checkMainCheckout(
       }
     }
     if (podsState) {
-      const iosRoot = join(mainRoot, 'ios');
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot)}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot)}`;
       findings.push(
         finding(
           'cost',
@@ -372,10 +440,9 @@ export function checkMainCheckout(
       );
     }
 
-    const broken = brokenPods === undefined && existsSync(podsRoot) ? brokenPodLinks(podsRoot) : brokenPods || [];
+    const broken = brokenPods === undefined && existsSync(podsRoot) ? await brokenPodLinks(podsRoot) : brokenPods || [];
     if (broken.length) {
-      const iosRoot = join(mainRoot, 'ios');
-      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, '--clean-install')}`;
+      const podCommand = `cd ${quotedPath(iosRoot)} && ${podInstallCommand(mainRoot, iosRoot, '--clean-install')}`;
       findings.push(
         finding(
           'cost',
@@ -388,11 +455,11 @@ export function checkMainCheckout(
   }
 
   const coldPlatforms = [
-    localIos && existsSync(join(mainRoot, 'ios')) && !hasIosWarmOutput(mainRoot) ? 'iOS' : null,
+    localIos && existsSync(iosRoot) && !hasIosWarmOutput(mainRoot, iosRoot) ? 'iOS' : null,
     platform !== 'ios' &&
-    existsSync(join(mainRoot, 'android')) &&
-    !existsSync(join(mainRoot, 'android', 'build')) &&
-    !existsSync(join(mainRoot, 'android', 'app', 'build'))
+    hasAndroidProject(mainAndroid) &&
+    !existsSync(join(mainAndroid.gradleRoot, 'build')) &&
+    !existsSync(join(mainAndroid.moduleDir, 'build'))
       ? 'Android'
       : null,
   ].filter((coldPlatform): coldPlatform is string => coldPlatform !== null);
@@ -407,9 +474,11 @@ export function checkMainCheckout(
     );
   }
 
-  const linked = linkedWorktrees === undefined ? hasLinkedWorktree(projectRoot) : linkedWorktrees;
+  const linked = linkedWorktrees === undefined ? await hasLinkedWorktree(projectRoot) : linkedWorktrees;
   if (linked) {
-    findings.push(...seedFindings(mainRoot, upstream === undefined ? locallyKnownUpstream(mainRoot) : upstream));
+    findings.push(
+      ...(await seedFindings(mainRoot, upstream === undefined ? await locallyKnownUpstreamAsync(mainRoot) : upstream)),
+    );
   }
 
   return findings;
@@ -487,28 +556,13 @@ function checkChrome({
   );
 }
 
-function projectUsesWeb(
-  projectRoot: string,
-  settings: SettingsObject,
-  appConfig: AnyJson | null,
-  platform: DoctorPlatform | undefined,
-): boolean {
-  if (platform) return false;
-  const platforms = ((appConfig?.expo ?? appConfig) as AnyJson | null)?.platforms;
-  return (
-    webSettings(settings).url !== null ||
-    (Array.isArray(platforms) && platforms.includes('web')) ||
-    isPackageResolvable(projectRoot, 'react-native-web')
-  );
-}
-
-export function checkCcacheInstalled(onPath: boolean): Finding | null {
+export function checkCcacheInstalled(onPath: boolean, platform: NodeJS.Platform = process.platform): Finding | null {
   if (onPath) return null;
   return finding(
     'cost',
     'ccache is not on PATH, so Android C++ recompiles in every worktree',
     'Stim resolves the launcher with a PATH lookup for `ccache` -- the same lookup the build itself uses -- and found nothing, so it passes no CMAKE_C_COMPILER_LAUNCHER / CMAKE_CXX_COMPILER_LAUNCHER to Gradle and every AGP CMake task compiles without one. Those tasks are uncacheable by Gradle, so not one C++ object crosses a worktree. Measured on trailhead (arm64, fresh worktree): 49.6s without the launcher against 34.2s with it.',
-    'brew install ccache, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH -- agent shells often lack /opt/homebrew/bin.',
+    `${ccacheInstallCommand(platform)}, then delete android/app/.cxx and node_modules/**/android/.cxx once so CMake reconfigures with the launcher. The shell that runs Stim must have the install location on PATH${platform === 'darwin' ? ' -- agent shells often lack /opt/homebrew/bin' : ''}.`,
   );
 }
 
@@ -643,6 +697,15 @@ export function checkEasAuth({
     );
   }
 
+  if (status.code === 'project-cli') {
+    return finding(
+      'note',
+      'Did not check the EAS session: doctor runs only an eas-cli it can place outside the repository',
+      `Doctor does not run code from the project tree, and \`eas whoami\` would run ${status.reason}, which is in the repository, in a node_modules/.bin above it, or in a checkout whose repository root git did not report. Builds run that eas-cli, so whether this project's EAS build cache can be reached is unchecked.`,
+      status.remedy ?? null,
+    );
+  }
+
   if (status.code === 'logged-out') {
     return finding(
       'cost',
@@ -667,16 +730,28 @@ export function checkEasAuth({
 export function checkConcurrency({
   maxBuilds = 0,
   maxDevices = 0,
+  platformMax = { ios: 0, android: 0, macos: 0 },
   liveDevices = 0,
   activeBuilds = 0,
 }: {
   maxBuilds?: number;
   maxDevices?: number;
+  platformMax?: PlatformDeviceLimits;
   liveDevices?: number | { unknown: string };
   activeBuilds?: number;
 } = {}): Finding | null {
-  if (!maxBuilds && !maxDevices) return null;
-  const caps = `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`;
+  const platformCaps = (
+    [
+      ['ios', 'maxIosDevices'],
+      ['android', 'maxAndroidDevices'],
+      ['macos', 'maxMacosApps'],
+    ] as const
+  ).filter(([platform]) => platformMax[platform] > 0);
+  if (!maxBuilds && !maxDevices && !platformCaps.length) return null;
+  const caps = [
+    `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`,
+    ...platformCaps.map(([platform, setting]) => `${setting} ${platformMax[platform]}`),
+  ].join(', ');
   const devices =
     typeof liveDevices === 'number'
       ? `${liveDevices} Stim device(s) are booted`
@@ -686,14 +761,75 @@ export function checkConcurrency({
     'Concurrency limits are set',
     `${caps}. Right now ${devices} and ${activeBuilds} build slot(s) are in use on this machine. ` +
       'At the device cap a new `stim ios`/`android` waits in FIFO order for 600s (--wait changes it; --no-wait refuses with STIM_AT_CAPACITY); ' +
-      'at the build cap a compile waits for a free slot.',
+      'at the build cap a compile waits for a free slot.' +
+      (platformCaps.length
+        ? ' A per-platform cap bounds its platform alone, and a boot must also fit maxDevices; maxMacosApps bounds hosted macOS apps only.'
+        : ''),
     null,
   );
 }
 
-function readProjectEasCliVersion(projectRoot: string): string | null {
-  const bin = resolveEasCliBin(projectRoot);
-  return bin ? readInstalledEasCliVersion(bin.file, projectRoot) : null;
+async function easCliOutsideRepository(projectRoot: string, operation?: StimContext): Promise<string | null> {
+  const found = (String(getExecutor().findExecutable('eas') ?? '').split('\n')[0] ?? '').trim();
+  const root = found
+    ? operation
+      ? await repoRootAsync(projectRoot, { env: operation.env, signal: operation.signal })
+      : repoRoot(projectRoot)
+    : null;
+  if (!found || !root) return null;
+  try {
+    const repository = realpathSync(root);
+    const directory = realpathSync(dirname(resolve(found)));
+    const within = (path: string) => {
+      const rel = relative(repository, path);
+      return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
+    };
+    if (within(join(directory, basename(found))) || within(realpathSync(found))) return null;
+    for (let dir = realpathSync(projectRoot); ; dir = dirname(dir)) {
+      if (directory === join(dir, 'node_modules', '.bin')) return null;
+      if (dirname(dir) === dir) return found;
+    }
+  } catch {
+    return null;
+  }
+}
+
+async function readProjectEasCliVersion(projectRoot: string, operation?: StimContext): Promise<string | null> {
+  const packageJson = resolvePackageJson(projectRoot, 'eas-cli');
+  if (packageJson) {
+    const version = readJsonObject(packageJson)?.version;
+    return typeof version === 'string' ? `eas-cli/${version}` : null;
+  }
+  const onPath = await easCliOutsideRepository(projectRoot, operation);
+  return onPath ? readInstalledEasCliVersionAsync(onPath, projectRoot) : null;
+}
+
+async function doctorEasAuth({
+  projectRoot,
+  owner,
+  operation,
+}: {
+  projectRoot: string;
+  owner?: string | null;
+  operation?: StimContext;
+}): Promise<EasAuthResult> {
+  const file = await easCliOutsideRepository(projectRoot, operation);
+  if (file)
+    return probeEasAuth({
+      context: operation,
+      projectRoot,
+      owner,
+      resolveBin: () => ({ file, source: 'path' }),
+    });
+  const unchecked = resolveEasCliBin(projectRoot);
+  if (!unchecked) return probeEasAuth({ context: operation, projectRoot, owner, resolveBin: () => null });
+  return {
+    failed: true,
+    code: 'project-cli',
+    reason: unchecked.file,
+    remedy:
+      'Once you trust this checkout, run `npx eas whoami` in it. Or install eas-cli globally (`npm i -g eas-cli`) so doctor can check the session.',
+  };
 }
 
 export function checkRemoteDevice({
@@ -790,26 +926,33 @@ export function checkEasBuildDownload({
   );
 }
 
-function projectEasBuildDownloadFinding(
+async function projectEasBuildDownloadFinding(
   projectRoot: string,
   remoteBackends: readonly RemoteDeviceBackend[],
   lookupEasCli: (() => boolean) | null,
-): Finding | null {
+  operation?: StimContext,
+): Promise<Finding | null> {
   const easJson = existsSync(join(projectRoot, 'eas.json'));
+  const remoteEas = remoteBackends.includes('eas');
+  const easCliResolvable = easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot)));
+  const version =
+    easJson && !remoteEas && easCliResolvable ? await readProjectEasCliVersion(projectRoot, operation) : null;
   return checkEasBuildDownload({
     easJson,
-    remoteEas: remoteBackends.includes('eas'),
-    easCliResolvable: easJson && (lookupEasCli ? lookupEasCli() : Boolean(resolveEasCliBin(projectRoot))),
-    readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
+    remoteEas,
+    easCliResolvable,
+    readEasCliVersion: () => version,
   });
 }
 
 export function checkSimSlim({
   configured = false,
+  slimByDefault = false,
   profileError = null,
   onPath = false,
 }: {
   configured?: boolean;
+  slimByDefault?: boolean;
   profileError?: string | null;
   onPath?: boolean;
 } = {}): Finding | null {
@@ -819,6 +962,15 @@ export function checkSimSlim({
       'The SimSlim profile is invalid',
       profileError,
       'Set ios.simslimProfile to a readable JSON profile inside the repository.',
+    );
+  }
+  if (!configured && slimByDefault) {
+    if (onPath) return null;
+    return finding(
+      'cost',
+      'ios.simslim is on, but SimSlim is not installed',
+      '`stim ios` boots owned simulators without SimSlim until the `simslim` command is installed.',
+      'brew install mobai-app/tap/simslim',
     );
   }
   if (!configured) {
@@ -842,12 +994,15 @@ function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platfor
   if (platform !== 'ios' || host === 'darwin') return null;
   return finding(
     'note',
-    `iOS runs through EAS on this ${host} host`,
+    `iOS runs on a remote Mac or through EAS on this ${host} host`,
     'Xcode, CocoaPods and simctl exist only on macOS, so `stim ios` cannot build or boot a simulator here. ' +
+      '`stim ios --remote <mac> --remote-build <mac>` builds the app on a Mac approved for builds and hosted simulators, ' +
+      "with that Mac's Xcode and CocoaPods, and runs it on a simulator there; Metro stays on this machine. " +
       '`stim ios --remote eas --eas-profile <simulator profile>` downloads a finished EAS development build and runs it ' +
-      'on an EAS Simulator session driven through agent-device; Metro stays on this machine behind a tunnel.',
-    'Install eas-cli and agent-device, then run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
-      'Read `stim guide metro` for the remote device backends.',
+      'on an EAS Simulator session driven through agent-device.',
+    'Add a Mac with `stim doctor --fix` and run `stim ios --remote <mac> --remote-build <mac>`, or install eas-cli and ' +
+      'agent-device and run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
+      'Read `stim guide settings` for remote machines and `stim guide metro` for the remote device backends.',
   );
 }
 
@@ -891,96 +1046,93 @@ function configuredRemoteBackends(
   ].filter((backend): backend is RemoteDeviceBackend => backend !== null);
 }
 
-export function runDoctor(
+export interface DoctorInspectionOptions {
+  readFile?: typeof readFileSync;
+  xcodeMajor?: number | null;
+  easAuth?: (opts: {
+    projectRoot: string;
+    owner?: string | null;
+    operation?: StimContext;
+  }) => EasAuthResult | Promise<EasAuthResult>;
+  concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
+  liveDevices?: (() => number) | null;
+  activeBuilds?: (() => number) | null;
+  remoteEnv?: NodeJS.ProcessEnv;
+  operation?: StimContext;
+  lookupAgentDevice?: (() => boolean) | null;
+  lookupEasCli?: (() => boolean) | null;
+  lookupSimSlim?: (() => boolean) | null;
+  lookupSigningIdentities?: () => Promise<readonly SigningIdentity[] | null>;
+  memoryPressure?: () => HostMemoryPressure | null | Promise<HostMemoryPressure | null>;
+  lookupCcache?: (() => boolean) | null;
+  lookupChrome?: () => string | null;
+  tailnetStatus?: () => unknown;
+  now?: () => number;
+  platform?: DoctorPlatform;
+  host?: NodeJS.Platform;
+  platforms?: readonly DoctorPlatform[];
+  machineSettings?: MachineSettings;
+  repoRoot?: string | null;
+}
+
+export interface DoctorContext {
+  root: string;
+  options: DoctorInspectionOptions;
+  settings: SettingsObject;
+  optimizations: Optimizations | null;
+  platforms: readonly DoctorPlatform[];
+  repoRoot: string | null;
+}
+
+export async function runDoctor(
   projectRoot: string,
-  {
-    readFile = readFileSync,
-    xcodeMajor = null,
-    easAuth = probeEasAuth,
+  options: DoctorInspectionOptions = {},
+  inspectors: readonly ((context: DoctorContext) => Finding[] | Promise<Finding[]>)[] = [],
+): Promise<{ findings: Finding[]; context: DoctorContext }> {
+  const {
     concurrency = getConcurrencyLimits,
     liveDevices = null,
     activeBuilds = null,
-    remoteEnv = process.env,
-    lookupAgentDevice = null,
-    lookupEasCli = null,
     lookupSimSlim = null,
-    memoryPressure = readHostMemoryPressure,
-    lookupCcache = null,
+    lookupSigningIdentities = () => probeSigningIdentities({ env: options.operation?.env ?? process.env }),
+    memoryPressure = readHostMemoryPressureAsync,
     lookupChrome,
-    tailnetStatus = realIo.status,
-    now = Date.now,
     platform,
     host = process.platform,
-  }: {
-    readFile?: typeof readFileSync;
-    xcodeMajor?: number | null;
-    easAuth?: (opts: { projectRoot: string; owner?: string | null }) => EasAuthResult;
-    concurrency?: (() => ConcurrencyLimits) | ConcurrencyLimits;
-    liveDevices?: (() => number) | null;
-    activeBuilds?: (() => number) | null;
-    remoteEnv?: NodeJS.ProcessEnv;
-    lookupAgentDevice?: (() => boolean) | null;
-    lookupEasCli?: (() => boolean) | null;
-    lookupSimSlim?: (() => boolean) | null;
-    memoryPressure?: () => HostMemoryPressure | null;
-    lookupCcache?: (() => boolean) | null;
-    lookupChrome?: () => string | null;
-    tailnetStatus?: () => unknown;
-    now?: () => number;
-    platform?: DoctorPlatform;
-    host?: NodeJS.Platform;
-  } = {},
-): Finding[] {
-  // Only macOS has Xcode, CocoaPods and simctl; elsewhere iOS runs through `--remote eas`.
-  const localIos = platform !== 'android' && host === 'darwin';
-  const read = (rel: string): string | null => {
-    const p = join(projectRoot, rel);
-    if (!existsSync(p)) return null;
-    try {
-      return readFile(p, 'utf-8') as string;
-    } catch {
-      return null;
-    }
-  };
+    platforms = ['ios', 'android'],
+    machineSettings = readMachineSettings(projectSettingsContext(projectRoot)),
+  } = options;
+  const localIos = platforms.includes('ios') && platform !== 'android' && host === 'darwin';
 
-  const settingsRepoRoot = repoRoot(projectRoot) ?? projectRoot;
-  const machineSettings = readMachineSettings({
-    projectPath: projectRoot,
-    gitCommonDir: gitCommonDir(projectRoot),
-    repoRoot: settingsRepoRoot,
-  });
-  if (machineSettings.corrupt) return [machineSettings.corrupt];
   const projectSettings = machineSettings.settings;
-
-  const pkg = readJsonObject(join(projectRoot, 'package.json'));
-  const appConfig = readJsonObject(join(projectRoot, 'app.json'));
-  const dynamicConfig = appConfig
-    ? null
-    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
-  const podfileProperties = readJsonObject(join(projectRoot, 'ios', 'Podfile.properties.json'));
-  const podfile = read(join('ios', 'Podfile'));
-  const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
-
-  const isExpo = detectIsExpo(projectRoot);
-  const expoRange = (pkg?.dependencies as AnyJson | undefined)?.expo || '';
-  const sdkMajor =
-    parseInt(
-      String(expoRange)
-        .replace(/[^\d.]/g, '')
-        .split('.')[0] ?? '',
-      10,
-    ) || null;
-
-  const provider = appConfig ? providerFromConfig(appConfig) : null;
-  const owner = appConfig ? ownerFromConfig(appConfig) : null;
+  const context: DoctorContext = {
+    root: projectRoot,
+    options,
+    settings: projectSettings,
+    optimizations: null,
+    platforms,
+    repoRoot: options.repoRoot ?? null,
+  };
+  if (machineSettings.corrupt) return { findings: [machineSettings.corrupt], context };
 
   const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
-  if (limits && (limits.maxBuilds || limits.maxDevices)) {
+  const platformMax = getPlatformDeviceLimits();
+  if (
+    (limits && (limits.maxBuilds || limits.maxDevices)) ||
+    platformMax.ios ||
+    platformMax.android ||
+    platformMax.macos
+  ) {
     concurrencyFinding = checkConcurrency({
-      maxBuilds: limits.maxBuilds,
-      maxDevices: limits.maxDevices,
-      liveDevices: liveDevices ? liveDevices() : countLiveOwnedDevices(),
+      maxBuilds: limits?.maxBuilds,
+      maxDevices: limits?.maxDevices,
+      platformMax,
+      liveDevices: liveDevices
+        ? liveDevices()
+        : options.operation
+          ? await countLiveOwnedDevicesAsync(options.operation)
+          : countLiveOwnedDevices(),
       activeBuilds: activeBuilds ? activeBuilds() : countActiveBuilds(),
     });
   }
@@ -991,17 +1143,14 @@ export function runDoctor(
   let optimizations: Optimizations | null = null;
   try {
     optimizations = resolveAndroidCompilerCache({
-      optimizations: resolveOptimizations(projectSettings),
+      optimizations: resolveOptimizations(projectSettings, options.operation?.env ?? options.remoteEnv ?? process.env),
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
       use: readAndroidCasToolchain,
     }).optimizations;
   } catch {}
-  const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
-  const easFinding =
-    remoteBuildCache && provider === 'eas'
-      ? checkEasAuth({ provider, owner, auth: easAuth({ projectRoot, owner }) })
-      : null;
+  context.optimizations = optimizations;
   for (const poolPlatform of ['ios', 'android'] as const) {
-    if (platform && platform !== poolPlatform) continue;
+    if (!platforms.includes(poolPlatform) || (platform && platform !== poolPlatform)) continue;
     const poolSettingError = parkedMaxSetting(poolPlatform).error;
     if (poolSettingError) {
       settingShapeFindings.push(
@@ -1023,14 +1172,114 @@ export function runDoctor(
       simslimProfileError = String((error as Error)?.message || error);
     }
   }
+  const simslimByDefault = localIos && iosSimSlimDefaultSetting(projectSettings);
   const simslimFinding =
     !localIos || (!simslimProfile && !simslimProfileError && remoteIosSetting(projectSettings))
       ? null
       : checkSimSlim({
           configured: Boolean(simslimProfile),
+          slimByDefault: simslimByDefault,
           profileError: simslimProfileError,
-          onPath: simslimProfile ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
+          onPath: simslimProfile || simslimByDefault ? (lookupSimSlim ? lookupSimSlim() : simslimIsOnPath()) : false,
         });
+  const memoryAdvice =
+    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(await memoryPressure()) : null;
+
+  const shared = [
+    ...checkStorageLayout(projectRoot, { platform, host, scope: 'shared' }),
+    checkChrome({
+      usesWeb: () => !platform && webSettings(projectSettings).url !== null,
+      chrome: lookupChrome,
+    }),
+    concurrencyFinding,
+    memoryAdvice
+      ? finding(
+          'cost',
+          'Host memory pressure can stall the iOS simulator',
+          memoryAdvice,
+          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
+        )
+      : null,
+    simslimFinding,
+    localIos && deviceWorkflowPlausible(readWorkspaceState(projectRoot), projectSettings)
+      ? checkDeviceSigning(await lookupSigningIdentities())
+      : null,
+    ...settingShapeFindings,
+    ...checkMachineSettings({
+      settings: projectSettings,
+      layers: machineSettings.layers,
+      repositoryLayer: machineSettings.repositoryLayer,
+      projectRoot,
+      optimizations,
+      env: options.operation?.env ?? options.remoteEnv ?? process.env,
+      remoteBuild: loadConfig()?.remote?.build,
+      reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
+    }),
+  ].filter((f): f is Finding => Boolean(f));
+  const inspected = await Promise.all(inspectors.map((inspect) => inspect(context)));
+  return { findings: [...shared, ...inspected.flat()], context };
+}
+
+export async function reactNativeDoctorFindings({
+  root: projectRoot,
+  settings: projectSettings,
+  optimizations,
+  options,
+  repoRoot: repositoryRoot,
+}: DoctorContext): Promise<Finding[]> {
+  const androidLayout = resolveAndroidLayout(projectSettings, projectRoot, repositoryRoot ?? projectRoot);
+  const {
+    readFile = readFileSync,
+    xcodeMajor = null,
+    easAuth = doctorEasAuth,
+    remoteEnv = options.operation?.env ?? process.env,
+    lookupAgentDevice = null,
+    lookupEasCli = null,
+    lookupCcache = null,
+    tailnetStatus = realIo.status,
+    now = Date.now,
+    platform,
+    host = process.platform,
+  } = options;
+  const localIos = platform !== 'android' && host === 'darwin';
+  const read = (rel: string): string | null => {
+    const p = join(projectRoot, rel);
+    if (!existsSync(p)) return null;
+    try {
+      return readFile(p, 'utf-8') as string;
+    } catch {
+      return null;
+    }
+  };
+
+  const pkg = readJsonObject(join(projectRoot, 'package.json'));
+  const appConfig = readJsonObject(join(projectRoot, 'app.json'));
+  const dynamicConfig = appConfig
+    ? null
+    : ['app.config.ts', 'app.config.js', 'app.config.mjs'].find((f) => existsSync(join(projectRoot, f))) || null;
+  const iosProject = resolveIosProjectDir(projectSettings, projectRoot);
+  const podfileProperties = readJsonObject(join(iosProject.dir, 'Podfile.properties.json'));
+  const podfile = read(relative(projectRoot, join(iosProject.dir, 'Podfile')));
+  const metroConfig = read('metro.config.js') ?? read('metro.config.cjs');
+
+  const isExpo = detectIsExpo(projectRoot);
+  const expoRange = (pkg?.dependencies as AnyJson | undefined)?.expo || '';
+  const sdkMajor =
+    parseInt(
+      String(expoRange)
+        .replace(/[^\d.]/g, '')
+        .split('.')[0] ?? '',
+      10,
+    ) || null;
+
+  const provider = appConfig ? providerFromConfig(appConfig) : null;
+  const owner = appConfig ? ownerFromConfig(appConfig) : null;
+
+  const remoteBuildCache = optimizations?.buildCache && optimizations.remoteBuildCache;
+  const easFinding =
+    remoteBuildCache && provider === 'eas'
+      ? checkEasAuth({ provider, owner, auth: await easAuth({ projectRoot, owner, operation: options.operation }) })
+      : null;
   const remoteBackends = configuredRemoteBackends(projectSettings, platform);
   const daemonInEnv = Boolean(
     remoteEnv.AGENT_DEVICE_DAEMON_BASE_URL?.trim() && remoteEnv.AGENT_DEVICE_DAEMON_AUTH_TOKEN?.trim(),
@@ -1045,6 +1294,10 @@ export function runDoctor(
       ? lookupEasCli()
       : Boolean(resolveEasCliBin(projectRoot))
     : false;
+  const remoteVersion =
+    agentDeviceOnPath && easCliResolvable && remoteBackends.includes('eas')
+      ? await readProjectEasCliVersion(projectRoot, options.operation)
+      : null;
   const remoteFindings = remoteBackends
     .map((backend) =>
       checkRemoteDevice({
@@ -1052,58 +1305,53 @@ export function runDoctor(
         daemonInEnv,
         agentDeviceOnPath,
         easCliResolvable,
-        readEasCliVersion: () => readProjectEasCliVersion(projectRoot),
+        readEasCliVersion: () => remoteVersion,
       }),
     )
     .filter((remoteFinding): remoteFinding is Finding => remoteFinding !== null);
-  const easBuildDownloadFinding = projectEasBuildDownloadFinding(projectRoot, remoteBackends, lookupEasCli);
+  const easBuildDownloadFinding = await projectEasBuildDownloadFinding(
+    projectRoot,
+    remoteBackends,
+    lookupEasCli,
+    options.operation,
+  );
 
-  const memoryAdvice =
-    localIos && !remoteIosSetting(projectSettings) ? hostMemoryPressureAdvice(memoryPressure()) : null;
-
+  const appProjectFinding = checkAppProject(projectRoot);
   return [
-    checkAppProject(projectRoot),
+    appProjectFinding,
     checkIosHost(platform, host),
     checkXcodeEnvLineEndings(projectRoot, platform, host),
-    ...checkMainCheckout(projectRoot, { platform, localIos }),
-    ...(localIos ? inspectIosDebugArchitectures(mainCheckoutProjectRoot(projectRoot)) : []),
-    ...checkStorageLayout(projectRoot, { platform, host }),
+    ...checkStorageLayout(projectRoot, {
+      platform,
+      host,
+      scope: 'native',
+      iosProjectPath: iosProject.relative,
+      androidLayout,
+    }),
     optimizations?.metroSharedCache ? checkMetroCache(metroConfig) : null,
     localIos && optimizations?.ios.compilationCache ? checkCompilationCache(podfile, xcodeMajor) : null,
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
-      : androidCcacheFindings(projectRoot, platform, lookupCcache)),
+      : androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
     checkAndroidPathRoom(projectRoot, platform, host),
-    checkAndroidSdk(projectRoot, platform),
+    checkAndroidSdk(projectRoot, platform, androidLayout),
     checkChrome({
-      usesWeb: () => projectUsesWeb(projectRoot, projectSettings, appConfig, platform),
-      chrome: lookupChrome,
+      usesWeb: () =>
+        !platform &&
+        webSettings(projectSettings).url === null &&
+        ((Array.isArray(((appConfig?.expo ?? appConfig) as AnyJson | null)?.platforms) &&
+          (((appConfig?.expo ?? appConfig) as AnyJson).platforms as unknown[]).includes('web')) ||
+          isPackageResolvable(projectRoot, 'react-native-web')),
+      chrome: options.lookupChrome,
     }),
     remoteBuildCache ? checkBuildCacheProvider(appConfig, sdkMajor, isExpo, dynamicConfig) : null,
     easFinding,
     easBuildDownloadFinding,
-    concurrencyFinding,
-    readOffloadCandidate(tailnetStatus, now(), host),
-    memoryAdvice
-      ? finding(
-          'cost',
-          'Host memory pressure can stall the iOS simulator',
-          memoryAdvice,
-          'Free host memory, then retry. Run `stim guide lifecycle simslim` for the optional memory reduction setup.',
-        )
-      : null,
-    simslimFinding,
+    await readOffloadCandidate(tailnetStatus, now(), host),
     ...remoteFindings,
-    ...settingShapeFindings,
-    ...checkMachineSettings({
-      settings: projectSettings,
-      layers: machineSettings.layers,
-      projectRoot,
-      optimizations,
-      reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
-    }),
-  ].filter((f): f is Finding => Boolean(f));
+    appProjectFinding ? null : checkReadinessMarkers(projectRoot),
+  ].filter((value): value is Finding => Boolean(value));
 }
 
 export function checkAndroidPathRoom(
@@ -1121,21 +1369,29 @@ export function checkAndroidPathRoom(
     ...finding(
       'cost',
       'The project path leaves no room for Android native object paths',
-      `${androidPathRoomMessage(room)} \`stim android\` refuses to build here with STIM_PATH_TOO_LONG, because Gradle would fail deep inside ninja instead.`,
+      `${androidPathRoomMessage(room)} \`stim android\` refuses to run an emulator here with STIM_PATH_TOO_LONG, before it prepares the device, because Gradle would fail deep inside ninja instead.`,
       androidPathRoomRemedy(room),
     ),
   };
 }
 
-export function checkAndroidSdk(projectRoot: string, platform: DoctorPlatform | undefined): Finding | null {
-  const androidDir = join(projectRoot, 'android');
+function hasAndroidProject(layout: AndroidLayout): boolean {
+  return existsSync(layout.custom ? layout.moduleDir : layout.gradleRoot);
+}
+
+export function checkAndroidSdk(
+  projectRoot: string,
+  platform: DoctorPlatform | undefined,
+  layout: AndroidLayout = defaultAndroidLayout(projectRoot),
+): Finding | null {
+  const androidDir = layout.gradleRoot;
   if (platform === 'ios' || (platform !== 'android' && !existsSync(androidDir))) return null;
   const sdkPath = androidHome();
   const refusal = androidSdkRefusal({
     sdkPath,
     sdkExists: existsSync(sdkPath),
     hasLocalProperties: existsSync(join(androidDir, 'local.properties')),
-    localPropertiesPath: 'android/local.properties',
+    localPropertiesPath: `${relative(projectRoot, androidDir) || '.'}/local.properties`,
   });
   if (!refusal) return null;
   return {
@@ -1153,12 +1409,13 @@ function androidCcacheFindings(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   lookupCcache: (() => boolean) | null,
+  layout: AndroidLayout,
 ): (Finding | null)[] {
-  if (platform !== 'android' && !existsSync(join(projectRoot, 'android'))) return [];
+  if (platform !== 'android' && !hasAndroidProject(layout)) return [];
   const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
   let cxx: Finding | null;
   try {
-    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot), ccacheOnPath: onPath });
+    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
   } catch (error) {
     cxx = finding(
       'cost',
@@ -1184,6 +1441,62 @@ function checkAppProject(projectRoot: string): Finding | null {
   );
   if (problem.kind === 'not-an-app') result.code = 'not-an-app';
   return result;
+}
+
+const READINESS_MARKER = '[stim:readiness]';
+const READINESS_SCAN_LIMIT = 5000;
+const READINESS_SKIPPED_DIRS = new Set([
+  'node_modules',
+  'ios',
+  'android',
+  'macos',
+  'windows',
+  'Pods',
+  'build',
+  'dist',
+  'web-build',
+  'coverage',
+]);
+const JS_SOURCE = /\.[cm]?[jt]sx?$/;
+
+function hasReadinessMarker(projectRoot: string): boolean | null {
+  const dirs = [projectRoot];
+  let scanned = 0;
+  for (let dir = dirs.pop(); dir !== undefined; dir = dirs.pop()) {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) continue;
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (!READINESS_SKIPPED_DIRS.has(entry.name)) dirs.push(path);
+        continue;
+      }
+      if (!entry.isFile() || !JS_SOURCE.test(entry.name)) continue;
+      if (++scanned > READINESS_SCAN_LIMIT) return null;
+      try {
+        if (readFileSync(path, 'utf-8').includes(READINESS_MARKER)) return true;
+      } catch {}
+    }
+  }
+  return false;
+}
+
+function checkReadinessMarkers(projectRoot: string): Finding | null {
+  if (hasReadinessMarker(projectRoot) !== false) return null;
+  return {
+    code: 'readiness-markers-missing',
+    ...finding(
+      'note',
+      'The app does not report readiness to Stim',
+      `No \`${READINESS_MARKER}\` marker appears in this app's JavaScript or TypeScript sources outside node_modules. A debug \`stim ios\` or \`stim android\` launch then ends shortly after the app's JavaScript starts running, before the app is usable, and a later startup error shows only in \`stim logs --errors\`.`,
+      "In debug builds, log `[stim:readiness] pending` from the first module the app's entry loads, before the root component, and `[stim:readiness] ready` once the app is usable. `stim guide lifecycle readiness` has the code.",
+    ),
+  };
 }
 
 function agentDeviceIsOnPath(): boolean {
@@ -1225,8 +1538,57 @@ export function checkFingerprintParity({
     'note',
     'This checkout does not fingerprint like a fresh worktree of HEAD',
     `A clean detached worktree of HEAD computes a different @expo/fingerprint hash than this checkout, so worktrees will MISS the cache entries this checkout fills (and vice versa) until the two agree.${differing} ${cause} (To measure this, doctor ran a real fingerprint twice and briefly created a temporary git worktree -- .git/worktrees metadata was touched and cleaned up.)`,
-    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties and android/.idea). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
+    'Commit the dirty fingerprint inputs, or list the build-irrelevant ones in .fingerprintignore (same syntax as .gitignore, at the project root; Stim already ignores android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and ios/main.jsbundle and ios/assets while a .gitignore pattern matches them). Only the ones that genuinely cannot change the native build belong there -- generated reports, local env files, a lockfile whose checksums embed absolute machine paths. Never ignore a real native input (a Podfile, a gradle file, the app config) to force a hit: that trades a slow build for a wrong one.',
   );
+}
+
+function fingerprintConfigSkipped(root: string): Finding | null {
+  const file = ['fingerprint.config.js', 'fingerprint.config.cjs'].find((name) => existsSync(join(root, name)));
+  if (!file) return null;
+  return {
+    ...finding(
+      'note',
+      `Skipped the fingerprint checks: ${file} is code`,
+      `@expo/fingerprint loads ${file} with require(), and doctor does not execute project code, so it did not compare this checkout's fingerprint with a fresh worktree or look for linked libraries that carry Git metadata into it.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    ),
+    code: 'fingerprint-config-skipped',
+  };
+}
+
+function fingerprintParitySkipped(title: string, detail: string, fix: string): Finding {
+  return { ...finding('note', title, detail, fix), code: 'fingerprint-parity-skipped' };
+}
+
+// @expo/fingerprint resolves through resolve-from, which follows the real path, NODE_PATH and global module folders.
+function fingerprintResolves(root: string, request: string): boolean {
+  try {
+    createRequire(join(realpathSync(root), 'package.json')).resolve(request);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function coldFingerprintRunsProjectCode(root: string, platform: DoctorPlatform | undefined): Finding | null {
+  const resolved = ['expo/package.json', 'expo/config', 'expo-modules-autolinking/package.json']
+    .find((request) => fingerprintResolves(root, request))
+    ?.replace(/\/.*$/, '');
+  if (resolved) {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check: dependencies resolve from outside the app',
+      `This app has no node_modules of its own, but ${resolved} resolves from outside it. @expo/fingerprint would evaluate the app config and run the autolinking CLI, which loads project config files, and doctor does not execute project code.`,
+      'Builds load the config. Once you trust this checkout, `stim ios` or `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  if (platform !== 'ios') {
+    return fingerprintParitySkipped(
+      'Skipped the fingerprint parity check for Android or a project without an iOS directory on a checkout without dependencies',
+      'Without expo-modules-autolinking installed, @expo/fingerprint runs `npx react-native config` in the project to read Android autolinking, which can load project config and download a CLI, and doctor does not execute project code.',
+      'Once you trust this checkout, `stim android` reports whether a worktree hits the cache this checkout fills.',
+    );
+  }
+  return null;
 }
 
 function gitMetadataAt(path: string): boolean {
@@ -1246,8 +1608,8 @@ function listDirectory(dir: string): string[] {
   }
 }
 
-function hasLinkedPackageWithGit(projectRoot: string): boolean {
-  const root = repoRoot(projectRoot) ?? projectRoot;
+async function hasLinkedPackageWithGit(projectRoot: string): Promise<boolean> {
+  const root = (await repoRootAsync(projectRoot)) ?? projectRoot;
   for (let dir = projectRoot; ; dir = dirname(dir)) {
     if (linkedPackageWithGitIn(join(dir, 'node_modules'))) return true;
     if (dir === root || dirname(dir) === dir || relative(root, dirname(dir)).startsWith('..')) return false;
@@ -1285,13 +1647,24 @@ export async function detectLinkedLibraryGitMetadata(
   {
     createFingerprint = expoFingerprint.createFingerprintAsync,
     platform,
-  }: { createFingerprint?: typeof expoFingerprint.createFingerprintAsync; platform?: DoctorPlatform } = {},
+    operation,
+  }: {
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    platform?: DoctorPlatform;
+    operation?: StimContext;
+  } = {},
 ): Promise<Finding | null> {
-  const mainRoot = mainCheckoutProjectRoot(projectRoot);
-  if (!hasLinkedPackageWithGit(mainRoot)) return null;
+  const mainRoot = await mainCheckoutProjectRoot(projectRoot);
+  if (!(await hasLinkedPackageWithGit(mainRoot))) return null;
+  const skipped = fingerprintConfigSkipped(mainRoot);
+  if (skipped) return skipped;
   let sources: FingerprintSource[];
   try {
-    sources = (await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true }))?.sources ?? [];
+    sources =
+      (operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? await readDoctorFingerprint(operation, { root: mainRoot, platform, debug: true })
+        : await fingerprintProject(mainRoot, { platform, createFingerprint, debug: true })
+      )?.sources ?? [];
   } catch {
     return null;
   }
@@ -1314,6 +1687,13 @@ export async function detectLinkedLibraryGitMetadata(
   };
 }
 
+async function appPathInRepository(projectRoot: string): Promise<string> {
+  const top = await repoRootAsync(projectRoot);
+  if (!top) return '';
+  const path = relative(realpathSync.native(top), realpathSync.native(projectRoot));
+  return path.startsWith('..') ? '' : path;
+}
+
 export async function detectFingerprintParity(
   projectRoot: string,
   {
@@ -1321,25 +1701,39 @@ export async function detectFingerprintParity(
     differ = expoFingerprint.diffFingerprints,
     dirtyFiles = dirtyFingerprintFiles,
     platform: selectedPlatform,
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    operation,
   }: {
     createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
     differ?: typeof expoFingerprint.diffFingerprints | null;
-    dirtyFiles?: (root: string) => string[];
+    dirtyFiles?: (root: string) => string[] | Promise<string[]>;
     platform?: DoctorPlatform;
+    iosProjectPath?: string;
+    operation?: StimContext;
   } = {},
 ): Promise<Finding | null> {
-  const exec = getExecutor();
-  if (exec.runFileQuiet('git', ['-C', projectRoot, 'rev-parse', '--git-dir'], { timeoutMs: 10000 }) == null) {
+  if ((await gitQuietAsync(projectRoot, ['rev-parse', '--git-dir'])) == null) {
     return null;
   }
   // A fresh `git worktree add` of HEAD carries no node_modules, and @expo/fingerprint reads
   // installed packages as sources, so from an installed checkout every comparison reports drift
   // that is only the missing install. The question has an answer only on a cold checkout.
   if (hasInstalledDependencies(projectRoot)) return null;
+  const skipped = fingerprintConfigSkipped(projectRoot);
+  if (skipped) return skipped;
 
   const platform =
     selectedPlatform ??
-    (existsSync(join(projectRoot, 'ios')) ? 'ios' : existsSync(join(projectRoot, 'android')) ? 'android' : undefined);
+    (existsSync(join(projectRoot, iosProjectPath))
+      ? 'ios'
+      : existsSync(join(projectRoot, 'android'))
+        ? 'android'
+        : undefined);
+  const unsafe = coldFingerprintRunsProjectCode(projectRoot, platform);
+  if (unsafe) return unsafe;
+  // @expo/fingerprint spawns `npx react-native config` unless this is true or expo-modules-autolinking >= 1.12 resolves.
+  const coldFingerprint: typeof createFingerprint = (root, options) =>
+    createFingerprint(root, { ...options, useRNCoreAutolinkingFromExpo: true });
 
   let base: string;
   try {
@@ -1348,17 +1742,33 @@ export async function detectFingerprintParity(
     return null;
   }
   const worktree = join(base, 'head');
-  const added = exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'add', '--detach', worktree, 'HEAD'], {
-    timeoutMs: 60000,
+  let released: () => void;
+  let rejected: (error: unknown) => void;
+  const cleanup = new Promise<void>((done, reject) => {
+    released = done;
+    rejected = reject;
   });
-  if (added == null) {
-    rmSync(base, { recursive: true, force: true });
-    return null;
-  }
+  const release = () => released();
+  let added = false;
+  trackReportResource(operation, cleanup, () => cleanup);
 
   try {
-    const project = await fingerprintProject(projectRoot, { platform, createFingerprint });
-    const clean = await fingerprintProject(worktree, { platform, createFingerprint });
+    added =
+      (await gitQuietAsync(
+        projectRoot,
+        ['-c', `core.hooksPath=${join(base, 'hooks')}`, 'worktree', 'add', '--detach', worktree, 'HEAD'],
+        { write: true, timeoutMs: 60000 },
+      )) !== null;
+    if (!added) return null;
+    const headApp = join(worktree, await appPathInRepository(projectRoot));
+    const headSkipped = fingerprintConfigSkipped(headApp) ?? coldFingerprintRunsProjectCode(headApp, platform);
+    if (headSkipped) return headSkipped;
+    const inspect = (root: string) =>
+      operation && createFingerprint === expoFingerprint.createFingerprintAsync
+        ? readDoctorFingerprint(operation, { root, platform, iosProjectPath, cold: true })
+        : fingerprintProject(root, { platform, iosProjectPath, createFingerprint: coldFingerprint });
+    const project = await inspect(projectRoot);
+    const clean = await inspect(headApp);
     if (!project || !clean) return null;
     if (project.hash === clean.hash) return null;
     const changed = diffFingerprintSources({
@@ -1371,13 +1781,48 @@ export async function detectFingerprintParity(
       projectHash: project.hash,
       worktreeHash: clean.hash,
       changed,
-      dirtyFiles: dirtyFiles(projectRoot),
+      dirtyFiles: await dirtyFiles(projectRoot),
     });
   } catch {
     return null;
   } finally {
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'remove', '--force', worktree], { timeoutMs: 30000 });
-    rmSync(base, { recursive: true, force: true });
-    exec.runFileQuiet('git', ['-C', projectRoot, 'worktree', 'prune'], { timeoutMs: 10000 });
+    await finishCleanup();
+  }
+
+  async function finishCleanup() {
+    try {
+      const options = {
+        timeoutMs: 30000,
+        ...(operation ? { signal: AbortSignal.timeout(30000) } : {}),
+      };
+      const target = join(realpathSync.native(base), 'head');
+      if (added || operation)
+        await gitQuietAsync(projectRoot, ['worktree', 'remove', '--force', '--force', worktree], {
+          write: true,
+          ...options,
+        });
+      if (operation) {
+        const registered = await gitQuietAsync(projectRoot, ['worktree', 'list', '--porcelain', '-z'], options);
+        if (
+          registered === null ||
+          registered
+            .split('\0')
+            .some((line) => line.startsWith('worktree ') && relative(target, line.slice('worktree '.length)) === '')
+        )
+          throw new Error('The temporary worktree is still registered or its registration cannot be read.');
+      }
+      await rm(base, { recursive: true, force: true });
+      if (added && !operation) await gitQuietAsync(projectRoot, ['worktree', 'prune'], { write: true });
+    } catch (error) {
+      if (!operation) throw error;
+      const refusal = Object.assign(
+        new Error(`Cannot finish cleanup for temporary worktree ${worktree}.`, { cause: error }),
+        { code: 'STIM_CLAIM_UNAVAILABLE', reportCleanup: true },
+      );
+      if (reportSignal(operation)) rejected(refusal);
+      throw refusal;
+    } finally {
+      release();
+    }
   }
 }

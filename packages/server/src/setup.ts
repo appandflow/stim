@@ -1,14 +1,31 @@
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
-import type { BuildToolchain } from '@stim-cli/core/protocol';
+import {
+  isJsonObject,
+  stimBuildDigest,
+  tailscaleEnv,
+  type SetupCapability,
+  type SetupJournal,
+} from '@stim-cli/core/state';
+import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
-import { bundledStim, loginShellEnvironment } from './environment.ts';
-import { grantDevice, readBuildClients, readDeviceHostClients, serverDir, type PairedDevice } from './registry.ts';
+import { discoverToolchain } from '@stim-cli/core/toolchain';
+import { bundledStim } from './environment.ts';
+import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
+import { readLanAddresses } from './lan.ts';
+import {
+  dropSetupSecret,
+  readBuildClients,
+  readDeviceHostClients,
+  serverDir,
+  serverIdentity,
+  storeSetupSecret,
+  watchClientRegistries,
+  type PairedDevice,
+} from './registry.ts';
 import {
   fetchHealth,
   holdingUpdateClaim,
@@ -17,14 +34,13 @@ import {
   prepareRoute,
   recordServiceRoute,
   requireManaged,
-  run,
   serverBuild,
-  serviceRoot,
   stableNode,
   updateInstalledService,
 } from './service.ts';
 import {
   applyServeEnvironment,
+  compareVersions,
   DEFAULT_LABEL,
   DEFAULT_PORT,
   planServe,
@@ -35,6 +51,7 @@ import {
   type InstalledService,
   type ServerBuild,
 } from './service-plist.ts';
+import { run, serviceManagerOrNull, serviceRoot } from './service-manager.ts';
 import { SetupPrinter, setupDisplayFor, type SetupDisplay, type StepText } from './setup-output.ts';
 import { pruneSetupJournals, writeSetupJournal } from './setup-journal.ts';
 import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
@@ -43,15 +60,19 @@ import {
   readRawTailscaleStatus,
   serveRoute,
   tailscaleInstall,
-  type ServeRoute,
   type TailscaleInstall,
-} from './tailscale.ts';
+} from '@stim-cli/transport-tailscale';
 
-const SETUP_MIN_VERSION = '1.16.0';
+/** The protocol whose Noise authentication setup tickets rely on; a reused server must speak it. */
+const SETUP_PROTOCOL = 2;
+
+/** How long setup waits for a server it started or reused to report its local network listener. */
+const LAN_WAIT_MS = 15_000;
 
 export interface SetupOptions {
-  nodeId: string;
-  ticketHash: string;
+  ticket: Buffer;
+  /** The journal name both sides derive from the ticket. */
+  journal: string;
   expiresAt: string;
   capabilities: SetupCapability[];
   label: string;
@@ -61,6 +82,7 @@ export interface SetupOptions {
   yes: boolean;
   json: boolean;
   verbose: boolean;
+  noWait: boolean;
 }
 
 class SetupRefusal extends Error {
@@ -73,7 +95,7 @@ class SetupRefusal extends Error {
   }
 }
 
-export function parseSetupArgs(args: string[], now: number): SetupOptions {
+export function parseSetupArgs(args: string[], now: number, ticket: string | undefined): SetupOptions {
   const { values } = parseArgs({
     args,
     options: {
@@ -89,11 +111,19 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
       yes: { type: 'boolean' },
       json: { type: 'boolean' },
       verbose: { type: 'boolean' },
+      'no-wait': { type: 'boolean' },
     },
   });
-  if (!values.client?.trim()) throw new SetupRefusal('--client takes a tailnet node id.');
-  if (!values.ticket || !/^[A-Za-z0-9_-]{43}$/.test(values.ticket))
-    throw new SetupRefusal('--ticket takes 43 base64url characters.');
+  if (values.ticket !== undefined)
+    throw new SetupRefusal(
+      'setup no longer takes --ticket, because other users on this machine can read command-line arguments. Set STIM_SETUP_TICKET=<ticket> before stim-server setup, or copy a new command from Stim Desktop.',
+    );
+  if (values.client !== undefined)
+    throw new SetupRefusal(
+      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim doctor --fix` on the requesting machine.',
+    );
+  const secret = ticket ? decodeSecret(ticket) : null;
+  if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
   const capabilities = (['build', 'device-host'] as const).filter((cap) => values[cap]);
   if (!capabilities.length) throw new SetupRefusal('setup needs --build or --device-host.');
   const expires = values.expires;
@@ -116,8 +146,8 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
   const problem = validateLabel(label) ?? validateServeEnvironment(env, pathPrepend);
   if (problem) throw new SetupRefusal(problem);
   return {
-    nodeId: values.client.trim(),
-    ticketHash: createHash('sha256').update(values.ticket).digest('hex'),
+    ticket: secret,
+    journal: secretValues(secret).journal,
     expiresAt: expires,
     capabilities,
     label,
@@ -127,78 +157,42 @@ export function parseSetupArgs(args: string[], now: number): SetupOptions {
     yes: values.yes === true,
     json: values.json === true,
     verbose: values.verbose === true,
+    noWait: values['no-wait'] === true,
   };
 }
 
+/** The record a client made for each capability by spending this run's ticket. */
 export function selectGrants(
   records: PairedDevice[],
-  match: {
-    nodeId: string;
-    ticketHash: string;
-    capabilities: SetupCapability[];
-    now: number;
-  },
-): { capability: SetupCapability; record: PairedDevice; approved: boolean }[] {
+  match: { journal: string; capabilities: SetupCapability[] },
+): { capability: SetupCapability; record: PairedDevice }[] {
   return match.capabilities.flatMap((capability) => {
-    const candidates = records.filter(
-      (r) =>
-        r.requestedCapability === capability &&
-        r.identity.kind === 'tailnet' &&
-        r.identity.nodeId === match.nodeId &&
-        r.setupTicketHash === match.ticketHash &&
-        (r.pendingUntil === undefined ? r.capabilities.includes(capability) : Date.parse(r.pendingUntil) > match.now),
-    );
-    const approved = candidates.filter((r) => r.pendingUntil === undefined);
-    if (approved.length > 1 || (approved.length === 0 && candidates.length > 1)) {
-      throw new SetupRefusal(
-        `More than one ${capability} request matches this ticket; refusing to choose. Revoke the extra request and rerun.`,
-      );
-    }
-    const record = approved[0] ?? candidates[0];
-    return record ? [{ capability, record, approved: record.pendingUntil === undefined }] : [];
+    const record = records.find((r) => r.setupJournal === match.journal && r.capabilities.includes(capability));
+    return record ? [{ capability, record }] : [];
   });
 }
 
-const parseVersion = (v: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/.exec(v);
-
-function compareVersions(a: string, b: string): number {
-  const aa = parseVersion(a),
-    bb = parseVersion(b);
-  if (!aa || !bb) throw new SetupRefusal(`Cannot compare stim-server versions ${a} and ${b}.`);
-  for (let i = 1; i <= 3; i++) {
-    const diff = Number(aa[i]) - Number(bb[i]);
-    if (diff) return diff;
-  }
-  if (!aa[4] || !bb[4]) return aa[4] ? -1 : bb[4] ? 1 : 0;
-  const ap = aa[4].split('.'),
-    bp = bb[4].split('.');
-  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
-    const x = ap[i],
-      y = bp[i];
-    if (x === y) continue;
-    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
-    if (/^\d+$/.test(x) && /^\d+$/.test(y)) return Number(x) - Number(y);
-    if (/^\d+$/.test(x) !== /^\d+$/.test(y)) return /^\d+$/.test(x) ? -1 : 1;
-    return x < y ? -1 : 1;
-  }
-  return 0;
-}
-
+/**
+ * Whether setup installs, updates or reuses the server. `protocol` comes from a running server's `/health`; a server
+ * that reports none, or one below protocol 2, cannot take a setup ticket.
+ */
 export function setupVersionDecision(
-  current: string | null,
+  current: { version: string; protocol?: number; running: boolean } | null,
   desired: string,
   managed: boolean,
 ): 'install' | 'update' | 'reuse' | 'too-old' {
   if (current === null) return 'install';
-  if (managed && compareVersions(current, desired) < 0) return 'update';
-  return compareVersions(current.replace(/-.*/, ''), SETUP_MIN_VERSION) < 0 ? 'too-old' : 'reuse';
+  if (managed && compareVersions(current.version, desired) < 0) return 'update';
+  return current.running && (current.protocol ?? 0) < SETUP_PROTOCOL ? 'too-old' : 'reuse';
 }
 
-function tailscaleRefusal(install: TailscaleInstall): string {
+function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platform']): string {
   if (install === 'none')
-    return 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac';
+    return platform === 'darwin'
+      ? 'Install Tailscale on this Mac and sign in to the same tailnet: https://tailscale.com/download/mac'
+      : `Install Tailscale on this machine and sign in to the same tailnet: https://tailscale.com/download/${platform === 'win32' ? 'windows' : 'linux'}`;
   if (install === 'app') return 'Turn on Tailscale from its menu bar icon on this Mac, then run this again.';
-  return 'Run tailscale up on this Mac, then run this again.';
+  return `Run tailscale up on this ${platform === 'darwin' ? 'Mac' : 'machine'}, then run this again.`;
 }
 
 export function setupExitCode(journal: SetupJournal): number {
@@ -219,25 +213,46 @@ interface SetupOutput {
   label: string;
   port: number;
   route: { state: string; dnsName: string | null; port: number };
+  /** The local network endpoints the server listens on, when setup ran without Tailscale. */
+  lan?: string[];
+  /** The fingerprint of this server's key, which the requesting machine shows before it pins a local network worker. */
+  fingerprint: string;
   server: ServerBuild;
   managed: boolean;
-  granted: { capability: SetupCapability; id: string; client: { nodeId: string; name: string } }[];
+  granted: { capability: SetupCapability; id: string; client: { name: string } }[];
   permissions: { screenRecording: PermissionState; deviceControl: PermissionState };
   tools: Tool[];
   warnings: string[];
 }
 
 export interface SetupDeps {
+  /**
+   * Where setup runs. On Linux and Windows it approves builds only, under a systemd user service or a scheduled task,
+   * with no Stim Host.
+   */
+  platform: 'darwin' | 'linux' | 'win32';
+  /** The setup ticket, from `STIM_SETUP_TICKET`; other users can read a process's arguments, not its environment. */
+  ticket?: string;
+  /** Whether Doctor generated this setup command and needs a client reconnect afterward. */
+  fromDoctor?: boolean;
   display?: SetupDisplay;
   signal?: AbortSignal;
   now(): number;
-  sleep(ms: number): Promise<void>;
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
   tty: boolean;
   stdout(line: string): void;
   stderr(line: string): void;
   confirm(question: string, timeoutMs: number): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
-  preflight(options: SetupOptions): Promise<{ dnsName: string }>;
+  /**
+   * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set. Setup checks the local network
+   * listener when it is, and the tailnet route while Tailscale runs.
+   */
+  preflight(options: SetupOptions): Promise<{ dnsName: string | null; lan?: boolean }>;
+  /** This server's key fingerprint. */
+  fingerprint(): string;
+  /** Whether the macOS application firewall is on, or null when it cannot be read or the platform has none. */
+  firewall(): Promise<boolean | null>;
   claim(): () => void;
   write: typeof writeSetupJournal;
   prune: typeof pruneSetupJournals;
@@ -253,8 +268,10 @@ export interface SetupDeps {
   prepareRoute: typeof prepareRoute;
   recordRoute: typeof recordServiceRoute;
   createRoute(args: string[]): Promise<void>;
-  records(now: number): PairedDevice[];
-  grant: typeof grantDevice;
+  records(): PairedDevice[];
+  watchRecords(changed: () => void): () => void;
+  storeSecret: typeof storeSetupSecret;
+  dropSecret: typeof dropSetupSecret;
   panes: typeof hostPermissionPanes;
   requestPermissions: typeof requestHostPermissions;
   openPane(pane: string): Promise<void>;
@@ -279,7 +296,17 @@ export function setupClaim(): () => void {
   };
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    signal?.addEventListener('abort', finish, { once: true });
+    if (signal?.aborted) finish();
+  });
 const binary = () => findTailscale(process.env);
 
 async function interruptible<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -329,7 +356,10 @@ export async function discardTypedAhead(stream: NodeJS.ReadableStream & { isTTY?
 }
 
 export function defaultSetupDeps(): SetupDeps {
+  const manager = serviceManagerOrNull();
+  const platform = manager?.name === 'systemd' ? 'linux' : manager?.name === 'taskscheduler' ? 'win32' : 'darwin';
   return {
+    platform,
     now: Date.now,
     sleep,
     tty: process.stdin.isTTY === true,
@@ -362,28 +392,31 @@ export function defaultSetupDeps(): SetupDeps {
         process.stdin.on('data', onData);
       });
     },
-    async preflight(options) {
-      if (process.platform !== 'darwin') throw new SetupRefusal('setup runs only on macOS.');
+    async preflight() {
+      if (!manager) throw new SetupRefusal('setup runs only on macOS, Linux and Windows.');
       if (compareVersions(process.versions.node, '22.12.0') < 0)
         throw new SetupRefusal('setup needs Node 22.12 or later.');
       const status = await readRawTailscaleStatus(binary(), process.env);
-      if (
-        !isJsonObject(status) ||
-        !isJsonObject(status.Self) ||
-        typeof status.Self.DNSName !== 'string' ||
-        !status.Self.DNSName
-      ) {
-        throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env)));
+      const dnsName =
+        isJsonObject(status) && isJsonObject(status.Self) && typeof status.Self.DNSName === 'string'
+          ? status.Self.DNSName.replace(/\.$/, '')
+          : '';
+      const lan = (await readLanAddresses()).length > 0;
+      if (!dnsName && !lan) {
+        throw new SetupRefusal(
+          `${tailscaleRefusal(tailscaleInstall(process.env), platform)} To set this ${platform === 'darwin' ? 'Mac' : 'machine'} up on the local network without Tailscale, set server.lanAddresses first: npx --yes stim settings set server.lanAddresses '["en0"]', with this machine's network interface or private IPv4 address.`,
+        );
       }
-      if (
-        !isJsonObject(status.Peer) ||
-        !Object.values(status.Peer).some((p) => isJsonObject(p) && p.ID === options.nodeId)
-      ) {
-        throw new SetupRefusal('That Mac is not on this tailnet');
-      }
-      const gui = await run('launchctl', ['print', `gui/${process.getuid?.()}`]);
-      if (!gui.ok) throw new SetupRefusal('Log in to a GUI session on this Mac before running setup.');
-      return { dnsName: status.Self.DNSName.replace(/\.$/, '') };
+      const problem = await manager.sessionProblem();
+      if (problem) throw new SetupRefusal(problem);
+      return { dnsName: dnsName || null, lan };
+    },
+    fingerprint: () => keyFingerprint(serverIdentity().publicKey),
+    async firewall() {
+      if (platform !== 'darwin') return null;
+      const result = await run('/usr/libexec/ApplicationFirewall/socketfilterfw', ['--getglobalstate']);
+      const state = result.ok ? /State = (\d)/.exec(result.stdout)?.[1] : undefined;
+      return state === undefined ? null : state !== '0';
     },
     claim: setupClaim,
     write: writeSetupJournal,
@@ -407,11 +440,13 @@ export function defaultSetupDeps(): SetupDeps {
     prepareRoute,
     recordRoute: recordServiceRoute,
     async createRoute(args) {
-      const result = await run(binary() ?? 'tailscale', args);
+      const result = await run(binary() ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
-    records: (now) => [...readBuildClients(now), ...readDeviceHostClients(now)],
-    grant: grantDevice,
+    records: () => [...readBuildClients(), ...readDeviceHostClients()],
+    watchRecords: watchClientRegistries,
+    storeSecret: storeSetupSecret,
+    dropSecret: dropSetupSecret,
     panes: hostPermissionPanes,
     requestPermissions: requestHostPermissions,
     async openPane(pane) {
@@ -419,7 +454,7 @@ export function defaultSetupDeps(): SetupDeps {
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     async toolchain(options) {
-      const env = applyServeEnvironment(loginShellEnvironment() ?? process.env, options.env, options.pathPrepend);
+      const env = applyServeEnvironment(discoverToolchain(process.env).env, options.env, options.pathPrepend);
       const host = new BuildHost({
         worker: join(dirname(bundledStim().cli), 'offload-worker.mjs'),
         env,
@@ -439,8 +474,7 @@ export function defaultSetupDeps(): SetupDeps {
 
 function requireApprovalMode(deps: SetupDeps, options: SetupOptions): void {
   if (deps.tty || options.yes) return;
-  const approved = selectGrants(deps.records(deps.now()), { ...options, now: deps.now() }).filter((g) => g.approved);
-  if (approved.length !== options.capabilities.length)
+  if (selectGrants(deps.records(), options).length !== options.capabilities.length)
     throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
 }
 
@@ -535,7 +569,11 @@ async function checkPermissions(
   }
 }
 
-function toolChecks(tools: BuildToolchain, stimBuild: string | null): [string, boolean, string, string][] {
+function toolChecks(
+  tools: BuildToolchain,
+  stimBuild: string | null,
+  platform: SetupDeps['platform'],
+): [string, boolean, string, string][] {
   return [
     [
       'Xcode',
@@ -555,32 +593,77 @@ function toolChecks(tools: BuildToolchain, stimBuild: string | null): [string, b
       tools.cocoapods ?? 'Missing CocoaPods',
       'brew install cocoapods; or gem install bundler',
     ],
-    ['JDK', !!tools.jdk, tools.jdk ?? 'Missing JDK', 'brew install --cask zulu@17'],
+    [
+      'JDK',
+      !!tools.jdk,
+      tools.jdk ?? 'Missing JDK',
+      platform === 'linux'
+        ? 'Install JDK 17 (for example sudo apt install openjdk-17-jdk-headless) and rerun setup with --env JAVA_HOME=<jdk>'
+        : platform === 'win32'
+          ? 'Install JDK 17 (for example winget install EclipseAdoptium.Temurin.17.JDK) and rerun setup with --env JAVA_HOME=<jdk>'
+          : 'brew install --cask zulu@17',
+    ],
     [
       'Android SDK',
-      !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
+      !!tools.androidSdk,
       tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
-      'Install Android Studio or set ANDROID_HOME',
+      platform === 'linux'
+        ? 'Install the Android SDK in ~/Android/Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'
+        : platform === 'win32'
+          ? 'Install the Android SDK in %LOCALAPPDATA%\\Android\\Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'
+          : 'Install Android Studio or set ANDROID_HOME',
     ],
     [
       'Stim build',
       !!stimBuild && stimBuild === tools.stimBuild,
       `${stimBuild ?? 'unknown'} (setup: ${tools.stimBuild ?? 'unknown'})`,
-      "Install This Mac's Build from Stim Desktop > Settings > Remote Macs",
+      "Install This Mac's Build from Stim Desktop > Settings > Remote Machines",
     ],
   ];
 }
 
+function reportTools(
+  tools: BuildToolchain,
+  opts: SetupOptions,
+  output: SetupOutput,
+  report: StepWriter,
+  platform: SetupDeps['platform'],
+): void {
+  const checks = toolChecks(tools, output.server.stimBuild, platform);
+  for (const [tool, present, detail, fix] of checks) {
+    const appleTool = tool === 'Xcode' || tool === 'iOS runtime' || tool === 'CocoaPods';
+    const needed =
+      platform !== 'darwin'
+        ? !appleTool
+        : opts.capabilities.includes('build') || tool === 'Xcode' || tool === 'iOS runtime' || tool === 'Stim build';
+    output.tools.push({ tool, state: !needed ? 'not-needed' : present ? 'present' : 'missing', detail, fix });
+    report(
+      `tools.${tool}`,
+      present || !needed ? 'ok' : 'pending',
+      tool,
+      !needed
+        ? platform !== 'darwin'
+          ? `Not needed on ${platform === 'win32' ? 'Windows' : 'Linux'}, which builds Android only.`
+          : 'Not needed for hosted simulators.'
+        : present
+          ? detail
+          : `${detail}; ${opts.capabilities.includes('build') ? 'builds requiring this tool' : 'hosted simulators'} will not work.`,
+      present || !needed ? undefined : fix,
+      { hidden: present || !needed },
+    );
+  }
+}
+
 const capabilityNoun = (capability: SetupCapability) => (capability === 'build' ? 'builds' : 'hosted simulators');
 
-function approvalQuestion(concise: boolean, name: string, capability: SetupCapability, nodeId: string): string {
+function approvalQuestion(concise: boolean, capability: SetupCapability, here: string): string {
   if (!concise) {
-    const verb = capability === 'build' ? 'build on this Mac' : 'host simulators on this Mac';
-    return `${name} (node ${nodeId.slice(0, 4)}...) asks to ${verb}. Approve? [Y/n] `;
+    const verb = capability === 'build' ? `build on ${here}` : `host simulators on ${here}`;
+    return `Let the machine holding this setup ticket ${verb}? [Y/n] `;
   }
   const action =
     capability === 'build' ? 'build here (runs its project code' : 'host simulators here (runs its app code';
-  return `Approve ${name} to ${action} on this Mac)? [Y/n] `;
+  return `Approve the machine holding this ticket to ${action} on ${here})? [Y/n] `;
 }
 
 function serverText(desktop: boolean, decision: string, version: string): string {
@@ -601,7 +684,7 @@ function printSuccess(
 ): void {
   const { printer, gaps, exit } = concise;
   const machine = output.route.dnsName?.split('.')[0] ?? output.label;
-  const client = output.granted[0]?.client.name ?? options.nodeId;
+  const client = output.granted[0]?.client.name ?? 'the requesting machine';
   const names = { build: 'build', 'device-host': 'host simulators' };
   const what = options.capabilities.map((c) => names[c]).join(' and ');
   if (exit === 0) printer.headline('ok', `${machine} is ready to ${what} for ${client}`);
@@ -620,6 +703,7 @@ function printSuccess(
     ...(output.managed && output.granted.length ? [`stim-server service uninstall --label ${output.label}`] : []),
   ];
   if (undo.length) printer.dim(`To undo: ${undo.join('; ')}`);
+  if (output.fingerprint) printer.dim(`Server key fingerprint: ${output.fingerprint}`);
 }
 
 function summarizeSetup(
@@ -648,8 +732,10 @@ function summarizeSetup(
     `Summary: ${output.label}, port ${output.port}, route https ${output.route.port}; ${output.granted.length} grant(s).`,
   );
   log(`Server: ${output.server.version}; ${output.managed ? output.label : 'existing app server'}.`);
+  if (output.fingerprint) log(`Server key fingerprint: ${output.fingerprint}.`);
+  if (output.lan) log(`Local network: ${output.lan.join(', ')}.`);
   for (const grant of output.granted) {
-    log(`${grant.capability}: ${grant.client.name} (${grant.client.nodeId}), request ${grant.id}.`);
+    log(`${grant.capability}: ${grant.client.name}, request ${grant.id}.`);
     log(`Undo: stim-server devices revoke ${grant.id}`);
   }
   log(
@@ -660,12 +746,48 @@ function summarizeSetup(
   if (output.managed) log(`Undo: stim-server service uninstall --label ${output.label}`);
 }
 
+/**
+ * Waits for the server to report its local network listener, and names what a person must allow before other machines
+ * reach it. Setup never changes the firewall.
+ */
+async function localNetwork(
+  deps: SetupDeps,
+  opts: SetupOptions,
+  desktop: boolean,
+  wait: <T>(work: Promise<T>) => Promise<T>,
+): Promise<{ endpoints: string[]; warnings: string[] }> {
+  const deadline = deps.now() + LAN_WAIT_MS;
+  let lan = (await wait(deps.health(opts.port)))?.lan;
+  while (!lan?.addresses.length && deps.now() < deadline) {
+    await wait(deps.sleep(1000));
+    lan = (await wait(deps.health(opts.port)))?.lan;
+  }
+  if (!lan?.addresses.length)
+    throw new SetupRefusal(
+      'stim-server does not listen on any address server.lanAddresses names. Its log names each entry it cannot use.',
+      false,
+      desktop
+        ? 'Check server.lanAddresses with `npx --yes stim settings get server.lanAddresses`, then quit and reopen Stim Desktop.'
+        : `Check server.lanAddresses with \`npx --yes stim settings get server.lanAddresses\`, and the log \`stim-server service status --label ${opts.label}\` names.`,
+    );
+  const { port } = lan;
+  const endpoints = lan.addresses.map((address) => `ws://${address}:${port}`);
+  if ((await wait(deps.firewall())) !== true) return { endpoints, warnings: [] };
+  const service = desktop ? null : await wait(deps.installed(opts.label));
+  const node = desktop ? "the node that runs Stim Desktop's stim-server" : (service?.node ?? deps.node);
+  return {
+    endpoints,
+    warnings: [
+      `The macOS firewall is on: when macOS asks whether ${node} may accept incoming network connections, choose Allow, or allow it in System Settings > Network > Firewall > Options. Other machines cannot connect until then.`,
+    ],
+  };
+}
+
 export async function runSetup(args: string[], version: string, deps: SetupDeps): Promise<number> {
   const json = args.includes('--json');
   let options: SetupOptions | undefined;
   let journal: SetupJournal = {
     v: 1,
-    client: { nodeId: 'unknown' },
     expiresAt: new Date(deps.now()).toISOString(),
     capabilities: [],
     steps: [],
@@ -677,6 +799,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     label: DEFAULT_LABEL,
     port: DEFAULT_PORT,
     route: { state: 'pending', dnsName: null, port: 7443 },
+    fingerprint: '',
     server: { version, stimBuild: deps.stimBuild },
     managed: false,
     granted: [],
@@ -692,14 +815,19 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
   const chatter = concise ? () => {} : log;
   const gaps: { subject: string; fix: string }[] = [];
   if (!json) printer.banner();
+  const androidOnly = deps.platform !== 'darwin';
+  const here = androidOnly ? 'this machine' : 'this Mac';
+  const serviceNoun =
+    deps.platform === 'linux' ? 'systemd user service' : deps.platform === 'win32' ? 'scheduled task' : 'LaunchAgent';
   const wait = <T>(work: Promise<T>) => interruptible(work, deps.signal);
   let release: (() => void) | undefined;
+  let secretStored = false;
   let active = 'args';
   let writable = true;
   const save = () => {
     if (release && options && writable) {
       try {
-        deps.write(options.ticketHash, journal);
+        deps.write(options.journal, journal);
       } catch (error) {
         writable = false;
         throw error;
@@ -725,25 +853,29 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     printer.step({ ...value, ...view });
   };
   try {
-    options = parseSetupArgs(args, deps.now());
+    options = parseSetupArgs(args, deps.now(), deps.ticket);
     Object.assign(output, { label: options.label, port: options.port });
+    if (androidOnly && options.capabilities.includes('device-host'))
+      throw new SetupRefusal(
+        `Hosting simulators needs a Mac. On ${deps.platform === 'win32' ? 'Windows' : 'Linux'}, run setup with --build only.`,
+      );
     if (options.capabilities.includes('device-host'))
       output.permissions = { screenRecording: 'denied', deviceControl: 'denied' };
     journal = {
       ...journal,
-      client: { nodeId: options.nodeId },
       capabilities: options.capabilities,
       expiresAt: options.expiresAt,
     };
     const preflight = await wait(deps.preflight(options));
     output.route.dnsName = preflight.dnsName;
+    output.fingerprint = deps.fingerprint();
     requireApprovalMode(deps, options);
     release = deps.claim();
     deps.prune(deps.now());
     step('preflight', 'ok', 'Preflight', undefined, undefined, { hidden: true });
     const opts = options;
     let installed: InstalledService | null = null;
-    let host: HostApp | undefined;
+    let host: HostApp | null = null;
     let script = '';
     let desktop = false;
     await deps.withInstallClaim(opts.label, async () => {
@@ -760,13 +892,17 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       desktop = health !== null && installed === null;
       output.managed = !desktop;
       const current = health ?? (installed?.script ? deps.build(installed.script) : null);
-      const decision = setupVersionDecision(current?.version ?? null, version, !desktop);
+      const decision = setupVersionDecision(
+        current && { version: current.version, protocol: health?.protocol, running: health !== null },
+        version,
+        !desktop,
+      );
       const fix = desktop
-        ? `npm install --global @stim-cli/server@${version}`
-        : `stim-server service update --label ${opts.label} --release ${version}`;
+        ? `If Stim Desktop runs this server, update Stim Desktop with Check for Updates in its app menu. Otherwise run npm install --global @stim-cli/server@${version} and restart the server.`
+        : `stim-server service update --label ${opts.label} --release ${version}${opts.noWait ? ' --no-wait' : ''}`;
       if (decision === 'too-old')
         throw new SetupRefusal(
-          `This server predates setup support (${current?.version}); needs >= ${SETUP_MIN_VERSION}. ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
+          `This server predates setup support (${current?.version} speaks protocol ${health?.protocol ?? 1}; setup needs protocol ${SETUP_PROTOCOL}). ${desktop ? "Update and restart the app's server, then rerun setup." : 'Update the service, then rerun setup.'}`,
           false,
           fix,
         );
@@ -779,6 +915,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
             { ...installed, script: installed.script, node: installed.node, port: installed.port },
             { release: version },
             chatter,
+            !opts.noWait,
           ),
         ))
           chatter(note);
@@ -809,12 +946,15 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
           text: serverText(desktop, decision, output.server.version),
         },
       );
-      step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
-      host = await wait(deps.installHost());
-      step('host', 'ok', 'Stim Host', host.app, undefined, { text: 'Stim Host installed' });
-      if (installed?.host) {
-        const app = dirname(dirname(dirname(installed.host)));
-        host = { ...host, executable: installed.host, app, name: basename(app, '.app') };
+      if (!androidOnly) {
+        step('host', 'running', 'Stim Host', undefined, undefined, { running: 'Installing Stim Host' });
+        const installedHost = await wait(deps.installHost());
+        host = installedHost;
+        step('host', 'ok', 'Stim Host', installedHost.app, undefined, { text: 'Stim Host installed' });
+        if (installed?.host) {
+          const app = dirname(dirname(dirname(installed.host)));
+          host = { ...installedHost, executable: installed.host, app, name: basename(app, '.app') };
+        }
       }
       step('service', 'running', 'Service', undefined, undefined, { running: 'Starting the service' });
       if (!desktop) {
@@ -830,115 +970,163 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         'service',
         'ok',
         'Service',
-        desktop ? 'Reusing app server; no LaunchAgent installed.' : `${opts.label} running.`,
+        desktop ? `Reusing app server; no ${serviceNoun} installed.` : `${opts.label} running.`,
         undefined,
-        { text: desktop ? 'reusing the app server (no LaunchAgent)' : `LaunchAgent ${opts.label} running` },
+        { text: desktop ? `reusing the app server (no ${serviceNoun})` : `${serviceNoun} ${opts.label} running` },
       );
     });
-    const previous = desktop ? null : await wait(deps.installed(opts.label));
-    step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
-    const route = await wait(deps.route(opts.port));
-    output.route.state = route.state;
-    output.route.port = route.port;
-    const plan = planServe(route, opts.port, previous?.serve ?? null);
-    if ('refusal' in plan)
-      throw new SetupRefusal(
-        plan.refusal,
-        false,
-        route.state === 'funneled'
-          ? route.ports.map((p) => `tailscale funnel --https=${p} off`).join('\n')
-          : 'tailscale serve status --json',
-      );
-    const prepared = await wait(deps.prepareRoute(opts.port, previous));
-    if (desktop && prepared.create)
-      throw new SetupRefusal(
-        'The app server needs an existing tailnet route; setup cannot record route ownership for it.',
-        false,
-        `tailscale ${prepared.create.join(' ')}`,
-      );
-    let routeCreated = false;
-    let verified: ServeRoute;
-    try {
-      if (prepared.create) {
-        await deps.createRoute(prepared.create);
-        routeCreated = true;
+    if (preflight.lan) {
+      step('lan', 'running', 'Local network', undefined, undefined, {
+        running: 'Checking the local network listener',
+      });
+      const lan = await localNetwork(deps, opts, desktop, wait);
+      output.lan = lan.endpoints;
+      step('lan', 'ok', 'Local network', lan.endpoints.join(', '), undefined, {
+        text: `local network ${lan.endpoints.join(', ')}`,
+      });
+      for (const warning of lan.warnings) {
+        output.warnings.push(warning);
+        printer.clear();
+        log(warning);
       }
-      verified = await wait(deps.route(opts.port));
-      output.route.state = verified.state;
-      output.route.port = verified.port;
-      if (verified.state !== 'routed')
-        throw new SetupRefusal('Tailnet route could not be verified.', false, 'tailscale serve status --json');
-      if (!desktop) await deps.recordRoute(opts.label, opts.port, prepared.record);
-    } catch (error) {
-      if (routeCreated) {
-        try {
-          await deps.createRoute(['serve', `--https=${prepared.record.port}`, 'off']);
-          output.route.state = 'missing';
-        } catch (rollbackError) {
-          throw new SetupRefusal(
-            `${(error as Error).message}; could not remove the route: ${(rollbackError as Error).message}`,
-            false,
-            `tailscale serve --https=${prepared.record.port} off`,
-          );
-        }
-      }
-      throw error;
     }
-    step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`, undefined, {
-      text: `tailnet route https ${verified.port} (no Funnel)`,
-    });
+    if (preflight.dnsName === null) {
+      output.route.state = 'local-network';
+    } else {
+      const previous = desktop ? null : await wait(deps.installed(opts.label));
+      step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
+      const route = await wait(deps.route(opts.port));
+      output.route.state = route.state;
+      output.route.port = route.port;
+      const plan = planServe(route, opts.port, previous?.serve ?? null);
+      if ('refusal' in plan)
+        throw new SetupRefusal(
+          plan.refusal,
+          false,
+          route.state === 'funneled'
+            ? route.ports.map((p) => `tailscale funnel --https=${p} off`).join('\n')
+            : 'tailscale serve status --json',
+        );
+      const prepared = await wait(deps.prepareRoute(opts.port, previous));
+      if (desktop && prepared.create)
+        throw new SetupRefusal(
+          'The app server needs an existing tailnet route; setup cannot record route ownership for it.',
+          false,
+          `tailscale ${prepared.create.join(' ')}`,
+        );
+      let routeCreated = false;
+      let verified: ServeRoute;
+      try {
+        if (prepared.create) {
+          await deps.createRoute(prepared.create);
+          routeCreated = true;
+        }
+        verified = await wait(deps.route(opts.port));
+        output.route.state = verified.state;
+        output.route.port = verified.port;
+        if (verified.state !== 'routed')
+          throw new SetupRefusal('Tailnet route could not be verified.', false, 'tailscale serve status --json');
+        if (!desktop) await deps.recordRoute(opts.label, opts.port, prepared.record);
+      } catch (error) {
+        if (routeCreated) {
+          try {
+            await deps.createRoute(['serve', `--https=${prepared.record.port}`, 'off']);
+            output.route.state = 'missing';
+          } catch (rollbackError) {
+            throw new SetupRefusal(
+              `${(error as Error).message}; could not remove the route: ${(rollbackError as Error).message}`,
+              false,
+              `tailscale serve --https=${prepared.record.port} off`,
+            );
+          }
+        }
+        throw error;
+      }
+      step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`, undefined, {
+        text: `tailnet route https ${verified.port} (no Funnel)`,
+      });
+    }
     step('approve', 'running', 'Access approval', `Waiting until ${opts.expiresAt}.`, undefined, {
       running: `Waiting for approval until ${opts.expiresAt}`,
     });
-    const declined = new Set<SetupCapability>();
     requireApprovalMode(deps, opts);
-    while (deps.now() < Date.parse(opts.expiresAt)) {
-      const remaining = opts.capabilities.filter(
-        (c) => !declined.has(c) && !journal.granted.some((g) => g.capability === c),
+    const recorded = (capabilities: SetupCapability[]) =>
+      selectGrants(deps.records(), { journal: opts.journal, capabilities }).filter(
+        (grant) => !journal.granted.some((g) => g.capability === grant.capability),
       );
-      if (!remaining.length) break;
-      const grants = selectGrants(deps.records(deps.now()), { ...opts, capabilities: remaining, now: deps.now() });
-      for (const { capability, record, approved } of grants) {
-        if (!approved && !opts.yes && !deps.tty)
-          throw new SetupRefusal('To approve requests, rerun with --yes or in a terminal.');
-        if (!approved && !opts.yes) {
-          printer.clear();
-          if (!concise)
-            log(
-              capability === 'build'
-                ? 'This runs its project code on this Mac to build.'
-                : 'This runs its native app code in session-owned simulators on this Mac.',
-            );
-          const question = approvalQuestion(concise, record.name, capability, opts.nodeId);
-          const yes = await wait(deps.confirm(question, Math.max(1, Date.parse(opts.expiresAt) - deps.now())));
-          if (deps.now() >= Date.parse(opts.expiresAt)) break;
-          if (!yes) {
-            declined.add(capability);
-            printer.clear();
-            if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
-            step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
-            continue;
-          }
-        }
-        if (deps.now() >= Date.parse(opts.expiresAt)) break;
-        if (!approved && deps.grant(record.id, [capability], deps.now()) !== 'granted')
-          throw new SetupRefusal(`Request ${record.id} lapsed or changed; rerun with a new request.`);
-        journal.granted.push({ capability, id: record.id });
-        output.granted.push({ capability, id: record.id, client: { nodeId: opts.nodeId, name: record.name } });
-        step(
-          `approve.${capability}`,
-          'ok',
-          `${approved ? 'Already approved' : 'Approved'} ${record.name} (${opts.nodeId}) for ${capability === 'build' ? 'builds' : 'hosted simulators'}`,
-          `request ${record.id}`,
-          undefined,
-          {
-            text: `${approved ? 'already approved' : 'approved'} ${record.name} for ${capabilityNoun(capability)}`,
-          },
+    const note = (grant: { capability: SetupCapability; record: PairedDevice }, already: boolean) => {
+      journal.granted.push({ capability: grant.capability, id: grant.record.id });
+      output.granted.push({ capability: grant.capability, id: grant.record.id, client: { name: grant.record.name } });
+      step(
+        `approve.${grant.capability}`,
+        'ok',
+        `${already ? 'Already approved' : 'Approved'} ${grant.record.name} for ${grant.capability === 'build' ? 'builds' : 'hosted simulators'}`,
+        `request ${grant.record.id}`,
+        undefined,
+        {
+          text: `${already ? 'already approved' : 'approved'} ${grant.record.name} for ${capabilityNoun(grant.capability)}`,
+        },
+      );
+    };
+    for (const grant of recorded(opts.capabilities)) note(grant, true);
+    const approved: SetupCapability[] = [];
+    for (const capability of opts.capabilities) {
+      if (journal.granted.some((g) => g.capability === capability)) continue;
+      if (!opts.yes) {
+        printer.clear();
+        if (!concise)
+          log(
+            capability === 'build'
+              ? `This runs its project code on ${here} to build.`
+              : 'This runs its native app code in session-owned simulators on this Mac.',
+          );
+        const yes = await wait(
+          deps.confirm(
+            approvalQuestion(concise, capability, here),
+            Math.max(1, Date.parse(opts.expiresAt) - deps.now()),
+          ),
         );
+        if (deps.now() >= Date.parse(opts.expiresAt)) break;
+        if (!yes) {
+          printer.clear();
+          if (!(concise && display.tty)) deps.stderr(`stim-server: ${capability} approval refused.`);
+          step(`approve.${capability}`, 'failed', `${capability} refused`, 'No approval given.');
+          continue;
+        }
       }
-      if (opts.capabilities.every((c) => declined.has(c) || journal.granted.some((g) => g.capability === c))) break;
-      await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now()))));
+      approved.push(capability);
     }
+    if (approved.length && deps.now() < Date.parse(opts.expiresAt)) {
+      let changed = false;
+      let sleeping: AbortController | undefined;
+      const stopWatching = deps.watchRecords(() => {
+        changed = true;
+        sleeping?.abort();
+      });
+      try {
+        deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
+        secretStored = true;
+        const waiting = preflight.lan
+          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          : deps.fromDoctor
+            ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
+            : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
+        step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
+        while (deps.now() < Date.parse(opts.expiresAt)) {
+          changed = false;
+          for (const grant of recorded(approved)) note(grant, false);
+          if (approved.every((c) => journal.granted.some((g) => g.capability === c))) break;
+          if (changed) continue;
+          sleeping = new AbortController();
+          await wait(deps.sleep(Math.min(1000, Math.max(0, Date.parse(opts.expiresAt) - deps.now())), sleeping.signal));
+          sleeping = undefined;
+        }
+      } finally {
+        sleeping?.abort();
+        stopWatching();
+      }
+    }
+
     step(
       'approve',
       journal.granted.length === opts.capabilities.length ? 'ok' : 'pending',
@@ -954,24 +1142,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       step('tools', 'running', 'Tools', undefined, undefined, { running: 'Checking build tools' });
       const tools = await wait(deps.toolchain(opts));
       if (!tools) throw new SetupRefusal('Could not read the local build toolchain.');
-      const checks = toolChecks(tools, output.server.stimBuild);
-      for (const [tool, present, detail, fix] of checks) {
-        const needed =
-          opts.capabilities.includes('build') || tool === 'Xcode' || tool === 'iOS runtime' || tool === 'Stim build';
-        output.tools.push({ tool, state: !needed ? 'not-needed' : present ? 'present' : 'missing', detail, fix });
-        step(
-          `tools.${tool}`,
-          present || !needed ? 'ok' : 'pending',
-          tool,
-          !needed
-            ? 'Not needed for hosted simulators.'
-            : present
-              ? detail
-              : `${detail}; ${opts.capabilities.includes('build') ? 'builds requiring this tool' : 'hosted simulators'} will not work.`,
-          present || !needed ? undefined : fix,
-          { hidden: present || !needed },
-        );
-      }
+      reportTools(tools, opts, output, step, deps.platform);
       step('tools', 'ok', 'Tools', 'Checked; installs nothing.', undefined, {
         text: 'build tools ready',
         hidden: output.tools.some((t) => t.state === 'missing'),
@@ -999,6 +1170,13 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     if (!(concise && display.tty)) deps.stderr(`stim-server: ${code ? `${code}: ` : ''}${message}`);
     output.warnings.push(message);
   } finally {
+    if (secretStored && options) {
+      try {
+        deps.dropSecret(options.journal);
+      } catch (error) {
+        deps.stderr(`stim-server: could not delete the setup ticket's secret: ${(error as Error).message}`);
+      }
+    }
     try {
       journal.steps.push({
         id: 'summary',

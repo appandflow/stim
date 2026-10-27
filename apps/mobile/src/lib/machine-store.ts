@@ -1,4 +1,5 @@
 import { createStore } from 'zustand/vanilla';
+import { validHomeId } from '@stim-cli/core/workspace-link';
 
 import type { ConnectionState, StimConnection } from '@/lib/connection';
 import {
@@ -22,9 +23,13 @@ export interface MachineLink {
   home: string | null;
   /** When the connection last dropped; null while connected or before the first connection. */
   disconnectedAt: number | null;
+  /** Whether the Mac's last `hello` listed the `status-views` feature; null before the first `hello`. */
+  statusViews: boolean | null;
 }
 
 export interface MachineSnapshot {
+  /** The authenticated open state that delivered this snapshot, replaced on reconnect. */
+  source?: Extract<ConnectionState, { kind: 'open' }>;
   status: StatusPayload;
   /** The machine's name when the snapshot was cached, for the rows shown before the pairings load. */
   name: string;
@@ -51,6 +56,7 @@ export const IDLE_LINK: MachineLink = {
   missing: false,
   home: null,
   disconnectedAt: null,
+  statusViews: null,
 };
 
 const CACHE_WRITE_DELAY_MS = 5000;
@@ -152,7 +158,16 @@ export function createMachineStore({
     },
     patchLink(id: string, patch: Partial<MachineLink>) {
       const before = store.getState().links[id];
-      store.setState((state) => ({ links: { ...state.links, [id]: { ...(state.links[id] ?? IDLE_LINK), ...patch } } }));
+      const serverId = patch.state?.kind === 'open' ? patch.state.server.id : undefined;
+      store.setState((state) => ({
+        links: { ...state.links, [id]: { ...(state.links[id] ?? IDLE_LINK), ...patch } },
+        ...(validHomeId(serverId)
+          ? {
+              macs:
+                state.macs?.map((mac) => (mac.id === id ? { ...mac, serverId: serverId.toLowerCase() } : mac)) ?? null,
+            }
+          : {}),
+      }));
       if (before?.state.kind === 'open' && patch.state && patch.state.kind !== 'open') write(id);
     },
     removeLink(id: string) {
@@ -167,9 +182,14 @@ export function createMachineStore({
       const state = store.getState();
       const prev = state.snapshots[id];
       const status = shareStatus(prev?.status ?? null, payload);
-      if (prev && prev.status === status && prev.cachedSeenAt === null) return;
       const name = state.macs?.find((mac) => mac.id === id)?.name ?? prev?.name ?? '';
-      const snapshots = { ...state.snapshots, [id]: { status, name, cachedSeenAt: null } };
+      const link = state.links[id];
+      const source = link?.state.kind === 'open' ? link.state : undefined;
+      if (prev && prev.status === status && prev.cachedSeenAt === null && prev.source === source) return;
+      const snapshots = {
+        ...state.snapshots,
+        [id]: { status, name, cachedSeenAt: null, ...(source ? { source } : {}) },
+      };
       store.setState({
         snapshots,
         ...(prev?.status === status ? {} : homeItemsOf({ ...state, snapshots })),

@@ -1,54 +1,19 @@
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import {
+  AgentDriverUnavailable,
+  type HostedAgentApp,
+  type HostedAgentDevice,
+  type HostedAgentDriver,
+} from '@stim-cli/agent-driver';
 import type { HostedAgentGrant } from '@stim-cli/core/state';
 
-export type HostedAgentDevice = { session: string } & (
-  | { udid: string; serial?: never; avdName?: never }
-  | { serial: string; avdName: string; udid?: never }
-);
-
-/** One installed hosted app and its process or owned device. */
-export type HostedAgentApp = {
-  client: string;
-  session: string;
-  bundleId: string;
-} & ({ pid: number; udid?: never; serial?: never; avdName?: never } | (HostedAgentDevice & { pid?: never }));
-
-/**
- * The host side of one driving tool. `HostedAgentHost` calls it; a driver never decides which client or
- * session may use it.
- */
-export interface HostedAgentDriver {
-  readonly name: Exclude<HostedAgentGrant['driver'], 'none'>;
-  /** Starts the host daemon under an ownership claim whose child is the daemon; idempotent. */
-  start(): Promise<void>;
-  /** Stops the daemon with identity-checked signals and releases its claim; resolves only once it is gone. */
-  stop(): Promise<void>;
-  /** Issues a grant scoped to exactly one hosted app. Refuses with `AgentDriverUnavailable` when it cannot scope. */
-  issue(app: HostedAgentApp): Promise<HostedAgentGrant>;
-  /** Invalidates a session's grant and lease. */
-  revoke(session: string): Promise<void>;
-  /** Forwards one request the host already authenticated to the loopback daemon. */
-  forward(session: string, request: IncomingMessage, response: ServerResponse): void;
-  /** Calls `listener` once for each daemon run that exits without `stop()`; a driver keeps one listener. */
-  onExit(listener: () => void): void;
-}
-
-/** The driver cannot run or cannot scope an app; the message is safe to show a client. */
-export class AgentDriverUnavailable extends Error {}
-
-export const AGENT_ROUTE_PREFIX = '/device-host/agent/';
-
-export function agentRoute(session: string): string {
-  return `${AGENT_ROUTE_PREFIX}${session}/`;
-}
-
-/** A 256-bit bearer secret in the alphabet `parseHostedAgentGrant` accepts. */
-export function newAgentToken(): string {
-  return randomBytes(32).toString('base64url');
-}
+type Resolved = HostedAgentDriver | null | Promise<HostedAgentDriver | null>;
 
 export type AgentAccess = { grant: HostedAgentGrant; notice?: string };
+
+/** Where an agent request came from: a tailnet node, or null when none identifies it, or an authenticated client link. */
+export type AgentPeer = { node: string | null } | { client: string };
 
 interface Entry {
   app: HostedAgentApp;
@@ -58,11 +23,21 @@ interface Entry {
 }
 
 export interface HostedAgentHostOptions {
-  /** The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. */
-  resolve: () => HostedAgentDriver | null;
-  resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => HostedAgentDriver | null;
-  /** The tailnet node a client's approved device-host credential is pinned to, or null once it is not approved. */
-  nodeOf: (client: string) => string | null;
+  /**
+   * The driver the host's `hosting.agentDriver` names right now, or null for none. Read when no driver runs. An
+   * `AgentDriverUnavailable` rejection leaves the app without agent control and carries the reason to the client.
+   */
+  resolve: () => Resolved;
+  resolveDevice?: (app: HostedAgentDevice, stopping?: boolean) => Resolved;
+  /**
+   * Whether a request from `from` may use `client`'s agent grant: the client must still have its device-host approval.
+   * A request through the tailnet route names its tailnet node, which the host may also require to be the node the
+   * client's authenticated connection came from. A request over `device-host.agent.link` names the client key that
+   * authenticated the link, which must be `client`.
+   */
+  approved: (client: string, from: AgentPeer) => boolean;
+  /** Called after a session's app stopped and its grant was withdrawn, so the host can end what still carries it. */
+  withdrawn?: (session: string) => void;
   strictStop?: boolean;
   restartDelayMs?: number;
   maxRestarts?: number;
@@ -138,7 +113,12 @@ export class HostedAgentHost {
         return this.access(app.session)!;
       if (existing) await this.drop(app.session, false);
       if (this.closed) return none();
-      const driver = this.active ?? this.options.resolve();
+      let driver: HostedAgentDriver | null;
+      try {
+        driver = this.active ?? (await this.options.resolve());
+      } catch (error) {
+        return this.remember(app, none(this.reason(error)));
+      }
       if (!driver) return this.remember(app, none());
       if (this.active !== driver) {
         try {
@@ -167,7 +147,7 @@ export class HostedAgentHost {
     this.entries.set(app.session, {
       app,
       grant: access.grant,
-      digest: access.grant.driver === 'none' ? Buffer.alloc(0) : digest(access.grant.token),
+      digest: 'token' in access.grant ? digest(access.grant.token) : Buffer.alloc(0),
       ...(access.notice ? { notice: access.notice } : {}),
     });
     return access;
@@ -183,7 +163,7 @@ export class HostedAgentHost {
     return this.serialize(async () => {
       let child = this.devices.get(session);
       if (!child && device && this.options.resolveDevice) {
-        const driver = this.options.resolveDevice(
+        const driver = await this.options.resolveDevice(
           { session, ...(typeof device === 'string' ? { udid: device } : device) },
           true,
         );
@@ -197,6 +177,7 @@ export class HostedAgentHost {
         await child.close();
         this.devices.delete(session);
       } else await this.drop(session);
+      this.options.withdrawn?.(session);
     });
   }
 
@@ -264,13 +245,21 @@ export class HostedAgentHost {
     });
   }
 
-  authorize(session: string, token: string | null, node: string | null): 'ok' | 'unknown' | 'forbidden' {
+  /** The client whose agent grant is live for `session`, or undefined. */
+  holder(session: string): string | undefined {
     const child = this.devices.get(session);
-    if (child) return child.authorize(session, token, node);
+    if (child) return child.holder(session);
+    const entry = this.entries.get(session);
+    return entry && entry.grant.driver !== 'none' ? entry.app.client : undefined;
+  }
+
+  /** Agent control needs the session's token; `approved` also checks where the request came from. */
+  authorize(session: string, token: string | null, from: AgentPeer = { node: null }): 'ok' | 'unknown' | 'forbidden' {
+    const child = this.devices.get(session);
+    if (child) return child.authorize(session, token, from);
     const entry = this.entries.get(session);
     if (!entry || entry.grant.driver === 'none') return 'unknown';
-    const expected = this.options.nodeOf(entry.app.client);
-    if (!token || !expected || node !== expected) return 'forbidden';
+    if (!token || !this.options.approved(entry.app.client, from)) return 'forbidden';
     const presented = digest(token);
     return presented.length === entry.digest.length && timingSafeEqual(presented, entry.digest) ? 'ok' : 'forbidden';
   }
@@ -278,20 +267,28 @@ export class HostedAgentHost {
   forward(
     session: string,
     token: string | null,
-    node: string | null,
     request: IncomingMessage,
     response: ServerResponse,
+    from: AgentPeer = { node: null },
   ): 'ok' | 'unknown' | 'forbidden' {
     const child = this.devices.get(session);
-    if (child) return child.forward(session, token, node, request, response);
-    const verdict = this.authorize(session, token, node);
+    if (child) return child.forward(session, token, request, response, from);
+    const verdict = this.authorize(session, token, from);
     if (verdict === 'ok' && this.active) this.active.forward(session, request, response);
     else if (verdict === 'ok')
       response.writeHead(503, { 'content-type': 'text/plain' }).end('Agent control is not running.\n');
     else
       response
         .writeHead(verdict === 'unknown' ? 404 : 403, { 'content-type': 'text/plain' })
-        .end(verdict === 'unknown' ? 'Not found.\n' : 'Forbidden.\n');
+        .end(
+          verdict === 'unknown'
+            ? 'Not found.\n'
+            : 'node' in from && from.node === null
+              ? 'Forbidden. The server could not identify the requesting tailnet node.\n'
+              : 'client' in from && !this.options.approved(from.client, from)
+                ? 'Forbidden. This machine no longer has device-host approval on the host.\n'
+                : 'Forbidden.\n',
+        );
     return verdict;
   }
 

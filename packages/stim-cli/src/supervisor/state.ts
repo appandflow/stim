@@ -1,6 +1,7 @@
 import {
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   updateWorkspaceState,
   clearWorkspaceStateKey,
 } from '../workspace/workspace-state.ts';
@@ -14,6 +15,12 @@ import type { ProcessRecord } from '@stim-cli/core/process-identity';
 
 export const MODE_BARE = 'bare-inproc';
 export const MODE_EXPO = 'expo-child';
+export const MODE_COMMAND = 'command-child';
+
+export function workspaceDevServerMode(root: string, isExpo: boolean): string {
+  const mode = readWorkspaceState(root)?.supervisor?.mode;
+  return typeof mode === 'string' ? mode : isExpo ? MODE_EXPO : MODE_BARE;
+}
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 
@@ -22,6 +29,7 @@ export interface WorkspaceLaunchRecord {
   deviceId: string;
   metroPort: number | null;
   release: boolean;
+  runtime?: 'process';
   launchedAt: string;
 }
 
@@ -93,6 +101,7 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   if (typeof record.deviceId !== 'string' || record.deviceId.length === 0) return null;
   if (record.metroPort !== null && typeof record.metroPort !== 'number') return null;
   if (typeof record.release !== 'boolean') return null;
+  if (record.runtime !== undefined && (record.runtime !== 'process' || record.metroPort !== null)) return null;
   if (typeof record.launchedAt !== 'string') return null;
   return record as WorkspaceLaunchRecord;
 }
@@ -118,6 +127,16 @@ export function writeWorkspaceLaunch(
     const launches = state.launches && typeof state.launches === 'object' ? state.launches : {};
     return { ...state, launches: { ...launches, [deviceSlotKey(platform, slot)]: record } };
   });
+}
+
+/** Records a launch after asynchronously acquiring the workspace state lock. */
+export function writeWorkspaceLaunchAsync(
+  root: string,
+  platform: WorkspaceLaunchPlatform,
+  record: WorkspaceLaunchRecord,
+  slot = 'default',
+): Promise<void> {
+  return withWorkspaceStateLockAsync(root, () => writeWorkspaceLaunch(root, platform, record, slot));
 }
 
 export function clearWorkspaceLaunches(root: string, slot: string): void {

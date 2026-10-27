@@ -53,9 +53,19 @@ jest.mock('react-native-transformer-text-input', () => ({
 
 const scanned = {
   type: 'qr',
-  data: JSON.stringify({ v: 1, name: 'Fixture Mac', endpoint: 'ws://127.0.0.1:1', pairingToken: 'fixture-token' }),
+  data: JSON.stringify({
+    v: 2,
+    name: 'Fixture Mac',
+    endpoint: 'ws://127.0.0.1:1',
+    pairingToken: 'TzVwCxX0F3_3bAXKpgOSMq7xNgGMdHUpcnWL3yIrj5w',
+    fingerprint: 'kM6qZt0yD3R8oN1vWlFc2sB9eHjXaQ4uYiPg7rTkLmE',
+  }),
 } as BarcodeScanningResult;
 const pairing = jest.mocked(pair);
+
+const scan = (data: BarcodeScanningResult = scanned) =>
+  act(async () => screen.getByTestId('camera').props.onBarcodeScanned(data));
+const connect = () => act(async () => fireEvent.press(screen.getByText('Connect')));
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -72,6 +82,7 @@ test('a failed QR stays paused, including queued scans, until Retry', async () =
   );
   const callback = screen.getByTestId('camera').props.onBarcodeScanned as (result: BarcodeScanningResult) => void;
   await act(async () => callback(scanned));
+  await connect();
   expect(pairing).toHaveBeenCalledTimes(1);
   expect(screen.getByText('Cannot reach Fixture Mac')).toBeTruthy();
   await act(async () => {
@@ -85,7 +96,8 @@ test('a failed QR stays paused, including queued scans, until Retry', async () =
 
   await fireEvent.press(screen.getByText('Retry'));
   expect(screen.queryByText('Cannot reach Fixture Mac')).toBeNull();
-  await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
+  await scan();
+  await connect();
   expect(pairing).toHaveBeenCalledTimes(2);
   expect(screen.getByText('Cannot reach Fixture Mac')).toBeTruthy();
 });
@@ -98,14 +110,16 @@ test('manual choice clears the failed scan and returning to the camera permits a
       </I18nProvider>
     </GestureHandlerRootView>,
   );
-  await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
+  await scan();
+  await connect();
   await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
   expect(screen.queryByText('Cannot reach Fixture Mac')).toBeNull();
   expect(screen.queryByTestId('camera')).toBeNull();
   expect(screen.getByText('Endpoint')).toBeTruthy();
 
   await fireEvent.press(screen.getByText('Scan a QR Code Instead'));
-  await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
+  await scan();
+  await connect();
   expect(pairing).toHaveBeenCalledTimes(2);
 });
 
@@ -122,6 +136,55 @@ test('an unrelated QR can be followed by a pairing QR without Retry', async () =
   );
   expect(pairing).not.toHaveBeenCalled();
   expect(screen.queryByText('Retry')).toBeNull();
-  await act(async () => screen.getByTestId('camera').props.onBarcodeScanned(scanned));
+  await scan();
+  await connect();
   expect(pairing).toHaveBeenCalledTimes(1);
+});
+
+const remote = (endpoint: string) => ({ ...scanned, data: JSON.stringify({ ...JSON.parse(scanned.data), endpoint }) });
+
+test('a scanned code shows its host and connects only after Connect', async () => {
+  await render(
+    <GestureHandlerRootView>
+      <I18nProvider i18n={i18n}>
+        <Pair />
+      </I18nProvider>
+    </GestureHandlerRootView>,
+  );
+  await scan(remote('wss://evil.example.com:7443'));
+  expect(pairing).not.toHaveBeenCalled();
+  expect(screen.getByText('evil.example.com')).toBeTruthy();
+  expect(screen.getByText(/not a Tailscale/)).toBeTruthy();
+
+  await fireEvent.press(screen.getByText('Cancel'));
+  expect(pairing).not.toHaveBeenCalled();
+  expect(screen.getByTestId('camera').props.onBarcodeScanned).toBeDefined();
+
+  await scan(remote('wss://mac.tail1234.ts.net'));
+  expect(screen.getByText('mac.tail1234.ts.net')).toBeTruthy();
+  expect(screen.queryByText(/not a Tailscale/)).toBeNull();
+  await fireEvent.press(screen.getByText('Cancel'));
+  await scan(remote('ws://127.0.0.1:1'));
+  expect(screen.queryByText(/not a Tailscale/)).toBeNull();
+});
+
+test('a typed endpoint also waits for Connect, and Cancel keeps what was typed', async () => {
+  await render(
+    <GestureHandlerRootView>
+      <I18nProvider i18n={i18n}>
+        <Pair />
+      </I18nProvider>
+    </GestureHandlerRootView>,
+  );
+  await fireEvent.press(screen.getByText('Enter the Endpoint and Token Instead'));
+  await fireEvent.changeText(screen.getByLabelText('Endpoint'), 'wss://evil.example.com');
+  await fireEvent.changeText(screen.getByLabelText('Pairing token'), 'kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
+  await fireEvent.press(screen.getByText('Pair'));
+  await screen.findByText('evil.example.com');
+  expect(pairing).not.toHaveBeenCalled();
+
+  await fireEvent.press(screen.getByText('Cancel'));
+  expect(screen.getByLabelText('Endpoint').props.value).toBe('wss://evil.example.com');
+  expect(screen.getByLabelText('Pairing token').props.defaultValue).toBe('kp7CvKCHww1rpbHjqsuHFhKCp0yAlBBLVKNdFQ0ngI4');
+  expect(pairing).not.toHaveBeenCalled();
 });

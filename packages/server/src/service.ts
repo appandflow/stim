@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
@@ -17,30 +16,34 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest } from '@stim-cli/core/state';
+import { isJsonObject, stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
 import {
   answersAs,
   DEFAULT_LABEL,
-  parseInstalledPlist,
-  parseLaunchctlPrint,
   planServe,
-  renderPlist,
-  argumentsWithScript,
+  normalizeEnv,
   ServiceError,
   signatureProblem,
   unusedInstalls,
   type InstalledService,
-  type LaunchdJob,
   type ServeRecord,
   type ServerBuild,
   type ServiceSpec,
   lastLines,
 } from './service-plist.ts';
-import { hostPermissionPanes, installHostApp, requestHostPermissions, type HostApp } from './stim-host.ts';
-import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from './tailscale.ts';
+import {
+  run,
+  serviceManager,
+  serviceManagerOrNull,
+  serviceRoot,
+  type Run,
+  type ServiceJob,
+  type ServiceManager,
+} from './service-manager.ts';
+import { hostPermissionPanes, requestHostPermissions, type HostApp } from './stim-host.ts';
+import { findTailscale, readTailscaleStatus, serveCommand, serveRoute } from '@stim-cli/transport-tailscale';
 import type { StartupState } from './startup.ts';
 
-const LAUNCHCTL_TIMEOUT_MS = 15_000;
 const HEALTH_TIMEOUT_MS = 5_000;
 const HEALTH_WAIT_MS = 15_000;
 const UNLOAD_WAIT_MS = 45_000;
@@ -53,41 +56,19 @@ export interface ServiceOptions {
   serve: boolean;
 }
 
-interface Run {
-  ok: boolean;
-  stdout: string;
-  stderr: string;
-}
-
-export function run(
-  file: string,
-  args: string[],
-  env: NodeJS.ProcessEnv = process.env,
-  timeout: number = LAUNCHCTL_TIMEOUT_MS,
-): Promise<Run> {
-  return new Promise((resolve) => {
-    execFile(
-      file,
-      args,
-      { env, timeout, killSignal: 'SIGKILL', encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
-      (error, stdout, stderr) => resolve({ ok: !error, stdout, stderr: stderr || (error ? error.message : '') }),
-    );
-  });
-}
-
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function requireMacOs(): void {
-  if (process.platform !== 'darwin') {
-    throw new ServiceError(
-      'stim-server service manages a launchd LaunchAgent and runs only on macOS. On this system, start stim-server from your own service manager.',
-    );
-  }
-}
+const FILE_NOUNS = { launchd: 'plist', systemd: 'unit', taskscheduler: 'service file' } as const;
+const START_COMMANDS = {
+  launchd: 'launchctl bootstrap',
+  systemd: 'systemctl --user enable and start',
+  taskscheduler: 'schtasks /Create and /Run',
+} as const;
+const fileNoun = () => FILE_NOUNS[serviceManager().name];
+const startCommand = () => START_COMMANDS[serviceManager().name];
 
-const domain = () => `gui/${process.getuid?.() ?? 501}`;
-const plistPath = (label: string) => join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
-const logPath = (label: string) => join(homedir(), 'Library', 'Logs', 'Stim', `${label}.log`);
+const plistPath = (label: string) => serviceManager().file(label);
+const logPath = (label: string) => serviceManager().logPath(label);
 
 /**
  * The `node` to put in the plist: `process.execPath` is a resolved path such as a Homebrew Cellar version that
@@ -98,7 +79,7 @@ export function stableNode(pathEnv: string | undefined): string {
   for (const dir of (pathEnv ?? '').split(delimiter)) {
     if (!dir) continue;
     try {
-      const candidate = join(dir, 'node');
+      const candidate = join(dir, process.platform === 'win32' ? 'node.exe' : 'node');
       if (realpathSync(candidate) === real) return candidate;
     } catch {
       continue;
@@ -107,23 +88,8 @@ export function stableNode(pathEnv: string | undefined): string {
   return real;
 }
 
-async function loaded(label: string): Promise<LaunchdJob | null> {
-  const printed = await run('launchctl', ['print', `${domain()}/${label}`]);
-  if (printed.ok) return parseLaunchctlPrint(printed.stdout);
-  if (/could not find service/i.test(printed.stderr)) return null;
-  throw new ServiceError(`launchctl print ${label} failed: ${printed.stderr.trim()}`);
-}
-
-async function readInstalled(label: string): Promise<InstalledService | null> {
-  const path = plistPath(label);
-  if (!existsSync(path)) return null;
-  const converted = await run('plutil', ['-convert', 'json', '-o', '-', path]);
-  if (!converted.ok)
-    throw new ServiceError(
-      `Could not read ${path} to check that install wrote it: ${converted.stderr.trim()}. Fix or remove the file, then run this again.`,
-    );
-  return parseInstalledPlist(JSON.parse(converted.stdout));
-}
+const loaded = (label: string): Promise<ServiceJob | null> => serviceManager().job(label);
+const readInstalled = (label: string): Promise<InstalledService | null> => serviceManager().read(label);
 
 function alive(pid: number): boolean {
   try {
@@ -146,15 +112,33 @@ async function portFree(port: number): Promise<boolean> {
 }
 
 async function listenerPids(port: number): Promise<string[]> {
+  if (process.platform === 'win32') {
+    const listed = await run('netstat', ['-ano']);
+    return listed.ok ? netstatListeners(listed.stdout, port) : [];
+  }
   const listener = await run('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN', '-t']);
   return listener.ok ? listener.stdout.trim().split(/\s+/).filter(Boolean) : [];
+}
+
+/**
+ * The pids listening on TCP `port` in `netstat -ano` output. netstat localizes the state column, so a listener is a
+ * TCP row with no foreign address.
+ */
+export function netstatListeners(output: string, port: number): string[] {
+  const pids = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const [protocol, local, foreign, , pid] = line.trim().split(/\s+/);
+    if (protocol === 'TCP' && (foreign === '0.0.0.0:0' || foreign === '[::]:0') && pid && local?.endsWith(`:${port}`))
+      pids.add(pid);
+  }
+  return [...pids];
 }
 
 async function unload(label: string, port: number | null): Promise<void> {
   const job = await loaded(label);
   if (!job) return;
   const listeners = port === null ? [] : await listenerPids(port);
-  const stopped = await run('launchctl', ['bootout', `${domain()}/${label}`]);
+  const stopped = await serviceManager().stop(label);
   const deadline = Date.now() + UNLOAD_WAIT_MS;
   while (Date.now() < deadline) {
     if (
@@ -193,12 +177,14 @@ interface Health {
   startup?: StartupState;
   host?: { name: string; screenRecording: boolean; accessibility: boolean } | null;
   version: string;
+  protocol?: number;
   stim: string;
   stimBuild?: string | null;
   busy?: { builds: number; hostedSessions: number };
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
+  lan?: { addresses: string[]; port: number };
 }
 
 export async function fetchHealth(port: number): Promise<Health | null> {
@@ -228,7 +214,9 @@ export async function prepareRoute(
   const binary = findTailscale(process.env);
   const status = await readTailscaleStatus(binary, process.env);
   if (!binary || status.state !== 'running') {
-    throw new ServiceError('--serve needs Tailscale running on this Mac, and the tailscale command on PATH.');
+    throw new ServiceError(
+      `--serve needs Tailscale running on this ${serviceManager().name === 'launchd' ? 'Mac' : 'machine'}, and the tailscale command on PATH.`,
+    );
   }
   const plan = planServe(await serveRoute(binary, process.env, port, status.ips), port, previous?.serve ?? null);
   if ('refusal' in plan) throw new ServiceError(plan.refusal);
@@ -239,7 +227,7 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   const installed = await readInstalled(label);
   if (!installed && existsSync(plistPath(label))) {
     throw new ServiceError(
-      `${plistPath(label)} is not a plist that install wrote; not touching it. Use another --label.`,
+      `${plistPath(label)} is not a ${fileNoun()} that install wrote; not touching it. Use another --label.`,
     );
   }
   if (installed && !installed.managed) {
@@ -249,20 +237,20 @@ export async function requireManaged(label: string): Promise<InstalledService | 
   }
   if (!installed && (await loaded(label))) {
     throw new ServiceError(
-      `launchd already runs a job named ${label} that install did not write. Use another --label.`,
+      `${serviceManager().name} already runs a job named ${label} that install did not write. Use another --label.`,
     );
   }
   return installed;
 }
 
 export async function installService(options: ServiceOptions): Promise<string[]> {
-  requireMacOs();
+  serviceManager();
   return holdingUpdateClaim(options.label, () => installJob(options));
 }
 
 export async function installJob(
   options: ServiceOptions,
-  setup?: { script: string; host: HostApp; requestPermissions: false },
+  setup?: { script: string; host: HostApp | null; requestPermissions: false },
 ): Promise<string[]> {
   const script = realpathSync(setup?.script ?? process.argv[1] ?? '');
   const previous = await requireManaged(options.label);
@@ -281,9 +269,10 @@ export async function installJob(
   const environment: Record<string, string> = {};
   if (process.env.STIM_HOME) environment.STIM_HOME = process.env.STIM_HOME;
   if (process.env.SHELL) environment.SHELL = process.env.SHELL;
-  const host = setup?.host ?? (await installHostApp());
+  const manager = serviceManager();
+  const host = setup ? setup.host : await manager.host();
   const spec: ServiceSpec = {
-    host: host.executable,
+    host: host?.executable ?? null,
     label: options.label,
     node: stableNode(process.env.PATH),
     script,
@@ -302,7 +291,7 @@ export async function installJob(
     previous?.script === script &&
     previous.port === options.port &&
     previous.host === spec.host &&
-    JSON.stringify(previous.env) === JSON.stringify(spec.env) &&
+    JSON.stringify(normalizeEnv(previous.env)) === JSON.stringify(normalizeEnv(spec.env)) &&
     JSON.stringify(previous.pathPrepend) === JSON.stringify(spec.pathPrepend)
   ) {
     const health = await fetchHealth(options.port);
@@ -326,21 +315,21 @@ export async function installJob(
       );
     }
     if (createRoute) {
-      const made = await run(tailscale, createRoute);
+      const made = await run(tailscale, createRoute, tailscaleEnv(process.env));
       if (!made.ok) throw new ServiceError(`\`tailscale ${createRoute.join(' ')}\` failed: ${made.stderr.trim()}`);
       routeCreated = true;
     }
     const partial = `${path}.${process.pid}.tmp`;
-    writeFileSync(partial, renderPlist(spec), { mode: 0o644 });
+    writeFileSync(partial, manager.render(spec), { mode: 0o644 });
     renameSync(partial, path);
-    const started = await run('launchctl', ['bootstrap', domain(), path]);
-    if (!started.ok) throw new ServiceError(`launchctl bootstrap failed: ${started.stderr.trim()}`);
+    const started = await manager.start(options.label);
+    if (!started.ok) throw new ServiceError(`${startCommand()} failed: ${started.stderr.trim()}`);
     bootstrapped = true;
     health = await waitForHealth(options.port, options.label);
   } catch (error) {
-    if (oldPlist === null) rmSync(path, { force: true });
-    else writeFileSync(path, oldPlist, { mode: 0o644 });
-    if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
+    if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
+    if (routeCreated && serve)
+      await run(tailscale, ['serve', `--https=${serve.port}`, 'off'], tailscaleEnv(process.env));
     if (bootstrapped) {
       try {
         await unload(options.label, options.port);
@@ -348,12 +337,14 @@ export async function installJob(
         (error as Error).message += ` ${(cleanupError as Error).message}`;
       }
     }
-    if (oldPlist === null) throw error;
-    const restored =
-      wasLoaded && !(await loaded(options.label)) ? await run('launchctl', ['bootstrap', domain(), path]) : null;
+    if (oldPlist === null) {
+      await manager.remove(options.label).catch(() => rmSync(path, { force: true }));
+      throw error;
+    }
+    const restored = wasLoaded && !(await loaded(options.label)) ? await manager.start(options.label) : null;
     if (wasLoaded && !restored?.ok) {
       throw new ServiceError(
-        `${(error as Error).message} The previous plist was restored, but the service could not be restarted (${restored?.stderr.trim() || 'the job is still loaded'}); run \`launchctl bootout ${domain()}/${options.label}\` and \`launchctl bootstrap ${domain()} ${path}\`.`,
+        `${(error as Error).message} The previous ${fileNoun()} was restored, but the service could not be restarted (${restored?.stderr.trim() || 'the job is still loaded'}); ${manager.restartRemedy(options.label)}.`,
       );
     }
     throw error;
@@ -361,16 +352,18 @@ export async function installJob(
 
   const notes = [`Installed ${options.label}: ${path}`, `Log: ${spec.logPath}`];
   const follow = `Run \`stim-server service status --label ${options.label}\` and check ${spec.logPath}.`;
+  const noun =
+    manager.name === 'launchd' ? 'LaunchAgent' : manager.name === 'taskscheduler' ? 'Scheduled task' : 'Service';
   notes.push(
     !health
-      ? `LaunchAgent installed, but server readiness is unavailable on 127.0.0.1:${options.port}. ${follow}`
+      ? `${noun} installed, but server readiness is unavailable on 127.0.0.1:${options.port}. ${follow}`
       : health.startup?.state === 'degraded'
-        ? `LaunchAgent installed and listening on 127.0.0.1:${options.port}, but not serving clients: ${health.startup.reason} ${follow}`
+        ? `${noun} installed and listening on 127.0.0.1:${options.port}, but not serving clients: ${health.startup.reason} ${follow}`
         : health.startup?.state === 'pending'
-          ? `LaunchAgent installed and listening on 127.0.0.1:${options.port}, still reading its Stim home. ${follow}`
+          ? `${noun} installed and listening on 127.0.0.1:${options.port}, still reading its Stim home. ${follow}`
           : `stim-server ${health.version} answers on 127.0.0.1:${options.port}.`,
   );
-  if (setup?.requestPermissions !== false) {
+  if (host && setup?.requestPermissions !== false) {
     try {
       await requestHostPermissions(host.app);
     } catch (error) {
@@ -383,7 +376,7 @@ export async function installJob(
       `If a request does not appear, turn ${host.name} on in System Settings > Privacy & Security > ${panes.screen} and System Settings > Privacy & Security > ${panes.control}. Stim never changes these settings itself.`,
     );
   }
-  if (host.adHoc) {
+  if (host?.adHoc) {
     notes.push(
       `${host.name} is signed ad hoc, so macOS keeps its approvals only while the launcher source and Xcode toolchain are unchanged.`,
     );
@@ -395,10 +388,23 @@ export async function installJob(
   } else {
     notes.push(`No tailnet route. Run \`${serveCommand(7443, options.port)}\` or install again with --serve.`);
   }
-  notes.push(
-    'The service runs in your GUI login session (gui/<uid>), so after a reboot it starts when you log in. On a headless Mac, turn on automatic login.',
-  );
+  const shim = process.platform === 'win32' ? nodeShim(spec.node, spec.pathPrepend) : null;
+  if (shim) {
+    notes.push(
+      `The first node.exe on PATH, ${shim}, is not the Node that runs stim-server (${spec.node}). Builds start tools such as Expo's config loader with it, and a version manager's node.exe shim, such as pnpm's, breaks their Node IPC, so builds fail with fingerprint-mismatch. Install again with --path-prepend "${dirname(spec.node)}" to put the real Node first.`,
+    );
+  }
+  notes.push(...(await manager.sessionNotes()));
   return notes;
+}
+
+/** The first `node.exe` the service's PATH finds, when it is not `node`; builds run their tools with that one. */
+function nodeShim(node: string, pathPrepend: string[]): string | null {
+  for (const dir of [...pathPrepend, ...(process.env.PATH ?? '').split(delimiter)]) {
+    const candidate = dir && join(dir, 'node.exe');
+    if (candidate && existsSync(candidate)) return sameFile(candidate, node) ? null : candidate;
+  }
+  return null;
 }
 
 export async function recordServiceRoute(label: string, port: number, record: ServeRecord): Promise<void> {
@@ -410,12 +416,12 @@ export async function recordServiceRoute(label: string, port: number, record: Se
     const staged = `${path}.${process.pid}.tmp`;
     copyFileSync(path, staged);
     try {
-      for (const args of [
-        ['-replace', 'StimService.ServePort', '-integer', String(record.port), staged],
-        ['-replace', 'StimService.ServeCreated', '-bool', String(record.created), staged],
-      ]) {
-        const edited = await run('plutil', args);
-        if (!edited.ok) throw new ServiceError(`Could not record the setup route: ${edited.stderr.trim()}`);
+      try {
+        await serviceManager().rewrite(installed, staged, { serve: record });
+      } catch (error) {
+        throw new ServiceError(
+          `Could not record the setup route: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
       renameSync(staged, path);
     } finally {
@@ -426,7 +432,10 @@ export async function recordServiceRoute(label: string, port: number, record: Se
 
 export interface ServiceStatus {
   label: string;
+  /** The service manager: launchd on macOS, systemd on Linux. */
+  manager: ServiceManager['name'];
   installed: boolean;
+  /** The service file: the LaunchAgent plist, or the systemd user unit. */
   plist: string;
   loaded: boolean;
   state: string | null;
@@ -453,6 +462,8 @@ export interface ServiceStatus {
   envNames: string[];
   pathPrepend: string[];
   stimBuild: { service: string | null; cli: string | null; match: boolean | null };
+  /** Whether systemd keeps this user's services running without a login; null under launchd. */
+  linger: boolean | null;
 }
 
 function stimDist(from: string): string | null {
@@ -478,7 +489,7 @@ function stimOnPath(): string | null {
 }
 
 export async function serviceStatus(label: string): Promise<ServiceStatus> {
-  requireMacOs();
+  const manager = serviceManager();
   const installed = await readInstalled(label);
   const job = await loaded(label);
   const health = installed?.port ? await fetchHealth(installed.port) : null;
@@ -488,6 +499,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
   const cli = cliDist ? stimBuildDigest(cliDist) : null;
   return {
     label,
+    manager: manager.name,
     installed: installed !== null,
     plist: plistPath(label),
     loaded: job !== null,
@@ -522,6 +534,7 @@ export async function serviceStatus(label: string): Promise<ServiceStatus> {
     envNames: (installed?.env ?? []).map((entry) => entry.slice(0, entry.indexOf('='))),
     pathPrepend: installed?.pathPrepend ?? [],
     stimBuild: { service, cli, match: service && cli ? service === cli : null },
+    linger: await manager.linger(),
   };
 }
 
@@ -541,10 +554,12 @@ function routeText(route: Health['route']): string | null {
 
 export function statusLines(status: ServiceStatus, panes: { screen: string; control: string }): string[] {
   if (!status.installed) {
-    return [`${status.label} is not installed (no ${status.plist}).${status.loaded ? ' launchd still lists it.' : ''}`];
+    return [
+      `${status.label} is not installed (no ${status.plist}).${status.loaded ? ` ${status.manager} still lists it.` : ''}`,
+    ];
   }
   const lines = [
-    `${status.label}: ${status.loaded ? `${status.state}${status.pid ? ` (pid ${status.pid})` : ''}` : 'installed but not loaded'}`,
+    `${status.label}: ${status.loaded ? `${status.state}${status.pid ? ` (pid ${status.pid})` : ''}` : status.manager === 'launchd' ? 'installed but not loaded' : 'installed but stopped'}`,
   ];
   if (status.runs !== null)
     lines.push(`  runs: ${status.runs}${status.lastExitCode ? `, last exit ${status.lastExitCode}` : ''}`);
@@ -584,7 +599,7 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
         `  ${pane}: ${permission === true ? 'allowed' : permission === false ? `needed: System Settings > Privacy & Security > ${pane} > ${status.host.name}` : 'unknown (server did not report permissions)'}`,
       );
     }
-  } else {
+  } else if (status.manager === 'launchd') {
     lines.push(
       `  macOS attributes ${panes.screen} and ${panes.control} to node. Run \`stim-server service install\` again to use Stim Host.`,
     );
@@ -594,12 +609,19 @@ export function statusLines(status: ServiceStatus, panes: { screen: string; cont
   lines.push(`  log: ${status.logPath}`);
   if (status.pathPrepend.length) lines.push(`  path-prepend: ${status.pathPrepend.join(delimiter)}`);
   if (status.envNames.length) lines.push(`  env: ${status.envNames.join(', ')}`);
-  lines.push(`  plist: ${status.plist}`);
+  if (status.linger !== null) {
+    lines.push(
+      status.linger
+        ? '  linger: on, so the service runs without a login'
+        : `  linger: off, so the service stops when you log out; run \`sudo loginctl enable-linger <user>\``,
+    );
+  }
+  lines.push(`  ${FILE_NOUNS[status.manager]}: ${status.plist}`);
   return lines;
 }
 
 export async function uninstallService(label: string): Promise<string[]> {
-  requireMacOs();
+  serviceManager();
   const notes = await holdingUpdateClaim(label, async () => {
     const result = await uninstallJob(label);
     for (const entry of readdirSync(serviceRoot(label))) {
@@ -645,14 +667,14 @@ async function uninstallJob(label: string): Promise<string[]> {
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
   await unload(label, null);
   if (routeOff && tailscale) {
-    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);
+    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
     notes.push(
       removed.ok
         ? `Removed the tailscale serve route on https port ${routeOff}.`
         : `Could not remove the tailscale serve route: ${removed.stderr.trim()}. Run \`tailscale serve --https=${routeOff} off\`.`,
     );
   }
-  rmSync(plistPath(label), { force: true });
+  await serviceManager().remove(label);
   notes.unshift(
     `Uninstalled ${label}. Pairings, stim home and the log ${installed.logPath ?? logPath(label)} are kept.`,
   );
@@ -667,9 +689,6 @@ const NPM_TIMEOUT_MS = 10 * 60_000;
 const REGISTRY = 'https://registry.npmjs.org/';
 const SERVER_PACKAGE = '@stim-cli/server';
 const SERVER_SCRIPT = ['node_modules', '@stim-cli', 'server', 'dist', 'stim-server.mjs'];
-
-export const serviceRoot = (label: string): string =>
-  join(homedir(), 'Library', 'Application Support', 'Stim', 'services', label);
 
 export type UpdateSource = { release: string } | { from: string };
 
@@ -706,11 +725,12 @@ export function readLastUpdate(label: string): UpdateOutcome | null {
   }
 }
 
-/** Whether `label` names a LaunchAgent that `service install` wrote and that serves `port`. */
+/** Whether `label` names a service that `service install` wrote and that serves `port`. */
 export async function runsAsService(label: string, port: number): Promise<boolean> {
-  if (process.platform !== 'darwin') return false;
+  const manager = serviceManagerOrNull();
+  if (!manager) return false;
   try {
-    const installed = await readInstalled(label);
+    const installed = await manager.read(label);
     return installed?.managed === true && installed.port === port;
   } catch {
     return false;
@@ -742,12 +762,21 @@ function sameFile(a: string, b: string): boolean {
   }
 }
 
-function npmFor(node: string): { npm: string; env: NodeJS.ProcessEnv } {
+/**
+ * How to run npm for `node`. On Windows npm is a `.cmd` shim, which Node runs only through a shell, so this runs its
+ * `npm-cli.js` with `node` instead.
+ */
+function npmFor(node: string): { npm: string; prefix: string[]; env: NodeJS.ProcessEnv } {
   const path = [dirname(node), ...(process.env.PATH ?? '').split(delimiter)].filter(Boolean);
   const env = { ...process.env, PATH: path.join(delimiter) };
   for (const dir of path) {
+    if (process.platform === 'win32') {
+      const cli = join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      if (existsSync(cli)) return { npm: node, prefix: [cli], env };
+      continue;
+    }
     const npm = join(dir, 'npm');
-    if (existsSync(npm)) return { npm, env };
+    if (existsSync(npm)) return { npm, prefix: [], env };
   }
   throw new ServiceError(`No npm next to ${node} or on PATH. Install npm for that node, then run update again.`);
 }
@@ -773,7 +802,14 @@ async function localPackageSpecs(dir: string, names: string[]): Promise<Record<s
   const specs: Record<string, string> = {};
   for (const file of names) {
     const path = join(dir, file);
-    const manifest = await run('/usr/bin/tar', ['-xzOf', path, 'package/package.json'], process.env, 60_000);
+    const manifest = await run(
+      process.platform === 'win32'
+        ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe')
+        : '/usr/bin/tar',
+      ['-xzOf', path, 'package/package.json'],
+      process.env,
+      60_000,
+    );
     let name: unknown;
     try {
       name = (JSON.parse(manifest.stdout) as { name?: unknown }).name;
@@ -804,7 +840,7 @@ export async function installServer(
   const staging = join(versions, `.install-${process.pid}`);
   mkdirSync(staging);
   try {
-    const { npm, env } = npmFor(node);
+    const { npm, prefix, env } = npmFor(node);
     const registry = [`--registry=${REGISTRY}`, `--@stim-cli:registry=${REGISTRY}`];
     let files: { name: string; sha256: string }[] = [];
     let specs: string[];
@@ -829,9 +865,13 @@ export async function installServer(
     log(
       `Installing ${'release' in source ? `${SERVER_PACKAGE}@${source.release} from ${REGISTRY}` : `${files.length} package file(s) from ${source.from}`}.`,
     );
+    // npm 10 on Windows fails to save the root package.json of a project that only lists `file:` packages
+    // (TypeError reading 'spec' in arborist's reify), and with a working directory outside the project it looks
+    // for a package.json there; nothing needs saving, and npm runs from the project.
     const installed = await run(
       npm,
       [
+        ...prefix,
         'install',
         '--prefix',
         staging,
@@ -839,19 +879,21 @@ export async function installServer(
         '--no-audit',
         '--no-fund',
         '--omit=dev',
-        '--save-exact',
+        ...(localPackages && process.platform === 'win32' ? ['--no-save'] : ['--save-exact']),
         ...registry,
         ...specs,
       ],
       env,
       NPM_TIMEOUT_MS,
+      process.platform === 'win32' ? staging : undefined,
     );
     if (!installed.ok) throw new ServiceError(`npm install failed:\n${lastLines(installed.stderr)}`);
     const audit = await run(
       npm,
-      ['audit', 'signatures', '--json', '--prefix', staging, ...registry],
+      [...prefix, 'audit', 'signatures', '--json', '--prefix', staging, ...registry],
       env,
       NPM_TIMEOUT_MS,
+      process.platform === 'win32' ? staging : undefined,
     );
     const problem = signatureProblem(audit.stdout, audit.stderr);
     if (problem) throw new ServiceError(`${problem}. Not switching to it.`);
@@ -887,7 +929,21 @@ export async function installServer(
         2,
       )}\n`,
     );
-    const dir = join(versions, `${build.version}-${build.stimBuild}-${serverDigest}`);
+    const filesDigest = files.length
+      ? createHash('sha256')
+          .update(
+            files
+              .map((file) => file.sha256)
+              .toSorted()
+              .join('\n'),
+          )
+          .digest('hex')
+          .slice(0, 16)
+      : null;
+    const dir = join(
+      versions,
+      [build.version, build.stimBuild, serverDigest, ...(filesDigest ? [filesDigest] : [])].join('-'),
+    );
     if (!existsSync(dir)) renameSync(staging, dir);
     return { script: join(dir, ...SERVER_SCRIPT), build, dir };
   } finally {
@@ -933,15 +989,15 @@ async function waitForBuild(label: string, port: number, expected: ServerBuild):
   return false;
 }
 
-async function restart(label: string, path: string, port: number): Promise<Run> {
+async function restart(label: string, port: number): Promise<Run> {
   await unload(label, port);
-  return run('launchctl', ['bootstrap', domain(), path]);
+  return serviceManager().start(label);
 }
 
 const SWITCH_SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
 
 function holdSignal(): void {
-  console.error('stim-server: finishing the switch first, so the LaunchAgent stays loaded.');
+  console.error(`stim-server: finishing the switch first, so the ${serviceManager().noun} stays loaded.`);
 }
 
 async function finishingOnSignals<T>(work: () => Promise<T>): Promise<T> {
@@ -958,18 +1014,13 @@ async function switchTo(
   script: string,
   expected: ServerBuild,
 ): Promise<void> {
+  const manager = serviceManager();
   const path = plistPath(installed.label);
   const before = readFileSync(path);
   const staged = `${path}.${process.pid}.tmp`;
   copyFileSync(path, staged);
   try {
-    for (const args of [
-      ['-replace', 'ProgramArguments', '-json', JSON.stringify(argumentsWithScript(installed, script)), staged],
-      ['-replace', 'StimService.PreviousScript', '-string', installed.script, staged],
-    ]) {
-      const edited = await run('plutil', args);
-      if (!edited.ok) throw new ServiceError(`plutil ${args.slice(0, 2).join(' ')} failed: ${edited.stderr.trim()}`);
-    }
+    await manager.rewrite(installed, staged, { script, previousScript: installed.script });
   } catch (error) {
     rmSync(staged, { force: true });
     throw error;
@@ -978,11 +1029,11 @@ async function switchTo(
     let why: string;
     try {
       renameSync(staged, path);
-      const started = await restart(installed.label, path, installed.port);
+      const started = await restart(installed.label, installed.port);
       if (started.ok && (await waitForBuild(installed.label, installed.port, expected))) return;
       why = started.ok
         ? `did not answer on 127.0.0.1:${installed.port} within ${UPDATE_HEALTH_WAIT_MS / 1000} s`
-        : `did not start (launchctl bootstrap: ${started.stderr.trim()})`;
+        : `did not start (${startCommand()}: ${started.stderr.trim()})`;
     } catch (error) {
       why = `could not be started: ${(error as Error).message}`;
     }
@@ -998,8 +1049,7 @@ async function switchTo(
     if (unloaded) {
       for (const deadline = Date.now() + UNLOAD_WAIT_MS; !loadedAgain && Date.now() < deadline;) {
         loadedAgain =
-          (await run('launchctl', ['bootstrap', domain(), path])).ok ||
-          (await loaded(installed.label).catch(() => null)) !== null;
+          (await manager.start(installed.label)).ok || (await loaded(installed.label).catch(() => null)) !== null;
         if (!loadedAgain) await sleep(1000);
       }
     }
@@ -1014,8 +1064,8 @@ async function switchTo(
         answered
           ? `Switched back to ${describeBuild(previous)}.`
           : loadedAgain
-            ? `Restored the previous plist, but ${answer} instead of ${describeBuild(previous)}; check ${installed.logPath ?? logPath(installed.label)}.`
-            : `Restored the previous plist, but launchd did not load it; run \`launchctl bootout ${domain()}/${installed.label}\` and \`launchctl bootstrap ${domain()} ${path}\`.`
+            ? `Restored the previous ${fileNoun()}, but ${answer} instead of ${describeBuild(previous)}; check ${installed.logPath ?? logPath(installed.label)}.`
+            : `Restored the previous ${fileNoun()}, but ${manager.name} did not load it; ${manager.restartRemedy(installed.label)}.`
       }`,
     );
   });
@@ -1059,7 +1109,7 @@ function withUpdateClaim<T>(
   label: string,
   work: (installed: InstalledService & { script: string; node: string; port: number }) => Promise<T>,
 ): Promise<T> {
-  requireMacOs();
+  serviceManager();
   return holdingUpdateClaim(label, async () => {
     const installed = await requireManaged(label);
     if (!installed?.script || !installed.node || installed.port === null) {
@@ -1072,16 +1122,17 @@ function withUpdateClaim<T>(
 /**
  * Installs `source` beside the server the job runs, waits for offloaded builds and hosted sessions to finish,
  * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
- * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route.
+ * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route. With `waitForWork` false,
+ * restart interrupts active work instead of waiting for idle; shutdown and health checks still apply.
  */
 export async function updateService(
   label: string,
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork = true,
 ): Promise<string[]> {
-  requireMacOs();
   if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
-  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log));
+  return withUpdateClaim(label, (installed) => updateInstalledService(label, installed, source, log, waitForWork));
 }
 
 export async function updateInstalledService(
@@ -1089,10 +1140,11 @@ export async function updateInstalledService(
   installed: InstalledService & { script: string; node: string; port: number },
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork = true,
 ): Promise<string[]> {
   const at = new Date().toISOString();
   try {
-    const notes = await switchToSource(label, installed, source, log);
+    const notes = await switchToSource(label, installed, source, log, waitForWork);
     recordOutcome(label, { at, target: describeSource(source), ok: true, message: notes[0]! });
     return notes;
   } catch (error) {
@@ -1106,13 +1158,15 @@ async function switchToSource(
   installed: InstalledService & { script: string; node: string; port: number },
   source: UpdateSource,
   log: (line: string) => void,
+  waitForWork: boolean,
 ): Promise<string[]> {
   const versions = join(serviceRoot(label), 'versions');
   const target = await installServer(versions, source, installed.node, log);
   if (sameFile(installed.script, target.script)) {
     return [`${label} already runs ${describeBuild(target.build)}.`];
   }
-  await waitForIdle(installed.port, log);
+  if (waitForWork) await waitForIdle(installed.port, log);
+  else log('Restarting without waiting for active builds or hosted sessions; they will be interrupted.');
   log(`Switching ${label} to ${describeBuild(target.build)}.`);
   const script = realpathSync(target.script);
   await switchTo(installed, script, target.build);
@@ -1126,7 +1180,6 @@ async function switchToSource(
 
 /** Switches the job back to the server it ran before the last update or rollback, under the same checks. */
 export async function rollbackService(label: string, log: (line: string) => void): Promise<string[]> {
-  requireMacOs();
   if (!existsSync(plistPath(label))) throw new ServiceError(`${label} is not installed.`);
   return withUpdateClaim(label, async (installed) => {
     const previous = installed.previousScript;

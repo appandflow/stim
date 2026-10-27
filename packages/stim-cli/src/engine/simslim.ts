@@ -1,5 +1,7 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { join } from 'node:path';
+import type { StimContext } from '@stim-cli/core';
+import { isTermination, operationState } from './operation-state.ts';
 import { getConfigDir } from '../workspace/config.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import {
@@ -19,29 +21,49 @@ type SpawnFn = (cmd: string, args: readonly string[], opts: SpawnOptions) => Chi
 export interface SimSlimResult {
   managed: boolean;
   profile: string | null;
+  notInstalled?: true;
 }
 
-export async function reconcileSimSlim({
+export async function reconcileSimSlim(options: Parameters<typeof applySimSlim>[0]): Promise<SimSlimResult> {
+  try {
+    return await applySimSlim(options);
+  } catch (error) {
+    const cause = error instanceof Error ? error.cause : undefined;
+    const missing = cause instanceof Error && 'code' in cause && cause.code === 'ENOENT';
+    if (options.profile || !options.slimByDefault || !missing) throw error;
+    options.out?.(
+      'SimSlim: ios.simslim is on but the `simslim` command is not installed; continuing without it. Run `brew install mobai-app/tap/simslim`.',
+    );
+    return { managed: Boolean(options.previouslyManaged), profile: null, notInstalled: true };
+  }
+}
+
+async function applySimSlim({
   udid,
   profile,
+  slimByDefault = false,
   previouslyManaged = false,
   out = () => {},
   spawn,
   timeoutMs = 12 * 60 * 1000,
   cleanupMs = 10000,
+  context,
 }: {
+  context: StimContext | undefined;
   udid: string;
   profile?: string | null;
+  slimByDefault?: boolean;
   previouslyManaged?: boolean;
   out?: (line: string) => void;
   spawn?: SpawnFn;
   timeoutMs?: number;
   cleanupMs?: number;
 }): Promise<SimSlimResult> {
-  if (!profile && !previouslyManaged) return { managed: false, profile: null };
+  if (!profile && !slimByDefault && !previouslyManaged) return { managed: false, profile: null };
 
-  const action = profile ? 'on' : 'off';
-  const args = profile ? ['on', udid, '--profile', profile] : ['off', udid];
+  const slim = Boolean(profile) || slimByDefault;
+  const action = slim ? 'on' : 'off';
+  const args = profile ? ['on', udid, '--profile', profile] : slim ? ['on', udid] : ['off', udid];
   const lines: string[] = [];
   const onLine = (raw: string) => {
     const line = stripAnsi(raw).trim();
@@ -82,8 +104,12 @@ export async function reconcileSimSlim({
     cancellation ??= signal;
     stopGroup();
   };
-  const onInterrupt = () => cancel('SIGINT');
-  const onTerminate = () => cancel('SIGTERM');
+  const state = operationState(context);
+  const onAbort = () => {
+    state.handled = true;
+    state.draining = true;
+    cancel(isTermination(context?.signal.reason) ? 'SIGTERM' : 'SIGINT');
+  };
   const groupAlive = () => child?.pid !== undefined && processGroupAlive(child.pid);
   const settled = () => result !== undefined && !groupAlive();
   const waitUntil = async (deadline: number, cancellable = false) => {
@@ -93,10 +119,10 @@ export async function reconcileSimSlim({
     }
     return settled();
   };
-  process.on('SIGINT', onInterrupt);
-  process.on('SIGTERM', onTerminate);
-  process.on('exit', stopGroup);
+  context?.signal.addEventListener('abort', onAbort);
+  state.exitCleanups.add(stopGroup);
   try {
+    if (context?.signal.aborted) onAbort();
     markClaimChildPending(claim);
     try {
       child = (spawn ?? ((cmd, childArgs, opts) => getExecutor().spawn(cmd, childArgs, opts)))('simslim', args, {
@@ -143,10 +169,8 @@ export async function reconcileSimSlim({
       child.stderr?.destroy?.();
       child.unref();
     }
-    process.off('SIGINT', onInterrupt);
-    process.off('SIGTERM', onTerminate);
-    process.off('exit', stopGroup);
-    if (cancellation) process.exit(cancellation === 'SIGINT' ? 130 : 143);
+    context?.signal.removeEventListener('abort', onAbort);
+    state.exitCleanups.delete(stopGroup);
   }
 
   stdout.flush();
@@ -157,7 +181,7 @@ export async function reconcileSimSlim({
     const detail = lines.length ? ` ${lines.join(' | ')}` : '';
     throw new Error(`SimSlim ${action} failed with exit code ${result?.code ?? 'unknown'}.${detail}`);
   }
-  return { managed: Boolean(profile), profile: profile ?? null };
+  return { managed: slim, profile: profile ?? null };
 }
 
 function simslimLaunchError(error: unknown): Error {

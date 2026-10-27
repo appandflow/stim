@@ -103,7 +103,7 @@ struct PairPhoneSheet: View {
       case .stopped(true): AddMachineIllustration(scene: .tailscaleSwitch)
       case .stopped(false): AddMachineIllustration(scene: .tailscaleUp)
       case .missing: AddMachineIllustration(scene: .tailnet(connected: false))
-      case .checking, .running: PhoneTailnetArt()
+      case .checking, .unresponsive, .running: PhoneTailnetArt()
       }
       Text("Connect Both to Your Tailnet").font(.stim(.title))
       VStack(alignment: .leading, spacing: Space.md) {
@@ -114,6 +114,12 @@ struct PairPhoneSheet: View {
             ProgressView().controlSize(.small)
             Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
           }
+        case .unresponsive:
+          Label("Tailscale didn't respond", systemImage: "exclamationmark.triangle.fill").foregroundStyle(Palette.warning)
+          Text("Tailscale did not answer in time. Check that it is not stuck, then try again.")
+            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Button("Try Again", systemImage: "arrow.clockwise") { Task { await model.retryTailscale() } }
+            .buttonStyle(.stim(.primary, .regular))
         case .running(let dns):
           Label("Tailscale is on", systemImage: "checkmark.circle.fill").foregroundStyle(Palette.success)
           if let dns { Text(dns).font(.stim(.caption)).foregroundStyle(Palette.secondary) }
@@ -259,11 +265,19 @@ struct PairPhoneSheet: View {
           warning("Tailscale is off, so only a simulator on this Mac can use this code.")
         }
       }
-      HStack(spacing: Space.sm) {
-        ProgressView().controlSize(.small)
-        Text("Waiting for your phone\u{2026}").foregroundStyle(Palette.secondary)
+      if let code = model.code, code.expiresAt > model.now, wizard.server.isReady {
+        HStack(spacing: Space.sm) {
+          ProgressView().controlSize(.small)
+          Text("Waiting for your phone\u{2026}").foregroundStyle(Palette.secondary)
+        }
       }
-      if !wizard.server.isReady { warning("Serving stopped. Go Back to turn it on again.") }
+      if model.code != nil, !wizard.server.isReady {
+        if case .running = wizard.server {
+          warning("The server is running, but the phone connection is not verified. Go Back to check it.")
+        } else {
+          warning("Serving stopped. Go Back to turn it on again.")
+        }
+      }
     }
   }
 
@@ -301,11 +315,11 @@ struct PairPhoneSheet: View {
           Label("Drives simulators and emulators, and runs Reload and Stop", systemImage: "checkmark.circle.fill")
             .foregroundStyle(Palette.success)
         } else {
-          Text("View only. You can allow control in Settings > Phones.").foregroundStyle(Palette.secondary)
+          Text("View only. You can allow control in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
         }
-        Text("Manage it in Settings > Phones.").foregroundStyle(Palette.secondary)
+        Text("Manage it in Settings > Paired Devices.").foregroundStyle(Palette.secondary)
         if let openPhones {
-          Button("Open Phones") {
+          Button("Open Paired Devices") {
             openPhones()
             dismiss()
           }.buttonStyle(.stim())

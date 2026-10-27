@@ -15,7 +15,7 @@ export interface HostedAppOffer {
   session: string;
   attempt: string;
   bundleId: string;
-  mode: 'development' | 'release';
+  mode: 'development' | 'release' | 'process';
   devClientScheme?: string;
   arguments?: string[];
   manifest: { sha256: string; size: number };
@@ -102,7 +102,7 @@ export function parseHostedAppOffer(value: unknown): HostedAppOffer | null {
     !hostedAppAttempt(value.attempt) ||
     typeof value.bundleId !== 'string' ||
     !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/.test(value.bundleId) ||
-    (value.mode !== 'development' && value.mode !== 'release') ||
+    (value.mode !== 'development' && value.mode !== 'release' && value.mode !== 'process') ||
     (value.devClientScheme !== undefined &&
       (value.mode !== 'development' ||
         typeof value.devClientScheme !== 'string' ||

@@ -14,15 +14,23 @@ vi.mock('../src/server.ts', () => ({
 }));
 vi.mock('../src/environment.ts', () => ({
   bundledStim: () => ({ cli: 'unused', version: '1.0.0' }),
-  loginShellEnvironment: () => process.env,
 }));
-vi.mock('../src/tailscale.ts', () => ({
-  findTailscale: () => null,
-  readTailscaleStatus: async () => ({ state: 'unavailable', reason: 'fixture' }),
+vi.mock('@stim-cli/core/toolchain', () => ({
+  discoverToolchain: (env: NodeJS.ProcessEnv) => ({ env: { ...env }, entries: [] }),
 }));
-vi.mock('../src/tailscale-monitor.ts', () => ({
-  watchTailscale: () => ({ stop: () => {}, onChange: () => {} }),
-}));
+vi.mock('@stim-cli/transport-tailscale', async (original) => {
+  const actual = await original<typeof import('@stim-cli/transport-tailscale')>();
+  const snapshot = { binary: null, state: { state: 'unavailable' as const, reason: 'fixture' } };
+  return {
+    ...actual,
+    createTransport: async ({ env }: { env: NodeJS.ProcessEnv }) =>
+      actual.tailscaleTransport({
+        env,
+        snapshot,
+        monitor: { current: () => snapshot, stop: () => {}, onChange: () => () => {} },
+      }),
+  };
+});
 
 async function serve(...flags: string[]): Promise<Record<string, unknown>> {
   const home = mkdtempSync(join(tmpdir(), 'stim-server-loopback-'));

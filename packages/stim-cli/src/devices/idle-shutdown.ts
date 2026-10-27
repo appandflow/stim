@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_RECLAIM_REASON,
@@ -8,8 +10,10 @@ import {
 import { formatLongDuration } from '../command-output.ts';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from './ios.ts';
@@ -84,6 +88,14 @@ export interface IdleShutdownEvent {
   level: 'info' | 'warn';
   event: 'device_idle_shutdown' | 'device_idle_shutdown_failed';
   msg: string;
+  skipped?: true;
+}
+
+/** Appends an idle shutdown record to the workspace's metro.ndjson, where the supervisor writes its own. */
+export function writeIdleShutdownEvent(root: string, event: IdleShutdownEvent): void {
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  writer.write({ src: 'metro', ...event });
+  writer.close();
 }
 
 /**
@@ -91,13 +103,13 @@ export interface IdleShutdownEvent {
  * and records why. The caller holds the workspace's native-run lock, so no `ios` or `android` run is booting or
  * installing on them.
  */
-export function shutDownIdleDevices(
+export async function shutDownIdleDevices(
   root: string,
   idleMs: number,
   log: (event: IdleShutdownEvent) => void,
   now: number = Date.now(),
   { only, reason }: { only?: OwnedDeviceActivity; reason?: DeviceIdleShutdownRecord['reason'] } = {},
-): number {
+): Promise<number> {
   let shutDown = 0;
   for (const { device, idleForMs } of dueIdleDevices(root, idleMs, now)) {
     if (
@@ -111,8 +123,8 @@ export function shutDownIdleDevices(
     const what = `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
     const outcome =
       device.kind === 'ios'
-        ? teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
-        : teardownOwnedAvd(device.id, {
+        ? await teardownOwnedIosSim(device.id, { label: device.name, workspace: root })
+        : await teardownOwnedAvd(device.id, {
             owner: { projectPath: device.project, slot: device.slot },
             workspace: root,
           });
@@ -120,7 +132,7 @@ export function shutDownIdleDevices(
       shutDown++;
       const idleMinutes = Math.floor(idleForMs / MINUTE_MS);
       try {
-        updateWorkspaceState(root, (state) => ({
+        await updateWorkspaceStateAsync(root, (state) => ({
           ...state,
           [DEVICE_IDLE_SHUTDOWN_KEY]: {
             ...readDeviceIdleShutdowns(state),
@@ -148,6 +160,7 @@ export function shutDownIdleDevices(
         level: 'warn',
         event: 'device_idle_shutdown_failed',
         msg: `could not shut down idle ${what}: ${outcome.reason}`,
+        ...(outcome.status === 'skipped' ? { skipped: true as const } : {}),
       });
     }
   }
@@ -155,10 +168,10 @@ export function shutDownIdleDevices(
 }
 
 /** Forgets the slot's idle shutdown once a run boots its device again. */
-export function clearDeviceIdleShutdown(root: string, platform: string, slot: string = 'default'): void {
+export async function clearDeviceIdleShutdown(root: string, platform: string, slot: string = 'default'): Promise<void> {
   const key = deviceSlotKey(platform, slot);
   if (!(key in readDeviceIdleShutdowns(readWorkspaceState(root)))) return;
-  updateWorkspaceState(root, (state) => {
+  await updateWorkspaceStateAsync(root, (state) => {
     const { [key]: _cleared, ...rest } = readDeviceIdleShutdowns(state);
     const { [DEVICE_IDLE_SHUTDOWN_KEY]: _all, ...others } = state;
     return Object.keys(rest).length ? { ...others, [DEVICE_IDLE_SHUTDOWN_KEY]: rest } : others;

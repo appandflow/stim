@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -137,7 +139,7 @@ describe('clearDeviceIdleShutdown', () => {
     delete process.env.STIM_HOME;
   });
 
-  test("a run that boots one slot's device forgets only that slot's idle shutdown", () => {
+  test("a run that boots one slot's device forgets only that slot's idle shutdown", async () => {
     const root = join(stimHome, 'app');
     const record = { at: at(0), idleMinutes: 30 };
     writeWorkspaceState(root, {
@@ -145,13 +147,51 @@ describe('clearDeviceIdleShutdown', () => {
       lastUsedAt: at(0),
     });
 
-    clearDeviceIdleShutdown(root, 'ios');
+    await clearDeviceIdleShutdown(root, 'ios');
     expect(readDeviceIdleShutdowns(readWorkspaceState(root))).toEqual({
       'ios:fold': record,
     });
 
-    clearDeviceIdleShutdown(root, 'ios', 'fold');
+    await clearDeviceIdleShutdown(root, 'ios', 'fold');
     expect(readWorkspaceState(root)).toEqual({ lastUsedAt: at(0) });
+  });
+
+  test('a run waits for a workspace state lock held by another process without blocking the event loop', async () => {
+    const root = join(stimHome, 'app');
+    writeWorkspaceState(root, { [DEVICE_IDLE_SHUTDOWN_KEY]: { ios: { at: at(0), idleMinutes: 30 } } });
+    const holder = spawn(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+          const { withWorkspaceStateLock } = await import(process.argv[1]);
+          withWorkspaceStateLock(process.argv[2], () => {
+            process.stdout.write('held');
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);
+          });
+        `,
+        new URL('../workspace/workspace-state.ts', import.meta.url).href,
+        root,
+      ],
+      { stdio: ['ignore', 'pipe', 'inherit'] },
+    );
+    const exited = once(holder, 'exit');
+    try {
+      await once(holder.stdout, 'data');
+      let ticks = 0;
+      const timer = setInterval(() => ticks++, 20);
+      try {
+        await clearDeviceIdleShutdown(root, 'ios');
+      } finally {
+        clearInterval(timer);
+      }
+      expect(ticks).toBeGreaterThan(5);
+      expect(readDeviceIdleShutdowns(readWorkspaceState(root))).toEqual({});
+    } finally {
+      holder.kill('SIGKILL');
+      await exited;
+    }
   });
 });
 
@@ -184,11 +224,11 @@ describe('shutDownIdleDevices', () => {
     return mine;
   }
 
-  test("shuts down only its own workspace's idle device, without deleting it, and records why", () => {
+  test("shuts down only its own workspace's idle device, without deleting it, and records why", async () => {
     const mine = setup();
-    vi.mocked(teardownOwnedIosSim).mockReturnValue({ status: 'torn-down', label: 'stim-MINE' });
+    vi.mocked(teardownOwnedIosSim).mockResolvedValue({ status: 'torn-down', label: 'stim-MINE' });
     const log: { event: string; msg: string }[] = [];
-    expect(shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(1);
+    expect(await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(1);
     expect(vi.mocked(teardownOwnedIosSim).mock.calls).toEqual([['MINE', { label: 'stim-MINE', workspace: mine }]]);
     expect(readDeviceIdleShutdowns(readWorkspaceState(mine))).toEqual({ ios: { at: at(0), idleMinutes: 10 } });
     expect(log).toEqual([
@@ -196,21 +236,21 @@ describe('shutDownIdleDevices', () => {
     ]);
   });
 
-  test('a teardown that is refused records nothing and logs why; a device already gone is silent', () => {
+  test('a teardown that is refused records nothing and logs why; a device already gone is silent', async () => {
     const mine = setup();
-    vi.mocked(teardownOwnedIosSim).mockReturnValueOnce({ status: 'skipped', kind: 'not-owned', reason: 'not ours' });
+    vi.mocked(teardownOwnedIosSim).mockResolvedValueOnce({ status: 'skipped', kind: 'not-owned', reason: 'not ours' });
     const log: { event: string }[] = [];
-    expect(shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(0);
+    expect(await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(0);
     expect(log).toMatchObject([{ event: 'device_idle_shutdown_failed', msg: expect.stringMatching(/not ours/) }]);
     expect(readDeviceIdleShutdowns(readWorkspaceState(mine))).toEqual({});
 
-    vi.mocked(teardownOwnedIosSim).mockReturnValueOnce({ status: 'missing' });
+    vi.mocked(teardownOwnedIosSim).mockResolvedValueOnce({ status: 'missing' });
     log.length = 0;
-    shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW);
+    await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW);
     expect(log).toEqual([]);
   });
 
-  test('recent client activity keeps the device up without probing processes', () => {
+  test('recent client activity keeps the device up without probing processes', async () => {
     const mine = setup();
     const file = join(workspaceLogsDir(mine), 'client.ndjson');
     mkdirSync(workspaceLogsDir(mine), { recursive: true });
@@ -218,14 +258,14 @@ describe('shutDownIdleDevices', () => {
     utimesSync(file, NOW / 1000, NOW / 1000);
     const probe = vi.fn<() => string>(() => '');
     setExecutor({ runFileQuiet: probe } as never);
-    expect(shutDownIdleDevices(mine, 2 * MINUTE, () => {}, NOW)).toBe(0);
+    expect(await shutDownIdleDevices(mine, 2 * MINUTE, () => {}, NOW)).toBe(0);
     expect(teardownOwnedIosSim).not.toHaveBeenCalled();
     expect(probe).not.toHaveBeenCalled();
   });
 
-  test('a device used within the threshold is left alone', () => {
+  test('a device used within the threshold is left alone', async () => {
     const mine = setup();
-    expect(shutDownIdleDevices(mine, 20 * MINUTE, () => {}, NOW)).toBe(0);
+    expect(await shutDownIdleDevices(mine, 20 * MINUTE, () => {}, NOW)).toBe(0);
     expect(teardownOwnedIosSim).not.toHaveBeenCalled();
   });
 });

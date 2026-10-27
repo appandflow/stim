@@ -1,9 +1,11 @@
-import { getProject, clearSupervisor } from '../workspace/config.ts';
-import { killMetroTree, resolveProjectMetro } from '../metro.ts';
+import { getProject, clearSupervisor, withConfigLockAsync } from '../workspace/config.ts';
+import { killMetroTreeAsync, listeningPidsAsync, processCwds, resolveProjectMetro } from '../metro.ts';
+import { isMetroRunning } from '../ports.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 import { waitForProcessExit } from '../process-identity.ts';
 import { resolveSupervisorTarget } from './ownership.ts';
 import { clearWorkspaceSupervisor } from './state.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { supervisorError } from './errors.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from './stop-cause.ts';
 
@@ -11,7 +13,22 @@ export type OwnedMetroStop =
   | { status: 'stopped' | 'not-running' }
   | { status: 'unverified' | 'external' | 'stuck' | 'port-occupied'; reason: string };
 
-export async function stopOwnedMetro(root: string, requester: StopRequester): Promise<OwnedMetroStop> {
+export async function stopOwnedMetro(
+  root: string,
+  requester: StopRequester,
+  signal?: AbortSignal,
+): Promise<OwnedMetroStop> {
+  const resolve = async (port: number, probeSignal?: AbortSignal) => {
+    throwIfCancelled(probeSignal, 'Metro reset');
+    const result = await resolveProjectMetro(port, root, {
+      pidsOf: (candidate) => listeningPidsAsync(candidate, process.platform, probeSignal),
+      cwdOf: async (pid) => (await processCwds([pid], probeSignal)).get(pid) ?? null,
+      probe: (candidate) => isMetroRunning(candidate, probeSignal),
+    });
+    throwIfCancelled(probeSignal, 'Metro reset');
+    return result;
+  };
+  throwIfCancelled(signal, 'Metro reset');
   const project = getProject(root);
   const port = project?.metroPort;
   const target = resolveSupervisorTarget({
@@ -20,27 +37,29 @@ export async function stopOwnedMetro(root: string, requester: StopRequester): Pr
     reservedPort: port,
   });
   if (target.status === 'unverified') return { status: 'unverified', reason: target.reason ?? 'unknown identity' };
-  if (port && target.status !== 'ours' && !(await resolveProjectMetro(port, root)).missing) {
+  if (port && target.status !== 'ours' && !(await resolve(port, signal)).missing) {
     return { status: 'external', reason: `a dev server Stim did not start answers on port ${port}` };
   }
   if (target.status !== 'ours') return { status: 'not-running' };
   const expected = { pid: target.pid, processToken: target.processToken };
-  requestDevServerStop(root, target.processToken, requester);
-  const signalled = killMetroTree(target.pid, target.processToken);
-  if (!signalled) withdrawDevServerStopRequest(root, target.processToken);
+  await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, requester), signal);
+  const signalled = await killMetroTreeAsync(target.pid, target.processToken);
+  if (!signalled)
+    await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
   if (!signalled || !(await waitForProcessExit(expected, 10_000))) {
     return { status: 'stuck', reason: `supervisor pid ${target.pid} did not exit` };
   }
-  if (port && !(await resolveProjectMetro(port, root)).missing) {
+  if (port && !(await resolve(port)).missing) {
     return { status: 'port-occupied', reason: `port ${port} is still occupied after stopping Metro` };
   }
-  clearWorkspaceSupervisor(root, expected);
-  clearSupervisor(root, expected);
+  await withWorkspaceStateLockAsync(root, () => clearWorkspaceSupervisor(root, expected));
+  await withConfigLockAsync(() => clearSupervisor(root, expected));
+  throwIfCancelled(signal, 'Metro reset');
   return { status: 'stopped' };
 }
 
-export async function stopOwnedMetroForReset(root: string): Promise<void> {
-  const stopped = await stopOwnedMetro(root, { by: 'stim start --reset-cache' });
+export async function stopOwnedMetroForReset(root: string, signal?: AbortSignal): Promise<void> {
+  const stopped = await stopOwnedMetro(root, { by: 'stim start --reset-cache' }, signal);
   switch (stopped.status) {
     case 'unverified':
       throw supervisorError(

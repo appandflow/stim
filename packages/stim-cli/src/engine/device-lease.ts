@@ -2,12 +2,14 @@ import { deviceSlotKey, parseDeviceSlotKey, validateDeviceSlot } from '../device
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { isJsonObject } from '@stim-cli/core/state';
 import { getConfigDir } from '../workspace/config.ts';
-import { withDirLock } from '../dir-lock.ts';
+import { withDirLock, withDirLockAsync } from '../dir-lock.ts';
 import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   writeWorkspaceState,
 } from '../workspace/workspace-state.ts';
 import { segment } from './build-lock.ts';
@@ -131,8 +133,8 @@ export function parseLease(raw: string | null): DeviceLease | null {
   } catch {
     return null;
   }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-  const entry = parsed as Record<string, unknown>;
+  if (!isJsonObject(parsed)) return null;
+  const entry = parsed;
   if (entry.version !== LEASE_VERSION || !isPlatform(entry.platform)) return null;
   const id = text(entry.id);
   const holder = text(entry.holder);
@@ -409,6 +411,46 @@ export function releaseWorkspaceLeases(
     }
     return released;
   });
+}
+
+/** Releases workspace leases with asynchronous lock waits and the same ownership checks. */
+export async function releaseWorkspaceLeasesAsync(
+  root: string,
+  options: Parameters<typeof releaseWorkspaceLeases>[1] = {},
+): Promise<ReleasedLease[]> {
+  const released: ReleasedLease[] = [];
+  const lockOptions = { ensureParent: () => mkdirSync(deviceLocksDir(), { recursive: true }) };
+  for (;;) {
+    const attempt: { blocked?: { path: string; error: unknown } } = {};
+    const io: LeaseIo = {
+      ...fileLeaseIo,
+      removeLease(path) {
+        const lease = parseLease(fileLeaseIo.readLease(path));
+        fileLeaseIo.removeLease(path);
+        if (lease) released.push(summarize(lease));
+      },
+      withLeaseLock(path, fn) {
+        try {
+          return withDirLock(path, fn, { ...lockOptions, waitMs: 0 });
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'STIM_LOCK_TIMEOUT') {
+            attempt.blocked = { path, error };
+          }
+          throw error;
+        }
+      },
+    };
+    await withWorkspaceStateLockAsync(root, () => {
+      try {
+        releaseWorkspaceLeases(root, options, io);
+      } catch (error) {
+        if (error !== attempt.blocked?.error) throw error;
+      }
+    });
+    const blocked = attempt.blocked;
+    if (!blocked) return released;
+    await withDirLockAsync(blocked.path, () => undefined, lockOptions);
+  }
 }
 
 export function removeExpiredLease(entry: LeaseFileEntry, io: LeaseIo = fileLeaseIo): boolean {

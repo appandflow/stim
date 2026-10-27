@@ -6,7 +6,7 @@ import StimKit
 @MainActor
 public final class ActionRun: ObservableObject, Identifiable {
   typealias Launch =
-    @Sendable (
+    @MainActor @Sendable (
       StimCommand, @escaping @Sendable (OutputLine) -> Void, @escaping @Sendable (Int32) -> Void
     ) throws -> Void
 
@@ -68,7 +68,7 @@ public final class ActionRun: ObservableObject, Identifiable {
     command.arguments.contains("--json") ? lines.filter { $0.channel != .stdout } : lines
   }
 
-  /// One line for the autopilot log: the cleanup summary, or the last line the command printed.
+  /// One line for the run: the cleanup summary, or the last line the command printed.
   public var summary: String? {
     if let launchError { return launchError }
     if case .success(let outcome) = gcOutcome { return outcome.headline }
@@ -126,6 +126,7 @@ public final class ActionCenter: ObservableObject {
   public let operations = OperationLog()
   public var onFinish: ((ActionRun) -> Void)?
   private let cli: Task<StimCLI, Never>
+  private let server: @MainActor @Sendable () -> (client: ServerClient, home: String)?
 
   #if DEBUG
     private var fixtureAction: ((String) -> Void)?
@@ -136,8 +137,12 @@ public final class ActionCenter: ObservableObject {
     }
   #endif
 
-  public init(cli: Task<StimCLI, Never>) {
+  public init(
+    cli: Task<StimCLI, Never>,
+    server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)? = { nil }
+  ) {
     self.cli = cli
+    self.server = server
   }
 
   public func active(for key: String) -> ActionRun? {
@@ -173,10 +178,91 @@ public final class ActionCenter: ObservableObject {
     operations.began(run)
     if present { presented = run }
     let cli = cli
+    let server = server
     Task { [weak self] in
       let stim = await cli.value
       run.start(launch: { command, onLine, onExit in
-        try stim.stream(command, onLine: onLine, onExit: onExit)
+        if command.program == "stim", command.arguments == ["doctor", "--json"] {
+          try Self.runDoctor(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", command.arguments.first == "settings",
+          ["set", "unset"].contains(command.arguments.dropFirst().first)
+        {
+          try Self.runSettings(command, cli: stim, connection: server(), onLine: onLine, onExit: onExit)
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "warm"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeWarm(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "stop" {
+          Task {
+            do {
+              let result = try await runServerStop(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "reload" {
+          Task {
+            do {
+              let result = try await runServerReload(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "start" {
+          Task {
+            do {
+              let result = try await runServerStart(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", command.arguments.first == "gc" {
+          Task {
+            do {
+              let result = try await runServerGc(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", Array(command.arguments.prefix(2)) == ["worktree", "remove"] {
+          Task {
+            do {
+              let result = try await runServerWorktreeRemove(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else if command.program == "stim", let platform = command.arguments.first,
+          ["ios", "android", "macos", "web"].contains(platform)
+        {
+          Task {
+            do {
+              let result = try await runServerPlatform(command, cli: stim, connection: server(), onLine: onLine)
+              onExit(result.exitStatus)
+            } catch {
+              onLine(OutputLine(.stderr, error.localizedDescription))
+              onExit(1)
+            }
+          }
+        } else {
+          try stim.stream(command, onLine: onLine, onExit: onExit)
+        }
       }) { [weak self] in
         self?.objectWillChange.send()
         if let self { operations.finished(run, viewed: presented?.id == run.id) }
@@ -191,5 +277,65 @@ public final class ActionCenter: ObservableObject {
     run(
       "Run \(env.names.title) on \(platformName(platform))",
       steps: [env.runCommand(platform: platform)], present: false)
+  }
+
+  private static func runSettings(
+    _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    let set = command.arguments[1] == "set"
+    let scopeIndex = set ? 4 : 3
+    let json = command.arguments.count == scopeIndex + 3 && command.arguments.last == "--json"
+    let arguments = json ? Array(command.arguments.dropLast()) : command.arguments
+    guard arguments.count == scopeIndex + 2, arguments[scopeIndex] == "--scope",
+      let scope = SettingScope(rawValue: arguments[scopeIndex + 1])
+    else { throw ServerError(code: "bad-request", message: "Unsupported Desktop settings command.") }
+    let key = arguments[2]
+    let value = set ? arguments[3] : nil
+    Task {
+      do {
+        let response = try await writeServerSetting(
+          key, value: value, scope: scope, cwd: command.cwd, cli: cli, connection: connection)
+        if json {
+          onLine(OutputLine(.stdout, String(decoding: try JSONEncoder().encode(response.payload), as: UTF8.self)))
+        }
+        switch response.result {
+        case .written:
+          if !json { onLine(OutputLine(.stdout, "Updated \(key) in \(scope.rawValue) settings.")) }
+          onExit(0)
+        case .refused(let refusal):
+          onLine(
+            OutputLine(.stderr, ["\(refusal.code): \(refusal.message)", refusal.remedy].compactMap { $0 }.joined(separator: " ")))
+          onExit(1)
+        }
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
+  }
+
+  private static func runDoctor(
+    _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+    onLine: @escaping @Sendable (OutputLine) -> Void, onExit: @escaping @Sendable (Int32) -> Void
+  ) throws {
+    guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+      throw ServerError(
+        code: "not-connected", message: "The local stim-server is not ready to check this project for this Stim home.")
+    }
+    guard case .open(let hello) = client.state, hello.features?.contains("desktop-doctor-run") == true else {
+      throw ServerError(code: "unsupported", message: "Update the local stim-server to check projects from the setup guide.")
+    }
+    Task {
+      do {
+        let report = try await client.request("desktop.doctor.run", ["cwd": .string(command.cwd)])
+        let data = try JSONEncoder().encode(report)
+        onLine(OutputLine(.stdout, String(decoding: data, as: UTF8.self)))
+        onExit(0)
+      } catch {
+        onLine(OutputLine(.stderr, error.localizedDescription))
+        onExit(1)
+      }
+    }
   }
 }

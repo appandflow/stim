@@ -11,6 +11,8 @@ import Testing
     "Authorization: Bearer abc.def-123_456",
     "stim-server pair --token abc123def456 --json",
     "stim-server pair --ticket=abc123def456",
+    "STIM_SETUP_TICKET=abc123def456 npx --yes stim-server setup",
+    "$env:STIM_SETUP_TICKET='abc123def456'; npx.cmd --yes stim-server setup",
     "https://0123456789abcdef@o123.ingest.sentry.io/456",
     "SENTRY_DSN=https://key@o1.ingest.sentry.io/2",
     "setup ticket abcdEFGH0123ijklMNOP4567qrstUVWX8901yzAB",

@@ -1,9 +1,10 @@
-import { rotateLog } from '@stim-cli/core';
+import { ensurePrivateDir, rotateLog } from '@stim-cli/core';
 import { runId, type NdjsonRecord } from '@stim-cli/core/state';
-import { closeSync, mkdirSync, openSync, writeSync } from 'fs';
+import { closeSync, openSync, writeSync } from 'fs';
 import { dirname } from 'path';
 
 export {
+  createNdjsonTail,
   LEVELS,
   levelRank,
   parseNdjsonLine,
@@ -51,8 +52,8 @@ export function createNdjsonWriter(
   let closed = false;
 
   function open(): void {
-    mkdirSync(dirname(file), { recursive: true });
-    fd = openSync(file, freshFile ? 'w' : 'a');
+    ensurePrivateDir(dirname(file));
+    fd = openSync(file, freshFile ? 'w' : 'a', 0o600);
     freshFile = false;
   }
 

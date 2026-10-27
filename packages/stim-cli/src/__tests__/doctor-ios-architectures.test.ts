@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspectIosDebugArchitectures, parseIosDebugArchitectures } from '../diagnostics/doctor-ios-architectures.ts';
-import { resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 
 function target(settings: Record<string, unknown> = {}, name = 'NativePod') {
   return {
@@ -77,7 +77,7 @@ afterEach(() => {
 
 test.skipIf(process.platform === 'win32')(
   'doctor reports generated Pod helper effects using bounded metadata calls without evaluating Ruby (xcodebuild metadata; skipped on win32)',
-  () => {
+  async () => {
     mkdirSync(join(project, 'ios', 'Pods', 'Pods.xcodeproj'), { recursive: true });
     writeFileSync(
       join(project, 'ios', 'Podfile'),
@@ -85,7 +85,7 @@ test.skipIf(process.platform === 'win32')(
     );
     const calls: string[][] = [];
     setExecutor({
-      runFile(file: string, args: string[], options: { timeoutMs: number }) {
+      async runFileAsync(file: string, args: string[], options: { timeoutMs: number }) {
         expect(file).toBe('xcodebuild');
         calls.push(args);
         expect(options.timeoutMs).toBeGreaterThan(0);
@@ -93,7 +93,7 @@ test.skipIf(process.platform === 'win32')(
         return JSON.stringify([target({ ONLY_ACTIVE_ARCH: args[1]?.includes('/Pods/') ? 'NO' : 'YES' })]);
       },
     });
-    const findings = inspectIosDebugArchitectures(project);
+    const findings = await inspectIosDebugArchitectures(project);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures', level: 'cost' });
     expect(findings[0]?.detail).toContain('ios/Pods/Pods.xcodeproj');
@@ -117,14 +117,14 @@ test.skipIf(process.platform === 'win32')(
 
 test.skipIf(process.platform === 'win32')(
   'missing Pods and failed app metadata produce an unverified note without a cost warning (xcodebuild metadata; skipped on win32)',
-  () => {
+  async () => {
     writeFileSync(join(project, 'ios', 'Podfile'), 'post_install {}\n');
     setExecutor({
-      runFile() {
+      async runFileAsync() {
         throw new Error('timed out');
       },
     });
-    const findings = inspectIosDebugArchitectures(project);
+    const findings = await inspectIosDebugArchitectures(project);
     expect(findings).toHaveLength(1);
     expect(findings[0]).toMatchObject({ code: 'ios-debug-architectures-unknown', level: 'note' });
     expect(findings[0]?.detail).toContain('Pods project (not generated)');
@@ -132,28 +132,28 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('ungenerated iOS projects do not invoke Xcode', () => {
+test('ungenerated iOS projects do not invoke Xcode', async () => {
   setExecutor({
-    runFile() {
+    async runFileAsync() {
       throw new Error('must not run');
     },
   });
-  expect(inspectIosDebugArchitectures(home)).toEqual([]);
+  expect(await inspectIosDebugArchitectures(home)).toEqual([]);
 });
 
-test('metadata inspection stops at its total deadline and keeps partial findings', () => {
+test('metadata inspection stops at its total deadline and keeps partial findings', async () => {
   mkdirSync(join(project, 'ios', 'Pods', 'Pods.xcodeproj'), { recursive: true });
   const clock = vi.spyOn(Date, 'now').mockReturnValue(1_000);
   let calls = 0;
   try {
     setExecutor({
-      runFile() {
+      async runFileAsync() {
         calls++;
         clock.mockReturnValue(61_001);
         return JSON.stringify([target()]);
       },
     });
-    expect(inspectIosDebugArchitectures(project).map((finding) => finding.code)).toEqual([
+    expect((await inspectIosDebugArchitectures(project)).map((finding) => finding.code)).toEqual([
       'ios-debug-architectures',
       'ios-debug-architectures-unknown',
     ]);
@@ -162,3 +162,50 @@ test('metadata inspection stops at its total deadline and keeps partial findings
     clock.mockRestore();
   }
 });
+
+test('a slow metadata child leaves the event loop responsive while preserving its findings', async () => {
+  const executor = getExecutor();
+  let finished = false;
+  setExecutor({
+    runFileAsync(_file, _args, options) {
+      return executor.runFileAsync(
+        process.execPath,
+        ['-e', `setTimeout(() => console.log(${JSON.stringify(JSON.stringify([target()]))}), 200)`],
+        options,
+      );
+    },
+  });
+  const inspection = inspectIosDebugArchitectures(project).then((findings) => {
+    finished = true;
+    return findings;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  expect(finished).toBe(false);
+  expect(await inspection).toEqual([expect.objectContaining({ code: 'ios-debug-architectures' })]);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'overlapping and repeated inspections share one result until a project input changes (xcodebuild metadata; skipped on win32)',
+  async () => {
+    const pbxproj = join(project, 'ios', 'App.xcodeproj', 'project.pbxproj');
+    writeFileSync(pbxproj, 'one');
+    let calls = 0;
+    setExecutor({
+      async runFileAsync() {
+        calls++;
+        return JSON.stringify([target({ ONLY_ACTIVE_ARCH: 'NO' })]);
+      },
+    });
+    const [first, overlapping] = await Promise.all([
+      inspectIosDebugArchitectures(project),
+      inspectIosDebugArchitectures(project),
+    ]);
+    expect(first.map((finding) => finding.code)).toEqual(['ios-debug-architectures']);
+    expect(overlapping).toEqual(first);
+    expect(await inspectIosDebugArchitectures(project)).toEqual(first);
+    expect(calls).toBe(1);
+    writeFileSync(pbxproj, 'changed');
+    await inspectIosDebugArchitectures(project);
+    expect(calls).toBe(2);
+  },
+);

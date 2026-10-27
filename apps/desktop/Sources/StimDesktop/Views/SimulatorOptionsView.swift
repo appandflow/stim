@@ -33,6 +33,7 @@ struct SimulatorOptionsView: View {
   let canControl: Bool
   var clipboard: ClipboardOptionsView? = nil
   var frame: DeviceFrameOption?
+  var audio: DeviceAudioTarget?
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
@@ -56,11 +57,15 @@ struct SimulatorOptionsView: View {
     }
   #endif
 
-  init(udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil) {
+  init(
+    udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil,
+    audio: DeviceAudioTarget? = nil
+  ) {
     self.udid = udid
     self.canControl = canControl
     self.clipboard = clipboard
     self.frame = frame
+    self.audio = audio
   }
 
   var body: some View {
@@ -72,6 +77,10 @@ struct SimulatorOptionsView: View {
       }
       if let frame {
         DeviceFrameToggle(frame: frame)
+        Divider()
+      }
+      if let audio {
+        DeviceAudioOptionsView(target: audio, canControl: canControl)
         Divider()
       }
       if let appearance {

@@ -12,7 +12,7 @@ final class WizardCompletionTests: XCTestCase {
       ]))
   }
   private func journal(_ steps: [SetupJournal.Step]) -> SetupJournal {
-    SetupJournal(nodeId: "self", ticket: SetupTicket.generate(now: Date()), capabilities: [.build], steps: steps)
+    SetupJournal(ticket: SetupTicket.generate(now: Date()), capabilities: [.build], steps: steps)
   }
 
   func testDoctorComparisonOverridesJournalAndBusyDoesNotBlock() throws {
@@ -58,6 +58,37 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertTrue(fixes.contains("gem install cocoapods -v 1.16.2"))
     XCTAssertTrue(fixes.filter(wizardFixIsCommand).count == 3)
     XCTAssertFalse(try row("bundler", "no Bundler there to run the CocoaPods this project's Gemfile.lock pins", [.build]).blocks)
+  }
+
+  func testAnAndroidPackageGradleDownloadsIsAnAmberRowAndNeverBlocks() throws {
+    let note = "NDK 27.1.12297006 is not installed there; Gradle downloads it on the first build (about 1-2 GB)"
+    let downloads = try JSONDecoder().decode(
+      BuildMachineStatus.self,
+      from: JSONSerialization.data(withJSONObject: [
+        "machine": "mini", "state": "approved", "offloadable": true, "problems": [],
+        "notes": [["code": "ndk", "reason": note]],
+      ]))
+    let rows = toolsReport(journal: nil, status: downloads, capabilities: [.build], android: true)
+    let ndk = try XCTUnwrap(rows.first { $0.id == "ndk" })
+    XCTAssertEqual(ndk.state, .ok)
+    XCTAssertTrue(ndk.warns)
+    XCTAssertFalse(ndk.blocks)
+    XCTAssertEqual(ndk.detail, note)
+    XCTAssertNil(ndk.consequence)
+    XCTAssertFalse(rows.contains { $0.blocks })
+    XCTAssertFalse(try XCTUnwrap(rows.first { $0.id == "build-tools" }).warns)
+  }
+
+  func testSdkmanagerByPathIsACopyableCommand() {
+    XCTAssertTrue(wizardFixIsCommand("/Users/x/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager \"ndk;27.1.12297006\""))
+    XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/Android/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("\"C:\\Users\\First Last\\sdk\\cmdline-tools\\latest\\bin\\sdkmanager.bat\" --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("'/Users/First Last/O'\\''Neil/sdk/cmdline-tools/latest/bin/sdkmanager' --licenses"))
+    XCTAssertTrue(wizardFixIsCommand("winget install EclipseAdoptium.Temurin.17.JDK"))
+    XCTAssertTrue(wizardFixIsCommand("xcodes install 27.1"))
+    XCTAssertFalse(wizardFixIsCommand("On mini, install the package into its Android SDK:"))
+    XCTAssertFalse(wizardFixIsCommand("/usr/bin/rm -rf x"))
   }
 
   func testHostedOnlyToolsWithoutBuildDataNeverWaitForever() {
@@ -116,6 +147,31 @@ final class WizardCompletionTests: XCTestCase {
       ).first { $0.id == "cocoapods" }?.state.fix, "On mini, on the PATH stim-server uses:\ngem install bundler")
   }
 
+  func testLinuxToolsSkipAppleRowsAndBlockOnJdkOrMissingAndroidSdk() throws {
+    func rows(_ problems: [[String: String]]) throws -> [WizardTool] {
+      toolsReport(
+        journal: nil, status: try status(problems, offloadable: problems.isEmpty), capabilities: [.build], android: true,
+        androidOnly: true)
+    }
+    XCTAssertEqual(
+      try rows([]).map(\.id), ["stim-build", "jdk", "android-sdk", "ndk", "build-tools", "compile-sdk"])
+    XCTAssertTrue(try rows([["code": "jdk", "reason": "JDK none there, 17 here"]]).first { $0.id == "jdk" }!.blocks)
+    XCTAssertTrue(try rows([["code": "android-sdk", "reason": "no Android SDK there"]]).first { $0.id == "android-sdk" }!.blocks)
+    XCTAssertTrue(try rows([["code": "jdk", "reason": "JDK 21 there, 17 here"]]).first { $0.id == "jdk" }!.blocks)
+    let ndk = try XCTUnwrap(try rows([["code": "ndk", "reason": "no NDK 27.1.12297006 there"]]).first { $0.id == "ndk" })
+    XCTAssertFalse(ndk.blocks)
+    XCTAssertNil(ndk.detail?.range(of: "Needed only for Android"))
+    let missingSdk = journal([.init(id: "tools.Android SDK", state: .pending, title: "Android SDK", fix: "install it")])
+    let journalOnly = try XCTUnwrap(
+      toolsReport(journal: missingSdk, status: nil, capabilities: [.build], androidOnly: true).first { $0.id == "android-sdk" })
+    XCTAssertEqual(journalOnly.state, .missing("install it"))
+    XCTAssertFalse(journalOnly.blocks, "setup's stricter SDK check must not block before doctor compares")
+    let compared = try status([], offloadable: true)
+    XCTAssertEqual(
+      toolsReport(journal: missingSdk, status: compared, capabilities: [.build], androidOnly: true)
+        .first { $0.id == "android-sdk" }?.state, .ok, "doctor's comparison replaces the setup-time check")
+  }
+
   func testOffloadProofRejectsFallbackWrongMachineAndUnverifiedLaunch() throws {
     for launch in ["true", "\"bundling\"", "\"unverified\"", "false", "\"future\""] {
       for machine in ["mini", "other"] {
@@ -132,19 +188,16 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(parsed.code, "STIM_OFFLOAD_REFUSED")
     XCTAssertEqual(parsed.message, "Exact message")
     XCTAssertEqual(parsed.remedy, "Exact remedy")
-    XCTAssertFalse(try OffloadResult.localPassed(Data("{\"launched\":\"unverified\"}".utf8), exit: 0))
-    XCTAssertFalse(try OffloadResult.localPassed(Data("{\"offloadedTo\":\"mini\",\"launched\":true}".utf8), exit: 0))
-    XCTAssertTrue(try OffloadResult.localPassed(Data("{\"launched\":\"bundling\"}".utf8), exit: 0))
   }
 
-  func testFixesUseTheSelectedMachinesDoctorFindingAndPreferTheJournal() throws {
+  func testFixesUseTheSelectedMachinesDoctorFindingAndPreferTheJournalUnlessTheFindingHasCommands() throws {
     let report = try JSONDecoder().decode(
       DoctorReport.self,
       from: Data(
         """
         {"project":"/fixture","findings":[
         {"code":"build-machine-jdk","level":"cost","title":"Remote Mac other JDK","detail":"mismatch","fix":"other fix"},
-        {"code":"build-machine-jdk","level":"cost","title":"Remote Mac mini JDK","detail":"mismatch","fix":"selected fix"},
+        {"code":"build-machine-jdk","level":"cost","title":"Remote machine mini JDK","detail":"mismatch","fix":"selected fix"},
         {"code":"build-machine-checkout","level":"cost","title":"Remote Mac mini checkout","detail":"checkout","fix":"checkout fix"}]}
         """.utf8))
     let status = try status([
@@ -160,6 +213,16 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(
       toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: report.findings)
         .first { $0.id == "jdk" }?.state.fix, "journal fix")
+    let withCommands = try JSONDecoder().decode(
+      DoctorReport.self,
+      from: Data(
+        """
+        {"project":"/fixture","findings":[
+        {"code":"build-machine-jdk","level":"cost","title":"Remote machine mini JDK","detail":"mismatch","fix":"On mini, install JDK 17:\\nbrew install --cask zulu@17"}]}
+        """.utf8))
+    XCTAssertEqual(
+      toolsReport(journal: journal, status: status, capabilities: [.build], android: true, findings: withCommands.findings)
+        .first { $0.id == "jdk" }?.state.fix, "On mini, install JDK 17:\nbrew install --cask zulu@17")
   }
 
   func testProseFixesAndCommandExamplesAreNotCopyableShellCommands() {
@@ -178,7 +241,7 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(try BuildTimings.record(Data(log.utf8)).totalMs, 10)
   }
 
-  func testReducerNeedsRemoteProofTimingsAndLocalProofAndSkipStopsLateEvents() throws {
+  func testReducerPassesOnRemoteProofAndTimingsAndSkipStopsLateEvents() throws {
     let data = Data(
       "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"
         .utf8)
@@ -195,35 +258,25 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(test.outcome, .notRun)
     test.apply(.start)
     test.apply(.timings(times))
-    test.apply(.localStart)
-    test.apply(.localFinished(passed: true, ms: 250000))
     XCTAssertFalse(test.passed)
     XCTAssertEqual(test.outcome, .notRun)
     test.apply(.offload(.success))
-    test.apply(.timings(times))
-    test.apply(.localStart)
-    XCTAssertEqual(test.state, .localBuilding)
-    XCTAssertEqual(test.outcome, .notRun)
-    test.apply(.localFinished(passed: false, ms: 250000))
     XCTAssertFalse(test.passed)
-    test.apply(.skip)
-    XCTAssertEqual(test.outcome, .skippedAfterFailure("The sample did not launch from a local build."))
+    test.apply(.timings(times))
+    XCTAssertEqual(test.state, .done)
+    XCTAssertEqual(test.timings, times)
     test.apply(.start)
     test.apply(.skip)
     XCTAssertEqual(test.outcome, .skipped)
     test.apply(.start)
     test.apply(.offload(.success))
     test.apply(.timings(times))
-    test.apply(.localStart)
-    test.apply(.localFinished(passed: true, ms: 250000))
     XCTAssertTrue(test.passed)
     XCTAssertEqual(test.outcome, .passed)
     XCTAssertEqual(test.outcome.symbol, "checkmark.circle.fill")
     XCTAssertEqual(test.outcome.accessibilityLabel, "Test build, done")
     XCTAssertNil(test.outcome.summaryText)
-    XCTAssertEqual(test.localMs, 250000)
     test.apply(.skip)
-    test.apply(.localFinished(passed: true, ms: 1))
     test.apply(.progress("late"))
     test.apply(.fail(code: "LATE", message: "Cancelled build", remedy: nil))
     XCTAssertEqual(test.state, .skipped)
@@ -258,12 +311,12 @@ final class WizardCompletionTests: XCTestCase {
     XCTAssertEqual(test.outcome, .skipped)
   }
 
-  func testComparisonAndModeDefaultsDoNotClaimSlowerBuildsAreFaster() {
-    XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 172000, localMs: 250000).contains("faster"))
-    XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 250000, localMs: 172000).contains("slower"))
-    XCTAssertTrue(speedComparison(machine: "mini", offloadMs: 172000, localMs: 172000).contains("same time"))
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "off"), .auto)
-    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "force"), .force)
+  func testModeDefaults() {
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: true, current: "local"), .auto)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: "remote"), .remote)
+    XCTAssertEqual(WizardMode.defaultChoice(changedMode: false, current: nil), .auto)
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "remote-only"))
+    XCTAssertNil(WizardMode.defaultChoice(changedMode: false, current: "janics-mac-mini"))
   }
 
   func testSampleRemovalRejectsOtherFoldersAndSymlinkEscapes() throws {

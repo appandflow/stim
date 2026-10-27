@@ -12,3 +12,5 @@ packages/*/bin/*.d.ts
 packages/stim-cli/src/**/*.d.ts
 
 .claude/worktrees/
+
+!.github/actions/stim-ci/dist/

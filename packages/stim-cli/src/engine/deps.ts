@@ -1,19 +1,23 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
 import { spawnDeclared } from './spawn-claims.ts';
 import { bundlerPin } from './bundler.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
+import { ambientContext, ambientEnv } from '@stim-cli/core';
+import { killOnAbort } from '../workspace/git-read.ts';
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
 export const DEPS_ERROR = 'STIM_DEPS_FAILED';
 
 const LAST_LINES = 20;
+
+const BUILD_MARKER = '.last_build_configuration';
 
 const TRANSCRIPT_LINES = 2000;
 
@@ -98,18 +102,19 @@ function extractRubyHead(lines: string[]): PodDiagnostics | null {
 export function podsAreStale(
   lockText: unknown,
   manifestText: unknown,
+  dir = 'ios/',
 ): { noPods?: boolean; stale: boolean; reason?: string } {
   const lock = normalize(lockText);
   const manifest = normalize(manifestText);
   if (lock === null && manifest === null) return { noPods: true, stale: false };
   if (lock === null) {
-    return { stale: true, reason: 'ios/Podfile.lock is missing but ios/Pods exists' };
+    return { stale: true, reason: `${dir}Podfile.lock is missing but ${dir}Pods exists` };
   }
   if (manifest === null) {
-    return { stale: true, reason: 'ios/Pods/Manifest.lock is missing (pods have never been installed here)' };
+    return { stale: true, reason: `${dir}Pods/Manifest.lock is missing (pods have never been installed here)` };
   }
   if (lock !== manifest) {
-    return { stale: true, reason: 'ios/Podfile.lock and ios/Pods/Manifest.lock differ' };
+    return { stale: true, reason: `${dir}Podfile.lock and ${dir}Pods/Manifest.lock differ` };
   }
   return { stale: false };
 }
@@ -119,19 +124,21 @@ function normalize(text: unknown) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
-function podfilePath(root: string) {
-  return join(root, 'ios', 'Podfile');
-}
-
-export function readPodState(root: string): {
+export function readPodState(
+  root: string,
+  directory: string = join(root, 'ios'),
+): {
   hasPodfile: boolean;
   lockText: string | null;
   manifestText: string | null;
+  dir: string;
 } {
+  const rel = relative(root, directory);
   return {
-    hasPodfile: existsSync(podfilePath(root)),
-    lockText: readOrNull(join(root, 'ios', 'Podfile.lock')),
-    manifestText: readOrNull(join(root, 'ios', 'Pods', 'Manifest.lock')),
+    hasPodfile: existsSync(join(directory, 'Podfile')),
+    lockText: readOrNull(join(directory, 'Podfile.lock')),
+    manifestText: readOrNull(join(directory, 'Pods', 'Manifest.lock')),
+    dir: rel ? `${rel}/` : '',
   };
 }
 
@@ -143,17 +150,109 @@ function readOrNull(file: string) {
   }
 }
 
-export function podEnv(root: string, options: Parameters<typeof podEnvForRuby>[1] = {}): NodeJS.ProcessEnv {
-  return podEnvForRuby(readRubyVersion(root), options);
+export interface LoginRubyEnv {
+  PATH?: string;
+  GEM_HOME?: string;
+  GEM_PATH?: string;
+}
+
+const LOGIN_ENV_BEGIN = '@@ruby-env-begin@@';
+const LOGIN_ENV_END = '@@ruby-env-end@@';
+const LOGIN_ENV_SCRIPT =
+  `printf '\\n${LOGIN_ENV_BEGIN}\\nPATH=%s\\nGEM_HOME=%s\\nGEM_PATH=%s\\n${LOGIN_ENV_END}\\n' ` +
+  '"$PATH" "$GEM_HOME" "$GEM_PATH" > "$1"';
+
+export function parseLoginRubyEnv(output: string): LoginRubyEnv | null {
+  const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
+  const begin = lines.lastIndexOf(LOGIN_ENV_BEGIN);
+  const end = lines.indexOf(LOGIN_ENV_END, begin + 1);
+  if (begin < 0 || end < 0) return null;
+  const out: LoginRubyEnv = {};
+  for (const line of lines.slice(begin + 1, end)) {
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq);
+    const value = line.slice(eq + 1);
+    if (value && (key === 'PATH' || key === 'GEM_HOME' || key === 'GEM_PATH')) out[key] = value;
+  }
+  return out;
+}
+
+const loginRubyEnvByEnvironment = new WeakMap<NodeJS.ProcessEnv, Map<string, LoginRubyEnv | null>>();
+
+const LOGIN_ENV_OPTIONS = { timeoutMs: 10_000, killSignal: 'SIGKILL', detachedSilent: true } as const;
+
+async function readLoginRubyEnvAsync(
+  shell: string | undefined = ambientEnv().SHELL,
+  platform: NodeJS.Platform = process.platform,
+): Promise<LoginRubyEnv | null> {
+  const context = ambientContext();
+  context?.signal.throwIfAborted();
+  if (platform !== 'darwin' || !shell || !isAbsolute(shell)) return null;
+  const environment = ambientEnv();
+  let cache = loginRubyEnvByEnvironment.get(environment);
+  if (!cache) {
+    cache = new Map();
+    loginRubyEnvByEnvironment.set(environment, cache);
+  }
+  if (cache.has(shell)) return cache.get(shell) ?? null;
+  let dir: string | null = null;
+  let parsed: LoginRubyEnv | null = null;
+  try {
+    dir = mkdtempSync(join(tmpdir(), 'stim-ruby-env-'));
+    const file = join(dir, 'env');
+    await getExecutor().runFileAsync(shell, ['-lic', LOGIN_ENV_SCRIPT, 'stim', file], {
+      ...LOGIN_ENV_OPTIONS,
+      declareFor: context,
+      onSpawn: killOnAbort(context?.signal),
+    });
+    parsed = parseLoginRubyEnv(readFileSync(file, 'utf-8'));
+  } catch {
+    parsed = null;
+  } finally {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  }
+  context?.signal.throwIfAborted();
+  cache.set(shell, parsed);
+  return parsed;
+}
+
+function rubyPathEntries(
+  login: LoginRubyEnv,
+  callerPath: string | undefined,
+  exists: (p: string) => boolean,
+): string[] {
+  const have = new Set((callerPath ?? '').split(delimiter));
+  const gemDirs = [login.GEM_HOME, ...(login.GEM_PATH ?? '').split(delimiter)].filter((dir): dir is string => !!dir);
+  return (login.PATH ?? '').split(delimiter).filter((entry) => {
+    if (!entry || have.has(entry)) return false;
+    if (gemDirs.some((gem) => entry === gem || entry.startsWith(gem + sep))) return true;
+    return exists(join(entry, 'ruby')) || exists(join(entry, 'pod'));
+  });
+}
+
+function prependPath(entries: string[], existing: string | undefined): string {
+  const seen = new Set<string>();
+  return [...entries, ...(existing ?? '').split(delimiter)]
+    .filter((entry) => entry && !seen.has(entry) && seen.add(entry))
+    .join(delimiter);
 }
 
 export function podEnvForRuby(
   version: string | null,
   {
-    env = process.env,
-    home = homedir(),
+    env = ambientEnv(),
+    home = (process.platform === 'win32' ? env.USERPROFILE : env.HOME) || homedir(),
     exists = existsSync,
-  }: { env?: NodeJS.ProcessEnv; home?: string; exists?: (p: string) => boolean } = {},
+    read = readOrNull,
+    loginEnv = () => null,
+  }: {
+    env?: NodeJS.ProcessEnv;
+    home?: string;
+    exists?: (p: string) => boolean;
+    read?: (p: string) => string | null;
+    loginEnv?: () => LoginRubyEnv | null;
+  } = {},
 ): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...env,
@@ -162,26 +261,91 @@ export function podEnvForRuby(
     LANG: env.LANG ?? 'en_US.UTF-8',
     LC_ALL: env.LC_ALL ?? env.LANG ?? 'en_US.UTF-8',
   };
-  if (!version) return out;
-  const candidates: Array<{ bin: string; gems?: string }> = [
-    { bin: join(home, '.rbenv', 'versions', version, 'bin') },
-    {
-      bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'),
-      gems: join(home, '.rvm', 'gems', `ruby-${version}`),
-    },
-    { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
-    { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
-  ];
+  const candidates: Array<{ bin: string; rvm?: string }> = version
+    ? [
+        { bin: join(home, '.rbenv', 'versions', version, 'bin') },
+        { bin: join(home, '.rvm', 'rubies', `ruby-${version}`, 'bin'), rvm: `ruby-${version}` },
+        { bin: join(home, '.asdf', 'installs', 'ruby', version, 'bin') },
+        { bin: join(home, '.local', 'share', 'mise', 'installs', 'ruby', version, 'bin') },
+      ]
+    : [];
   for (const c of candidates) {
     if (!exists(c.bin)) continue;
-    out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
-    if (c.gems && exists(c.gems)) {
-      out.GEM_HOME = c.gems;
-      out.GEM_PATH = c.gems;
+    if (c.rvm) {
+      const rvm = rvmRuby(join(home, '.rvm'), c.rvm, exists);
+      out.PATH = prependPath(rvm.bins, out.PATH);
+      if (exists(rvm.gems.home)) {
+        out.GEM_HOME = rvm.gems.home;
+        out.GEM_PATH = rvm.gems.path;
+      }
+      return out;
     }
-    break;
+    out.PATH = `${c.bin}${delimiter}${out.PATH ?? ''}`;
+    return out;
   }
+  if (env.GEM_HOME) return out;
+  const fallback = defaultRuby(home, exists, read);
+  if (fallback) {
+    out.PATH = prependPath(fallback.bins, out.PATH);
+    if (fallback.gems) {
+      out.GEM_HOME = fallback.gems.home;
+      out.GEM_PATH = fallback.gems.path;
+    }
+    return out;
+  }
+  const login = loginEnv();
+  if (!login) return out;
+  const rubyPath = rubyPathEntries(login, out.PATH, exists);
+  if (rubyPath.length) out.PATH = prependPath(rubyPath, out.PATH);
+  if (login.GEM_HOME) out.GEM_HOME = login.GEM_HOME;
+  if (login.GEM_PATH) out.GEM_PATH = login.GEM_PATH;
   return out;
+}
+
+/** What `rvm use <name>` sets: the gemset and its `@global` gemset on `GEM_PATH` and their `bin` directories on `PATH`. */
+function rvmRuby(
+  rvm: string,
+  name: string,
+  exists: (p: string) => boolean,
+): { bins: string[]; gems: { home: string; path: string } } {
+  const gems = join(rvm, 'gems', name);
+  const global = `${gems}@global`;
+  return {
+    bins: [join(gems, 'bin'), join(global, 'bin'), join(rvm, 'rubies', name, 'bin')].filter(exists),
+    gems: { home: gems, path: [gems, global].join(delimiter) },
+  };
+}
+
+/**
+ * The Ruby a new login shell makes the default, read from the version manager's files: rvm's `default` alias in
+ * `~/.rvm/config/alias`, or rbenv's global `~/.rbenv/version`.
+ */
+function defaultRuby(
+  home: string,
+  exists: (p: string) => boolean,
+  read: (p: string) => string | null,
+): { bins: string[]; gems?: { home: string; path: string } } | null {
+  const rvm = join(home, '.rvm');
+  const alias = /^default=(\S+)$/m.exec(read(join(rvm, 'config', 'alias')) ?? '')?.[1];
+  if (alias && exists(join(rvm, 'rubies', alias, 'bin'))) return rvmRuby(rvm, alias, exists);
+  const rbenv = read(join(home, '.rbenv', 'version'))?.trim();
+  if (rbenv && exists(join(home, '.rbenv', 'versions', rbenv, 'bin'))) {
+    return { bins: [join(home, '.rbenv', 'versions', rbenv, 'bin')] };
+  }
+  return null;
+}
+
+export async function podEnvForRubyAsync(version: string | null): Promise<NodeJS.ProcessEnv> {
+  let loginNeeded = false;
+  const withoutLogin = podEnvForRuby(version, {
+    loginEnv: () => {
+      loginNeeded = true;
+      return null;
+    },
+  });
+  if (!loginNeeded) return withoutLogin;
+  const login = await readLoginRubyEnvAsync();
+  return podEnvForRuby(version, { loginEnv: () => login });
 }
 
 export function readRubyVersion(
@@ -220,8 +384,8 @@ export type PodInstallResult = {
 // lockfile is never edited. Gems still land wherever the project's own bundler config
 // points BUNDLE_PATH (the React Native template ships `.bundle/config` with
 // vendor/bundle), which is the project's dependency state, not Stim's (#137).
-function bundlerEnv(root: string, gemfile: string): NodeJS.ProcessEnv {
-  return { ...podEnv(root), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
+async function bundlerEnv(root: string, gemfile: string): Promise<NodeJS.ProcessEnv> {
+  return { ...(await podEnvForRubyAsync(readRubyVersion(root))), BUNDLE_GEMFILE: gemfile, BUNDLE_FROZEN: 'true' };
 }
 
 const BUNDLE_PATH_SETTING = /^BUNDLE_PATH:[ \t]*["']?([^"'\r\n]+?)["']?[ \t]*$/m;
@@ -281,7 +445,7 @@ export async function runCaptured(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
+    child = spawnDeclared(ambientContext(), () =>
       ctx.spawn(ctx.cmd, ctx.args, {
         cwd: ctx.cwd,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -332,7 +496,7 @@ async function ensureBundledGems(
   pin: { gemfile: string; lockfile: string },
   ctx: RunContext,
 ): Promise<GemsResult> {
-  const env = bundlerEnv(root, pin.gemfile);
+  const env = await bundlerEnv(root, pin.gemfile);
   const cwd = dirname(pin.gemfile);
 
   const check = await runCaptured({
@@ -373,7 +537,7 @@ async function ensureBundledGems(
       failed: true,
       code: DEPS_ERROR,
       reason: `\`bundle install\` failed (${how}).`,
-      remedy: frozenRemedy(root, pin, transcript) || gemInstallRemedy(root, pin),
+      remedy: frozenRemedy(pin, transcript) || gemInstallRemedy(root, pin),
       diagnosticSource: extracted ? extracted.source : 'tail',
       diagnosticLines: extracted ? extracted.lines : [],
       lastLines: install.transcript.slice(-LAST_LINES),
@@ -408,15 +572,11 @@ function missingBundlerNote(pin: { gemfile: string; lockfile: string }): string 
   );
 }
 
-function frozenRemedy(
-  root: string,
-  pin: { gemfile: string; lockfile: string },
-  transcript: string,
-): string | undefined {
+function frozenRemedy(pin: { gemfile: string; lockfile: string }, transcript: string): string | undefined {
   if (!BUNDLER_FROZEN.test(transcript)) return undefined;
   return (
     `Stim runs bundler with BUNDLE_FROZEN so it can never write into your checkout, and ${pin.gemfile} no longer ` +
-    `matches ${pin.lockfile}. Run \`cd ${root} && bundle install\` yourself, keep the updated Gemfile.lock, then run again.`
+    `matches ${pin.lockfile}. Run \`cd ${dirname(pin.gemfile)} && bundle install\` yourself, keep the updated Gemfile.lock, then run again.`
   );
 }
 
@@ -427,8 +587,47 @@ function gemInstallRemedy(root: string, pin: { gemfile: string; lockfile: string
     : '';
   return (
     `${ruby}Bundler could not install the gems ${pin.lockfile} pins, so \`bundle exec pod install\` cannot run. ` +
-    `Run \`cd ${root} && bundle install\` and fix what it reports, then run again.`
+    `Run \`cd ${dirname(pin.gemfile)} && bundle install\` and fix what it reports, then run again.`
   );
+}
+
+interface BuildMarker {
+  dir: string;
+  ino: number;
+  content: Buffer;
+}
+
+// CocoaPods cleans every pod directory when it installs any pod, and its preserve_paths glob skips
+// dotfiles. That removes the .last_build_configuration marker react-native's replace-*-version.js
+// scripts read, which treat a missing marker as a Debug binary even when the Release one is still there.
+function readBuildMarkers(podsDir: string): BuildMarker[] {
+  let names: string[];
+  try {
+    names = readdirSync(podsDir);
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    const dir = join(podsDir, name);
+    try {
+      return [{ dir, ino: statSync(dir).ino, content: readFileSync(join(dir, BUILD_MARKER)) }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function restoreBuildMarkers(markers: BuildMarker[]): string[] {
+  const restored: string[] = [];
+  for (const { dir, ino, content } of markers) {
+    const file = join(dir, BUILD_MARKER);
+    try {
+      if (existsSync(file) || statSync(dir).ino !== ino) continue;
+      writeFileSync(file, content);
+      restored.push(basename(dir));
+    } catch {}
+  }
+  return restored;
 }
 
 export async function runPodInstall(
@@ -440,20 +639,22 @@ export async function runPodInstall(
     heartbeatMs = HEARTBEAT_INTERVAL_MS,
     estimateMs = null,
     onHeartbeat = (line: string) => console.error(line),
+    directory = join(root, 'ios'),
   }: {
     spawnFn?: SpawnFn | null;
     now?: () => number;
     heartbeatMs?: number;
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
+    directory?: string;
   } = {},
 ): Promise<PodInstallResult> {
-  const iosDir = join(root, 'ios');
+  const iosDir = directory;
   if (!existsSync(iosDir)) {
     return {
       failed: true,
       code: DEPS_ERROR,
-      reason: `No ios/ directory in ${root}, so there is nothing to pod install.`,
+      reason: `No ${relative(root, iosDir) || '.'}/ directory in ${root}, so there is nothing to pod install.`,
       remedy: 'Run `stim ios` on a project with native iOS sources, or let prebuild generate them.',
       lastLines: [] as string[],
     };
@@ -468,7 +669,7 @@ export async function runPodInstall(
   };
 
   const notes: string[] = [];
-  const pin = bundlerPin(root);
+  const pin = bundlerPin(root, iosDir);
   let bundler = false;
   if (pin) {
     const gems = await ensureBundledGems(root, pin, ctx);
@@ -479,16 +680,21 @@ export async function runPodInstall(
 
   const args = bundler ? ['bundle', 'exec', 'pod', 'install'] : ['pod', 'install'];
   const command = args.join(' ');
+  const markers = readBuildMarkers(join(iosDir, 'Pods'));
   const run = await runCaptured({
     ...ctx,
     cmd: args[0] as string,
     args: args.slice(1),
     cwd: iosDir,
-    env: bundler && pin ? bundlerEnv(root, pin.gemfile) : podEnv(root),
+    env: bundler && pin ? await bundlerEnv(root, pin.gemfile) : await podEnvForRubyAsync(readRubyVersion(root)),
     event: 'pod_install',
     label: 'pods',
     estimateMs,
   });
+  const restored = restoreBuildMarkers(markers);
+  if (restored.length) {
+    notes.push(`kept the ${BUILD_MARKER} that pod install removed from ${restored.join(', ')}`);
+  }
 
   if (run.error) {
     const missing = bundler ? missingBundle(run.error, pin) : missingPod(run.error);
@@ -530,13 +736,13 @@ function podFailureRemedy(
   transcript: string,
 ): string | undefined {
   if (pin) {
-    const frozen = frozenRemedy(root, pin, transcript);
+    const frozen = frozenRemedy(pin, transcript);
     if (frozen) return frozen;
     if (BUNDLER_NO_COCOAPODS.test(transcript)) {
       return (
         `${pin.lockfile} resolves cocoapods, but bundler found no \`pod\` executable in the bundle it loaded: ` +
         `the installed gems belong to a different Gemfile than ${pin.gemfile}, or that Gemfile's bundle was never ` +
-        `installed. Run \`cd ${root} && bundle install && bundle exec pod --version\` and make that work, then run again.`
+        `installed. Run \`cd ${dirname(pin.gemfile)} && bundle install && bundle exec pod --version\` and make that work, then run again.`
       );
     }
   }
@@ -568,12 +774,14 @@ function missingBundle(err: unknown, pin: { gemfile: string; lockfile: string } 
   };
 }
 
+export const POD_MISSING_REASON = 'CocoaPods is not installed: no `pod` executable on PATH.';
+
 function missingPod(err: unknown) {
   if (!isMissingBinary(err)) return null;
   return {
     failed: true,
     code: DEPS_ERROR,
-    reason: 'CocoaPods is not installed: no `pod` executable on PATH.',
+    reason: POD_MISSING_REASON,
     remedy: 'Install CocoaPods (`brew install cocoapods`, or `gem install cocoapods`) and run again.',
     lastLines: [] as string[],
   };

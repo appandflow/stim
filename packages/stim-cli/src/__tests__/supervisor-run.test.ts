@@ -10,7 +10,9 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { fork, type ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve as absolute } from 'node:path';
 import { getProject, upsertProject } from '../workspace/config.ts';
@@ -25,9 +27,10 @@ import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
 import { goneClaimOwner, liveClaimOwner, recycledClaimOwner } from './_factories.ts';
+import { MODE_COMMAND } from '../supervisor/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -40,7 +43,15 @@ import {
   writePidFile,
 } from '../supervisor/run.ts';
 
-vi.mock('../supervisor/hosted-metro.ts', () => ({ watchHostedMetro: () => async () => {} }));
+const hostedMetro = vi.hoisted(() => ({ open: false }));
+vi.mock('../supervisor/hosted-metro.ts', () => ({
+  watchHostedMetro: () => {
+    hostedMetro.open = true;
+    return async () => {
+      hostedMetro.open = false;
+    };
+  },
+}));
 
 let tmpHome: string;
 let root: string;
@@ -79,6 +90,7 @@ test('an old supervisor finishing cannot erase its replacement registration or t
 });
 
 beforeEach(() => {
+  hostedMetro.open = false;
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
@@ -86,7 +98,7 @@ beforeEach(() => {
   const real = getExecutor();
   setExecutor({
     ...real,
-    runFileAsync: (file: string, args?: string[], opts?: object) =>
+    runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
       file === 'watchman'
         ? Promise.reject(new Error('watchman is not used here'))
         : real.runFileAsync(file, args, opts),
@@ -245,9 +257,11 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
         `const { writeWorkspaceState } = await import(${JSON.stringify(runUrl)});`,
         'const root = process.argv[2];',
         'const key = process.argv[3];',
-        'const startAt = Number(process.argv[4]);',
-        'while (Date.now() < startAt) {}',
-        'writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+        "process.on('message', () => {",
+        '  writeWorkspaceState(root, { [key]: { pid: process.pid } });',
+        "  process.send('done');",
+        '});',
+        "process.send('ready');",
       ].join('\n'),
     );
 
@@ -261,28 +275,54 @@ describe('state.json concurrent writers (Contract 2 lock)', () => {
       'seventh',
       'eighth',
     ];
-    for (let round = 0; round < 8; round++) {
-      mkdirSync(workspaceDir(root), { recursive: true });
-      writeFileSync(workspaceStateFile(root), '{}\n');
-      const startAt = Date.now() + 250;
-      await Promise.all(
-        keys.map(
-          (key) =>
-            new Promise<void>((resolve, reject) => {
-              execFile(
-                process.execPath,
-                [script, root, key, String(startAt)],
-                { env: { ...process.env, STIM_HOME: tmpHome } },
-                (err) => (err ? reject(err) : resolve()),
-              );
-            }),
-        ),
-      );
-
-      const state = readWorkspaceState(root);
-      for (const key of keys) {
-        expect(state && state[key]).toBeTruthy();
+    const children = keys.map((key) =>
+      fork(script, [root, key], {
+        env: { ...process.env, STIM_HOME: tmpHome },
+        execArgv: [],
+        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      }),
+    );
+    function nextWrite(child: ChildProcess): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const detach = () => {
+          child.off('message', received);
+          child.off('error', failed);
+          child.off('exit', exited);
+        };
+        const received = () => {
+          detach();
+          resolve();
+        };
+        const failed = (error: Error) => {
+          detach();
+          reject(error);
+        };
+        const exited = (code: number | null) => failed(new Error(`State writer exited with ${code}`));
+        child.once('message', received);
+        child.once('error', failed);
+        child.once('exit', exited);
+      });
+    }
+    try {
+      await Promise.all(children.map(nextWrite));
+      for (let round = 0; round < 8; round++) {
+        mkdirSync(workspaceDir(root), { recursive: true });
+        writeFileSync(workspaceStateFile(root), '{}\n');
+        const written = children.map(nextWrite);
+        for (const child of children) child.send('write');
+        await Promise.all(written);
+        const state = readWorkspaceState(root);
+        for (const key of keys) expect(state && state[key]).toBeTruthy();
       }
+    } finally {
+      await Promise.all(
+        children.map(async (child) => {
+          if (child.exitCode !== null || child.signalCode !== null) return;
+          const exited = once(child, 'exit');
+          child.kill('SIGKILL');
+          await exited;
+        }),
+      );
     }
   }, 15_000);
 });
@@ -349,6 +389,22 @@ describe('runSupervisor', () => {
     expect(typeof startState.supervisor.startedAt).toBe('string');
   });
 
+  test.each([
+    [true, true],
+    [false, undefined],
+  ])('a server that loads the request shim (%s) is recorded as reporting HMR updates', async (observes, recorded) => {
+    const server = fakeServer({ observesRequests: observes });
+    await runSupervisor({
+      root,
+      port: 8091,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: () => {},
+      startBare: async () => server.handle,
+    });
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBe(recorded);
+  });
+
   test('a new supervisor clears a stale Expo tunnel before it starts the server', async () => {
     writeWorkspaceState(root, { metroTunnel: { kind: 'expo', url: 'exp://stale.exp.direct' } });
     const server = fakeServer({ mode: MODE_EXPO, serverPid: 31336 });
@@ -394,6 +450,36 @@ describe('runSupervisor', () => {
     assert(state.supervisor);
     expect(state.supervisor.serverPid).toBe(31337);
     expect(state.supervisor.mode).toBe(MODE_EXPO);
+  });
+
+  test('metro.command hosts the configured command instead of the detected ecosystem', async () => {
+    const command = ['node', 'cli.js', 'start', '--port', '{port}'];
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '58' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { slug: 'app' } }));
+    writeFileSync(join(root, '.stim.json'), JSON.stringify({ metro: { command } }));
+    const server = fakeServer({ mode: MODE_COMMAND, serverPid: 31338 });
+    let received: readonly string[] | null = null;
+    let receivedSettings: unknown = null;
+    const running = await runSupervisor({
+      root,
+      port: 8093,
+      attachSignals: false,
+      onExit: () => {},
+      startExpo: async () => {
+        throw new Error('the Expo server must not start');
+      },
+      startCommand: async (opts) => {
+        received = opts.command;
+        receivedSettings = opts.settings;
+        return server.handle;
+      },
+    });
+    assert(running);
+    expect(running.mode).toBe(MODE_COMMAND);
+    expect(received).toEqual(command);
+    expect(receivedSettings).toMatchObject({ metro: { command } });
+    expect(readWorkspaceState(root)?.supervisor?.mode).toBe(MODE_COMMAND);
+    expect(readWorkspaceState(root)?.supervisor?.hmrUpdates).toBeUndefined();
   });
 
   test('records the Expo child with a process token that proves it after the supervisor is gone', async () => {
@@ -585,6 +671,87 @@ describe('runSupervisor', () => {
     expect(last.event).toBe('supervisor_stopped');
     expect(last.level).toBe('info');
     expect(last.src).toBe('metro');
+  });
+
+  test('a failed server close keeps ownership and a later shutdown can retry', async () => {
+    let attempts = 0;
+    const server = fakeServer({
+      close: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('dev-server group is still alive');
+      },
+    });
+    const exits: number[] = [];
+    const running = await runSupervisor({
+      root,
+      port: 8093,
+      isExpo: () => false,
+      attachSignals: false,
+      onExit: (code) => exits.push(code),
+      startBare: async () => server.handle,
+    });
+    assert(running);
+    try {
+      await running.shutdown(0, 'supervisor_stopped', 'first shutdown');
+      expect(exits).toEqual([]);
+      expect(hostedMetro.open).toBe(true);
+      expect(readPidFile(root)).toBe(process.pid);
+      expect(readWorkspaceState(root)?.supervisor?.pid).toBe(process.pid);
+      expect(getProject(root)?.supervisor?.pid).toBe(process.pid);
+      expect(readMetroLog()).toContainEqual(expect.objectContaining({ event: 'server_close_failed' }));
+      await running.shutdown(0, 'supervisor_stopped', 'retry shutdown');
+      expect(attempts).toBe(2);
+      expect(hostedMetro.open).toBe(false);
+      expect(exits).toEqual([0]);
+      expect(readPidFile(root)).toBeNull();
+      expect(readWorkspaceState(root)).toBeNull();
+      expect(getProject(root)?.supervisor).toBeUndefined();
+    } finally {
+      await running.shutdown(0, 'supervisor_stopped', 'fixture cleanup');
+    }
+  });
+
+  test('shutdown stays alive while server closure waits without any other referenced handles', async () => {
+    const failed = join(root, 'close-rejected');
+    const child = getExecutor().spawn(
+      process.execPath,
+      [
+        '--experimental-strip-types',
+        '--input-type=module',
+        '-e',
+        `
+      import { writeFileSync } from 'node:fs';
+      import { runSupervisor } from ${JSON.stringify(new URL('../supervisor/run.ts', import.meta.url).href)};
+      const running = await runSupervisor({
+        root: ${JSON.stringify(root)}, port: 8093, attachSignals: false, isExpo: () => false,
+        watchman: async () => ({ roots: [] }),
+        startBare: async () => ({ close: () => new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            writeFileSync(${JSON.stringify(failed)}, '');
+            reject(new Error('dev-server group is still alive'));
+          }, 50);
+          timer.unref();
+        }) }),
+      });
+      await running.shutdown(0, 'supervisor_stopped', 'test shutdown');
+    `,
+      ],
+      { cwd: root, stdio: 'ignore', env: { ...process.env, STIM_HOME: tmpHome } },
+    );
+    try {
+      const deadline = Date.now() + 2000;
+      while (!existsSync(failed) && child.exitCode === null && child.signalCode === null && Date.now() < deadline)
+        await delay(10);
+      expect(existsSync(failed)).toBe(true);
+      expect(child.exitCode === null && child.signalCode === null).toBe(true);
+      expect(readWorkspaceState(root)?.supervisor?.pid).toBe(child.pid);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exited = once(child, 'exit');
+        child.kill('SIGKILL');
+        await exited;
+      }
+    }
   });
 
   test('a second shutdown is a no-op: the server is closed once', async () => {
@@ -973,7 +1140,7 @@ describe('idle stop', () => {
     expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
   });
 
-  test('a physical device this workspace locks blocks the stop until the lease expires', () => {
+  test('a physical device this workspace locks blocks the stop until the lease expires', async () => {
     useProbeHost({ ps: '' });
     const probe = workspaceIdleProbe(root);
     takeLease({ root, platform: 'android', id: 'PHYSICAL-SERIAL', kind: 'declared', durationMs: 30 * MINUTE });
@@ -1096,7 +1263,7 @@ describe('device idle shutdown', () => {
         seen.checks++;
         return due() ? [{ device: {} as never, idleForMs: deviceMinutes * MINUTE }] : [];
       },
-      shutDown: (_root, idleMs, log) => {
+      shutDown: async (_root, idleMs, log) => {
         seen.shutDowns.push(idleMs);
         log({ level: 'info', event: 'device_idle_shutdown', msg: 'shut down simulator stim-test, idle 2m' });
         return 1;

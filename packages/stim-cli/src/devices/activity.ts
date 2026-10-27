@@ -1,7 +1,10 @@
 import { closeSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from 'node:fs';
+import { readdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFileQuiet } from '../engine/operation-exec.ts';
 import { cdpClientTool, hostDriverTool, instrumentationTool } from './automation-tools.ts';
 import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../engine/device-lease.ts';
@@ -45,6 +48,7 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
       driver,
       ...lastActivityAt,
       basis: [...new Set(evidence.drivers.map((entry) => entry.basis))],
+      ...(evidence.unknown.length ? { unknown: [...new Set(evidence.unknown)] } : {}),
     };
   }
   if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
@@ -260,19 +264,22 @@ export function tailLines(path: string): string[] | null {
   }
 }
 
-export function envDir(name: string): string | null {
-  const value = process.env[name]?.trim();
-  return value ? resolve(value) : null;
+export function envDir(name: string, env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string | null {
+  const value = env[name]?.trim();
+  return value ? resolve(cwd, value) : null;
 }
 
-function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: string }[] {
+function agentDeviceDirs(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): { kind: AgentDeviceRecord['kind']; dir: string }[] {
   const root = join(home, '.agent-device');
   const leaseDirs = [
-    envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR') ?? join(root, 'apple-runner', 'leases'),
+    envDir('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', env) ?? join(root, 'apple-runner', 'leases'),
     join(root, 'ios-runner', 'leases'),
   ];
   return [
-    { kind: 'claim', dir: envDir('AGENT_DEVICE_CLAIMS_DIR') ?? join(root, 'device-claims') },
+    { kind: 'claim', dir: envDir('AGENT_DEVICE_CLAIMS_DIR', env) ?? join(root, 'device-claims') },
     ...[...new Set(leaseDirs)].map((dir) => ({ kind: 'runner-lease' as const, dir })),
   ];
 }
@@ -281,9 +288,14 @@ function agentDeviceDirs(home: string): { kind: AgentDeviceRecord['kind']; dir: 
  * When an agent-device session last recorded an event: its events file's modification time. agent-device names a
  * session's directory after the session with every character outside `[a-zA-Z0-9._-]` replaced by `_`.
  */
-function agentSessionActedAt(home: string, session: string, stateDir: string | null): number | null {
+function agentSessionActedAt(
+  home: string,
+  session: string,
+  stateDir: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
   let latest: number | null = null;
-  for (const root of stateDir ? [stateDir] : agentDeviceStateDirs(home)) {
+  for (const root of stateDir ? [stateDir] : agentDeviceStateDirs(home, env)) {
     try {
       const at = statSync(join(root, 'sessions', session.replaceAll(/[^a-zA-Z0-9._-]/g, '_'), 'events.ndjson')).mtimeMs;
       latest = latest === null ? at : Math.max(latest, at);
@@ -292,8 +304,8 @@ function agentSessionActedAt(home: string, session: string, stateDir: string | n
   return latest;
 }
 
-export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
-  return agentDeviceDirs(home).flatMap(({ kind, dir }) => {
+export function readAgentDeviceRecords(home: string, env: NodeJS.ProcessEnv = process.env): AgentDeviceRecord[] {
+  return agentDeviceDirs(home, env).flatMap(({ kind, dir }) => {
     let names: string[];
     try {
       names = readdirSync(dir).filter((name) => name.endsWith('.json'));
@@ -309,6 +321,30 @@ export function readAgentDeviceRecords(home: string): AgentDeviceRecord[] {
       return parseAgentDeviceRecord(kind, path, raw);
     });
   });
+}
+
+export async function readAgentDeviceRecordsAsync(
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<AgentDeviceRecord[]> {
+  const records: AgentDeviceRecord[] = [];
+  for (const { kind, dir } of agentDeviceDirs(home, env)) {
+    let names: string[];
+    try {
+      names = (await readdir(dir)).filter((name) => name.endsWith('.json'));
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const path = join(dir, name);
+      let raw: string | null = null;
+      try {
+        raw = await readFile(path, 'utf8');
+      } catch {}
+      records.push(parseAgentDeviceRecord(kind, path, raw));
+    }
+  }
+  return records;
 }
 
 function isClaimProtocolRunner(record: AgentDeviceRecord, row: HostProcess): boolean {
@@ -379,12 +415,80 @@ export function createDeviceProcessTables(): DeviceProcessTables {
 }
 
 export interface ActivityReaderOptions {
+  env?: NodeJS.ProcessEnv;
   now?: number;
   home?: string;
   startOf?: (pid: number) => ProcessStart;
   leaseFiles?: () => LeaseFileEntry[];
   tables?: DeviceProcessTables;
   viewers?: () => ViewedDevice[];
+}
+
+export async function readHostProcessTableAsync(
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<HostProcess[] | null> {
+  const output = await runOperationFileQuiet(operation, getExecutor(), 'ps', ['-axww', '-o', HOST_PROCESS_COLUMNS], {
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return output === null ? null : parseProcessTable(output);
+}
+
+/** Reads bounded host/instrumentation children asynchronously, sharing observations across device targets. */
+export function createActivityReaderAsync(
+  options: Omit<ActivityReaderOptions, 'tables'> & { signal?: AbortSignal; operation?: StimContext } = {},
+): (target: ActivityTarget) => Promise<DeviceActivity> {
+  const exec = getExecutor();
+  let host: Promise<HostProcess[] | null> | undefined;
+  let hostValue: HostProcess[] | null = null;
+  const android = new Map<string, Promise<string | null>>();
+  const androidValues = new Map<string, string | null>();
+  const read = createActivityReader({
+    ...options,
+    tables: {
+      ...createDeviceProcessTables(),
+      host: () => hostValue,
+      android: (serial) => androidValues.get(serial) ?? null,
+    },
+  });
+  const probe = async (target: ActivityTarget): Promise<DeviceActivity> => {
+    options.signal?.throwIfAborted();
+    host ??= readHostProcessTableAsync(options.signal, options.operation);
+    hostValue = await host;
+    options.signal?.throwIfAborted();
+    if (target.platform === 'android') {
+      let pending = android.get(target.id);
+      if (!pending) {
+        pending = runOperationFileQuiet(
+          options.operation,
+          exec,
+          'adb',
+          ['-s', target.id, 'shell', 'ps', '-A', '-o', 'PID,ARGS'],
+          {
+            timeoutMs: 5000,
+            killSignal: 'SIGKILL',
+            signal: options.signal,
+            // Windows keeps adb's inherited cwd open when it starts its server: https://github.com/appandflow/stim/issues/914.
+            cwd: process.platform === 'win32' ? homedir() : options.operation?.cwd,
+          },
+        );
+        android.set(target.id, pending);
+      }
+      androidValues.set(target.id, await pending);
+    }
+    options.signal?.throwIfAborted();
+    return read(target);
+  };
+  let queued: Promise<unknown> = Promise.resolve();
+  return (target) => {
+    if (!options.operation) return probe(target);
+    const result = queued.then(() => probe(target));
+    queued = result;
+    return result;
+  };
 }
 
 function workspaceDeviceRecency(root: string): ActivityEvidence['recency'] {
@@ -409,7 +513,8 @@ export function workspaceDeviceLastUseAt(root: string): number {
 
 export function createActivityReader({
   now = Date.now(),
-  home = homedir(),
+  env = process.env,
+  home = env.HOME || env.USERPROFILE || homedir(),
   startOf = inspectProcessStart,
   leaseFiles = listLeaseFiles,
   tables = createDeviceProcessTables(),
@@ -427,7 +532,7 @@ export function createActivityReader({
   return (target) => {
     const evidence: ActivityEvidence = { drivers: [], unknown: [], recency: [] };
 
-    agentDevice ??= readAgentDeviceRecords(home).map((record) => ({
+    agentDevice ??= readAgentDeviceRecords(home, env).map((record) => ({
       record,
       liveness: agentDeviceLiveness(record, startOf),
     }));
@@ -442,7 +547,7 @@ export function createActivityReader({
           pid: record.owner?.pid ?? null,
           since: record.createdAtMs !== null ? new Date(record.createdAtMs).toISOString() : null,
         });
-        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir) : null;
+        const actedAt = record.session ? agentSessionActedAt(home, record.session, record.stateDir, env) : null;
         if (actedAt !== null) evidence.recency.push({ basis: 'agent-action', at: actedAt });
       } else if (liveness === 'unknown') {
         evidence.unknown.push(basis);

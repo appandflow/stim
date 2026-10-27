@@ -15,6 +15,7 @@ import { CCACHE_UNAVAILABLE, type CcacheSetup, readCcacheActivity } from './ccac
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from './build-facts.ts';
 import type { AndroidCasSetup } from './android-cas.ts';
+import { ambientContext } from '@stim-cli/core';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -63,7 +64,7 @@ export function androidSdkRefusal({
   return {
     code: BUILD_ERROR,
     reason: `No Android SDK at ${sdkPath}.`,
-    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
+    remedy: `Set ANDROID_HOME to the Android SDK (Android Studio installs it at ~/Library/Android/sdk on macOS and ~/Android/Sdk on Linux), or write sdk.dir into ${localPropertiesPath}. JAVA_HOME must point at a JDK 17 install as well.`,
   };
 }
 
@@ -174,6 +175,7 @@ export interface LocateApkResult {
   apkPath?: string | null;
   note?: string | null;
   candidates?: string[];
+  androidPackage?: string;
 }
 
 export function locateApk(project: ApkLayout, transcript = '', variant: string | null = null): LocateApkResult {
@@ -358,7 +360,7 @@ export type BuildAndroidResult = {
   durationMs: number;
   ccache?: CcacheActivity;
 } & (
-  | { ok: true; apkPath: string; apkNote: string | null }
+  | { ok: true; apkPath: string; apkNote: string | null; androidPackage?: string }
   | {
       ok: false;
       code: string;
@@ -385,6 +387,7 @@ export async function buildGradle(
     task,
     projectArgs = [],
     preflightFailure = null,
+    locate,
   }: {
     root: string;
     logWriter?: NdjsonWriter | null;
@@ -393,11 +396,12 @@ export async function buildGradle(
     task: string;
     projectArgs?: string[];
     preflightFailure?: GradlePreflightFailure | null;
+    locate?: () => Promise<LocateApkResult | GradlePreflightFailure> | LocateApkResult | GradlePreflightFailure;
   },
   {
     spawnFn = null,
     now = Date.now,
-    env = process.env,
+    env = ambientContext()?.env ?? process.env,
     buildCache = true,
     ccache = null,
     cas = null,
@@ -504,20 +508,23 @@ export async function buildGradle(
 
   let child: ChildProcess;
   try {
-    child = spawnDeclared(() =>
-      spawn(project.gradlew, args, {
-        cwd: project.directory,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: {
-          ...env,
-          ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
-          ...ccache?.env,
-          ...cas?.env,
-          ...nativeEnv,
-          TERM: 'dumb',
-          FORCE_COLOR: '0',
-        },
-      }),
+    child = spawnDeclared(
+      ambientContext(),
+      () =>
+        spawn(project.gradlew, args, {
+          cwd: project.directory,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: {
+            ...env,
+            ...(sdkExists && !env.ANDROID_HOME && !env.ANDROID_SDK_ROOT ? { ANDROID_HOME: sdk } : {}),
+            ...ccache?.env,
+            ...cas?.env,
+            ...nativeEnv,
+            TERM: 'dumb',
+            FORCE_COLOR: '0',
+          },
+        }),
+      { until: process.platform === 'win32' ? 'close' : 'exit' },
     );
   } catch (err) {
     return spawnFailure(err, root, project, now() - startedAt);
@@ -537,7 +544,10 @@ export async function buildGradle(
     estimateMs,
   });
 
+  const closed =
+    process.platform === 'win32' ? new Promise<void>((resolve) => child.once('close', () => resolve())) : undefined;
   const result = await waitForChild(child);
+  await closed;
   stopHeartbeat();
   outReader.flush();
   errReader.flush();
@@ -567,7 +577,17 @@ export async function buildGradle(
     };
   }
 
-  const located = locateApk(project, transcript, variant);
+  const located = locate ? await locate() : locateApk(project, transcript, variant);
+  if ('code' in located)
+    return {
+      ok: false,
+      ...located,
+      diagnostics: [],
+      truncated: 0,
+      lastLines: tail.slice(),
+      durationMs,
+      ccache: ccacheActivity,
+    };
   if (!located.apkPath && located.candidates?.length) {
     return {
       ok: false,
@@ -604,6 +624,7 @@ export async function buildGradle(
     ok: true,
     apkPath,
     apkNote: located.note ?? null,
+    ...(located.androidPackage ? { androidPackage: located.androidPackage } : {}),
     durationMs,
     lastLines: tail.slice(),
     ccache: ccacheActivity,

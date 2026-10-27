@@ -1,4 +1,5 @@
 import { FEATURES } from '@stim-cli/core/protocol';
+import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
@@ -18,12 +19,16 @@ import {
   MEMORY_SOURCES,
   NATIVE_BUILD_STEPS,
   TUTORIAL_VERSION,
+  CAPACITY_REFUSAL_LIMIT,
+  CAPACITY_REFUSAL_MAX_AGE_MS,
+  PLACEMENT_DECISIONS,
+  PLACEMENT_WORDS,
+  REPLACED_SETTINGS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_FINGERPRINT_IGNORES } from '../cache/build-cache.ts';
-import { OUTPUT_LABELS } from '../command-output.ts';
 import { WATCHMAN_NESTED_WORKTREES } from '../diagnostics/doctor-watchman.ts';
 import { CLAIM_REFUSED, CLAIM_UNAVAILABLE } from '../ownership-claim.ts';
 import { AUTOMATION_TOOLS } from '../devices/automation-tools.ts';
@@ -34,13 +39,7 @@ import { detectTutorial } from '../workspace/project.ts';
 import webCommand from '../commands/web.ts';
 import macosCommand from '../commands/macos.ts';
 import { buildReport } from '../engine/build-progress.ts';
-import {
-  CAPACITY_REFUSAL_LIMIT,
-  CAPACITY_REFUSAL_MAX_AGE_MS,
-  PLACEMENT_DECISIONS,
-  PLACEMENT_LIMIT,
-  PLACEMENT_MAX_AGE_MS,
-} from '../engine/stats.ts';
+import { PLACEMENT_LIMIT, PLACEMENT_MAX_AGE_MS } from '../engine/stats.ts';
 import {
   topicNames,
   renderTopic,
@@ -68,6 +67,8 @@ function allBodies(): string[] {
 
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
+  'STIM_TRACE',
+  'STIM_TRACE_OWNER',
   'STIM_ANDROID_CAS_TOOLCHAIN',
   'STIM_BACKGROUND_LAUNCH',
   'STIM_ACCESS_TICKET',
@@ -80,7 +81,59 @@ function scrapedCodes(source: string): Set<string> {
   );
 }
 
-const SUMMARY_ONLY_LABELS = ['app', 'compilation cache'];
+const PHASE_LABELS = [
+  'agent-device',
+  'branch',
+  'budget',
+  'build',
+  'cache',
+  'caches',
+  'carry',
+  'checkout',
+  'daemons',
+  'deps',
+  'device',
+  'devices',
+  'error',
+  'failed',
+  'findings',
+  'fingerprint',
+  'gems',
+  'install',
+  'installs',
+  'ip.txt',
+  'lan',
+  'launch',
+  'lease',
+  'lock',
+  'log',
+  'logs',
+  'meaning',
+  'metro',
+  'pods',
+  'port',
+  'prebuild',
+  'project',
+  'readiness',
+  'ready',
+  'remedy',
+  'removed',
+  'resolved',
+  'result',
+  'services',
+  'setting',
+  'settings',
+  'setup',
+  'state',
+  'stats',
+  'stop',
+  'storage',
+  'swap',
+  'verify',
+  'version',
+  'workspace',
+  'worktrees',
+];
 
 test('every advertised topic renders non-empty content', () => {
   for (const name of topicNames()) {
@@ -179,9 +232,7 @@ test('the lifecycle topic grids every label the output vocabulary allows, and no
   const start = body.indexOf('The labels are a closed set');
   expect(start).toBeGreaterThan(-1);
   const grid = body.slice(body.indexOf('column:', start) + 'column:'.length, body.indexOf('`app` and', start));
-  expect(grid.trim().split(/\s+/).toSorted()).toEqual(
-    OUTPUT_LABELS.filter((label) => label !== '' && !SUMMARY_ONLY_LABELS.includes(label)).toSorted(),
-  );
+  expect(grid.trim().split(/\s+/).toSorted()).toEqual(PHASE_LABELS.toSorted());
 });
 
 test('native-build cache fields are documented in the JSON failure contract', () => {
@@ -226,6 +277,8 @@ test('the errors topic documents every code the build commands, the Node check a
   const body = renderTopic('errors');
   assert(body);
   const commandFiles = [
+    'device-provision.ts',
+    'device-tools.ts',
     'ios.ts',
     'android.ts',
     'macos.ts',
@@ -241,9 +294,13 @@ test('the errors topic documents every code the build commands, the Node check a
   ];
   const sources = [
     ...commandFiles.map((file) => readFileSync(new URL(`../commands/${file}`, import.meta.url), 'utf-8')),
-    ...['engine/ios-profile.ts', 'engine/ios-signing.ts', 'engine/eas-build.ts', 'engine/ios-device.ts'].map((f) =>
-      readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8'),
-    ),
+    ...[
+      'engine/ios-profile.ts',
+      'engine/ios-signing.ts',
+      'engine/ios-provision.ts',
+      'engine/eas-build.ts',
+      'engine/ios-device.ts',
+    ].map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf-8')),
     readFileSync(new URL('../../bin/node-check.ts', import.meta.url), 'utf-8'),
     readFileSync(new URL('../../../server/bin/node-check.ts', import.meta.url), 'utf-8'),
   ].join('\n');
@@ -412,6 +469,12 @@ test('pool recovery guidance routes claim refusals to the error remedy and back'
   expect(renderSection('errors', CLAIM_REFUSED)).toContain('stim guide lifecycle pool');
 });
 
+test('native Gradle build-worker references route to the rendered native-android section', () => {
+  expect(renderSection('lifecycle', 'native-android')).toContain('android.offloadInputs');
+  expect(renderTopic('settings')).toContain('stim guide lifecycle native-android');
+  expect(renderSection('lifecycle', 'hosted-android')).toContain('stim guide lifecycle native-android');
+});
+
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
   expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
@@ -435,6 +498,23 @@ test('the settings topic documents every registered setting and its environment 
   assert(body);
   const names = SETTINGS.flatMap((setting) => (setting.env ? [setting.key, setting.env] : [setting.key]));
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
+});
+
+test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {
+  for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    assert(body);
+    expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
+  }
+  for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+  }
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
+      expect(settings).toContain(name);
+  }
 });
 
 test('the static skill is only the agent guide router', () => {
@@ -553,44 +633,82 @@ test('the agent guide routes situations to valid sections before listing every t
 
 test('tutorial prompts route to rendered sections', () => {
   for (const step of TUTORIAL_STEPS) {
-    if (!step.prompt) continue;
-    assert(step.section, step.id);
+    if (!step.section) continue;
     expect(renderSection('tutorial', step.section)).toBeTruthy();
   }
 });
 
-test('the printed tutorial app is detected as the supported tutorial version', () => {
-  const app = renderSection('tutorial', 'app');
-  assert(app);
-  const json = app.match(/```json\n([\s\S]*?)\n```/)?.[1];
-  assert(json);
-  expect(detectTutorial(JSON.parse(json))).toEqual({ version: TUTORIAL_VERSION });
+const flat = (topicSection: string) => renderSection('tutorial', topicSection)?.replace(/\s+/g, ' ') ?? '';
+
+test('the run section names the marker version the status payload reports and only clones', () => {
+  const run = flat('run');
+  expect(run).toContain(`expo.extra.stimTutorial equal to ${TUTORIAL_VERSION}`);
+  expect(run).toMatch(/Do not run the app/);
+  expect(run).toMatch(/do not act on them/);
+  expect(run).toMatch(/stim doctor --platform ios there: it registers the clone/);
+  expect(detectTutorial({ expo: { extra: { stimTutorial: TUTORIAL_VERSION } } })).toEqual({
+    version: TUTORIAL_VERSION,
+  });
+});
+
+test('the run section checks each change on the tutorial app with agent-device', () => {
+  const run = flat('run');
+  for (const testID of ['tap-button', 'dark-accent-switch', 'size-m']) expect(run).toContain(testID);
+  expect(run).toContain('agent-device open dev.stim.tutorial --platform ios --udid <ios.udid>');
+  expect(run).toMatch(/snapshot -i before every action/);
 });
 
 test('tutorial setup protects existing folders and the user repository', () => {
-  const run = renderSection('tutorial', 'run');
-  assert(run);
-  expect(run).toMatch(/existing non-tutorial[\s\S]*?stop and ask the user for another folder/i);
-  expect(run).toMatch(/Never overwrite or delete it/i);
-  expect(run).toMatch(/inside another repository[\s\S]*?stop and ask the user for another folder/i);
+  const run = flat('run');
+  expect(run).toMatch(/stop and ask the user for another folder; never overwrite or delete it/i);
+  expect(run).toMatch(/inside another repository: stop and ask the user for another folder/i);
   expect(run).toMatch(/Never git add in the user's repo/i);
 });
 
-test('the manual tutorial checks for an enclosing repository before creating or initializing the app', () => {
-  const begin = TUTORIAL_STEPS.find((step) => step.id === 'begin')!.manual;
-  const index = (needle: string) => begin.findIndex((line) => line.includes(needle));
-  expect(index('--is-inside-work-tree')).toBeGreaterThanOrEqual(0);
-  expect(index('--is-inside-work-tree')).toBeLessThan(index('create-expo-app'));
-  expect(index('create-expo-app')).toBeLessThan(index('git init'));
+test('the cloning tutorial step checks the repository before cloning', () => {
+  const run = renderSection('tutorial', 'run')!;
+  expect(run.indexOf('--is-inside-work-tree')).toBeLessThan(run.indexOf('git clone'));
 });
 
-test('tutorial finish removes the tour worktree without forcing removal', () => {
-  const finish = renderSection('tutorial', 'finish');
-  assert(finish);
-  expect(finish).toMatch(/stim worktree remove "\{tour\}"/);
-  expect(finish).toMatch(/authorizes removing this tour worktree only/i);
-  expect(finish).toMatch(/Never use --force/i);
-  expect(finish).not.toMatch(/stim worktree remove[^\n]*--force/);
+test('tutorial finish names the two tracked worktrees as the only --force targets', () => {
+  const finish = flat('finish');
+  expect(finish).toContain('stim worktree remove "{tour}" stim worktree remove "{second}"');
+  expect(finish).toMatch(
+    /consent stim guide agent asks for before worktree remove --force, for exactly those two paths/i,
+  );
+  expect(finish).toMatch(/Never use --force on the clone or on any other worktree/i);
+  expect(finish).toMatch(/Use a plain remove first/i);
+  expect(finish).not.toMatch(/stim worktree remove "[^"]*" --force/);
+  const ask = TUTORIAL_STEPS.find((step) => step.id === 'finish')!.ask!;
+  expect(ask).toContain('{worktrees}');
+});
+
+test('tutorial delete tears down the worktrees and the clone through Stim before deleting only the clone', () => {
+  const remove = flat('delete');
+  expect(remove).toMatch(
+    /expo\.extra\.stimTutorial\. If it does not, \{base\} is not the tutorial clone: report it and stop/,
+  );
+  expect(remove.indexOf('stim worktree remove "<path>"')).toBeLessThan(remove.indexOf('stim worktree remove "{base}"'));
+  expect(remove.indexOf('stim worktree remove "{base}"')).toBeLessThan(remove.indexOf('rm -rf "{base}"'));
+  expect(remove).toMatch(/Never use --force in this step, and never delete any path other than \{base\}/);
+  expect(remove).not.toMatch(/remove it with --force/);
+  expect(flat('finish')).not.toContain('rm -rf');
+});
+
+test('tutorial restart removes nothing, so it cannot contradict the finish force rule', () => {
+  expect(flat('restart')).toMatch(/remove nothing/i);
+});
+
+test("the share step comes before finish, pushes to a fork, and attaches the body's screenshots", () => {
+  const ids = TUTORIAL_STEPS.map((step) => step.id);
+  expect(ids.indexOf('share')).toBeLessThan(ids.indexOf('finish'));
+  const share = flat('share');
+  expect(share).toMatch(/gh repo fork[\s\S]*git push[\s\S]*gh pr create --repo/);
+  expect(share).toMatch(/never booted/);
+  for (const shot of ['before', 'after']) {
+    expect(share).toContain(`--attach ".expo/screenshots/${shot}.png`);
+    expect(flat('share')).toContain(`(./.expo/screenshots/${shot}.png)`);
+  }
 });
 
 test('the agent guide shares the Stim Desktop link the commands print, once', () => {
@@ -632,7 +750,7 @@ test('the agent and cleanup guides shut down owned simulators without an occupan
 test('the guide names every path Stim ignores by default', () => {
   const lifecycle = renderSection('lifecycle', 'builds') ?? '';
   for (const path of DEFAULT_FINGERPRINT_IGNORES) {
-    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*$/, '');
+    const bare = path.replace(/^\*\*\//, '').replace(/\/\*\*(\/\*)?$/, '');
     expect(lifecycle).toContain(bare);
   }
 });
@@ -858,7 +976,7 @@ test('hosting setup routes approval through doctor and a separate person-granted
   const settings = renderTopic('settings');
   expect(settings).toContain('remote.machines');
   expect(settings).toContain('doctor --fix');
-  expect(settings).toContain('stim-server devices grant <id> --device-host');
+  expect(settings).toContain('STIM_SETUP_TICKET');
   expect(settings).toContain('stim-server setup');
   expect(renderTopic('agent')).toMatch(/Agents never run stim-server setup and never approve access requests/);
   expect(settings).toContain('$STIM_HOME/device-host-machines.json');
@@ -867,7 +985,7 @@ test('hosting setup routes approval through doctor and a separate person-granted
 
 test('access ticket guidance routes agents to settings and reserves setup for a person', () => {
   const source = readFileSync(new URL('../offload/access-ticket.ts', import.meta.url), 'utf8');
-  const env = /process\.env\.(STIM_[A-Z_]+)/.exec(source)?.[1];
+  const env = /(?:process\.env|ambientEnv\(\))\.(STIM_[A-Z_]+)/.exec(source)?.[1];
   assert(env);
   for (const topic of ['agent', 'settings']) {
     const body = renderTopic(topic);
@@ -879,12 +997,12 @@ test('access ticket guidance routes agents to settings and reserves setup for a 
   expect(renderTopic('agent')).toContain('stim guide settings');
 });
 
-test('agents tell the user about remote Macs and the phone app and never set them up', () => {
+test('agents tell the user about remote machines and the phone app and never set them up', () => {
   for (const topic of ['agent', 'settings']) {
     const rendered = renderTopic(topic);
     assert(rendered);
     const body = rendered.replace(/\s+/g, ' ');
-    expect(body).toContain('Stim Desktop > Settings > Remote Macs > Add');
+    expect(body).toContain('Stim Desktop > Settings > Remote Machines > Add');
     expect(body).toContain('Pair a Phone');
   }
   const settings = renderTopic('settings');
@@ -902,6 +1020,9 @@ test('the macos guide covers the declared command flags and project settings', (
   const keys = SETTINGS.filter((setting) => setting.key.startsWith('macos.')).map((setting) => setting.key);
   expect([...keys, ...flags].filter((name) => !body.includes(name!))).toEqual([]);
   expect(renderTopic('agent')).toContain('stim guide macos');
+  const agentActions = body.slice(body.indexOf('AGENT ACTIONS'));
+  expect(agentActions).toContain('agent-device open <bundleId>');
+  expect(agentActions).not.toContain('lsappinfo find');
 });
 
 test.each([registerIos, registerAndroid, macosCommand])(
@@ -934,12 +1055,34 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
   expect(hosted).toContain('hosted-ios-agent');
+  expect(hosted).toContain('hosted-agent-link');
   const android = renderSection('lifecycle', 'hosted-android');
   expect(android).toContain('hosted-android-agent');
+  expect(android).toContain('hosted-agent-link');
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+});
+
+test('the hosted device sections name every command the agent-device driver allows or refuses', () => {
+  const clientSide = REFUSED_DEVICE_COMMANDS.auth;
+  const named = [
+    ...Object.keys(DEVICE_COMMAND_RULES),
+    ...Object.keys(REFUSED_DEVICE_COMMANDS).filter((name) => REFUSED_DEVICE_COMMANDS[name] !== clientSide),
+  ];
+  for (const section of ['hosted-ios', 'hosted-android']) {
+    const words = new Set(renderSection('lifecycle', section)?.split(/[^a-z-]+/));
+    expect(named.filter((name) => !words.has(name))).toEqual([]);
+  }
+});
+
+test('native Xcode and Gradle apps route to their lifecycle sections', () => {
+  expect(sectionNames('lifecycle')).toEqual(expect.arrayContaining(['native-ios', 'native-android']));
+  for (const guide of [renderTopic('agent'), renderTopic('lifecycle')]) {
+    expect(guide).toContain('lifecycle native-ios');
+    expect(guide).toContain('lifecycle native-android');
+  }
 });
 
 test('hosted Android command and safety routing render through the guides', () => {
@@ -993,12 +1136,14 @@ test('archive cleanup guidance names each code-supported cache selector', () => 
   }
 });
 
-test('facts keep the SwiftPM stats and gc keys and measurement cache filename discoverable', () => {
+test('facts keep the SwiftPM and machine cache gc keys and measurement cache filenames discoverable', () => {
   const stats = renderSection('facts', 'stats');
   const gc = renderSection('facts', 'gc');
   expect(stats).toContain('swiftpmCache:');
   expect(stats).toContain('$STIM_HOME/swiftpm-cache-usage.json');
   expect(gc).toContain('swiftpmCache');
+  expect(gc).toContain('machineCaches');
+  expect(gc).toContain('$STIM_HOME/machine-cache-usage.json');
 });
 
 test('agent-device cleanup guidance distinguishes shared state from workspace teardown', () => {

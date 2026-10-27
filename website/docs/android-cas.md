@@ -222,6 +222,7 @@ probe is the independently runnable correctness evidence.
   and different build-system layouts need coverage.
 - Generated CAS configurations retain adapter paths and depend on the CAS
   environment. Stim separates compiler/PCH modes under `.cxx/stim-<profile>`
+  (`.cxx/<first 4 profile characters>` on Windows)
   so switching back to `compilerCache: "ccache"` or `"none"` uses a different
   configuration without deleting evidence. Direct Gradle uses its own staging
   directory. Legacy unprofiled configurations need their previous cleanup flow.

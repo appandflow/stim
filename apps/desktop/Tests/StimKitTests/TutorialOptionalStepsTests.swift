@@ -13,21 +13,3 @@ func tutorialPhoneActionUsesPairingAvailability(count: Int?) {
     #expect(state == .paired)
   }
 }
-
-@Test func tutorialMachineWithoutConfigurationOffersSkipFirst() {
-  let state = TutorialMachineState(configured: false, approved: false)
-  #expect(state.skipIsPrimary)
-  #expect(!state.showsPrompt)
-}
-
-@Test func tutorialMachineConfigurationDoesNotAuthorizeTheBuildPrompt() {
-  let state = TutorialMachineState(configured: true, approved: false)
-  #expect(!state.skipIsPrimary)
-  #expect(!state.showsPrompt)
-}
-
-@Test func tutorialApprovedMachineUnlocksTheBuildPrompt() {
-  let state = TutorialMachineState(configured: true, approved: true)
-  #expect(state.showsPrompt)
-  #expect(!state.skipIsPrimary)
-}

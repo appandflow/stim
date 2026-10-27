@@ -18,7 +18,7 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
 import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
-import * as buildLocks from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
@@ -27,6 +27,34 @@ import macosCommand from '../commands/macos.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
+
+const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
+vi.mock('@stim-cli/core/ownership-claim', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@stim-cli/core/ownership-claim')>();
+  const { existsSync: exists } = await import('node:fs');
+  return {
+    ...original,
+    tryAcquireClaim: (...args: Parameters<typeof original.tryAcquireClaim>) => {
+      if (disk.full && (!disk.reserve || exists(disk.reserve)))
+        throw Object.assign(new Error(`${disk.code}: no space left, mkdir '${args[0].root}'`), { code: disk.code });
+      return original.tryAcquireClaim(...args);
+    },
+  };
+});
+
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...original,
+    writeFileSync: (...args: Parameters<typeof original.writeFileSync>) => {
+      if (disk.partialReserveWrite && String(args[0]).endsWith('disk-reserve')) {
+        original.writeFileSync(args[0], 'partial');
+        throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+      }
+      return original.writeFileSync(...args);
+    },
+  };
+});
 
 let home: string;
 beforeEach(() => {
@@ -48,12 +76,13 @@ beforeEach(() => {
     warningSince: null,
   });
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(false);
-  vi.spyOn(measurements, 'measureSizes').mockReturnValue([]);
+  vi.spyOn(measurements, 'measureSizes').mockResolvedValue([]);
 });
 afterEach(() => {
   resetExecutor();
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
+  Object.assign(disk, { full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false });
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
     delete process.env[key];
   process.exitCode = 0;
@@ -127,6 +156,59 @@ test('an already held pass makes the child exit silently and gc refuse with the 
   }
 });
 
+test('a pass creates its disk reserve, and at zero free disk frees it to take its claim and run', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  rmSync(maintenanceStateFile());
+  Object.assign(disk, { full: true, reserve });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status', mode: 'report' });
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+  expect(existsSync(maintenanceRunClaims())).toBe(false);
+});
+
+test('at zero free disk with no reserve left the pass logs the ENOSPC and acts on nothing', async () => {
+  Object.assign(disk, { full: true });
+  await runMaintenance('status');
+  expect(readMaintenanceState()).toBeNull();
+  expect(measurements.measurePressure).not.toHaveBeenCalled();
+  expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toContain('ENOSPC');
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
+});
+
+test('EDQUOT frees the reserve like ENOSPC', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  await runMaintenance('status');
+  rmSync(maintenanceStateFile());
+  Object.assign(disk, { full: true, reserve, code: 'EDQUOT' });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+});
+
+test('a pass rewrites a reserve of the wrong size', async () => {
+  const reserve = join(maintenanceDir(), 'disk-reserve');
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(reserve, 'short');
+  await runMaintenance('status');
+  expect(readFileSync(reserve).length).toBe(1024 * 1024);
+});
+
+test('a reserve write that fails part way leaves no partial reserve', async () => {
+  disk.partialReserveWrite = true;
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
+});
+
+test('a reserve that can be neither written nor removed still releases the run claim', async () => {
+  mkdirSync(join(maintenanceDir(), 'disk-reserve', 'blocker'), { recursive: true });
+  await runMaintenance('status');
+  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
+  expect(existsSync(join(maintenanceDir(), 'disk-reserve', 'blocker'))).toBe(true);
+  expect(existsSync(maintenanceRunClaims())).toBe(false);
+});
+
 test('an unresolved claim produces only one child crash-log line', async () => {
   mkdirSync(join(maintenanceRunClaims(), 'exclusive'), { recursive: true });
   writeFileSync(join(maintenanceRunClaims(), 'exclusive', 'bad.claim'), '{');
@@ -142,7 +224,7 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   expect(err).not.toHaveBeenCalled();
 });
 
-test('status and gc JSON remain a single payload while their preAction hook starts a detached child', async () => {
+test('status JSON stays a single payload while its preAction hook starts a detached child, and gc JSON starts none', async () => {
   const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
   setExecutor({
     run: () => '',
@@ -172,9 +254,13 @@ test('status and gc JSON remain a single payload while their preAction hook star
     mode: 'dry-run',
     maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
-  expect(spawn).toHaveBeenCalledTimes(2);
-  for (const call of spawn.mock.calls)
-    expect(call[2]).toMatchObject({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] });
+  expect(spawn).toHaveBeenCalledTimes(1);
+  expect(spawn).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.anything(),
+    expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
+  );
+  expect(existsSync(maintenanceAttemptFile())).toBe(false);
 });
 
 test('a macOS plan preAction hook never starts maintenance or writes its attempt and log', async () => {
@@ -329,7 +415,6 @@ test('cached Swift CAS observations refresh build protection before each plan', 
     memory: { level: 'normal', availableBytes: null, pressured: false },
     warningSince: null,
   });
-  const locks = vi.spyOn(buildLocks, 'listBuildLocks').mockReturnValue([]);
   mkdirSync(sharedCompilationCache());
   const sizes = [
     {
@@ -338,7 +423,7 @@ test('cached Swift CAS observations refresh build protection before each plan', 
       category: 'compilation-cache' as const,
       bytes: 16 * 1024 ** 3,
       measuredAt: 1,
-      blocked: 'a build lock or slot is live or unresolved',
+      blocked: 'the ios build (pid 42 in /w/app) may be using it',
     },
   ];
   const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
@@ -350,11 +435,47 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
-  locks.mockReturnValue([{ alive: true } as ReturnType<typeof buildLocks.listBuildLocks>[number]]);
-  const busy = await preview.plannedMaintenance(emergency, sizes, settings);
-  expect(busy.actions).toEqual([]);
-  expect(busy.skips).toContainEqual(
-    expect.objectContaining({ target: sharedCompilationCache(), reason: 'a build lock or slot is live or unresolved' }),
+  const build = tryAcquireClaim({
+    root: cacheClaimRoot(sharedCompilationCache()),
+    mode: 'shared',
+    details: { platform: 'ios', projectRoot: '/w/app' },
+  }).acquired;
+  const using = `the ios build (pid ${process.pid} in /w/app) may be using it`;
+  try {
+    const busy = await preview.plannedMaintenance(emergency, sizes, settings);
+    expect(busy.actions).toEqual([]);
+    expect(busy.skips).toContainEqual(expect.objectContaining({ target: sharedCompilationCache(), reason: using }));
+    expect(busy.blocked).toContainEqual(
+      `the Swift compilation cache (16.0G) can only be emptied whole and is kept: ${using}`,
+    );
+  } finally {
+    releaseClaim(build);
+  }
+});
+
+test('a removed workspace leaves no kept entry and no cap total once its directory is gone', async () => {
+  const gone = join(home, 'workspaces', 'gone--0123456789abcdef');
+  const sizes = [
+    {
+      name: 'workspace build outputs',
+      category: 'workspace-outputs' as const,
+      dir: gone,
+      bytes: 5 * 1024 ** 3,
+      measuredAt: 1,
+      workspace: '/projects/gone',
+      idleDays: 3,
+    },
+  ];
+  const settings = { ...resolveMaintenanceSettings(), workspaceOutputsMaxGb: 1 };
+  mkdirSync(join(home, 'workspaces'));
+  expect(await preview.plannedMaintenance(null, sizes, settings)).toMatchObject({
+    actions: [],
+    blocked: [],
+    skips: [],
+  });
+  rmSync(join(home, 'workspaces'), { recursive: true });
+  expect((await preview.plannedMaintenance(null, sizes, settings)).skips).toContainEqual(
+    expect.objectContaining({ target: gone, reason: 'workspace outputs cannot be resolved' }),
   );
 });
 

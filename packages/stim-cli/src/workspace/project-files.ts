@@ -5,6 +5,7 @@ interface PackageJson {
   scripts?: Record<string, unknown>;
   dependencies?: Record<string, unknown>;
   devDependencies?: Record<string, unknown>;
+  peerDependencies?: Record<string, unknown>;
 }
 
 interface AnyJson {
@@ -56,8 +57,8 @@ export interface AppProjectProblem {
 
 export function declaresAppDependency(pkg: unknown): boolean {
   if (!pkg || typeof pkg !== 'object') return false;
-  const { dependencies, devDependencies } = pkg as PackageJson;
-  const deps = { ...dependencies, ...devDependencies };
+  const { dependencies, devDependencies, peerDependencies } = pkg as PackageJson;
+  const deps = { ...dependencies, ...devDependencies, ...peerDependencies };
   return APP_DEPENDENCIES.some((name) => name in deps);
 }
 

@@ -8,24 +8,32 @@ import SwiftUI
 /// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only.
 struct PhysicalDeviceScreen: View {
   var device: DeviceRef
+  var owner: ServerOwner
   var workspace: String
   var interactive: Bool
+  /// Whether the tile's build cover hides the screen; its own message then stays hidden, and lifting the cover
+  /// subscribes again after a failed subscription.
+  var covered: Bool
   var onPixelSizeChange: (CGSize) -> Void
   /// Control ended, or was refused, while `interactive`, other than by the user's Release.
   var onControlLost: () -> Void
   /// Receives the windows of a hosted macOS app, for the tile's menu.
   var windowChoice: MacosWindowChoice?
-  @ObservedObject private var session = ServerSession.shared
+  @ObservedObject private var localSession = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @StateObject private var stream: PhysicalStream
 
   init(
-    device: DeviceRef, workspace: String, interactive: Bool, onPixelSizeChange: @escaping (CGSize) -> Void,
-    onControlLost: @escaping () -> Void, windowChoice: MacosWindowChoice? = nil
+    device: DeviceRef, owner: ServerOwner = .local, workspace: String, interactive: Bool, covered: Bool = false,
+    onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
+    windowChoice: MacosWindowChoice? = nil
   ) {
     self.windowChoice = windowChoice
     self.device = device
+    self.owner = owner
     self.workspace = workspace
     self.interactive = interactive
+    self.covered = covered
     self.onPixelSizeChange = onPixelSizeChange
     self.onControlLost = onControlLost
     _stream = StateObject(
@@ -35,16 +43,21 @@ struct PhysicalDeviceScreen: View {
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 15)) { context in
-      let screen = PhysicalScreen(device: device, link: session.link, now: context.date)
+      let screen = ServerSession.screen(for: owned, now: context.date)
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
-      if interactive, PhysicalScreen(device: device, link: session.link, now: Date()).canControl {
+      if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
         stream.begin()
       } else {
         stream.end()
       }
+    }
+    .onChange(of: covered) { _, covered in
+      guard !covered, stream.problem != nil else { return }
+      stream.stop()
+      follow(ServerSession.screen(for: owned, now: Date()))
     }
     .onChange(of: stream.control) { _, control in
       switch control {
@@ -77,11 +90,12 @@ struct PhysicalDeviceScreen: View {
     case .stream:
       VStack(spacing: Space.md) {
         PhysicalDisplay(
-          stream: stream, activityKey: device.activityKey, interactive: interactive && isControlling,
+          stream: stream, activityKey: owned.activityKey,
+          interactive: interactive && isControlling,
           onPixelSizeChange: onPixelSizeChange
         )
         .overlay {
-          if let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to the device") {
+          if !covered, let problem = stream.problem ?? (stream.receiving ? nil : "Connecting to the device") {
             PhysicalMessage(text: problem)
           }
         }
@@ -93,6 +107,8 @@ struct PhysicalDeviceScreen: View {
       }
     }
   }
+
+  private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
 
   private var isControlling: Bool {
     if case .on = stream.control { return true }
@@ -127,7 +143,7 @@ struct PhysicalDeviceScreen: View {
   }
 
   private func follow(_ screen: PhysicalScreen) {
-    if case .stream = screen, session.isOpen {
+    if case .stream = screen, let session = ServerSession.session(for: owner), session.isOpen {
       stream.connect(session.client)
       if interactive, screen.canControl { stream.begin() } else { stream.end() }
     } else {

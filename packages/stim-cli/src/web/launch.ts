@@ -11,8 +11,24 @@ export interface WebLaunchVerdict {
   reason: string | null;
 }
 
-const VERIFY_WAIT_MS = 20_000;
-const LOADING_WAIT_MS = 60_000;
+const PORT_PLACEHOLDER = /\{port:([^}]*)\}/g;
+
+/** Replaces each `{port:<label>}` in a `web.url` template; `metro` is the workspace's Metro port. */
+export async function resolveWebUrl(
+  template: string,
+  { metroPort, namedPort }: { metroPort: number | null; namedPort: (label: string) => Promise<number> },
+): Promise<string> {
+  let url = template;
+  for (const [placeholder, label] of template.matchAll(PORT_PLACEHOLDER)) {
+    const port = label === 'metro' ? metroPort : await namedPort(label!);
+    if (port === null) throw new Error(`${placeholder} needs a Metro port, and this workspace has none reserved.`);
+    url = url.replace(placeholder, String(port));
+  }
+  return url;
+}
+
+export const VERIFY_WAIT_MS = 20_000;
+export const LOADING_WAIT_MS = 60_000;
 
 const METRO_WEB_BUNDLE = /\bWeb\s+Bundl(?:ing|ed)\b/i;
 

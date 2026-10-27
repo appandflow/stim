@@ -5,6 +5,18 @@ import XCTest
 @testable import StimDesktop
 
 final class SampleBuildModelTests: XCTestCase {
+  @MainActor func testProductionRemovalRefusesWithoutPrivateServerInsteadOfLaunchingCLI() async {
+    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-sample-removal-test"], override: "/does-not-exist/stim")
+    let model = SampleBuildModel(cli: Task { cli })
+    do {
+      _ = try await model.dependencies.run(StimCommand(["worktree", "remove", "/sample"], cwd: "/fixture"), { _ in })
+      XCTFail("Removal requires the private server")
+    } catch let error as ServerError {
+      XCTAssertEqual(error.code, "not-connected")
+    } catch {
+      XCTFail("Removal launched the CLI instead of refusing through the server: \(error)")
+    }
+  }
   @MainActor private final class Harness {
     let sample = WizardSample(applicationSupport: URL(fileURLWithPath: "/fixture"))
     var commands: [StimCommand] = []
@@ -16,14 +28,16 @@ final class SampleBuildModelTests: XCTestCase {
     var fallback = false
     var refusal = false
     var waitForCancel = false
+    var startupCleanupError: String?
+    var startupBegan = false
     var failInstall = false
     var cancelled = false
     var invalidOutput: WizardCommandOutput?
-    var invalidLocal = false
     func make() -> SampleBuildModel {
       SampleBuildModel(
         dependencies: .init(
           sample: sample,
+          timings: { _ in BuildTimings(offerMs: 1000, syncMs: 3000, workerMs: 161000, fetchMs: 4000, totalMs: 172000) },
           run: { command, onLine in
             self.commands.append(command)
             self.events.append("\(command.program) \(command.arguments.joined(separator: " "))")
@@ -31,22 +45,25 @@ final class SampleBuildModelTests: XCTestCase {
               return WizardCommandOutput(exit: 9, stdout: Data(), stderr: "  Resources still in use\n")
             }
             var stdout = ""
+            if command.arguments == ["start"], let message = self.startupCleanupError {
+              self.startupBegan = true
+              do { try await Task.sleep(for: .seconds(100)) } catch {
+                throw ServerError(code: "action-failed", message: message)
+              }
+            }
             if command.program == "npm", self.failInstall {
               return WizardCommandOutput(exit: 1, stdout: Data(), stderr: "Registry unavailable")
             }
             if command.arguments.first == "ios" {
               onLine(OutputLine(.stderr, "building"))
-              if command.arguments.contains("local") == self.invalidLocal, let output = self.invalidOutput { return output }
+              if let output = self.invalidOutput { return output }
               if self.waitForCancel {
                 do { try await Task.sleep(for: .seconds(100)) } catch {
                   self.cancelled = true
                   throw error
                 }
               }
-              if command.arguments.contains("local") {
-                self.now = self.now.addingTimeInterval(250)
-                stdout = "{\"launched\":true}"
-              } else if self.refusal {
+              if self.refusal {
                 return WizardCommandOutput(
                   exit: 1,
                   stdout: Data(
@@ -58,10 +75,7 @@ final class SampleBuildModelTests: XCTestCase {
                   ? "{\"launched\":true}" : "{\"offloadedTo\":\"\(command.arguments[2])\",\"launched\":\"bundling\"}"
               }
             }
-            if command.arguments.first == "logs" {
-              stdout =
-                "{\"event\":\"offload_done\",\"timings\":{\"offerMs\":1000,\"syncMs\":3000,\"workerMs\":161000,\"fetchMs\":4000,\"totalMs\":172000}}"
-            }
+
             return WizardCommandOutput(exit: 0, stdout: Data(stdout.utf8), stderr: "")
           }, exists: { self.files.contains($0) }, create: { self.files.insert($0) },
           move: { from, to in
@@ -160,6 +174,27 @@ final class SampleBuildModelTests: XCTestCase {
       harness.events, ["stim stop", "git init", "stim worktree remove \(model.folder)", "remove \(model.folder)"])
   }
 
+  @MainActor func testSkipPreservesStartupRecoveryInsteadOfTheLaterBusyStop() async {
+    let harness = Harness()
+    let recovery = "STIM_CLAIM_UNAVAILABLE: Recover /exact/claim"
+    harness.startupCleanupError = recovery
+    harness.failedCommand = ["stop"]
+    harness.files.insert(harness.sample.marker)
+    let model = harness.make()
+    model.prepare()
+    await settle(model)
+    model.run(entry: "worker", platform: "ios")
+    for _ in 0..<1000 {
+      if harness.startupBegan { break }
+      await Task.yield()
+    }
+    XCTAssertTrue(harness.startupBegan)
+    await model.skip()
+    XCTAssertEqual(model.test.state, .skipped)
+    XCTAssertEqual(model.cleanupError, recovery)
+    XCTAssertFalse(model.running)
+  }
+
   @MainActor func testWorkspaceRemovalFailurePreservesSampleForRetryAndExposesStderr() async {
     for preparing in [false, true] {
       let harness = Harness()
@@ -215,7 +250,7 @@ final class SampleBuildModelTests: XCTestCase {
     }
   }
 
-  @MainActor func testBothBuildsPassAndCleanupRunsButSilentFallbackDoesNotPass() async {
+  @MainActor func testRemoteBuildAloneReachesDoneAndCleanupRunsButSilentFallbackDoesNotPass() async {
     for fallback in [false, true] {
       let harness = Harness()
       harness.files.insert(harness.sample.marker)
@@ -223,14 +258,16 @@ final class SampleBuildModelTests: XCTestCase {
       let model = harness.make()
       model.prepare()
       await settle(model)
-      model.run(entry: "mini:7447")
+      model.run(entry: "mini:7447", platform: "ios")
       await settle(model)
       XCTAssertEqual(model.test.passed, !fallback)
-      XCTAssertEqual(harness.commands.filter { $0.arguments.contains("local") }.count, fallback ? 0 : 1)
+      XCTAssertEqual(
+        harness.commands.filter { $0.arguments.first == "ios" }.map(\.arguments),
+        [["ios", "--remote-build", "mini:7447", "--no-build-cache", "--json"]])
       XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
       XCTAssertTrue(harness.commands.allSatisfy { $0.cwd == harness.sample.folder.path })
       if !fallback {
-        XCTAssertEqual(model.test.localMs, 250000)
+        XCTAssertEqual(model.test.state, .done)
         XCTAssertEqual(model.test.timings?.workerMs, 161000)
       }
     }
@@ -242,7 +279,7 @@ final class SampleBuildModelTests: XCTestCase {
     let model = refused.make()
     model.prepare()
     await settle(model)
-    model.run(entry: "mini")
+    model.run(entry: "mini", platform: "ios")
     await settle(model)
     XCTAssertEqual(model.test.state, .failed(code: "STIM_OFFLOAD_REFUSED", message: "Worker refused", remedy: "Exact fix"))
     XCTAssertEqual(refused.commands.last?.arguments, ["stop"])
@@ -254,7 +291,7 @@ final class SampleBuildModelTests: XCTestCase {
     let running = harness.make()
     running.prepare()
     await settle(running)
-    running.run(entry: "mini")
+    running.run(entry: "mini", platform: "ios")
     for _ in 0..<1000 {
       if harness.commands.contains(where: { $0.arguments.first == "ios" }) { break }
       await Task.yield()
@@ -268,22 +305,19 @@ final class SampleBuildModelTests: XCTestCase {
   }
 
   @MainActor func testNonObjectBuildOutputShowsStderrAndStillStopsTheSample() async {
-    for local in [false, true] {
-      for stdout in ["", "Usage: stim ios", "[]"] {
-        let harness = Harness()
-        harness.files.insert(harness.sample.marker)
-        harness.invalidLocal = local
-        harness.invalidOutput = WizardCommandOutput(exit: 9, stdout: Data(stdout.utf8), stderr: "Unknown build option")
-        let model = harness.make()
-        model.prepare()
-        await settle(model)
-        model.run(entry: "mini")
-        await settle(model)
-        guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
-        XCTAssertTrue(message.contains("Unknown build option"))
-        XCTAssertTrue(message.contains("9"))
-        XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
-      }
+    for stdout in ["", "Usage: stim ios", "[]"] {
+      let harness = Harness()
+      harness.files.insert(harness.sample.marker)
+      harness.invalidOutput = WizardCommandOutput(exit: 9, stdout: Data(stdout.utf8), stderr: "Unknown build option")
+      let model = harness.make()
+      model.prepare()
+      await settle(model)
+      model.run(entry: "mini", platform: "ios")
+      await settle(model)
+      guard case .failed(_, let message, _) = model.test.state else { return XCTFail("Invalid output passed") }
+      XCTAssertTrue(message.contains("Unknown build option"))
+      XCTAssertTrue(message.contains("9"))
+      XCTAssertEqual(harness.commands.last?.arguments, ["stop"])
     }
   }
 }

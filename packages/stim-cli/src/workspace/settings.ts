@@ -1,9 +1,16 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'fs';
-import { isAbsolute, join, relative, resolve, sep } from 'path';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import { isAbsolute, join, normalize, relative, resolve, sep } from 'path';
 import type { CacheProviderConfig } from '@stim-cli/cache';
+import type { StimContext } from '@stim-cli/core';
+import { throwIfCancelled } from '../cancellation.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getConfigPath, getProjectSettings, getRepoSettings, loadConfig } from './config.ts';
-import { resolveOptimizations, resolveMetroSharedCache, type Optimizations } from '../optimizations.ts';
-import { gitCommonDir as projectGitCommonDir, repoRoot as projectRepoRoot } from './worktree.ts';
+import {
+  gitCommonDir as projectGitCommonDir,
+  repoRoot as projectRepoRoot,
+  gitCommonDirAsync,
+  repoRootAsync,
+} from './worktree.ts';
 import { TUNNEL_MODES, type TunnelMode } from '../engine/metro-reach.ts';
 import type { RemoteDeviceBackend } from '../engine/device-remote.ts';
 import {
@@ -11,12 +18,16 @@ import {
   expectedShape,
   isLayeredSetting,
   coerceSettingText,
+  placementWord,
+  replacementAdvice,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
+  REPLACED_SETTINGS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
+  type AutomaticPlacement,
   type SettingScope,
   type SettingsObject,
   type WebViewport,
@@ -32,6 +43,7 @@ export function mergeSettingsLayers(layers: Array<SettingsObject | null | undefi
   for (const layer of layers) {
     if (!isPlainObject(layer)) continue;
     for (const [key, value] of Object.entries(layer)) {
+      if (key === '__proto__') continue;
       if (isPlainObject(value) && isPlainObject(out[key])) {
         out[key] = mergeSettingsLayers([out[key] as SettingsObject, value]);
       } else if (!(key in out)) {
@@ -79,6 +91,8 @@ export function settingShapeErrors(settings: unknown): string[] {
     const expected =
       setting.key === 'ios.remote' ||
       setting.key === 'android.remote' ||
+      setting.key === 'macos.remote' ||
+      setting.key === 'android.deviceProfile' ||
       (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
         : acceptsShape(setting, value)
@@ -271,6 +285,13 @@ function pathEscapesRoot(root: string, path: string): boolean {
   return child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child);
 }
 
+export function realpathInside(root: string, path: string): string {
+  const base = realpathSync(root);
+  const real = realpathSync(resolve(base, path));
+  if (pathEscapesRoot(base, real)) throw new Error(`it resolves outside ${base}`);
+  return real;
+}
+
 export function androidAvdConfigSetting(settings: unknown, settingsRoot: string): Record<string, string> {
   if (!isPlainObject(settings) || !isPlainObject(settings.android)) return {};
   const android = settings.android;
@@ -325,6 +346,182 @@ export function androidAvdConfigSettingError(settings: unknown, projectPath: str
   }
 }
 
+export const DEFAULT_IOS_PROJECT_PATH = 'ios';
+
+export interface IosProjectDir {
+  dir: string;
+  relative: string;
+  custom: boolean;
+}
+
+export function iosProjectDirSetting(settings: unknown, appRoot: string): IosProjectDir {
+  const value = iosString(settings, 'projectPath');
+  if (
+    value === undefined ||
+    (typeof value === 'string' && normalize(value).replace(/[\\/]+$/, '') === DEFAULT_IOS_PROJECT_PATH)
+  ) {
+    return { dir: join(appRoot, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
+  }
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value !== value.trim() ||
+    /[\r\n\0]/.test(value) ||
+    isAbsolute(value)
+  ) {
+    throw new Error('Invalid ios.projectPath setting. Expected a directory path relative to the app directory.');
+  }
+  try {
+    const root = realpathSync(appRoot);
+    const candidate = resolve(root, value);
+    if (pathEscapesRoot(root, candidate)) throw new Error('path escapes the app directory');
+    const dir = realpathSync(candidate);
+    if (pathEscapesRoot(root, dir)) throw new Error('symlink target escapes the app directory');
+    if (!statSync(dir).isDirectory()) throw new Error('path is not a directory');
+    if (!readdirSync(dir).some((name) => name.endsWith('.xcworkspace') || name.endsWith('.xcodeproj'))) {
+      throw new Error('it holds no .xcworkspace or .xcodeproj');
+    }
+    return { dir, relative: relative(root, dir) || '.', custom: true };
+  } catch (error) {
+    throw new Error(`Could not use ios.projectPath ${value}: ${String((error as Error)?.message || error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export function iosProjectDirSettingError(settings: unknown, appRoot: string): string | null {
+  try {
+    iosProjectDirSetting(settings, appRoot);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
+
+const INVALID_IOS_PROJECT_DIR = '\0invalid ios.projectPath';
+
+export const DEFAULT_ANDROID_GRADLE_ROOT = 'android';
+export const DEFAULT_ANDROID_MODULE = ':app';
+const ANDROID_MODULE = /^(:(?!\.\.?(?::|$))[A-Za-z0-9._-]+)+$/;
+
+export interface AndroidLayout {
+  gradleRoot: string;
+  gradleRootRelative: string;
+  module: string;
+  moduleDir: string;
+  custom: boolean;
+}
+
+function androidString(settings: unknown, key: string): unknown {
+  if (!isPlainObject(settings) || !isPlainObject(settings.android)) return undefined;
+  return settings.android[key];
+}
+
+function hasGradleScript(dir: string, name: string): boolean {
+  return existsSync(join(dir, `${name}.gradle`)) || existsSync(join(dir, `${name}.gradle.kts`));
+}
+
+export function androidLayoutSetting(settings: unknown, appRoot: string, bound: string): AndroidLayout {
+  const rootValue = androidString(settings, 'gradleRoot');
+  const moduleValue = androidString(settings, 'module');
+  const custom =
+    (rootValue !== undefined && rootValue !== DEFAULT_ANDROID_GRADLE_ROOT) ||
+    (moduleValue !== undefined && moduleValue !== DEFAULT_ANDROID_MODULE);
+  if (!custom) {
+    const gradleRoot = join(appRoot, DEFAULT_ANDROID_GRADLE_ROOT);
+    return {
+      gradleRoot,
+      gradleRootRelative: DEFAULT_ANDROID_GRADLE_ROOT,
+      module: DEFAULT_ANDROID_MODULE,
+      moduleDir: join(gradleRoot, 'app'),
+      custom: false,
+    };
+  }
+  const rawRoot = rootValue ?? DEFAULT_ANDROID_GRADLE_ROOT;
+  if (
+    typeof rawRoot !== 'string' ||
+    !rawRoot.trim() ||
+    rawRoot !== rawRoot.trim() ||
+    /[\r\n\0]/.test(rawRoot) ||
+    isAbsolute(rawRoot)
+  ) {
+    throw new Error('Invalid android.gradleRoot setting. Expected a directory path relative to the app directory.');
+  }
+  const module = moduleValue ?? DEFAULT_ANDROID_MODULE;
+  if (typeof module !== 'string' || !ANDROID_MODULE.test(module)) {
+    throw new Error(
+      `Invalid android.module setting ${JSON.stringify(module)}. Expected a Gradle project path such as :app.`,
+    );
+  }
+  try {
+    const app = realpathSync(appRoot);
+    const limit = realpathSync(bound);
+    const gradleRoot = realpathSync(resolve(app, rawRoot));
+    if (pathEscapesRoot(limit, gradleRoot)) throw new Error(`it resolves outside ${limit}`);
+    if (!statSync(gradleRoot).isDirectory()) throw new Error('it is not a directory');
+    if (!hasGradleScript(gradleRoot, 'settings')) throw new Error('it holds no settings.gradle or settings.gradle.kts');
+    const mapped = join(gradleRoot, ...module.split(':').filter(Boolean));
+    if (!hasGradleScript(mapped, 'build')) {
+      throw new Error(`module ${module} has no build.gradle or build.gradle.kts at ${mapped}`);
+    }
+    const moduleDir = realpathSync(mapped);
+    if (pathEscapesRoot(limit, moduleDir)) throw new Error(`module ${module} resolves outside ${limit}`);
+    return {
+      gradleRoot,
+      gradleRootRelative: relative(app, gradleRoot).split(sep).join('/') || '.',
+      module,
+      moduleDir,
+      custom: true,
+    };
+  } catch (error) {
+    throw new Error(`Could not use android.gradleRoot ${rawRoot}: ${String((error as Error)?.message || error)}`, {
+      cause: error,
+    });
+  }
+}
+
+export function androidLayoutSettingError(settings: unknown, appRoot: string, bound: string): string | null {
+  try {
+    androidLayoutSetting(settings, appRoot, bound);
+    return null;
+  } catch (error) {
+    return String((error as Error)?.message || error);
+  }
+}
+
+const INVALID_ANDROID_GRADLE_ROOT = '\0invalid android.gradleRoot';
+
+export function defaultAndroidLayout(appRoot: string): AndroidLayout {
+  return androidLayoutSetting({}, appRoot, appRoot);
+}
+
+export function resolveAndroidLayout(settings: SettingsObject | null, root: string, bound: string): AndroidLayout {
+  if (settings === null) return defaultAndroidLayout(root);
+  try {
+    return androidLayoutSetting(settings, root, bound);
+  } catch {
+    const gradleRoot = join(root, INVALID_ANDROID_GRADLE_ROOT);
+    return {
+      gradleRoot,
+      gradleRootRelative: INVALID_ANDROID_GRADLE_ROOT,
+      module: DEFAULT_ANDROID_MODULE,
+      moduleDir: join(gradleRoot, 'app'),
+      custom: true,
+    };
+  }
+}
+
+export function resolveIosProjectDir(settings: SettingsObject | null, root: string): IosProjectDir {
+  if (settings === null) {
+    return { dir: join(root, DEFAULT_IOS_PROJECT_PATH), relative: DEFAULT_IOS_PROJECT_PATH, custom: false };
+  }
+  try {
+    return iosProjectDirSetting(settings, root);
+  } catch {
+    return { dir: join(root, INVALID_IOS_PROJECT_DIR), relative: INVALID_IOS_PROJECT_DIR, custom: true };
+  }
+}
+
 export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string): string | null {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios) || !('simslimProfile' in settings.ios)) return null;
   const value = settings.ios.simslimProfile;
@@ -354,13 +551,8 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
   }
 }
 
-export function iosSimSlimProfileSettingError(settings: unknown, settingsRoot: string): string | null {
-  try {
-    iosSimSlimProfileSetting(settings, settingsRoot);
-    return null;
-  } catch (error) {
-    return String((error as Error)?.message || error);
-  }
+export function iosSimSlimDefaultSetting(settings: unknown): boolean {
+  return isPlainObject(settings) && isPlainObject(settings.ios) && settings.ios.simslim === 'on';
 }
 
 function iosString(settings: unknown, key: string): unknown {
@@ -437,6 +629,16 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
+export function inertSettingWarning(settings: unknown, key: string): string {
+  const advice = replacementAdvice(key, settingValueAt(settings, key));
+  const instead = advice
+    ? advice.command
+      ? ` Run \`${advice.command}\` instead.`
+      : ` Use ${advice.key} instead.`
+    : '';
+  return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
+}
+
 export function readCommittedSettings(directory?: string | null): SettingsObject {
   if (!directory) return {};
   const p = join(directory, '.stim.json');
@@ -465,8 +667,17 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
-function machineLayerSettings(machine: unknown): SettingsObject | null {
+export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
+  for (const key of Object.keys(REPLACED_SETTINGS)) {
+    const value = settingValueAt(machine, key);
+    if (value !== undefined) setSettingValueAt(settings, key, value);
+  }
+  return settings;
+}
+
+function machineLayerSettings(machine: unknown): SettingsObject | null {
+  const settings: SettingsObject = removedMachineSettings(machine);
   // Copied whole, not key by key, so an unknown or malformed key under machine
   // optimizations still reaches settingShapeErrors and doctor's inert-key check
   // instead of silently disappearing.
@@ -555,20 +766,91 @@ export function resolveSettings(context: {
   return mergeSettingsLayers(settingsLayers(context).map((layer) => layer.settings));
 }
 
-function settingsForProject(root: string): SettingsObject {
-  return resolveSettings({
-    projectPath: root,
-    gitCommonDir: projectGitCommonDir(root),
-    repoRoot: projectRepoRoot(root) ?? root,
-  });
+export interface ProjectSettingsContext {
+  projectPath: string;
+  gitCommonDir: string | null;
+  repoRoot: string | null;
 }
 
-export function projectOptimizations(root: string): Optimizations {
-  return resolveOptimizations(settingsForProject(root));
+export function projectSettingsContext(
+  root: string,
+  git: { gitCommonDir: (cwd: string) => string | null; repoRoot: (cwd: string) => string | null } = {
+    gitCommonDir: projectGitCommonDir,
+    repoRoot: projectRepoRoot,
+  },
+): ProjectSettingsContext {
+  return { projectPath: root, gitCommonDir: git.gitCommonDir(root), repoRoot: git.repoRoot(root) };
 }
 
-export function projectMetroSharedCache(root: string): boolean {
-  return resolveMetroSharedCache(settingsForProject(root));
+export interface ResolvedProjectSettings {
+  context: ProjectSettingsContext;
+  settings: SettingsObject;
+}
+
+export function resolveProjectSettings(root: string): ResolvedProjectSettings {
+  const context = projectSettingsContext(root);
+  return { context, settings: resolveSettings(context) };
+}
+
+type ProjectSettingsReadOptions = { env?: NodeJS.ProcessEnv; signal?: AbortSignal; declareFor?: StimContext };
+
+export interface ProjectSettingsReaders {
+  gitCommonDir: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+  repoRoot: (cwd: string, options?: ProjectSettingsReadOptions) => string | null | Promise<string | null>;
+}
+
+/** Resolves repository paths asynchronously; declared probes run sequentially and cancellation rejects. */
+export async function projectSettingsContextAsync(
+  root: string,
+  git: ProjectSettingsReaders = { gitCommonDir: gitCommonDirAsync, repoRoot: repoRootAsync },
+  { env = process.env, signal, declareFor }: ProjectSettingsReadOptions = {},
+): Promise<ProjectSettingsContext> {
+  throwIfCancelled(signal, 'settings resolution');
+  const options = { env, signal, declareFor };
+  const common = Promise.resolve(git.gitCommonDir(root, options));
+  const repo = declareFor ? common.then(() => git.repoRoot(root, options)) : git.repoRoot(root, options);
+  const [commonResult, repoResult] = await Promise.allSettled([common, repo]);
+  for (const result of [commonResult, repoResult])
+    if (
+      result.status === 'rejected' &&
+      (result.reason instanceof WorkspaceProcessCleanupError ||
+        (result.reason instanceof Error && 'reportCleanup' in result.reason))
+    )
+      throw result.reason;
+  throwIfCancelled(signal, 'settings resolution');
+  if (commonResult.status === 'rejected') throw commonResult.reason;
+  if (repoResult.status === 'rejected') throw repoResult.reason;
+  return { projectPath: root, gitCommonDir: commonResult.value, repoRoot: repoResult.value };
+}
+
+export async function resolveProjectSettingsAsync(
+  root: string,
+  options?: ProjectSettingsReadOptions,
+): Promise<ResolvedProjectSettings> {
+  const context = await projectSettingsContextAsync(root, undefined, options);
+  return { context, settings: resolveSettings(context) };
+}
+
+export const METRO_COMMAND_PORT = '{port}';
+
+export function metroCommandSetting(settings: SettingsObject): string[] | null {
+  const value = settingValueAt(settings, 'metro.command');
+  if (!Array.isArray(value) || !value.every((arg) => typeof arg === 'string')) return null;
+  return typeof value[0] === 'string' && value[0].trim() !== '' ? value : null;
+}
+
+export function metroCommandSettingError(settings: SettingsObject): string | null {
+  if (settingValueAt(settings, 'metro.command') === undefined) return null;
+  const command = metroCommandSetting(settings);
+  if (!command) return 'metro.command must be a non-empty array of strings whose first entry is the program to run.';
+  if (!command.some((arg) => arg.includes(METRO_COMMAND_PORT))) {
+    return `metro.command must pass ${METRO_COMMAND_PORT} so the dev server listens on this workspace's reserved port.`;
+  }
+  return null;
+}
+
+export function runnableMetroCommand(settings: SettingsObject): string[] | null {
+  return metroCommandSettingError(settings) ? null : metroCommandSetting(settings);
 }
 
 interface CacheSettingsLayer {
@@ -633,14 +915,20 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-export type IosRemoteTarget = { kind: 'backend'; backend: RemoteDeviceBackend } | { kind: 'machine'; machine: string };
+export type IosRemoteTarget =
+  | { kind: 'backend'; backend: RemoteDeviceBackend }
+  | { kind: 'machine'; machine: string; placement?: AutomaticPlacement };
 
-export function parseIosRemote(remote: string): IosRemoteTarget {
+/** The remote target `remote` names, or null for `local`, which runs on this machine whatever a lower layer sets. */
+export function parseIosRemote(remote: string): IosRemoteTarget | null {
   const selected = remote.trim();
   const reserved = selected.toLowerCase();
+  const word = placementWord(selected);
+  if (word === 'local') return null;
+  if (word) return { kind: 'machine', machine: 'auto', placement: word };
   return (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(reserved)
     ? { kind: 'backend', backend: reserved as RemoteDeviceBackend }
-    : { kind: 'machine', machine: reserved === 'auto' ? 'auto' : selected };
+    : { kind: 'machine', machine: selected };
 }
 
 export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | null {
@@ -680,17 +968,13 @@ export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): numbe
   return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
 }
 
-export function projectMaintenancePinned(root: string): boolean {
-  try {
-    const value = settingValueAt(settingsForProject(root), 'maintenance.keep');
-    return value !== undefined && value !== false;
-  } catch {
-    return true;
-  }
+export function maintenanceKeepSetting(settings: SettingsObject): boolean {
+  const value = settingValueAt(settings, 'maintenance.keep');
+  return value !== undefined && value !== false;
 }
 
-export function projectDeviceReclaimIdleMinutes(root: string): number {
-  return deviceReclaimIdleMinutesSetting(settingsForProject(root));
+export function workspaceHiddenSetting(settings: SettingsObject | undefined): boolean {
+  return settingValueAt(settings, 'workspace.hidden') === true;
 }
 
 export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
@@ -702,7 +986,7 @@ export function tunnelModeSetting(settings: SettingsObject): TunnelMode | null {
 
 export function metroTunnelSettingError(settings: SettingsObject): string | null {
   const block = settings.metro;
-  if (!isPlainObject(block) || !('ngrokUrl' in block)) return null;
+  if (!isPlainObject(block) || block.ngrokUrl === undefined) return null;
   if (block.tunnel !== 'ngrok') {
     return 'metro.ngrokUrl requires metro.tunnel to be "ngrok".';
   }
@@ -713,14 +997,12 @@ export function metroTunnelSettingError(settings: SettingsObject): string | null
 }
 
 export function metroPortSetting(
-  projectPath: string,
+  settings: SettingsObject,
   env: NodeJS.ProcessEnv = process.env,
 ): { port: number | null; error: string | null } {
   const setting = settingDefinition('metro.port')!;
   const fromEnv = env.STIM_METRO_PORT?.trim();
-  const value = fromEnv
-    ? coerceSettingText(setting, fromEnv)
-    : settingValueAt(settingsForProject(projectPath), 'metro.port');
+  const value = fromEnv ? coerceSettingText(setting, fromEnv) : settingValueAt(settings, 'metro.port');
   if (value === undefined) return { port: null, error: null };
   const problem = settingValueError(setting, value);
   if (problem === null) return { port: value as number, error: null };

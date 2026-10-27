@@ -3,148 +3,186 @@ import StimKit
 
 @MainActor
 public final class StatusStore: ObservableObject {
-  static let pollInterval: TimeInterval = 10
-
-  @Published public private(set) var payload: StatusPayload?
+  @Published public private(set) var payload: StatusPayload? {
+    didSet {
+      newestArchiveCache = nil
+      sidebarCache = nil
+    }
+  }
   @Published public private(set) var error: String?
   @Published public private(set) var updatedAt: Date?
   @Published public private(set) var projects: [String: Project] = [:] {
-    didSet { projectTitleMap = projectTitles(roots: projects.values.map(\.root)) }
+    didSet {
+      projectTitleMap = projectTitles(roots: projects.values.map(\.root))
+      sidebarCache = nil
+    }
   }
   private var projectTitleMap: [String: String] = [:]
+  private var resolvedExistence: [String: Bool] = [:]
+  private var newestArchiveCache: [ArchivedWorkspace]?
+  private var sidebarCache: SidebarCache?
   @Published public private(set) var watching = false
-  @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim"
+  @Published public private(set) var stimHome = "\(NSHomeDirectory())/.stim" {
+    didSet { syncServerFeed() }
+  }
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
+  /// Each paired server's status, by `PairedServer.id`. It stays in memory, and none of its paths reach a local file,
+  /// process or git command.
+  @Published public private(set) var paired: [String: PairedStatus] = [:]
 
-  private let cli: Task<StimCLI, Never>
-  private let fetch: @Sendable () async throws -> StatusPayload
   private var started = false
-  private var terminating = false
-  private var watcher: Process?
-  private var watchStderr: [String] = []
-  private var backoff = RestartBackoff()
-  private var pollTimer: Timer?
-  private var inFlight = false
-  private var refreshPending = false
+  private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
+  private var serverConnection: (client: ServerClient, home: String)?
+  private var pairedFeeds: [String: (client: ServerClient, feed: ServerStatusFeed)] = [:]
+  private var shownWorkspace: WorkspaceKey?
+  private lazy var serverFeed = ServerStatusFeed(
+    onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
+    onDelivering: { [weak self] in self?.serverDelivering($0) })
   private var issued = 0
   private var shown = 0
   private var doctorRuns: [String: DoctorRun] = [:]
   private var doctorCheckedAt: Date?
-  private var doctorStartedAt: Date?
-  private static let doctorTimeout: TimeInterval = 10 * 60
+  private var doctorTask: Task<Void, Never>?
+  private var doctorGeneration = 0
   private static let doctorCheckInterval: TimeInterval = 60
 
-  init(cli: Task<StimCLI, Never>, fetch: @escaping @Sendable () async throws -> StatusPayload) {
-    self.cli = cli
-    self.fetch = fetch
-    Task { stimHome = await cli.value.stimHome }
-  }
-
-  public convenience init(cli: Task<StimCLI, Never>) {
-    self.init(cli: cli, fetch: { try await cli.value.status() })
+  /// `stimHome` is the home to expect until the CLI environment resolves, so its server feed can show first.
+  public init(cli: Task<StimCLI, Never>, stimHome expected: String? = nil) {
+    if let expected { self.stimHome = expected }
+    Task {
+      stimHome = await cli.value.stimHome
+      LaunchMilestones.reach("cli-ready")
+    }
   }
 
   public func start() {
     guard !started else { return }
     started = true
-    NotificationCenter.default.addObserver(
-      forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-    ) { [weak self] _ in
-      MainActor.assumeIsolated {
-        self?.terminating = true
-        self?.watcher?.terminate()
-      }
-    }
-    startWatch()
+    syncServerFeed()
   }
 
-  public func refresh() {
-    guard !inFlight else {
-      refreshPending = true
+  /// Reads `owner`'s status again; a paired server's read waits for its connection.
+  public func refresh(_ owner: ServerOwner = .local) {
+    if case .paired(let id) = owner {
+      pairedFeeds[id]?.feed.refresh()
       return
     }
-    inFlight = true
-    let sequence = nextSequence()
-    let fetch = fetch
-    Task {
-      let result = await Result.awaiting { try await fetch() }
-      inFlight = false
-      show(result, sequence: sequence)
-      if refreshPending {
-        refreshPending = false
-        refresh()
-      }
+    guard readCapableServer(serverConnection, stimHome: stimHome) != nil else {
+      accept(.failure(connectionError))
+      return
     }
+    serverFeed.refresh()
   }
 
-  private func startWatch() {
-    let cli = cli
-    Task { [weak self] in
-      let cli = await cli.value
-      guard let self, !self.terminating else { return }
-      let startedAt = Date()
-      self.watchStderr = []
-      do {
-        self.watcher = try cli.stream(
-          StatusWatch.arguments, cwd: NSHomeDirectory(),
-          onLine: { [weak self] line in
-            let decoded: Result<StatusPayload, Error>? =
-              line.channel == .stdout
-              ? Result { try decodeReporting(StatusPayload.self, from: Data(line.text.utf8), source: .cli) } : nil
-            DispatchQueue.main.async {
-              MainActor.assumeIsolated {
-                guard let self else { return }
-                if let decoded {
-                  self.accept(decoded)
-                } else {
-                  self.watchStderr.append(line.text)
-                }
-              }
-            }
-          },
-          onExit: { [weak self] status in
-            DispatchQueue.main.async {
-              MainActor.assumeIsolated { self?.watchExited(status, ranFor: Date().timeIntervalSince(startedAt)) }
-            }
+  public func useServer(_ connection: (client: ServerClient, home: String)?) {
+    serverConnection = connection
+    syncServerFeed()
+  }
+
+  /// Follows the status of each paired server's client, by `PairedServer.id`, while that client is open with `read`, and
+  /// drops the status of any other. A closed client keeps its last payload, no longer delivering. A client of this
+  /// Mac's Unix socket is never followed as a paired server. Call it again whenever a paired client's state changes.
+  public func usePairedServers(_ clients: [String: ServerClient]) {
+    for (id, followed) in pairedFeeds where clients[id] !== followed.client {
+      pairedFeeds[id] = nil
+      followed.feed.use(nil)
+      if clients[id] == nil { paired[id] = nil } else { paired[id]?.delivering = false }
+    }
+    for (id, client) in clients where client.isRemote {
+      if pairedFeeds[id] == nil {
+        let feed = ServerStatusFeed(
+          onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
+          onDelivering: { [weak self, weak client] delivering in
+            guard let self, let client, self.pairedFeeds[id]?.client === client else { return }
+            self.paired[id]?.delivering = delivering
           })
-        self.watching = true
-      } catch {
-        self.error = error.localizedDescription
-        self.restartWatch(ranFor: 0)
+        pairedFeeds[id] = (client, feed)
+        if paired[id] == nil { paired[id] = PairedStatus() }
+        if case .paired(id) = shownWorkspace?.owner, let path = shownWorkspace?.path { feed.follow([path]) }
+      }
+      guard case .open(let hello) = client.state, hello.capabilities.contains("read") else {
+        pairedFeeds[id]?.feed.use(nil)
+        continue
+      }
+      pairedFeeds[id]?.feed.use(client)
+    }
+  }
+
+  private func acceptPaired(_ result: Result<StatusPayload, Error>, id: String, client: ServerClient) {
+    guard pairedFeeds[id]?.client === client else { return }
+    switch result {
+    case .success(var payload):
+      for i in payload.environments.indices {
+        let env = payload.environments[i]
+        payload.environments[i].project =
+          env.worktree?.repository.map { Project(root: $0) } ?? Project(fallbackFor: env.path)
+      }
+      paired[id] = PairedStatus(payload: payload, error: nil, updatedAt: Date(), delivering: paired[id]?.delivering ?? false)
+    case .failure(let failure):
+      paired[id, default: PairedStatus()].error = failure.localizedDescription
+    }
+  }
+
+  /// This Mac's workspaces, then each paired server's, in pairing id order.
+  public var ownedEnvironments: [OwnedWorkspace] {
+    (payload?.environments ?? []).map { OwnedWorkspace(owner: .local, workspace: $0) }
+      + paired.keys.sorted().flatMap { id in
+        (paired[id]?.payload?.environments ?? []).map { OwnedWorkspace(owner: .paired(id), workspace: $0) }
+      }
+  }
+
+  /// The workspace `key` names, as its own server last reported it.
+  public func workspace(_ key: WorkspaceKey) -> OwnedWorkspace? {
+    let environments: [Workspace]?
+    switch key.owner {
+    case .local: environments = payload?.environments
+    case .paired(let id): environments = paired[id]?.payload?.environments
+    }
+    return environments?.first { $0.path == key.path }.map { OwnedWorkspace(owner: key.owner, workspace: $0) }
+  }
+
+  private var connectionError: ServerError {
+    if let connection = serverConnection,
+      URL(fileURLWithPath: connection.home).resolvingSymlinksInPath().path
+        == URL(fileURLWithPath: stimHome).resolvingSymlinksInPath().path,
+      case .refused(let error) = connection.client.state
+    {
+      return error
+    }
+    return ServerError(code: "not-connected", message: "Connect the Stim server to refresh workspaces.")
+  }
+
+  private func syncServerFeed() {
+    let client = readCapableServer(serverConnection, stimHome: stimHome)
+    serverFeed.use(client)
+    if client == nil {
+      watching = false
+      payloadSource = nil
+      if started {
+        accept(.failure(connectionError))
       }
     }
   }
 
-  private func watchExited(_ status: Int32, ranFor duration: TimeInterval) {
-    watcher = nil
-    watching = false
-    guard !terminating else { return }
-    if StatusWatch.isUnsupported(stderr: watchStderr) {
-      startPolling()
-      return
-    }
-    if status != 0 { error = watchStderr.last ?? StimCLI.Failure.exited(status).localizedDescription }
-    restartWatch(ranFor: duration)
+  func serverDelivering(_ delivering: Bool) {
+    watching = delivering
+    if !delivering { payloadSource = nil }
   }
 
-  private func restartWatch(ranFor duration: TimeInterval) {
-    let delay = backoff.delay(afterRunning: duration)
-    Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-      MainActor.assumeIsolated { self?.startWatch() }
-    }
+  func accept(_ result: Result<StatusPayload, Error>, source: (client: ServerClient, generation: Int)? = nil) {
+    show(result, sequence: nextSequence(), source: source)
   }
 
-  private func startPolling() {
-    guard pollTimer == nil else { return }
-    refresh()
-    pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-      MainActor.assumeIsolated { self?.refresh() }
-    }
-  }
-
-  /// Shows a payload the live watch delivered, which is newer than every refresh started before it.
-  func accept(_ result: Result<StatusPayload, Error>) {
-    show(result, sequence: nextSequence())
+  /// Resolves a shared link only from a snapshot of the current authenticated connection to this store's home.
+  public func target(for link: SharedWorkspaceOpenRequest, connection: (client: ServerClient, home: String)?)
+    -> (workspace: Workspace, device: DeviceRef?)?
+  {
+    guard let client = readCapableServer(connection, stimHome: stimHome),
+      let source = payloadSource, source.client === client, source.generation == client.generation,
+      case .open(let hello) = client.state, let homeId = hello.server.id
+    else { return nil }
+    guard let request = source.payload.request(for: link, homeId: homeId) else { return nil }
+    return source.payload.target(of: request)
   }
 
   private func nextSequence() -> Int {
@@ -152,34 +190,77 @@ public final class StatusStore: ObservableObject {
     return issued
   }
 
-  private func show(_ result: Result<StatusPayload, Error>, sequence: Int) {
+  private func show(_ result: Result<StatusPayload, Error>, sequence: Int, source: (client: ServerClient, generation: Int)? = nil)
+  {
     guard case .success(let payload) = result else {
-      if sequence > shown, case .failure(let failure) = result { error = failure.localizedDescription }
+      if sequence > shown, case .failure(let failure) = result {
+        shown = sequence
+        error = failure.localizedDescription
+      }
       return
     }
     let known = projects
+    let existed = resolvedExistence
     let reported = Dictionary(
       (payload.unprovisionedWorktrees ?? []).compactMap { w in w.repository.map { (w.path, Project(root: $0)) } },
       uniquingKeysWith: { first, _ in first })
-    let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
-    let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
+    let paths = Set(payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path))
     Task.detached {
-      let resolved = Dictionary(missing.map { ($0, Project.resolve(workspace: $0)) }, uniquingKeysWith: { first, _ in first })
+      let resolved = await withTaskGroup(of: (String, Project, Bool).self) { group in
+        for path in paths where reported[path] == nil {
+          guard known[path] == nil || existed[path] != nil else { continue }
+          let exists = FileManager.default.fileExists(atPath: path)
+          guard known[path] == nil || existed[path] != exists else { continue }
+          group.addTask { (path, Project.resolve(workspace: path), exists) }
+        }
+        return await group.reduce(into: [String: (project: Project, exists: Bool)]()) { $0[$1.0] = ($1.1, $1.2) }
+      }
       await MainActor.run {
-        self.projects.merge(reported) { old, _ in old }
-        self.projects.merge(resolved) { old, _ in old }
+        DebugLog.debug(
+          .server,
+          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(resolved.count)"
+        )
+        var next = self.projects
+        for (path, project) in reported where next[path] == nil { next[path] = project }
+        for (path, fact) in resolved where self.resolvedExistence[path] == existed[path] {
+          if existed[path] == nil, next[path] != nil { continue }
+          next[path] = fact.project
+          self.resolvedExistence[path] = fact.exists
+        }
+        if next != self.projects { self.projects = next }
         guard sequence > self.shown else { return }
         self.shown = sequence
         var payload = payload
         for i in payload.environments.indices {
           payload.environments[i].project = self.project(ofPath: payload.environments[i].path)
         }
+        self.payloadSource = source.map { (client: $0.client, generation: $0.generation, payload: payload) }
         self.payload = payload
+        self.followShown()
         self.error = nil
         self.updatedAt = Date()
+        LaunchMilestones.reach(
+          "first-payload-shown", "environments=\(payload.environments.count) archived=\(payload.archived?.count ?? 0)")
         self.checkDoctor()
       }
     }
+  }
+
+  /// Follows the full environment of `key`, the workspace a screen shows, on its own server instead of its summary;
+  /// nil for none.
+  public func show(workspace key: WorkspaceKey?) {
+    guard key != shownWorkspace else { return }
+    shownWorkspace = key
+    followShown()
+    for (id, followed) in pairedFeeds {
+      if case .paired(id) = key?.owner, let path = key?.path { followed.feed.follow([path]) } else { followed.feed.follow([]) }
+    }
+  }
+
+  private func followShown() {
+    var paths = Set(payload?.environments.filter { $0.tutorial != nil }.map(\.path) ?? [])
+    if let shownWorkspace, shownWorkspace.owner == .local { paths.insert(shownWorkspace.path) }
+    serverFeed.follow(paths)
   }
 
   public func project(of env: Workspace) -> Project {
@@ -213,60 +294,106 @@ public final class StatusStore: ObservableObject {
       project: project(ofPath:))
   }
 
+  /// The payload's archives, newest first.
+  public var newestArchives: [ArchivedWorkspace] {
+    if let newestArchiveCache { return newestArchiveCache }
+    let newest = ArchivedWorkspace.newestFirst(payload?.archived ?? [])
+    newestArchiveCache = newest
+    return newest
+  }
+
   public func sidebarTrees(_ options: SidebarOptions) -> [ProjectTree] {
-    StimKit.sidebarTrees(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let trees = cache.trees { return trees }
+    let trees = StimKit.sidebarTrees(
+      visible: cache.visible, environments: payload?.environments ?? [],
+      unprovisioned: payload?.unprovisionedWorktrees ?? [], project: project(ofPath:), options: options)
+    cache.trees = trees
+    sidebarCache = cache
+    return trees
   }
 
   public func sidebarList(_ options: SidebarOptions) -> [SidebarEntry] {
-    StimKit.sidebarList(
-      environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+    var cache = sidebar(options)
+    if let list = cache.list { return list }
+    let list = StimKit.sidebarList(visible: cache.visible, project: project(ofPath:), options: options)
+    cache.list = list
+    sidebarCache = cache
+    return list
   }
 
   public func sidebarStatusCounts(_ options: SidebarOptions) -> [StatusFilter: Int] {
-    StimKit.sidebarStatusCounts(
+    sidebar(options).counts
+  }
+
+  private func sidebar(_ options: SidebarOptions) -> SidebarCache {
+    if let sidebarCache, sidebarCache.options == options { return sidebarCache }
+    let entries = sidebarEntries(
       environments: payload?.environments ?? [], unprovisioned: payload?.unprovisionedWorktrees ?? [],
-      project: project(ofPath:), options: options, archived: payload?.archived ?? [])
+      project: project(ofPath:), options: options, newestArchives: newestArchives)
+    let cache = SidebarCache(
+      options: options, visible: visibleSidebarEntries(entries, options),
+      counts: StimKit.sidebarStatusCounts(entries, hidden: options.hiddenWorkspaces))
+    sidebarCache = cache
+    return cache
   }
 
   private func checkDoctor() {
     let now = Date()
-    guard doctorStartedAt.map({ now.timeIntervalSince($0) > Self.doctorTimeout }) ?? true,
+    guard doctorTask == nil,
       doctorCheckedAt.map({ now.timeIntervalSince($0) >= Self.doctorCheckInterval }) ?? true,
-      let payload
+      let payload, let client = readCapableServer(serverConnection, stimHome: stimHome),
+      case .open(let hello) = client.state
     else { return }
-    doctorStartedAt = now
     doctorCheckedAt = now
     let checkouts = doctorCheckouts(payload.environments, project: project(ofPath:))
     let paths = Set(checkouts.map(\.path))
     doctor = doctor.filter { paths.contains($0.key) }
     let runs = doctorRuns
-    let cli = cli
-    Task.detached(priority: .utility) { [self] in
-      let cli = await cli.value
-      let version = await cli.versionOutput()
+    let generation = doctorGeneration
+    let version = hello.server.stim
+    doctorTask = Task.detached(priority: .utility) { [self] in
       for checkout in checkouts where FileManager.default.fileExists(atPath: checkout.path) {
+        guard !Task.isCancelled else { break }
         let inputs = newestModification(doctorInputs(checkout: checkout.path, repository: checkout.repository))
         guard DoctorRun.due(runs[checkout.path], version: version, inputsChangedAt: inputs, now: Date()) else { continue }
-        let result = await Result.awaiting { try await cli.doctor(cwd: checkout.path) }
+        let result = await Result.awaiting {
+          try await readDoctor(cwd: checkout.path, client: client)
+        }
         let run = DoctorRun(at: Date(), version: version, inputsChangedAt: inputs)
-        await recordDoctor(checkout.path, run: run, result: result)
+        await recordDoctor(checkout.path, run: run, result: result, generation: generation)
       }
-      await finishDoctor()
+      await finishDoctor(generation: generation)
     }
   }
 
-  private func recordDoctor(_ path: String, run: DoctorRun, result: Result<DoctorReport, any Error>) {
-    doctorRuns[path] = run
+  private func recordDoctor(_ path: String, run: DoctorRun, result: Result<DoctorReport, any Error>, generation: Int) {
+    guard generation == doctorGeneration, !Task.isCancelled else { return }
+    if case .success = result { doctorRuns[path] = run }
     doctor[path, default: Fetched()].record(result)
   }
 
-  private func finishDoctor() { doctorStartedAt = nil }
+  private func readDoctor(cwd: String, client: ServerClient) async throws -> DoctorReport {
+    try Task.checkCancellation()
+    guard case .open(let hello) = client.state, hello.features?.contains("desktop-reports") == true else {
+      throw ServerError(code: "unsupported", message: "Update the local stim-server to read setup reports.")
+    }
+    let result = try await client.report(["report": .string("doctor"), "cwd": .string(cwd)], restart: true)
+    guard case .object(let snapshot) = result, snapshot["pending"] == .bool(false), let value = snapshot["value"] else {
+      throw ServerError(code: "bad-response", message: "The local stim-server did not return a completed setup report.")
+    }
+    return try decodeReporting(DoctorReport.self, from: value, source: .server)
+  }
+
+  private func finishDoctor(generation: Int) {
+    if generation == doctorGeneration { doctorTask = nil }
+  }
 
   /// Makes doctor due again in `path`, after a command there may have changed its findings.
   public func doctorChanged(in path: String) {
+    doctorGeneration += 1
+    doctorTask?.cancel()
+    doctorTask = nil
     doctorRuns[path] = nil
     doctorCheckedAt = nil
     checkDoctor()
@@ -282,4 +409,28 @@ public final class StatusStore: ObservableObject {
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
       stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
   }
+}
+
+/// What a paired server last reported. `payload` stays after a failure or a dropped connection, as that server's last
+/// known status.
+public struct PairedStatus: Sendable {
+  public var payload: StatusPayload?
+  public var error: String?
+  public var updatedAt: Date?
+  public var delivering = false
+
+  public init(payload: StatusPayload? = nil, error: String? = nil, updatedAt: Date? = nil, delivering: Bool = false) {
+    self.payload = payload
+    self.error = error
+    self.updatedAt = updatedAt
+    self.delivering = delivering
+  }
+}
+
+private struct SidebarCache {
+  var options: SidebarOptions
+  var visible: [SidebarEntry]
+  var counts: [StatusFilter: Int]
+  var trees: [ProjectTree]?
+  var list: [SidebarEntry]?
 }

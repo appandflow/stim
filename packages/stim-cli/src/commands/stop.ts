@@ -1,3 +1,5 @@
+import type { StimContext } from '@stim-cli/core';
+import { debugLog } from '../debug-log.ts';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
 import {
@@ -10,7 +12,7 @@ import {
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { WorkspaceProcessCleanupError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
   NATIVE_RUN_WAIT_MS,
@@ -35,13 +37,28 @@ import {
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import { phaseLine, plural, refuseNoProject, releasedLeaseFact } from '../command-output.ts';
-import { clearSupervisor, getProject, upsertProject, withConfigLock } from '../workspace/config.ts';
+import { clearSupervisor, getProject, upsertProject, withConfigLockAsync } from '../workspace/config.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspace } from '../workspace/project.ts';
-import { pidExists, killMetroTree, resolveProjectMetro, signalProcessTree } from '../metro.ts';
-import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
-import type { MetroResolution } from '../metro.ts';
 import {
+  pidExists,
+  killMetroTreeAsync,
+  listeningPidsAsync,
+  processCwds,
+  resolveProjectMetro,
+  signalProcessTreeAsync,
+  type killMetroTree,
+  type MetroResolution,
+} from '../metro.ts';
+import { isMetroRunning } from '../ports.ts';
+import {
+  logVanishedSupervisor,
+  requestDevServerStop,
+  withdrawDevServerStopRequest,
+  type StopRequester,
+} from '../supervisor/stop-cause.ts';
+import {
+  MODE_COMMAND,
   clearManagedMetroTunnel,
   clearRemoteSession,
   readMetroTunnel,
@@ -53,13 +70,16 @@ import {
   clearWorkspaceStateKeys,
   readWorkspaceState,
   withWorkspaceStateLock,
+  withWorkspaceStateLockAsync,
   writeWorkspaceState,
-  updateWorkspaceState,
+  updateWorkspaceStateAsync,
 } from '../workspace/workspace-state.ts';
 import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { teardownOwnedBrowser, teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
+import { removeOwnedEmulatorMetroReverses } from '../devices/android.ts';
+import { removePhoneReverses } from '../devices/phone-reverses.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
-import { fileLeaseIo, releaseWorkspaceLeases, type ReleasedLease } from '../engine/device-lease.ts';
+import { fileLeaseIo, releaseWorkspaceLeasesAsync, type ReleasedLease } from '../engine/device-lease.ts';
 import { resolveEasCliBin } from '../engine/remote-cache.ts';
 import { stopTunnel } from '../engine/tunnel.ts';
 import {
@@ -243,37 +263,45 @@ export interface StopResult {
   summary: string;
 }
 
+type RegistrationCleanup = boolean | void | { error: string };
+
 interface TunnelOutcome {
   status: string;
   provider?: string;
   reason?: string;
 }
 
-function defaultTeardownRemoteSession(
+async function defaultTeardownRemoteSession(
   root: string,
   sessionId: string,
-): { status: 'torn-down' | 'failed'; reason?: string } {
-  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null });
+  operation?: StimContext,
+): Promise<{ status: 'torn-down' | 'failed'; reason?: string }> {
+  return endRecordedSession({ root, sessionId, easBin: resolveEasCliBin(root)?.file ?? null, operation });
 }
 
-function endRemoteSession(
+async function endRemoteSession(
   root: string,
   sessionId: string,
   {
     teardownRemoteSession,
     report,
   }: {
-    teardownRemoteSession: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
+    teardownRemoteSession: (
+      root: string,
+      sessionId: string,
+    ) =>
+      | { status: 'torn-down' | 'failed'; reason?: string }
+      | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
     report: (line: string) => void;
   },
-): DeviceOutcomeEntry {
-  const result = teardownRemoteSession(root, sessionId);
+): Promise<DeviceOutcomeEntry> {
+  const result = await teardownRemoteSession(root, sessionId);
   if (result.status === 'failed') {
     report(chalk.red(phaseLine('device', result.reason ?? `could not stop remote session ${sessionId}`)));
   } else {
     report(chalk.dim(phaseLine('device', `stopped remote session ${sessionId}`)));
     if (result.reason) report(chalk.yellow(phaseLine('device', result.reason)));
-    else clearRemoteSession(root, sessionId);
+    else await withWorkspaceStateLockAsync(root, () => clearRemoteSession(root, sessionId));
   }
   return { status: result.status, label: sessionId, reason: result.reason };
 }
@@ -310,19 +338,20 @@ export async function runStop(options: StopArgs & { slot?: string }): Promise<St
     remoteDevice: null,
     metroTunnel: null,
     clearCollectors: (projectRoot, expected) =>
-      withWorkspaceStateLock(projectRoot, () => {
+      withWorkspaceStateLockAsync(projectRoot, () => {
         clearCollectorState(projectRoot, expected);
         return !Object.keys(readCollectorState(projectRoot)).some((key) => parseDeviceSlotKey(key)?.slot === slot);
       }),
-    clearState: (projectRoot) => {
-      clearWorkspaceLaunches(projectRoot, slot);
-      return true;
-    },
+    clearState: (projectRoot) =>
+      withWorkspaceStateLockAsync(projectRoot, () => {
+        clearWorkspaceLaunches(projectRoot, slot);
+        return true;
+      }),
     clearRegistration: async () => true,
     teardownBrowser: null,
     stopMacos: false,
     hostedSlot: slot,
-    releaseLeases: (projectRoot) => releaseWorkspaceLeases(projectRoot, { slot }),
+    releaseLeases: (projectRoot) => releaseWorkspaceLeasesAsync(projectRoot, { slot }),
   });
   result.outcomes.port = {
     status: 'kept',
@@ -362,7 +391,9 @@ async function stopWorkspaceHostedNative(
   slot: string | undefined,
   report: (line: string) => void,
   failed: () => void,
+  operation: StimContext | undefined,
 ): Promise<{ devices: Record<string, DeviceOutcomeEntry>; failed: boolean }> {
+  const signal = operation?.signal;
   const devices: Record<string, DeviceOutcomeEntry> = {};
   let anyFailed = false;
   for (const platform of ['ios', 'android'] as const) {
@@ -373,10 +404,11 @@ async function stopWorkspaceHostedNative(
         ? `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${platform} device`} on ${placement.machine}`
         : `hosted ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} for slot ${name}`;
       try {
-        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name);
+        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name, signal);
         devices[`${platform}:host:${name}`] = { status: 'shut-down', label };
         report(chalk.dim(phaseLine('device', `stopped ${label}`)));
       } catch (error) {
+        signal?.throwIfAborted();
         const reason = (error as Error).message;
         devices[`${platform}:host:${name}`] = { status: 'failed', label, reason };
         report(chalk.red(phaseLine('device', reason)));
@@ -405,62 +437,78 @@ async function stopWorkspaceMacos(
 
 async function stopWorkspace({
   root,
+  operation,
   project = undefined,
   state = undefined,
   collectors = undefined,
-  signalCollector = (pid: number) => signalProcessTree(pid),
+  signalCollector = (pid: number) => signalProcessTreeAsync(pid),
   verifyCollector = verifyCollectorOwnership,
-  clearCollectors = clearCollectorState,
+  clearCollectors = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearCollectorState(projectRoot, expected)),
   isAlive = pidExists,
-  killGroup = killMetroTree,
-  signalServer = (pid: number) => signalProcessTree(pid),
+  killGroup = killMetroTreeAsync,
+  signalServer = (pid: number, group: boolean) => signalProcessTreeAsync(pid, 'SIGTERM', { group }),
   inspectIdentity = inspectProcessIdentity,
   waitForDeath = undefined,
   waitMs = DEFAULT_WAIT_MS,
-  resolveMetro = resolveProjectMetro,
+  resolveMetro = (port: number, projectRoot: string) =>
+    resolveProjectMetro(port, projectRoot, {
+      probe: (candidatePort) => isMetroRunning(candidatePort, operation?.signal),
+      pidsOf: listeningPidsAsync,
+      cwdOf: async (pid) => (await processCwds([pid])).get(pid) ?? null,
+    }),
   teardownIos = teardownOwnedIosSim,
   teardownAvd = teardownOwnedAvd,
   teardownBrowser = (projectRoot: string) => teardownOwnedBrowser(projectRoot),
   stopMacos,
   hostedSlot,
   remoteDevice = undefined,
-  teardownRemoteSession = defaultTeardownRemoteSession,
+  teardownRemoteSession = (projectRoot: string, id: string) => defaultTeardownRemoteSession(projectRoot, id, operation),
   metroTunnel = undefined,
   stopMetroTunnel = stopTunnel,
-  releaseLeases = releaseWorkspaceLeases,
+  releaseLeases = releaseWorkspaceLeasesAsync,
   freePort = defaultFreePort,
-  clearRegistration = defaultClearRegistration,
-  clearState = clearSupervisorState,
+  clearRegistration = (projectRoot, expected) => defaultClearRegistration(projectRoot, expected, report),
+  clearState = (projectRoot, expected) =>
+    withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
+  requester,
 }: {
   root: string;
+  operation?: StimContext;
   project?: ProjectRecord | null;
   state?: SupervisorStateRecord | null;
   collectors?: CollectorStateMap | null;
-  signalCollector?: (pid: number) => void;
+  signalCollector?: (pid: number) => unknown;
   verifyCollector?: typeof verifyCollectorOwnership;
-  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void;
+  clearCollectors?: (root: string, expected?: CollectorStateMap | null) => boolean | void | Promise<boolean | void>;
   isAlive?: (pid: number) => boolean;
-  killGroup?: typeof killMetroTree;
-  signalServer?: (pid: number) => boolean;
+  killGroup?: typeof killMetroTree | typeof killMetroTreeAsync;
+  signalServer?: (pid: number, group: boolean) => boolean | Promise<boolean>;
   inspectIdentity?: typeof inspectProcessIdentity;
   waitForDeath?: ((pid: number) => Promise<boolean>) | undefined;
   waitMs?: number;
   resolveMetro?: (port: number, root: string) => Promise<MetroResolution>;
-  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
-  teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+  teardownIos?: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+  teardownAvd?: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
   stopMacos?: boolean;
   hostedSlot?: string;
   teardownBrowser?: ((root: string) => Promise<TeardownResult>) | null;
   remoteDevice?: RemoteDeviceRecord | null;
   metroTunnel?: ReturnType<typeof readMetroTunnel> | undefined;
   stopMetroTunnel?: typeof stopTunnel;
-  releaseLeases?: (root: string) => ReleasedLease[];
-  teardownRemoteSession?: (root: string, sessionId: string) => { status: 'torn-down' | 'failed'; reason?: string };
-  freePort?: (root: string, port: number) => boolean | void;
-  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<boolean | void>;
-  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void;
+  releaseLeases?: (root: string) => ReleasedLease[] | Promise<ReleasedLease[]>;
+  teardownRemoteSession?: (
+    root: string,
+    sessionId: string,
+  ) =>
+    | { status: 'torn-down' | 'failed'; reason?: string }
+    | Promise<{ status: 'torn-down' | 'failed'; reason?: string }>;
+  freePort?: (root: string, port: number) => boolean | void | Promise<boolean | void>;
+  clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
+  clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
+  requester?: StopRequester;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
@@ -482,6 +530,7 @@ async function stopWorkspace({
   let stillHolding: string | null | undefined = null;
   let keepPort: string | null = null;
 
+  debugLog.log('stop.phase.start', { phase: 'supervisor' });
   const target = resolveSupervisorTarget({
     state: sup,
     record: proj?.supervisor ?? null,
@@ -489,6 +538,28 @@ async function stopWorkspace({
     isAlive,
     inspectIdentity,
   });
+  let phoneReversesRemoved = false;
+  const releasePhoneReverses = async () => {
+    if (phoneReversesRemoved) return;
+    phoneReversesRemoved = true;
+    try {
+      await removePhoneReverses(root, { slot: hostedSlot, operation });
+    } catch (error) {
+      operation?.signal.throwIfAborted();
+      report(
+        chalk.yellow(
+          phaseLine(
+            'device',
+            `could not remove the adb reverse from the phone: ${error instanceof Error ? error.message : error}`,
+          ),
+        ),
+      );
+    }
+  };
+  const releaseReverses = async () => {
+    await removeOwnedEmulatorReverses(proj, reservedPort, operation);
+    await releasePhoneReverses();
+  };
   if (target.status === 'none') {
     report(chalk.dim(phaseLine('stop', 'no supervisor recorded')));
   } else if (target.status === 'stale') {
@@ -505,13 +576,15 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses, requester });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
     }
   }
 
+  debugLog.log('stop.phase.end', { phase: 'supervisor', status: outcomes.supervisor.status });
+  debugLog.log('stop.phase.start', { phase: 'collectors' });
   outcomes.collectors = await reapCollectors(root, collectorRecords, {
     isAlive,
     signal: signalCollector,
@@ -534,10 +607,16 @@ async function stopWorkspace({
   } else if (outcomes.collectors.entries.some((entry) => entry.status === 'failed')) {
     ok = false;
     stillHolding ??= 'a collector could not be stopped';
-  } else if (outcomes.collectors.entries.length && clearCollectors(root, collectorRecords) === false) {
-    ok = false;
-    stillHolding ??= 'a replacement collector appeared during cleanup';
+  } else if (outcomes.collectors.entries.length) {
+    debugLog.log('stop.phase.start', { phase: 'clear-collectors' });
+    const cleared = await clearCollectors(root, collectorRecords);
+    debugLog.log('stop.phase.end', { phase: 'clear-collectors', cleared });
+    if (cleared === false) {
+      ok = false;
+      stillHolding ??= 'a replacement collector appeared during cleanup';
+    }
   }
+  debugLog.log('stop.phase.end', { phase: 'collectors', status: outcomes.collectors.status });
 
   const supervisorHandled =
     outcomes.supervisor.status === 'stopped' ||
@@ -548,6 +627,7 @@ async function stopWorkspace({
     outcomes.metro = { status: 'skipped', reason: 'the supervisor owns the dev server on this port' };
   } else if (reservedPort === null) {
     report(chalk.dim(phaseLine('metro', 'no port reserved')));
+    await releasePhoneReverses();
   } else {
     const metro = await stopMetro(reservedPort, root, {
       server: sup,
@@ -557,6 +637,7 @@ async function stopWorkspace({
       waiter,
       resolveMetro,
       report,
+      releaseReverses,
     });
     outcomes.metro = metro.outcome;
     keepPort = metro.keepPort;
@@ -567,8 +648,13 @@ async function stopWorkspace({
   }
 
   const releaseStoppedSupervisor = async () => {
-    const stateCleared = clearState(root, sup);
+    const stateCleared = await clearState(root, sup);
     const registrationCleared = await clearRegistration(root, proj?.supervisor ?? null);
+    if (typeof registrationCleared === 'object') {
+      ok = false;
+      outcomes.port = { status: 'kept', port: reservedPort, reason: registrationCleared.error };
+      return;
+    }
     if (stateCleared === false || registrationCleared === false) {
       ok = false;
       outcomes.port = {
@@ -584,7 +670,7 @@ async function stopWorkspace({
         report(chalk.dim(phaseLine('port', `keeping reservation ${reservedPort} -- ${keepPort}`)));
         return;
       }
-      if (freePort(root, reservedPort) === false) {
+      if ((await freePort(root, reservedPort)) === false) {
         ok = false;
         outcomes.port = { status: 'kept', port: reservedPort, reason: 'the port reservation changed during cleanup' };
         return;
@@ -597,7 +683,7 @@ async function stopWorkspace({
   if (stillHolding) {
     report(chalk.dim(phaseLine('device', 'left alone (something is still running)')));
   } else {
-    outcomes.device = shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
+    outcomes.device = await shutDownDevices(proj, root, { teardownIos, teardownAvd, report });
     if (Object.values(outcomes.device).some((device) => device?.status === 'failed')) ok = false;
   }
 
@@ -612,11 +698,17 @@ async function stopWorkspace({
     stopMacos,
   );
 
-  const hosted = await stopWorkspaceHostedNative(root, hostedSlot, report, () => {
-    ok = false;
-  });
+  const hosted = await stopWorkspaceHostedNative(
+    root,
+    hostedSlot,
+    report,
+    () => {
+      ok = false;
+    },
+    operation,
+  );
   Object.assign(outcomes.device, hosted.devices);
-  updateWorkspaceState(root, (workspace) => {
+  await updateWorkspaceStateAsync(root, (workspace) => {
     const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
     for (const name of ['default', ...Object.keys(slots)]) {
       if (hostedSlot !== undefined && name !== hostedSlot) continue;
@@ -638,7 +730,7 @@ async function stopWorkspace({
   const remote = remoteDevice === undefined ? readRemoteSession(root) : remoteDevice;
   const sessionId = typeof remote?.sessionId === 'string' ? remote.sessionId : null;
   if (sessionId) {
-    outcomes.device.remote = endRemoteSession(root, sessionId, { teardownRemoteSession, report });
+    outcomes.device.remote = await endRemoteSession(root, sessionId, { teardownRemoteSession, report });
     if (!remoteEnded(outcomes.device.remote)) ok = false;
   }
 
@@ -653,7 +745,7 @@ async function stopWorkspace({
       if (!stillHolding) stillHolding = tunnelHolding;
       report(chalk.red(phaseLine('lan', tunnelHolding)));
     } else {
-      if (!clearManagedMetroTunnel(root, tunnel)) {
+      if (!(await withWorkspaceStateLockAsync(root, () => clearManagedMetroTunnel(root, tunnel)))) {
         tunnelHolding = 'a replacement managed tunnel record appeared during cleanup and remains active';
         stillHolding = stillHolding ?? tunnelHolding;
         ok = false;
@@ -674,7 +766,7 @@ async function stopWorkspace({
     outcomes.metroTunnel = { status: 'not-managed' };
   }
 
-  outcomes.releasedLeases = releaseLeases(root);
+  outcomes.releasedLeases = await releaseLeases(root);
   for (const lease of outcomes.releasedLeases) {
     report(chalk.dim(phaseLine('lease', releasedLeaseFact(lease))));
   }
@@ -686,7 +778,7 @@ async function stopWorkspace({
       ['none', 'already-stopped', 'stopped'].includes(outcomes.supervisor.status) &&
       !['refused', 'failed'].includes(outcomes.metro.status);
     if (tunnelHolding && serverIsDown) {
-      clearState(root, sup);
+      await clearState(root, sup);
       await clearRegistration(root, proj?.supervisor ?? null);
     }
   } else {
@@ -707,7 +799,7 @@ async function reapCollectors(
     waiter,
   }: {
     isAlive: (pid: number) => boolean;
-    signal: (pid: number) => void;
+    signal: (pid: number) => unknown;
     report: (line: string) => void;
     verify?: typeof verifyCollectorOwnership;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
@@ -752,7 +844,7 @@ async function reapCollectors(
         });
         continue;
       }
-      signal(target.pid as number);
+      await signal(target.pid as number);
       if (!(await waiter(target.pid as number, collectors?.[target.platform]?.processToken as string | undefined))) {
         entries.push({
           platform: target.platform,
@@ -793,18 +885,27 @@ async function stopSupervisor(
     killGroup,
     waiter,
     report,
+    releaseReverses,
+    requester,
   }: {
     root: string;
-    killGroup: typeof killMetroTree;
+    killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
+    requester: StopRequester | undefined;
   },
 ): Promise<SupervisorOutcome> {
+  await releaseReverses();
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
-  requestDevServerStop(root, target.processToken, { by: 'stim stop' });
+  try {
+    await withWorkspaceStateLockAsync(root, () =>
+      requestDevServerStop(root, target.processToken, requester ?? { by: 'stim stop' }),
+    );
+  } catch {}
   let signalled = false;
   try {
-    signalled = killGroup(target.pid, target.processToken);
+    signalled = await killGroup(target.pid, target.processToken);
   } catch (e) {
     signalled = false;
     report(
@@ -814,7 +915,9 @@ async function stopSupervisor(
     );
   }
   if (!signalled) {
-    withdrawDevServerStopRequest(root, target.processToken);
+    try {
+      await withWorkspaceStateLockAsync(root, () => withdrawDevServerStopRequest(root, target.processToken));
+    } catch {}
     const reason = `could not signal supervisor pid ${target.pid}`;
     report(chalk.red(phaseLine('stop', reason)));
     return { status: 'failed', pid: target.pid, port: target.port ?? null, reason };
@@ -829,6 +932,16 @@ async function stopSupervisor(
   report(
     chalk.dim(phaseLine('', `inspect it with \`ps -p ${target.pid}\`, or signal it yourself: kill -9 -${target.pid}`)),
   );
+  if (target.mode === MODE_COMMAND) {
+    report(
+      chalk.dim(
+        phaseLine(
+          '',
+          'metro.command runs in its own process group: once the supervisor is gone, run stim stop again to stop it',
+        ),
+      ),
+    );
+  }
   return { status: 'timeout', pid: target.pid, port: target.port ?? null, reason };
 }
 
@@ -843,14 +956,16 @@ async function stopMetro(
     waiter,
     resolveMetro,
     report,
+    releaseReverses,
   }: {
     server: SupervisorStateRecord | null;
     supervisorGone: boolean;
-    signalServer: (pid: number) => boolean;
+    signalServer: (pid: number, group: boolean) => boolean | Promise<boolean>;
     inspectIdentity: typeof inspectProcessIdentity;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     resolveMetro: (port: number, root: string) => Promise<MetroResolution>;
     report: (line: string) => void;
+    releaseReverses: () => Promise<void>;
   },
 ): Promise<{ outcome: MetroOutcome; keepPort: string | null }> {
   const serverPid = numberOrNull(server?.serverPid);
@@ -865,9 +980,10 @@ async function stopMetro(
   }
   if (identity === 'same') {
     report(chalk.dim(phaseLine('metro', `sending SIGTERM to dev server pid ${serverPid} left by the supervisor`)));
+    await releaseReverses();
     let signalled = false;
     try {
-      signalled = signalServer(serverPid as number);
+      signalled = await signalServer(serverPid as number, server?.mode === MODE_COMMAND);
     } catch {}
     const exited = signalled
       ? await waiter(serverPid as number, serverProcessToken as string)
@@ -882,6 +998,7 @@ async function stopMetro(
   }
   const resolution = await resolveMetro(port, root);
   if (resolution.missing) {
+    await releaseReverses();
     report(chalk.dim(phaseLine('metro', `nothing listening on port ${port}`)));
     return { outcome: { status: 'missing', port }, keepPort: null };
   }
@@ -901,7 +1018,21 @@ function occupiedSkipReason(reason: string, holders: string[] | null | undefined
   return named.length ? `${reason} -- held by UI-test runner ${named.join(', ')}` : `${reason} -- ${OCCUPANCY_HINT}`;
 }
 
-function shutDownDevices(
+async function removeOwnedEmulatorReverses(
+  project: ProjectRecord | null | undefined,
+  metroPort: number | null,
+  operation: StimContext | undefined,
+): Promise<void> {
+  if (metroPort === null) return;
+  for (const { platforms } of projectDeviceSlots(project)) {
+    const android = platforms.android;
+    if (android?.owned && android.avdName && android.consolePort) {
+      await removeOwnedEmulatorMetroReverses(android.avdName, `emulator-${android.consolePort}`, metroPort, operation);
+    }
+  }
+}
+
+async function shutDownDevices(
   project: ProjectRecord | null | undefined,
   workspace: string,
   {
@@ -909,12 +1040,18 @@ function shutDownDevices(
     teardownAvd,
     report,
   }: {
-    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => TeardownResult;
-    teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => TeardownResult;
+    teardownIos: (udid: string, opts: { del?: boolean; label?: string; workspace?: string }) => Promise<TeardownResult>;
+    teardownAvd: (avdName: string, opts: { del?: boolean; workspace?: string }) => Promise<TeardownResult>;
     report: (line: string) => void;
   },
-): DeviceOutcome {
+): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
+  const entries: Array<{
+    key: string;
+    kind: 'ios' | 'android';
+    label: string;
+    result: Promise<TeardownResult> | null;
+  }> = [];
 
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     const iosKey = slot === 'default' ? 'ios' : `ios:${slot}`;
@@ -923,44 +1060,61 @@ function shutDownDevices(
     const iosUdid = ios?.deviceUdid as string | undefined;
     const iosName = ios?.deviceName as string | undefined;
     if (iosUdid) {
-      if (!ios?.owned) {
-        device[iosKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: iosUdid,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
-      } else {
-        device[iosKey] = reportDevice(
-          iosUdid,
-          teardownIos(iosUdid, { del: false, label: iosName, workspace }),
-          report,
-          'ios',
-        );
+      let result: Promise<TeardownResult> | null = null;
+      if (ios?.owned) {
+        debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
+        result = teardownIos(iosUdid, { del: false, label: iosName, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: outcome.status });
+          return outcome;
+        });
       }
+      entries.push({ key: iosKey, kind: 'ios', label: iosUdid, result });
     }
 
     const android = platforms.android;
     if (android?.avdName) {
-      if (!android.owned) {
-        device[androidKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: android.avdName,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
-      } else {
-        device[androidKey] = reportDevice(
-          android.avdName,
-          teardownAvd(android.avdName, { del: false, workspace }),
-          report,
-          'android',
-        );
+      const avdName = android.avdName;
+      let result: Promise<TeardownResult> | null = null;
+      if (android.owned) {
+        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: avdName });
+        result = teardownAvd(avdName, { del: false, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'android', slot, deviceId: avdName, status: outcome.status });
+          return outcome;
+        });
       }
+      entries.push({ key: androidKey, kind: 'android', label: avdName, result });
     }
   }
+
+  const settled = await Promise.allSettled(entries.map((entry) => entry.result));
+  entries.forEach(({ key, kind, label }, index) => {
+    const outcome = settled[index];
+    if (outcome?.status === 'rejected') return;
+    if (!outcome?.value) {
+      device[key] = {
+        status: 'skipped',
+        kind: 'not-owned',
+        label,
+        reason: 'Stim does not own this device',
+      };
+      report(chalk.dim(phaseLine('device', `${label} is not Stim-owned, leaving it running`)));
+      return;
+    }
+    device[key] = reportDevice(label, outcome.value, report, kind);
+  });
+  const rejected = settled.flatMap((outcome) => (outcome.status === 'rejected' ? [outcome.reason] : []));
+  const cleanup = rejected.filter((reason) => reason instanceof WorkspaceProcessCleanupError);
+  if (cleanup.length > 1) {
+    throw Object.assign(
+      new WorkspaceProcessCleanupError(
+        [...new Set(cleanup.flatMap((error) => error.claims))],
+        cleanup.map((error) => error.message).join(' '),
+        'Verify the device operations and their descendants have stopped.',
+      ),
+      { reportCleanup: true },
+    );
+  }
+  if (rejected.length > 0) throw cleanup[0] ?? rejected[0];
   return device;
 }
 
@@ -1048,8 +1202,8 @@ function summarize(root: string, outcomes: StopOutcomes, ok: boolean): string {
   return `${ok ? 'Stopped' : 'Stopped with problems'}: ${what} (${root})`;
 }
 
-function defaultFreePort(root: string, port: number): boolean {
-  return withConfigLock(() => {
+function defaultFreePort(root: string, port: number): Promise<boolean> {
+  return withConfigLockAsync(() => {
     const current = getProject(root);
     if (!current) return true;
     if (current.supervisor || current.metroPort !== port) return false;
@@ -1058,11 +1212,17 @@ function defaultFreePort(root: string, port: number): boolean {
   });
 }
 
-async function defaultClearRegistration(root: string, expected?: ProcessRecord | null): Promise<boolean> {
+async function defaultClearRegistration(
+  root: string,
+  expected: ProcessRecord | null | undefined,
+  report: (line: string) => void,
+): Promise<RegistrationCleanup> {
   try {
-    return clearSupervisor(root, expected);
-  } catch {
-    return false;
+    return await withConfigLockAsync(() => clearSupervisor(root, expected));
+  } catch (error) {
+    const message = `Could not clear workspace registration: ${error instanceof Error ? error.message : String(error)}`;
+    report(chalk.red(phaseLine('stop', message)));
+    return { error: message };
   }
 }
 
@@ -1121,21 +1281,34 @@ function workspaceDeviceSlots(root: string): string[] {
   return slots;
 }
 
-function readRemoteSessionEntry(root: string, report: (line: string) => void): DeviceOutcomeEntry | null {
+async function readRemoteSessionEntry(
+  root: string,
+  report: (line: string) => void,
+  operation?: StimContext,
+): Promise<DeviceOutcomeEntry | null> {
   const sessionId = readRemoteSession(root)?.sessionId;
   if (typeof sessionId !== 'string') return null;
   report(chalk.dim(phaseLine('device', `ending remote session ${sessionId} without waiting on the build lock`)));
-  return endRemoteSession(root, sessionId, { teardownRemoteSession: defaultTeardownRemoteSession, report });
+  return endRemoteSession(root, sessionId, {
+    teardownRemoteSession: (projectRoot, id) => defaultTeardownRemoteSession(projectRoot, id, operation),
+    report,
+  });
+}
+
+function signalledHolder(holder: ClaimHolder): boolean {
+  return nativeRunHolder(holder).takesSignals && holder.owner.pid !== process.pid;
 }
 
 /**
  * `stop` under the workspace's native-run lock. A billable remote session is ended as soon as the lock is
- * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is interrupted with
- * SIGINT and given INTERRUPT_WAIT_MS to exit; a build for another slot that stays is left running while
+ * seen held; a live `ios` or `android` run that the stop leaves nothing to deploy to is asked to cancel through
+ * its workspace state, sent SIGINT when its holder is a CLI process, and given INTERRUPT_WAIT_MS to exit; a build
+ * for another slot that stays is left running while
  * the slot stops without the lock; any other holder is waited on with a visible notice.
  */
 export async function stopWorkspaceNow({
   root,
+  operation,
   slot,
   report = (line: string) => console.error(line),
   now = Date.now,
@@ -1144,12 +1317,13 @@ export async function stopWorkspaceNow({
   interruptWaitMs = INTERRUPT_WAIT_MS,
   inspectIdentity = inspectProcessIdentity,
   interrupt = (pid: number) => process.kill(pid, 'SIGINT'),
-  endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report),
+  endRemote = (projectRoot: string) => readRemoteSessionEntry(projectRoot, report, operation),
   deviceSlots = workspaceDeviceSlots,
   recordedSlots = recordedDeviceSlots,
-  stop = (options: { root: string; slot?: string }) => runStop(options),
+  stop = (options: { root: string; slot?: string }) => runStop({ ...options, operation, report }),
 }: {
   root: string;
+  operation?: StimContext;
   slot?: string;
   report?: (line: string) => void;
   now?: () => number;
@@ -1158,7 +1332,7 @@ export async function stopWorkspaceNow({
   interruptWaitMs?: number;
   inspectIdentity?: typeof inspectProcessIdentity;
   interrupt?: (pid: number) => void;
-  endRemote?: (root: string) => DeviceOutcomeEntry | null;
+  endRemote?: (root: string) => DeviceOutcomeEntry | null | Promise<DeviceOutcomeEntry | null>;
   deviceSlots?: (root: string) => string[];
   recordedSlots?: (root: string) => string[];
   stop?: (options: { root: string; slot?: string }) => ReturnType<typeof runStop>;
@@ -1176,66 +1350,77 @@ export async function stopWorkspaceNow({
   };
   let remote: DeviceOutcomeEntry | null = null;
   let remoteHandled = slot !== undefined;
-  const endRemoteNow = () => {
+  const endRemoteNow = async () => {
     if (remoteHandled) return;
     remoteHandled = true;
-    remote = endRemote(root);
+    remote = await endRemote(root);
   };
   const notice = nativeRunWaitNotice({ write: (line) => report(chalk.dim(phaseLine('lock', line))), now });
   let seen: { claimId: string; action: StopHolderAction['action']; deadline: number } | null = null;
   const interrupted: string[] = [];
 
-  const onHeld = (holder: ClaimHolder): void => {
+  const onHeld = async (holder: ClaimHolder): Promise<void> => {
     const at = now();
     if (seen?.claimId === holder.claimId) {
       if (seen.action === 'interrupt' && at >= seen.deadline) {
         if (inspectIdentity(holder.owner) !== 'same') throw ownerGoneRefusal(holder, at);
+        const signalled = signalledHolder(holder);
         throw new StopBlocked({
           code: 'STIM_STOP_BLOCKED',
-          message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of SIGINT; it still holds this workspace's native-run claim at ${holder.path}.`,
-          remedy: `Wait for it to finish, or end it with \`kill ${holder.owner.pid}\`, then run \`stim stop\` again.`,
+          message: `${describeNativeRunHolder(holder, at)} did not exit within ${Math.round(interruptWaitMs / 1000)}s of ${signalled ? 'SIGINT' : 'the stop request'}; it still holds this workspace's native-run claim at ${holder.path}.`,
+          remedy: signalled
+            ? `Wait for it to finish, or end it with \`kill ${holder.owner.pid}\`, then run \`stim stop\` again.`
+            : `It runs inside process ${holder.owner.pid}, which embeds Stim (such as stim-server) and runs other work too. Wait for the run to finish, or cancel it from the client that started it, then run \`stim stop\` again.`,
         });
       }
       notice(holder);
       return;
     }
-    endRemoteNow();
-    const target = nativeRunHolder(holder);
-    if (unknownSlot) {
-      const refusal = target.slot === slot ? null : stillUnknown();
-      if (refusal) throw refusal;
-      unknownSlot = false;
-    }
-    const { action } = decideStopAction({
-      stopSlot: slot,
-      holder: target,
-      ownerIdentity: inspectIdentity(holder.owner),
-      deviceSlots: deviceSlots(root),
-    });
-    seen = { claimId: holder.claimId, action, deadline: Number.POSITIVE_INFINITY };
-    const who = describeNativeRunHolder(holder, at);
-    if (action === 'proceed') {
-      notice(holder, `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`);
-      throw new LeaveBuildRunning();
-    }
-    if (action === 'refuse') throw ownerGoneRefusal(holder, at);
-    if (action === 'interrupt') {
-      requestNativeRunCancel(root, holder.claimId);
-      interrupted.push(holder.claimId);
-      seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
-      if (inspectIdentity(holder.owner) !== 'same') return;
-      try {
-        interrupt(holder.owner.pid);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
+    try {
+      const target = nativeRunHolder(holder);
+      if (unknownSlot) {
+        const refusal = target.slot === slot ? null : stillUnknown();
+        if (refusal) throw refusal;
+        unknownSlot = false;
       }
-      notice(
-        holder,
-        `interrupting ${who}: sent SIGINT, waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`,
-      );
-      return;
+      const { action } = decideStopAction({
+        stopSlot: slot,
+        holder: target,
+        ownerIdentity: inspectIdentity(holder.owner),
+        deviceSlots: deviceSlots(root),
+      });
+      seen = { claimId: holder.claimId, action, deadline: Number.POSITIVE_INFINITY };
+      const who = describeNativeRunHolder(holder, at);
+      if (action === 'proceed') {
+        notice(
+          holder,
+          `leaving ${who} running: slot ${target.slot} stays, so slot ${slot} stops without the build lock`,
+        );
+        throw new LeaveBuildRunning();
+      }
+      if (action === 'refuse') throw ownerGoneRefusal(holder, at);
+      if (action === 'interrupt') {
+        await withWorkspaceStateLockAsync(root, () => requestNativeRunCancel(root, holder.claimId));
+        interrupted.push(holder.claimId);
+        seen = { claimId: holder.claimId, action, deadline: now() + interruptWaitMs };
+        if (inspectIdentity(holder.owner) !== 'same') return;
+        const wait = `waiting up to ${Math.round(interruptWaitMs / 1000)}s for it to exit`;
+        if (!signalledHolder(holder)) {
+          notice(holder, `interrupting ${who}: asked it to stop, ${wait}`);
+          return;
+        }
+        try {
+          interrupt(holder.owner.pid);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code !== 'ESRCH') throw error;
+        }
+        notice(holder, `interrupting ${who}: sent SIGINT, ${wait}`);
+        return;
+      }
+      notice(holder);
+    } finally {
+      await endRemoteNow();
     }
-    notice(holder);
   };
 
   const withRemote = (result: Awaited<ReturnType<typeof runStop>>): Awaited<ReturnType<typeof runStop>> => {
@@ -1257,9 +1442,11 @@ export async function stopWorkspaceNow({
         },
         {
           external: true,
+          signal: operation?.signal,
           waitMs,
           now,
           ...(sleep ? { sleep } : {}),
+          declareSpawnsFor: operation,
           details: { command: 'stop', ...(slot === undefined ? {} : { slot }) },
           onHeld,
         },
@@ -1268,10 +1455,14 @@ export async function stopWorkspaceNow({
   } catch (error) {
     if (error instanceof LeaveBuildRunning) return withRemote(await stop({ root, slot }));
     if (error instanceof StopBlocked) return { refusal: error.refusal, remote };
-    if (isClaimRefusal(error)) endRemoteNow();
+    if (isClaimRefusal(error)) await endRemoteNow();
     throw error;
   } finally {
-    for (const claimId of interrupted) clearNativeRunCancel(root, claimId);
+    for (const claimId of interrupted) {
+      try {
+        await withWorkspaceStateLockAsync(root, () => clearNativeRunCancel(root, claimId));
+      } catch {}
+    }
   }
 }
 

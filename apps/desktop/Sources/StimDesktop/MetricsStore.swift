@@ -29,6 +29,9 @@ final class MetricsStore {
   private(set) var volumes: [DiskVolume] = []
   private(set) var hasVolumes = false
   private(set) var memory: MachineMemory?
+  private(set) var machineCpuFraction: Double?
+  private(set) var machineCpu: [Double] = []
+  private(set) var diskUsed: [String: [Double]] = [:]
   /// Samples of the Mac's memory in use and of the CPU the status `machine` owners use, oldest first.
   private(set) var memoryUsed: [Double] = []
   private(set) var ownersCpu: [Double] = []
@@ -41,6 +44,8 @@ final class MetricsStore {
   @ObservationIgnored private var poller: VisiblePoller?
   @ObservationIgnored private var observers: [NSObjectProtocol] = []
   @ObservationIgnored private var sampling = false
+  @ObservationIgnored private var cpuTicks: (ticks: MachineCpuTicks, at: Date)?
+  private var cores: Int?
 
   init(status: StatusStore, gc: GcReportStore, disks: DiskVolumeStore) {
     self.status = status
@@ -65,19 +70,42 @@ final class MetricsStore {
     poller.update()
   }
 
-  private static var cores: Int { ProcessInfo.processInfo.activeProcessorCount }
-
   /// The share of the Mac's CPU that every live workspace's processes use, from 0 to 1.
-  var totalCpuFraction: Double? {
+  var workspacesCpuFraction: Double? {
+    guard let cores else { return nil }
     let values = usage.values.compactMap(\.latest.cpuPercent)
     return values.isEmpty
-      ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: Self.cores)
+      ? nil : UsageThresholds.cpuFraction(percentOfOneCore: values.reduce(0, +), cores: cores)
   }
 
   private func tick() {
+    sampleMachineCpu()
     sample()
     if !gc.running, gc.at.map({ Date().timeIntervalSince($0) > 300 }) ?? true { gc.refresh() }
   }
+
+  private func sampleMachineCpu() {
+    guard let ticks = MachineCpuTicks.read() else {
+      cpuTicks = nil
+      machineCpuFraction = nil
+      machineCpu = []
+      return
+    }
+    let now = Date()
+    if let previous = cpuTicks, now.timeIntervalSince(previous.at) < Self.cpuStaleAfter {
+      machineCpuFraction = MachineCpuTicks.fraction(from: previous.ticks, to: ticks)
+    } else {
+      machineCpuFraction = nil
+    }
+    cpuTicks = (ticks, now)
+    if let machineCpuFraction {
+      machineCpu = Array((machineCpu + [machineCpuFraction * 100]).suffix(UsageHistory.limit))
+    } else {
+      machineCpu = []
+    }
+  }
+
+  private static let cpuStaleAfter: TimeInterval = 10
 
   private func sample() {
     guard !sampling, let payload = status.payload else { return }
@@ -86,6 +114,7 @@ final class MetricsStore {
     let base = sampler
     let disks = disks
     Task.detached {
+      let cores = ProcessInfo.processInfo.activeProcessorCount
       var processes: [ProcessEntry] = []
       do {
         processes = try ProcessTable.snapshot()
@@ -117,15 +146,21 @@ final class MetricsStore {
           history.append(value, footprintBytes: footprints[path])
           next[path] = history
         }
+        self.cores = cores
         self.usage = next
         self.volumes = volumes
+        self.diskUsed = Dictionary(
+          uniqueKeysWithValues: volumes.map { volume in
+            let values = (self.diskUsed[volume.id] ?? []) + [Double(volume.totalBytes - volume.freeBytes)]
+            return (volume.id, Array(values.suffix(UsageHistory.limit)))
+          })
         if self.hasVolumes != !volumes.isEmpty { self.hasVolumes = !volumes.isEmpty }
         self.memory = memory
         if let memory { self.memoryUsed = Array((self.memoryUsed + [Double(memory.usedBytes)]).suffix(UsageHistory.limit)) }
         self.owners.append(self.status.payload?.machine, at: Date())
         DebugLog.gap("machine cpu", self.status.payload?.machine == nil ? "stim status reported no machine usage" : nil)
         if let machine = self.status.payload?.machine {
-          let share = 100 * UsageThresholds.cpuFraction(percentOfOneCore: machine.cpuPercent, cores: Self.cores)
+          let share = 100 * UsageThresholds.cpuFraction(percentOfOneCore: machine.cpuPercent, cores: cores)
           self.ownersCpu = Array((self.ownersCpu + [share]).suffix(UsageHistory.limit))
         } else {
           self.ownersCpu = []

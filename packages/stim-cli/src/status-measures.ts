@@ -42,6 +42,7 @@ import { agentKey, attributeAgentSessions, discoverAgentSessions, type AgentWork
 import { withDirLock } from './dir-lock.ts';
 import { ownedAvdDirectory } from './devices/android.ts';
 import { getExecutor } from './exec.ts';
+import { gitAsync } from './workspace/git.ts';
 import { workspaceDir } from './workspace/paths.ts';
 import { gitCommonDirOnDisk, linkedWorktreesOnDisk } from './workspace/worktree.ts';
 import { pullRequestLookups, type PullRequestFact, type PullRequestQuery } from './workspace/pull-request.ts';
@@ -56,7 +57,7 @@ const GIT_TIMEOUT_MS = 5000;
 const AGENT_DISCOVERY_MS = 15_000;
 const AGENT_CACHE_MAX_AGE_MS = 2 * 60_000;
 
-function writeCacheFile(file: string, entry: object): void {
+export function writeCacheFile(file: string, entry: object): void {
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     mkdirSync(dirname(file), { recursive: true });
@@ -152,6 +153,40 @@ function statusPullRequest(fact: PullRequestFact, checkedAt: string): WorktreePu
     reviewDecision: fact.reviewDecision ?? null,
     checkedAt,
   };
+}
+
+/**
+ * Writes a pull request lookup into the cache `status` and report-only `gc` read. A lookup made without detail is
+ * marked `partial`, so `status` asks again for the title, checks and review decision; until then it keeps the title
+ * cached for the same pull request, and the checks and review decision cached for the same HEAD.
+ */
+export function recordPullRequestLookup(
+  { path, branch, head }: { path: string; branch: string; head: string },
+  fact: PullRequestFact | null,
+  checkedAt: string,
+): void {
+  let pullRequest = fact ? statusPullRequest(fact, checkedAt) : null;
+  const partial = pullRequest !== null && fact?.title === undefined;
+  const previous = partial ? readPullRequestCache(path) : null;
+  if (pullRequest && previous?.pullRequest?.number === pullRequest.number) {
+    const same = previous.head === head;
+    pullRequest = {
+      ...pullRequest,
+      title: previous.pullRequest.title,
+      checks: same ? previous.pullRequest.checks : null,
+      reviewDecision: same ? previous.pullRequest.reviewDecision : null,
+    };
+  }
+  const entry: PullRequestCacheEntry = {
+    path,
+    branch,
+    head,
+    checkedAt,
+    pullRequest,
+    ...(fact ? { containsHead: fact.containsHead, endedAt: fact.endedAt } : {}),
+    ...(partial ? { partial: true as const } : {}),
+  };
+  writeCacheFile(pullRequestCacheFile(path), entry);
 }
 
 function canonicalPath(path: string): string {
@@ -399,7 +434,7 @@ export function createStatusMeasurer({
 
   async function branchHead(repository: string, branch: string): Promise<string | null> {
     try {
-      const out = await exec.runFileAsync('git', ['-C', repository, 'rev-parse', '--verify', `refs/heads/${branch}`], {
+      const out = await gitAsync(repository, ['rev-parse', '--verify', `refs/heads/${branch}`], {
         timeoutMs: GIT_TIMEOUT_MS,
       });
       return out.trim() || null;
@@ -419,6 +454,7 @@ export function createStatusMeasurer({
       const fresh =
         cached?.branch === branch &&
         cached.head === head &&
+        !cached.partial &&
         now() - Date.parse(cached.checkedAt) < PULL_REQUEST_MAX_AGE_MS;
       if (!fresh) {
         byRepository.set(repository, [
@@ -433,14 +469,7 @@ export function createStatusMeasurer({
       results.forEach((result, i) => {
         if (!('pullRequest' in result)) return;
         const { path, branch, head } = queries[i]!;
-        const entry: PullRequestCacheEntry = {
-          path,
-          branch,
-          head,
-          checkedAt: at,
-          pullRequest: result.pullRequest ? statusPullRequest(result.pullRequest, at) : null,
-        };
-        writeCacheFile(pullRequestCacheFile(path), entry);
+        recordPullRequestLookup({ path, branch, head }, result.pullRequest, at);
       });
       if (results.some((result) => 'pullRequest' in result)) updated();
     }

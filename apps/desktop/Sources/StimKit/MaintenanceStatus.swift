@@ -15,48 +15,49 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
 
   public struct Claim: Decodable, Hashable, Sendable {}
 
-  public struct LastChecks: Decodable, Hashable, Sendable {
-    /// Epoch milliseconds of the last finished-worktree check, nil when none has run.
-    public var worktree: Double?
+  /// A process whose physical footprint the CLI found abnormal while memory pressure was warning or critical.
+  /// `command` safely restarts or stops it; it is nil when the CLI knows no safe restart.
+  public struct MemoryCulprit: Decodable, Hashable, Sendable, Identifiable {
+    public var pid: Int
+    public var name: String
+    public var bytes: Int64
+    public var command: String?
+    public var note: String?
+
+    public var id: Int { pid }
   }
 
-  /// How long the CLI's finished-worktree check may go without running before the app removes them itself.
-  public static let worktreeCheckStaleAfter: TimeInterval = 60 * 60
+  public struct Pressure: Decodable, Hashable, Sendable {
+    public struct Memory: Decodable, Hashable, Sendable {
+      public var culprits: [MemoryCulprit]?
+    }
+
+    public var memory: Memory?
+  }
 
   public var mode: String
   public var invalid: String?
   public var claim: Claim?
   public var lastPass: Pass?
-  public var lastChecks: LastChecks?
+  public var pressure: Pressure?
 
-  public init(
-    mode: String, invalid: String? = nil, claim: Claim? = nil, lastPass: Pass? = nil, lastChecks: LastChecks? = nil
-  ) {
+  public var memoryCulprits: [MemoryCulprit] { pressure?.memory?.culprits ?? [] }
+
+  public init(mode: String, invalid: String? = nil, claim: Claim? = nil, lastPass: Pass? = nil) {
     self.mode = mode
     self.invalid = invalid
     self.claim = claim
     self.lastPass = lastPass
-    self.lastChecks = lastChecks
   }
 
-  /// True when the CLI clears build outputs, trims caches and removes finished worktrees on its own: mode `on`
-  /// with valid settings and no unresolved claim blocking its passes. A `stim` without the block or in `report`
-  /// mode leaves that cleanup to the app.
+  /// True when the CLI cleans up on its own: mode `on` with valid settings and no unresolved claim blocking its
+  /// passes. A `stim` without the block, or in `report` or `off` mode, cleans up nothing by itself.
   public var cleansAutomatically: Bool { mode == "on" && invalid == nil && claim == nil }
 
-  /// True when the CLI also removes finished worktrees: it cleans automatically and its worktree check ran within
-  /// `worktreeCheckStaleAfter`. The check does not run under sustained load or with
-  /// `maintenance.removeFinishedWorktrees` false, and then the app keeps removing them.
-  public func removesFinishedWorktrees(now: Date) -> Bool {
-    guard cleansAutomatically, let last = lastChecks?.worktree else { return false }
-    return now.timeIntervalSince(Date(timeIntervalSince1970: last / 1000)) <= Self.worktreeCheckStaleAfter
-  }
-
-  /// The last pass as one line, or nil when none has run or it only planned.
-  public var lastPassLine: String? {
-    guard let pass = lastPass, pass.mode == "on" else { return nil }
-    let when = pass.date.formatted(date: .omitted, time: .shortened)
-    let actions = pass.actions == 1 ? "1 action" : "\(pass.actions) actions"
-    return "Last pass \(when): \(actions), \(Format.fileSize(pass.freedBytes)) freed."
+  /// Whether free disk under the budget needs a person: the CLI does not clean up on its own, or its last pass
+  /// was blocked.
+  public static func asksAboutDiskPressure(_ status: MaintenanceStatus?) -> Bool {
+    guard let status, status.cleansAutomatically else { return true }
+    return !(status.lastPass?.blocked.isEmpty ?? true)
   }
 }

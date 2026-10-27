@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { withDirLock } from '../index.ts';
+import { withDirLock, withDirLockAsync, withDirLockTransaction } from '../index.ts';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
 
 const faults = vi.hoisted(() => ({
@@ -424,4 +424,147 @@ test('a malformed compatibility marker refuses without removing the visible lock
   );
   expect(body).not.toHaveBeenCalled();
   expect(readFileSync(marker, 'utf8')).toBe('partial');
+});
+
+function holdInChild(holdMs: number) {
+  const child = spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+    const { withDirLock } = await import(process.argv[1]);
+    withDirLock(process.argv[2], () => {
+      process.stdout.write('held');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.argv[3]));
+    });
+  `,
+      CORE_URL,
+      lock,
+      String(holdMs),
+    ],
+    { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const { stdout } = child;
+  if (!stdout) throw new Error('the holder has no stdout');
+  return { held: once(stdout, 'data'), exited: once(child, 'exit'), child };
+}
+
+test.each(['resolve', 'reject'])('an asynchronous transaction holds its claim until the body %ss', async (outcome) => {
+  let enter = () => {};
+  let finish = () => {};
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const failure = new Error('transaction failed');
+  const held = withDirLockTransaction(lock, async () => {
+    enter();
+    await release;
+    if (outcome === 'reject') throw failure;
+    return 'finished';
+  });
+  const completion = held.then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  try {
+    await entered;
+    expect(existsSync(lock)).toBe(true);
+    await expect(withDirLockTransaction(lock, () => 'overlapped', { waitMs: 0 })).rejects.toMatchObject({
+      code: 'STIM_LOCK_TIMEOUT',
+    });
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, lock], {
+      env: process.env,
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    expect(JSON.parse(output)).toEqual({ code: 'STIM_LOCK_TIMEOUT', lockPath: lock });
+  } finally {
+    finish();
+    await completion;
+  }
+  expect(await completion).toEqual(outcome === 'reject' ? { error: failure } : { value: 'finished' });
+  expect(existsSync(lock)).toBe(false);
+  expect(await withDirLockTransaction(lock, () => 'released', { waitMs: 0 })).toBe('released');
+});
+
+test('an async acquisition waits for another process without blocking the event loop', async () => {
+  const holder = holdInChild(600);
+  try {
+    await holder.held;
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 20);
+    let ticksWhenEntered = -1;
+    try {
+      await withDirLockAsync(lock, () => {
+        ticksWhenEntered = ticks;
+        expect(readdirSync(lock)).toHaveLength(1);
+      });
+    } finally {
+      clearInterval(timer);
+    }
+    expect(ticksWhenEntered).toBeGreaterThan(5);
+    expect(existsSync(lock)).toBe(false);
+  } finally {
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
+test('an async acquisition that times out reports the same lock error as the sync wait', async () => {
+  const holder = holdInChild(5000);
+  try {
+    await holder.held;
+    const entered = vi.fn<() => void>();
+    await expect(withDirLockAsync(lock, entered, { waitMs: 100, pollMs: 10 })).rejects.toMatchObject({
+      code: 'STIM_LOCK_TIMEOUT',
+      lockPath: lock,
+    });
+    expect(entered).not.toHaveBeenCalled();
+  } finally {
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
+test('an async acquisition inside a held lock runs its body before the outer body returns', () => {
+  const order: string[] = [];
+  withDirLock(lock, () => {
+    void withDirLockAsync(lock, () => order.push('inner'));
+    order.push('outer');
+  });
+  expect(order).toEqual(['inner', 'outer']);
+  expect(existsSync(lock)).toBe(false);
+});
+
+test('cancelling a waiting async acquisition keeps the holder and skips the transaction', async () => {
+  const holder = holdInChild(5000);
+  const controller = new AbortController();
+  const entered = vi.fn<() => void>();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await holder.held;
+    timer = setTimeout(() => controller.abort(), 50);
+    await expect(withDirLockAsync(lock, entered, { signal: controller.signal, waitMs: 1800 })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    expect(entered).not.toHaveBeenCalled();
+    expect(existsSync(lock)).toBe(true);
+  } finally {
+    clearTimeout(timer);
+    holder.child.kill('SIGKILL');
+    await holder.exited;
+  }
+});
+
+test('a waiting async acquisition does not keep the claim that a sync call in the same process needs', async () => {
+  mkdirSync(lock);
+  const waiting = withDirLockAsync(lock, () => 'entered', { waitMs: 2000, pollMs: 10 });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(() => withDirLock(lock, () => 'sync', { waitMs: 0 })).toThrow('No current Stim holds it');
+  rmSync(lock, { recursive: true });
+  await expect(waiting).resolves.toBe('entered');
 });

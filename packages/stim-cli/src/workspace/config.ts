@@ -4,20 +4,23 @@ import {
   projectDeviceSlots,
   removeSlotDevice,
 } from '../devices/device-slots.ts';
-import { existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'fs';
+import { existsSync, renameSync, unlinkSync, writeFileSync } from 'fs';
 import { isAbsolute } from 'path';
-import { configDir } from '@stim-cli/core';
+import { configDir, ensurePrivateDir } from '@stim-cli/core';
 import {
   getConfigPath,
   loadConfig,
   withConfigLock,
+  withConfigLockAsync,
   validateAutomaticPool,
+  cannotHost,
   type Config,
   type DeviceRecord,
   type ProjectRecord,
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 import { isOnMountedVolume } from '../fs-util.ts';
+import { realIo, tailscaleStatusAsync } from '../offload/tailnet.ts';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import { sameProcessRecord, type ProcessRecord } from '../process-identity.ts';
@@ -26,21 +29,21 @@ export {
   allMetroPorts,
   configCorruptRepair,
   findEnclosingWorktreeRoot,
-  findProjectByMetroPort,
   getConcurrencyLimits,
   getConfigPath,
+  getPlatformDeviceLimits,
   getProject,
-  getProjectSetting,
   getProjectSettings,
   getRepoSettings,
   isPathPrefix,
   loadConfig,
   withConfigLock,
+  withConfigLockAsync,
   type Config,
   type ConcurrencyLimits,
   type DeviceRecord,
+  type PlatformDeviceLimits,
   type ProjectRecord,
-  type RepoRecord,
   type SupervisorRecord,
 } from '@stim-cli/core/state';
 
@@ -60,16 +63,11 @@ export function refuseRelativeStimPaths(env: NodeJS.ProcessEnv = process.env): v
   }
 }
 
-function ensureDir() {
-  const dir = getConfigDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-}
-
 export function saveConfig(config: Config): void {
-  ensureDir();
+  ensurePrivateDir(getConfigDir());
   const target = getConfigPath();
   const tmp = `${target}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n');
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
   try {
     renameSync(tmp, target);
   } catch (err) {
@@ -199,8 +197,8 @@ export function recordIosSchemeApprovals(
   deviceUdid: string,
   schemeApprovals: string[],
   slot = 'default',
-): void {
-  withConfigLock(() => {
+): Promise<void> {
+  return withConfigLockAsync(() => {
     const cfg = loadConfig();
     const ios = deviceSlotPlatforms(cfg?.projects?.[projectPath], slot)?.ios;
     if (!cfg || !ios?.owned || ios.deviceUdid !== deviceUdid) return;
@@ -261,49 +259,6 @@ export function clearSupervisor(projectPath: string, expected?: ProcessRecord | 
   });
 }
 
-export function setProjectSetting(projectPath: string, dottedKey: string, value: unknown): void {
-  withConfigLock(() => {
-    const cfg = ensureConfig();
-    const proj = cfg.projects[projectPath];
-    if (!proj) throw new Error(`Project not registered: ${projectPath}`);
-    proj.settings = proj.settings || {};
-    writeNested(proj.settings, dottedKey, value);
-    saveConfig(cfg);
-  });
-}
-
-export function unsetProjectSetting(projectPath: string, dottedKey: string): boolean {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    const proj = cfg?.projects?.[projectPath];
-    if (!proj?.settings) return false;
-    const removed = deleteNested(proj.settings, dottedKey);
-    if (removed && cfg) saveConfig(cfg);
-    return removed;
-  });
-}
-
-export function setRepoSetting(gitCommonDir: string, dottedKey: string, value: unknown): void {
-  withConfigLock(() => {
-    const cfg = ensureConfig();
-    cfg.repos[gitCommonDir] = cfg.repos[gitCommonDir] || {};
-    cfg.repos[gitCommonDir].settings = cfg.repos[gitCommonDir].settings || {};
-    writeNested(cfg.repos[gitCommonDir].settings, dottedKey, value);
-    saveConfig(cfg);
-  });
-}
-
-export function unsetRepoSetting(gitCommonDir: string, dottedKey: string): boolean {
-  return withConfigLock(() => {
-    const cfg = loadConfig();
-    const settings = cfg?.repos?.[gitCommonDir]?.settings;
-    if (!settings) return false;
-    const removed = deleteNested(settings, dottedKey);
-    if (removed && cfg) saveConfig(cfg);
-    return removed;
-  });
-}
-
 export type ConfigSettingsTarget =
   | { scope: 'machine' }
   | { scope: 'workspace'; projectPath: string }
@@ -329,26 +284,52 @@ function targetSettings(cfg: Config, target: ConfigSettingsTarget, create: boole
   return repo.settings ?? null;
 }
 
+function localDevicePoolOff(dottedKey: string, value: unknown): boolean {
+  if (dottedKey === 'remote.devicePoolDisabled') return Array.isArray(value) && value.includes('local');
+  if (dottedKey !== 'remote.machines') return false;
+  const disabled = loadConfig()?.remote?.devicePoolDisabled;
+  return Array.isArray(disabled) && disabled.includes('local');
+}
+
 export function writeConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown): boolean {
   if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
-  return withConfigLock(() => {
-    const cfg = value === undefined ? loadConfig() : ensureConfig();
-    const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
-    if (!cfg || !settings) return false;
-    if (value === undefined) {
-      if (!deleteNested(settings, dottedKey)) return false;
-    } else {
-      writeNested(settings, dottedKey, value);
-    }
-    if (target.scope === 'machine') {
-      if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
-        validateAutomaticPool('build', cfg);
-      if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
-        validateAutomaticPool('device', cfg);
-    }
-    saveConfig(cfg);
-    return true;
-  });
+  const status = target.scope === 'machine' && localDevicePoolOff(dottedKey, value) ? realIo.status() : null;
+  return withConfigLock(() => applyConfigSetting(target, dottedKey, value, status));
+}
+
+/** Waits for the config lock and device-pool probe asynchronously; cancellation prevents a pending write. */
+export async function writeConfigSettingAsync(
+  target: ConfigSettingsTarget,
+  dottedKey: string,
+  value: unknown,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (target.scope === 'workspace') requireAbsoluteProjectPath(target.projectPath);
+  signal?.throwIfAborted();
+  const status =
+    target.scope === 'machine' && (dottedKey === 'remote.machines' || localDevicePoolOff(dottedKey, value))
+      ? await tailscaleStatusAsync(signal)
+      : null;
+  return withConfigLockAsync(() => applyConfigSetting(target, dottedKey, value, status), signal);
+}
+
+function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown, status: unknown): boolean {
+  const cfg = value === undefined ? loadConfig() : ensureConfig();
+  const settings = cfg ? targetSettings(cfg, target, value !== undefined) : null;
+  if (!cfg || !settings) return false;
+  if (value === undefined) {
+    if (!deleteNested(settings, dottedKey)) return false;
+  } else {
+    writeNested(settings, dottedKey, value);
+  }
+  if (target.scope === 'machine') {
+    if (dottedKey === 'remote.buildPoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('build', cfg);
+    if (dottedKey === 'remote.devicePoolDisabled' || dottedKey === 'remote.machines')
+      validateAutomaticPool('device', cfg, (machine) => !cannotHost(status, machine));
+  }
+  saveConfig(cfg);
+  return true;
 }
 
 function writeNested(obj: Record<string, unknown>, dottedKey: string, value: unknown): void {

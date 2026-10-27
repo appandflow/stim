@@ -6,10 +6,13 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { getProject, loadConfig, saveConfig, setDevice, upsertProject, withConfigLock } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { runReport } from '../report-runtime.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { readClaimSet } from '../ownership-claim.ts';
 import { IMPOSSIBLE_PID, liveClaimOwner, plantClaim, recycledClaimOwner } from './_factories.ts';
 import {
-  DEFAULT_PARKED_MAX,
   adoptParked,
   evictOverflow,
   parkSim,
@@ -51,7 +54,7 @@ afterEach(() => {
 });
 
 test('the machine pool defaults to three but redirected homes default to off', () => {
-  expect(parkedMaxSetting('ios', { config: null, env: {} })).toEqual({ max: DEFAULT_PARKED_MAX, error: null });
+  expect(parkedMaxSetting('ios', { config: null, env: {} })).toEqual({ max: 3, error: null });
   expect(parkedMaxSetting('ios', { config: null, env: { STIM_HOME: '/tmp/scoped' } })).toEqual({
     max: 0,
     error: null,
@@ -128,7 +131,7 @@ test('parking without recorded scheme approvals leaves the pool record without t
   expect(readParked('ios')[0]).not.toHaveProperty('schemeApprovals');
 });
 
-test('adoption restores scheme approvals from the locked pool record, not a stale caller value', () => {
+test('adoption restores scheme approvals from the locked pool record, not a stale caller value', async () => {
   const schemeApprovals = ['com.apple.CoreSimulator.CoreSimulatorBridge-->com.example.app=com.example.app'];
   upsertProject('/tmp/source', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true, schemeApprovals } },
@@ -137,23 +140,23 @@ test('adoption restores scheme approvals from the locked pool record, not a stal
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
   // The caller's device object (built before adoptParked takes its lock) carries a stale value of its own.
   const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true, schemeApprovals: ['stale'] };
-  const adopted = adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  const adopted = await adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
   expect(adopted?.schemeApprovals).toEqual(schemeApprovals);
   expect(getProject('/tmp/adopter')?.platforms?.ios).toMatchObject({ schemeApprovals });
 });
 
-test('adoption leaves the device record without scheme approvals when the pool record has none', () => {
+test('adoption leaves the device record without scheme approvals when the pool record has none', async () => {
   upsertProject('/tmp/source', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
   });
   upsertProject('/tmp/adopter', { platforms: {} });
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
   const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
-  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  await adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
   expect(getProject('/tmp/adopter')?.platforms?.ios).not.toHaveProperty('schemeApprovals');
 });
 
-test('overflow records stay claimed until deletion succeeds', () => {
+test('overflow records stay claimed until deletion succeeds', async () => {
   upsertProject('/tmp/project', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-project', owned: true } },
   });
@@ -166,33 +169,103 @@ test('overflow records stay claimed until deletion succeeds', () => {
       .toSorted(),
   ).toEqual(['FIRST', 'SECOND']);
 
-  expect(() =>
+  await expect(
     removeParkedAfter('ios', first.udid, () => {
       throw new Error('simctl busy');
     }),
-  ).toThrow(/simctl busy/);
+  ).rejects.toThrow(/simctl busy/);
   expect(
     readParked('ios')
       .map((record) => record.udid)
       .toSorted(),
   ).toEqual(['FIRST', 'SECOND']);
 
-  expect(removeParkedAfter('ios', first.udid, () => {})).toEqual(first);
+  expect(await removeParkedAfter('ios', first.udid, () => {})).toEqual(first);
   expect(readParked('ios').map((record) => record.udid)).toEqual(['SECOND']);
 });
 
-test('a deletion claim skips a simulator that another workspace adopted', () => {
+test('unresolved native cleanup keeps the pool claim and prevents another workspace adopting the device', async () => {
+  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: first.udid, deviceName: first.name, owned: true } } });
+  upsertProject('/tmp/adopter', { platforms: {} });
+  parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
+  const controller = new AbortController();
+  const context: StimContext = {
+    home: stimHome,
+    projectRoot: stimHome,
+    cwd: stimHome,
+    env: { ...process.env, STIM_HOME: stimHome },
+    buildCache: null,
+    runId: 'pool-cleanup',
+    signal: controller.signal,
+    output: () => {},
+  };
+  const root = join(stimHome, 'pool-locks', 'ios', 'first.lock');
+  let owned: { pid: number; processToken: string } | undefined;
+  let closed: Promise<void> = Promise.resolve();
+  const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
+  try {
+    const failure = await runReport(context, (operation) =>
+      withAmbientContext(operation, () =>
+        removeParkedAfter(
+          'ios',
+          first.udid,
+          async () => {
+            await getExecutor().runFileAsync(
+              process.execPath,
+              ['-e', 'console.log("ready"); setInterval(() => {}, 1000)'],
+              {
+                timeoutMs: 10000,
+                declareFor: operation,
+                onSpawn: (child) => {
+                  const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+                  if (child.pid === undefined || !captured?.ok)
+                    throw new Error('The fixture child has no verified identity');
+                  owned = { pid: child.pid, processToken: captured.token };
+                  closed = new Promise((resolve) => child.once('close', () => resolve()));
+                  child.stdout?.once('data', () => controller.abort());
+                },
+              },
+            );
+          },
+          operation,
+        ),
+      ),
+    ).catch((error: unknown) => error);
+    const held = readClaimSet(root).live[0];
+    expect(held).toBeDefined();
+    if (!held) throw new Error('The unresolved fixture claim was released');
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE', remedy: expect.stringContaining(held.path) });
+    expect(held).toMatchObject({ childDeclared: true, child: owned });
+    expect(readParked('ios')[0]).toHaveProperty('deletionClaim');
+    expect(
+      await adoptParked({
+        platform: 'ios',
+        projectPath: '/tmp/adopter',
+        udid: first.udid,
+        device: { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true },
+      }),
+    ).toBeNull();
+  } finally {
+    inspect.mockRestore();
+    controller.abort();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    await closed;
+    if (owned) await waitForProcessExit(owned, 2000);
+  }
+});
+
+test('a deletion claim skips a simulator that another workspace adopted', async () => {
   upsertProject('/tmp/source', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
   });
   upsertProject('/tmp/adopter', { platforms: {} });
   parkSim({ platform: 'ios', projectPath: '/tmp/source', record: first, max: 3 });
   const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
-  adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
+  await adoptParked({ platform: 'ios', projectPath: '/tmp/adopter', udid: first.udid, device });
   let deleted = false;
 
   expect(
-    removeParkedAfter('ios', first.udid, () => {
+    await removeParkedAfter('ios', first.udid, () => {
       deleted = true;
     }),
   ).toBe(null);
@@ -200,7 +273,7 @@ test('a deletion claim skips a simulator that another workspace adopted', () => 
   expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
 
-test('a live deletion claim blocks adoption beyond the ordinary lock stale window', () => {
+test('a live deletion claim blocks adoption beyond the ordinary lock stale window', async () => {
   upsertProject('/tmp/source', {
     platforms: { ios: { deviceUdid: first.udid, deviceName: 'stim-source', owned: true } },
   });
@@ -209,14 +282,14 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
   const device = { deviceUdid: first.udid, deviceName: 'stim-adopter', owned: true };
   let childResult = '';
 
-  const removed = removeParkedAfter('ios', first.udid, () => {
+  const removed = await removeParkedAfter('ios', first.udid, () => {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_250);
     const script = `
         const { adoptParked, removeParkedAfter } = await import(process.argv[1]);
         const request = JSON.parse(process.argv[2]);
         let deleted = false;
-        const result = removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
-        process.stdout.write(JSON.stringify({ adopted: adoptParked(request), removed: result, deleted }));
+        const result = await removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
+        process.stdout.write(JSON.stringify({ adopted: await adoptParked(request), removed: result, deleted }));
       `;
     childResult = execFileSync(
       process.execPath,
@@ -262,7 +335,7 @@ describe('pool operation recovery', () => {
            const request = JSON.parse(process.argv[2]);
            let deleted = false;
            const result = process.argv[3] === 'adopt'
-             ? adoptParked(request)
+             ? await adoptParked(request)
              : removeParkedAfter(request.platform, request.udid, () => { deleted = true; });
            process.stdout.write(JSON.stringify({ result, deleted }));`,
           pathToFileURL(module).href,
@@ -274,8 +347,8 @@ describe('pool operation recovery', () => {
     );
   }
 
-  test.each(['adopt', 'delete'] as const)('an older CLI cannot %s during a new deletion', (action) => {
-    const removed = removeParkedAfter('ios', first.udid, () => {
+  test.each(['adopt', 'delete'] as const)('an older CLI cannot %s during a new deletion', async (action) => {
+    const removed = await removeParkedAfter('ios', first.udid, () => {
       expect(legacyAttempt(action)).toEqual({ result: null, deleted: false });
       expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
     });
@@ -320,8 +393,8 @@ describe('pool operation recovery', () => {
       let deleted = false;
       const result =
         action === 'adopt'
-          ? adoptParked(request)
-          : removeParkedAfter('ios', first.udid, () => {
+          ? await adoptParked(request)
+          : await removeParkedAfter('ios', first.udid, () => {
               deleted = true;
             });
       expect(result).toEqual(first);
@@ -342,7 +415,7 @@ describe('pool operation recovery', () => {
     await killOwnerAfterMarking();
     expect(selectParked(readParked('ios'), first)).toMatchObject([first]);
 
-    const adopted = adoptParked(request);
+    const adopted = await adoptParked(request);
 
     expect(adopted).toEqual(first);
     expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
@@ -350,14 +423,14 @@ describe('pool operation recovery', () => {
     expect(readClaimSet(claimRoot())).toMatchObject({ live: [], dead: [], unresolved: [] });
   });
 
-  test('a reused owner PID does not prevent adoption or deletion', () => {
+  test('a reused owner PID does not prevent adoption or deletion', async () => {
     plantClaim(claimRoot(), 'exclusive', recycledClaimOwner());
-    expect(adoptParked(request)).toEqual(first);
+    expect(await adoptParked(request)).toEqual(first);
     parkSim({ platform: 'ios', projectPath: '/tmp/adopter', record: first, max: 3 });
     plantClaim(claimRoot(), 'exclusive', recycledClaimOwner());
     let deleted = false;
     expect(
-      removeParkedAfter('ios', first.udid, () => {
+      await removeParkedAfter('ios', first.udid, () => {
         deleted = true;
       }),
     ).toEqual(first);
@@ -365,15 +438,15 @@ describe('pool operation recovery', () => {
     expect(readParked('ios')).toEqual([]);
   });
 
-  test('an unreadable owner identity protects the pool record from adoption and native deletion', () => {
+  test('an unreadable owner identity protects the pool record from adoption and native deletion', async () => {
     const path = plantClaim(claimRoot(), 'exclusive', { pid: process.pid, processToken: 'unverifiable' });
-    expect(() => adoptParked(request)).toThrow(path);
+    await expect(adoptParked(request)).rejects.toThrow(path);
     let deleted = false;
-    expect(() =>
+    await expect(
       removeParkedAfter('ios', first.udid, () => {
         deleted = true;
       }),
-    ).toThrow(path);
+    ).rejects.toThrow(path);
     expect(deleted).toBe(false);
     expect(readParked('ios')).toEqual([first]);
     expect(getProject('/tmp/adopter')?.platforms?.ios).toBeUndefined();
@@ -394,13 +467,13 @@ describe('pool operation recovery', () => {
     );
     expect(await once(child, 'exit')).toEqual(KILLED_EXIT);
     expect(readClaimSet(claimRoot()).unresolved).toHaveLength(1);
-    expect(() => adoptParked(request)).toThrow(claimRoot());
+    await expect(adoptParked(request)).rejects.toThrow(claimRoot());
     let deleted = false;
-    expect(() =>
+    await expect(
       removeParkedAfter('ios', first.udid, () => {
         deleted = true;
       }),
-    ).toThrow(claimRoot());
+    ).rejects.toThrow(claimRoot());
     expect(deleted).toBe(false);
     expect(readParked('ios')).toMatchObject([{ ...first, deletionClaim: { kind: 'ownership-claim' } }]);
     expect(legacyAttempt('adopt')).toEqual({ result: null, deleted: false });
@@ -412,7 +485,7 @@ describe('pool operation recovery', () => {
     ['record', true],
     ['marker', false],
     ['marker', true],
-  ] as const)('a replacement pool %s survives a removal callback (throws: %s)', (change, fails) => {
+  ] as const)('a replacement pool %s survives a removal callback (throws: %s)', async (change, fails) => {
     let replacement: ParkedSim | undefined;
     const remove = () =>
       removeParkedAfter('ios', first.udid, () => {
@@ -430,13 +503,13 @@ describe('pool operation recovery', () => {
       });
     let result: unknown;
     try {
-      result = remove();
+      result = await remove();
     } catch (error) {
       result = (error as Error).message;
     }
     expect(result).toBe(fails ? 'simctl failed' : null);
     expect(readParked('ios')).toEqual([replacement]);
-    const adopted = adoptParked(request);
+    const adopted = await adoptParked(request);
     expect(adopted).toMatchObject({ ...first, parkedAt: replacement?.parkedAt });
     expect(adopted?.deletionClaim).toBeUndefined();
   });
@@ -445,34 +518,34 @@ describe('pool operation recovery', () => {
     { pid: process.pid, token: 'legacy-live' },
     { pid: IMPOSSIBLE_PID, token: 'legacy-gone' },
     { invalid: 'legacy' },
-  ])('a legacy inline deletion claim requires field-only manual recovery: %j', (deletionClaim) => {
+  ])('a legacy inline deletion claim requires field-only manual recovery: %j', async (deletionClaim) => {
     withConfigLock(() => {
       const config = loadConfig()!;
       config.parked = { ios: [{ ...first, deletionClaim }] };
       saveConfig(config);
     });
-    expect(adoptParked(request)).toBeNull();
+    expect(await adoptParked(request)).toBeNull();
     expect(selectParked(readParked('ios'), first)).toEqual([]);
     let deleted = false;
-    expect(() =>
+    await expect(
       removeParkedAfter('ios', first.udid, () => {
         deleted = true;
       }),
-    ).toThrow(/remove only that record's deletionClaim field/);
+    ).rejects.toThrow(/remove only that record's deletionClaim field/);
     expect(deleted).toBe(false);
     expect(readParked('ios')).toEqual([{ ...first, deletionClaim }]);
   });
 
-  test('a nonblocking refusal releases its waiting fence without touching the active holder', () => {
+  test('a nonblocking refusal releases its waiting fence without touching the active holder', async () => {
     plantClaim(claimRoot(), 'shared', liveClaimOwner());
-    expect(adoptParked(request)).toBeNull();
+    expect(await adoptParked(request)).toBeNull();
     const claims = readClaimSet(claimRoot());
     expect(claims.live.map((claim) => claim.mode)).toEqual(['shared']);
     expect(readParked('ios')).toEqual([first]);
   });
 });
 
-test('adoption takes a pool record and creates the owned project claim in one persisted update', () => {
+test('adoption takes a pool record and creates the owned project claim in one persisted update', async () => {
   upsertProject('/tmp/project', { platforms: {} });
   setDevice('/tmp/project', 'ios', { deviceUdid: first.udid, owned: true });
   parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 });
@@ -482,9 +555,52 @@ test('adoption takes a pool record and creates the owned project claim in one pe
     owned: true,
     adoptionPending: true,
   };
-  expect(adoptParked({ platform: 'ios', projectPath: '/tmp/project', udid: first.udid, device })).toEqual(first);
+  expect(await adoptParked({ platform: 'ios', projectPath: '/tmp/project', udid: first.udid, device })).toEqual(first);
   expect(readParked('ios')).toEqual([]);
   expect(loadConfig()?.projects['/tmp/project']?.platforms?.ios).toEqual(device);
+});
+
+test('adoption waits for a config lock held by another process without blocking the event loop', async () => {
+  upsertProject('/tmp/project', { platforms: {} });
+  setDevice('/tmp/project', 'ios', { deviceUdid: first.udid, owned: true });
+  parkSim({ platform: 'ios', projectPath: '/tmp/project', record: first, max: 3 });
+  const holder = getExecutor().spawn(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+        const { withConfigLock } = await import(process.argv[1]);
+        withConfigLock(() => {
+          process.stdout.write('held');
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 600);
+        });
+      `,
+      new URL('../workspace/config.ts', import.meta.url).href,
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  );
+  const exited = once(holder, 'exit');
+  const { stdout } = holder;
+  if (!stdout) throw new Error('the holder has no stdout');
+  try {
+    await once(stdout, 'data');
+    let ticks = 0;
+    const timer = setInterval(() => ticks++, 20);
+    const device = { deviceUdid: first.udid, deviceName: 'stim-project (iPhone 17 26.5)', owned: true };
+    try {
+      expect(await adoptParked({ platform: 'ios', projectPath: '/tmp/project', udid: first.udid, device })).toEqual(
+        first,
+      );
+    } finally {
+      clearInterval(timer);
+    }
+    expect(ticks).toBeGreaterThan(5);
+    expect(loadConfig()?.projects['/tmp/project']?.platforms?.ios).toEqual(device);
+  } finally {
+    holder.kill('SIGKILL');
+    await exited;
+  }
 });
 
 test('malformed and non-Stim pool records are ignored', () => {
@@ -497,7 +613,7 @@ test('malformed and non-Stim pool records are ignored', () => {
   expect(readParked('ios', { config }).map((record) => record.udid)).toEqual(['FIRST']);
 });
 
-test('parking and adopting a named slot preserve its default and sibling assignments', () => {
+test('parking and adopting a named slot preserve its default and sibling assignments', async () => {
   const device = { deviceUdid: first.udid, owned: true };
   upsertProject('/tmp/project', {
     platforms: { ios: { deviceUdid: 'DEFAULT', owned: true } },
@@ -511,14 +627,14 @@ test('parking and adopting a named slot preserve its default and sibling assignm
   expect(getProject('/tmp/project')?.platforms?.ios?.deviceUdid).toBe('DEFAULT');
   expect(getProject('/tmp/project')?.deviceSlots?.tablet?.ios?.deviceUdid).toBe('TABLET');
   expect(
-    adoptParked({ platform: 'ios', projectPath: '/tmp/project', slot: 'second-phone', udid: first.udid, device }),
+    await adoptParked({ platform: 'ios', projectPath: '/tmp/project', slot: 'second-phone', udid: first.udid, device }),
   ).toEqual(first);
   expect(readParked('ios')).toEqual([]);
   expect(getProject('/tmp/project')?.deviceSlots?.['second-phone']?.ios?.deviceUdid).toBe(first.udid);
   expect(getProject('/tmp/project')?.platforms?.ios?.deviceUdid).toBe('DEFAULT');
 });
 
-test('pool transfers refuse to overwrite or clear another device in the same slot', () => {
+test('pool transfers refuse to overwrite or clear another device in the same slot', async () => {
   const path = '/tmp/project';
   upsertProject(path, {});
   setDevice(path, 'ios', { deviceUdid: first.udid, owned: true }, 'phone');
@@ -529,7 +645,7 @@ test('pool transfers refuse to overwrite or clear another device in the same slo
   parkSim({ platform: 'ios', projectPath: path, slot: 'phone', record: first, max: 3 });
   setDevice(path, 'ios', { deviceUdid: second.udid, owned: true }, 'phone');
   expect(
-    adoptParked({
+    await adoptParked({
       platform: 'ios',
       projectPath: path,
       slot: 'phone',

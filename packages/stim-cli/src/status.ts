@@ -1,4 +1,5 @@
 import { basename, sep } from 'path';
+import { workspaceId } from '@stim-cli/core';
 import { isInsideProject } from './metro.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { clockTime, formatElapsed, formatLongDuration, plural } from './command-output.ts';
@@ -17,6 +18,7 @@ import type {
   MetroLastStop,
   RemoteDeviceState,
   StatusCapacity,
+  StatusCapacityLoad,
   StatusIssue,
   StatusIssueCode,
   WebBrowserState,
@@ -24,7 +26,8 @@ import type {
   WorktreeGit,
 } from '@stim-cli/core/state';
 import { workspaceAgentDeviceDir } from './workspace/paths.ts';
-import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
+import { getExecutor } from './exec.ts';
+import { ACTIVITY_RECENCY_BASES, loadState } from '@stim-cli/core/state';
 
 export type {
   AndroidRuntimeFacts,
@@ -286,6 +289,7 @@ export function environmentState(
 
   return {
     path: project.__path,
+    workspaceId: workspaceId(project.__path),
     ...(slots.length ? { slots } : {}),
     live,
     memoryMb,
@@ -325,7 +329,7 @@ export function environmentState(
             healthy: Boolean(supervisor.healthy),
           }
         : null,
-    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path) },
+    agentDevice: { stateDir: workspaceAgentDeviceDir(project.__path), installed: agentDeviceInstalled() },
     logs: logs ? { dir: logs.dir, errorsSinceMarker: logs.errorsSinceMarker ?? 0 } : null,
     worktree: enclosingWorktree(worktrees, project.__path),
     remoteDevices: remote ? [remote] : [],
@@ -549,6 +553,68 @@ export function capacity(states: EnvironmentState[], totalMemoryMb: number): Sta
   };
 }
 
+/** `capacity.load` from a load reading, the `server.maxLoadPerCore` it is busy at, and the configured limit. */
+export function capacityLoad(
+  { cpus, loadPerCore }: { cpus: number; loadPerCore: number },
+  busyAt: number,
+  limit: number | null,
+): StatusCapacityLoad {
+  return { cpus, loadPerCore, busyAt, limit, state: loadState(loadPerCore, busyAt, limit) };
+}
+
+export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): string {
+  return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
+}
+
+/** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */
+export function slotUsageLines({
+  builds,
+  devices,
+  platformDevices,
+}: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>): string[] {
+  const lines: string[] = [];
+  if (builds) {
+    const holders = builds.holders.map((holder) =>
+      holder.unresolved
+        ? `slot ${holder.slot} unresolved`
+        : holder.client
+          ? `offloaded for ${holder.client}`
+          : holder.workspace
+            ? basename(holder.workspace)
+            : `slot ${holder.slot}`,
+    );
+    lines.push(
+      `builds ${builds.inUse}/${builds.max} (concurrency.maxBuilds)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+    );
+  }
+  if (devices) {
+    if (devices.inUse === null) {
+      lines.push(`devices ?/${devices.max} (concurrency.maxDevices): ${devices.unknown ?? 'not counted'}`);
+    } else {
+      const holders = devices.holders.map(
+        (holder) =>
+          `${holder.label} ${holder.platform}${holder.slot && holder.slot !== 'default' ? ` [${holder.slot}]` : ''}${holder.booting ? ' (booting)' : ''}`,
+      );
+      lines.push(
+        `devices ${devices.inUse}/${devices.max} (concurrency.maxDevices)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+      );
+    }
+  }
+  for (const [platform, setting, noun] of [
+    ['ios', 'concurrency.maxIosDevices', 'iOS simulators'],
+    ['android', 'concurrency.maxAndroidDevices', 'Android emulators'],
+  ] as const) {
+    const slots = platformDevices?.[platform];
+    if (!slots) continue;
+    lines.push(
+      slots.inUse === null
+        ? `${noun} ?/${slots.max} (${setting}): ${slots.unknown ?? 'not counted'}`
+        : `${noun} ${slots.inUse}/${slots.max} (${setting})`,
+    );
+  }
+  return lines;
+}
+
 export function parseDfFree(output: unknown): DiskInfo | null {
   const lines = String(output || '')
     .trim()
@@ -652,4 +718,21 @@ export function deviceLeaseLines(states: readonly DeviceLeaseState[], now: numbe
     lines.push(`  ${device} -- ${state.holder} ${expiry}${state.mine ? ' [this workspace]' : ''}`);
   }
   return lines;
+}
+
+const AGENT_DEVICE_CACHE_MS = 30_000;
+let agentDeviceCache: { at: number; installed: boolean } | undefined;
+
+function agentDeviceInstalled(): boolean {
+  const now = Date.now();
+  const age = agentDeviceCache ? now - agentDeviceCache.at : -1;
+  if (agentDeviceCache && age >= 0 && age < AGENT_DEVICE_CACHE_MS) return agentDeviceCache.installed;
+  let installed = false;
+  try {
+    installed = Boolean(getExecutor().findExecutable('agent-device'));
+  } catch {
+    installed = false;
+  }
+  agentDeviceCache = { at: now, installed };
+  return installed;
 }

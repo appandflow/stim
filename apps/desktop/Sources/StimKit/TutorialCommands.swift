@@ -1,29 +1,22 @@
 import Foundation
 
-public func tutorialCommands(
-  _ lines: [String], tourPath: String?, repository: String?, stateDir: String?, machine: String?
+public func tutorialAsk(
+  _ template: String, tourPath: String?, repository: String?, second: String? = nil,
+  existing: Set<String>? = nil
 ) -> String {
   let base = repository ?? "~/stim-tutorial"
+  let worktrees = [tourPath, second].compactMap { $0 }.filter { existing?.contains($0) ?? true }
+    .joined(separator: " and ")
   let values = [
-    "base": base, "tour": tourPath ?? "\(base)-tour",
-    "stateDir": stateDir ?? "<agentDevice.stateDir>", "machine": machine ?? "<approved machine>",
+    "base": base, "tour": tourPath ?? "the first worktree",
+    "worktrees": worktrees.isEmpty ? "(there are none, so there is nothing to remove)" : worktrees,
   ]
-  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|stateDir|machine)\}"#)
-  let source = lines.joined(separator: "\n")
-  var result = source
-  for match in pattern.matches(in: source, range: NSRange(source.startIndex..., in: source)).reversed() {
-    let key = String(source[Range(match.range(at: 1), in: source)!])
-    let range = Range(match.range, in: result)!
-    result.replaceSubrange(range, with: shellDoubleQuotedValue(values[key]!))
+  let pattern = try! NSRegularExpression(pattern: #"\{(base|tour|worktrees)\}"#)
+  var result = template
+  for match in pattern.matches(in: template, range: NSRange(template.startIndex..., in: template)).reversed() {
+    let key = String(template[Range(match.range(at: 1), in: template)!])
+    guard let value = values[key] else { continue }
+    result.replaceSubrange(Range(match.range, in: result)!, with: value)
   }
   return result
-}
-
-private func shellDoubleQuotedValue(_ value: String) -> String {
-  let literal = value.hasPrefix("~/") ? String(value.dropFirst(2)) : value
-  let escaped = literal.replacingOccurrences(of: "\\", with: "\\\\")
-    .replacingOccurrences(of: "\"", with: "\\\"")
-    .replacingOccurrences(of: "$", with: "\\$")
-    .replacingOccurrences(of: "`", with: "\\`")
-  return value.hasPrefix("~/") ? "$HOME/" + escaped : escaped
 }

@@ -27,6 +27,80 @@ tradeoffs for each layer, including Android ccache, PCH, and experimental CAS.
 
 ## Native artifact cache
 
+### Native Gradle artifact inputs
+
+Native Android projects can opt into APK reuse in `.stim.json`:
+
+```json
+{
+  "android": {
+    "artifactInputs": {
+      "complete": true,
+      "ignored": [],
+      "outputs": ["build", "app/build"],
+      "localFiles": ["../signing/release.keystore"],
+      "environment": ["SIGNING_PASSWORD"]
+    }
+  }
+}
+```
+
+`complete` is the project's promise that Git-visible source, listed ignored files,
+local files and environment variables fully determine a repeatable build with
+pinned dependencies. Stim does not infer this from arbitrary Gradle code.
+Declare every signing file, external configuration and environment input. Mutable
+dependencies, undeclared files, network responses, time and other changing inputs
+do not meet this contract. Leave the declaration unset to build without Stim
+artifact caching; Gradle's own caches remain available.
+
+`ignored` lists exact repository-relative files and `outputs` lists generated
+repository-relative directories. Source cannot overlap outputs. `localFiles`
+lists exact regular files, absolute or relative to the project; `environment`
+lists variable names. Missing files and unset variables contribute an absence
+marker. Private bytes and values contribute only hashes and are not persisted in
+cache receipts. This declaration adds no files or values to worker transfers;
+the independent `android.offloadInputs` contract still governs Git-visible and
+explicitly authorized ignored source. Never authorize private signing files for
+worker transfer.
+
+The identity also includes the wrapper JDK release, installed SDK version
+metadata, variant, ABI, build options, `local.properties`, user
+`gradle.properties`, and ordinary debug keystores, including their absence.
+Declare alternate JDK/toolchain release files and custom JVM `user.home` or
+signing locations explicitly. For publication, AGP's SDK must match
+`ANDROID_HOME`; the SDK directory location alone does not change the key.
+`local.properties` needs plain unescaped keys and single-line values; Java
+Properties escapes in `sdk.dir` values are supported. Unsupported syntax leaves
+the build uncached. Other properties still contribute to the identity.
+Changed inputs during compilation prevent storage. Native
+Release hits reuse the original signed APK; signature, package, ABI and receipt
+bytes are checked before reuse.
+
+A [configured cache provider](./cache-packages.md) with a `files` capability,
+including the S3-compatible provider, can share the completed APK and its
+verification receipt. Stim checks the local cache first, then downloads and
+verifies a shared entry before filling the local cache. Invalid entries are
+cache misses. Providers without `files` are skipped for native Gradle artifacts.
+Only the APK and receipt are shared; private input files, signing keys and
+environment values stay local. A build worker can reuse verified APKs when the
+transferred project declares complete `android.artifactInputs`. It keys them from
+its actual worker inputs, including the worker's toolchain, signing files and
+environment; it does not use the caller's key. Without that declaration, worker
+builds remain uncached. After a local and configured-provider miss, Stim can ask
+enabled paired workers for a completed APK matching the declared source and
+resolved variant, ABI and build options. Each worker rechecks its current private
+inputs against the saved build receipt, again before download. A hit skips source
+upload and compilation even while that worker is busy. A miss uses normal build
+placement. This requires `native-gradle-peer-cache`; older workers still build
+normally. Off mode, an explicit local build and disabled remote artifact reads
+skip peer lookup. The returned offload fingerprint remains `null`; a worker key
+is never published under the caller's identity.
+
+`optimizations.buildCache=false` disables artifact reads and writes.
+`--no-build-cache` skips reads and shared-build waits but stores the fresh build. `--plan` performs the same read-only local check.
+
+### React Native and Expo inputs
+
 Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an
@@ -35,9 +109,87 @@ Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
 or `-x86-64`). A local iOS Release simulator build compiles every architecture
 the project lists and has no suffix.
 
+Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
+project's own Expo uses:
+
+- An installed dependency counts by its name and version, not by its files. So
+  does a config plugin loaded from `node_modules`.
+- A package linked from outside `node_modules` counts by its files: a workspace
+  package, a `link:` dependency, or a local Expo module. A `file:` dependency
+  that the package manager copies into `node_modules` counts by version.
+- `patches/`, a committed `ios/` or `android/`, the evaluated app config, its
+  local config plugins and the files it names count by their contents. Stim also
+  hashes the `patches/` and `.yarn/patches/` directories next to a monorepo's
+  lockfile, and the patch hashes `pnpm-lock.yaml` records, wherever the patch
+  files live.
+- The app's `version`, `ios.buildNumber` and `android.versionCode`, `eas.json`,
+  `.easignore` and the path overrides in `react-native.config.js` are left out.
+  A Release cache hit keeps the version it was built with.
+
+To hash the files of every native dependency, set `preset: 'strict'` in
+`fingerprint.config.js`. That costs about twice the fingerprint's CPU time.
+
+:::warning[Edits inside node_modules]
+
+Stim does not see an edit you make directly to a dependency's files, such as
+`node_modules/<package>/ios/*.m`, a podspec or `build.gradle`. The key stays the
+same, so the next run installs the cached app without your change. Make the
+change a patch with `patch-package` or `pnpm patch`; Stim hashes patches. To try
+an edit before you make it a patch, build it fresh on this machine:
+
+<StimTabs
+code={`stim ios --no-build-cache --remote-build local
+stim android --no-build-cache --remote-build local`}
+/>
+
+`--no-build-cache` alone can place the build on a paired build machine. That
+machine installs dependencies from the lockfile, so its build does not include
+your edit. The fresh build is stored under the same key in the machine-wide
+cache, and handed to a configured cache provider, so every worktree reuses it,
+edit included, until the dependency's version or patches change. Undo the edit
+with another `--no-build-cache` build.
+
+:::
+
 `stim ios` and `stim android` first check the machine-wide artifact cache. A hit
 installs the saved `.app` or `.apk`. A miss runs the native build and stores the
 result. Two matching misses use one build through a single-flight lock.
+
+Computing the fingerprint evaluates the app config and runs autolinking. After a
+full fingerprint, Stim records it under a static digest of the tree in
+`$STIM_HOME/fingerprint-memo` (`~/.stim` by default), shared by every worktree.
+The digest covers several inputs:
+
+- the git blob ids of the tracked native inputs, and the contents of untracked,
+  modified and ignored ones;
+- the app config's sources and the files and directories they name;
+- each installed package's path and version, and the lockfile;
+- the environment variables the config and its `.env` files read.
+
+A later run whose tree has the same digest, in any worktree, uses the record and
+prints `matches a recorded fingerprint of this tree`. A full fingerprint then
+runs in the background at low priority. If it disagrees, Stim drops the record
+and prints a warning at the end of the run; run the command again to use the
+current tree.
+
+A config that the digest cannot follow always gets a full fingerprint. That
+includes dynamic imports, `process.env` used other than by literal name, file,
+process or network access while the config is evaluated, and `dotenv`. Local
+config plugins count as evaluated, except that the files a plugin reads are not
+tracked when it applies mods; Stim assumes it reads them at prebuild, and the
+background check catches one that puts them in the config. The
+record is never used after `expo prebuild` or `pod install`, on a build machine,
+in `stim doctor`, or with `--no-build-cache`.
+
+After local and configured-provider misses, development builds can reuse an
+exact completed archive from an enabled paired build worker with
+`react-native-peer-cache`. The query includes the post-prebuild/pod-install
+fingerprint, native options and compatible toolchain. The worker retains the
+completed archive even after changing or removing its checkout. A hit needs no
+source upload or compilation slot. Missing or corrupt archives use normal build
+placement. Remote mode off, an explicit local build, and disabled remote
+artifact reads skip this lookup. Release and physical-device builds keep their
+existing paths.
 
 To find out before a run whether it will hit, and how long it should take, run
 `stim ios --plan` or `stim android --plan`. See
@@ -45,19 +197,55 @@ To find out before a run whether it will hit, and how long it should take, run
 and the phone app run the same check when a workspace opens and show the
 result on its build row.
 
+A bare app whose Xcode project is not in `ios/` sets `ios.projectPath` to its
+directory, relative to the app. A subdirectory is hashed the way `ios/` is. When
+the project sits in the app directory itself (`"."`), Stim cannot tell the
+native sources from the JavaScript beside them, so it hashes every top-level
+entry except `node_modules`, `Pods`, `build`, `android`, `.stim.json` and
+anything git ignores: a JavaScript edit
+then misses the cache and rebuilds incrementally rather than reusing a build
+that might be stale.
+
+```json
+{ "ios": { "projectPath": "." } }
+```
+
 In an Expo project that gitignores `ios/` or `android/` (Continuous Native
 Generation), the fingerprint hashes the app config instead of the native
 directory. Stim records the fingerprint of each prebuild it runs. When a native
 build is needed and the existing directory was not generated from the current
-fingerprint, for example after a config plugin change, Stim regenerates it with
-`expo prebuild --clean` before building. This discards hand edits in the
-gitignored directory, so keep native settings such as the signing team in the
-app config or a config plugin. A committed native directory is part of the key
-and is never regenerated.
+fingerprint, for example after a config plugin change, Stim updates it in place
+with `expo prebuild --no-clean` before building (plain `expo prebuild` before
+Expo SDK 57, whose CLI keeps the directory by default). On iOS it then runs
+`pod install` against the existing `ios/Pods`, so only changed pods are
+reinstalled. A build offloaded to another machine still regenerates that
+machine's copy with `--clean`, because deleting your local directory does not
+reach it. A committed native directory is part of the key and is never
+regenerated.
+
+An in-place prebuild reapplies the current app config over the existing
+directory but does not undo what earlier config wrote. Delete the gitignored
+`ios/` or `android/` before the next `stim ios` or `stim android` after a
+change that has to remove something or needs a fresh template:
+
+- removing a config plugin, or an app config entry that a plugin turned into a
+  native setting such as a permission, entitlement, URL scheme or extra target
+- upgrading the Expo SDK or React Native, because Expo copies its native
+  template only into a missing directory
+- renaming the app, when the Xcode project and target names should follow
+- a config plugin that fails or duplicates its edit when it runs twice
+
+Stim then generates the directory from scratch and runs a full `pod install`.
+If you already built after such a change, that build is cached under the
+current fingerprint, which deleting the directory does not change. Pass
+`--no-build-cache` on the next build so it compiles from the fresh directory.
+Hand edits in a gitignored directory survive an in-place update unless a plugin
+rewrites them, and are lost when it is deleted, so keep native settings such as
+the signing team in the app config or a config plugin.
 
 Stim only knows about prebuilds it ran. If you run `expo prebuild` yourself with
-a different config, delete the native directory or run
-`expo prebuild --clean` before the next `stim ios` or `stim android`.
+a different config, delete the native directory before the next `stim ios` or
+`stim android`.
 
 ### Inputs edited during a build
 
@@ -147,17 +335,68 @@ for profile selection, device support, and cache behavior.
 
 ### Optional artifact providers
 
-The provider integration is implemented, but Stim ships no network provider
-or hosted cache service. Without a configured provider, artifacts stay on the
-local machine.
+`@stim-cli/cache-s3` is a separate provider for S3-compatible storage,
+including Cloudflare R2. Without a configured provider, artifacts stay on the
+local machine. Its AWS SDK and archive dependencies are installed only when
+you install that provider. Stim does not run a hosted cache service.
 
 Projects can supply a module through `cache.provider` using the
 [`@stim-cli/cache` contract](https://github.com/appandflow/stim/tree/main/packages/cache),
 or use a configured Expo `buildCacheProvider`, such as `eas`.
+Custom Expo provider modules run in isolated workers with the workspace environment.
+Inspection and lookup have 30-second request budgets; upload has a 60-second
+budget, followed by verified worker cleanup. Plugin output appears in build logs.
+Each request loads a fresh module; module globals are not shared between phases.
+Legacy uploads finish before Stim installs or exports the built app.
 `optimizations.remoteBuildCache` controls whether Stim uses those providers.
 Provider and build-profile restrictions still apply; see
 [build optimizations](./build-optimizations.md#compare-compiler-settings).
 This caches app artifacts; ccache and Clang CAS use separate compiler caches.
+
+Expo's `eas` tier needs `eas-build-cache-provider` in the app and an installed
+`eas-cli` in the app or on `PATH`. Stim runs fixed EAS CLI commands without
+loading the provider SDK into the caller. Fingerprint generation uploads
+fingerprint metadata to EAS. Fingerprint and transfer commands share one deadline
+within each resolve/upload phase; timeout or cancellation stops the CLI process
+before returning. Stim never
+installs `eas-cli` during cache lookup. Custom Windows batch launchers need a
+project `eas-cli` installation so Stim can stop the Node process directly.
+
+Install `@stim-cli/cache-s3` in the app and select the S3 provider in `.stim.json`:
+
+```json
+{
+  "cache": {
+    "provider": "@stim-cli/cache-s3",
+    "options": {
+      "bucket": "stim-cache",
+      "endpoint": "https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com",
+      "region": "auto",
+      "prefix": "team/cache-v1"
+    }
+  }
+}
+```
+
+Use a private R2 bucket and an R2 token scoped to Object Read & Write on that
+bucket. Save the credentials through the AWS SDK's standard credential chain;
+for a named profile, set `cache.options.profile` to `stim-r2` or run
+`AWS_PROFILE=stim-r2 stim ios`. An explicit cache profile overrides the ambient
+AWS profile. Keep secrets out of
+committed settings. See [Cloudflare's setup guide](https://developers.cloudflare.com/r2/get-started/s3/).
+For AWS S3, omit `endpoint` and use the bucket's region. Other compatible
+services may require `forcePathStyle: true`.
+
+The same transport shares Metro values and complete native artifacts, with
+local caches checked first, digest verification and cancellable transfers.
+Use matching native toolchains for the initial test: the provider uses Stim's
+existing keys and does not add a toolchain partition. It does not synchronize
+dependency directories or compiler caches. Bucket lifecycle rules own remote
+retention; local GC never deletes shared objects. Single-object PUT uploads are
+limited to 5 GiB per entry. Connection resets retry the completed file with a
+fresh stream, up to three PUT attempts with cancellable delays. Conditional
+writes preserve an existing entry even if an upload committed but its reply
+was lost.
 
 ## Keep the source checkout warm
 
@@ -192,6 +431,32 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
+A full disk or a killed build can leave a damaged object in the Xcode
+compilation cache. When an iOS build that used it fails with the compiler's
+own corruption error, such as `OnDiskCAS: corrupt internal reference` or
+`CAS operation failed`, Stim empties the cache the same way and fails with
+`STIM_COMPILATION_CACHE_CORRUPT`. Run the command again; that build is a cold
+one. Stim leaves the cache alone while another build is compiling with it, and
+the error says so. The emptying is recorded in the maintenance log. A build
+worker does the same for its own cache. A build sent there with
+`--remote-build <machine>` fails with that code; one placed there
+automatically builds here instead.
+
+A cached iOS simulator app can be damaged without failing to build. If a
+cache-hit app is killed at launch because dyld cannot bind a symbol that one
+part of the app needs from another part of the same app, Stim removes that
+entry from the shared cache and fails with `STIM_LAUNCH_FAILED` naming it. Run
+the command again to build the app fresh. A crash that the app's own bytes did
+not cause, such as a missing system library, leaves the entry alone, and so
+does an app built by the same run. A cache provider keeps its own copy of an
+entry; add `--no-build-cache` to skip it.
+
+Each iOS build holds a shared claim on the compilation cache while xcodebuild
+runs, in a `compilation-cache.claims` directory beside it. `gc --delete
+--cache`, automatic maintenance and the corruption check empty the cache only
+after taking that claim exclusively, so none of them can empty it under a
+running xcodebuild. Xcode builds you run outside Stim take no claim.
+
 ### Workspace build outputs
 
 Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
@@ -206,18 +471,27 @@ stim gc --delete --older-than 7
 stim gc --delete --cache workspaces`}
 />
 
-Plain `gc --delete` clears the build outputs of every workspace that is not in
-use. A workspace is in use while its dev server runs, a `stim ios` or
-`stim android` run holds it, a build names it, or a tunnel or remote lock is
-held. A running, building, unverified or hosted macOS app also keeps its
-workspace untouched. `--older-than <days>` clears only workspaces no Stim
-command has used for that many days. `--cache workspaces` clears the outputs and nothing else, and
-`--cache all` includes them. `--cache parked` is the one reserved name that
-`all` leaves out: it erases parked simulators and emulators (see
-[owned devices](./owned-devices.md)). The workspace keeps its `workspace.json`,
-`state.json`, logs, devices and ports, along with `macos/` itself,
-`macos/runtime.lock`, its claim set and other macOS files. The project's own
-`.build` stays.
+Plain `gc --delete` lightens every workspace that is not building and did not
+run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, and
+prints the bytes it freed for each. A workspace whose worktree is locked with
+`git worktree lock` is never lightened, at any disk pressure level, and nor is
+a workspace whose worktree git cannot list. A running dev server, a booted or
+hosted simulator or emulator, or a tunnel no longer keeps the outputs. They
+stay while a `stim ios` or `stim android` run holds the workspace, a build names
+it, or its macOS app or build runs or cannot be verified. Lightening also clears the
+project's own `android/app/build`, `android/build`, `android/.gradle` and
+`.build` when git ignores every file in the directory and tracks none.
+`ios/build` stays, because React Native's `pod install` writes files there that
+only `pod install` recreates. The shared build cache, the Xcode compilation cache, the Gradle caches
+and the Metro cache are never touched. `--older-than <days>` clears only
+workspaces no Stim command has used for that many days. `--cache workspaces`
+clears the outputs and nothing else, and `--cache all` includes them.
+`--cache parked` is the one reserved name that `all` leaves out: it erases
+parked simulators and emulators (see [owned devices](./owned-devices.md)). The
+workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
+running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
+set and other macOS files. Automatic maintenance at disk pressure level 2
+clears them by the same rule; level 1 keeps its own rules.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
@@ -225,6 +499,24 @@ Native 0.86, Swift does not use that cache because explicit modules are off,
 so the first iOS build after a native change recompiles Swift. The next
 `stim macos` recreates its scratch directory with a full Swift build and
 restages the app.
+
+### Worktree dependencies
+
+Plain `gc --delete` also lightens linked worktrees that have a Stim workspace:
+it deletes their `node_modules` and `ios/Pods`, never the source checkout's.
+A worktree locked with `git worktree lock` always keeps them, so a rollback
+checkout stays runnable. Otherwise a worktree keeps them while its dev server
+runs or a native run or build holds it, for 15 minutes after its last git, Stim or dependency activity, while git
+tracks a file in them, and while a stim-server service, the `stim` on your PATH
+or a running process (by command line or working directory) uses the worktree.
+It also keeps them when `stim worktree warm` could not restore the same
+versions: the source checkout lacks the directory, or the worktree's lockfile
+differs from the source checkout's. gc records what it deleted, and the next
+`stim start`, `stim ios` or `stim android` in that worktree runs
+`stim worktree warm` first to restore it. If that warm fails or leaves a
+directory missing, the command refuses with `STIM_DEPS_FAILED`. Other commands,
+such as a test run, find the directory missing until then. `.pnpm-store`
+stays, because it is all clones and deleting it frees nothing.
 
 ### Device recordings
 
@@ -257,22 +549,31 @@ shared caches on a different volume. The same values can live in the machine con
 
 ## Automatic maintenance
 
-CLI commands and `status --watch` start a detached maintenance pass when a
-check is due. In the default `on` mode a pass removes what `stim gc --delete`
+CLI commands, `status --watch` and every running dev server supervisor start a
+detached maintenance pass when a check is due, so the disk check runs each
+minute while a dev server or Stim Desktop is running even when no command does. In the default `on` mode a pass removes what `stim gc --delete`
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
-Disk and memory pressure are checked every minute, Stim-owned directory sizes
-every hour, finished worktrees every 15 minutes and the age sweep once a day.
+Disk and memory pressure are checked every minute, idle devices every
+`maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
+finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; a pass never shuts down idle devices or dev servers or stops helpers.
+recorded; below disk pressure level 3 a pass stops a dev server only after
+`maintenance.idleStopHours` without real activity and never stops helpers. The idle check shuts down owned simulators and emulators idle for
+their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
+see [idle shutdown](./owned-devices.md#idle-shutdown).
+The same check stops a whole workspace, dev server and owned devices, after
+`maintenance.idleStopHours` (6) with no real activity; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop).
 Removing a finished worktree or orphaned directory does tear down that
 workspace's own dev server, owned devices and Chrome profile, as `gc --delete` does.
-Size, worktree and sweep checks defer under high host load. The size scan covers
+Size, idle, worktree and sweep checks defer under high host load. The size scan covers
 workspace build outputs, native build and Metro caches, ccache, Swift
-compilation cache, and other registered Stim caches. Other tools' caches are
-not managed by this feature.
+compilation cache, and other registered Stim caches. It also records the disk of
+each owned and parked simulator and emulator, which `stim status` reports as
+`owned devices`. Other tools' caches are not managed by this feature.
 
 In `on` mode a pass works through these steps, cheapest to rebuild first, and
 stops the disk-driven ones once free space is back above the floor:
@@ -285,9 +586,36 @@ stops the disk-driven ones once free space is back above the floor:
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
 4. The Swift compilation cache, emptied whole, only below
-   `budget.hardFloorDiskGb` and with no build running.
+   `budget.hardFloorDiskGb`. It is kept while an iOS build holds its claim on
+   the cache, or while that claim is unresolved. The cache is LLVM's
+   on-disk content store, whose entries live inside shared database files, so
+   Stim cannot remove only the entries a running build does not need.
 5. Linked worktrees whose branch or pull request finished, by the same rules as
-   `stim gc --delete` and `gc.worktreeGraceMinutes`.
+   `stim gc --delete` and `gc.worktreeGraceMinutes`, a dirty finished one after
+   archiving its uncommitted files, and clean ones with no commits of their own
+   once idle ([worktrees](./worktrees.md#remove-finished-worktrees-in-bulk)). With
+   `maintenance.removeIdleWorktrees true` (off by default), the daily sweep also
+   removes clean, pushed linked worktrees unused for `maintenance.olderThanDays`,
+   as `stim gc --delete --worktrees --older-than <days>` removes them. An
+   unfinished dirty worktree, one with unpushed commits, a locked one, the
+   source checkout, one holding the running or PATH `stim`, and one whose last
+   use is unknown are never removed. `maintenance.removeFinishedWorktrees false`
+   turns off all of them.
+6. Parked simulators and emulators unused for `maintenance.olderThanDays` in the
+   daily sweep, deleted through centralized teardown after their ownership is
+   checked again.
+7. Owned simulators and emulators of a finished worktree that is kept, such as
+   a dirty one, once idle for `gc.worktreeGraceMinutes`, and of any workspace
+   idle for `maintenance.deviceIdleDays` (3 days) in the daily sweep. Idle
+   means no dev server, native run, build, lease, managed lock, driven or busy
+   device, and no recorded use. The next run recreates them.
+
+The daily sweep runs in the background of Stim commands every `maintenance.sweepHours` (24), never at a
+set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
+`maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
+and the sweep removes nothing in them by age. Step 1, step 7 (which
+`maintenance.deviceIdleDays` controls), finished worktrees, and the cap and
+low-disk parts of steps 2 and 3 still run.
 
 A pass keeps a workspace that is in use, holds a lock, was used within
 `maintenance.protectRecentHours`, or is the workspace of the command that
@@ -297,6 +625,32 @@ entries of a project with a running dev server. Anything it cannot verify is
 kept. Pin a workspace against all of this with `maintenance.keep`. ccache
 limits itself through `caches.ccacheMaxGb`. The first build after a clear
 rebuilds what was removed.
+
+### Disk pressure levels
+
+When free disk keeps falling, maintenance escalates:
+
+| Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces that did not run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, as `stim gc --delete` lightens them (a running dev server does not keep them, a build does); parked simulators and emulators; build directories of those worktrees (`android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`; `ios/build` stays, because `pod install` writes files there); owned simulators and emulators of workspaces idle for the short window; Stim temp directories, xctrace recordings and SwiftPM temp directories in TMPDIR unmodified for 24 hours, with the checks of `stim gc --delete`.                                                                                |
+| 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces whose dev server runs but that are otherwise inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout; idle Gradle and Kotlin daemons, as `gc --delete --cache gradle-daemons` stops them, only when they are all that keeps an unpinned Gradle version, and then Gradle version caches and wrapper distributions no registered project pins, once unmodified for `maintenance.gradleVersionIdleDays` (7) days. |
+
+Each step re-measures free disk first and stops once it is back above its
+level's floor: the budget floor for levels 1 and 2, the level 3 floor for level 3. A directory is cleared only when it is a real directory inside its worktree,
+git tracks nothing in it, its worktree is not in use, locked, building or
+pinned, and, for the `node_modules` and `ios/Pods` of level 3, nothing under it, nor the worktree's git index, HEAD or Stim
+state, changed within the short window. A level 2 build directory also stays in a worktree where no Stim workspace has recorded any state. A dirty or unpushed worktree can still be
+stopped and have these directories cleared; only its removal is refused. Caches
+owned by other tools, such as the pnpm and npm stores, CocoaPods, SwiftPM and
+the shared Gradle caches, are never deleted; at level 3 only the version
+caches and wrapper distributions of Gradle versions no registered project pins
+go, with the checks of `stim gc --cache gradle-versions`.
+
+`stim status` shows the current level. At level 3 the last pass names the
+shortfall in `stim status`. When a build keeps the Swift compilation cache, it
+also names the cache's size and that build. While the last check, at most 10
+minutes old, measured level 3, every Stim command prints one warning on stderr.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for
@@ -311,7 +665,17 @@ In report mode actions and explaining skips are logged only when newly planned.
 In on mode every action taken, failure and explaining skip is logged with its
 size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
-The hook skips `gc --delete` and live or unresolved claims. Failed attempts
+Every run that deletes or changes something also appends one record per item
+to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete`, `--idle`
+and `--cache`, each maintenance action taken, and what the budget gate reclaims
+before a build. A dry run writes nothing. Each record has the run, the trigger
+(`manual`, `desktop`, `maintenance` or `budget`), the item's kind, label, path,
+bytes freed and status (`done`, `kept` or `failed`), and the reason a kept or
+failed item was left. It rotates and expires with the maintenance log. Read it
+from any directory with `stim logs --source gc`, add `--json` for raw records
+or `--errors` for failures.
+The hook skips every `stim gc` invocation, and live or unresolved claims.
+`stim gc` without `--delete` prints the maintenance plan itself. Failed attempts
 back off for at least one minute; child crash logs are truncated above 64 KiB.
 `status` and `doctor` report unresolved claims with a removal command to run
 only after confirming the holder is gone. Invalid maintenance settings appear
@@ -319,6 +683,10 @@ in `invalid` and disable passes; an invalid cache cap falls back to its own
 default and is reported there.
 A pass and `gc --delete` share an exclusive claim; a held claim makes gc refuse
 with the holder and recovery guidance.
+Each pass keeps a 1 MiB file, `maintenance/disk-reserve`. When taking its claim
+fails because the disk or quota is full, the pass deletes that file and tries
+once more, so it starts at zero free disk as long as an earlier pass left the
+reserve. It writes the file again when it ends.
 
 The default mode is `on`, or `off` under `STIM_HOME` or `CI` unless
 `STIM_MAINTENANCE` is explicit. Passes delete by default. Turn them off, or

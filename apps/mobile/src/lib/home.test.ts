@@ -2,8 +2,10 @@ import fixture from '../../mock-server/fixtures/status.json';
 import tones from '../../../desktop/Tests/StimKitTests/Fixtures/usage-tone-vectors.json';
 
 import {
+  allStatuses,
   budgetRows,
   DEFAULT_FILTERS,
+  entryStatus,
   filterWorkspaces,
   filtersActive,
   gridRows,
@@ -19,9 +21,13 @@ import {
   projectNames,
   projectsByActivity,
   runningDevices,
+  setIdleShown,
+  STATUSES,
+  toggleStatus,
   visibleProjects,
   workspaceActivityMs,
   type DeviceTileItem,
+  type HomeStatus,
 } from '@/lib/home';
 import type { EnvironmentState, MachineUsage, StatusPayload, UsageSample, WorktreeFacts } from '@/protocol/types';
 
@@ -78,6 +84,8 @@ const macs = [
   },
   { id: 'c', name: 'Offline Mac', status: null },
 ];
+
+const LIVE = { ...DEFAULT_FILTERS, statuses: ['live' as const] };
 
 describe('mergeWorkspaces', () => {
   it('lists every Mac in one list by project and name, keeping each item on its Mac', () => {
@@ -418,15 +426,10 @@ describe('warming and ready workspaces', () => {
 
   it('shows them under the live filter', () => {
     const items = mergeWorkspaces(setup);
-    expect(filterWorkspaces(items, DEFAULT_FILTERS, ['a']).shown.map((i) => i.title)).toEqual([
-      'live-one',
-      'ready',
-      'warming',
-    ]);
-    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, activity: 'idle' }, ['a']).shown.map((i) => i.title)).toEqual([
-      'idle-one',
-      'killed',
-    ]);
+    expect(filterWorkspaces(items, LIVE, ['a']).shown.map((i) => i.title)).toEqual(['live-one', 'ready', 'warming']);
+    expect(
+      filterWorkspaces(items, { ...DEFAULT_FILTERS, statuses: ['idle', 'notSetUp'] }, ['a']).shown.map((i) => i.title),
+    ).toEqual(['idle-one', 'killed']);
   });
 });
 
@@ -434,13 +437,20 @@ describe('filterWorkspaces', () => {
   const items = [...mergeWorkspaces(macs), ...mergeWorktrees(macs)];
   const ids = ['a', 'b', 'c'];
   const titles = (f: Partial<typeof DEFAULT_FILTERS>, known = ids) =>
-    filterWorkspaces(items, { ...DEFAULT_FILTERS, ...f }, known).shown.map((i) => i.title);
+    filterWorkspaces(items, { ...LIVE, ...f }, known).shown.map((i) => i.title);
 
   it('hides idle apps and source-only worktrees under Live and reveals them under Idle and All', () => {
-    expect(filterWorkspaces(items, DEFAULT_FILTERS, ids)).toMatchObject({ hiddenByActivity: 3 });
+    expect(filterWorkspaces(items, LIVE, ids)).toMatchObject({ hiddenByActivity: 3 });
     expect(titles({})).toEqual(['building', 'live-one', 'other']);
-    expect(titles({ activity: 'idle' })).toEqual(['idle-one', 'source-only', 'source']);
-    expect(titles({ activity: 'all' })).toEqual(['building', 'idle-one', 'live-one', 'other', 'source-only', 'source']);
+    expect(titles({ statuses: ['idle', 'notSetUp'] })).toEqual(['idle-one', 'source-only', 'source']);
+    expect(titles({ statuses: [...STATUSES] })).toEqual([
+      'building',
+      'idle-one',
+      'live-one',
+      'other',
+      'source-only',
+      'source',
+    ]);
   });
 
   it('counts the apps of one checkout as one hidden workspace', () => {
@@ -455,16 +465,16 @@ describe('filterWorkspaces', () => {
         ]),
       },
     ];
-    expect(filterWorkspaces(mergeWorkspaces(multi), DEFAULT_FILTERS, ['a']).hiddenByActivity).toBe(1);
+    expect(filterWorkspaces(mergeWorkspaces(multi), LIVE, ['a']).hiddenByActivity).toBe(1);
   });
 
   it('filters by Mac, project, errors and remote sessions', () => {
-    expect(titles({ activity: 'all', macs: ['a'] })).toEqual(['idle-one', 'live-one', 'source-only']);
-    expect(titles({ activity: 'all', projects: ['other'] })).toEqual(['other']);
-    expect(titles({ activity: 'all', projects: ['review'] })).toEqual(['source']);
-    expect(filterWorkspaces(items, { ...DEFAULT_FILTERS, macs: ['b'] }, ids).hiddenByActivity).toBe(1);
-    expect(titles({ activity: 'all', errorsOnly: true })).toEqual(['live-one']);
-    expect(titles({ activity: 'all', remoteOnly: true })).toEqual(['other']);
+    expect(titles({ statuses: [...STATUSES], macs: ['a'] })).toEqual(['idle-one', 'live-one', 'source-only']);
+    expect(titles({ statuses: [...STATUSES], projects: ['other'] })).toEqual(['other']);
+    expect(titles({ statuses: [...STATUSES], projects: ['review'] })).toEqual(['source']);
+    expect(filterWorkspaces(items, { ...LIVE, macs: ['b'] }, ids).hiddenByActivity).toBe(1);
+    expect(titles({ statuses: [...STATUSES], errorsOnly: true })).toEqual(['live-one']);
+    expect(titles({ statuses: [...STATUSES], remoteOnly: true })).toEqual(['other']);
   });
 
   it('matches any selected platform, including stopped devices and apps, but excludes source-only and archived rows', () => {
@@ -500,18 +510,18 @@ describe('filterWorkspaces', () => {
     const entries = [...mergeWorkspaces(snapshots), ...mergeWorktrees(snapshots), ...mergeArchives(snapshots)];
     for (const platform of ['ios', 'android', 'web', 'macos'] as const) {
       expect(
-        filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms: [platform] }, ['a']).shown.map(
-          (item) => item.title,
-        ),
+        filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...STATUSES], platforms: [platform] }, [
+          'a',
+        ]).shown.map((item) => item.title),
       ).toEqual([platform]);
       expect(
-        filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', platforms: [platform] }, ['a']).shown,
+        filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: ['archived'], platforms: [platform] }, ['a']).shown,
       ).toEqual([]);
     }
     expect(
-      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms: ['ios', 'web'] }, ['a']).shown.map(
-        (item) => item.title,
-      ),
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...STATUSES], platforms: ['ios', 'web'] }, [
+        'a',
+      ]).shown.map((item) => item.title),
     ).toEqual(['ios', 'web']);
   });
 
@@ -533,7 +543,7 @@ describe('filterWorkspaces', () => {
       { id: 'a', name: 'Mac', status: status([remote('ios'), remote('android'), remote(null)]) },
     ]);
     const titles = (platforms: ('ios' | 'android')[]) =>
-      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', platforms }, ['a']).shown.map(
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...STATUSES], platforms }, ['a']).shown.map(
         (item) => item.title,
       );
     expect(titles(['ios'])).toEqual(['ios']);
@@ -585,12 +595,12 @@ describe('filterWorkspaces', () => {
     ];
     const entries = [...mergeWorkspaces(snapshots), ...mergeWorktrees(snapshots), ...mergeArchives(snapshots)];
     expect(
-      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all', buildingOnly: true }, ['a']).shown.map(
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...STATUSES], buildingOnly: true }, ['a']).shown.map(
         (item) => item.title,
       ),
     ).toEqual(['local', 'macos', 'offloaded']);
     expect(
-      filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', buildingOnly: true }, ['a']).shown,
+      filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: ['archived'], buildingOnly: true }, ['a']).shown,
     ).toEqual([]);
   });
 
@@ -743,16 +753,68 @@ describe('parseFilters', () => {
     );
   });
 
+  it('maps each saved single-value activity to the rows it showed', () => {
+    const statuses = (activity: string) => parseFilters(JSON.stringify({ activity })).statuses;
+    expect(statuses('live')).toEqual(['live']);
+    expect(statuses('idle')).toEqual(['idle', 'notSetUp']);
+    expect(statuses('all')).toEqual(['live', 'idle', 'notSetUp', 'archived']);
+    expect(statuses('archived')).toEqual(['archived']);
+  });
+
+  it('prefers saved statuses over the old activity, drops unknown ones and never restores an empty selection', () => {
+    expect(
+      parseFilters(JSON.stringify({ activity: 'all', statuses: ['archived', 'live', 'bogus', 'live'] })).statuses,
+    ).toEqual(['live', 'archived']);
+    expect(parseFilters(JSON.stringify({ statuses: [] })).statuses).toEqual(['live', 'idle']);
+    expect(parseFilters(JSON.stringify({ statuses: ['bogus'] })).statuses).toEqual(['live', 'idle']);
+  });
+
   it('keeps valid saved filters and falls back to defaults for anything else', () => {
-    expect(parseFilters(JSON.stringify({ macs: ['a', 3], activity: 'all', errorsOnly: true }))).toEqual({
+    expect(parseFilters(JSON.stringify({ macs: ['a', 3], statuses: [...STATUSES], errorsOnly: true }))).toEqual({
       ...DEFAULT_FILTERS,
       macs: ['a'],
-      activity: 'all',
+      statuses: [...STATUSES],
       errorsOnly: true,
     });
     expect(parseFilters('{not json')).toEqual(DEFAULT_FILTERS);
-    expect(parseFilters(JSON.stringify({ activity: 'sometimes' })).activity).toBe('live');
+    expect(parseFilters(JSON.stringify({ activity: 'sometimes' })).statuses).toEqual(['live', 'idle']);
     expect(parseFilters(null)).toEqual(DEFAULT_FILTERS);
+  });
+});
+
+describe('status selection', () => {
+  it('toggles in the chips order and keeps the last status selected', () => {
+    expect(toggleStatus(['archived', 'live'], 'idle')).toEqual(['live', 'idle', 'archived']);
+    expect(toggleStatus(['live', 'idle'], 'live')).toEqual(['idle']);
+    expect(toggleStatus(['idle'], 'idle')).toEqual(['idle']);
+  });
+
+  it('knows when every status is selected', () => {
+    expect(allStatuses(STATUSES)).toBe(true);
+    expect(allStatuses(['live', 'idle', 'notSetUp'])).toBe(false);
+  });
+
+  it('turns idle and not-set-up rows on and off together, keeping the other statuses and at least one', () => {
+    expect(setIdleShown(['live'], true)).toEqual(['live', 'idle', 'notSetUp']);
+    expect(setIdleShown(['archived'], true)).toEqual(['idle', 'notSetUp', 'archived']);
+    expect(setIdleShown(['live', 'idle', 'notSetUp', 'archived'], false)).toEqual(['live', 'archived']);
+    expect(setIdleShown(['idle', 'notSetUp'], false)).toEqual(['live']);
+  });
+
+  it('shows exactly the selected statuses, in any combination, with All including Archived', () => {
+    const archives = mergeArchives([{ id: 'a', name: 'Mac', status: payload }]);
+    const entries = [...mergeWorkspaces(macs), ...mergeWorktrees(macs), ...archives];
+    const kinds = (statuses: HomeStatus[]) => [
+      ...new Set(filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses }, ['a', 'b', 'c']).shown.map(entryStatus)),
+    ];
+    expect(kinds(['live', 'archived']).sort()).toEqual(['archived', 'live']);
+    expect(kinds(['notSetUp', 'idle']).sort()).toEqual(['idle', 'notSetUp']);
+    expect(kinds([...STATUSES]).sort()).toEqual(['archived', 'idle', 'live', 'notSetUp']);
+  });
+
+  it('marks a selection other than the default as an active filter', () => {
+    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live'] }, [], [])).toBe(true);
+    expect(filtersActive({ ...DEFAULT_FILTERS, statuses: ['live', 'idle'] }, [], [])).toBe(false);
   });
 });
 
@@ -954,7 +1016,7 @@ test('renders unknown live and numeric history memory pressure without an alarm 
 });
 
 it('round-trips Archived with the persisted machine and project filters', () => {
-  const selected = { ...DEFAULT_FILTERS, activity: 'archived' as const, macs: ['a'], projects: ['stim'] };
+  const selected = { ...DEFAULT_FILTERS, statuses: ['archived' as const], macs: ['a'], projects: ['stim'] };
   expect(parseFilters(JSON.stringify(selected))).toEqual(selected);
   expect(filtersActive(selected, ['a'], ['stim'])).toBe(true);
 });
@@ -963,23 +1025,23 @@ it('keeps archives out of Live and Idle and shows them after current rows in All
   const archives = mergeArchives([{ id: 'a', name: 'Mac', status: payload }]);
   const live = mergeWorkspaces(macs);
   const entries = [...live, ...mergeWorktrees(macs), ...archives];
-  for (const activity of ['live', 'idle'] as const) {
-    const filtered = filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity }, ['a', 'b']);
+  for (const statuses of [['live'], ['idle', 'notSetUp']] as const) {
+    const filtered = filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...statuses] }, ['a', 'b']);
     expect(filtered.shown.some((entry) => 'archive' in entry)).toBe(false);
     expect(filtered.hiddenByActivity).toBe(
       filterWorkspaces(
         entries.filter((entry) => !('archive' in entry)),
-        { ...DEFAULT_FILTERS, activity },
+        { ...DEFAULT_FILTERS, statuses: [...statuses] },
         ['a', 'b'],
       ).hiddenByActivity,
     );
   }
-  const everything = filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'all' }, ['a', 'b']);
+  const everything = filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: [...STATUSES] }, ['a', 'b']);
   expect(everything.shown.filter((entry) => 'archive' in entry)).toEqual(archives);
   expect(everything.hiddenByActivity).toBe(0);
-  expect(filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived' }, ['a', 'b']).shown).toEqual(archives);
+  expect(filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: ['archived'] }, ['a', 'b']).shown).toEqual(archives);
   expect(
-    filterWorkspaces(entries, { ...DEFAULT_FILTERS, activity: 'archived', projects: ['tlon-apps'] }, [
+    filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses: ['archived'], projects: ['tlon-apps'] }, [
       'a',
       'b',
     ]).shown.map((entry) => entry.project),

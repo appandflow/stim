@@ -1,4 +1,15 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, existsSync, writeFileSync } from 'fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  statSync,
+  writeFileSync,
+} from 'fs';
+import fs from 'node:fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -19,13 +30,10 @@ import {
   allMetroPorts,
   allConsolePortsAndSerials,
   getProjectSettings,
-  getProjectSetting,
-  setProjectSetting,
-  unsetProjectSetting,
   getRepoSettings,
-  setRepoSetting,
-  unsetRepoSetting,
   refuseRelativeStimPaths,
+  writeConfigSetting,
+  type ConfigSettingsTarget,
 } from '../workspace/config.ts';
 import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
@@ -94,6 +102,31 @@ test('saveConfig writes through a temp file and leaves none behind', () => {
   saveConfig({ version: 2, projects: {}, repos: {} });
   const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
   expect(strays).toEqual([]);
+  expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
+});
+
+test.skipIf(process.platform === 'win32')(
+  'saveConfig leaves STIM_HOME and config.json readable only by the owner',
+  () => {
+    chmodSync(tmpHome, 0o755);
+    writeFileSync(join(tmpHome, 'config.json'), '{}', { mode: 0o644 });
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    expect(statSync(tmpHome).mode & 0o777).toBe(0o700);
+    expect(statSync(join(tmpHome, 'config.json')).mode & 0o777).toBe(0o600);
+  },
+);
+
+test.skipIf(process.platform === 'win32')('saveConfig still writes when STIM_HOME refuses chmod', () => {
+  chmodSync(tmpHome, 0o755);
+  const chmod = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
+    throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
+  });
+  try {
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    expect(chmod).toHaveBeenCalledWith(tmpHome, 0o700);
+  } finally {
+    chmod.mockRestore();
+  }
   expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
 });
 
@@ -291,47 +324,20 @@ test('allConsolePortsAndSerials frees the claim of a dead project on a mounted v
   expect(result.androidConsolePorts).toEqual([]);
 });
 
-test('setProjectSetting writes a top-level key', () => {
+test('writeConfigSetting writes, overwrites, and unsets dotted workspace keys', () => {
   upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'ios.deviceType', 'iPhone 16');
-  expect(getProjectSetting('/p', 'ios.deviceType')).toBe('iPhone 16');
-  expect(getProjectSettings('/p')).toEqual({ ios: { deviceType: 'iPhone 16' } });
-});
-
-test('setProjectSetting writes a dotted key, creating intermediate objects', () => {
-  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'ios.script', 'dev:ios');
-  setProjectSetting('/p', 'android.script', 'dev:android');
+  const target: ConfigSettingsTarget = { scope: 'workspace', projectPath: '/p' };
+  writeConfigSetting(target, 'ios.deviceType', 'iPhone 16');
+  writeConfigSetting(target, 'ios.script', 'dev:ios');
+  writeConfigSetting(target, 'android.script', 'dev:android');
+  writeConfigSetting(target, 'ios.deviceType', 'iPhone 17');
   expect(getProjectSettings('/p')).toEqual({
-    ios: { script: 'dev:ios' },
+    ios: { deviceType: 'iPhone 17', script: 'dev:ios' },
     android: { script: 'dev:android' },
   });
-  expect(getProjectSetting('/p', 'ios.script')).toBe('dev:ios');
-});
-
-test('setProjectSetting overwrites an existing key', () => {
-  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'ios.deviceType', 'iPhone 16');
-  setProjectSetting('/p', 'ios.deviceType', 'iPhone 17');
-  expect(getProjectSetting('/p', 'ios.deviceType')).toBe('iPhone 17');
-});
-
-test('unsetProjectSetting removes a key and reports whether it existed', () => {
-  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setProjectSetting('/p', 'ios.script', 'dev:ios');
-  expect(unsetProjectSetting('/p', 'ios.script')).toBe(true);
-  expect(getProjectSetting('/p', 'ios.script')).toBe(undefined);
-  expect(unsetProjectSetting('/p', 'ios.script')).toBe(false);
-});
-
-test('getProjectSetting returns undefined for unknown projects / keys', () => {
-  expect(getProjectSetting('/missing', 'packageManager')).toBe(undefined);
-  upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  expect(getProjectSetting('/p', 'packageManager')).toBe(undefined);
-});
-
-test('setProjectSetting throws when the project is not registered', () => {
-  expect(() => setProjectSetting('/missing', 'packageManager', 'bun')).toThrow(/not registered/);
+  expect(writeConfigSetting(target, 'ios.script', undefined)).toBe(true);
+  expect(writeConfigSetting(target, 'ios.script', undefined)).toBe(false);
+  expect(getProjectSettings('/p')).toEqual({ ios: { deviceType: 'iPhone 17' }, android: { script: 'dev:android' } });
 });
 
 test('ensureConfig creates a v2 config with a repos section', () => {
@@ -404,13 +410,14 @@ test('migrates a v1 config without touching projects', () => {
 });
 
 test('repo settings round-trip by git common dir', () => {
-  setRepoSetting('/repo/.git', 'ios.deviceType', 'iPhone 17');
-  setRepoSetting('/repo/.git', 'worktree.exclude', ['.env']);
+  const target: ConfigSettingsTarget = { scope: 'repo', gitCommonDir: '/repo/.git' };
+  writeConfigSetting(target, 'ios.deviceType', 'iPhone 17');
+  writeConfigSetting(target, 'worktree.exclude', ['.env']);
   expect(getRepoSettings('/repo/.git')).toEqual({
     ios: { deviceType: 'iPhone 17' },
     worktree: { exclude: ['.env'] },
   });
-  expect(unsetRepoSetting('/repo/.git', 'worktree.exclude')).toBe(true);
+  expect(writeConfigSetting(target, 'worktree.exclude', undefined)).toBe(true);
   expect(getRepoSettings('/repo/.git')).toEqual({ ios: { deviceType: 'iPhone 17' } });
 });
 

@@ -21,7 +21,8 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
     },
     "slots": [
       {
@@ -43,11 +44,18 @@
               "driver": "none",
               "setting": "hosting.agentDriver"
             }
-          }
+          },
+          "appPresence": null
         },
         "android": null
       }
-    ]
+    ],
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
+    }
   },
   {
     "path": "/Users/dev/Developer/hosted-ios-stopped",
@@ -71,7 +79,14 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
+    },
+    "stage": {
+      "kind": "stopped",
+      "since": null,
+      "platform": null,
+      "closedApps": []
     }
   },
   {
@@ -96,7 +111,14 @@
           "driver": "none",
           "setting": "hosting.agentDriver"
         }
-      }
+      },
+      "appPresence": null
+    },
+    "stage": {
+      "kind": "running",
+      "since": null,
+      "platform": null,
+      "closedApps": []
     }
   }
 ]

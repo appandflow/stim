@@ -16,7 +16,6 @@ afterEach(() => {
 
 const journal: SetupJournal = {
   v: 1,
-  client: { nodeId: 'nClient' },
   expiresAt: '2026-10-06T12:00:00.000Z',
   capabilities: ['build', 'device-host'],
   steps: [

@@ -1,26 +1,28 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
+import { loadConfigAsync as loadFingerprintConfig } from '@expo/fingerprint/build/Config.js';
+import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
+import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
-import { resolveArtifact, storeArtifact } from '@stim-cli/core';
+import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
+import { trace } from '@stim-cli/core/state';
+import { readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
+import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
+import { computeSignedTail, writeSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
+import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/settings.ts';
 
 export { artifactIn, buildCacheKey } from '@stim-cli/core';
 export { cacheRoot };
-
-export interface BuildRunOptions {
-  variant?: string;
-  abi?: string;
-  configuration?: string;
-  buildConfiguration?: string;
-  isSimulator?: boolean;
-  device?: string | boolean | null;
-}
 
 export function entryDir(platform: string, key: string, root: string = cacheRoot()): string {
   return join(root, platform, key);
@@ -45,38 +47,374 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/local.properties',
   // Appears the first time someone opens the project in Android Studio.
   '**/android/.idea/**',
+  // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
+  '**/*.xcodeproj/xcuserdata/**/*',
 ];
 
-export async function fingerprintProject(
+/**
+ * `react-native bundle` output, ignored only while an ignore pattern matches it: a committed copy can be a native
+ * resource, while a Debug build loads JS from Metro and a release cache hit injects the current JS. The match skips
+ * the index, so a force-added copy counts the same on a build worker, whose mirror index is empty. A build worker
+ * has only the synced .gitignore files, so the client sends the paths it ignored (`ignoredFingerprintPaths`) for
+ * those it ignores through .git/info/exclude or a global excludes file.
+ */
+const BUNDLE_OUTPUT_IGNORES: Record<string, string> = {
+  'ios/main.jsbundle': 'ios/main.jsbundle',
+  'ios/assets': 'ios/assets/**/*',
+};
+
+const APP_ROOT_IOS_SKIPPED = new Set(['node_modules', 'Pods', 'build', 'android', '.git', '.DS_Store', '.stim.json']);
+
+const appRootNames = (entries: readonly string[]) =>
+  entries.filter((name) => !APP_ROOT_IOS_SKIPPED.has(name) && !name.startsWith('.watchman-cookie-'));
+
+function gitIgnoredNames(projectRoot: string, names: readonly string[], noIndex = false): Set<string> {
+  if (names.length === 0) return new Set();
+  const out = gitQuiet(projectRoot, ['check-ignore', ...(noIndex ? ['--no-index'] : []), '--', ...names]);
+  return new Set(
+    String(out ?? '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Sources and ignores that make an `ios.projectPath` outside `ios/` count the way
+ * @expo/fingerprint's bare sourcer counts `ios/`. A project directory that is the
+ * app itself cannot be told apart from the app's JavaScript, so every top-level
+ * entry git tracks, except dependencies and build output, is hashed: a JS change
+ * misses the cache instead of risking a stale native build.
+ */
+export function iosProjectFingerprintOptions(
+  projectRoot: string,
+  iosProjectPath: string,
+  {
+    list = (dir: string) => readdirSync(dir),
+    isDirectory = (path: string) => statSync(path).isDirectory(),
+    ignored = gitIgnoredNames,
+  }: {
+    list?: (dir: string) => string[];
+    isDirectory?: (path: string) => boolean;
+    ignored?: (projectRoot: string, names: readonly string[]) => Set<string>;
+  } = {},
+): Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> {
+  if (iosProjectPath === DEFAULT_IOS_PROJECT_PATH) return {};
+  const appRoot = iosProjectPath === '.';
+  const prefix = appRoot ? '' : `${iosProjectPath}/`;
+  const reasons = ['ios.projectPath'];
+  let extraSources: NonNullable<FingerprintOptions['extraSources']> = [
+    { type: 'dir', filePath: iosProjectPath, reasons },
+  ];
+  if (appRoot) {
+    const names = appRootNames(list(projectRoot));
+    const skip = ignored(projectRoot, names);
+    extraSources = names
+      .filter((name) => !skip.has(name))
+      .toSorted((a, b) => a.localeCompare(b))
+      .map((filePath) => ({
+        type: isDirectory(join(projectRoot, filePath)) ? 'dir' : 'file',
+        filePath,
+        reasons,
+      }));
+  }
+  return {
+    extraSources,
+    ignorePaths: [
+      `${prefix}Pods/**/*`,
+      `${prefix}build/**/*`,
+      `${prefix}.xcode.env.local`,
+      `${prefix}**/project.xcworkspace`,
+      `${prefix}*.xcworkspace/xcuserdata/**/*`,
+    ],
+  };
+}
+
+const ANDROID_ROOT_SOURCES = [
+  'settings.gradle',
+  'settings.gradle.kts',
+  'build.gradle',
+  'build.gradle.kts',
+  'gradle.properties',
+  'gradle',
+];
+
+export function androidProjectFingerprintOptions(
+  projectRoot: string,
+  layout: Pick<AndroidLayout, 'gradleRoot' | 'gradleRootRelative' | 'module' | 'moduleDir' | 'custom'>,
+  exists: (path: string) => boolean = existsSync,
+): Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> {
+  if (!layout.custom) return {};
+  const reasons = ['android.gradleRoot'];
+  const extraSources: NonNullable<FingerprintOptions['extraSources']> = ANDROID_ROOT_SOURCES.filter((name) =>
+    exists(join(layout.gradleRoot, name)),
+  ).map((name) => ({
+    type: name === 'gradle' ? 'dir' : 'file',
+    filePath: posix.join(layout.gradleRootRelative, name),
+    reasons,
+  }));
+  let appRoot = projectRoot;
+  try {
+    appRoot = realpathSync(projectRoot);
+  } catch {}
+  const fromApp = relative(appRoot, layout.moduleDir).split(sep).join('/');
+  if (fromApp === 'android' || fromApp.startsWith('android/')) {
+    return fromApp === 'android/app'
+      ? { extraSources }
+      : { extraSources, ignorePaths: ['build', '.cxx', '.gradle'].map((dir) => `${fromApp}/${dir}/**/*`) };
+  }
+  const moduleRel = posix.join(layout.gradleRootRelative, ...layout.module.split(':').filter(Boolean));
+  extraSources.push({ type: 'dir', filePath: moduleRel, reasons: ['android.module'] });
+  return {
+    extraSources,
+    ignorePaths: ['build', '.cxx', '.gradle'].map((dir) => `${moduleRel}/${dir}/**/*`),
+  };
+}
+
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
+
+/**
+ * The patches of a monorepo's install root, which @expo/fingerprint does not see: its patch sourcer reads only the
+ * app's own `patches/`, and its default preset hashes an installed package by name and version, so a patch applied
+ * from the workspace root would leave the key unchanged.
+ */
+function workspacePatchSources(projectRoot: string): NonNullable<FingerprintOptions['extraSources']> {
+  let dir = resolvePath(projectRoot);
+  for (;;) {
+    if (LOCKFILES.some((name) => existsSync(join(dir, name)))) break;
+    const parent = resolvePath(dir, '..');
+    if (parent === dir || existsSync(join(dir, '.git'))) return [];
+    dir = parent;
+  }
+  const sources: NonNullable<FingerprintOptions['extraSources']> = ['patches', '.yarn/patches']
+    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && existsSync(join(dir, name)))
+    .map((name) => ({
+      type: 'dir' as const,
+      filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
+      reasons: ['workspacePatches'],
+    }));
+  const patched = pnpmPatchedDependencies(join(dir, 'pnpm-lock.yaml'));
+  if (patched)
+    sources.push({ type: 'contents', id: 'pnpmPatchedDependencies', contents: patched, reasons: ['workspacePatches'] });
+  return sources;
+}
+
+/** The lockfile's `patchedDependencies` block, which pnpm rewrites with each patch's hash wherever the patch lives. */
+function pnpmPatchedDependencies(lockfile: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(lockfile, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split(/\r?\n/);
+  const start = lines.indexOf('patchedDependencies:');
+  if (start === -1) return null;
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line && !/^\s/.test(line)) break;
+    if (line.trim()) block.push(line.trim());
+  }
+  return block.length ? block.join('\n') : null;
+}
+
+export interface FingerprintTarget {
+  platform?: string;
+  iosProjectPath?: string;
+  androidLayout?: AndroidLayout | null;
+  ignoredPaths?: readonly string[];
+  trackedPaths?: readonly string[];
+}
+
+/**
+ * The bundle output and, with `ios.projectPath` '.', the top-level entries that git ignores here for an iOS
+ * fingerprint, as the paths a build worker needs to ignore the same ones: it has no .git/info/exclude or global
+ * excludes file.
+ */
+export function ignoredFingerprintPaths(
+  projectRoot: string,
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH }: FingerprintTarget,
+): string[] {
+  if (platform !== 'ios') return [];
+  const appRoot = iosProjectPath === '.' ? gitIgnoredNames(projectRoot, appRootNames(readdirSync(projectRoot))) : [];
+  return [...gitIgnoredNames(projectRoot, Object.keys(BUNDLE_OUTPUT_IGNORES), true), ...appRoot].toSorted();
+}
+
+/**
+ * With `ios.projectPath` '.', the top-level entries that git tracks here although an ignore pattern matches them, as
+ * the names a build worker must count: its mirror index is empty, so its own `check-ignore` skips them.
+ */
+export function trackedFingerprintPaths(
+  projectRoot: string,
+  { platform, iosProjectPath = DEFAULT_IOS_PROJECT_PATH }: FingerprintTarget,
+): string[] {
+  if (platform !== 'ios' || iosProjectPath !== '.') return [];
+  const names = appRootNames(readdirSync(projectRoot));
+  const ignored = gitIgnoredNames(projectRoot, names);
+  const matched = gitIgnoredNames(projectRoot, names, true);
+  return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
+}
+
+export async function fingerprintOptions(
   projectRoot: string,
   {
     platform,
-    createFingerprint = expoFingerprint.createFingerprintAsync,
-    debug = false,
-  }: { platform?: string; createFingerprint?: typeof expoFingerprint.createFingerprintAsync; debug?: boolean } = {},
-): Promise<ProjectFingerprint | null> {
+    iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
+    androidLayout = null,
+    ignoredPaths = [],
+    trackedPaths = [],
+  }: FingerprintTarget,
+): Promise<FingerprintOptions> {
+  const ignoredHere = (names: readonly string[], noIndex = false) =>
+    new Set([...gitIgnoredNames(projectRoot, names, noIndex), ...ignoredPaths.filter((path) => names.includes(path))]);
+  const ignoredAtAppRoot = (names: readonly string[]) =>
+    new Set([...ignoredHere(names)].filter((name) => !trackedPaths.includes(name)));
   const platforms =
     platform && FINGERPRINT_PLATFORMS.has(platform)
       ? { platforms: [platform] as FingerprintOptions['platforms'] }
       : undefined;
+  const ios: Pick<FingerprintOptions, 'extraSources' | 'ignorePaths'> =
+    platform === 'ios'
+      ? iosProjectFingerprintOptions(projectRoot, iosProjectPath, { ignored: (_, names) => ignoredAtAppRoot(names) })
+      : androidLayout?.custom
+        ? androidProjectFingerprintOptions(projectRoot, androidLayout)
+        : {};
+  const patches = workspacePatchSources(projectRoot);
+  if (ios.extraSources || patches.length) {
+    // An explicit extraSources replaces fingerprint.config.js's list in @expo/fingerprint, so keep the project's own.
+    const config = await loadFingerprintConfig(projectRoot, true);
+    ios.extraSources = [...(config?.extraSources ?? []), ...(ios.extraSources ?? []), ...patches];
+  }
+  const bundleOutput =
+    platform === 'android'
+      ? []
+      : [...ignoredHere(Object.keys(BUNDLE_OUTPUT_IGNORES), true)].map((path) => BUNDLE_OUTPUT_IGNORES[path]!);
   // With DEBUG set, @expo/fingerprint profiles sourcers on stdout unless silent.
-  const options: FingerprintOptions = {
+  return {
     ...platforms,
-    ...(debug ? { debug } : {}),
-    ignorePaths: DEFAULT_FINGERPRINT_IGNORES,
+    ...(ios.extraSources ? { extraSources: ios.extraSources } : {}),
+    ignorePaths: [...DEFAULT_FINGERPRINT_IGNORES, ...bundleOutput, ...(ios.ignorePaths ?? [])],
     silent: true,
   };
-  const result = await createFingerprint(projectRoot, options);
-  const hash = result?.hash ?? null;
-  if (!hash) return null;
-  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
-  return { hash, sources };
 }
 
-function registerOnce(root: string): void {
+export async function fingerprintProject(
+  projectRoot: string,
+  {
+    createFingerprint = expoFingerprint.createFingerprintAsync,
+    debug = false,
+    ...target
+  }: FingerprintTarget & {
+    createFingerprint?: typeof expoFingerprint.createFingerprintAsync;
+    debug?: boolean;
+  } = {},
+): Promise<ProjectFingerprint | null> {
+  return trace.spanAsync(
+    'fingerprint',
+    async () => {
+      const options = await fingerprintOptions(projectRoot, target);
+      const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
+      const hash = result?.hash ?? null;
+      if (!hash) return null;
+      const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
+      return { hash, sources };
+    },
+    { platform: target.platform },
+  );
+}
+
+/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
+export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
+  return ['.env.development.local', '.env.local', '.env.development', '.env'];
+}
+
+const inNodeModules = (path: string) => path.split('/').includes('node_modules');
+
+/**
+ * Absolute paths of the files git ignores that a fingerprint with `sources` hashed or the Expo config loader read:
+ * the inputs a checkout of the tracked and untracked files lacks. Files under node_modules are left out, because a
+ * dependency install recreates them.
+ */
+export async function gitignoredFingerprintInputs(
+  projectRoot: string,
+  sources: readonly FingerprintSource[],
+  target: FingerprintTarget,
+  { env, signal }: { env?: NodeJS.ProcessEnv; signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const found = new Set<string>();
+  if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
+    for (const name of expoEnvFiles(env))
+      if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
+  const top = realpathSync.native(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
+  const base = realpathSync.native(projectRoot);
+  const pathspecs = sources.flatMap((source) => {
+    if (source.type === 'contents' || inNodeModules(source.filePath)) return [];
+    const inRepo = relative(top, resolvePath(base, source.filePath));
+    return isAbsolute(inRepo) || inRepo === '..' || inRepo.startsWith(`..${sep}`)
+      ? []
+      : [posix.normalize(source.filePath)];
+  });
+  if (pathspecs.length) {
+    const { ignorePathMatchObjects, ignoreDirMatchObjects } = await normalizeOptionsAsync(
+      projectRoot,
+      await fingerprintOptions(projectRoot, target),
+    );
+    const addFile = (path: string) => {
+      if (!isIgnoredPathWithMatchObjects(path, ignorePathMatchObjects)) found.add(path);
+    };
+    const walk = async (dir: string): Promise<void> => {
+      if (isIgnoredPathWithMatchObjects(dir, ignoreDirMatchObjects)) return;
+      for (const entry of await readdir(join(projectRoot, dir), { withFileTypes: true })) {
+        signal?.throwIfAborted();
+        const path = posix.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules') await walk(path);
+        } else if (entry.isFile()) addFile(path);
+      }
+    };
+    const inSource = (path: string) =>
+      pathspecs.some((spec) => spec === '.' || path === spec || path.startsWith(`${spec}/`));
+    const listed = await gitAsync(
+      projectRoot,
+      [
+        '--literal-pathspecs',
+        'ls-files',
+        '-z',
+        '--others',
+        '--ignored',
+        '--exclude-standard',
+        '--directory',
+        '--',
+        ...pathspecs,
+      ],
+      { untrimmed: true, timeoutMs: 120_000, signal },
+    );
+    for (const listedPath of listed.split('\0')) {
+      if (!listedPath || inNodeModules(listedPath)) continue;
+      const directory = listedPath.endsWith('/');
+      const path = directory ? listedPath.slice(0, -1) : listedPath;
+      if (inSource(path)) {
+        if (directory) await walk(path);
+        else addFile(path);
+        continue;
+      }
+      // `git ls-files --directory` reports a wholly ignored directory as one entry, even when a source is only part of it.
+      for (const spec of pathspecs.filter((each) => each.startsWith(`${path}/`))) {
+        const stat = lstatSync(join(projectRoot, spec), { throwIfNoEntry: false });
+        if (stat?.isDirectory()) await walk(spec);
+        else if (stat?.isFile()) addFile(spec);
+      }
+    }
+  }
+  return [...found].toSorted().map((path) => join(projectRoot, path));
+}
+
+function registerOnce(root: string, registeredBy?: string): void {
   try {
     register({
       dir: root,
+      registeredBy,
       name: 'Build cache',
       prune: 'entries',
       entriesDepth: 2,
@@ -89,7 +427,7 @@ export function resolveBuild(platform: string, key: string, root: string = cache
   return resolveArtifact(entryDir(platform, key, root));
 }
 
-export function storeBuild(
+export async function storeBuild(
   platform: string,
   key: string,
   buildPath: string,
@@ -100,31 +438,92 @@ export function storeBuild(
         overwrite?: boolean;
         sources?: FingerprintSource[] | null;
         assetManifest?: AssetManifest | null;
+        readAppId?: AppIdReader;
+        signal?: AbortSignal;
+        context?: StimContext;
       } = {},
-): string | null {
+): Promise<string | null> {
   const options = typeof rootOrOptions === 'string' ? { root: rootOrOptions } : rootOrOptions || {};
   const root = options.root || cacheRoot();
+  const signal = options.signal ?? options.context?.signal;
+  const env = options.context?.env;
+  throwIfCancelled(signal, 'build cache copy');
   if (!buildPath || !existsSync(buildPath)) {
     throw new Error(`No build to store at ${buildPath}`);
   }
-  registerOnce(root);
+  registerOnce(root, options.context?.cwd);
 
-  return storeArtifact(entryDir(platform, key, root), buildPath, {
-    runFile: getExecutor().runFile,
-    overwrite: Boolean(options.overwrite),
-    writeMetadata: (staging) => {
-      if (Array.isArray(options.sources)) {
-        try {
-          writeFileSync(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
-        } catch {}
-      }
-      if (options.assetManifest) {
-        try {
-          writeFileSync(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
-        } catch {}
-      }
-    },
-  });
+  try {
+    return await withDrainingCancellation(options.context, signal, () =>
+      storeArtifactAsync(entryDir(platform, key, root), buildPath, {
+        signal,
+        runFile: (file, args) =>
+          getExecutor().runFileAsync(file, args, {
+            timeoutMs: 'unbounded',
+            ...(env ? childEnvironment(env) : {}),
+            onSpawn: killOnAbort(signal),
+            declareFor: options.context,
+          }),
+        overwrite: Boolean(options.overwrite),
+        writeMetadata: async (staging) => {
+          if (platform === 'android' && buildPath.endsWith('.apk')) {
+            try {
+              const tail = await computeSignedTail(join(staging, basename(buildPath)), (file, args) =>
+                getExecutor().runFileAsync(file, args, {
+                  timeoutMs: 120_000,
+                  ...(env ? childEnvironment(env) : {}),
+                  onSpawn: killOnAbort(signal),
+                  declareFor: options.context,
+                }),
+              );
+              if (tail) await writeSignedTail(staging, tail);
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
+          if (Array.isArray(options.sources)) {
+            try {
+              await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
+            } catch {}
+          }
+          if (options.assetManifest) {
+            try {
+              await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
+            } catch {}
+          }
+          if (options.readAppId) {
+            try {
+              const appId = await options.readAppId(buildPath);
+              if (appId) await writeFile(join(staging, APP_ID_FILE), JSON.stringify({ appId }));
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
+        },
+      }),
+    );
+  } catch (error) {
+    throwIfCancelled(signal, 'build cache copy');
+    throw error;
+  }
+}
+
+export type BuildStore = (...args: Parameters<typeof storeBuild>) => string | null | ReturnType<typeof storeBuild>;
+
+export type AppIdReader = (artifactPath: string) => string | null | Promise<string | null>;
+
+/** Removes a stored build by renaming its entry aside first, so no run sees a half-deleted entry. */
+export async function evictBuild(platform: string, key: string, root: string = cacheRoot()): Promise<boolean> {
+  const dir = entryDir(platform, key, root);
+  const evicted = `${dir}.evicted-${process.pid}`;
+  try {
+    await rm(evicted, { recursive: true, force: true });
+    await rename(dir, evicted);
+  } catch {
+    return false;
+  }
+  await rm(evicted, { recursive: true, force: true }).catch(() => {});
+  return true;
 }
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
@@ -138,12 +537,13 @@ export function providerDownloadPath(workspacePath: string): string {
  * created only when a provider is about to be asked, and registered so `gc`
  * reports what an interrupted run left behind.
  */
-export function prepareProviderDownloadDir(dir: string): void {
+export function prepareProviderDownloadDir(dir: string, registeredBy?: string): void {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
   try {
     register({
       dir,
+      registeredBy,
       name: 'Cache provider downloads',
       prune: 'entries',
       entriesDepth: 1,
@@ -154,27 +554,34 @@ export function prepareProviderDownloadDir(dir: string): void {
 
 export interface FilesystemBuildCapabilityOptions {
   root?: string;
+  context?: StimContext;
   sources?: FingerprintSource[] | null;
   assetManifest?: AssetManifest | null;
+  readAppId?: AppIdReader;
   resolve?: typeof resolveBuild;
-  store?: typeof storeBuild;
+  store?: BuildStore;
 }
 
 export function filesystemBuildCapability({
   root,
+  context,
   sources,
   assetManifest,
+  readAppId,
   resolve = resolveBuild,
   store = storeBuild,
 }: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
   const stored = {
+    ...(context === undefined ? {} : { context }),
     ...(root === undefined ? {} : { root }),
     ...(sources === undefined ? {} : { sources }),
     ...(assetManifest === undefined ? {} : { assetManifest }),
+    ...(readAppId === undefined ? {} : { readAppId }),
   };
   return {
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
-    store: ({ platform, key, sourcePath, overwrite }) => store(platform, key, sourcePath, { ...stored, overwrite }),
+    store: ({ platform, key, sourcePath, overwrite, signal }) =>
+      store(platform, key, sourcePath, { ...stored, overwrite, signal }),
   };
 }
 
@@ -186,17 +593,19 @@ export interface ProviderUploadOutcome {
 export function providerUploadOutcome(
   result: ProviderCallResult<void> | null | undefined,
   name: string | null,
+  env?: NodeJS.ProcessEnv,
 ): ProviderUploadOutcome | null {
   if (!result) return null;
   const label = name || 'the cache provider';
   if (result.timedOut) {
-    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs()}ms`, warn: true };
+    return { line: `${label} upload was cancelled after ${buildUploadTimeoutMs(env)}ms`, warn: true };
   }
   if (result.failed) return { line: `${label} upload failed: ${result.failed}`, warn: true };
   return { line: `uploaded (${label})`, warn: false };
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';
+const APP_ID_FILE = 'app-id.json';
 
 function withoutContents(source: FingerprintSource): FingerprintSource {
   return source.type === 'contents' ? { ...source, contents: '' } : source;
@@ -206,6 +615,18 @@ export function storedSources(platform: string, key: string, root: string = cach
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
     return Array.isArray(parsed) ? (parsed as FingerprintSource[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The bundle id or Android package read from the entry's artifact when it was stored, or null for older entries. */
+export function storedAppId(platform: string, key: string, root: string = cacheRoot()): string | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), APP_ID_FILE), 'utf-8'));
+    if (parsed && typeof parsed === 'object' && 'appId' in parsed && typeof parsed.appId === 'string' && parsed.appId)
+      return parsed.appId;
+    return null;
   } catch {
     return null;
   }
@@ -249,6 +670,31 @@ function diffItemChange(item: unknown): SourceChange | null {
   return name === null ? null : { name, change, reasons: sourceReasons(source) };
 }
 
+/** The installed package a source path lies in: the name after its last `node_modules/`. */
+export function packageIn(path: string): string | null {
+  const matches = [...path.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)];
+  return matches.at(-1)?.[1] ?? null;
+}
+
+/** A package that moved, such as a version bump of a pnpm store directory, is one change rather than a removal and an addition. */
+function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
+  const added = new Map<string, SourceChange>();
+  for (const change of changes) {
+    const pkg = change.change === 'added' ? packageIn(change.name) : null;
+    if (pkg && !added.has(pkg)) added.set(pkg, change);
+  }
+  const moved = new Set<SourceChange>();
+  const kept = changes.filter((change) => {
+    const pkg = change.change === 'removed' ? packageIn(change.name) : null;
+    const counterpart = pkg ? added.get(pkg) : undefined;
+    if (!counterpart || moved.has(counterpart)) return true;
+    moved.add(counterpart);
+    return false;
+  });
+  for (const change of moved) change.change = 'changed';
+  return kept;
+}
+
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
@@ -274,7 +720,7 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   for (const [name, before] of previousByName) {
     if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return changes;
+  return mergeMovedPackages(changes);
 }
 
 export function diffFingerprintSources({
@@ -295,16 +741,10 @@ export function diffFingerprintSources({
         { sources: current.sources, hash: current.hash },
       );
       if (Array.isArray(items)) {
-        const changes: SourceChange[] = [];
         const seen = new Set<string>();
-        for (const item of items) {
-          const change = diffItemChange(item);
-          if (change !== null && !seen.has(change.name)) {
-            seen.add(change.name);
-            changes.push(change);
-          }
-        }
-        return changes;
+        return mergeMovedPackages(
+          items.map(diffItemChange).filter((change): change is SourceChange => change !== null),
+        ).filter((change) => !seen.has(change.name) && Boolean(seen.add(change.name)));
       }
     } catch {}
   }
@@ -315,16 +755,30 @@ export async function refingerprintAfterMutation({
   projectRoot,
   platform,
   previousHash,
+  iosProjectPath,
+  androidLayout,
+  ignoredPaths,
+  trackedPaths,
   fingerprint = fingerprintProject,
 }: {
   projectRoot: string;
   platform: string;
   previousHash: string;
+  iosProjectPath?: string;
+  androidLayout?: AndroidLayout;
+  ignoredPaths?: readonly string[];
+  trackedPaths?: readonly string[];
   fingerprint?: typeof fingerprintProject;
 }): Promise<(ProjectFingerprint & { moved: boolean }) | null> {
   let computed: ProjectFingerprint | null = null;
   try {
-    computed = await fingerprint(projectRoot, { platform });
+    computed = await fingerprint(projectRoot, {
+      platform,
+      ...(iosProjectPath ? { iosProjectPath } : {}),
+      ...(androidLayout ? { androidLayout } : {}),
+      ...(ignoredPaths ? { ignoredPaths } : {}),
+      ...(trackedPaths ? { trackedPaths } : {}),
+    });
   } catch {
     return null;
   }
@@ -348,7 +802,7 @@ const PREBUILD_WRITTEN_IDS = [
   ['android', 'package'],
 ] as const;
 
-function expoConfigContents(sources: FingerprintSource[]): Record<string, unknown> | null {
+export function expoConfigContents(sources: readonly FingerprintSource[]): Record<string, unknown> | null {
   const source = sources.find((s) => s.type === 'contents' && s.id === 'expoConfig');
   if (source?.type !== 'contents') return null;
   try {
@@ -420,22 +874,21 @@ export const UNTRACKED_MISS_CAP = 3;
 
 export function untrackedNativeFiles({
   projectRoot,
-  exec = getExecutor(),
+  iosProjectPath = DEFAULT_IOS_PROJECT_PATH,
 }: {
   projectRoot: string;
-  exec?: { runFile: (file: string, args?: string[]) => string };
+  iosProjectPath?: string;
 }): string[] {
   let out: string;
   try {
-    out = exec.runFile('git', [
-      '-C',
-      projectRoot,
+    out = git(projectRoot, [
       'ls-files',
       '--others',
       '--exclude-standard',
       '--',
       'ios',
       'android',
+      ...(iosProjectPath !== DEFAULT_IOS_PROJECT_PATH ? [iosProjectPath] : []),
     ]);
   } catch {
     return [];

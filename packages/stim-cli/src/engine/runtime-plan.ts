@@ -3,6 +3,7 @@ export interface RuntimePreparationError {
   message: string;
   remedy?: string | null;
   lines?: string[];
+  retainedClaimRoots?: string[];
 }
 
 export type RuntimePreparationResult<Prepared> =

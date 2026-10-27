@@ -5,10 +5,12 @@ import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-dev
 import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { loadConfig, saveConfig, withConfigLock } from '../workspace/config.ts';
 import { getExecutor, type Executor } from '../exec.ts';
+import type { BootResult } from '../devices/android.ts';
 
 const native = vi.hoisted(() => ({
   create: vi.fn<(_label: string, options: { spawn: Executor['spawn'] }) => Promise<void>>(),
   boot: vi.fn<(...args: unknown[]) => void>(),
+  wait: vi.fn<() => Promise<BootResult>>(),
   teardown: vi.fn<(target: string, options: { del?: boolean }) => { status: string; reason?: string }>(),
   avds: vi.fn<() => string[]>(),
   name: vi.fn<() => string | null>(),
@@ -20,9 +22,9 @@ const native = vi.hoisted(() => ({
   reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
-  pressure: vi.fn<() => string | null>(),
+  mute: vi.fn<(serial: string, avdName: string) => Promise<void>>(),
 }));
-vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
+vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
 vi.mock('../devices/android.ts', () => ({
   DEFAULT_AVD_DEVICE_PROFILE: 'pixel_6',
   hostSystemImageArch: () => 'arm64-v8a',
@@ -32,19 +34,26 @@ vi.mock('../devices/android.ts', () => ({
     images.find((image) => !request.systemImage || image.pkg === request.systemImage),
   listAvdDeviceProfiles: () => ['pixel_6', 'pixel_7'],
   listAvds: () => native.avds(),
+  listAvdsAsync: async () => native.avds(),
   ownedAvdName: (label: string) => `stim-${label}`,
   listAdbDevices: () => native.adb(),
+  listAdbDevicesAsync: async () => native.adb(),
   createOwnedAvd: (label: string, options: { spawn: Executor['spawn'] }) => native.create(label, options),
   bootAndroidEmulator: (...args: unknown[]) => native.boot(...args),
-  waitForBoot: () => Promise.resolve({ ok: true }),
+  waitForBoot: () => native.wait(),
   getAvdNameForSerial: () => native.name(),
-  androidDeviceAbi: () => native.abi(),
+  getAvdNameForSerialAsync: async () => native.name(),
+  androidDeviceAbi: async () => native.abi(),
   avdStorageRoots: () => [home],
   assertOwnedAvdStopped: () => native.stopped(),
   ownedAvdSystemImage: () => native.image(),
   resolveOwnedAvdSerial: () => native.resolved(),
+  resolveOwnedAvdSerialAsync: async () => native.resolved(),
   resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
+}));
+vi.mock('../engine/device-android.ts', () => ({
+  muteBootedEmulator: (serial: string, avdName: string) => native.mute(serial, avdName),
 }));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedAvd: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
@@ -61,7 +70,7 @@ beforeEach(() => {
   home = join(area, 'home');
   mkdirSync(home);
   process.env.STIM_HOME = home;
-  native.pressure.mockReturnValue('normal');
+  native.wait.mockResolvedValue({ ok: true });
   native.image.mockReturnValue('system-images;android-30;google_apis;arm64-v8a');
   native.resolved.mockReturnValue({ notRunning: true });
   native.adb.mockReturnValue({ emulators: [], unhealthy: [] });
@@ -92,6 +101,10 @@ afterEach(() => {
   rmSync(area, { recursive: true, force: true });
 });
 
+test('prepare trusts the offer instead of sampling memory pressure again', async () => {
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
+});
+
 test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {
   native.boot.mockImplementation(() => {
     expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8'))).toMatchObject({
@@ -111,6 +124,36 @@ test('persists exact ownership before a viewer-free boot and stops only that AVD
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, { del: true });
 });
 
+test('mutes the exact emulator after boot on prepare and after the adoption reset', async () => {
+  const order: string[] = [];
+  native.boot.mockImplementation((_avd, port) => {
+    order.push(`boot:${String(port)}`);
+    native.name.mockReturnValue(avd);
+  });
+  native.reset.mockImplementation(async () => {
+    order.push('reset');
+  });
+  native.mute.mockImplementation(async (serial, avdName) => {
+    order.push(`mute:${serial}:${avdName}`);
+  });
+  await runHostedAndroidDevice('prepare', request);
+  expect(order).toEqual(['boot:5554', `mute:emulator-5554:${avd}`]);
+  native.teardown.mockImplementation(() => {
+    native.name.mockReturnValue(null);
+    return { status: 'torn-down' };
+  });
+  await runHostedAndroidDevice('park', request);
+  order.length = 0;
+  await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 });
+  expect(order).toEqual(['boot:5556', 'reset', `mute:emulator-5556:${avd}`]);
+});
+
+test('does not mute an emulator whose boot was not verified', async () => {
+  native.wait.mockResolvedValue({ ok: false });
+  await runHostedAndroidDevice('prepare', request);
+  expect(native.mute).not.toHaveBeenCalled();
+});
+
 test('an occupied console port refuses before any native creation', async () => {
   native.adb.mockReturnValue({ emulators: [{ consolePort: 5554, serial: 'emulator-5554' }], unhealthy: [] });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'stopped', device: null });
@@ -128,6 +171,32 @@ test.each(['name', 'abi'] as const)(
     });
   },
 );
+
+test.each(['prepare', 'adopt'] as const)('a failed %s boot retains its observations and owned device', async (mode) => {
+  if (mode === 'adopt') await parkedEmulator();
+  native.teardown.mockClear();
+  const diagnostic = {
+    devices: 'List of devices attached\nemulator-5554\tdevice\nemulator-5556\tdevice\nother-physical-device\tdevice',
+    sysBoot: '1',
+    devBoot: '',
+    bootAnim: 'running',
+    packageManager: '',
+  };
+  native.wait.mockResolvedValue({ ok: false, diagnostic });
+  const result = await runHostedAndroidDevice(mode, request);
+  expect(result).toMatchObject({
+    state: 'unknown',
+    device: { avdName: avd, serial: 'emulator-5554' },
+    notice: expect.stringContaining(
+      JSON.stringify({ sysBoot: '1', devBoot: '', bootAnim: 'running', packageManager: '' }),
+    ),
+  });
+  expect(result.notice).not.toContain('emulator-5556');
+  expect(result.notice).not.toContain('other-physical-device');
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
+  expect(native.reset).not.toHaveBeenCalled();
+  expect(native.teardown).not.toHaveBeenCalled();
+});
 
 test('foreign ledger ownership refuses teardown and retains the exact record', async () => {
   await runHostedAndroidDevice('prepare', request);
@@ -155,7 +224,7 @@ test('AVD creation remains in the worker process group', { skip: process.platfor
   });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'ready' });
   const workerGroup = getExecutor()
-    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)])
+    .runFile('ps', ['-o', 'pgid=', '-p', String(process.pid)], { timeoutMs: 60_000 })
     .trim();
   expect(readFileSync(groupFile, 'utf8').trim()).toBe(workerGroup);
 });

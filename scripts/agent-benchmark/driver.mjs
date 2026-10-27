@@ -1,9 +1,10 @@
+import { killProcessTree, makeRunnerHome, spawnStamped, terminateProcessTree } from './runner.mjs';
 import { javascriptProof, appAliveErrorIsSuperseded } from './javascript-proof.mjs';
+import { benchmarkAvdDescription as androidAvdDescription } from './android-avd.mjs';
 import { ownedMetroListeners } from './metro-listeners.mjs';
 import {
   chmodSync,
   copyFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -19,7 +20,6 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 import {
   changedPathsFromGitOutputs,
   injectRootRenderCrash,
@@ -31,10 +31,16 @@ import {
 } from '../launch-crash-benchmark.mjs';
 import { benchmarkFingerprint, selectBenchmarkCacheKey } from './cache-key.mjs';
 import { reconstructCommandEvidence } from './command-evidence.mjs';
-import { matchesGoldenPreparation, preparedAndroidEmulator } from './golden-state.mjs';
+import {
+  ANDROID_BENCHMARK_AVD_CONFIG,
+  assertGoldenCleanup,
+  matchesGoldenPreparation,
+  preparedAndroidEmulator,
+} from './golden-state.mjs';
 import { launchCrashSetup } from './launch-crash-setup.mjs';
 import { benchmarkTaskPrompt } from './task-prompt.mjs';
-import { collectedNativeCompatibility, probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
+import { probeNativeCompatibility, verifyNativeCompatibility } from './native-compat.mjs';
+import { compatibilityProofEvidence, prepareCompatibilityProof } from './compatibility-proof.mjs';
 import {
   androidApplicationLabelFromBadging,
   matchesExpectedAndroidEmulator,
@@ -45,6 +51,7 @@ import { ccacheLogEvidence } from './ccache-evidence.mjs';
 import { retireAndroidRecording } from './recording-cleanup.mjs';
 import { benchmarkEnvironment, benchmarkLocale, isolatedShellEnvironment } from './shell-environment.mjs';
 import {
+  benchmarkFixtureReadPaths,
   isolatedRunnerInvocation,
   prepareRunnerIsolation,
   runnerIsolationPolicy,
@@ -60,6 +67,7 @@ import {
   stimShellProvenanceInvalidReasons,
   assertAndroidDoctorClean,
   benchmarkCcache,
+  benchmarkMeasurementWarnings,
   ccacheMeasurements,
   runnerToolOutput,
   topLevelShellCommand,
@@ -192,6 +200,10 @@ function agentDeviceCommand(meta, command) {
   return `env AGENT_DEVICE_STATE_DIR=${stateDir} AGENT_DEVICE_SESSION=${session} agent-device ${command}`;
 }
 
+function agentDeviceSessionState(meta) {
+  return `${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${meta.agentDevice?.session ?? meta.runId}`;
+}
+
 function isJavascriptVariant(variant) {
   return variant === 'javascript' || variant === launchCrashVariant;
 }
@@ -305,6 +317,17 @@ function waitForSimulatorQuiescence(udid) {
   throw new Error(`simulator did not become quiescent: ${udid}`);
 }
 
+function pinnedIosDevice() {
+  const deviceTypes = jsonRun('xcrun', ['simctl', 'list', 'devicetypes', '--json']).devicetypes;
+  const runtimes = jsonRun('xcrun', ['simctl', 'list', 'runtimes', '--json']).runtimes;
+  const device = deviceTypes.find((item) => item.name === pins.IOS_DEVICE_TYPE);
+  const runtime = runtimes.find(
+    (item) => item.name.startsWith('iOS ') && item.version === pins.IOS_RUNTIME && item.isAvailable,
+  );
+  if (!device || !runtime) throw new Error('pinned iOS device type or runtime is unavailable');
+  return { deviceTypeIdentifier: device.identifier, runtimeIdentifier: runtime.identifier };
+}
+
 function verifyParkedSimulator(stimHome, expectedUdid) {
   const configPath = join(stimHome, 'config.json');
   if (!existsSync(configPath)) throw new Error('golden Stim config is missing');
@@ -326,9 +349,10 @@ function verifyParkedSimulator(stimHome, expectedUdid) {
   ) {
     throw new Error(`golden parked simulator is not ready: ${JSON.stringify({ record, simulator })}`);
   }
+  const expected = pinnedIosDevice();
   if (
-    record.deviceTypeIdentifier !== 'com.apple.CoreSimulator.SimDeviceType.iPhone-17' ||
-    !record.runtimeIdentifier.endsWith('iOS-26-5')
+    record.deviceTypeIdentifier !== expected.deviceTypeIdentifier ||
+    record.runtimeIdentifier !== expected.runtimeIdentifier
   ) {
     throw new Error(`golden parked simulator has the wrong model or runtime: ${JSON.stringify(record)}`);
   }
@@ -345,7 +369,7 @@ function verifyParkedAndroidEmulator(stimHome, expectedName) {
   );
   return preparedAndroidEmulator({
     config: JSON.parse(readFileSync(join(stimHome, 'config.json'), 'utf8')),
-    avds: androidAvdSnapshot().map(androidAvdDescription),
+    avds: androidAvdSnapshot().map((name) => androidAvdDescription(name)),
     activeNames,
     systemImage: pins.ANDROID_SYSTEM_IMAGE,
     expectedName,
@@ -391,15 +415,18 @@ function prepareAllowedBin() {
     'watchman',
   ];
   if (compatibility) names.push('xcodebuild');
+  if (compatibility?.emulatorProcess) names.push('ps');
   for (const name of names) {
     let source;
     try {
       source =
         name === 'agent-device'
           ? executablePath(agentDeviceBin)
-          : name === 'xcodebuild' && compatibility
-            ? join(compatibility.directory, 'bin/xcodebuild')
-            : run('/usr/bin/which', [name], { cwd: root });
+          : name === 'ps' && compatibility?.emulatorProcess
+            ? join(compatibility.directory, 'emulator-process/ps')
+            : name === 'xcodebuild' && compatibility
+              ? join(compatibility.directory, 'bin/xcodebuild')
+              : run('/usr/bin/which', [name], { cwd: root });
     } catch {
       continue;
     }
@@ -446,40 +473,15 @@ function androidEmulatorTransports() {
     .map(([serial, transportState]) => ({ serial, transportState }));
 }
 
-function androidAvdDescription(name) {
-  const avdRoot = process.env.ANDROID_AVD_HOME ?? join(process.env.HOME, '.android', 'avd');
-  const configPath = join(avdRoot, `${name}.avd`, 'config.ini');
-  const config = existsSync(configPath) ? readFileSync(configPath, 'utf8') : '';
-  const systemImage = config
-    .match(/^image\.sysdir\.1=(.+)$/m)?.[1]
-    ?.trim()
-    .replace(/\/+$/, '')
-    .replaceAll('/', ';');
-  return {
-    name,
-    config: Object.fromEntries(
-      config
-        .split(/\r?\n/)
-        .filter((line) => line.includes('='))
-        .map((line) => {
-          const at = line.indexOf('=');
-          return [line.slice(0, at).trim(), line.slice(at + 1).trim()];
-        }),
-    ),
-    deviceTypeIdentifier: config.match(/^hw\.device\.name=(.+)$/m)?.[1]?.trim(),
-    runtimeIdentifier: `Android-${systemImage?.match(/android-(\d+)/)?.[1]}`,
-    systemImage,
-  };
-}
-
-function androidEmulatorDescription(serial) {
+function androidEmulatorDescription(serial, allowedRoots = []) {
   const name = run('adb', ['-s', serial, 'shell', 'getprop', 'ro.boot.qemu.avd_name']);
-  const avd = androidAvdDescription(name);
+  const avd = androidAvdDescription(name, {
+    reportedPath: run('adb', ['-s', serial, 'emu', 'avd', 'path']),
+    allowedRoots,
+  });
   return {
     ...avd,
     udid: serial,
-    deviceTypeIdentifier:
-      avd.deviceTypeIdentifier ?? run('adb', ['-s', serial, 'shell', 'getprop', 'ro.product.device']),
     runtimeIdentifier: `Android-${run('adb', ['-s', serial, 'shell', 'getprop', 'ro.build.version.sdk'])}`,
   };
 }
@@ -503,7 +505,7 @@ function controlSimulatorForCleanup(runDir, preferredUdid) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function controlAndroidForCleanup(runDir, preferredSerial, expectedName) {
+function controlAndroidForCleanup(runDir, preferredSerial, expectedName, recordedPath) {
   const beforePath = join(runDir, 'avds-before.json');
   if (!existsSync(beforePath)) return null;
   const before = new Set(JSON.parse(readFileSync(beforePath, 'utf8')));
@@ -511,13 +513,16 @@ function controlAndroidForCleanup(runDir, preferredSerial, expectedName) {
   const baseline = new Set(JSON.parse(readFileSync(join(runDir, 'devices-before.json'), 'utf8')));
   const liveCandidates = androidEmulatorSnapshot()
     .filter((serial) => !baseline.has(serial))
-    .map(androidEmulatorDescription)
+    .map((serial) => androidEmulatorDescription(serial, [runDir]))
     .filter((device) => device.name === expectedName);
   if (preferredSerial) {
     const preferred = liveCandidates.find((device) => device.udid === preferredSerial);
     if (preferred) return preferred;
   }
   if (liveCandidates.length === 1) return liveCandidates[0];
+  if (recordedPath) {
+    return androidAvdDescription(expectedName, { reportedPath: dirname(recordedPath), allowedRoots: [runDir] });
+  }
   return androidAvdSnapshot().includes(expectedName) ? androidAvdDescription(expectedName) : null;
 }
 
@@ -963,6 +968,7 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   });
   return {
     fixtureCheckout: absolute,
+    setup: { arm, platform, systemImage: pins.ANDROID_SYSTEM_IMAGE },
     fixtureBranch,
     fixtureCommit: run('git', ['rev-parse', 'HEAD'], { cwd: absolute }),
     sourcePath,
@@ -972,7 +978,7 @@ function prepareLaunchCrashFixture(arm, runId, environment, platform) {
   };
 }
 
-function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios') {
+function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform = 'ios', compatibilityProof = null) {
   const platform = checkedPlatform(requestedPlatform);
   const source = variant === launchCrashVariant ? crash.fixtureCheckout : main;
   const worktree = join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId);
@@ -980,8 +986,8 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
   const deviceName = platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`;
   const device =
     platform === 'ios'
-      ? `an isolated iPhone 17 simulator with iOS 26.5${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
-      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}, with the default hardware profile and an 8 GiB data partition` : ''}`;
+      ? `an isolated ${pins.IOS_DEVICE_TYPE} simulator with iOS ${pins.IOS_RUNTIME}${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`
+      : `an isolated arm64 Android emulator using ${JSON.stringify(pins.ANDROID_SYSTEM_IMAGE)}, the ${JSON.stringify(ANDROID_BENCHMARK_AVD_CONFIG['hw.device.name'])} hardware profile, a hardware keyboard enabled, and an 8 GiB data partition${arm === 'control' ? `, newly created and named ${JSON.stringify(deviceName)}` : ''}`;
   const prefix = `env AGENT_DEVICE_STATE_DIR=${agentDeviceState} AGENT_DEVICE_SESSION=${runId} agent-device`;
   const screenshot = join('/tmp', `${runId}-settings.png`);
   const recording = join('/tmp', `${runId}-session.mp4`);
@@ -1000,6 +1006,7 @@ function promptFor(arm, variant, runId, runDir, crash = null, requestedPlatform 
       `cp ${screenshot} ${join(runDir, 'proof', 'settings.png')}`,
       `${prefix} record stop`,
       `cp ${recording} ${join(runDir, 'proof', 'session.mp4')}`,
+      ...(compatibilityProof ? [compatibilityProof.command] : []),
       `${prefix} close`,
     ]
       .map((command, index) => `${index + 1}. \`${command}\``)
@@ -1031,79 +1038,26 @@ function writeClaudeGuidance(codexHome, arm, runDir) {
   return { path, skillNames };
 }
 
-function makeRunnerHome(runDir, arm) {
-  if (!codexAuthPath || !agentSkillsRoot) {
-    throw new Error('STIM_BENCH_CODEX_AUTH and STIM_BENCH_SKILLS_ROOT are required');
-  }
-  const home = join(runDir, 'runner-home');
-  const codexHome = join(home, '.codex');
-  mkdirSync(codexHome, { recursive: true });
-  copyFileSync(codexAuthPath, join(codexHome, 'auth.json'));
-  chmodSync(join(codexHome, 'auth.json'), 0o600);
-  const selectedSkills = [
-    {
-      name: 'agent-device',
-      source: join(agentSkillsRoot, 'agent-device'),
-    },
-  ];
-  if (arm === 'stim') {
-    selectedSkills.push({
-      name: 'stim',
-      source: join(stimPackage, 'skill'),
-    });
-  }
-  for (const skill of selectedSkills) {
-    const target = join(codexHome, 'skills', skill.name);
-    mkdirSync(dirname(target), { recursive: true });
-    cpSync(skill.source, target, { recursive: true });
-  }
-  const skillRoot = agentSkillsRoot;
-  const skillPaths = [];
-  function visit(path) {
-    for (const entry of readdirSync(path, { withFileTypes: true })) {
-      const child = join(path, entry.name);
-      if (entry.isDirectory()) visit(child);
-      if (entry.isFile() && entry.name === 'SKILL.md') {
-        skillPaths.push(realpathSync(child));
-      }
-    }
-  }
-  visit(skillRoot);
-  const config = [
-    'service_tier = "priority"',
-    'model_reasoning_effort = "high"',
-    '',
-    '[features]',
-    'plugins = false',
-    'multi_agent = false',
-    '',
-    '[skills]',
-    'include_instructions = true',
-    '',
-    '[skills.bundled]',
-    'enabled = false',
-    ...skillPaths.flatMap((path) => ['', '[[skills.config]]', `path = ${JSON.stringify(path)}`, 'enabled = false']),
-    '',
-  ].join('\n');
-  writeFileSync(join(codexHome, 'config.toml'), config);
-  return { codexHome };
-}
-
-function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null) {
+function prepareRunIsolation(runId, runDir, env, arm, crash = null, claudeGuidance = null, compatibilityProof = null) {
   const runTmp = join(runDir, 'tmp');
   return prepareRunnerIsolation({
     policy: runnerIsolationPolicy({
       protectedRoots: [root, worktreeParent],
       reservedRoots: [golden, results, state, worktreeParent],
       readPaths: [
-        ...(!crash ? [main] : []),
+        ...benchmarkFixtureReadPaths(main, crash?.setup),
         allowedBin,
         ...(nativeCompatManifest ? [dirname(realpathSync(nativeCompatManifest))] : []),
         ...(arm === 'stim' ? [stimBin, join(root, 'runtime'), stimPackage] : []),
       ],
-      writePaths: [env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
+      writePaths: [join(main, '.git'), env.GRADLE_USER_HOME, env.ANDROID_AVD_HOME].filter(Boolean),
       scopedAccess: {
-        readPaths: [crash?.fixtureCheckout, claudeGuidance?.path].filter(Boolean),
+        readPaths: [
+          crash?.fixtureCheckout,
+          claudeGuidance?.path,
+          compatibilityProof?.helper,
+          compatibilityProof?.node,
+        ].filter(Boolean),
         writePaths: [
           join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
           join(runDir, 'runner-home'),
@@ -1154,7 +1108,7 @@ function smoke(arm) {
   const runId = `smoke-${arm}`;
   rmSync(runDir, { recursive: true, force: true });
   mkdirSync(runDir, { recursive: true });
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const env = {
     ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
@@ -1188,7 +1142,7 @@ async function runnerSmoke(arm) {
   const runDir = join(state, `runner-smoke-${arm}`);
   rmSync(runDir, { recursive: true, force: true });
   mkdirSync(runDir, { recursive: true });
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const env = {
     ...benchmarkEnvironment(process.env),
     CODEX_HOME: codexHome,
@@ -1224,88 +1178,6 @@ async function runnerSmoke(arm) {
     throw new Error(`runner smoke failed: ${JSON.stringify({ result, usage })}`);
   }
   process.stdout.write(`${JSON.stringify({ arm, result, usage }, null, 2)}\n`);
-}
-
-function killProcessTree(child, processGroupId, signal) {
-  try {
-    if (process.platform !== 'win32' && processGroupId) process.kill(-processGroupId, signal);
-    else if (child.exitCode == null && child.signalCode == null) child.kill(signal);
-  } catch (error) {
-    if (error?.code !== 'ESRCH') throw error;
-  }
-}
-
-function terminateProcessTree(child, processGroupId, graceMs) {
-  killProcessTree(child, processGroupId, 'SIGTERM');
-  const timer = setTimeout(() => killProcessTree(child, processGroupId, 'SIGKILL'), graceMs);
-  timer.unref();
-  return timer;
-}
-
-function spawnStamped(command, args, output, options, input, timeoutMs = null, killGraceMs = 5000, onEvent = null) {
-  const child = spawn(command, args, { ...options, detached: process.platform !== 'win32' });
-  const processGroupId = process.platform === 'win32' ? null : child.pid;
-  let timedOut = false;
-  let forceKill = null;
-  const timeout = timeoutMs
-    ? setTimeout(() => {
-        timedOut = true;
-        forceKill = terminateProcessTree(child, processGroupId, killGraceMs);
-      }, timeoutMs)
-    : null;
-  const stampOut = spawn('node', [join(scriptRoot, 'stamp.mjs'), 'stdout'], {
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  const stampErr = spawn('node', [join(scriptRoot, 'stamp.mjs'), 'stderr'], {
-    stdio: ['pipe', 'pipe', 'inherit'],
-  });
-  const outChunks = [];
-  const errChunks = [];
-  stampOut.stdout.on('data', (chunk) => outChunks.push(chunk));
-  stampErr.stdout.on('data', (chunk) => errChunks.push(chunk));
-  child.stdout.pipe(stampOut.stdin);
-  child.stderr.pipe(stampErr.stdin);
-  if (onEvent) {
-    createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', (line) => {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        return;
-      }
-      onEvent(event);
-    });
-  }
-  child.stdin.end(input);
-  const stampOutClosed = new Promise((done) => stampOut.on('close', done));
-  const stampErrClosed = new Promise((done) => stampErr.on('close', done));
-  return new Promise((resolvePromise) => {
-    child.on('close', (code, signal) => {
-      if (timeout) clearTimeout(timeout);
-      if (forceKill) {
-        clearTimeout(forceKill);
-        killProcessTree(child, processGroupId, 'SIGKILL');
-      }
-      stampOut.stdin.end();
-      stampErr.stdin.end();
-      return Promise.all([stampOutClosed, stampErrClosed]).then(() => {
-        const lines = [outChunks, errChunks]
-          .flatMap((chunks) => Buffer.concat(chunks).toString('utf8').split('\n'))
-          .filter(Boolean)
-          .map((line) => JSON.parse(line))
-          .toSorted((a, b) => a.arrivedAt.localeCompare(b.arrivedAt));
-        writeFileSync(output, lines.map((line) => JSON.stringify(line)).join('\n') + '\n');
-        writeFileSync(
-          join(dirname(output), 'runner-stream.jsonl'),
-          lines
-            .filter((line) => line.stream === 'stdout')
-            .map((line) => line.line)
-            .join('\n') + '\n',
-        );
-        return resolvePromise({ code, signal, timedOut });
-      });
-    });
-  });
 }
 
 async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform = 'ios') {
@@ -1353,8 +1225,8 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const expectedControlSimulator = {
     name: platform === 'ios' ? `Trailhead ${runId}` : `Trailhead_${runId}`,
     deviceTypeIdentifier:
-      platform === 'ios' ? 'com.apple.CoreSimulator.SimDeviceType.iPhone-17' : ready.deviceTypeIdentifier,
-    runtimeIdentifier: platform === 'ios' ? 'com.apple.CoreSimulator.SimRuntime.iOS-26-5' : ready.runtimeIdentifier,
+      platform === 'ios' ? expectedParkedSimulator.deviceTypeIdentifier : ready.deviceTypeIdentifier,
+    runtimeIdentifier: platform === 'ios' ? expectedParkedSimulator.runtimeIdentifier : ready.runtimeIdentifier,
     ...(platform === 'android' ? { systemImage: ready.systemImage } : {}),
   };
   const expectedStimDevice =
@@ -1377,7 +1249,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
   const runnerKind = runnerForModel(model);
   const runnerEnvironment =
     runnerKind === 'claude' ? { CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1', CLAUDE_CODE_DISABLE_CRON: '1' } : {};
-  const { codexHome } = makeRunnerHome(runDir, arm);
+  const { codexHome } = makeRunnerHome({ runDir, arm, codexAuthPath, agentSkillsRoot, stimPackage });
   const runTmp = join(runDir, 'tmp');
   mkdirSync(runTmp, { recursive: true });
   run('cp', ['-cR', `${join(platformGolden, 'control-tmp')}/.`, runTmp], {
@@ -1411,11 +1283,17 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
       crash.fixtureCheckout,
       executablePath(agentDeviceBin),
     );
-  const prompt = promptFor(arm, variant, runId, runDir, crash, platform);
+  const compatibilityProof = prepareCompatibilityProof({
+    runId,
+    worktree: join(worktreeParent, arm === 'stim' ? `bench-${runId}` : runId),
+    runDir,
+    compatibility: preflightReport.nativeCompatibility,
+  });
+  const prompt = promptFor(arm, variant, runId, runDir, crash, platform, compatibilityProof);
   writeFileSync(join(runDir, 'prompt.txt'), `${prompt}\n`);
   const shellProvenance = verifyRunnerShell(arm, env);
   const claudeGuidance = runnerKind === 'claude' ? writeClaudeGuidance(codexHome, arm, runDir) : null;
-  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance);
+  const isolation = prepareRunIsolation(runId, runDir, env, arm, crash, claudeGuidance, compatibilityProof);
   try {
     preflightReport.isolationCompatibility = verifyIsolationCompatibility(isolation, {
       platform,
@@ -1458,6 +1336,7 @@ async function dispatch(model, arm, variant, stage = 'pilot', requestedPlatform 
     dispatchAt,
     timingTarget,
     preflight: preflightReport,
+    compatibilityProof,
     expectedStimShellProvenance: arm === 'stim' ? expectedStimShellProvenance() : null,
     stimShellProvenance: shellProvenance,
     profile: { ...profile, claudeGuidance, isolation, runnerEnvironment },
@@ -1732,6 +1611,15 @@ function agentDeviceOpenCommand(meta, appAlive) {
   return `${prefix} --platform ${platform} ${targetFlag} ${appAlive.simulator?.udid ?? '<missing-run-device>'}`;
 }
 
+function agentDeviceCaptureCommands(meta, appAlive) {
+  return {
+    command: agentDeviceOpenCommand(meta, appAlive),
+    snapshotCommand: meta.promptPolicy === 'minimal-v1' ? agentDeviceCommand(meta, 'snapshot -i') : undefined,
+    appId: 'com.appandflow.trailhead',
+    sessionState: agentDeviceSessionState(meta),
+  };
+}
+
 function nativeMarkerObserved(items, openCommand, expected) {
   let opened = false;
   for (const item of items) {
@@ -1834,8 +1722,7 @@ function screenEvidence(meta, appAlive, commands, runDir) {
       target,
     };
   }
-  const session = meta.agentDevice?.session ?? meta.runId;
-  const expectedSessionState = `Session state: ${meta.agentDevice?.stateDir ?? agentDeviceState}/sessions/${session}`;
+  const expectedSessionState = `Session state: ${agentDeviceSessionState(meta)}`;
   if (!commands[openIndex].output.includes(expectedSessionState)) {
     return {
       valid: false,
@@ -2214,7 +2101,7 @@ function collect(runDir) {
     commandAudit.commands,
     ccacheLogEvidence({ runDir, meta, commands: commandAudit.commands, worktree, capture: true }),
   );
-  const nativeCompatibility = collectedNativeCompatibility(meta, worktree);
+  const nativeCompatibility = compatibilityProofEvidence(meta, worktree, commandAudit.commands, screen, recording);
   const proof = proofFor(meta, appAlive, runDir, worktree, commandAudit.completedEvents, screen);
   const rollout =
     meta.runner === 'claude'
@@ -2231,9 +2118,10 @@ function collect(runDir) {
           arm: meta.arm,
           platform: meta.platform ?? 'ios',
           activities: commandAudit.activities,
+          agentDeviceLaunch: agentDeviceCaptureCommands(meta, appAlive),
           setup: {
             worktree,
-            avdConfig: meta.expectedControlAvdConfig,
+            avdConfig: appAlive.simulator?.configPath ?? meta.expectedControlAvdConfig,
           },
         })
       : null;
@@ -2248,6 +2136,7 @@ function collect(runDir) {
       : null;
   const diagnosisUsage =
     diagnosis?.valid && meta.runner !== 'claude' ? usageAtOrBefore(rollout, diagnosis.observedAt) : null;
+  const measurementWarnings = benchmarkMeasurementWarnings({ ...meta, timing, ccache, diagnosis, diagnosisUsage });
   const invalidReasons = [
     ...(nativeCompatibility && !nativeCompatibility.valid ? ['native-compatibility-changed-or-unverified'] : []),
     ...(appAlive.error && !appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : []),
@@ -2262,9 +2151,6 @@ function collect(runDir) {
     ...(worktree ? [] : ['worktree-evidence-missing']),
     ...(diagnosis && !diagnosis.valid ? [diagnosis.reason ?? 'launch-crash-diagnosis-failed'] : []),
     ...(recovery && !recovery.valid ? [recovery.reason ?? 'launch-crash-recovery-failed'] : []),
-    ...(meta.variant === launchCrashVariant && meta.runner !== 'claude' && !diagnosisUsage
-      ? ['launch-crash-diagnosis-usage-missing']
-      : []),
     ...deviceMismatchReasons(meta, appAlive.simulator),
     ...commandAudit.invalidReasons,
     ...benchmarkSetupInvalidReasons(meta, commandAudit.commands),
@@ -2287,6 +2173,7 @@ function collect(runDir) {
     valid: invalidReasons.length === 0,
     nativeCompatibility,
     invalidReasons,
+    measurementWarnings,
     watcherWarnings: appAliveErrorIsSuperseded(appAlive, proof, screen) ? [appAlive.error] : [],
     dispatchToAppAliveSeconds: appAlive.dispatchToAppAliveSeconds ?? null,
     dispatchToProofSeconds: appAlive.dispatchToProofSeconds ?? null,
@@ -2338,6 +2225,14 @@ function cleanup(runDir) {
   const worktree = findRunWorktree(meta.runId, runWorktreeParent(meta));
   const branch = meta.arm === 'stim' ? `worktree-bench/${meta.runId}` : `bench/${meta.runId}`;
   const actions = [];
+  let retainStimWorktrees = false;
+  const verifyCleanupDevice = () =>
+    assertGoldenCleanup({
+      config: JSON.parse(readFileSync(join(runDir, 'stim-home', 'config.json'), 'utf8')),
+      platform: meta.platform,
+      expectedIdentity:
+        meta.platform === 'android' ? meta.expectedParkedEmulator?.name : meta.expectedParkedSimulator?.udid,
+    });
   const agentDeviceEnv = agentDeviceEnvironment(meta.agentDevice?.session ?? meta.runId);
   try {
     run(agentDeviceBin, ['close'], {
@@ -2397,6 +2292,7 @@ function cleanup(runDir) {
     };
     for (const args of [['stop'], ['worktree', 'remove', '--force']]) {
       try {
+        if (args[0] === 'worktree') verifyCleanupDevice();
         run('node', [stimCli, ...args], {
           cwd: worktree,
           env,
@@ -2406,6 +2302,8 @@ function cleanup(runDir) {
         actions.push(`stim ${args.join(' ')}`);
       } catch (error) {
         actions.push(`failed: stim ${args.join(' ')}: ${error}`);
+        retainStimWorktrees = true;
+        break;
       }
     }
     if (meta.platform === 'android') {
@@ -2428,7 +2326,12 @@ function cleanup(runDir) {
   } else if (meta.arm === 'control') {
     const simulator =
       meta.platform === 'android'
-        ? controlAndroidForCleanup(runDir, appAlive.simulator?.udid, meta.expectedControlSimulator?.name)
+        ? controlAndroidForCleanup(
+            runDir,
+            appAlive.simulator?.udid,
+            meta.expectedControlSimulator?.name,
+            appAlive.simulator?.configPath,
+          )
         : controlSimulatorForCleanup(runDir, appAlive.simulator?.udid);
     if (simulator) {
       const udid = simulator.udid;
@@ -2451,7 +2354,10 @@ function cleanup(runDir) {
               Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1_000);
             }
           }
-          run('avdmanager', ['delete', 'avd', '-n', simulator.name], { timeout: 60_000 });
+          run('avdmanager', ['delete', 'avd', '-n', simulator.name], {
+            timeout: 60_000,
+            env: { ...benchmarkEnvironment(process.env), ANDROID_AVD_HOME: simulator.avdHome },
+          });
           actions.push(`delete AVD ${simulator.name}`);
         } catch (error) {
           actions.push(`failed: delete Android benchmark emulator ${udid}: ${error}`);
@@ -2505,7 +2411,7 @@ function cleanup(runDir) {
       actions.push(`delete branch ${branch}`);
     } catch {}
   }
-  if (meta.crash?.fixtureCheckout) {
+  if (meta.crash?.fixtureCheckout && !retainStimWorktrees) {
     const fixtureCheckout = resolve(meta.crash.fixtureCheckout);
     const fixtureBranch = meta.crash.fixtureBranch;
     if (!fixtureCheckout.startsWith(`${worktreeParent}/`)) {
@@ -2513,6 +2419,7 @@ function cleanup(runDir) {
     } else if (existsSync(fixtureCheckout)) {
       if (meta.arm === 'stim') {
         try {
+          verifyCleanupDevice();
           run('node', [stimCli, 'worktree', 'remove', '--force'], {
             cwd: fixtureCheckout,
             env: {
@@ -2583,13 +2490,14 @@ function report(stage) {
     return estimatedCost(record.model, record.tokens);
   };
   const header =
-    '| Model | Variant | Arm | Valid | Diagnosis (s) | Settings repaired (s) | Commands to diagnosis | Tokens to diagnosis | Cost to diagnosis | Total commands | Uncached input | Cached input | Output | Total cost |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
+    '| Model | Variant | Arm | Valid | Measurement warnings | Diagnosis (s) | Settings repaired (s) | Commands to diagnosis | Tokens to diagnosis | Cost to diagnosis | Total commands | Uncached input | Cached input | Output | Total cost |\n| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |';
   const rows = records.map((record) =>
     [
       record.model,
       record.variant,
       record.arm,
       record.valid ? 'yes' : `no: ${record.invalidReasons.join(', ')}`,
+      (record.measurementWarnings ?? []).join(', ') || '-',
       record.dispatchToDiagnosisSeconds ?? '-',
       record.dispatchToScreenReadySeconds ?? '-',
       record.diagnosisCommandCount ?? '-',

@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import type { AndroidRuntimeKind } from './launch.ts';
 import { workspaceAgentDeviceDir } from '../../workspace/paths.ts';
 import type { AndroidFacts, CcacheActivity, DevServerStart, WaitedForBuild } from '../../engine/build-facts.ts';
 import { LAUNCH_BUNDLING, LAUNCH_UNVERIFIED } from '../../engine/launch-verify.ts';
@@ -18,6 +19,7 @@ import type { ReclaimedStep } from '../../budget.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
+import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 
 export function androidFacts({
   root,
@@ -141,7 +143,13 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  message = null,
+  remedy = null,
+  deviceSerial = null,
 }: {
+  deviceSerial?: string | null;
+  message?: string | null;
+  remedy?: string | null;
   devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
@@ -158,7 +166,7 @@ export function lastBuildRecord({
   appPath?: string | null;
   bundleId?: string | null;
   startedAt: string;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   avdName?: string | null;
   deviceName?: string | null;
@@ -187,6 +195,13 @@ export function lastBuildRecord({
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
+  const device = deviceName ?? avdName;
+  const ledger: BuildLedgerExtras = {
+    ...(device && device !== deviceSerial ? { device: { name: device } } : {}),
+    ...(message ? { message } : {}),
+    ...(remedy ? { remedy } : {}),
+  };
+  if (Object.keys(ledger).length) record.ledger = ledger;
   return record;
 }
 
@@ -224,6 +239,7 @@ export interface ReportAndroidResultArgs {
   useBuildCache: boolean;
   variant: string | null;
   release: boolean;
+  runtimeKind?: AndroidRuntimeKind;
   metroCheck: boolean;
   metroPort: number | null;
   logsDir: string | null;
@@ -242,6 +258,7 @@ export interface ReportAndroidResultArgs {
   durationMs: number;
   writer: AndroidWriter;
   emit: (line: string) => void;
+  out: (line: string) => void;
   recordRun: RunRecorder['record'];
   reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
@@ -256,6 +273,7 @@ export function reportAndroidResult({
   useBuildCache,
   variant,
   release,
+  runtimeKind = release ? 'embedded-js' : 'metro',
   metroCheck,
   metroPort,
   logsDir,
@@ -274,6 +292,7 @@ export function reportAndroidResult({
   durationMs,
   writer,
   emit,
+  out,
   lease,
   recordRun,
   reclaimed = [],
@@ -299,7 +318,7 @@ export function reportAndroidResult({
     variant,
     metroPort,
     cacheHit: record.cacheHit,
-    cacheSkipped: !useBuildCache,
+    cacheSkipped: record.cacheSkipped || !useBuildCache,
     waitedForBuild,
     appPath: apkPath,
     bundleId: androidPackage,
@@ -323,7 +342,7 @@ export function reportAndroidResult({
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${host ? `${host.device?.name ?? 'Android emulator'} on ${host.machine}` : serial}, ` +
-      `${release ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
+      `${runtimeKind === 'process' ? `${variant ?? 'debug'} (native process, no Metro)` : runtimeKind === 'embedded-js' ? `${variant} (embedded JS, no Metro)` : `Metro port ${metroPort}`} ` +
       `(${cacheOutcome(record.cacheHit, remote?.name ?? providerName, offloadedTo)})`;
     const outcome = launchWarning
       ? chalk.yellow(`${summary} -- ${launchWarning}`)
@@ -336,26 +355,29 @@ export function reportAndroidResult({
     const cacheResult = useBuildCache
       ? cacheOutcome(record.cacheHit, remote?.name ?? providerName, offloadedTo)
       : `bypassed; ${cacheOutcome(false, null, offloadedTo)}`;
-    const metroResult = release
-      ? `embedded (${variant})`
-      : !metroCheck
-        ? `check skipped on port ${metroPort}`
-        : launchState === LAUNCH_UNVERIFIED
-          ? `state unverified on port ${metroPort}`
-          : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
+    const metroResult =
+      runtimeKind === 'process'
+        ? 'native process (no Metro)'
+        : runtimeKind === 'embedded-js'
+          ? `embedded (${variant})`
+          : !metroCheck
+            ? `check skipped on port ${metroPort}`
+            : launchState === LAUNCH_UNVERIFIED
+              ? `state unverified on port ${metroPort}`
+              : `running on port ${metroPort}${devServer ? ` (started: ${devServer.reason})` : ''}`;
     emit(
       [
         outcome,
         phaseLine('device', host ? `${deviceName} on ${host.machine}` : `${deviceName} (${serial})`),
         phaseLine('app', androidPackage),
-        phaseLine('metro', metroResult),
+        phaseLine(runtimeKind === 'process' ? 'runtime' : 'metro', metroResult),
         phaseLine('cache', cacheResult),
         ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
         ...(!host ? [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)] : []),
       ].join('\n'),
     );
-    if (links) console.error(chalk.dim(workspaceLinkLine(links)));
+    if (links) out(chalk.dim(workspaceLinkLine(links)));
   }
   return facts;
 }
@@ -379,23 +401,58 @@ export function persistLastBuild({
   status,
   errorCode = null,
   diagnostics = null,
+  message = null,
+  remedy = null,
   out,
 }: {
+  message?: string | null;
+  remedy?: string | null;
   recordBuild?: typeof recordFinishedBuild;
   root: string;
   record: AndroidRecord;
   startedAt: string;
   durationMs: number;
-  status: string;
+  status: 'ok' | 'failed';
   errorCode?: string | null;
   diagnostics?: readonly unknown[] | null;
   out: (line: string) => void;
 }): Record<string, unknown> {
-  const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode, diagnostics });
+  const lastBuild = lastBuildRecord({
+    ...record,
+    startedAt,
+    durationMs,
+    status,
+    errorCode,
+    diagnostics,
+    message,
+    remedy,
+  });
   try {
     recordBuild(root, lastBuild);
   } catch (err) {
     out(phaseLine('state', chalk.yellow(`could not record lastBuild: ${(err as Error)?.message || err}`)));
   }
   return lastBuild;
+}
+
+export function logPostBuildFailure(acquired: boolean, writer: AndroidWriter, record: Record<string, unknown>): void {
+  if (acquired) writer.write(record);
+}
+
+export function persistThrownBuild({
+  acquired,
+  error,
+  ...args
+}: Omit<Parameters<typeof persistLastBuild>[0], 'status' | 'errorCode' | 'diagnostics' | 'message' | 'remedy'> & {
+  acquired: boolean;
+  error: unknown;
+}): void {
+  if (!acquired) return;
+  const { code } = error as { code?: unknown };
+  persistLastBuild({
+    ...args,
+    status: 'failed',
+    errorCode: typeof code === 'string' ? code : undefined,
+    message: error instanceof Error ? error.message : String(error),
+  });
 }

@@ -15,14 +15,6 @@ public enum OffloadResult: Equatable, Sendable {
     else { return .unproven }
     return .success
   }
-
-  public static func localPassed(_ data: Data, exit: Int32, stderr: String = "") throws -> Bool {
-    guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
-      throw StimCLI.Failure.exited(exit, stderr: stderr)
-    }
-    guard exit == 0 else { return false }
-    return facts["offloadedTo"]?.string == nil && (facts["launched"] == .bool(true) || facts["launched"] == .string("bundling"))
-  }
 }
 
 public struct BuildTimings: Decodable, Equatable, Sendable {
@@ -96,8 +88,6 @@ public struct BuildTest: Equatable, Sendable {
   public enum State: Equatable, Sendable {
     case preparingSample, ready
     case offloading(String)
-    case offloaded(BuildTimings)
-    case localBuilding
     case done
     case failed(code: String, message: String, remedy: String?)
     case skipped
@@ -107,8 +97,6 @@ public struct BuildTest: Equatable, Sendable {
     case progress(String)
     case offload(OffloadResult)
     case timings(BuildTimings)
-    case localStart
-    case localFinished(passed: Bool, ms: Double)
     case fail(code: String, message: String, remedy: String?)
     case skip
   }
@@ -118,7 +106,6 @@ public struct BuildTest: Equatable, Sendable {
     }
   }
   public private(set) var timings: BuildTimings?
-  public private(set) var localMs: Double?
   private var lastFailure: String?
   private var offloadPassed = false
   public var passed: Bool { state == .done }
@@ -137,7 +124,6 @@ public struct BuildTest: Equatable, Sendable {
       lastFailure = nil
       state = .preparingSample
       timings = nil
-      localMs = nil
     case .prepared:
       if state == .preparingSample {
         lastFailure = nil
@@ -147,7 +133,6 @@ public struct BuildTest: Equatable, Sendable {
       guard state == .ready || state == .done || isFailed || state == .skipped else { return }
       lastFailure = nil
       timings = nil
-      localMs = nil
       offloadPassed = false
       state = .offloading("Starting the sample")
     case .progress(let phase): if case .offloading = state { state = .offloading(phase) }
@@ -158,23 +143,13 @@ public struct BuildTest: Equatable, Sendable {
       case .refused(let refusal): state = .failed(code: refusal.code, message: refusal.message, remedy: refusal.remedy)
       case .unproven:
         state = .failed(
-          code: "TEST_OFFLOAD_UNPROVEN", message: "The sample did not launch from a build on the selected Mac.",
-          remedy: "Check the build Mac and run again.")
+          code: "TEST_OFFLOAD_UNPROVEN", message: "The sample did not launch from a build on the selected machine.",
+          remedy: "Check the remote machine and run again.")
       }
     case .timings(let times):
       guard case .offloading = state, offloadPassed else { return }
       timings = times
-      state = .offloaded(times)
-    case .localStart: if case .offloaded = state { state = .localBuilding }
-    case .localFinished(let passed, let ms):
-      guard state == .localBuilding else { return }
-      localMs = ms
-      state =
-        passed
-        ? .done
-        : .failed(
-          code: "TEST_LOCAL_UNPROVEN", message: "The sample did not launch from a local build.",
-          remedy: "Check this Mac's tools and run again.")
+      state = .done
     case .fail(let code, let message, let remedy):
       if state != .skipped { state = .failed(code: code, message: message, remedy: remedy) }
     case .skip: state = .skipped
@@ -187,29 +162,21 @@ public struct BuildTest: Equatable, Sendable {
 }
 
 public func sampleDuration(_ ms: Double) -> String {
-  let seconds = max(0, Int(ms / 1000))
+  let seconds = max(0, Format.int(ms / 1000))
   return String(format: "%d:%02d", seconds / 60, seconds % 60)
 }
 
-public func speedComparison(machine: String, offloadMs: Double, localMs: Double) -> String {
-  let difference = localMs - offloadMs
-  if abs(difference) < 1000 { return "Builds on \(machine) took the same time as building here for this sample." }
-  return
-    "Builds on \(machine) were \(sampleDuration(abs(difference))) \(difference > 0 ? "faster" : "slower") than building here for this sample."
-}
-
 public enum WizardMode: String, CaseIterable, Sendable {
-  case auto, force, off
+  case auto, remote, local
   public var title: String {
     switch self {
     case .auto: return "Auto"
-    case .force: return "Always"
-    case .off: return "Never"
+    case .remote: return "Remote first"
+    case .local: return "This Mac"
     }
   }
-  /// Auto once the wizard sets up the first build machine; otherwise the mode this Mac already had.
-  public static func defaultChoice(changedMode: Bool, current: String?) -> Self {
-    changedMode ? .auto : Self(rawValue: current ?? "auto") ?? .auto
+  public static func defaultChoice(changedMode: Bool, current: String?) -> Self? {
+    changedMode ? .auto : Self(rawValue: current ?? "auto")
   }
 }
 

@@ -8,8 +8,10 @@ import StimStores
 final class TipCoordinator: ObservableObject {
   @Published private(set) var topic: TipTopic?
   @Published private(set) var hasNext = false
+  @Published private(set) var position = 0
+  @Published private(set) var total = 0
   @Published private(set) var established = false
-  var suppressed = false {
+  var suppressed = true {
     didSet { if suppressed != oldValue { evaluate() } }
   }
   private let status: StatusStore
@@ -22,6 +24,8 @@ final class TipCoordinator: ObservableObject {
   private var launchTimer: Timer?
   private var pollTimer: Timer?
   private var polling = false
+  private var capabilities: [ProjectCapabilities] = []
+  private var capabilityRoots: [String]?
 
   init(status: StatusStore, machines: BuildMachinesModel, defaults: UserDefaults = .standard) {
     self.status = status
@@ -39,6 +43,7 @@ final class TipCoordinator: ObservableObject {
       var usage = persistence.usage
       usage.observe(payload.environments, now: Date(), calendar: .current)
       if usage != persistence.usage { persistence.usage = usage }
+      detectCapabilities()
       scheduleEvaluation()
     }.store(in: &subscriptions)
     NoticeCenter.shared.objectWillChange.sink { [weak self] _ in self?.scheduleEvaluation() }.store(in: &subscriptions)
@@ -60,10 +65,22 @@ final class TipCoordinator: ObservableObject {
     Task { [weak self] in self?.evaluate() }
   }
 
+  private func detectCapabilities() {
+    let roots = status.projectList.map(\.project.root)
+    guard roots != capabilityRoots else { return }
+    capabilityRoots = roots
+    Task {
+      let detected = await Task.detached { roots.map { ProjectCapabilities.detect(root: $0) } }.value
+      guard capabilityRoots == roots else { return }
+      capabilities = detected
+      evaluate()
+    }
+  }
+
   private func trackMachines() {
     withObservationTracking {
       _ = machines.entries
-      _ = machines.macs
+      _ = machines.peers
       _ = machines.settings.payload
       _ = machines.settings.error
     } onChange: { [weak self] in
@@ -91,17 +108,22 @@ final class TipCoordinator: ObservableObject {
       inputs.machines = machines.entries
       inputs.hosting = machines.settings.payload.map { $0.entry("remote.machines")?.value.strings ?? [] }
     }
-    inputs.macs = machines.macs
+    inputs.peers = machines.peers
     inputs.pairedPhones = ServerController.shared.pairedPhoneCount
     inputs.phoneApp = FeatureFlags.isEnabled(.phoneApp)
     inputs.tutorialCompleted = tutorial.completed
+    inputs.tutorialOffered = AppPreferences.offersTutorial(defaults)
     inputs.sidebar = SidebarPreferences().options
     inputs.rows = status.sidebarList(inputs.sidebar).count
     inputs.workspaces = status.payload?.environments ?? []
+    inputs.hasEASProject = capabilities.contains { $0.eas }
+    inputs.hasMacosTarget = capabilities.contains { $0.macos }
+    inputs.archived = status.payload?.archived ?? []
+    inputs.serverRunning = ServerController.shared.isRunning
     return inputs
   }
 
-  private func evaluate(next: Bool = false) {
+  private func evaluate(direction: Tips.Direction? = nil) {
     let now = Date()
     let calendar = Calendar.current
     let inputs = inputs
@@ -118,23 +140,31 @@ final class TipCoordinator: ObservableObject {
     var state = persistence.state
     var selected: TipTopic?
     var showsNext = false
+    var available: [TipTopic] = []
     if Tips.visible(
       gate: gate, noticeCount: NoticeCenter.shared.notices.count, closedDay: state.closedDay, now: now,
       calendar: calendar)
     {
-      selected =
-        next
-        ? Tips.next(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
-        : Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      if let direction {
+        selected = Tips.move(
+          direction: direction, inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      } else {
+        selected = Tips.select(inputs: inputs, state: &state, discoveries: discovery.states, now: now, calendar: calendar)
+      }
       persistence.state = state
-      showsNext =
-        Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar).count > 1
+      available = Tips.available(inputs: inputs, state: state, discoveries: discovery.states, now: now, calendar: calendar)
+      showsNext = available.count > 1
     }
+    let position = selected.flatMap { available.firstIndex(of: $0) }.map { $0 + 1 } ?? 0
+    if self.position != position { self.position = position }
+    if total != available.count { total = available.count }
     if topic != selected { topic = selected }
     if hasNext != showsNext { hasNext = showsNext }
   }
 
-  func next() { evaluate(next: true) }
+  func next() { evaluate(direction: .forward) }
+
+  func previous() { evaluate(direction: .backward) }
 
   func close() {
     persistence.close(now: Date(), calendar: .current)
@@ -146,12 +176,15 @@ final class TipCoordinator: ObservableObject {
     switch topic {
     case .buildMachine, .hostedSimulators:
       OpenRequests.shared.addMachine = AddMachineRequest(
-        machineID: Tips.firstMac(machines.macs)?.id, hostedSimulators: topic == .hostedSimulators)
+        machineID: Tips.preselected(machines.peers, hostedSimulators: topic == .hostedSimulators)?.id,
+        hostedSimulators: topic == .hostedSimulators)
     case .phone: OpenRequests.shared.pairsPhone = true
     case .tutorial: OpenRequests.shared.showTutorial()
     case .replay:
-      OpenRequests.shared.workspacePath = inputs.workspaces.first { $0.recording?.enabled == true }?.path
-    case .hideWorkspaces, .statusFilter: break
+      if let archive = Tips.replayArchive(inputs) {
+        OpenRequests.shared.workspaceLink = .workspace(WorkspaceOpenRequest(path: archive.projectRoot, archive: archive.id))
+      }
+    case .hideWorkspaces, .statusFilter, .easProfile, .macos, .logs: break
     }
   }
 }

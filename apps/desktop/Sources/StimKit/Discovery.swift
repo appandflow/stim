@@ -98,12 +98,13 @@ public enum Discovery {
     public var prompt: DiscoveryPrompt?
   }
 
+  /// A peer that can build here (a Mac, Linux or Windows machine) and joined the tailnet since the last check.
   public static func newMac(
-    macs: [TailnetMac], seen: Set<String>?, machines: [String], hosting: [String], now: Date
+    peers: [TailnetMac], seen: Set<String>?, machines: [String], hosting: [String], now: Date
   ) -> NewMacResult {
-    let updated = (seen ?? []).union(macs.map(\.id))
+    let updated = (seen ?? []).union(peers.map(\.id))
     guard let seen, machines.isEmpty, hosting.isEmpty,
-      let mac = macs.sorted(by: { $0.dnsName < $1.dnsName }).first(where: { mac in
+      let mac = peers.sorted(by: { $0.dnsName < $1.dnsName }).first(where: { mac in
         !seen.contains(mac.id) && !(machines + hosting).contains { OffloadMachines.names($0, mac) }
       })
     else { return NewMacResult(seen: updated, prompt: nil) }
@@ -111,13 +112,15 @@ public enum Discovery {
   }
 
   /// The first build that waited for a build slot, which means `concurrency.maxBuilds` was reached. `paired` is every
-  /// `remote.machines` and hosting entry; nil when they are not known, which shows nothing.
+  /// `remote.machines` and hosting entry; nil when they are not known, which shows nothing. Setup preselects a Linux or
+  /// Windows peer only when an Android build waited, since such a machine builds Android only.
   public static func slotWait(
-    placements: [BuildPlacements.Placement], macs: [TailnetMac], paired: [String]?, now: Date
+    placements: [BuildPlacements.Placement], peers: [TailnetMac], paired: [String]?, now: Date
   ) -> DiscoveryPrompt? {
-    guard paired?.isEmpty == true, placements.contains(where: { ($0.slotWaitMs ?? 0) > 0 && recent($0.at, now: now) })
-    else { return nil }
-    return banner(.slotWait, title: "A build waited for a build slot", mac: firstMac(macs))
+    let waited = placements.filter { ($0.slotWaitMs ?? 0) > 0 && recent($0.at, now: now) }
+    guard paired?.isEmpty == true, !waited.isEmpty else { return nil }
+    let candidates = waited.contains { $0.platform == "android" } ? peers : peers.filter { !$0.buildsAndroidOnly }
+    return banner(.slotWait, title: "A build waited for a build slot", mac: firstMac(candidates))
   }
 
   public static func lowWithCaches(plan: PressurePlan?, cacheBytes: Int64?) -> DiscoveryPrompt? {
@@ -176,13 +179,15 @@ public enum Discovery {
 
   /// `hosts` are the hosting Macs approved for device-host (nil when that is not known, which shows nothing). With
   /// one approved the prompt offers to use it instead of setting up; setup is offered only when none is approved and
-  /// no Mac is `paired` (nil when that is not known).
+  /// no Mac is `paired` (nil when that is not known). Setup preselects the first Mac among the online `peers`, never
+  /// a Linux or Windows machine, which cannot host.
   /// `isRemote` says whether the workspace's devices for the platform already run on another Mac.
   public static func capHit(
-    source: CapHitSource, mac: TailnetMac?, hosts: [String]?, paired: [String]?,
+    source: CapHitSource, peers: [TailnetMac], hosts: [String]?, paired: [String]?,
     isRemote: (String, String?) -> Bool = { _, _ in false }
   ) -> DiscoveryPrompt? {
     guard let hosts else { return nil }
+    let mac = peers.first { !$0.buildsAndroidOnly }
     if hosts.isEmpty {
       guard paired?.isEmpty == true else { return nil }
       return banner(

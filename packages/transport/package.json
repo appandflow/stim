@@ -1,0 +1,32 @@
+{
+  "name": "@stim-cli/transport",
+  "version": "1.32.0",
+  "description": "Transport contract for stim-server: how phones and other machines reach it.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/transport"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

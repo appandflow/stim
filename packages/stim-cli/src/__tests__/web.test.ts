@@ -1,5 +1,10 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { createStim } from '../api.ts';
+import * as workspaceLocks from '../engine/workspace-process-lock.ts';
+import * as ownershipClaims from '../ownership-claim.ts';
+import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
+import * as browserCdp from '../web/cdp.ts';
 import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
 import { makeExecutor } from './_factories.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -17,30 +22,35 @@ import {
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
-import { teardownOwnedBrowser } from '../devices/teardown.ts';
+import { BROWSER_LOCK, teardownOwnedBrowser } from '../devices/teardown.ts';
 import { getNamedPort, clearNamedPorts, reserveBrowserPort } from '../named-ports.ts';
 import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
 import { environmentState, withWebFacts } from '../status.ts';
-import { runWeb, resolveWebUrl } from '../commands/web.ts';
+import { runWeb } from '../commands/web.ts';
+import { launchOwnedBrowser } from '../web/runtime.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
+import { groupRunsProfile } from '../web/profile.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
-import type { NdjsonRecord } from '../ndjson.ts';
-import { webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
-import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
+import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
+import { resolveWebUrl, webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
+import { NOT_OURS_FOREIGN_CWD, pidExists } from '../metro.ts';
 import {
   latestPageLoad,
   readWebPage,
   readWebRecord,
   webFacts,
+  webFactsAsync,
   webProfileDir,
+  webLogFile,
   writeWebRecord,
   type WebRecord,
 } from '../web/state.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
+import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { staleBrowserProfiles } from '../commands/gc/ledger.ts';
+import { testContext } from './_context.ts';
 
 let home: string;
 let root: string;
@@ -143,6 +153,31 @@ describe('web Metro pin', () => {
     expect(launch).not.toHaveBeenCalled();
     expect(getProject(root)?.metroPort).toBe(null);
     expect(getProject(join(home, 'other'))?.metroPort).toBe(25062);
+  });
+});
+
+describe('selected web runtime preparation', () => {
+  afterEach(() => {
+    resetExecutor();
+    vi.restoreAllMocks();
+  });
+
+  test.each([
+    { manifest: { name: 'tools' }, expo: false, code: 'STIM_WEB_NO_URL' },
+    { manifest: { dependencies: { expo: '*' } }, expo: true, code: 'STIM_WEB_DEPS_MISSING' },
+  ])('keeps the $code refusal before browser launch', async ({ manifest, expo, code }) => {
+    writeFileSync(join(root, 'package.json'), JSON.stringify(manifest));
+    if (expo) writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture', slug: 'fixture' } }));
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/chrome');
+    const launch = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: launch }));
+
+    const result = await runWeb({ root, headed: false, note: () => {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code } });
+    expect(launch).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(readWebRecord(root)).toBeNull();
   });
 });
 
@@ -541,7 +576,379 @@ async function ownedBrowser(): Promise<WebRecord> {
   return record;
 }
 
+describe.skipIf(process.platform === 'win32')('selected configured-URL runtime', () => {
+  afterEach(() => {
+    resetExecutor();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  test('failed supervisor bookkeeping closes IPC and retains unresolved ownership', async () => {
+    let supervisor: ChildProcess | undefined;
+    setExecutor(
+      makeExecutor({
+        spawn: () => {
+          supervisor = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
+            detached: true,
+            stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          });
+          children.push(supervisor);
+          return supervisor;
+        },
+      }),
+    );
+    vi.spyOn(ownershipClaims, 'setClaimChild').mockImplementation(() => {
+      throw new Error('ENOSPC');
+    });
+    try {
+      const result = await launchOwnedBrowser(
+        {
+          url: 'http://localhost:8901/ready',
+          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+        },
+        { root, note: () => {} },
+      ).catch((error: unknown) => error);
+      assert(result instanceof workspaceLocks.WorkspaceProcessCleanupError);
+      expect(result.code).toBe('STIM_CLAIM_UNAVAILABLE');
+      expect(result.claims.every((claim) => existsSync(claim.path))).toBe(true);
+      assert(supervisor?.pid !== undefined);
+      expect(pidExists(supervisor.pid)).toBe(true);
+      expect(supervisor.connected).toBe(false);
+    } finally {
+      if (supervisor?.connected) supervisor.disconnect();
+    }
+  });
+
+  test.each(['message', 'disconnect', 'exit'])('browser registration settles from %s', async (ending) => {
+    let registered = () => {};
+    const publication = new Promise<void>((resolve) => {
+      registered = resolve;
+    });
+    let supervisor: ChildProcess | undefined;
+    setExecutor(
+      makeExecutor({
+        spawn: (_file, args = []) => {
+          const child = spawn(
+            process.execPath,
+            [
+              '-e',
+              ending === 'exit'
+                ? "process.on('message', () => process.exit(1)); setInterval(() => {}, 1000);"
+                : "process.on('message', () => process.send?.('web-registered')); setInterval(() => {}, 1000);",
+            ],
+            { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] },
+          );
+          children.push(child);
+          supervisor = child;
+          assert(child.pid !== undefined);
+          const processToken = captureProcessToken(child.pid);
+          assert(processToken);
+          const pid = child.pid;
+          child.once(ending === 'exit' ? 'exit' : 'message', registered);
+          if (ending === 'disconnect') child.disconnect();
+          setImmediate(() => {
+            if (ending === 'exit') {
+              child.send('exit');
+              return;
+            }
+            writeWebRecord(root, {
+              pid,
+              processToken,
+              chromeProcess: { pid, processToken },
+              chrome: '/fixture/chrome',
+              headless: true,
+              viewport: 'desktop',
+              ignoreCertificateErrors: false,
+              cdpPort: Number(args[args.indexOf('--port') + 1]),
+              profile: webProfileDir(root),
+              launchId: args[args.indexOf('--launch-id') + 1],
+              targetId: 'ready-page',
+              url: 'http://localhost:8901/ready',
+              startedAt: new Date().toISOString(),
+            });
+            if (ending === 'disconnect') registered();
+            else child.send('publish');
+          });
+          return child;
+        },
+      }),
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let finished = false;
+    const launch = launchOwnedBrowser(
+      {
+        url: 'http://localhost:8901/ready',
+        config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
+      },
+      { root, note: () => {} },
+    ).then((result) => {
+      finished = true;
+      return result;
+    });
+    try {
+      await publication;
+      await vi.advanceTimersByTimeAsync(ending === 'disconnect' ? 1000 : 0);
+      expect(finished).toBe(true);
+      expect((await launch).ok).toBe(ending !== 'exit');
+    } finally {
+      await vi.advanceTimersByTimeAsync(1000);
+      await launch;
+      if (supervisor?.connected) supervisor.disconnect();
+      vi.useRealTimers();
+    }
+  });
+
+  test.each(['lock', 'connect', 'verify'])(
+    'a web API cancellation during %s does not restart the browser',
+    async (stage) => {
+      const owned = { ...(await ownedBrowser()), targetId: 'owned-page' };
+      writeWebRecord(root, owned);
+      upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
+      vi.spyOn(chromeLookup, 'findChrome').mockReturnValue(owned.chrome);
+      const spawnBrowser = vi.fn<Executor['spawn']>();
+      setExecutor(makeExecutor({ spawn: spawnBrowser }));
+      const controller = new AbortController();
+      const navigations: string[] = [];
+      vi.spyOn(browserCdp, 'connectOwnedBrowser').mockImplementation(async () => {
+        if (stage === 'connect') controller.abort();
+        return {
+          async send(method) {
+            if (method === 'Target.getTargetInfo') return { targetInfo: { url: owned.url } };
+            if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+            if (method === 'Page.navigate') {
+              navigations.push(method);
+              if (stage === 'verify') controller.abort();
+              else {
+                const writer = createNdjsonWriter(webLogFile(root));
+                writer.write({ event: 'web_document_response', status: 200 });
+                writer.write({ event: 'web_page_loaded' });
+                writer.close();
+              }
+            }
+            return {};
+          },
+          onEvent: () => {},
+          onClose: () => {},
+          close: () => {},
+        };
+      });
+      let release = () => {};
+      let entered = () => {};
+      const held = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const lock =
+        stage === 'lock'
+          ? workspaceLocks.withWorkspaceProcessLock(
+              workspaceDir(root),
+              BROWSER_LOCK,
+              async () => {
+                entered();
+                await gate;
+              },
+              { external: true },
+            )
+          : Promise.resolve();
+      if (stage === 'lock') await held;
+      let waiting = () => {};
+      const contended = new Promise<void>((resolve) => {
+        waiting = resolve;
+      });
+      const originalLock = workspaceLocks.withWorkspaceProcessLock;
+      if (stage === 'lock')
+        vi.spyOn(workspaceLocks, 'withWorkspaceProcessLock').mockImplementation((directory, name, run, options) =>
+          originalLock(directory, name, run, { ...options, onHeld: waiting }),
+        );
+      const result = createStim({ projectRoot: root })
+        .run({ platform: 'web', signal: controller.signal })
+        .then(
+          (facts) => facts,
+          (error: unknown) => error,
+        );
+      if (stage === 'lock') {
+        await contended;
+        controller.abort();
+        release();
+      }
+      try {
+        expect(await result).toMatchObject({ code: 'STIM_CANCELLED' });
+        expect(navigations).toEqual(stage === 'verify' ? ['Page.navigate'] : []);
+        expect(spawnBrowser).not.toHaveBeenCalled();
+        expect(readWebRecord(root)).toMatchObject({
+          pid: owned.pid,
+          url: stage === 'verify' ? 'http://localhost:8901/cancelled' : owned.url,
+        });
+      } finally {
+        release();
+        await lock;
+      }
+    },
+  );
+
+  test('a cancelled new web launch drains its registered supervisor and browser', async () => {
+    upsertProject(root, { settings: { web: { url: 'http://localhost:8901/cancelled' } } });
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue('/fixture/chrome');
+    const controller = new AbortController();
+    const launched: Array<Pick<WebRecord, 'pid' | 'processToken'>> = [];
+    let registration: Promise<void> | undefined;
+    setExecutor(
+      makeExecutor({
+        spawn: (_file, args = []) => {
+          const supervisor = nodeProcess("process.on('SIGTERM', () => process.exit(0)); setInterval(() => {}, 1000);");
+          const chrome = nodeProcess('setInterval(() => {}, 1000);');
+          const supervisorPid = supervisor.pid;
+          const chromePid = chrome.pid;
+          assert(supervisorPid !== undefined && chromePid !== undefined);
+          const supervisorToken = captureProcessToken(supervisorPid);
+          const chromeToken = captureProcessToken(chromePid);
+          assert(supervisorToken && chromeToken);
+          launched.push(
+            { pid: supervisorPid, processToken: supervisorToken },
+            { pid: chromePid, processToken: chromeToken },
+          );
+          registration = new Promise<void>((resolve) =>
+            setTimeout(() => {
+              const profile = webProfileDir(root);
+              mkdirSync(profile, { recursive: true });
+              symlinkSync(`${hostname()}-${chromePid}`, join(profile, 'SingletonLock'));
+              writeWebRecord(root, {
+                pid: supervisorPid,
+                processToken: supervisorToken,
+                chromeProcess: { pid: chromePid, processToken: chromeToken },
+                chrome: '/fixture/chrome',
+                headless: true,
+                viewport: 'desktop',
+                ignoreCertificateErrors: false,
+                cdpPort: Number(args[args.indexOf('--port') + 1]),
+                profile,
+                launchId: args[args.indexOf('--launch-id') + 1],
+                url: 'http://localhost:8901/cancelled',
+                startedAt: new Date().toISOString(),
+              });
+              controller.abort();
+              resolve();
+            }, 200),
+          );
+          return supervisor;
+        },
+      }),
+    );
+    try {
+      await expect(
+        createStim({ projectRoot: root }).run({ platform: 'web', signal: controller.signal }),
+      ).rejects.toMatchObject({ code: 'STIM_CANCELLED' });
+      expect(launched).toHaveLength(2);
+      expect(launched.every((record) => ['gone', 'different'].includes(inspectProcessIdentity(record)))).toBe(true);
+      expect(readWebRecord(root)).toBeNull();
+    } finally {
+      await registration;
+    }
+  });
+
+  test.each([
+    { kind: 'tooling', expo: false, manifest: JSON.stringify({ name: 'tools' }) },
+    { kind: 'Expo without web dependencies', expo: true, manifest: JSON.stringify({ dependencies: { expo: '*' } }) },
+    { kind: 'unreadable package manifest', expo: false, manifest: '{' },
+  ])('uses the configured page at a $kind root and verifies each owned navigation', async ({ manifest, expo }) => {
+    writeFileSync(join(root, 'package.json'), manifest);
+    if (expo) writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture', slug: 'fixture' } }));
+    const owned = { ...(await ownedBrowser()), targetId: 'owned-page' };
+    writeWebRecord(root, owned);
+    const url = 'http://localhost:8901/selected-page/';
+    upsertProject(root, { settings: { web: { url } } });
+    vi.stubEnv('STIM_METRO_PORT', '80');
+    vi.spyOn(chromeLookup, 'findChrome').mockReturnValue(owned.chrome);
+    const spawnBrowser = vi.fn<Executor['spawn']>();
+    setExecutor(makeExecutor({ spawn: spawnBrowser }));
+    let status = 200;
+    const navigations: unknown[] = [];
+    vi.spyOn(browserCdp, 'connectOwnedBrowser').mockResolvedValue({
+      async send(method, params) {
+        if (method === 'Target.getTargetInfo') return { targetInfo: { url: owned.url } };
+        if (method === 'Target.attachToTarget') return { sessionId: 'owned-session' };
+        if (method === 'Page.navigate') {
+          navigations.push(params?.url);
+          const writer = createNdjsonWriter(webLogFile(root));
+          if (status === 200) {
+            writer.write({ event: 'web_document_response', status });
+            writer.write({ event: 'web_page_loaded' });
+          } else {
+            writer.write({ event: 'web_document_failed', msg: `failed: HTTP ${status}` });
+          }
+          writer.close();
+        }
+        return {};
+      },
+      onEvent: () => {},
+      onClose: () => {},
+      close: () => {},
+    });
+
+    const loaded = await runWeb({ root, headed: false, note: () => {} });
+    expect(loaded).toMatchObject({
+      ok: true,
+      remedy: null,
+      facts: { url, launched: true, running: true, reused: true, metroPort: null, pid: owned.chromeProcess?.pid },
+    });
+    status = 503;
+    const progress: string[] = [];
+    const failed = await createStim({ projectRoot: root, onProgress: ({ message }) => progress.push(message) }).run({
+      platform: 'web',
+    });
+    expect(failed).toMatchObject({
+      platform: 'web',
+      facts: { url, launched: 'unverified', running: true, reused: true, metroPort: null },
+    });
+    expect(progress.join('\n')).toContain('The dev server failed to serve');
+    expect(navigations).toEqual([url, url]);
+    expect(spawnBrowser).not.toHaveBeenCalled();
+    expect(getProject(root)?.metroPort).toBe(null);
+    expect(readWebRecord(root)).toMatchObject({ url, pid: owned.pid, chromeProcess: owned.chromeProcess });
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process groups; skipped on win32)', () => {
+  test.each(['supervisor', 'chrome'])(
+    'cancelling after the %s signal preserves the profile and ownership records',
+    async (target) => {
+      const workspace = realpathSync(root);
+      const record = await ownedBrowser();
+      if (!record.chromeProcess) throw new Error('The fixture has no Chrome owner.');
+      const chromePid = record.chromeProcess.pid;
+      recordCreatedDevice('web', record.profile);
+      const controller = new AbortController();
+      const cancelled = new Error('cancel browser cleanup');
+      const pid = target === 'supervisor' ? record.pid : record.chromeProcess.pid;
+      const kill = process.kill.bind(process);
+      const signals = vi.spyOn(process, 'kill').mockImplementation((signalled, name) => {
+        const result = kill(signalled, name);
+        if (Math.abs(signalled) === pid && name === 'SIGTERM') controller.abort(cancelled);
+        return result;
+      });
+      try {
+        await expect(
+          teardownOwnedBrowser(workspace, {
+            deleteProfile: true,
+            operation: testContext({ signal: controller.signal }),
+          }),
+        ).rejects.toBe(cancelled);
+        expect(readWebRecord(workspace)).toEqual(record);
+        expect(readCreatedDevices().web.has(record.profile)).toBe(true);
+        expect(existsSync(record.profile)).toBe(true);
+        expect(getProject(workspace)?.ports?.['web-cdp']).toBe(record.cdpPort);
+        expect(
+          signals.mock.calls.some(([signalled, name]) => Math.abs(signalled) === chromePid && name === 'SIGTERM'),
+        ).toBe(target === 'chrome');
+        expect(signals.mock.calls.filter(([, name]) => name === 'SIGKILL')).toEqual([]);
+      } finally {
+        signals.mockRestore();
+      }
+    },
+  );
+
   test('stop closes the verified supervisor and Chrome group, clears lock files and keeps the profile', async () => {
     const workspace = realpathSync(root);
     const record = await ownedBrowser();
@@ -639,5 +1046,93 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
       cdpEndpoint: 'http://127.0.0.1:8950',
       url: 'http://localhost:8900/',
     });
+  });
+
+  async function lingeringChrome(
+    workspace: string,
+    memberArgs: (profile: string) => string[],
+  ): Promise<{ member: number }> {
+    const record = await ownedBrowser();
+    const script = `const m = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', ...JSON.parse(process.argv[1])], { stdio: 'ignore' }); console.log(m.pid); setTimeout(() => process.exit(0), 600);`;
+    const leader = spawn(process.execPath, ['-e', script, JSON.stringify(memberArgs(record.profile))], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    children.push(leader);
+    const member = await new Promise<number>((resolve) =>
+      leader.stdout!.once('data', (chunk) => resolve(Number(String(chunk).trim()))),
+    );
+    const chromeProcess = { pid: leader.pid!, processToken: captureProcessToken(leader.pid!)! };
+    await new Promise((resolve) => leader.once('exit', resolve));
+    expect(inspectProcessIdentity(chromeProcess)).toBe('gone');
+    rmSync(join(record.profile, 'SingletonLock'), { force: true });
+    writeWebRecord(workspace, { ...record, chromeProcess });
+    return { member };
+  }
+
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test('stop does not read a Chrome leader that was just killed and not yet reaped as a profile holder', async () => {
+    const workspace = realpathSync(root);
+    const record = await ownedBrowser();
+    const script = `const l = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); console.log(l.pid); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);`;
+    const reaper = spawn(process.execPath, ['-e', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    children.push(reaper);
+    const leader = await new Promise<number>((resolve) =>
+      reaper.stdout!.once('data', (chunk) => resolve(Number(String(chunk).trim()))),
+    );
+    const chromeProcess = { pid: leader, processToken: captureProcessToken(leader)! };
+    process.kill(leader, 'SIGKILL');
+    await vi.waitFor(() => expect(inspectProcessIdentity(chromeProcess)).toBe('gone'));
+    expect(pidExists(leader)).toBe(true);
+    rmSync(join(record.profile, 'SingletonLock'), { force: true });
+    symlinkSync(`${hostname()}-${leader}`, join(record.profile, 'SingletonLock'));
+    writeWebRecord(workspace, { ...record, chromeProcess });
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(readWebRecord(workspace)).toBeNull();
+  });
+
+  test('stop signals a lingering Chrome group whose member still runs on the profile', async () => {
+    const workspace = realpathSync(root);
+    const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}`]);
+    expect(alive(member)).toBe(true);
+    expect(await webFactsAsync(readWebRecord(workspace))).toMatchObject({ status: 'orphaned' });
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(alive(member)).toBe(false);
+    expect(readWebRecord(workspace)).toBeNull();
+  });
+
+  test('stop does not signal a process group that is not running on the profile, and clears the record', async () => {
+    const workspace = realpathSync(root);
+    const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}-other`]);
+    expect(alive(member)).toBe(true);
+    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
+    expect(alive(member)).toBe(true);
+    expect(readWebRecord(workspace)).toBeNull();
+  });
+});
+
+describe('groupRunsProfile', () => {
+  const listing = [
+    '  100 /Applications/Chrome --user-data-dir=/p/web --remote-debugging-port=9222',
+    '  200 /Applications/Chrome Helper --type=gpu --user-data-dir=/p/web',
+    '  300 /Applications/Chrome --user-data-dir=/p/web-2',
+  ].join('\n');
+
+  test.each([
+    [100, '/p/web', true],
+    [200, '/p/web', true],
+    [300, '/p/web', false],
+    [999, '/p/web', false],
+    [300, '/p/web-2', true],
+  ])('group %i on %s -> %s', (pgid, profile, expected) => {
+    expect(groupRunsProfile(listing, pgid, profile)).toBe(expected);
   });
 });

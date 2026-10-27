@@ -1,3 +1,7 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { resolvePackageJson } from '../workspace/project-files.ts';
+
 /**
  * The NDK's ninja is not long-path aware, so every object path it opens has to stay under Windows'
  * MAX_PATH. CMake names the object for a source outside its source directory after that source's
@@ -10,13 +14,42 @@
 export const ANDROID_OBJECT_PATH_MAX = 240;
 
 /**
- * Characters the longest known shortened object path adds to the project root and the ABI name,
- * measured on the bare e2e fixture at a 36-character root:
- * `\android\app\.cxx\stim-<16 hex>\Debug\<8 chars>\<abi>\safeareacontext_autolinked_build/CMakeFiles/react_codegen_safeareacontext.dir/<md5>/RNCSafeAreaViewShadowNode.cpp.o`.
- * At that root the path reaches ANDROID_OBJECT_PATH_MAX and CMake leaves it unshortened (341
- * characters); the same fixture builds at a 33-character root.
+ * CMake's single-config Ninja generator measures an object against CMAKE_OBJECT_PATH_MAX from
+ * `<target>.dir/./`, two characters longer than the directory the object is written to, so a
+ * shortened object path fits only up to this length.
+ * https://github.com/Kitware/CMake/blob/v3.22.1/Source/cmGlobalNinjaGenerator.cxx#L1005-L1013
  */
-export const LONGEST_ANDROID_OBJECT_PATH_TAIL = 198;
+const LONGEST_SHORTENED_OBJECT_PATH = ANDROID_OBJECT_PATH_MAX - './'.length;
+
+export interface AndroidLongestObject {
+  target: string;
+  /** Characters the shortened object path adds to the project root and the ABI name. */
+  tail: number;
+}
+
+/**
+ * `\android\app\.cxx\<4 hex>\Debug\<8 chars>\<abi>\safeareacontext_autolinked_build/CMakeFiles/react_codegen_safeareacontext.dir/<md5>/RNCSafeAreaViewShadowNode.cpp.o`,
+ * measured on the bare e2e fixture and on trailhead (Expo SDK 58, RN 0.88).
+ */
+export const SAFE_AREA_CONTEXT_OBJECT: AndroidLongestObject = { target: 'react_codegen_safeareacontext', tail: 181 };
+
+/**
+ * react-native-gesture-handler 3 compiles shadow nodes from its `shared/shadowNodes` directory into
+ * its codegen library:
+ * `\android\app\.cxx\<4 hex>\Debug\<8 chars>\<abi>\rngesturehandler_codegen_autolinked_build/CMakeFiles/react_codegen_rngesturehandler_codegen.dir/<md5>/RNGestureHandlerDetectorShadowNode.cpp.o`,
+ * measured on trailhead. https://github.com/appandflow/stim/issues/3641
+ */
+export const GESTURE_HANDLER_OBJECT: AndroidLongestObject = {
+  target: 'react_codegen_rngesturehandler_codegen',
+  tail: 208,
+};
+
+export function longestAndroidObject(root: string): AndroidLongestObject {
+  const gestureHandler = resolvePackageJson(root, 'react-native-gesture-handler');
+  return gestureHandler && existsSync(join(dirname(gestureHandler), 'shared', 'shadowNodes'))
+    ? GESTURE_HANDLER_OBJECT
+    : SAFE_AREA_CONTEXT_OBJECT;
+}
 
 /** The ABI name a build for every ABI has to fit; `stim android` narrows a build to the device's. */
 const LONGEST_ANDROID_ABI = 'armeabi-v7a';
@@ -24,6 +57,7 @@ const LONGEST_ANDROID_ABI = 'armeabi-v7a';
 export interface AndroidPathRoom {
   root: string;
   abi: string;
+  target: string;
   longest: number;
   maxRootLength: number;
 }
@@ -34,25 +68,45 @@ export function androidPathRoom(
     abi = null,
     variant = null,
     platform = process.platform,
-  }: { abi?: string | null; variant?: string | null; platform?: NodeJS.Platform } = {},
+    object = null,
+  }: {
+    abi?: string | null;
+    variant?: string | null;
+    platform?: NodeJS.Platform;
+    object?: AndroidLongestObject | null;
+  } = {},
 ): AndroidPathRoom | null {
   if (platform !== 'win32') return null;
+  const { target, tail: objectTail } = object ?? longestAndroidObject(root);
   const abiName = abi ?? LONGEST_ANDROID_ABI;
   const configurationLength = /release$/i.test(variant ?? '') ? 'RelWithDebInfo'.length : 'Debug'.length;
-  const tail = LONGEST_ANDROID_OBJECT_PATH_TAIL + configurationLength - 'Debug'.length + abiName.length;
+  const tail = objectTail + configurationLength - 'Debug'.length + abiName.length;
   const longest = root.length + tail;
-  if (longest < ANDROID_OBJECT_PATH_MAX) return null;
-  return { root, abi: abiName, longest, maxRootLength: ANDROID_OBJECT_PATH_MAX - 1 - tail };
+  if (longest <= LONGEST_SHORTENED_OBJECT_PATH) return null;
+  return { root, abi: abiName, target, longest, maxRootLength: LONGEST_SHORTENED_OBJECT_PATH - tail };
 }
 
-export function androidPathRoomMessage({ root, abi, longest, maxRootLength }: AndroidPathRoom): string {
+export function androidPathRoomMessage({ root, abi, target, longest, maxRootLength }: AndroidPathRoom): string {
   return (
     `The project root ${root} is ${root.length} characters, so the longest known Android native object path ` +
-    `(react_codegen_safeareacontext for ${abi}) reaches ${longest} characters, past the ${ANDROID_OBJECT_PATH_MAX - 1} ` +
-    `the NDK's ninja can be given on Windows; the root can be at most ${maxRootLength} characters.`
+    `(${target} for ${abi}) reaches ${longest} characters, past the ${LONGEST_SHORTENED_OBJECT_PATH} ` +
+    `CMake can shorten it to for the NDK's ninja on Windows; the root can be at most ${maxRootLength} characters.`
   );
 }
 
-export function androidPathRoomRemedy({ root }: AndroidPathRoom): string {
-  return `Map the project to a drive letter (\`subst X: "${root}"\`) and run Stim from X:\\, or move it under a shorter root.`;
+export function androidPathRoomRemedy({ maxRootLength }: AndroidPathRoom): string {
+  return (
+    `Move or clone the project to a real path of at most ${maxRootLength} characters, such as C:\\src\\<name>, ` +
+    'and run Stim there. A subst drive does not help: Node and Expo autolinking resolve it back to the long path.'
+  );
+}
+
+export function androidPathRoomRefusal(
+  root: string,
+  options: Parameters<typeof androidPathRoom>[1],
+): { code: 'STIM_PATH_TOO_LONG'; reason: string; remedy: string } | null {
+  const room = androidPathRoom(root, options);
+  return room
+    ? { code: 'STIM_PATH_TOO_LONG', reason: androidPathRoomMessage(room), remedy: androidPathRoomRemedy(room) }
+    : null;
 }

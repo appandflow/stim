@@ -24,6 +24,23 @@ struct TipsTests {
     """
   }
 
+  func archive(
+    _ id: String, path: String? = nil, removedAt: String = "2026-10-05T12:00:00Z", recordings: Int64 = 1024,
+    expires: String? = "2026-10-06T12:00:00Z"
+  ) throws -> ArchivedWorkspace {
+    var archive = try #require(
+      try JSONDecoder().decode(
+        StatusPayload.self,
+        from: Data(contentsOf: Bundle.module.url(forResource: "Fixtures/archived-status.json", withExtension: nil)!)
+      ).archived?.first)
+    archive.id = id
+    archive.projectRoot = path ?? "/archived/\(id)"
+    archive.removedAt = removedAt
+    archive.bytes.recordings = recordings
+    archive.expires.recordings = expires
+    return archive
+  }
+
   func realUsage(days: Int = 3, workspaces: Int = 3, builds: Int = 0) -> UsageRecord {
     var usage = UsageRecord()
     usage.days = (0..<days).map { "2026-10-\(10 + $0)" }
@@ -43,11 +60,16 @@ struct TipsTests {
     var inputs = TipInputs()
     inputs.machines = []
     inputs.hosting = []
-    inputs.macs = [mac]
+    inputs.peers = [mac]
     inputs.pairedPhones = 0
     inputs.phoneApp = true
     inputs.rows = 11
-    inputs.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":true}")]
+    inputs.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":2}")]
+    inputs.hasEASProject = true
+    inputs.hasMacosTarget = true
+    inputs.archived = [try archive("a")]
+    inputs.serverRunning = true
+    inputs.now = now
     for topic in TipTopic.allCases {
       #expect(Tips.applicable(topic, inputs: inputs))
       var negative = inputs
@@ -55,14 +77,28 @@ struct TipsTests {
       case .buildMachine: negative.hosting = ["mini"]
       case .phone: negative.pairedPhones = 1
       case .tutorial: negative.tutorialCompleted = true
-      case .hideWorkspaces: negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
+      case .hideWorkspaces:
+        negative.sidebar.hiddenWorkspaces = HiddenWorkspaces(paths: ["/one"])
+        negative.sidebar.statuses = [.live]
       case .statusFilter: negative.sidebar.statuses = [.live]
-      case .replay: negative.workspaces = [try workspace(fields: ",\"recording\":{\"enabled\":false}")]
+      case .replay: negative.archived = []
       case .hostedSimulators: negative.machines = ["mini"]
+      case .easProfile: negative.hasEASProject = false
+      case .macos:
+        negative.workspaces = [
+          try workspace(
+            fields: """
+              ,"macos":{"launchId":"m","product":"App","bundle":"/A.app","bundleId":"dev.a","executable":"/A.app/A",
+              "state":"running","build":{"state":"ok","startedAt":"2026-10-05T09:00:00.000Z"}}
+              """)
+        ]
+      case .logs: negative.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":0}")]
       }
       #expect(!Tips.applicable(topic, inputs: negative))
     }
     inputs.rows = 10
+    #expect(Tips.applicable(.hideWorkspaces, inputs: inputs))
+    inputs.sidebar.statuses = [.live]
     #expect(!Tips.applicable(.hideWorkspaces, inputs: inputs))
     inputs.pairedPhones = nil
     inputs.machines = nil
@@ -72,12 +108,45 @@ struct TipsTests {
     #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
     inputs.machines = []
     inputs.hosting = []
-    for macs: [TailnetMac]? in [nil, []] {
-      inputs.macs = macs
+    for peers: [TailnetMac]? in [nil, []] {
+      inputs.peers = peers
       #expect(!Tips.applicable(.buildMachine, inputs: inputs))
       #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
     }
-    inputs.workspaces = [try workspace()]
+  }
+
+  @Test func aLinuxPeerSuggestsBuildsButNeverHostedSimulators() {
+    var linux = TailnetMac(id: "box", hostName: "build-box", dnsName: "build-box.tail.test")
+    linux.os = .linux
+    var inputs = TipInputs()
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [linux]
+    #expect(Tips.applicable(.buildMachine, inputs: inputs))
+    #expect(!Tips.applicable(.hostedSimulators, inputs: inputs))
+    #expect(Tips.emptyState(gate: true, machines: [], settingsError: nil, selectedMachine: nil, peers: [linux]) == .addMachine)
+    #expect(Tips.preselected([mac, linux], hostedSimulators: false)?.id == linux.id)
+    #expect(Tips.preselected([mac, linux], hostedSimulators: true)?.id == mac.id)
+    #expect(Tips.preselected([linux], hostedSimulators: true) == nil)
+  }
+
+  @Test func replayOpensTheNewestArchiveWhoseRecordingsCanStillBePlayed() throws {
+    var inputs = TipInputs()
+    inputs.now = now
+    inputs.serverRunning = true
+    inputs.workspaces = [try workspace("/archived/recreated", fields: ",\"recording\":{\"enabled\":true}")]
+    inputs.archived = [
+      try archive("older", removedAt: "2026-10-04T12:00:00Z"),
+      try archive("empty", removedAt: "2026-10-05T15:00:00Z", recordings: 0),
+      try archive("expired", removedAt: "2026-10-05T14:00:00Z", expires: "2026-10-05T11:00:00Z"),
+      try archive("recreated", removedAt: "2026-10-05T13:00:00Z"),
+      try archive("playable", removedAt: "2026-10-05T12:00:00Z"),
+    ]
+    #expect(Tips.replayArchive(inputs)?.id == "playable")
+    inputs.serverRunning = false
+    #expect(Tips.replayArchive(inputs) == nil)
+    inputs.serverRunning = true
+    inputs.archived = [try archive("empty", recordings: 0), try archive("expired", expires: "2026-10-01T00:00:00Z")]
     #expect(!Tips.applicable(.replay, inputs: inputs))
   }
 
@@ -168,7 +237,7 @@ struct TipsTests {
     #expect(state == selected)
     #expect(
       Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now.addingTimeInterval(86400), calendar: calendar)
-        == .statusFilter)
+        == .hideWorkspaces)
     #expect(
       Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now.addingTimeInterval(2 * 86400), calendar: calendar)
         == .tutorial)
@@ -179,22 +248,77 @@ struct TipsTests {
     var inputs = TipInputs()
     #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
     inputs.tutorialCompleted = true
-    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .statusFilter)
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .hideWorkspaces)
+  }
+
+  @Test func generalRotationExcludesSpecializedTipsAndRecoversASavedSelection() throws {
+    var inputs = TipInputs()
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [mac]
+    inputs.phoneApp = true
+    inputs.pairedPhones = 0
+    inputs.hasEASProject = true
+    inputs.hasMacosTarget = true
+    inputs.archived = [try archive("a")]
+    inputs.serverRunning = true
+    inputs.now = now
+    inputs.workspaces = [try workspace(fields: ",\"logs\":{\"dir\":\"/l\",\"errorsSinceMarker\":2}")]
+    var state = TipState()
+    state.current = .init(topic: .phone, day: Tips.day(now, calendar: calendar))
+    #expect(
+      Tips.available(inputs: inputs, state: state, discoveries: [:], now: now, calendar: calendar)
+        == [.tutorial, .buildMachine, .hideWorkspaces, .replay, .logs])
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .buildMachine)
+  }
+
+  @Test func theTutorialTipStopsWhenTheTutorialIsNotOffered() {
+    var state = TipState()
+    var inputs = TipInputs()
+    inputs.tutorialOffered = false
+    #expect(!Tips.applicable(.tutorial, inputs: inputs))
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) != .tutorial)
   }
 
   @Test func nextWrapsInCatalogOrderAndOneApplicableTipHasNoNext() {
     var state = TipState()
     var inputs = TipInputs()
-    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
-    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .statusFilter)
-    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .hideWorkspaces)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
     inputs.sidebar.statuses = [.live]
     #expect(Tips.available(inputs: inputs, state: state, discoveries: [:], now: now, calendar: calendar) == [.tutorial])
     let before = state
-    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
     #expect(state == before)
     inputs.tutorialCompleted = true
     #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == nil)
+  }
+
+  @Test func previousWrapsAndSkipsUnavailableTipsWithoutChangingASingleTip() {
+    var inputs = TipInputs()
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [mac]
+    var state = TipState()
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(
+      Tips.move(direction: .backward, inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar)
+        == .hideWorkspaces)
+    #expect(
+      Tips.move(direction: .backward, inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar)
+        == .buildMachine)
+    #expect(
+      Tips.move(direction: .backward, inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    inputs.machines = ["mini"]
+    inputs.sidebar.statuses = [.live]
+    let before = state
+    #expect(
+      Tips.move(direction: .backward, inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(state == before)
+    state.closedDay = Tips.day(now, calendar: calendar)
+    #expect(Tips.move(direction: .backward, inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == nil)
   }
 
   @Test func closingPersistsAndHidesOnlyForThatCalendarDay() {
@@ -206,11 +330,11 @@ struct TipsTests {
       store.close(now: now, calendar: calendar)
       var reloaded = TipStore(defaults: defaults).state
       #expect(Tips.select(inputs: TipInputs(), state: &reloaded, discoveries: [:], now: now, calendar: calendar) == nil)
-      #expect(Tips.next(inputs: TipInputs(), state: &reloaded, discoveries: [:], now: now, calendar: calendar) == nil)
+      #expect(Tips.move(inputs: TipInputs(), state: &reloaded, discoveries: [:], now: now, calendar: calendar) == nil)
       #expect(
         Tips.select(
           inputs: TipInputs(), state: &reloaded, discoveries: [:], now: now.addingTimeInterval(86400), calendar: calendar)
-          == .statusFilter)
+          == .hideWorkspaces)
     }
   }
 
@@ -252,27 +376,33 @@ struct TipsTests {
     for offset in 0..<TipTopic.allCases.count {
       let day = now.addingTimeInterval(Double(offset) * 86400)
       #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: day, calendar: calendar) != .phone)
-      #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: day, calendar: calendar) != .phone)
+      #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: day, calendar: calendar) != .phone)
     }
   }
 
   @Test func nextTipDoesNotRetireTopicsThatShareStateWithDiscovery() {
     var inputs = TipInputs()
-    inputs.pairedPhones = 0
-    inputs.phoneApp = true
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [mac]
+    inputs.tutorialCompleted = true
     var state = TipState()
-    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .phone)
-    #expect(Tips.next(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .tutorial)
+    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .buildMachine)
+    #expect(Tips.move(inputs: inputs, state: &state, discoveries: [:], now: now, calendar: calendar) == .hideWorkspaces)
     let later = now.addingTimeInterval(30 * 86400)
-    #expect(Tips.available(inputs: inputs, state: state, discoveries: [:], now: later, calendar: calendar).contains(.phone))
+    #expect(
+      Tips.available(inputs: inputs, state: state, discoveries: [:], now: later, calendar: calendar).contains(.buildMachine))
   }
 
   @Test func aDiscoveryTakenTopicIsSkippedAndAnyNoticeHidesTheCard() {
     var inputs = TipInputs()
-    inputs.pairedPhones = 0
-    inputs.phoneApp = true
+    inputs.machines = []
+    inputs.hosting = []
+    inputs.peers = [mac]
+    inputs.tutorialCompleted = true
     var state = TipState()
-    #expect(Tips.select(inputs: inputs, state: &state, discoveries: [.away: .shown], now: now, calendar: calendar) == .tutorial)
+    #expect(
+      Tips.select(inputs: inputs, state: &state, discoveries: [.newMac: .shown], now: now, calendar: calendar) == .hideWorkspaces)
     #expect(Tips.visible(gate: true, noticeCount: 0, closedDay: nil, now: now, calendar: calendar))
     #expect(!Tips.visible(gate: true, noticeCount: 1, closedDay: nil, now: now, calendar: calendar))
     #expect(!Tips.visible(gate: false, noticeCount: 0, closedDay: nil, now: now, calendar: calendar))
@@ -281,14 +411,14 @@ struct TipsTests {
 
   @Test func emptyStateRequiresKnownEmptyMachinesSuccessfulSettingsAndLocalSelection() {
     func variant(
-      gate: Bool = true, machines: [String]? = [], error: String? = nil, selected: String? = nil, macs: [TailnetMac]? = nil
+      gate: Bool = true, machines: [String]? = [], error: String? = nil, selected: String? = nil, peers: [TailnetMac]? = nil
     ) -> BuildMachineEmptyState? {
-      Tips.emptyState(gate: gate, machines: machines, settingsError: error, selectedMachine: selected, macs: macs)
+      Tips.emptyState(gate: gate, machines: machines, settingsError: error, selectedMachine: selected, peers: peers)
     }
-    #expect(variant(macs: [mac]) == .addMachine)
-    #expect(variant(macs: []) == .tailscale)
-    #expect(variant(macs: nil) == nil)
-    #expect(variant(gate: false, macs: [mac]) == nil)
+    #expect(variant(peers: [mac]) == .addMachine)
+    #expect(variant(peers: []) == .tailscale)
+    #expect(variant(peers: nil) == nil)
+    #expect(variant(gate: false, peers: [mac]) == nil)
     #expect(variant(machines: ["mini"]) == nil)
     #expect(variant(machines: nil) == nil)
     #expect(variant(error: "unavailable") == nil)

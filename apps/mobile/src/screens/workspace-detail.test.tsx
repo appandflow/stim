@@ -54,6 +54,7 @@ jest.mock('@/hooks/archive-detail', () => ({
   useArchiveDetail: () => mockDetail,
 }));
 jest.mock('@/hooks/app-foreground', () => ({ useAppForeground: () => true }));
+jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
 jest.mock('@/hooks/build-plans', () => ({ useWorkspaceBuildPlans: () => () => undefined }));
 jest.mock('@/hooks/workspace-actions', () => ({ useAction: () => ({ available: null, pending: null }) }));
 jest.mock('@/hooks/recents', () => ({ useRecents: () => ({ touch: () => {} }) }));
@@ -70,6 +71,7 @@ jest.mock('@/components/connection-banner', () => ({ ConnectionBanner: () => nul
 jest.mock('@/components/header-title', () => ({ HeaderTitle: () => null }));
 jest.mock('@/components/read-only', () => ({ readOnlyReason: () => '' }));
 jest.mock('@/components/build-progress', () => ({ PhaseBar: () => null }));
+jest.mock('@/components/stim-build-animation', () => ({ StimBuildAnimation: () => null }));
 jest.mock('@/components/agent-sessions', () => ({ AgentSessionLine: () => null }));
 jest.mock('@/components/text', () => ({
   Text: jest.requireActual<typeof import('react-native')>('react-native').Text,

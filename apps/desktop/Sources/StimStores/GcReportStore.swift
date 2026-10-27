@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import StimKit
 
-/// The one `stim gc --json` report the Machine page, the metrics and the autopilot share. At most one run is in
+/// The GC dry-run report the Machine page, the metrics and the autopilot share. At most one run is in
 /// flight; a caller that asks while it runs gets its result.
 @MainActor @Observable
 public final class GcReportStore {
@@ -27,8 +27,8 @@ public final class GcReportStore {
     self.settleDelay = settleDelay
   }
 
-  public convenience init(cli: Task<StimCLI, Never>) {
-    self.init(run: { try await cli.value.gcReport() })
+  public convenience init(reader: GcReportReader) {
+    self.init(run: { try await reader.refresh() })
   }
 
   public var report: GcReport? { latest.value }
@@ -39,12 +39,6 @@ public final class GcReportStore {
   public func report(maxAge: TimeInterval) async -> GcReport? {
     if let report, let at, at >= changedAt, now().timeIntervalSince(at) < maxAge { return report }
     return await current().value
-  }
-
-  /// The result of a run that started at or after `date`, so it saw everything that happened before then.
-  public func report(startedAfter date: Date) async -> GcReport? {
-    if let report, let at, at >= max(changedAt, date) { return report }
-    return await current(after: date).value
   }
 
   public func refresh() {
@@ -65,8 +59,8 @@ public final class GcReportStore {
     }
   }
 
-  private func current(after date: Date = .distantPast) -> Task<GcReport?, Never> {
-    if let task, taskStartedAt >= max(changedAt, date) { return task }
+  private func current() -> Task<GcReport?, Never> {
+    if let task, taskStartedAt >= changedAt { return task }
     let previous = task
     let startedAt = now()
     let run = run

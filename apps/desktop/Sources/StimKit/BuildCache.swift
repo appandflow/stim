@@ -51,25 +51,6 @@ public struct LastBuild: Decodable, Hashable, Sendable {
     }
   }
 
-  /// A plain-language line for a run that considered offloading and built here, such as
-  /// `Built here: janics-mac-mini was busy`, from the first machine `offloadFallback` names; `reason` is the whole of it.
-  public var fallbackLine: (text: String, reason: String)? {
-    guard let reason = offloadFallback, !reason.isEmpty else { return nil }
-    guard let match = try? Regex("^([A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]{1,5})?): (.+)$").wholeMatch(in: reason),
-      let machine = match.output[1].substring, let rest = match.output[2].substring
-    else { return ("Built here: offload skipped", reason) }
-    let words: [([String], String)] = [
-      (["busy"], "was busy"), (["no less loaded"], "was no less loaded"), (["capacity unknown"], "runs an older stim-server"),
-      (["Stim build "], "was on a different Stim build"),
-      (["CPU ", "Xcode ", "simulator SDK ", "CocoaPods ", "JDK "], "has a different toolchain"),
-      (["no iPhone simulator ", "no Android SDK", "no NDK ", "no build-tools ", "no platform "], "is missing the SDK"),
-    ]
-    let why =
-      words.first { $0.0.contains { rest.hasPrefix($0) } }?.1
-      ?? (rest.contains(" GB free, needs ") ? "is low on disk" : "failed")
-    return ("Built here: \(machineName(String(machine))) \(why)", reason)
-  }
-
   public var endedAt: Date? { parseTimestamp(finishedAt ?? startedAt) }
 }
 
@@ -204,7 +185,7 @@ public struct BuildHistory: Decodable, Hashable, Sendable {
   }
 }
 
-/// The payload of `stim ios|android|macos --plan --json`.
+/// The shared iOS, Android or macOS next-build report.
 public struct BuildPlan: Decodable, Hashable, Sendable {
   public var platform: String
   public var fingerprint: String?
@@ -275,12 +256,9 @@ extension Build {
     }
   }
 
-  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run. An older stim sends
-  /// no `outcomeKnown`; its outcome is settled from prebuild, pods, compile or install on.
+  /// Until the run knows its outcome, the CLI reports the outcome of the project's previous run.
   public var outcomeLabel: String? {
-    guard let outcome else { return nil }
-    let settled = outcomeKnown ?? !["prepare", "cache-lookup", "wait", "device"].contains(phase)
-    guard settled else { return nil }
+    guard let outcome, outcomeKnown == true else { return nil }
     switch outcome {
     case "hit": return "Cache hit"
     case "cold": return missReason == nil ? "Cold build" : "Cache miss"

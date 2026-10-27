@@ -3,7 +3,7 @@ import Foundation
 /// What the phone app flag decides, one function per place that shows something about phones. A view asks here
 /// instead of testing the flag itself, so each entry point has one tested answer.
 public enum PhoneApp {
-  /// The sidebar footer button that shows the phone server's state and opens the Phones page.
+  /// The sidebar footer button that shows the phone server's state and opens the Paired Devices page.
   public static func showsSidebarButton(phoneApp: Bool, servesPhones: Bool) -> Bool { phoneApp && servesPhones }
 
   /// Whether the server Desktop starts also listens on this Mac's Tailscale addresses. Only the phone app serving
@@ -27,6 +27,13 @@ public enum PhoneApp {
         ? "reconnect the phone viewer to verify the server's capture access" : "reopen the viewer to verify capture access"
       return
         "Allow this Stim app in the system dialog. After granting access, \(verify); if macOS asks for a relaunch, follow its instructions."
+    }
+
+    public static func screenPermissionDone(allowed: Bool, phoneApp: Bool) -> String {
+      let phone = phoneApp ? " Then reconnect the phone viewer." : ""
+      return allowed
+        ? "If the preview stays blank, relaunch Stim so macOS applies the new access.\(phone)"
+        : "Allow the missing access any time from Stim's Native App Viewer menu or System Settings, then relaunch Stim if the preview stays blank.\(phone)"
     }
 
     public static func viewerAppError(phoneApp: Bool) -> String {

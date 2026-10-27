@@ -4,18 +4,21 @@ import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots
 import {
   getConcurrencyLimits,
   getConfigDir,
+  getPlatformDeviceLimits,
   loadConfig,
+  withConfigLockAsync,
   type Config,
   type ProjectRecord,
 } from '../workspace/config.ts';
 import {
   iosRuntimeMatches,
   listAllIosSims,
+  listAllIosSimsAsync,
   listIosDeviceTypes,
   parseRuntimeVersion,
   type IosRuntime,
 } from '../devices/ios.ts';
-import { listAdbDevices, type SystemImage } from '../devices/android.ts';
+import { listAdbDevices, listAdbDevicesAsync, type SystemImage } from '../devices/android.ts';
 import { workspaceId } from '@stim-cli/core';
 import { automaticMachineEnabled } from '@stim-cli/core/state';
 import { formatElapsed, phaseLine } from '../command-output.ts';
@@ -31,10 +34,18 @@ import {
   type ClaimHolder,
 } from '../ownership-claim.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace-process-lock.ts';
-import { projectDeviceReclaimIdleMinutes } from '../workspace/settings.ts';
-import { canonicalPath } from '../commands/gc/paths.ts';
+import { deviceReclaimIdleMinutesSetting } from '../workspace/settings.ts';
+import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
-import type { BuildWaitingFor, SettingScope } from '@stim-cli/core/state';
+import type { StimContext } from '@stim-cli/core';
+import type {
+  BuildWaitingFor,
+  HostedLocalPlatformCounts,
+  SettingScope,
+  StatusCapacity,
+  StatusDeviceSlotHolder,
+  StatusPlatformDeviceSlots,
+} from '@stim-cli/core/state';
 
 type SimRecord = ReturnType<typeof listAllIosSims>[number];
 type DeviceTypeInfo = ReturnType<typeof listIosDeviceTypes>[number];
@@ -199,21 +210,71 @@ function inventoryKeys(inventory: DeviceInventory, exclude: DeviceCountExclusion
   return liveOwnedDeviceKeys({ ...inventory, adbEmulators: liveEmulatorPorts(inventory.adb), exclude });
 }
 
-function atCapacityRefusal(count: number, max: number): CapacityRefusal {
+type CappedPlatform = 'ios' | 'android';
+
+/** A cap a boot must fit: `count` of `max` are taken. `platform` is set for a per-platform cap. */
+export interface DeviceLimit {
+  setting: string;
+  noun: string;
+  count: number;
+  max: number;
+  platform?: CappedPlatform;
+}
+
+const PLATFORM_CAPS: Record<CappedPlatform, { setting: string; noun: string }> = {
+  ios: { setting: 'concurrency.maxIosDevices', noun: 'iOS simulator' },
+  android: { setting: 'concurrency.maxAndroidDevices', noun: 'Android emulator' },
+};
+
+function isCappedPlatform(platform: string): platform is CappedPlatform {
+  return platform === 'ios' || platform === 'android';
+}
+
+function platformCount(keys: Set<string>, platform: CappedPlatform): number {
+  return [...keys].filter((key) => key.startsWith(`${platform}:`)).length;
+}
+
+/** The caps that apply to a boot on `platform` given the booted `keys`, the platform's own cap first. */
+function deviceLimits(keys: Set<string>, platform: string, max: number, platformMax: number): DeviceLimit[] {
+  const limits: DeviceLimit[] = [];
+  if (platformMax > 0 && isCappedPlatform(platform))
+    limits.push({ ...PLATFORM_CAPS[platform], count: platformCount(keys, platform), max: platformMax, platform });
+  if (max > 0) limits.push({ setting: 'concurrency.maxDevices', noun: 'device', count: keys.size, max });
+  return limits;
+}
+
+/** Whether a queued waiter is held back by its own platform cap, so it does not hold up the runs behind it. */
+function platformWalled(
+  keys: Set<string>,
+  waiter: ClaimHolder,
+  platformMax: Partial<Record<CappedPlatform, number>>,
+): boolean {
+  const platform = String(waiter.details.platform);
+  if (!isCappedPlatform(platform)) return false;
+  const cap = platformMax[platform] ?? 0;
+  return cap > 0 && platformCount(keys, platform) >= cap;
+}
+
+/** The first cap with no room left, or the first cap when all have room (for a run waiting behind another). */
+function bindingLimit(limits: DeviceLimit[]): DeviceLimit | undefined {
+  return limits.find((limit) => limit.count >= limit.max) ?? limits[0];
+}
+
+function atCapacityRefusal({ count, max, setting, noun }: DeviceLimit): CapacityRefusal {
   return {
     code: 'STIM_AT_CAPACITY',
     message:
       count < max
-        ? `${count}/${max} Stim devices are in use, but another run is ahead in the device slot queue.`
-        : `${count} Stim device(s) are already booted and concurrency.maxDevices is ${max}, so booting another would exceed the cap.`,
-    remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+        ? `${count}/${max} Stim ${noun}s are in use, but another run is ahead in the device slot queue.`
+        : `${count} Stim ${noun}(s) are already booted and ${setting} is ${max}, so booting another would exceed the cap.`,
+    remedy: `stop an environment (stim stop) or raise ${setting}`,
   };
 }
 
 function uncountedRefusal(error: unknown): CapacityRefusal {
   return {
     code: 'STIM_NO_DEVICE',
-    message: `concurrency.maxDevices is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
+    message: `A device cap (concurrency.maxDevices, concurrency.maxIosDevices or concurrency.maxAndroidDevices) is set, and Stim could not count the booted devices: ${(error as Error)?.message || error}`,
     remedy: `Listing devices times out when the machine is overloaded: retry once the load falls. Otherwise run \`stim doctor\` to check the simulator and adb toolchains, and check that ${join(getConfigDir(), 'config.json')} and ${bootingDevicesRoot()} are readable.`,
   };
 }
@@ -224,6 +285,53 @@ function listed<T>(source: Listing<T>, empty: T, absent: (error: unknown) => boo
   } catch (error) {
     if (absent(error)) return empty;
     throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+async function listedAwait<T>(
+  read: () => T | Promise<T>,
+  empty: T,
+  absent: (error: unknown) => boolean = () => false,
+): Promise<T> {
+  try {
+    return (await read()) ?? empty;
+  } catch (error) {
+    if (absent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+type AsyncListing<T> = T | (() => T | Promise<T>);
+
+interface AsyncInventorySources {
+  sims?: AsyncListing<SimRecord[]>;
+  adb?: AsyncListing<AdbDevices>;
+  config?: AsyncListing<Config | null>;
+  booting?: AsyncListing<BootingDevice[]>;
+}
+
+async function readInventoryAsync({
+  sims = () => (process.platform === 'darwin' ? listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }) : []),
+  adb = () => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }),
+  config = loadConfig,
+  booting = readBootingDevices,
+}: AsyncInventorySources): Promise<DeviceInventory | CapacityRefusal> {
+  try {
+    const recorded = await listedAwait(() => (typeof config === 'function' ? config() : config), null);
+    return {
+      booting: await listedAwait(() => (typeof booting === 'function' ? booting() : booting), []),
+      sims: await listedAwait(() => (typeof sims === 'function' ? sims() : sims), [], toolAbsent),
+      adb: recordsOwnedEmulator(recorded)
+        ? await listedAwait(() => (typeof adb === 'function' ? adb() : adb), NO_ADB, toolAbsent)
+        : NO_ADB,
+      config: recorded,
+    };
+  } catch (error) {
+    if (error instanceof DeviceCountUnavailable) {
+      if (isClaimRefusal(error.cause)) throw error.cause;
+      return uncountedRefusal(error.cause);
+    }
+    throw error;
   }
 }
 
@@ -258,11 +366,67 @@ export function countLiveOwnedDevices(
   sources: InventorySources = {},
   { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
 ): number | { unknown: string } {
+  const counts = countLiveOwnedDevicesByPlatform(sources, { exclude });
+  return 'unknown' in counts ? counts : counts.ios + counts.android;
+}
+
+/** The counts of {@link countLiveOwnedDevices} split by platform. */
+export function countLiveOwnedDevicesByPlatform(
+  sources: InventorySources = {},
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): HostedLocalPlatformCounts | { unknown: string } {
   try {
     const inventory = readInventory(sources);
+    if ('code' in inventory) return { unknown: inventory.message };
+    const keys = inventoryKeys(inventory, exclude);
+    return { ios: platformCount(keys, 'ios'), android: platformCount(keys, 'android') };
+  } catch (error) {
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
+async function listedAsync<T>(source: () => Promise<T>, empty: T): Promise<T> {
+  try {
+    return await source();
+  } catch (error) {
+    if (toolAbsent(error)) return empty;
+    throw new DeviceCountUnavailable('', { cause: error });
+  }
+}
+
+export async function countLiveOwnedDevicesFrom(
+  sources: AsyncInventorySources,
+  { exclude = [] }: { exclude?: DeviceCountExclusion[] } = {},
+): Promise<number | { unknown: string }> {
+  try {
+    const inventory = await readInventoryAsync(sources);
     return 'code' in inventory ? { unknown: inventory.message } : inventoryKeys(inventory, exclude).size;
   } catch (error) {
     if (isClaimRefusal(error)) return { unknown: error.message };
+    throw error;
+  }
+}
+
+export async function countLiveOwnedDevicesAsync(operation: StimContext): Promise<number | { unknown: string }> {
+  try {
+    operation.signal.throwIfAborted();
+    const config = loadConfig();
+    const booting = readBootingDevices();
+    const [sims, adb] = await Promise.all([
+      process.platform === 'darwin'
+        ? listedAsync(() => listAllIosSimsAsync({ timeoutMs: LISTING_TIMEOUT_MS }), [])
+        : [],
+      recordsOwnedEmulator(config)
+        ? listedAsync(() => listAdbDevicesAsync({ timeoutMs: LISTING_TIMEOUT_MS }), NO_ADB)
+        : NO_ADB,
+    ]);
+    operation.signal.throwIfAborted();
+    return countLiveOwnedDevices({ config, booting, sims, adb });
+  } catch (error) {
+    operation.signal.throwIfAborted();
+    if (isClaimRefusal(error)) return { unknown: error.message };
+    if (error instanceof DeviceCountUnavailable) return { unknown: uncountedRefusal(error.cause).message };
     throw error;
   }
 }
@@ -294,6 +458,7 @@ export function deviceCapacityRefusal({
   project,
   slot = 'default',
   max,
+  platformMax,
   sims = [],
   adb = null,
   config = null,
@@ -303,68 +468,79 @@ export function deviceCapacityRefusal({
   project: ProjectRecord | null;
   slot: string;
   max: number;
+  platformMax: number;
   sims: SimRecord[];
   adb: AdbDevices | null;
   config: Config | null;
   booting: BootingDevice[];
-}> = {}): CapacityRefusal | null {
-  if (!max || max <= 0) return null;
+}> = {}): (CapacityRefusal & { max: number }) | null {
+  if (!(max && max > 0) && !(platformMax && platformMax > 0)) return null;
   const adbEmulators = liveEmulatorPorts(adb ?? NO_ADB);
   if (workspaceHasLiveDevice({ platform, project, slot, sims, adbEmulators })) return null;
-  const count = liveOwnedDeviceKeys({ sims, adbEmulators, config, booting }).size;
-  return count < max ? null : atCapacityRefusal(count, max);
+  const keys = liveOwnedDeviceKeys({ sims, adbEmulators, config, booting });
+  const full = deviceLimits(keys, platform ?? '', max ?? 0, platformMax ?? 0).find((limit) => limit.count >= limit.max);
+  return full ? { ...atCapacityRefusal(full), max: full.max } : null;
 }
 
 /**
  * The early `concurrency.maxDevices` check, before Metro starts or a device is created. It is advisory, so an
  * unknown count passes: `withDeviceBootAdmission` makes the binding decision when the boot starts.
  */
-export function checkDeviceCapacity({
+export async function checkDeviceCapacity({
   platform,
   project,
   slot = 'default',
   max,
+  platformMax = platform && isCappedPlatform(platform) ? getPlatformDeviceLimits()[platform] : 0,
   ...sources
 }: Partial<{
   platform: string;
   project: ProjectRecord | null;
   slot: string;
   max: number;
+  platformMax: number;
 }> &
-  InventorySources = {}): CapacityRefusal | null {
-  if (!max || max <= 0) return null;
-  let inventory: ReturnType<typeof readInventory>;
+  AsyncInventorySources = {}): Promise<(CapacityRefusal & { max: number }) | null> {
+  if (!(max && max > 0) && !(platformMax && platformMax > 0)) return null;
+  let inventory: Awaited<ReturnType<typeof readInventoryAsync>>;
   try {
-    inventory = readInventory(sources);
+    inventory = await readInventoryAsync(sources);
   } catch (error) {
     if (isClaimRefusal(error)) return null;
     throw error;
   }
   if ('code' in inventory) return null;
-  return deviceCapacityRefusal({ platform, project, slot, max, ...inventory });
+  return deviceCapacityRefusal({ platform, project, slot, max, platformMax, ...inventory });
 }
 
-export function peekDeviceSlots({
+export async function peekDeviceSlots({
   platform,
   project,
   slot = 'default',
   max = getConcurrencyLimits().maxDevices,
+  platformMax = getPlatformDeviceLimits()[platform],
   sources = {},
 }: {
   platform: 'ios' | 'android';
   project: ProjectRecord | null;
   slot?: string;
   max?: number;
-  sources?: InventorySources;
-}): { count: number | null; max: number; queued: number; localLive: boolean } {
+  platformMax?: number;
+  sources?: AsyncInventorySources;
+}): Promise<{ count: number | null; max: number; queued: number; localLive: boolean; limit?: string }> {
   try {
-    const inventory = readInventory(sources);
+    const inventory = await readInventoryAsync(sources);
     if ('code' in inventory) return { count: null, max, queued: 0, localLive: false };
     const owned = deviceSlotPlatforms(project, slot)?.[platform]?.owned === true;
+    const keys = inventoryKeys(inventory);
+    const limits = deviceLimits(keys, platform, max, platformMax);
+    const tightest = limits.length ? limits.reduce((a, b) => (b.max - b.count < a.max - a.count ? b : a)) : undefined;
     return {
-      count: inventoryKeys(inventory).size,
-      max,
-      queued: liveWaiters().length,
+      count: tightest?.count ?? keys.size,
+      max: tightest?.max ?? max,
+      queued: liveWaiters().filter(
+        (waiter) => !platformWalled(keys, waiter, { ...getPlatformDeviceLimits(), [platform]: platformMax }),
+      ).length,
       localLive:
         owned &&
         workspaceHasLiveDevice({
@@ -374,6 +550,7 @@ export function peekDeviceSlots({
           sims: inventory.sims,
           adbEmulators: liveEmulatorPorts(inventory.adb),
         }),
+      ...(tightest?.platform ? { limit: tightest.setting } : {}),
     };
   } catch (error) {
     if (!isClaimRefusal(error)) throw error;
@@ -387,8 +564,11 @@ export interface DeviceSlotWaitPolicy {
   signal?: AbortSignal;
   noWait?: boolean;
   displayName?: string;
+  reclaimIdleMinutes?: number;
   waitingFor?: (info: BuildWaitingFor | null) => void;
   onWait?: (ms: number) => void;
+  /** Called once admission lets the boot start, just before it runs. */
+  onBootStart?: () => void;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -401,35 +581,103 @@ export function deviceSlotWaitingLine({
   holders,
   elapsedMs,
   queue,
+  setting,
 }: {
   queue?: string;
   count: number;
   max: number;
   holders: string[];
   elapsedMs: number;
+  /** The per-platform cap the wait is on; absent for `concurrency.maxDevices`. */
+  setting?: string;
 }): string {
-  return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency${queue ? `; ${queue}` : ''}`;
+  return `${'device'.padEnd(11)} waiting for a device slot (${count}/${max} in use${setting ? ` by ${setting}` : ''}${holders.length ? `: ${holders.join(', ')}` : ''}), ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency${queue ? `; ${queue}` : ''}`;
 }
 
-function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
-  const names = new Map<string, string>();
-  for (const [root, project] of Object.entries(inventory.config?.projects ?? {})) {
-    for (const { platforms } of projectDeviceSlots(project)) {
+function unrecordedHolder(label: string): { label: string; workspace: null; slot: null } {
+  return { label, workspace: null, slot: null };
+}
+
+function slotHolders(inventory: DeviceInventory, keys: Set<string>): StatusDeviceSlotHolder[] {
+  const owners = new Map<string, { label: string; workspace: string | null; slot: string | null }>();
+  const projects = Object.entries(inventory.config?.projects ?? {});
+  const labels = workspaceLabels(projects.map(([root, project]) => ({ root, label: project.label })));
+  for (const [root, project] of projects) {
+    const label = labels.get(root) ?? basename(root);
+    for (const { slot, platforms } of projectDeviceSlots(project)) {
       if (platforms.ios?.deviceUdid)
-        names.set(deviceKey('ios', platforms.ios.deviceUdid), project.label || basename(root));
+        owners.set(deviceKey('ios', platforms.ios.deviceUdid), { label, workspace: root, slot });
       if (platforms.android?.avdName)
-        names.set(deviceKey('android', platforms.android.avdName), project.label || basename(root));
+        owners.set(deviceKey('android', platforms.android.avdName), { label, workspace: root, slot });
     }
   }
   for (const sim of inventory.sims) {
     const key = deviceKey('ios', sim.udid);
-    if (!names.has(key)) names.set(key, sim.name);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(sim.name));
   }
+  const booting = new Set<string>();
   for (const device of inventory.booting) {
     const key = deviceKey(device.platform, device.key);
-    if (!names.has(key)) names.set(key, device.displayName ?? device.key);
+    booting.add(key);
+    if (!owners.has(key)) owners.set(key, unrecordedHolder(device.displayName ?? device.key));
   }
-  return [...new Set([...keys].map((key) => names.get(key) ?? key.slice(key.indexOf(':') + 1)))].toSorted();
+  return [...keys]
+    .map((key): StatusDeviceSlotHolder => {
+      const { label, workspace, slot } = owners.get(key) ?? unrecordedHolder(key.slice(key.indexOf(':') + 1));
+      const platform = key.startsWith('android:') ? 'android' : 'ios';
+      return booting.has(key)
+        ? { platform, label, workspace, slot, booting: true }
+        : { platform, label, workspace, slot };
+    })
+    .toSorted((a, b) => a.label.localeCompare(b.label) || a.platform.localeCompare(b.platform));
+}
+
+function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
+  return [...new Set(slotHolders(inventory, keys).map((holder) => holder.label))].toSorted();
+}
+
+/**
+ * `concurrency.maxDevices` usage for status (the owned devices the cap counts and who holds each) and the usage of each
+ * per-platform cap that is set, from one inventory read. `sims` is the listing status already read; an unknown count
+ * reports why instead of failing.
+ */
+export async function deviceSlotUsages(
+  max: number,
+  platformMax: Partial<Record<CappedPlatform, number>>,
+  sources: AsyncInventorySources = {},
+): Promise<Pick<StatusCapacity, 'devices' | 'platformDevices'>> {
+  const capped: [CappedPlatform, number][] = [];
+  for (const platform of ['ios', 'android'] as const) {
+    const cap = platformMax[platform] ?? 0;
+    if (cap > 0) capped.push([platform, cap]);
+  }
+  const platformDevices = (count: (platform: CappedPlatform) => Partial<StatusPlatformDeviceSlots>) =>
+    capped.length
+      ? {
+          platformDevices: Object.fromEntries(
+            capped.map(([platform, cap]) => [platform, { max: cap, ...count(platform) }]),
+          ),
+        }
+      : {};
+  try {
+    const inventory = await readInventoryAsync(sources);
+    if ('code' in inventory)
+      return {
+        ...(max > 0 ? { devices: { max, inUse: null, unknown: inventory.message, holders: [] } } : {}),
+        ...platformDevices(() => ({ inUse: null, unknown: inventory.message })),
+      };
+    const keys = inventoryKeys(inventory);
+    return {
+      ...(max > 0 ? { devices: { max, inUse: keys.size, holders: slotHolders(inventory, keys) } } : {}),
+      ...platformDevices((platform) => ({ inUse: platformCount(keys, platform) })),
+    };
+  } catch (error) {
+    if (!isClaimRefusal(error)) throw error;
+    return {
+      ...(max > 0 ? { devices: { max, inUse: null, unknown: error.message, holders: [] } } : {}),
+      ...platformDevices(() => ({ inUse: null, unknown: error.message })),
+    };
+  }
 }
 
 function liveWaiters(): ClaimHolder[] {
@@ -478,7 +726,7 @@ function takeBootMarker(device: BootingDevice): ClaimHandle {
   if (attempt.acquired) return attempt.acquired;
   throw new DeviceAdmissionRefusal({
     code: 'STIM_NO_DEVICE',
-    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward concurrency.maxDevices.`,
+    message: `Another process holds ${bootingDevicesRoot()} exclusively, so this boot cannot be counted toward the device caps.`,
     remedy: 'Retry once that process finishes.',
   });
 }
@@ -508,7 +756,7 @@ async function admissionTransaction<T>(
     if (workspaceProcessLockError(error) !== 'timeout') throw error;
     throw new DeviceAdmissionRefusal({
       code: 'STIM_NO_DEVICE',
-      message: `Waited ${formatElapsed(lockWaitMs)} for other runs to finish counting booted devices for concurrency.maxDevices.`,
+      message: `Waited ${formatElapsed(lockWaitMs)} for other runs to finish counting booted devices for the device caps.`,
       remedy: 'Listing devices is slow, which usually means the machine is overloaded. Retry once the load falls.',
     });
   }
@@ -521,21 +769,25 @@ export async function withDeviceBootAdmission<T>(
   {
     root,
     max = getConcurrencyLimits().maxDevices,
+    platformMax = getPlatformDeviceLimits(),
     sources = {},
     lockWaitMs = ADMISSION_LOCK_WAIT_MS,
     out = () => {},
     waitMs = DEFAULT_DEVICE_SLOT_WAIT_MS,
     noWait = false,
     automatic = false,
-    displayName = basename(root),
+    displayName = workspaceDisplayLabel(root, loadConfig()),
+    reclaimIdleMinutes = deviceReclaimIdleMinutesSetting({}),
     now = Date.now,
     signal,
     sleep = (ms) => delay(ms, undefined, { signal }),
     waitingFor = () => {},
     onWait = () => {},
+    onBootStart = () => {},
   }: DeviceSlotWaitPolicy & {
     root: string;
     max?: number;
+    platformMax?: Partial<Record<CappedPlatform, number>>;
     sources?: InventorySources;
     lockWaitMs?: number;
     out?: (line: string) => void;
@@ -551,7 +803,11 @@ export async function withDeviceBootAdmission<T>(
   };
   signal?.throwIfAborted();
   requireMembership();
-  if (!max || max <= 0) return boot();
+  const ownCap = isCappedPlatform(device.platform) ? (platformMax[device.platform] ?? 0) : 0;
+  if (!(max > 0) && !(ownCap > 0)) {
+    onBootStart();
+    return boot();
+  }
   const workspace = workspaceId(root);
   device = { ...device, workspace, displayName };
   let ticket: ClaimHandle | undefined;
@@ -559,7 +815,9 @@ export async function withDeviceBootAdmission<T>(
   let started: number | undefined;
   let lastLine = -Infinity;
   let visibleWait = false;
-  let lastInventory = { count: 0, holders: [] as string[] };
+  let lastInventory: { limit: DeviceLimit; holders: string[] } | undefined;
+  let lastTurn = false;
+  let binding: DeviceLimit | undefined;
   let lastListed = -Infinity;
   let reclaimed = 0;
   let lastReclaim = -Infinity;
@@ -573,52 +831,62 @@ export async function withDeviceBootAdmission<T>(
             requireMembership();
             const waiters = liveWaiters();
             const first = waiters[0];
-            const turn = !first || first.claimId === ticket?.claimId;
+            const mine = waiters.findIndex((holder) => holder.claimId === ticket?.claimId);
+            const ahead = mine < 0 ? waiters : waiters.slice(0, mine);
             const admit = () => {
               const admitted = takeBootMarker(device);
               if (releaseClaim(ticket)) ticket = undefined;
               return { marker: admitted };
             };
-            const wait = ({ count, holders }: typeof lastInventory) => {
+            const wait = ({ limit, holders }: NonNullable<typeof lastInventory>, turn: boolean) => {
               const ticketId = ticket?.claimId;
               const position = ticketId
                 ? waiters.findIndex((holder) => holder.claimId === ticketId) + 1
                 : waiters.length + 1;
               const headName = first?.details.displayName ?? displayName;
               const queue = `queue position ${position}${position > 1 ? ' behind' : ', head'} ${headName}; queue: ${join(getConfigDir(), 'device-waits')}`;
-              if (noWait || waitMs === 0) throw new DeviceAdmissionRefusal(atCapacityRefusal(count, max));
+              if (noWait || waitMs === 0) throw new DeviceAdmissionRefusal(atCapacityRefusal(limit));
               if (started !== undefined && now() - started >= waitMs) {
                 throw new DeviceAdmissionRefusal({
                   code: 'STIM_AT_CAPACITY',
-                  message: `Waited ${formatElapsed(now() - started)} for a device slot; ${count}/${max} Stim devices are in use; ${queue}.`,
-                  remedy:
-                    'Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise concurrency.maxDevices.',
+                  message: `Waited ${formatElapsed(now() - started)} for a device slot; ${limit.count}/${limit.max} Stim ${limit.noun}s are in use (${limit.setting}); ${queue}.`,
+                  remedy: `Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise ${limit.setting}.`,
                 });
               }
               if (!ticket) {
                 ticket = takeWaitTicket(device, waiters);
                 started = now();
               }
-              return { count, holders, queue, reclaim: turn && count >= max };
+              const firstOfPlatform = ahead.every((holder) => holder.details.platform !== device.platform);
+              return { limit, holders, queue, reclaim: turn && firstOfPlatform && limit.count >= limit.max };
             };
-            if (ticket && !turn && now() - lastListed < INVENTORY_REFRESH_MS) {
+            if (ticket && lastInventory && ahead.length > 0 && !lastTurn && now() - lastListed < INVENTORY_REFRESH_MS) {
               const booting = sources.booting ?? readBootingDevices;
               const own = deviceKey(device.platform, device.key);
               const claims = typeof booting === 'function' ? booting() : booting;
               if (claims.some((entry) => deviceKey(entry.platform, entry.key) === own)) return admit();
-              return wait(lastInventory);
+              return wait(lastInventory, false);
             }
-            const inventory = readInventory(sources);
+            const inventory = await readInventoryAsync(sources);
             if ('code' in inventory) throw new DeviceAdmissionRefusal(inventory);
             const keys = inventoryKeys(inventory);
             const own = deviceKey(device.platform, device.key);
             const ownBooting = inventory.booting.some((entry) => deviceKey(entry.platform, entry.key) === own);
             if ((device.platform === 'ios' && keys.has(own)) || ownBooting) return admit();
             keys.delete(own);
-            if (keys.size < max && turn) return admit();
+            const limits = deviceLimits(keys, device.platform, max, ownCap);
+            const turn = ahead.every((waiter) => platformWalled(keys, waiter, platformMax));
+            if (turn && limits.every((limit) => limit.count < limit.max)) return admit();
             lastListed = now();
-            lastInventory = { count: keys.size, holders: deviceHolders(inventory, keys) };
-            return wait(lastInventory);
+            lastTurn = turn;
+            const limit = bindingLimit(limits);
+            if (!limit) return admit();
+            binding = limit;
+            const held = limit.platform
+              ? new Set([...keys].filter((key) => key.startsWith(`${limit.platform}:`)))
+              : keys;
+            lastInventory = { limit, holders: deviceHolders(inventory, held) };
+            return wait(lastInventory, turn);
           },
           lockWaitMs,
           out,
@@ -632,24 +900,38 @@ export async function withDeviceBootAdmission<T>(
         signal?.throwIfAborted();
         const elapsedMs = now() - started!;
         visibleWait = true;
-        waitingFor({ kind: 'device-slot', inUse: result.count, max, since: new Date(started!).toISOString() });
+        waitingFor({
+          kind: 'device-slot',
+          inUse: result.limit.count,
+          max: result.limit.max,
+          since: new Date(started!).toISOString(),
+        });
         if (now() - lastLine >= 10_000) {
           lastLine = now();
           out(
             deviceSlotWaitingLine({
-              count: result.count,
-              max,
+              count: result.limit.count,
+              max: result.limit.max,
               holders: result.holders,
               elapsedMs,
               queue: result.queue,
+              ...(result.limit.platform ? { setting: result.limit.setting } : {}),
             }),
           );
         }
+        signal?.throwIfAborted();
         if (result.reclaim && now() - lastReclaim >= 15_000) {
           lastReclaim = now();
           try {
-            const minutes = projectDeviceReclaimIdleMinutes(canonicalPath(root));
-            if (minutes > 0) reclaimed += await reclaimIdleDevice(root, minutes * 60_000, out, now, skippedReclaims);
+            if (reclaimIdleMinutes > 0)
+              reclaimed += await reclaimIdleDevice(
+                root,
+                reclaimIdleMinutes * 60_000,
+                out,
+                now,
+                skippedReclaims,
+                result.limit.platform,
+              );
           } catch (error) {
             out(phaseLine('device', `could not reclaim an idle device: ${(error as Error)?.message || error}`));
           }
@@ -658,7 +940,13 @@ export async function withDeviceBootAdmission<T>(
       }
     } catch (error) {
       if (error instanceof DeviceAdmissionRefusal && error.code === 'STIM_AT_CAPACITY') {
-        recordCapacityRefusal({ platform: device.platform as 'ios' | 'android', max, workspace }, now());
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityRefusal(
+            { platform: device.platform as 'ios' | 'android', max: binding?.max ?? max, workspace },
+            at,
+          ),
+        ).catch(() => {});
       }
       throw error;
     } finally {
@@ -666,14 +954,24 @@ export async function withDeviceBootAdmission<T>(
       if (visibleWait) waitingFor(null);
       if (started !== undefined) {
         const ms = Math.max(0, Math.round(now() - started));
-        recordCapacityWait(
-          { platform: device.platform as 'ios' | 'android', ms, max, workspace, ...(reclaimed ? { reclaimed } : {}) },
-          now(),
-        );
+        const at = now();
+        await withConfigLockAsync(() =>
+          recordCapacityWait(
+            {
+              platform: device.platform as 'ios' | 'android',
+              ms,
+              max: binding?.max ?? max,
+              workspace,
+              ...(reclaimed ? { reclaimed } : {}),
+            },
+            at,
+          ),
+        ).catch(() => {});
         onWait(ms);
       }
     }
     requireMembership();
+    onBootStart();
     return await boot();
   } finally {
     releaseClaim(marker);

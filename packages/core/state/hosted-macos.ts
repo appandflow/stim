@@ -5,9 +5,17 @@ import type { HostedAppDelivery } from './hosted-app.ts';
 /** App slots one host offers; a slot names the host-assigned bundle id `<bundleId>.hosted<slot>`. */
 export const HOSTED_MACOS_APP_SLOTS = 64;
 
+/** The drivers `hosting.agentDriver` can name: `none` and the first-party driver packages stim-server ships. */
 export const HOSTED_AGENT_DRIVERS = ['none', 'agent-device'] as const;
 
 export type HostedAgentDriverName = (typeof HOSTED_AGENT_DRIVERS)[number];
+
+const AGENT_DRIVER_NAME = /^[a-z][a-z0-9-]{0,62}$/;
+
+/** A driver name a grant or access record can carry; a client resolves only the drivers it knows. */
+export function hostedAgentDriverName(value: unknown): value is string {
+  return typeof value === 'string' && value !== 'none' && AGENT_DRIVER_NAME.test(value);
+}
 
 /** What a host reports in a macOS offer: no simulator is created, so the choice is the host itself. */
 export interface HostedMacosChoice {
@@ -33,20 +41,23 @@ export interface HostedAgentLease {
 }
 
 /**
+ * Agent control a driver issues for one installed hosted app. `path` is the session's base route on the host,
+ * `scope` the driver's handle that limits it to this one app, and `lease`, for a driver that allocates leases,
+ * the scope that pins the allocation.
+ */
+export interface HostedAgentIssuedGrant {
+  driver: string;
+  path: string;
+  token: string;
+  scope: string;
+  lease?: HostedAgentLease;
+}
+
+/**
  * Agent control the host grants a client for one installed hosted app, sent only over that client's approved
  * device-host connection and never journaled. `none` means the host's `hosting.agentDriver` starts no driver.
- * `path` is the session's base route on the host, `scope` the driver's handle that limits it to this one app,
- * and `lease` the scope that pins the driver's lease allocation.
  */
-export type HostedAgentGrant =
-  | { driver: 'none' }
-  | {
-      driver: Exclude<HostedAgentDriverName, 'none'>;
-      path: string;
-      token: string;
-      scope: string;
-      lease: HostedAgentLease;
-    };
+export type HostedAgentGrant = { driver: 'none' } | HostedAgentIssuedGrant;
 
 /** `app.launch` and `app.attach` results; a host includes `agent` once the app is installed. */
 export type HostedAppLaunch = HostedAppDelivery & { agent?: HostedAgentGrant };
@@ -58,7 +69,7 @@ export type HostedAppLaunch = HostedAppDelivery & { agent?: HostedAgentGrant };
  */
 export type HostedAgentAccess =
   | { driver: 'none'; setting: 'hosting.agentDriver' }
-  | { driver: 'agent-device'; remoteConfig: string; command: string };
+  | { driver: string; remoteConfig: string; command: string };
 
 /** Where a workspace's macOS app runs when `stim macos --remote` placed it on another Mac. */
 export interface HostedMacosPlacement {
@@ -93,32 +104,38 @@ export function parseHostedMacosChoice(value: unknown): HostedMacosChoice | null
 export function parseHostedMacosDevice(value: unknown): HostedMacosDevice | null {
   if (
     !isJsonObject(value) ||
-    !parseHostedMacosChoice(value) ||
     !hostedMacosAppSlot(value.appSlot) ||
     Object.keys(value).some((key) => !['architecture', 'macosVersion', 'appSlot'].includes(key))
   )
     return null;
-  return value as unknown as HostedMacosDevice;
+  const choice = parseHostedMacosChoice(value);
+  return choice && { ...choice, appSlot: value.appSlot };
 }
 
 const AGENT_PATH = /^\/device-host\/agent\/[a-f0-9-]{36}\/$/;
 const LEASE_NAME = /^[A-Za-z0-9._-]{1,128}$/;
 const LEASE_DEVICE_KEY = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+@[1-9][0-9]{0,9}$/;
 
+function leaseName(value: unknown): value is string {
+  return typeof value === 'string' && LEASE_NAME.test(value);
+}
+
 function parseHostedAgentLease(value: unknown): HostedAgentLease | null {
+  if (!isJsonObject(value)) return null;
+  const { tenant, runId, clientId, deviceKey, backend } = value;
   if (
-    !isJsonObject(value) ||
-    Object.keys(value).length !== (value.backend === 'ios-instance' || value.backend === 'android-instance' ? 5 : 4) ||
-    ![value.tenant, value.runId, value.clientId].every((name) => typeof name === 'string' && LEASE_NAME.test(name)) ||
-    typeof value.deviceKey !== 'string' ||
-    !(value.backend === 'ios-instance'
-      ? /^ios:mobile:[a-fA-F0-9-]{36}$/.test(value.deviceKey)
-      : value.backend === 'android-instance'
-        ? /^android:mobile:emulator-[0-9]+$/.test(value.deviceKey)
-        : value.backend === undefined && LEASE_DEVICE_KEY.test(value.deviceKey))
+    Object.keys(value).length !== (backend === 'ios-instance' || backend === 'android-instance' ? 5 : 4) ||
+    !leaseName(tenant) ||
+    !leaseName(runId) ||
+    !leaseName(clientId) ||
+    typeof deviceKey !== 'string'
   )
     return null;
-  return value as unknown as HostedAgentLease;
+  if (backend === 'ios-instance')
+    return /^ios:mobile:[a-fA-F0-9-]{36}$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  if (backend === 'android-instance')
+    return /^android:mobile:emulator-[0-9]+$/.test(deviceKey) ? { tenant, runId, clientId, deviceKey, backend } : null;
+  return backend === undefined && LEASE_DEVICE_KEY.test(deviceKey) ? { tenant, runId, clientId, deviceKey } : null;
 }
 
 /** A grant naming a driver this client does not know is not usable; it parses as null. */
@@ -126,25 +143,20 @@ export function parseHostedAgentGrant(value: unknown): HostedAgentGrant | null {
   if (!isJsonObject(value)) return null;
   if (value.driver === 'none') return Object.keys(value).length === 1 ? { driver: 'none' } : null;
   if (
-    !HOSTED_AGENT_DRIVERS.includes(value.driver as HostedAgentDriverName) ||
+    !hostedAgentDriverName(value.driver) ||
     typeof value.path !== 'string' ||
     !AGENT_PATH.test(value.path) ||
     typeof value.token !== 'string' ||
     !/^[A-Za-z0-9_-]{32,256}$/.test(value.token) ||
     typeof value.scope !== 'string' ||
     !/^[A-Za-z0-9._:-]{1,256}$/.test(value.scope) ||
-    Object.keys(value).length !== 5
+    Object.keys(value).length !== (value.lease === undefined ? 4 : 5)
   )
     return null;
+  const grant = { driver: value.driver, path: value.path, token: value.token, scope: value.scope };
+  if (value.lease === undefined) return grant;
   const lease = parseHostedAgentLease(value.lease);
-  if (!lease) return null;
-  return {
-    driver: value.driver as Exclude<HostedAgentDriverName, 'none'>,
-    path: value.path,
-    token: value.token,
-    scope: value.scope,
-    lease: { ...lease },
-  };
+  return lease && { ...grant, lease: { ...lease } };
 }
 
 export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null {
@@ -154,7 +166,7 @@ export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null
       ? { driver: 'none', setting: 'hosting.agentDriver' }
       : null;
   if (
-    value.driver !== 'agent-device' ||
+    !hostedAgentDriverName(value.driver) ||
     typeof value.remoteConfig !== 'string' ||
     !isAbsolute(value.remoteConfig) ||
     typeof value.command !== 'string' ||
@@ -162,7 +174,7 @@ export function parseHostedAgentAccess(value: unknown): HostedAgentAccess | null
     Object.keys(value).length !== 3
   )
     return null;
-  return { driver: 'agent-device', remoteConfig: value.remoteConfig, command: value.command };
+  return { driver: value.driver, remoteConfig: value.remoteConfig, command: value.command };
 }
 
 export function parseHostedMacosPlacement(value: unknown): HostedMacosPlacement | null {

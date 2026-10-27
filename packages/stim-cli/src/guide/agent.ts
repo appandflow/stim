@@ -7,6 +7,9 @@ device with another workspace. Prefer plain output: it streams each phase and
 ends with the facts the next step needs. Use --json only when a script must
 parse a stable payload.
 
+For a native Xcode or Gradle app without React Native or Expo, read guide
+lifecycle native-ios or guide lifecycle native-android before running it.
+
 TWO WORKFLOWS
 
 WORKTREE is the default. Take SINGLE CHECKOUT only when the user asks to work in
@@ -84,7 +87,10 @@ the printed remedy and keep concurrent runs on the same STIM_HOME.
 Before native work, run doctor for the platform in scope when the STATUS block
 at the top of this topic says it is due. No block means doctor is current and
 Stim is up to date. In the worktree workflow, run it from the linked worktree
-so it also checks the source checkout. Follow each finding's printed remedy,
+so it also checks the source checkout. Doctor never loads fingerprint.config.js
+or runs an eas from the project tree; its fingerprint checks can still run
+installed Expo packages, including hoisted ones, as a build does. warm,
+start, ios and android run project code. Follow each finding's printed remedy,
 and read the routed topic below before acting on one you do not understand. If
 the stim resolved from PATH is older than another installation, fix PATH or the
 installation before continuing so commands and guidance match. Under host
@@ -103,7 +109,7 @@ other apps or other workspaces' devices.
   stim ios                             # or: stim android, or: stim web
 
 When Stim Desktop is installed, worktree warm, start, ios, android and web
-print "Open in Stim Desktop: <link>" on stderr (links.desktop in JSON). The
+print "Open in Stim: <link>" on stderr (links.desktop in JSON). The
 first time one prints it in a workspace, tell the user once: "You can watch
 this workspace in Stim Desktop: <link>". Do not repeat it after later
 commands. When no command prints it, do not mention Stim Desktop.
@@ -132,9 +138,9 @@ lifecycle builds.
 Agents never set STIM_ACCESS_TICKET, run stim-server setup, edit remote.*,
 server.* or hosting.* for the user, or approve requests. Read stim guide settings for
 Desktop access tickets and person-owned approval.
-Read stim guide settings to select a remote Mac. Keep a requested named
+Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy Mac or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Macs > Add or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add or Phones > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the
@@ -174,16 +180,23 @@ RULES DURING THE LOOP
   you do other work.
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
+- The build cache counts an installed package by its name and version, so it
+  cannot see a file you edit inside node_modules/. Change a dependency's native
+  code with a patch (patch-package or pnpm patch), which is hashed, or run ios or
+  android with --no-build-cache --remote-build local to compile it here. See
+  guide lifecycle builds.
 - For stale Metro transforms or file-map state, use stim start --reset-cache.
   It restarts only this app's verified owned Metro, preserving devices and other
   apps' caches. See guide lifecycle for reset scope.
-- Reload is not part of the normal workflow. Use stim reload on an owned local
-  simulator or emulator when an error screen remains after the fix, and on
+- Reload is not part of the normal workflow. Use stim reload when an error
+  screen remains after the fix on an owned local simulator or emulator, a
+  physical device (an EAS Simulator session when its app connects to Metro), and on
   Android after a failed first bundle load. It reloads JavaScript and never
   restarts the app. An iOS app whose first bundle failed never connects to
   Metro, so reload cannot reach it and says to use the device's own Reload
-  control. For a physical device that reached Metro, use agent-device metro
-  reload with the reported port. The detected iOS Local Network first-load
+  control. With no owned launch recorded, reload goes through this workspace's
+  Metro to the apps connected to it, so an app that never connected is not
+  reached. The detected iOS Local Network first-load
   remedy uses UI automation instead because that app never established a Metro
   connection.
 - A successful stim reload confirms that the request was sent, not that new
@@ -246,6 +259,12 @@ holds it across runs; stim device unlock gives it back. Never delete another
 workspace's lease file under ~/.stim/device-locks; gc --delete removes expired
 ones.
 
+stim device provision ios [udid] registers a phone with the project's Apple
+Developer team and creates or refreshes its Development profile. It changes
+the team's developer account, so never run it, and never pass it --yes,
+without the user's explicit go-ahead for that step. When ios --device fails
+on signing, report the remedy and ask the user.
+
 stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
 shut down the phone or uninstall the app.
@@ -261,6 +280,13 @@ activity prevent reclaim. The supervisor's own idle shutdown default is 30m.
 Read the holder names in progress and build.waitingFor in status; do not start
 replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 
+After maintenance.idleStopHours (default 6) with no Stim command, native run,
+Metro bundle or HMR request, agent-device command or live view, automatic
+maintenance stops the workspace as stim stop does. Device and app logs do not
+count. A device hosted on a remote Mac stops with it, and stim-server stops a hosted
+session whose client has been gone that long. After a long pause, run stim ios or android again before driving the
+app; see \`stim guide cleanup\`.
+
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.
 Stim leaves externally started Metro servers alone. Stop them with their original
@@ -270,16 +296,20 @@ reserved named ports, even outside the workspace. Read guide ports before use.
 
 Ask the user before these actions:
 
-- worktree remove, because it deletes the worktree and gives up its owned
-  device. It works with any linked worktree, warmed or not, without requiring
+- worktree remove of a worktree you did not create, because it deletes the
+  worktree and gives up its owned device. It works with any linked worktree, warmed or not, without requiring
   a Stim registry entry. Git-created branches are kept; a branch with an
   existing Stim ownership record is deleted only when it has no unique commits.
 - worktree remove --force, because it also discards uncommitted and untracked
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
   worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and clears the build outputs of every
-  workspace not in use. Run stim gc --json first and show
+  was closed), and lightens every workspace that is not building and ran
+  no ios, android or macos command in the last 15 minutes, a running dev
+  server included, by clearing its build outputs and its git-ignored
+  in-tree build directories, and deletes node_modules and ios/Pods of idle
+  linked worktrees, which the next start, ios or android restores with
+  worktree warm. Run stim gc --json first and show
   the user the entries its sections list (guide facts gc). gc --delete
   --cache all empties the shared build caches and those outputs instead, and
   gc --delete --cache workspaces clears only the outputs; both inspect
@@ -300,8 +330,10 @@ Ask the user before these actions:
 
 LEAVE THE MACHINE CLEAN
 
-Run stim stop when you pause or finish a task, and stim worktree remove once
-it is merged or abandoned. Never create a simulator or emulator by hand;
+Run stim stop when you pause or finish a task, and stim worktree remove on
+the worktree you created once its work is merged or abandoned. Keep scratch
+files, test output and downloads outside the worktree: a stray untracked file
+blocks that removal, and automatic cleanup then has to archive it. Never create a simulator or emulator by hand;
 every device comes from Stim. Before starting a new workspace, check stim
 status for an idle workspace to reuse and confirm capacity headroom instead of
 adding another. Never quit Device Hub or Simulator.app: on Xcode 27
@@ -373,12 +405,13 @@ FULL TOPIC LIST
   stim guide errors fallbacks     # swap, cache, and install notes on a release cache hit
   stim guide lifecycle            # the ordered flow, consent rules, and capacity
   stim guide lifecycle verification # reproduce, edit, verify the UI, and retain proof
-  stim guide lifecycle readiness  # add optional app readiness logs; no package required
+  stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
+  stim guide lifecycle tools      # device location|permission|push|network on the owned simulator or emulator
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide api                  # typed run, stop, diagnostics and cancellation from the main package
   stim guide facts                # the --json payloads
@@ -391,7 +424,7 @@ FULL TOPIC LIST
   stim guide cleanup              # what reclaims a device, and what deletes
   stim guide cleanup collector    # an unproven collector pid; why the app on a phone closed
   stim guide cleanup memory       # watchman and Gradle daemon memory; gc --cache watchman
-  stim guide tutorial             # tutorial sections and manual commands
+  stim guide tutorial             # tutorial sections
   stim guide tutorial run         # create the app and build in a tour worktree
   stim guide settings             # configuration files and supported keys`,
 };

@@ -1,280 +1,241 @@
-import {
-  TUTORIAL_FILES,
-  TUTORIAL_PINS,
-  TUTORIAL_PROMPTS,
-  TUTORIAL_RESTART_PROMPT,
-  TUTORIAL_STEPS,
-} from './tutorial-data.ts';
+import { TUTORIAL_VERSION } from '@stim-cli/core/state';
+import { TUTORIAL_BUNDLE_ID, TUTORIAL_REPO, TUTORIAL_RESTART_PROMPT } from './tutorial-data.ts';
 import type { GuideTopic } from './types.ts';
 
-const paths = `Use {base} = ~/stim-tutorial and {tour} = ~/stim-tutorial-tour unless the
-user named another parent folder. Expand ~ to the absolute home path when
-substituting inside quotes. Keep the tutorial outside the user's project.`;
+const paths = `Use {base} = ~/stim-tutorial unless the user named another folder. Expand ~
+to the absolute home path when substituting inside quotes. Keep the tutorial
+outside the user's own projects.`;
 
-function commands(id: string): string {
-  return TUTORIAL_STEPS.find((step) => step.id === id)!.manual.join('\n');
-}
+const local = `The tutorial runs on this Mac. Every time you run the tutorial app on iOS
+from a worktree of {base}, use stim ios --remote local --remote-build local,
+even when the user's settings would place the device or the build on another
+machine. Only an explicit request to build on another machine changes the build, with
+stim ios --remote local --remote-build "<machine>"; the device stays here.`;
+
+const screenshots = `Before and after screenshots, for a pull request: in each change's worktree,
+run the app on iOS before you edit anything, open it with agent-device and save
+the screen, then make the change and, once Fast Refresh applies it, save the
+same screen on the same device:
+
+  mkdir -p .expo/screenshots
+  export AGENT_DEVICE_STATE_DIR="<agentDevice.stateDir from stim status --json>"
+  agent-device open ${TUTORIAL_BUNDLE_ID} --platform ios --udid <ios.udid>
+  agent-device screenshot .expo/screenshots/before.png
+  (make the change)
+  agent-device screenshot .expo/screenshots/after.png
+
+Without agent-device, use xcrun simctl io <ios.udid> screenshot
+.expo/screenshots/before.png, using that worktree's udid from stim status --json,
+never booted. Take both with the same tool so they match in size. .expo/ is
+ignored and outside the native fingerprint, so the files are never committed,
+never change the build, and never block stim worktree remove. Keep each PNG under 1 MB.`;
 
 const tutorial: GuideTopic = {
-  summary: 'An iOS tutorial: isolated worktree, builds, devices, logs, agent actions, and cleanup',
+  summary: 'A cloned test app: a first build, a second change in parallel with a cache hit, and cleanup',
   sectionHint: 'run',
   preamble: () => `STIM TUTORIAL
 
-Create a small Expo app in its own repository and tour worktree. Follow the
-normal Stim flow on iOS, then inspect builds, cache reuse, device control,
-logs, agent actions, Fast Refresh, and cleanup.
+The tutorial clones ${TUTORIAL_REPO}, a tiny Expo app, into {base}; the clone is
+never run, and only the optional delete step removes it. The user then asks for a visual change, which runs in a
+linked worktree of {base} with its own simulator and Metro port. Only the clone,
+the optional share and the cleanup need this guide: the changes are ordinary
+requests, so follow stim guide agent for them, and check each change on the
+device.
 
-Run one section per user request. Then end the turn, say what to look at in
-Stim Desktop, and give the next prompt. Pause never means stim stop.
-"${TUTORIAL_PROMPTS.begin}" means stim guide tutorial run.
-"Continue the Stim tutorial: <section>" means stim guide tutorial <section>.
+${local}
+
+"Follow stim guide tutorial run" means stim guide tutorial run.
+"Follow stim guide tutorial finish" means stim guide tutorial finish.
+"Follow stim guide tutorial delete" means stim guide tutorial delete.
 "${TUTORIAL_RESTART_PROMPT}" means stim guide tutorial restart.
-
-Without Stim Desktop, use the simulator, stim status for the workspace and
-device, stim logs --errors for errors, and stim stats for build performance.
-Follow stim guide agent for doctor, errors, consent, and cleanup. Never pair
-phones, approve machines, or grant access on the user's behalf.
 
 ${paths}
 
-Start with stim guide tutorial run. For commands to type yourself, read
-stim guide tutorial manual. The first run needs network access unless the
-required npm and native dependencies are already cached.`,
+Never pair phones, approve machines, or grant access on the user's behalf.`,
   sections: {
     run: {
-      summary: 'Create or reuse the app, warm a tour worktree, and build on iOS',
+      summary: 'Clone the test app into a fresh folder and install its dependencies',
       body: () => `RUN THE TUTORIAL
 
 ${paths}
 
-Folder safety: create the base folder only if absent. Reuse an existing
-folder only if app.json's expo.extra.stimTutorial equals this guide's version,
-${JSON.parse(TUTORIAL_FILES['app.json']).expo.extra.stimTutorial}; skip creation and file writes when reusing it. For an existing non-tutorial
-folder or another tutorial version, stop and ask the user for another folder.
-Never overwrite or delete it.
+Folder safety: if {base} does not exist, clone into it. If it exists, reuse it
+only when all of these hold: app.json has expo.extra.stimTutorial equal to
+${TUTORIAL_VERSION}, git remote get-url origin names ${TUTORIAL_REPO}, git
+rev-parse --show-toplevel equals {base}, and git status --porcelain prints
+nothing. Then skip the clone, install its dependencies (npm ci), run stim doctor
+--platform ios there, and continue at PAUSE. For any other existing folder (another
+repository, local changes, no tutorial marker), stop and ask the user for
+another folder; never overwrite or delete it. Before cloning, check the parent folder:
+create it if absent, then run git -C <parent> rev-parse --is-inside-work-tree.
+If that succeeds, the folder is inside another repository: stop and ask the
+user for another folder. Never git add in the user's repo.
 
-For a new app, first check the selected parent folder: create it if absent,
-then run git -C <parent> rev-parse --is-inside-work-tree. If it succeeds, the
-folder is inside another repository: stop and ask the user for another folder.
-Never git add in the user's repo. Then, from the parent folder, run:
+Then, from the parent folder, run:
 
-  npx --yes create-expo-app@${TUTORIAL_PINS.createExpoApp} stim-tutorial --template ${TUTORIAL_PINS.template} --no-install --no-agents-md --yes
+  git clone https://github.com/${TUTORIAL_REPO}.git stim-tutorial
 
-Enter the base folder. Run stim guide tutorial app, write its three app files
-verbatim, and append its .gitignore lines. Then run:
+Check that app.json in the clone has expo.extra.stimTutorial equal to
+${TUTORIAL_VERSION}. If it does not, report the mismatch and stop; the user needs a newer Stim.
+Enter the clone and install its dependencies (npm ci) so the worktrees made for
+the changes inherit them, then run stim doctor --platform ios there: it registers
+the clone with Stim so Stim Desktop sees it, and builds or boots nothing. Do not
+run the app: the clone is only the base for the user's changes; only the optional
+delete step removes it.
+Report the findings of stim doctor and do not act on them: no SimSlim install, no
+--fix, nothing that changes the machine during the tutorial. On npm or network failure, report stderr
+and stop.
 
-  npm install --prefer-offline
-  npm pkg set scripts.ios="expo run:ios" scripts.android="expo run:android"
-  git init
-  git add -A
-  git -c user.name=Stim -c user.email=stim@localhost -c commit.gpgsign=false commit -m "Stim tutorial"
+${local}
 
-On reuse, run git rev-parse --show-toplevel in the base folder before adding
-a worktree; if it does not equal the base folder, the folder is inside another
-repository: stop and ask the user for another folder.
+${screenshots}
 
-Set the scripts before the commit because Expo prebuild rewrites them to
-expo run:ios and expo run:android; otherwise the dirty worktree blocks removal.
-On npm or network failure, report stderr and stop.
+Check each change on the device with agent-device in that same session, after
+the after screenshot, so Stim Desktop records your actions and the user can
+replay them: tap tap-button, toggle dark-accent-switch, pick a size
+(size-s, size-m or size-l), then take a screenshot (agent-device screenshot
+.expo/screenshots/checked.png) and confirm the change. Refs expire after each
+action: run agent-device snapshot -i before every action and use the ref it
+reports for that testID. When agentDevice.installed is false in stim status
+--json, do not install agent-device unasked: check the change with the build
+result and stim logs --errors, and tell the user that agent-device would let
+you tap through the app.
 
-From the base folder, add the tour worktree and run:
-
-  git worktree add -B stim-tutorial/tour "{tour}" HEAD
-  cd "{tour}"
-  stim worktree warm
-  stim guide agent
-
-Apply the guide agent doctor rule before native work: if its STATUS block
-says doctor is due, run stim doctor --platform ios from the tour worktree and
-resolve its findings. No STATUS block means doctor is current. Then run:
-
-  stim start
-  stim ios
-
-Tell the user the first build can take about four minutes on a cold cache.
-Relay the Open in Stim Desktop link printed by stim ios once.
-
-PAUSE: end the turn. Ask the user to look at the Build section, then the
-device, then Logs in Stim Desktop. Without Desktop, use stim status,
-stim stats, and stim logs --errors. Give the next prompt:
-"${TUTORIAL_PROMPTS.rebuild}". Leave the workspace running.`,
-    },
-    app: {
-      summary: 'Pinned template, verbatim app files, and .gitignore additions',
-      body: () => `TUTORIAL APP
-
-create-expo-app: ${TUTORIAL_PINS.createExpoApp}
-Template: ${TUTORIAL_PINS.template}
-Write the app files verbatim. Append the .gitignore lines to the template's
-existing file. App log lines start with [stim:tutorial]. Crash me raises an
-uncaught JavaScript error, and Slow request times a local three-second timer;
-Stim does not capture native network requests.
-
-${Object.entries(TUTORIAL_FILES)
-  .map(
-    ([name, content]) =>
-      `${name}\n\n\`\`\`${name.endsWith('.json') ? 'json' : name.endsWith('.js') ? 'js' : 'text'}\n${content}\`\`\``,
-  )
-  .join('\n\n')}`,
-    },
-    rebuild: {
-      summary: 'Repeat the iOS build and explain the cache result',
-      body: () => `REBUILD
-
-${paths}
-
-Run the same build again, never with --no-build-cache:
-
-${commands('rebuild')}
-
-Read this workspace's environments[].lastBuilds.ios.cacheHit from
-stim status --json, and the miss reason printed by stim ios. Explain a local or remote hit, or the actual miss
-reason when cacheHit is false. A repeat run can miss; report the evidence.
-
-PAUSE: end the turn. Point at the Build section and cache badge, or stim stats.
-Ask the user to open the device's live view and tap Log an error; without
-Desktop use the simulator. Then inspect Logs or stim logs --errors. Crash me
-and Slow request are optional: the former shows a red box, the latter prints
-a timing line. Give the next prompt: "${TUTORIAL_PROMPTS.agent}".`,
-    },
-    agent: {
-      summary: 'Record a tap and screenshot, replay it, and inspect agent logs',
-      body: () => `AGENT ACTIONS
-
-${paths}
-
-Set {stateDir} to this workspace's agentDevice.stateDir from stim ios or
-stim status --json. Replace <ios.udid> with this workspace's ios.udid from
-stim status --json. Use that exact owned simulator, not a guessed one.
-Run from the tour worktree:
-
-${commands('agent').replace('read -r iosUdid', 'iosUdid="<ios.udid>"')}
-
-Use --save-script=tutorial.ad with the equals sign: agent-device treats a
-separate path as a URL and refuses. The dismiss-overlay step clears a red box that would cover the buttons.
-Replay with the same --platform and --udid so its steps reach the agent log.
-Remove the target-v1 evidence and dismiss-overlay lines before replay: replaying
-them can fail with REPLAY_DIVERGENCE on the recorded button identity.
-The scripts and screenshot stay in the tour worktree and are git-ignored.
-
-PAUSE: end the turn. Point at Agent Actions, or the agent log records just
-printed. Expect another error-button line after replay. When screen recording
-is enabled, the user can scrub Replay in Desktop. Give the next prompt:
-"${TUTORIAL_PROMPTS.refresh}".`,
-    },
-    refresh: {
-      summary: 'Change the title to purple and verify Fast Refresh through logs',
-      body: () => `FAST REFRESH
-
-${paths}
-
-Set TITLE_COLOR in theme.js to '#7c3aed' (purple). Wait a few seconds for
-Fast Refresh, without reloading the app:
-
-${commands('refresh')}
-
-The line [stim:tutorial] title color=#7c3aed is the proof that the edit reached
-the app. The intentional button errors may still be in the error log; check
-whether the edit introduced a new error.
-
-PAUSE: end the turn. Point at the purple title in the device view or simulator
-and the title color log line. Phone viewing and an approved remote Mac are
-optional user steps; skip them if unwanted. Never pair, approve, or grant
-anything. If the user names an approved machine, the next prompt is
-"${TUTORIAL_PROMPTS.machine}". Otherwise give
-"${TUTORIAL_PROMPTS.finish}".`,
-    },
-    machine: {
-      summary: 'Optionally build using a machine the user names and has approved',
-      body: () => `REMOTE MAC (OPTIONAL)
-
-${paths}
-
-Proceed only when the user names an approved remote Mac. Substitute that
-name for {machine}. Never approve, pair, or grant anything. If none is named,
-ask for the name or let the user skip this step.
-
-${commands('machine')}
-
-This step bypasses the artifact cache so the build can use the named machine.
-A named machine refuses without a local fallback. If it refuses, report the
-refusal and offer --remote-build auto or local; do not retry silently.
-
-PAUSE: end the turn. Point at the build's machine in Desktop or its report in
-stim status --json. Give the next prompt: "${TUTORIAL_PROMPTS.finish}".`,
+PAUSE: end the turn. Tell the user to ask for a visual change next, such as
+making the title purple, in their own words. It runs in a new linked worktree
+of {base} (stim guide agent), and its first iOS build takes a few minutes.`,
     },
     finish: {
-      summary: 'Revert the tutorial edit, stop, and remove only the tour worktree',
+      summary: 'Stop and remove the two tutorial worktrees, keeping the clone',
       body: () => `FINISH
 
 ${paths}
 
-The user's finish request authorizes removing this tour worktree only.
-Revert the refresh edit before removal; worktree remove refuses dirty trees.
-Stop from the tour path, then remove from the base checkout:
+The worktrees to remove are the two the tutorial tracked: the linked
+worktrees of {base} made for the user's changes. The finish request names them
+as {tour} and {second}. Never touch any other worktree, an earlier tutorial
+clone, or the clone itself. For each, stop from its path, then remove it from
+the clone:
 
-${commands('finish')}
+  cd "{tour}"
+  stim stop
+  cd "{second}"
+  stim stop
+  cd "{base}"
+  stim worktree remove "{tour}"
+  stim worktree remove "{second}"
 
-Never use --force. On a refusal, report it and stop. Keep the base folder
-and branch. Print these optional cleanup commands for the user; do not run. Deleting
-the base folder also removes the branch, so they are alternatives:
+Use a plain remove first. The user's finish request says they do not need the
+changes, which is the consent stim guide agent asks for before worktree remove
+--force, for exactly those two paths: if the plain remove refuses one of them
+only because of uncommitted changes or commits found nowhere else, remove that
+worktree with --force. Never use --force on the clone or on any other
+worktree, and on any other refusal report it and stop. Keep the clone: the
+optional delete step removes it only when the user asks (stim guide tutorial
+delete).
+
+If archive is enabled, tell the user the worktrees appear under Archived in
+Stim Desktop. With archive disabled, report removal without promising an
+archive. Without Desktop, inspect stim status --json for the removed
+environments. End the turn.`,
+    },
+    delete: {
+      summary: 'Remove the tutorial worktrees and the clone through Stim, then delete the folder',
+      body: () => `DELETE THE TEST APP (OPTIONAL)
+
+${paths}
+
+Only on the user's explicit request, which the delete prompt is. It covers
+{base} and its linked worktrees, nothing else. Remove them through Stim so their
+simulators, Metro ports and Stim records are torn down before the files go.
+
+First check that {base}/app.json has expo.extra.stimTutorial. If it does not,
+{base} is not the tutorial clone: report it and stop.
+
+List the worktrees with git -C "{base}" worktree list. For each linked worktree
+(every entry except {base} itself), run stim stop from its path, then
+stim worktree remove "<path>" from {base}. Never use --force here: the delete
+request does not say which changes the user can lose. If a remove refuses, report
+it and stop without deleting anything, so the user can decide about that
+worktree.
+
+Then, from {base}, run stim stop and stim worktree remove "{base}". On the
+source checkout it reclaims the Stim environment and leaves the files. If it
+refuses, report it and stop. Only after it succeeds, from the parent folder,
+delete the clone:
 
   rm -rf "{base}"
-  git -C "{base}" branch -D stim-tutorial/tour
 
-If archive is enabled, tell the user the tour appears under Archived in Stim
-Desktop. With archive disabled, report removal without promising an archive.
-Without Desktop, inspect stim status --json for the removed environment and,
-when enabled, its archived entry. End the turn.`,
+Never use --force in this step, and never delete any path other than {base}. Report
+what you removed and end the turn.`,
+    },
+    share: {
+      summary: 'Optionally open a public pull request with before and after screenshots of the change',
+      body: () => `SHARE YOUR FINISH (OPTIONAL)
+
+Only on the user's explicit request, which the share prompt is, and before the
+finish step removes the worktrees. The pull request is public: the user's GitHub
+name and change appear on ${TUTORIAL_REPO}, and a bot replies and closes it. It
+needs gh signed in. Never open it unprompted or from any other step.
+
+Work from the worktree holding the user's change, {tour}. Commit only the
+change's files there, never .expo/screenshots/. Fork the repository and push the
+branch to the fork, since the user has no write access:
+
+  gh repo fork ${TUTORIAL_REPO} --remote --remote-name fork
+  git push -u fork HEAD
+
+Screenshots: use .expo/screenshots/before.png and .expo/screenshots/after.png from that
+worktree (stim guide tutorial run). If either is missing, take it now on the same
+device, that worktree's ios.udid from stim status --json, never booted, with the
+app running from the branch (run it again first if needed). For
+a missing before, show the original screen with
+git checkout origin/main -- <changed files>, capture it once Fast Refresh applies,
+then restore the change with git checkout HEAD -- <changed files> and capture the
+after again with the same tool, so both match in size.
+
+Body: write .expo/screenshots/body.md from the clone's
+.github/pull_request_template.md, keeping its headings, table and Stim link and
+dropping its <!-- --> comments. An older clone without the template gets the
+same parts, in this order:
+- the first line: one sentence saying what changed and why;
+- the table, with ![Before](./.expo/screenshots/before.png) and
+  ![After](./.expo/screenshots/after.png) in its cells;
+- a How it was verified section, with only what you observed: Device is ios.name from
+  stim status --json; Readiness is the "app reported ready" time stim ios
+  printed; Build is lastBuilds.ios.durationMs and whether lastBuilds.ios.cacheHit
+  was local or remote (a cache hit) or false (a full build), plus, when you know
+  it, whether the second worktree's first iOS build was a cache hit; Logs is the
+  result of stim logs --errors. Drop a line you did not observe rather than
+  guess it;
+- the closing line: Built and verified with [Stim](https://github.com/appandflow/stim).
+
+Open the pull request from {tour}:
+
+  gh pr create --repo ${TUTORIAL_REPO} --title "<the one-line summary>" \\
+    --body-file .expo/screenshots/body.md \\
+    --attach ".expo/screenshots/before.png#Before" --attach ".expo/screenshots/after.png#After"
+
+--attach uploads each image and rewrites the matching ./.expo/screenshots/ reference in
+the body to the uploaded file, so the table shows both images. gh 2.99.0
+(2026-09-01) has --attach; confirm with gh pr create --help rather than guessing
+a version. When gh has no --attach, open the pull request with --body-file alone
+and tell the user to drag the two images into the table on GitHub. Give the user
+the pull request URL.`,
     },
     restart: {
-      summary: 'Remove the existing tour safely and repeat from the worktree step',
+      summary: 'Start the tutorial again without removing anything',
       body: () => `RESTART
 
 ${paths}
 
-For "${TUTORIAL_RESTART_PROMPT}", if the tour worktree is present, revert
-the refresh edit, stop, and remove it using the finish section's commands:
-
-${commands('finish')}
-
-Never use --force. On a refusal, report it and stop. Keep the base repository.
-Read stim guide tutorial run, recheck its folder and repository safety rules,
-and redo run from the worktree step. Pause after the build as run instructs.`,
-    },
-    manual: {
-      summary: 'Commands for every step, including heredocs for the app files',
-      body: () => `MANUAL TUTORIAL
-
-${paths}
-
-These commands are for a person typing them, one step at a time,
-as scripts: save a block to a file and run it with sh -e, so it stops on the
-first failure. Read stderr and do not continue to later commands. Follow stim guide tutorial run for folder and repository
-safety. Reuse only this version's tutorial app, never overwrite another folder.
-The creation block skips writes on reuse and checks the repository root.
-
-Replace {base} and {tour} with absolute paths; {base} must end in stim-tutorial. For Agent Actions, replace
-{stateDir} with agentDevice.stateDir from stim ios or stim status --json;
-when read -r iosUdid waits, type this workspace's ios.udid from that status.
-For the optional machine step,
-replace {machine} with a machine you have already approved, or skip it.
-
-Look at the sidebar during warm and Build during the first build (about four
-minutes on a cold cache). Compare cacheHit and missReason on rebuild. At Live
-view and control, open the device viewer and tap Log an error; without Desktop
-use the simulator. At App Logs, try Crash me or Slow request if wanted. A JS
-crash shows a red box; the slow request is a local timer, not network capture.
-At Watch on Your Phone, optionally open an already paired Stim phone to see
-the tour workspace; phone setup and machine approval stay with you.
-Use stim status, stim logs --errors, and stim stats without Desktop.
-
-${TUTORIAL_STEPS.map((step) => `${step.title}${step.optional ? ' (optional)' : ''}\n\n${step.manual.length ? `\`\`\`sh\n${step.manual.join('\n')}\n\`\`\`` : 'Observe this step in Stim Desktop, or skip it without Desktop.'}`).join('\n\n')}
-
-Finish removes only the tour worktree. Never use --force; report a refusal.
-With archive enabled, find the tour under Archived in Desktop or archived[]
-in stim status --json. Keep the base repository and branch. To delete them,
-read stim guide tutorial finish for commands to review and run yourself.`,
+For "${TUTORIAL_RESTART_PROMPT}", remove nothing: the user may still want the
+earlier worktrees. Finish only removes the pair named in its request, so leave
+any earlier worktrees and tell the user they stay until they ask for each by
+path; never use --force for them. Reuse the clone at {base} only if its
+stimTutorial marker equals ${TUTORIAL_VERSION}; otherwise follow stim guide
+tutorial run into a fresh folder. Pause as run instructs. Stim Desktop starts
+over: only worktrees and builds after the restart count.`,
     },
   },
 };

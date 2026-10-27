@@ -1,8 +1,12 @@
-import { existsSync, realpathSync } from 'node:fs';
-import type { MacosProcess } from '@stim-cli/core/state';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
+import type { StimContext } from '@stim-cli/core';
+import { runOperationFile } from '../engine/operation-exec.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 const BUNDLE_EXECUTABLE = /^[^/]+\.app\/Contents\/MacOS\/[^/]+$/;
 
@@ -42,34 +46,92 @@ export function bundleInstancePids(root: string): number[] {
   return candidatePids(bundleDirs(root));
 }
 
+export async function bundleInstancePidsAsync(
+  root: string,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<number[]> {
+  signal?.throwIfAborted();
+  const dirs = bundleDirs(root);
+  if (!dirs.length) return [];
+  const listed = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,comm='], {
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+    signal,
+    cwd: operation?.cwd,
+  });
+  return bundleCandidates(listed, dirs).filter((pid) => pid !== process.pid);
+}
+
 function unverified(pid: number, why: string): Error {
   return Object.assign(new Error(`Cannot verify macOS app pid ${pid}: ${why}; no signal was sent.`), {
     code: 'STIM_MACOS_OWNER_UNVERIFIED',
   });
 }
 
-/**
- * Every running process whose executable is an app bundle Stim built in the workspace's macOS directory, however it
- * was launched. Each identity is captured before its executable is confirmed with lsof.
- */
-export function runningBundleInstances(root: string): MacosProcess[] {
-  const dirs = bundleDirs(root);
+function bundleRecord(pid: number): MacosProcess | null {
+  const processToken = captureProcessToken(pid);
+  const start = processStartMicros(pid);
+  if (!processToken || start.status !== 'running') {
+    if (start.status === 'gone') return null;
+    throw unverified(pid, 'its identity cannot be captured');
+  }
+  return { pid, processToken, startedAtMicros: start.startedAtMicros };
+}
+
+function failedBundleListing(record: MacosProcess, error: unknown): string | null {
+  if (['gone', 'different'].includes(inspectProcessIdentity(record))) return null;
+  const open = String((error as { stdout?: unknown }).stdout ?? '');
+  if (!open.trim()) throw unverified(record.pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
+  return open;
+}
+
+/** The attempt directories under a hosted session's `apps`, each of which holds one `App.app`. */
+export function hostedBundleDirs(area: string): string[] {
+  const apps = join(area, 'apps');
+  if (process.platform !== 'darwin' || !existsSync(apps)) return [];
+  if (realpathSync(apps) !== apps) throw new Error('Hosted app data resolves outside its private area.');
+  return readdirSync(apps)
+    .filter((attempt) => hostedAppAttempt(attempt))
+    .map((attempt) => join(apps, attempt))
+    .filter((dir) => lstatSync(dir, { throwIfNoEntry: false })?.isDirectory());
+}
+
+/** Verifies owned bundle instances without blocking on process and executable probes. */
+export function runningBundleInstancesAsync(root: string, operation?: StimContext): Promise<MacosProcess[]> {
+  return runningInstancesInAsync(bundleDirs(root), operation);
+}
+
+/** Verifies the running copies of app bundles directly inside `dirs`. */
+export async function runningInstancesInAsync(
+  dirs: readonly string[],
+  operation?: StimContext,
+): Promise<MacosProcess[]> {
+  operation?.signal.throwIfAborted();
+  if (!dirs.length) return [];
+  const listing = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,comm='], {
+    cwd: operation?.cwd,
+    timeoutMs: 10_000,
+    killSignal: 'SIGKILL',
+  });
   const instances: MacosProcess[] = [];
-  for (const pid of candidatePids(dirs)) {
-    const processToken = captureProcessToken(pid);
-    const start = processStartMicros(pid);
-    if (!processToken || start.status !== 'running') {
-      if (start.status === 'gone') continue;
-      throw unverified(pid, 'its identity cannot be captured');
-    }
-    const record = { pid, processToken, startedAtMicros: start.startedAtMicros };
+  for (const pid of bundleCandidates(listing, dirs).filter((candidate) => candidate !== process.pid)) {
+    operation?.signal.throwIfAborted();
+    const record = bundleRecord(pid);
+    if (!record) continue;
     let open: string;
     try {
-      open = getExecutor().runFile('lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], { timeoutMs: 10_000 });
+      open = await runOperationFile(operation, getExecutor(), 'lsof', ['-a', '-p', String(pid), '-d', 'txt', '-Fn'], {
+        cwd: operation?.cwd,
+        timeoutMs: 10_000,
+        killSignal: 'SIGKILL',
+      });
     } catch (error) {
-      if (['gone', 'different'].includes(inspectProcessIdentity(record))) continue;
-      open = String((error as { stdout?: unknown }).stdout ?? '');
-      if (!open.trim()) throw unverified(pid, `lsof failed (${(error as Error).message.split('\n')[0]})`);
+      if (error instanceof WorkspaceProcessCleanupError) throw error;
+      operation?.signal.throwIfAborted();
+      const partial = failedBundleListing(record, error);
+      if (partial === null) continue;
+      open = partial;
     }
     if (lsofNamesBundleExecutable(open, dirs)) instances.push(record);
   }

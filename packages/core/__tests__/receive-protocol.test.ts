@@ -8,9 +8,19 @@ import {
   replaceReceivedField,
 } from '../../../apps/mobile/mock-server/receive-fixtures.ts';
 import type { StatusPayload } from '../phone-protocol.ts';
+import { statusViews } from '../state/status-views.ts';
 import { isRpcError, isRpcEvent, isRpcResult, rpcEventIssue, rpcResultIssue } from '../receive-protocol.ts';
 
 const hello = { protocol: 1, server: { name: 'Mac', version: '1', stim: '1' }, capabilities: ['read'] };
+
+test.each([
+  { event: 'desktop-run-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
+  { event: 'desktop-run-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
+  { event: 'desktop-build-progress', subscription: 'private', stream: 'stderr', message: 'Building' },
+  { event: 'desktop-build-ended', subscription: 'private', exitCode: 0, stdout: '{}', message: 'Finished' },
+])('does not expose private Desktop platform events to the phone: $event', (event) => {
+  expect(isRpcEvent(event)).toBe(false);
+});
 
 test('accepts captured older status while checking Android runtime fields', () => {
   const { payload } = JSON.parse(
@@ -109,6 +119,32 @@ test('accepts future maintenance modes and nonzero outcomes without disconnectin
       payload: { ...payload, maintenance: { ...maintenance, lastPass: { ...maintenance.lastPass, freedBytes: '5' } } },
     }),
   ).toBe(false);
+});
+
+test('accepts a machine event with a maintenance status, as stim-server sends it with maintenance off', () => {
+  const maintenance = {
+    mode: 'off',
+    lastChecks: { pressure: null, size: null, worktree: null, sweep: null },
+    pressure: null,
+    lastPass: null,
+    running: null,
+    plan: [],
+    sizes: [],
+    recent: [],
+  };
+  // The captured payload is phone-shaped; statusViews reads it as the server's own JSON.
+  const { machine } = statusViews(JSON.parse(JSON.stringify({ ...captured, maintenance })));
+  expect(machine.maintenance).not.toBeNull();
+  expect(rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine })).toBeNull();
+});
+
+test('names the failing field of a rejected event, not the first event type the union tried', () => {
+  const lastChecks = { pressure: null, size: null, worktree: null, sweep: null };
+  const maintenance = { mode: 'off', lastChecks, pressure: null, lastPass: null, running: null, plan: {} };
+  const { machine } = statusViews(JSON.parse(JSON.stringify(captured)));
+  const issue = rpcEventIssue({ event: 'machine', subscription: 's', seq: 0, machine: { ...machine, maintenance } });
+  expect(issue).toMatchObject({ keyword: 'type', expectedType: 'array' });
+  expect(issue?.schemaPath).toMatch(/\/plan\/type$/);
 });
 
 test('accepts the original hello and unknown compatible fields but refuses malformed nested server data', () => {

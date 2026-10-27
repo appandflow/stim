@@ -1,27 +1,35 @@
 import type { ChildProcess } from 'node:child_process';
+import type { StimContext } from '@stim-cli/core';
 import { captureProcessIdentity } from '../process-identity.ts';
 import { clearClaimChild, markClaimChildPending, setClaimChild, type ClaimHandle } from '../ownership-claim.ts';
+import { operationState } from './operation-state.ts';
 
-const declaring = new Set<ClaimHandle>();
-const running = new Set<ChildProcess>();
-let refusal: string | null = null;
-
-/** Record every child later started through `spawnDeclared` on `claim` until `stopDeclaringSpawnsOn(claim)`. */
-export function declareSpawnsOn(claim: ClaimHandle | null | undefined): void {
-  if (claim) declaring.add(claim);
+/**
+ * Record every child `context`'s operation later starts through `spawnDeclared` on `claim` until
+ * `stopDeclaringSpawnsOn(context, claim)`.
+ */
+export function declareSpawnsOn(context: StimContext | undefined, claim: ClaimHandle | null | undefined): void {
+  if (claim) operationState(context).declaring.add(claim);
 }
 
-export function stopDeclaringSpawnsOn(claim: ClaimHandle | null | undefined): void {
-  if (claim) declaring.delete(claim);
+export function stopDeclaringSpawnsOn(context: StimContext | undefined, claim: ClaimHandle | null | undefined): void {
+  if (claim) operationState(context).declaring.delete(claim);
 }
 
 /**
- * Start a child that every claim passed to `declareSpawnsOn` records until it exits. The child keeps
+ * Start a child that every claim `context`'s operation passed to `declareSpawnsOn` records until it exits. The child keeps
  * the caller's process group, so a terminal interrupt still reaches it; the claim follows the child
  * itself. A claim that cannot be marked stops the spawn rather than letting it run unprotected. A claim
- * records one child, so declared spawns must not overlap.
+ * records one child, so declared spawns must not overlap. `until: 'close'` also holds the declaration
+ * while a launcher's child retains its stdio pipes after the launcher exits. A promise holds the declaration until
+ * cleanup resolves; a rejection keeps the child record for recovery.
  */
-export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
+export function spawnDeclared(
+  context: StimContext | undefined,
+  spawn: () => ChildProcess,
+  { until = 'exit' }: { until?: 'exit' | 'close' | Promise<void> } = {},
+): ChildProcess {
+  const { declaring, running, refusal } = operationState(context);
   if (refusal !== null) throw new Error(refusal);
   const claims = [...declaring];
   if (claims.length === 0) return spawn();
@@ -46,7 +54,6 @@ export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
     return child;
   }
   running.add(child);
-  child.once('exit', () => running.delete(child));
   const captured = captureProcessIdentity(pid);
   if (captured.ok) {
     for (const claim of claims) {
@@ -55,23 +62,31 @@ export function spawnDeclared(spawn: () => ChildProcess): ChildProcess {
       } catch {}
     }
   }
-  child.once('exit', forget);
+  const settled = () => {
+    running.delete(child);
+    forget();
+  };
+  if (typeof until === 'string') child.once(until, settled);
+  else void until.then(settled, () => {});
   return child;
 }
 
-/** Refuse every later `spawnDeclared` with `reason` until `allowDeclaredSpawns()`. */
-export function refuseDeclaredSpawns(reason: string): void {
-  refusal = reason;
+/** Refuse every later `spawnDeclared` of `context`'s operation with `reason` until `allowDeclaredSpawns`. */
+export function refuseDeclaredSpawns(context: StimContext | undefined, reason: string): void {
+  operationState(context).refusal = reason;
 }
 
-export function allowDeclaredSpawns(): void {
-  refusal = null;
+export function allowDeclaredSpawns(context: StimContext | undefined): void {
+  operationState(context).refusal = null;
 }
 
-/** Send `signal` to every child started through `spawnDeclared` that has not exited; returns how many were signalled. */
-export function signalDeclaredSpawns(signal: NodeJS.Signals): number {
+/**
+ * Send `signal` to every child `context`'s operation started through `spawnDeclared` that has not exited; returns how
+ * many were signalled.
+ */
+export function signalDeclaredSpawns(context: StimContext | undefined, signal: NodeJS.Signals): number {
   let signalled = 0;
-  for (const child of running) {
+  for (const child of operationState(context).running) {
     if (child.exitCode !== null || child.signalCode !== null) continue;
     try {
       if (child.kill(signal)) signalled += 1;

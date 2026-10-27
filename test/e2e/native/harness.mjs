@@ -1,5 +1,7 @@
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { spawnSync } from 'node:child_process';
+import { launchEvidenceMessage } from './assertions.mjs';
 import {
   appendFileSync,
   copyFileSync,
@@ -18,12 +20,22 @@ import { setTimeout as sleep } from 'node:timers/promises';
 // npx, npm and bundle are .cmd wrappers on Windows, and Node refuses to spawn a
 // .cmd without a shell (child_process, since 18.20.2).
 const WRAPPER_SHELL = process.platform === 'win32';
+const require = createRequire(import.meta.url);
 
 export function createHarness({ env, cliPath, label }) {
   const log = (msg) => process.stderr.write(`[${label}] ${msg}\n`);
   const banner = (msg) => log('='.repeat(4) + ` ${msg} ` + '='.repeat(4));
+  const dieHooks = [];
+  const onDie = (hook) => dieHooks.push(hook);
   const die = (msg, code = 1) => {
     log(`ERROR: ${msg}`);
+    while (dieHooks.length > 0) {
+      try {
+        dieHooks.pop()(new Error(msg));
+      } catch (error) {
+        log(`exit cleanup failed: ${error?.message || error}`);
+      }
+    }
     process.exit(code);
   };
 
@@ -68,7 +80,32 @@ export function createHarness({ env, cliPath, label }) {
     }
   };
 
-  return { env, cliPath, label, log, banner, die, sh, cli, cliJson, requireTool };
+  return { env, cliPath, label, log, banner, die, onDie, sh, cli, cliJson, requireTool };
+}
+
+export function assertVerifiedLaunch({ h, facts, cwd, label, expectUnattributedAndroidSlot = false }) {
+  const strict = h.env.STIM_E2E_STRICT_QA === '1';
+  if (strict) {
+    assert([true, 'bundling', 'unverified'].includes(facts.launched), `${label} did not establish launch evidence`);
+    h.log(`${label}: checking this launch's delivery, live process and readiness (QA deadline 180s)`);
+    const helper = fileURLToPath(new URL('./await-launch.mjs', import.meta.url));
+    const argv = ['--experimental-strip-types', helper, cwd, JSON.stringify(facts)];
+    if (expectUnattributedAndroidSlot) argv.push('expect-unattributed-android-slot');
+    const result = h.sh(process.execPath, argv, {
+      cwd,
+      timeout: 180_000,
+      allowFail: true,
+    });
+    if (result.stdout) h.log(result.stdout.trim());
+    assert(result.code === 0, `${label} launch did not establish strict readiness: ${result.stderr}`);
+    h.log(
+      expectUnattributedAndroidSlot
+        ? `${label}: delivery UNAVAILABLE (same-platform Android slot attribution); exact app process checked, slot/cache/cleanup checks remain required.`
+        : `${label} completed bundle delivery and stayed alive.`,
+    );
+    return;
+  }
+  h.log(launchEvidenceMessage(facts.launched, label));
 }
 
 export function preflight(h, platform) {
@@ -235,24 +272,31 @@ export function createWarmWorktree({ h, sourceDir, workDir, name, created }) {
   return path;
 }
 
+export function teardownWorkspaces({ h, created, removeWorktrees = true, timeout = 3 * 60 * 1000 }) {
+  for (const path of created.toReversed()) {
+    if (!existsSync(path)) continue;
+    h.cli(['stop'], { cwd: path, allowFail: true, timeout });
+    if (!removeWorktrees) continue;
+    h.sh('git', ['-C', path, 'checkout', '--', '.'], { allowFail: true, timeout });
+    h.sh('git', ['-C', path, 'clean', '-fdq', 'ios', 'android'], { allowFail: true, timeout });
+    h.cli(['worktree', 'remove', path, '--force'], { allowFail: true, timeout });
+  }
+}
+
 export function prepareIosDevices({ h, platform, targets, cleanup }) {
   if (platform !== 'ios') return;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
   try {
-    for (const { cwd, slot = 'default', deviceType } of targets) {
+    for (const { cwd, slot = 'default' } of targets) {
       const settingsPath = join(cwd, '.stim.json');
       const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {};
       if (!settings.ios?.simslimProfile) continue;
       h.log(`preparing simulator ${slot} in ${cwd} before the multi-device workload`);
-      const result = h.sh(
-        process.execPath,
-        ['--experimental-strip-types', script, cwd, slot, ...(deviceType ? [deviceType] : [])],
-        {
-          cwd,
-          timeout: 25 * 60 * 1000,
-          allowFail: true,
-        },
-      );
+      const result = h.sh(process.execPath, ['--experimental-strip-types', script, cwd, slot], {
+        cwd,
+        timeout: 25 * 60 * 1000,
+        allowFail: true,
+      });
       cleanup.recordWorkspace(cwd);
       const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
       assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
@@ -266,9 +310,7 @@ export function prepareIosDevices({ h, platform, targets, cleanup }) {
     }
   } catch (error) {
     error.preserveNativeState = true;
-    h.log(
-      `Simulator preparation failed. Keeping ownership state at ${h.env?.STIM_HOME ?? 'STIM_HOME'} and its worktrees for recovery.`,
-    );
+    h.log(`Simulator preparation failed. Keeping ${h.env?.STIM_HOME ?? 'STIM_HOME'} for recovery.`);
     throw error;
   }
 }
@@ -322,7 +364,12 @@ export function ensureGitignore({ appDir, framework }) {
   }
 }
 
-export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 }) {
+export function createCleanupTracker({
+  h,
+  platform,
+  processExitTimeoutMs = 5000,
+  processStart = process.platform === 'darwin' ? darwinProcessStart : null,
+}) {
   const devices = new Set();
   const processes = new Map();
 
@@ -363,6 +410,7 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
     const live = processSnapshot(
       h,
       records.map((record) => record.pid),
+      processStart,
     );
     for (const record of records) {
       const key = JSON.stringify([cwd, record.pid, record.startedAt]);
@@ -396,6 +444,7 @@ export function createCleanupTracker({ h, platform, processExitTimeoutMs = 5000 
         processSnapshot(
           h,
           records.map((record) => record.pid),
+          processStart,
         ).values(),
       );
       const leaked = records.map((record) => record.identity).filter((identity) => live.has(identity));
@@ -414,9 +463,23 @@ function inspect(h, file, argv, timeout = 5000) {
   return result.stdout;
 }
 
-function processSnapshot(h, candidates) {
-  // macOS ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
+function darwinProcessStart(pid) {
+  return require('../../../packages/core/dist/process-identity.mjs').processStartMicros(pid);
+}
+
+function processSnapshot(h, candidates, processStart) {
   const pids = [...new Set([...candidates, process.pid])];
+  if (processStart) {
+    const live = new Map();
+    for (const pid of pids) {
+      const observed = processStart(pid);
+      assert(observed.status !== 'unknown', `could not inspect process birth for pid ${pid}`);
+      if (observed.status === 'running') live.set(pid, `${pid} ${observed.startedAtMicros}`);
+    }
+    assert(live.has(process.pid), 'process inspection did not include the live harness');
+    return live;
+  }
+  // ps exits 1 when no selected process remains; the live harness makes an empty result an inspection failure.
   const filter = pids.map((pid) => `ProcessId = ${pid}`).join(' OR ');
   const out =
     process.platform === 'win32'
@@ -454,8 +517,9 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   await cleanup.verifyProcesses();
   h.log('(2) no workspace supervisor/Metro/collector processes remain');
 
-  const status = h.cli(['status'], { allowFail: true }).stdout;
-  assert(!created.some((p) => status.includes(p)), 'status still lists a removed workspace');
+  const status = h.cli(['status'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(status.code === 0, `cleanup status failed: ${status.stderr}`);
+  assert(!created.some((p) => status.stdout.includes(p)), 'status still lists a removed workspace');
   h.log('(3) status is clean of our workspaces');
 
   const porcelain = h.sh('git', ['-C', appDir, 'status', '--porcelain']).stdout.trim();
@@ -470,8 +534,17 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   assert(!created.some((path) => registered.has(resolve(path))), `a worktree registration survived:\n${wl}`);
   h.log('(4) source checkout byte-clean, no worktrees linger');
 
-  const gc = h.cli(['gc'], { allowFail: true });
-  assert(!created.some((p) => gc.stdout.includes(p)), 'gc reports one of our workspaces as orphaned');
+  const gc = h.cli(['gc', '--json'], { allowFail: true });
+  if (h.env.STIM_E2E_STRICT_QA === '1') assert(gc.code === 0, `cleanup gc inspection failed: ${gc.stderr}`);
+  if (gc.code === 0) {
+    const { sections } = JSON.parse(gc.stdout);
+    assert(sections && typeof sections === 'object', `cleanup gc --json has no sections: ${gc.stdout.slice(0, 500)}`);
+    const text = JSON.stringify({ ...sections, trash: null });
+    assert(
+      !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),
+      'gc reports one of our workspaces as orphaned',
+    );
+  }
   h.log('(5) gc reports nothing of ours orphaned');
 }
 

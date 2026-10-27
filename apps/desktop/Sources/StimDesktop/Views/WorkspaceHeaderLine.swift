@@ -37,7 +37,6 @@ struct WorkspaceHeaderLine: View {
           gitWorkspace: page?.apps[0].path,
           openBuild: openBuild)
       }
-      .tutorialAnchor(.buildSection, workspace: env.path)
       Spacer(minLength: Space.md)
       if apps.contains(where: \.replayOff) {
         Pill("Replay off")
@@ -353,7 +352,7 @@ struct UsageFigures: View {
       figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
     }
     if let disk = usage.diskBytes {
-      figure("internaldrive", Format.fileSize(Int64(disk)), help: "Disk: the worktree and Stim's build folder", minor: true)
+      figure("internaldrive", Format.fileSize(reported: disk), help: "Disk: the worktree and Stim's build folder", minor: true)
     }
   }
 

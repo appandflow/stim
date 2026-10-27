@@ -829,7 +829,13 @@ export function DeviceView({
                   >
                     {subtitle}
                   </Text>
-                  {device?.host ? <HostLabel host={device.host} color={theme.media.textTertiary} /> : null}
+                  {device?.host ? (
+                    <HostLabel
+                      host={device.host}
+                      color={theme.media.textTertiary}
+                      mode={device.running ? 'running' : 'placed'}
+                    />
+                  ) : null}
                   {range?.recording && !replayOff ? (
                     <View style={styles.driver} accessible accessibilityLabel={t`Recording for replay`}>
                       <View style={styles.recordingDot} />

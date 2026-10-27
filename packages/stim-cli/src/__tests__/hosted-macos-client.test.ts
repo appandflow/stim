@@ -1,3 +1,5 @@
+import { testContext } from './_context.ts';
+import { createStim } from '../api.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   chmodSync,
@@ -16,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC, startProtocol1Server } from './_noise-server.ts';
 import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
@@ -29,26 +32,28 @@ import {
 } from '../device-host/hosted-macos.ts';
 import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
+import * as offload from '../offload/client.ts';
 import { BuildConnection } from '../offload/client.ts';
+import * as buildMachines from '../offload/build-machines.ts';
 import { getConfigPath } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import * as settings from '../workspace/settings.ts';
 
-const tailnet = { port: 0, nodeId: 'nMini' };
+const tailnet = { port: 0 };
 
 vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../offload/tailnet.ts')>();
   return {
     ...actual,
-    pinnedEndpoint: (credential: { machine: string; nodeId: string }) => {
+    resolveEndpoint: async (credential: { machine: string }) => {
       const status = {
         BackendState: 'Running',
-        Peer: { mini: { ID: tailnet.nodeId, DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
+        Peer: { mini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'] } },
       };
-      const target = actual.pinnedEndpoint(credential, () => status);
+      const target = await actual.resolveEndpoint(credential, () => status);
       return typeof target === 'string'
         ? target
         : { url: `ws://127.0.0.1:${tailnet.port}`, servername: target.servername, host: target.host };
@@ -56,7 +61,7 @@ vi.mock('../offload/tailnet.ts', async (importOriginal) => {
   };
 });
 
-const TOKEN = 'device-token-never-printed';
+const OTHER_KEY = 'O'.repeat(42) + 'A';
 const GRANT_TOKEN = 'g'.repeat(43);
 const GRANT = {
   driver: 'agent-device',
@@ -68,6 +73,7 @@ const GRANT = {
 const sha256 = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 
 interface FakeHost {
+  onRequest?: (method: string) => void;
   methods: string[];
   blobs: Map<string, Buffer>;
   chunks: string[];
@@ -81,11 +87,29 @@ interface FakeHost {
   logQueries: Record<string, unknown>[];
   logsRefused: boolean;
   installed: { state: string; launched: true | 'unverified' | null; notice?: string };
+  offer: Record<string, unknown>;
   attachReply?: { state: string; notice?: string } | { error: { code: string; message: string } };
   silentMethods: Set<string>;
   forgetSession: string | null;
   stopSession: () => void;
   close: () => Promise<void>;
+}
+
+function macosOffer({ declined = null, loadPerCore = 0.4 }: { declined?: string | null; loadPerCore?: number } = {}) {
+  return {
+    platform: 'macos',
+    choice: { architecture: 'arm64', macosVersion: '27.0' },
+    declined,
+    resources: {
+      cpus: 10,
+      loadPerCore,
+      maxLoadPerCore: 2,
+      memoryFreeBytes: 1e9,
+      memoryPressure: 'normal',
+      workerDiskFreeBytes: 1e10,
+    },
+    capacity: { running: 0, max: 0, available: null },
+  };
 }
 
 /** A hosting Mac that speaks the device-host contract for macOS sessions. */
@@ -112,6 +136,7 @@ async function fakeHost(): Promise<FakeHost> {
     logQueries: [],
     logsRefused: false,
     installed: { state: 'installed', launched: true },
+    offer: macosOffer(),
     stopSession: () => void (session = { ...session, state: 'stopped' }),
     close: () => new Promise((done) => server.close(() => done())),
   };
@@ -119,17 +144,15 @@ async function fakeHost(): Promise<FakeHost> {
     host.blobs.has(manifest!.sha256)
       ? (JSON.parse(String(host.blobs.get(manifest!.sha256))) as { sha256: string; size: number }[])
       : [manifest!];
-  server.on('connection', (socket) => {
-    socket.on('message', (data) => {
+  acceptNoiseConnections(server, (socket) => {
+    socket.on('message', (data: Buffer) => {
       const { id, method, params } = JSON.parse(String(data));
       host.methods.push(method);
+      host.onRequest?.(method);
       if (host.silentMethods.has(method)) return;
       const reply = (result: unknown) => socket.send(JSON.stringify({ id, result }));
-      if (method === 'hello') {
-        if (params.auth.deviceToken !== TOKEN)
-          return socket.send(JSON.stringify({ id, error: { code: 'unauthorized', message: 'no' } }));
+      if (method === 'hello')
         return reply({ capabilities: host.capabilities, device: { id: 'client1', name: 'laptop' } });
-      }
       if (host.forgetSession === params.session && (method === 'device-host.attach' || method === 'device-host.stop')) {
         return socket.send(
           JSON.stringify({
@@ -138,6 +161,7 @@ async function fakeHost(): Promise<FakeHost> {
           }),
         );
       }
+      if (method === 'device-host.offer') return reply(host.offer);
       if (method === 'device-host.reserve') {
         session = { id: randomUUID(), platform: 'macos', state: 'preparing', appSlot: 3, device: null, ...params };
         return reply(session);
@@ -212,11 +236,12 @@ let bin: string;
 let host: FakeHost;
 let spawned: string[];
 
-function credentials(state: 'approved' | 'pending' = 'approved') {
-  const machine = { machine: 'mini', nodeId: 'nMini', dnsName: 'mini.tail1.ts.net', deviceId: 'client1' };
+function credentials(state: 'approved' | 'pending' = 'approved', serverKey = FAKE_SERVER_PUBLIC) {
+  const machine = { machine: 'mini', transport: 'tailscale', address: 'mini.tail1.ts.net', deviceId: 'client1' };
+  const pinned = state === 'approved' ? { serverKey } : { ticket: 'p'.repeat(42) + 'A' };
   writeFileSync(
     deviceHostMachinesFile(),
-    JSON.stringify({ version: 1, machines: [{ ...machine, deviceToken: TOKEN, state, requestedAt: 'now' }] }),
+    JSON.stringify({ version: 2, machines: [{ ...machine, ...pinned, state, requestedAt: 'now' }] }),
   );
 }
 
@@ -237,11 +262,11 @@ beforeEach(() => {
   symlinkSync('Versions/A/Fixture', join(bin, 'Fixture.framework', 'Fixture'));
   writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'] } }));
   credentials();
-  tailnet.nodeId = 'nMini';
   spawned = [];
   const real = getExecutor();
   setExecutor({
     ...real,
+    runFileAsync: undefined,
     findExecutable: (name: string) => (name === 'agent-device' ? null : real.findExecutable(name)),
     spawn: (cmd: string, args: string[], opts: object) => {
       spawned.push(cmd);
@@ -249,7 +274,7 @@ beforeEach(() => {
       const script = args.includes('--show-bin-path') ? `console.log(${JSON.stringify(bin)})` : '';
       return real.spawn(process.execPath, ['-e', script], opts);
     },
-    runFile: (file: string, args: string[], opts?: object) => {
+    runFile: (file: string, args: string[], opts: ExecOptions) => {
       if (file === 'plutil')
         return JSON.stringify({ CFBundleIdentifier: 'dev.fixture.app', CFBundleExecutable: 'Fixture' });
       if (file === 'otool') return '@executable_path/../Frameworks';
@@ -269,7 +294,7 @@ test('macos rejects reserved remote backends and the retired option before state
   rmSync(process.env.STIM_HOME!, { recursive: true });
   writeFileSync(join(root, 'package.json'), '{}');
   rmSync(join(root, 'Package.swift'));
-  const resolve = vi.spyOn(settings, 'resolveSettings').mockImplementation(() => {
+  const resolve = vi.spyOn(settings, 'resolveProjectSettingsAsync').mockImplementation(() => {
     throw new Error('unexpected settings access');
   });
   const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));
@@ -278,12 +303,10 @@ test('macos rejects reserved remote backends and the retired option before state
   const cwd = process.cwd();
   process.chdir(root);
   try {
-    for (const machine of ['eas', 'proxy', 'auto', ' EAS ', ' PrOxY ', ' AuTo ']) {
+    for (const machine of ['eas', 'proxy', ' EAS ', ' PrOxY ']) {
       await expect(program.parseAsync(['node', 'stim', 'macos', '--remote', machine])).rejects.toMatchObject({
         code: 'STIM_BAD_ARG',
-        message: expect.stringContaining(
-          machine.trim().toLowerCase() === 'auto' ? 'automatic placement' : 'no eas or proxy backend',
-        ),
+        message: expect.stringContaining('no eas or proxy backend'),
       });
     }
     await expect(program.parseAsync(['node', 'stim', 'macos', '--host', 'mini'])).rejects.toMatchObject({
@@ -357,6 +380,64 @@ test('local, absent, stopped and supervised records never ask a host for status'
   }
 });
 
+test('a host that still runs a protocol 1 stim-server is refused with the update path, not as unreachable', async () => {
+  const old = await startProtocol1Server();
+  tailnet.port = old.port;
+  try {
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      code: 'STIM_HOSTING_REFUSED',
+      message: expect.stringContaining('mini runs a stim-server that speaks an older protocol'),
+    });
+  } finally {
+    await old.close();
+  }
+});
+
+describe('a host that does not answer is refused with the layer doctor names', () => {
+  const silent = { failure: 'Opening handshake has timed out', refused: false, transport: { kind: 'silent' } } as const;
+
+  function tailscale(peer: Record<string, unknown>) {
+    const status = JSON.stringify({
+      BackendState: 'Running',
+      Peer: { nMini: { ID: 'nMini', DNSName: 'mini.tail1.ts.net.', TailscaleIPs: ['100.64.0.7'], ...peer } },
+    });
+    const runFileAsync = vi.fn<() => Promise<string>>(async () => status);
+    setExecutor({ ...getExecutor(), runFileAsync });
+    return runFileAsync;
+  }
+
+  afterEach(() => vi.restoreAllMocks());
+
+  test('an offline peer is named with when it was last seen and the way to wake it', async () => {
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(silent);
+    tailscale({ Online: false, LastSeen: new Date(Date.now() - 18 * 3_600_000).toISOString() });
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      message: 'mini is offline on Tailscale (last seen 18 h ago).',
+      remedy: expect.stringContaining('Wake mini'),
+    });
+  });
+
+  test('a machine Tailscale no longer lists keeps the transport message', async () => {
+    vi.spyOn(BuildConnection, 'open').mockResolvedValue(silent);
+    tailscale({ DNSName: 'other.tail1.ts.net.' });
+    await expect(connectHost('mini')).rejects.toMatchObject({
+      message: 'mini is unreachable: Opening handshake has timed out. Run stim doctor to see which layer failed.',
+    });
+  });
+
+  test('a host that answers never reads Tailscale status after the connection', async () => {
+    host = await fakeHost();
+    const status = tailscale({});
+    try {
+      const connection = await connectHost('mini');
+      connection.connection.close();
+      expect(status).not.toHaveBeenCalled();
+    } finally {
+      await host.close();
+    }
+  });
+});
+
 describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and codesign run only on macOS)', () => {
   beforeEach(async () => {
     host = await fakeHost();
@@ -385,12 +466,18 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       }),
     );
     const notes: string[] = [];
-    const record = await runMacos(root, (line) => notes.push(line), 'mini');
+    const result = await createStim({
+      projectRoot: root,
+      onProgress: ({ message }) => notes.push(message),
+    }).run({ platform: 'macos', remote: 'mini' });
+    expect(result.facts.launched).toBe(true);
+    expect(result.facts.pid).toBeNull();
+    const record = readMacosRecord(root);
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers[0]).toMatchObject({ bundleId: 'dev.fixture.app', mode: 'release' });
     expect(host.offers[0]).not.toHaveProperty('devClientScheme');
     for (const offer of host.offers) expect(offer.arguments).toEqual(args);
-    expect(record.arguments).toEqual(args);
+    expect(record?.arguments).toEqual(args);
     expect(readMacosRecord(root)?.arguments).toEqual(args);
     expect(notes.some((line) => line.includes('did not apply macos.arguments'))).toBe(false);
     const manifest = JSON.parse(String(host.blobs.get((host.offers[0]!.manifest as { sha256: string }).sha256)));
@@ -417,10 +504,10 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       ]),
     );
     for (const file of manifest) expect(host.blobs.has(file.sha256)).toBe(true);
-    expect(record.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
+    expect(record?.host).toMatchObject({ machine: 'mini', appSlot: 3, bundleId: 'dev.fixture.app.hosted3' });
     expect(macosAppState(readMacosRecord(root))?.state).toBe('running');
     const config = agentRemoteConfig(root);
-    expect(record.host?.agent).toEqual({
+    expect(record?.host?.agent).toEqual({
       driver: 'agent-device',
       remoteConfig: config,
       command: `agent-device <command> --remote-config ${config}`,
@@ -442,7 +529,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(workspaceInUse(root, { managedLocks: false, nativeRun: false })).toEqual(['its macOS app runs on mini']);
     expect(spawned.every((cmd) => cmd === 'swift')).toBe(true);
 
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(1);
     expect(host.offers.at(-1)!.attempt).not.toBe(host.offers[0]!.attempt);
 
@@ -474,7 +561,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     'stop cleans up only its own agent connection, best effort: %s',
     async (scenario) => {
       host.grant = GRANT;
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       const config = agentRemoteConfig(root);
       const otherConfig = join(dir, 'other-config.json');
       if (scenario === 'canonical config') symlinkSync(config, otherConfig);
@@ -533,12 +620,74 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     },
   );
 
+  describe('macos.remote placement', () => {
+    const configure = (macos: Record<string, unknown>) =>
+      writeFileSync(
+        join(root, '.stim.json'),
+        JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', ...macos } }),
+      );
+
+    test.each(['remote-only', 'remote', 'mini'])(
+      'macos.remote %s launches the app on the hosting Mac that offers a macOS session',
+      async (remote) => {
+        configure({ remote });
+        const record = await runMacos(testContext(), root, () => {});
+        expect(record.host).toMatchObject({ machine: 'mini' });
+        expect(host.methods).toContain('device-host.reserve');
+        expect(readMacosRecord(root)?.host?.machine).toBe('mini');
+      },
+    );
+
+    test('macos.remote remote-only refuses instead of launching here when no Mac takes the app', async () => {
+      configure({ remote: 'remote-only' });
+      host.offer = macosOffer({ declined: 'every hosted device reservation is occupied' });
+      const notes: string[] = [];
+      await expect(runMacos(testContext(), root, (line) => notes.push(line))).rejects.toMatchObject({
+        code: 'STIM_HOSTING_REFUSED',
+        message: expect.stringContaining('remote-only never runs here'),
+      });
+      expect(host.methods).not.toContain('device-host.reserve');
+      expect(spawned).toEqual([]);
+      expect(readMacosRecord(root)).toBeNull();
+    });
+
+    test('macos.remote remote-only waits for a Mac past its own load limit, and refuses at once for one that is paused', async () => {
+      configure({ remote: 'remote-only' });
+      host.offer = macosOffer({ loadPerCore: 2.5 });
+      const controller = new AbortController();
+      const lines: string[] = [];
+      await expect(
+        runMacos(testContext({ signal: controller.signal }), root, (line) => {
+          lines.push(line);
+          if (line.includes('waits')) controller.abort();
+        }),
+      ).rejects.toMatchObject({ name: 'AbortError' });
+      expect(lines.join('\n')).toContain('saturated');
+      expect(host.methods).not.toContain('device-host.reserve');
+      expect(spawned).toEqual([]);
+
+      host.offer = macosOffer({ declined: 'Hosted sessions are paused' });
+      await expect(runMacos(testContext(), root, () => {})).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+      expect(spawned).toEqual([]);
+    });
+
+    test('a recorded hosted app keeps its Mac when the placement word is run again', async () => {
+      configure({ remote: 'remote-only' });
+      await runMacos(testContext(), root, () => {});
+      const offers = host.methods.filter((method) => method === 'device-host.offer').length;
+      host.offer = macosOffer({ declined: 'busy now' });
+      const record = await runMacos(testContext(), root, () => {});
+      expect(record.host?.machine).toBe('mini');
+      expect(host.methods.filter((method) => method === 'device-host.offer')).toHaveLength(offers);
+    });
+  });
+
   test('over-limit macos.arguments refuse before the host reserves a session', async () => {
     writeFileSync(
       join(root, '.stim.json'),
       JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: Array(33).fill('a') } }),
     );
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
+    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow('macos.arguments is too large');
     expect(host.methods).not.toContain('device-host.reserve');
   });
 
@@ -553,7 +702,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', arguments: args } }),
       );
       const notes: string[] = [];
-      const record = await runMacos(root, (line) => notes.push(line), 'mini');
+      const record = await runMacos(testContext(), root, (line) => notes.push(line), 'mini');
       for (const offer of host.offers) expect(offer.arguments).toEqual(args);
       expect(record.arguments).toEqual(applied ?? []);
       expect(readMacosRecord(root)?.arguments).toEqual(applied ?? []);
@@ -580,7 +729,6 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(payload.agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
     for (const offer of host.offers) expect(offer).not.toHaveProperty('arguments');
     expect(payload.host).toMatchObject({ machine: 'mini', agent: { driver: 'agent-device' } });
-    expect(lines[0]).not.toContain(TOKEN);
     expect(lines[0]).not.toContain(GRANT_TOKEN);
   });
 
@@ -591,18 +739,46 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       'not in remote.machines',
     ],
     ['an unapproved credential', () => credentials('pending'), 'has not confirmed hosting access'],
-    ['a changed tailnet node', () => (tailnet.nodeId = 'nOther'), 'not the pinned nMini'],
-    ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this Mac hosting access'],
+    ['a host that proves another server key', () => credentials('approved', OTHER_KEY), 'different server key'],
+    ['a host without hosting access', () => (host.capabilities = ['build']), 'not granted this machine hosting access'],
   ])('refuses %s before building and never launches locally', async (_name, change, message) => {
     change();
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow(message);
+    await expect(runMacos(testContext(), root, () => {}, 'mini')).rejects.toThrow(message);
     expect(spawned).toEqual([]);
     expect(host.methods).not.toContain('device-host.reserve');
     expect(readMacosRecord(root)).toBeNull();
   });
 
+  test.each([
+    ['--remote-build names the hosting node', FAKE_SERVER_PUBLIC, true],
+    ['--remote-build names another node', OTHER_KEY, undefined],
+  ])(
+    '%s: the toolchain match with this Mac applies only when the app stays on its builder',
+    async (_name, buildKey, runsOnWorker) => {
+      writeFileSync(getConfigPath(), JSON.stringify({ remote: { machines: ['mini'], build: 'remote' } }));
+      vi.spyOn(buildMachines, 'pairedMachines').mockReturnValue([
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail1.ts.net',
+          state: 'approved',
+          requestedAt: 'now',
+          serverKey: buildKey,
+        },
+      ]);
+      const choose = vi.spyOn(offload, 'chooseBuildMachine').mockResolvedValue('mini: stop before building');
+      try {
+        await expect(runMacos(testContext(), root, () => {}, 'mini', 'mini')).rejects.toThrow('stop before building');
+        const target = choose.mock.calls[0]?.[0].target;
+        expect(target?.platform === 'macos' ? target.runsOnWorker : 'not macos').toBe(runsOnWorker);
+      } finally {
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
   test('status reports a stopped host session without discarding the placement or changing saved state', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     host.stopSession();
     const facts = await readHostedMacosStatus(saved, { ttlMs: 0 });
@@ -614,7 +790,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('status preserves an unreachable placement as unverified with a cleanup remedy', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     await host.close();
     const started = performance.now();
@@ -627,7 +803,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('status carries an unknown host session notice and requires reconciliation', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     host.attachReply = { state: 'unknown', notice: 'The previous session owner is not attached to this server.' };
     const facts = await readHostedMacosStatus(readMacosRecord(root));
     expect(macosAppState(facts.record)).toMatchObject({ state: 'unverified', host: readMacosRecord(root)!.host });
@@ -639,7 +815,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a missing session is stopped, while other attach refusals remain unverified', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const saved = readMacosRecord(root)!;
     host.attachReply = { error: { code: 'unknown-session', message: 'This client has no such hosted session.' } };
     const missing = await readHostedMacosStatus(saved, { ttlMs: 0 });
@@ -651,7 +827,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test.each(['preparing', 'stopping'])('an unsettled %s session cannot report a running app', async (state) => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     host.attachReply = { state };
     const facts = await readHostedMacosStatus(readMacosRecord(root), { ttlMs: 0 });
     expect(macosAppState(facts.record)?.state).toBe('unverified');
@@ -659,7 +835,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('concurrent and recent probes share a connection, then refresh an expired result', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const placement = readMacosRecord(root)!.host!;
     const hellos = host.methods.filter((method) => method === 'hello').length;
     expect(await Promise.all([probeHostedMacos(placement), probeHostedMacos(placement)])).toEqual([
@@ -681,7 +857,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   test.each(['hello', 'device-host.attach'])(
     'a silent %s times out, closes the connection and caches failure',
     async (method) => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.silentMethods.add(method);
       const saved = readMacosRecord(root)!;
       const started = performance.now();
@@ -697,13 +873,13 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   );
 
   test.each<[string, string, 'all' | 'some' | 'refuse' | 'older', boolean]>([
-    ['takes the whole build on the same node', 'nMini', 'all', true],
-    ['uploads what the host could not take', 'nMini', 'some', true],
-    ['uploads the app when the host refuses the handoff', 'nMini', 'refuse', true],
-    ['uploads the app to a host that predates handoffs', 'nMini', 'older', true],
-    ['never offers the build to a host on another node', 'nOther', 'all', false],
-  ])('%s', async (_name, nodeId, answer, asked) => {
-    const placed = await runMacos(root, () => {}, 'mini');
+    ['takes the whole build on the same stim-server', FAKE_SERVER_PUBLIC, 'all', true],
+    ['uploads what the host could not take', FAKE_SERVER_PUBLIC, 'some', true],
+    ['uploads the app when the host refuses the handoff', FAKE_SERVER_PUBLIC, 'refuse', true],
+    ['uploads the app to a host that predates handoffs', FAKE_SERVER_PUBLIC, 'older', true],
+    ['never offers the build to another stim-server', OTHER_KEY, 'all', false],
+  ])('%s', async (_name, serverKey, answer, asked) => {
+    const placed = await runMacos(testContext(), root, () => {}, 'mini');
     const built = new Map(host.blobs);
     const manifestDigest = (host.offers.at(-1)!.manifest as { sha256: string }).sha256;
     const content = [...built.keys()].filter((digest) => digest !== manifestDigest);
@@ -724,7 +900,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
               bytes: taken.reduce((total, digest) => total + built.get(digest)!.length, 0),
             };
           };
-    const handoff = { nodeId, token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
+    const handoff = { serverKey, token: 'a'.repeat(64), sha256: 'b'.repeat(64) };
     const notes: string[] = [];
     const connection = await connectHost('mini');
     const run = await placeHostedMacos(connection, {
@@ -752,17 +928,17 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a session the host stopped is replaced by a new reservation', async () => {
-    const first = await runMacos(root, () => {}, 'mini');
+    const first = await runMacos(testContext(), root, () => {}, 'mini');
     host.stopSession();
-    const second = await runMacos(root, () => {}, 'mini');
+    const second = await runMacos(testContext(), root, () => {}, 'mini');
     expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(2);
     expect(second.host?.session).not.toBe(first.host?.session);
   });
 
   test('a session the host no longer holds is replaced on launch and released by stop', async () => {
-    const first = await runMacos(root, () => {}, 'mini');
+    const first = await runMacos(testContext(), root, () => {}, 'mini');
     host.forgetSession = first.host!.session;
-    const second = await runMacos(root, () => {}, 'mini');
+    const second = await runMacos(testContext(), root, () => {}, 'mini');
     expect(second.host?.session).not.toBe(first.host?.session);
     host.forgetSession = second.host!.session;
     await stopMacosApp(root);
@@ -770,26 +946,28 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
   });
 
   test('a launch the host cannot confirm or complete is reported, and the session stays recorded', async () => {
+    const stim = createStim({ projectRoot: root });
     host.installed = { state: 'installed', launched: 'unverified' };
-    await runMacos(root, () => {}, 'mini');
+    const result = await stim.run({ platform: 'macos', remote: 'mini' });
+    expect(result.facts.launched).toBe('unverified');
     expect(macosAppState(readMacosRecord(root))?.state).toBe('unverified');
 
     host.installed = { state: 'unknown', launched: null, notice: 'the executable has no arm64 slice' };
-    await expect(runMacos(root, () => {}, 'mini')).rejects.toThrow('no arm64 slice');
+    await expect(stim.run({ platform: 'macos', remote: 'mini' })).rejects.toThrow('no arm64 slice');
     const kept = readMacosRecord(root);
     expect(kept?.host?.session).toBeDefined();
     expect(macosAppState(kept)?.state).toBe('stopped');
   });
 
   test('a local run refuses while the workspace app runs on a host', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     spawned = [];
-    await expect(runMacos(root, () => {})).rejects.toThrow('runs on mini. Run stim stop first');
+    await expect(runMacos(testContext(), root, () => {})).rejects.toThrow('runs on mini. Run stim stop first');
     expect(spawned).toEqual([]);
   });
 
   test('workspace removal stops the hosted session, and keeps the workspace when the host cannot confirm', async () => {
-    await runMacos(root, () => {}, 'mini');
+    await runMacos(testContext(), root, () => {}, 'mini');
     const placed = readMacosRecord(root)!;
     await host.close();
     const kept = await reclaimProject(root, { deleteOwnedDevices: true });
@@ -802,6 +980,23 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     expect(host.methods).toContain('device-host.stop');
     expect(removed.failedDevices).toEqual([]);
   });
+
+  test.each(['device-host.stop', 'device-host.logs.query'])(
+    'cancelling cleanup during %s retains the hosted app record',
+    async (method) => {
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const placed = readMacosRecord(root);
+      if (!placed?.host) throw new Error('The fixture has no hosted placement.');
+      const controller = new AbortController();
+      const cancelled = new Error('cancel hosted cleanup');
+      host.silentMethods.add(method);
+      host.onRequest = (received) => {
+        if (received === method) controller.abort(cancelled);
+      };
+      await expect(stopMacosApp(root, testContext({ signal: controller.signal }))).rejects.toBe(cancelled);
+      expect(readMacosRecord(root)).toEqual(placed);
+    },
+  );
 
   describe('stim logs for a hosted app', () => {
     const originalCwd = process.cwd();
@@ -832,7 +1027,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     }
 
     test('copies each host record once, in pages, and picks up new ones on the next run', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logPage = 2;
       host.logs.push(clientRecord(1), clientRecord(2), clientRecord(3, 'error'));
       const first = await logs(['--json', '--source', 'client']);
@@ -847,7 +1042,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('concurrent runs do not duplicate records', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1), clientRecord(2));
       const placement = readMacosRecord(root)!.host!;
       await Promise.all([syncHostedMacosLogs(root, placement), syncHostedMacosLogs(root, placement)]);
@@ -855,7 +1050,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('a host that refuses costs a stderr warning, never stdout or the exit code', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logsRefused = true;
       const result = await logs(['--json', '--source', 'client']);
       expect(result.out).toEqual([]);
@@ -863,8 +1058,34 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
       expect(result.err).toContain('needs read access');
     });
 
+    test('an in-process read routes hosted warnings through its caller and cancels a pending copy', async () => {
+      await runMacos(testContext(), root, () => {}, 'mini');
+      const placement = readMacosRecord(root)!.host!;
+      const output = vi.fn<(stream: 'stdout' | 'stderr', text: string) => void>();
+      const abort = new AbortController();
+      const context = { signal: abort.signal, output };
+      host.logsRefused = true;
+      const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+      try {
+        expect(await syncHostedMacosLogs(root, placement, undefined, undefined, 'ios', context)).toBe(false);
+        expect(output).toHaveBeenCalledWith('stderr', expect.stringContaining('needs read access'));
+        expect(stderr).not.toHaveBeenCalled();
+        host.logsRefused = false;
+        host.silentMethods.add('device-host.logs.query');
+        const pending = syncHostedMacosLogs(root, placement, undefined, undefined, 'ios', context);
+        await vi.waitFor(() =>
+          expect(host.methods.filter((method) => method === 'device-host.logs.query')).toHaveLength(2),
+        );
+        abort.abort();
+        await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        expect(output).toHaveBeenCalledTimes(1);
+      } finally {
+        stderr.mockRestore();
+      }
+    });
+
     test('follow keeps copying, warns once per outage and recovers', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1));
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       const stop = followHostedMacosLogs(root, { intervalMs: 10, retryMs: 10 });
@@ -888,7 +1109,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('stop copies the last records before it forgets the placement', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logs.push(clientRecord(1), clientRecord(2, 'error'));
       await stopMacosApp(root);
       expect(host.methods.lastIndexOf('device-host.logs.query')).toBeGreaterThan(
@@ -901,7 +1122,7 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
     });
 
     test('a host that cannot return the final logs does not block stop', async () => {
-      await runMacos(root, () => {}, 'mini');
+      await runMacos(testContext(), root, () => {}, 'mini');
       host.logsRefused = true;
       const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
       try {

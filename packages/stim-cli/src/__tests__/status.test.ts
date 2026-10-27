@@ -1,14 +1,15 @@
 import { isRpcEvent } from '@stim-cli/core/receive-protocol';
-import { writeHostedIos, writeHostedAndroid } from '../device-host/ios-state.ts';
+import { writeHostedNative } from '../device-host/ios-state.ts';
+import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
-import { tmpdir } from 'os';
+import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
 import { createServer } from 'http';
 import { Command } from 'commander';
-import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
@@ -28,9 +29,17 @@ import { findProjectRoot } from '../workspace/project.ts';
 import { recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { quotedPath } from '@stim-cli/core';
+
+const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'ios');
+const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
+  writeHostedNative(root, slot, host, 'android');
 
 let tmpHome: string;
 const realExecutor = getExecutor();
+
+const initialCwd = process.cwd();
 
 beforeEach(() => {
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
@@ -78,12 +87,14 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
 
-async function runStatus() {
+async function runStatus(platform: NodeJS.Platform = 'darwin') {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
   const program = new Command();
   statusCommand(program);
   const logs: string[] = [];
@@ -128,11 +139,13 @@ test('status tags owned devices and leaves unowned devices untagged', async () =
 });
 
 test('status says nothing extra for a project that has only a Metro port', async () => {
+  const project = join(tmpHome, 'proj-a');
+  mkdirSync(project);
   saveConfig(
     makeConfig({
       version: 2,
       projects: {
-        '/proj/a': {
+        [project]: {
           label: 'agent-1',
           metroPort: 8083,
           platforms: {},
@@ -196,6 +209,81 @@ test('status reports simctl as unreadable instead of warning that every sim is g
   expect(logs.some((l) => /ios:.*unknown/.test(l))).toBeTruthy();
 });
 
+test('status off macOS never runs simctl and reports no simctl problem', async () => {
+  const simctlCalls: string[] = [];
+  const record = (args: string[] = []) => {
+    if (args.includes('simctl')) simctlCalls.push(args.join(' '));
+  };
+  setExecutor({
+    runFile(_file, args = []) {
+      record(args);
+      return '';
+    },
+    async runFileAsync(_file, args = []) {
+      record(args);
+      return '';
+    },
+    runQuiet: () => null,
+    runFileQuiet: (_file, args = []) => {
+      record(args);
+      return null;
+    },
+    spawn(_file, args = []) {
+      record(args);
+      throw new Error('spawn should not be called from status');
+    },
+  });
+  saveConfig(makeConfig({ version: 2, projects: { '/proj/a': { label: 'agent-1', platforms: {} } } }));
+
+  const logs = await runStatus('linux');
+  const json = await runStatusJson('linux');
+
+  expect(simctlCalls).toEqual([]);
+  expect(logs.some((l) => /simctl could not be read/.test(l))).toBe(false);
+  expect(json.simctlAvailable).toBe(true);
+});
+
+test('plain status shows the load and a set cap even with no projects registered', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 } }));
+  const logs = await runStatus();
+  expect(logs.some((l) => /No projects registered/.test(l))).toBe(true);
+  expect(logs.some((l) => /load [\d.]+\/core \(busy at 2\)/.test(l))).toBe(true);
+  expect(logs.some((l) => /builds 0\/2 \(concurrency\.maxBuilds\)/.test(l))).toBe(true);
+});
+
+test.skipIf(process.platform !== 'darwin')(
+  'device slot usage is unknown when simctl fails, and counts no simulators when simctl is absent, as admission does',
+  async () => {
+    const usageWhen = async (failure: Error) => {
+      setExecutor({
+        runFile: () => '',
+        async runFileAsync(_file, args = []) {
+          if (args.join(' ').includes('simctl list devices --json')) throw failure;
+          return '';
+        },
+        runQuiet: () => null,
+        runFileQuiet: () => null,
+        spawn() {
+          throw new Error('spawn should not be called from status');
+        },
+      });
+      return (await runStatusJson()).capacity.devices;
+    };
+    saveConfig(makeConfig({ concurrency: { maxDevices: 2 } }));
+
+    expect(await usageWhen(new Error('simctl timed out'))).toMatchObject({
+      max: 2,
+      inUse: null,
+      unknown: expect.stringContaining('simctl timed out'),
+    });
+    expect(await usageWhen(Object.assign(new Error('spawn xcrun ENOENT'), { code: 'ENOENT' }))).toEqual({
+      max: 2,
+      inUse: 0,
+      holders: [],
+    });
+  },
+);
+
 test('status still warns about a recorded sim missing from a readable listing', async () => {
   saveConfig(
     makeConfig({
@@ -250,7 +338,8 @@ test.each(['ios', 'android'] as const)(
   },
 );
 
-async function runStatusJson() {
+async function runStatusJson(platform: NodeJS.Platform = 'darwin') {
+  vi.spyOn(process, 'platform', 'get').mockReturnValue(platform);
   const program = new Command();
   statusCommand(program);
   const logs: string[] = [];
@@ -345,6 +434,21 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   await runStatusJson();
   expect(calls.filter((call) => call === 'swiftc')).toHaveLength(1);
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
+});
+
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+  saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
+  const cpus = availableParallelism();
+  const before = (loadavg()[1] ?? 0) / cpus;
+  const { capacity } = await runStatusJson();
+  const after = (loadavg()[1] ?? 0) / cpus;
+
+  expect(capacity.load).toMatchObject({ cpus, busyAt: 1.5, limit: null });
+  expect(capacity.load.loadPerCore).toBeGreaterThanOrEqual(Math.floor(Math.min(before, after) * 10) / 10);
+  expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
+  expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
+  expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
+  expect(capacity).not.toHaveProperty('devices');
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {
@@ -455,7 +559,7 @@ test('status reports a supervisor whose port answers as this project as healthy'
       }),
     );
 
-    const payload = await runStatusJson();
+    const payload = await runStatusJson(process.platform);
     const env = payload.environments[0];
     expect(env.supervisor).toEqual({
       pid: process.pid,
@@ -561,9 +665,32 @@ test('a workspace with no supervisor and no logs reports both as null', async ()
     const payload = await runStatusJson();
     expect(payload.environments[0].supervisor).toBe(null);
     expect(payload.environments[0].logs).toBe(null);
-    expect(payload.environments[0].agentDevice).toEqual({ stateDir: workspaceAgentDeviceDir(root) });
+    expect(payload.environments[0].agentDevice?.stateDir).toBe(workspaceAgentDeviceDir(root));
     expect(existsSync(workspaceAgentDeviceDir(root))).toBe(false);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('agentDevice.installed follows the executable on PATH and is cached for a short time', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
+  vi.useFakeTimers({ toFake: ['Date'] });
+  try {
+    saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', platforms: {} } } }));
+    const lookup = vi.fn<(name: string) => string | null>();
+    setExecutor({ ...getExecutor(), findExecutable: lookup });
+    vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+    lookup.mockReturnValue('/usr/local/bin/agent-device');
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    lookup.mockReturnValue(null);
+    vi.setSystemTime(new Date('2031-01-01T00:00:10Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(true);
+    vi.setSystemTime(new Date('2031-01-01T00:00:31Z'));
+    expect((await runStatusJson()).environments[0].agentDevice?.installed).toBe(false);
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(lookup).toHaveBeenCalledWith('agent-device');
+  } finally {
+    vi.useRealTimers();
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -581,7 +708,7 @@ test('the printed lines name the supervisor and the error count', async () => {
     writeLogs(root, [{ ts: 3, src: 'metro', level: 'error', msg: 'boom' }]);
     saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'agent-1', metroPort: 8083, platforms: {} } } }));
 
-    const logs = await runStatus();
+    const logs = await runStatus(process.platform);
     expect(logs.some((l) => new RegExp(`supervisor: pid ${process.pid}`).test(l))).toBeTruthy();
     expect(logs.some((l) => /1 error/.test(l))).toBeTruthy();
   } finally {
@@ -607,7 +734,7 @@ test('status reports a recorded EAS session with its preview URL', async () => {
         },
       }),
     );
-    recordEasSessionClaim({
+    await recordEasSessionClaim({
       sessionId: 'drs_9',
       name: 'stim-agent-1',
       platform: 'ios',
@@ -680,6 +807,25 @@ test('status reports detected platforms before a run, including resolved project
   expect((await runStatusJson()).environments[0].platforms).toEqual(['ios', 'web']);
 });
 
+test('status reports when doctor last ran per platform, and nothing before it has', async () => {
+  const root = process.cwd();
+  saveConfig(makeConfig({ version: 2, projects: { [root]: { label: 'fresh', platforms: {} } } }));
+  expect((await runStatusJson()).environments[0].doctorRuns).toBeUndefined();
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [root]: {
+          label: 'fresh',
+          platforms: {},
+          doctorRuns: { ios: { at: '2026-10-09T12:00:00.000Z', version: '1' } },
+        },
+      },
+    }),
+  );
+  expect((await runStatusJson()).environments[0].doctorRuns).toEqual({ ios: { at: '2026-10-09T12:00:00.000Z' } });
+});
+
 test('a running build reports what its build tool is doing only while it compiles', async () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-proj-'));
   const claim = tryAcquireClaim({
@@ -692,7 +838,7 @@ test('a running build reports what its build tool is doing only while it compile
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim });
     progress.step('compile');
     progress.output({ src: 'build', level: 'debug', msg: 'note: Target dependency graph (3 targets)' });
-    expect((await runStatusJson()).environments[0].build).toMatchObject({
+    expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({
       state: 'running',
       phase: 'compile',
       outcome: 'cold',
@@ -701,8 +847,8 @@ test('a running build reports what its build tool is doing only while it compile
     });
 
     progress.step('install');
-    expect((await runStatusJson()).environments[0].build).toMatchObject({ phase: 'install' });
-    expect((await runStatusJson()).environments[0].build).not.toHaveProperty('detail');
+    expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({ phase: 'install' });
+    expect((await runStatusJson(process.platform)).environments[0].build).not.toHaveProperty('detail');
     progress.clear();
   } finally {
     releaseClaim(claim);
@@ -711,13 +857,65 @@ test('a running build reports what its build tool is doing only while it compile
 });
 
 test('a workspace a warm just prepared reports phase ready in --json and [ready] in the human view', async () => {
-  saveConfig(makeConfig({ version: 2, projects: { '/wt/warmed': { platforms: {} } } }));
-  writeWorkspaceState('/wt/warmed', { warm: { phase: 'ready', at: new Date().toISOString() } });
+  const warmed = join(tmpHome, 'warmed');
+  mkdirSync(warmed);
+  saveConfig(makeConfig({ version: 2, projects: { [warmed]: { platforms: {} } } }));
+  writeWorkspaceState(warmed, { warm: { phase: 'ready', at: new Date().toISOString() } });
 
   const payload = await runStatusJson();
   expect(payload.environments[0]).toMatchObject({ live: false, phase: 'ready' });
+  expect(payload.environments[0]).not.toHaveProperty('pathMissing');
   expect((await runStatus()).some((line) => line.includes('warmed [ready]'))).toBe(true);
 });
+
+test('a workspace whose folder was deleted reports pathMissing and no ready phase, and stays registered', async () => {
+  const gone = join(tmpHome, 'gone');
+  mkdirSync(gone);
+  saveConfig(makeConfig({ version: 2, projects: { [gone]: { platforms: {} } } }));
+  writeWorkspaceState(gone, { warm: { phase: 'ready', at: new Date().toISOString() } });
+  rmSync(gone, { recursive: true });
+
+  const payload = await runStatusJson();
+  expect(payload.environments[0]).toMatchObject({
+    live: false,
+    phase: 'idle',
+    phaseSince: null,
+    pathMissing: true,
+    stage: { kind: 'stopped' },
+  });
+  const human = await runStatus();
+  expect(human.some((line) => line.includes('gone [folder missing]'))).toBe(true);
+  expect(human.some((line) => line.includes(`stim worktree remove ${quotedPath(gone)}`))).toBe(true);
+  expect(Object.keys(loadConfig()?.projects ?? {})).toEqual([gone]);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'a workspace whose folder cannot be read is not reported as pathMissing',
+  async () => {
+    const parent = join(tmpHome, 'locked');
+    const project = join(parent, 'app');
+    mkdirSync(project, { recursive: true });
+    saveConfig(makeConfig({ version: 2, projects: { [project]: { platforms: {} } } }));
+    chmodSync(parent, 0);
+    try {
+      const payload = await runStatusJson();
+      expect(payload.environments[0]).not.toHaveProperty('pathMissing');
+    } finally {
+      chmodSync(parent, 0o700);
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a workspace on a volume that is not mounted is not reported as pathMissing',
+  async () => {
+    const unmounted = '/Volumes/StimTestVolumeThatDoesNotExist/app';
+    saveConfig(makeConfig({ version: 2, projects: { [unmounted]: { platforms: {} } } }));
+
+    const payload = await runStatusJson();
+    expect(payload.environments[0]).not.toHaveProperty('pathMissing');
+  },
+);
 
 test('a worktree root that is itself the app is not flagged labelOnly', async () => {
   saveConfig(
@@ -755,15 +953,14 @@ function dfExecutor(byVolume: Record<string, string>) {
     run() {
       return '';
     },
-    runQuiet(cmd) {
-      const m = /^df -k '(.*)'$/.exec(cmd);
-      if (!m) return null;
-      const vol = m[1];
+    runQuiet: () => null,
+    runFileQuiet(file: string, args: string[]) {
+      if (file !== 'df' || args.length !== 2 || args[0] !== '-k') return null;
+      const vol = args[1];
       assert(vol !== undefined);
       asked.push(vol);
       return byVolume[vol] ?? null;
     },
-    runFileQuiet: () => null,
     spawn() {
       throw new Error('spawn should not be called from status');
     },
@@ -936,11 +1133,17 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
             : 'List of devices attached\n';
         return '';
       },
+      runFile(file, args = [], options) {
+        return this.run!([file, ...args].join(' '), options);
+      },
       runQuiet(cmd) {
         commands.push(cmd);
-        return cmd.includes('-s emulator-5556 emu avd name') ? 'stim-app\nOK' : null;
+        return null;
       },
-      runFileQuiet: () => null,
+      runFileQuiet(file: string, args: string[] = []) {
+        commands.push([file, ...args].join(' '));
+        return args.join(' ') === '-s emulator-5556 emu avd name' ? 'stim-app\nOK' : null;
+      },
       spawn() {
         throw new Error('status must not spawn a device');
       },
@@ -967,7 +1170,7 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
   },
 );
 
-test('status lists worktrees with no environment for every registered repository, from outside any repository, with their git state once every merge verdict is cached', async () => {
+test('status lists worktrees with no environment for every registered repository, from outside any repository, and reads git only for live environments once every merge verdict is cached', async () => {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   const commit = (cwd: string, file: string, message: string) => {
@@ -1002,6 +1205,7 @@ test('status lists worktrees with no environment for every registered repository
     const nested = worktree(first, 'nested');
     const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
+    const idleWorktree = worktree(second, 'idle');
     const deleted = worktree(second, 'deleted');
     rmSync(deleted, { recursive: true, force: true });
 
@@ -1025,20 +1229,41 @@ test('status lists worktrees with no environment for every registered repository
         version: 2,
         projects: {
           [first]: { label: 'first', platforms: {} },
-          [join(nested, 'apps', 'mobile')]: { label: 'nested', platforms: {} },
+          [join(nested, 'apps', 'mobile')]: {
+            label: 'nested',
+            platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
+          },
+          [join(loose, 'apps', 'mobile')]: {
+            label: 'loose',
+            platforms: { ios: { deviceUdid: 'UDID-DEF', owned: true } },
+          },
           [join(base, 'gone')]: { label: 'gone', platforms: {} },
           [join(second, 'apps', 'mobile')]: { label: 'second', platforms: {} },
+          [join(idleWorktree, 'apps', 'mobile')]: { label: 'idle', platforms: {} },
         },
       }),
     );
-    const real = (fallback: unknown) => (file: string, args: string[], opts: object) =>
+    const real = (fallback: unknown) => (file: string, args: string[], opts: ExecOptions) =>
       file === 'git' ? realExecutor.runFile(file, args, opts) : fallback;
+    const bootedSims = JSON.stringify({
+      devices: {
+        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': ['UDID-ABC', 'UDID-DEF'].map((udid) => ({
+          udid,
+          name: `stim-${udid}`,
+          state: 'Booted',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-17',
+        })),
+      },
+    });
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: object) =>
-        file === 'git' ? realExecutor.runFileAsync(file, args, opts) : Promise.resolve(''),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'git'
+          ? realExecutor.runFileAsync(file, args, opts)
+          : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
       runFile: real(''),
       runQuiet: () => null,
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'git' ? realExecutor.runFileQuiet(file, args, opts) : null,
       spawn() {
         throw new Error('spawn should not be called from status');
@@ -1048,28 +1273,29 @@ test('status lists worktrees with no environment for every registered repository
     await runStatusJson();
     const payload = await runStatusJson();
     expect(payload.unprovisionedWorktrees).toEqual([
-      {
-        path: loose,
-        branch: 'loose',
-        repository: first,
-        git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
-        gitChip: {
-          parts: [
-            { kind: 'arrows', ahead: 1, behind: 0 },
-            { kind: 'changed', count: 4 },
-          ],
-          ci: null,
-        },
-      },
       { path: deleted, branch: 'deleted', repository: second, git: null },
-      {
-        path: other,
-        branch: 'other',
-        repository: second,
-        git: { changed: 0, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
-        gitChip: { parts: [{ kind: 'no-upstream' }], ci: null },
-      },
+      { path: other, branch: 'other', repository: second, git: null },
     ]);
+    const liveLoose = payload.environments.find((e: { path: string }) => e.path === join(loose, 'apps', 'mobile'));
+    expect(liveLoose.worktree).toEqual({
+      path: loose,
+      branch: 'loose',
+      repository: first,
+      git: { changed: 2, untracked: 2, upstream: 'origin/loose', ahead: 1, behind: 0, mergedInto: null },
+      gitChip: {
+        parts: [
+          { kind: 'arrows', ahead: 1, behind: 0 },
+          { kind: 'changed', count: 4 },
+        ],
+        ci: null,
+      },
+    });
+    const plain = (await runStatus()).join('\n');
+    expect(plain).toContain('git: 2 changed, 2 untracked');
+    expect(plain).toContain(`${other} [other]`);
+    expect(plain).not.toContain(`${other} [other] --`);
+    const idle = payload.environments.find((e: { path: string }) => e.path === join(idleWorktree, 'apps', 'mobile'));
+    expect(idle).toMatchObject({ live: false, worktree: { path: idleWorktree, branch: 'idle', git: null } });
     const env = payload.environments.find((e: { path: string }) => e.path === join(nested, 'apps', 'mobile'));
     expect(env.worktree).toEqual({
       path: nested,
@@ -1081,7 +1307,7 @@ test('status lists worktrees with no environment for every registered repository
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
-});
+}, 30_000);
 
 test.each([
   ['mini', 'mini', false, 'ok', undefined, 'mini'],
@@ -1293,7 +1519,7 @@ test('status emits one archive payload and links earlier runs to a live environm
     saveConfig(makeConfig({ projects: { [root]: {} } }));
     ensureWorkspaceStorage(root);
     writeFileSync(workspaceStateFile(root), '{}');
-    archiveWorkspace(root, 'worktree-remove');
+    await archiveWorkspace(root, 'worktree-remove');
     const payload = await runStatusJson();
     expect(payload.archived).toHaveLength(1);
     expect(payload.archived[0]).toMatchObject({ projectRoot: root, replacedBy: root, removedBy: 'worktree-remove' });

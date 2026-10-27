@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { LOG_ROTATE_BYTES, configDir, rotateLog } from '../index.ts';
 import { loadConfig } from './config.ts';
 import { coerceSettingText, settingDefinition, settingValueError } from './settings-registry.ts';
+import { ambientEnv } from '../context.ts';
 
 export const DEBUG_ENV = 'STIM_DEBUG';
 
@@ -16,7 +17,7 @@ export function debugLogDir(): string {
 }
 
 /** The `STIM_DEBUG` override (1/true on, 0/false off, anything else off), else the machine setting `debug.logs`. Never throws. */
-export function debugLoggingEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function debugLoggingEnabled(env: NodeJS.ProcessEnv = ambientEnv()): boolean {
   const definition = settingDefinition('debug.logs')!;
   const raw = env[DEBUG_ENV];
   if (raw !== undefined && raw !== '') {
@@ -56,7 +57,7 @@ export interface DebugLog {
 export function createDebugLog(
   component: 'cli' | 'server',
   {
-    env = process.env,
+    env,
     now = Date.now,
     base = () => ({}),
   }: { env?: NodeJS.ProcessEnv; now?: () => number; base?: () => Record<string, unknown> } = {},
@@ -64,11 +65,17 @@ export function createDebugLog(
   let checkedAt = Number.NEGATIVE_INFINITY;
   let on = false;
   let unchecked = ROTATE_CHECK_BYTES;
+  let checkedEnv: NodeJS.ProcessEnv | undefined;
+  let checkedHome: string | undefined;
   const enabled = (): boolean => {
     const at = now();
-    if (at - checkedAt >= ENABLED_RECHECK_MS) {
+    const activeEnv = env ?? ambientEnv();
+    const home = configDir();
+    if (activeEnv !== checkedEnv || home !== checkedHome || at - checkedAt >= ENABLED_RECHECK_MS) {
       checkedAt = at;
-      on = debugLoggingEnabled(env);
+      checkedEnv = activeEnv;
+      checkedHome = home;
+      on = debugLoggingEnabled(activeEnv);
     }
     return on;
   };

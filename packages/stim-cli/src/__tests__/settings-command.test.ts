@@ -3,8 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { registerSettings } from '../commands/settings.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, saveConfig } from '../workspace/config.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { workspaceRecordingsDir, buildMachinesFile, deviceHostMachinesFile } from '@stim-cli/core/state';
 
 let base: string;
@@ -13,6 +14,8 @@ let repo: string;
 let app: string;
 let cwd: string;
 
+let tailscale: string | null = null;
+
 beforeEach(() => {
   base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-settings-')));
   home = join(base, 'home');
@@ -20,17 +23,26 @@ beforeEach(() => {
   app = join(repo, 'apps', 'mobile');
   mkdirSync(home);
   mkdirSync(app, { recursive: true });
-  getExecutor().runFile('git', ['init', '-q', repo]);
+  getExecutor().runFile('git', ['init', '-q', repo], { timeoutMs: 60_000 });
   writeFileSync(join(repo, 'package.json'), '{}\n');
   writeFileSync(join(app, 'package.json'), '{}\n');
   process.env.STIM_HOME = home;
   const real = getExecutor();
   setExecutor(
     Object.assign(Object.create(real), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
-        file === 'osascript' ? null : real.runFileQuiet(file, args, opts),
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? null : /tailscale$/i.test(file) ? tailscale : real.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript'
+          ? Promise.resolve('')
+          : /tailscale$/i.test(file)
+            ? tailscale === null
+              ? Promise.reject(new Error('Tailscale is unavailable'))
+              : Promise.resolve(tailscale)
+            : real.runFileAsync(file, args, opts),
     }),
   );
+  tailscale = null;
   cwd = process.cwd();
   process.chdir(app);
   process.exitCode = undefined;
@@ -99,6 +111,111 @@ test('--json reports each layer, the winning one, environment overrides, and def
   expect(payload.unknown).toEqual([{ key: 'bogus', scope: 'committed', file: join(repo, '.stim.json'), value: true }]);
 });
 
+test('a removed setting is listed with the command that replaces it', async () => {
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'force' } }));
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    {
+      key: 'remote.buildMode',
+      scope: 'committed',
+      file: join(app, '.stim.json'),
+      value: 'force',
+      replacement: 'stim settings set remote.build remote',
+    },
+  ]);
+  const { note } = await settings([]);
+  expect(note).toEqual([
+    expect.stringContaining(
+      `remote.buildMode in ${join(app, '.stim.json')} is not read by Stim. Run \`stim settings set remote.build remote\` instead.`,
+    ),
+  ]);
+});
+
+test('a removed setting in the machine config is listed with its replacement too', async () => {
+  writeFileSync(
+    join(home, 'config.json'),
+    JSON.stringify({ version: 2, projects: { [app]: {} }, repos: {}, remote: { buildMode: 'off' } }),
+  );
+  const [printed] = (await settings(['--json'])).out;
+  expect(JSON.parse(printed ?? '').unknown).toEqual([
+    expect.objectContaining({
+      key: 'remote.buildMode',
+      scope: 'machine',
+      value: 'off',
+      replacement: 'stim settings set remote.build local',
+    }),
+  ]);
+});
+
+test.each([
+  ['auto', 'auto'],
+  ['force', 'remote'],
+  ['off', 'local'],
+])(
+  'set of the removed remote.buildMode %s names stim settings set remote.build %s and writes nothing',
+  async (old, value) => {
+    const file = join(home, 'config.json');
+    const before = JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'off' } });
+    writeFileSync(file, before);
+    const { note, exitCode } = await settings(['set', 'remote.buildMode', old, '--scope', 'machine']);
+    expect(exitCode).toBe(1);
+    expect(note.join('\n')).toContain('STIM_BAD_ARG: "remote.buildMode" was replaced by remote.build');
+    expect(note.join('\n')).toContain(`stim settings set remote.build ${value}`);
+    expect(readFileSync(file, 'utf-8')).toBe(before);
+  },
+);
+
+test('get of the removed remote.buildMode points at remote.build', async () => {
+  const { note, exitCode } = await settings(['get', 'remote.buildMode']);
+  expect(exitCode).toBe(1);
+  expect(note.join('\n')).toContain('was replaced by remote.build');
+});
+
+test('unset of the removed remote.buildMode removes it from every layer that has it', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(
+    machine,
+    JSON.stringify({
+      version: 2,
+      projects: { [app]: { settings: { remote: { buildMode: 'auto' }, ios: { runtime: '26.0' } } } },
+      repos: {},
+      remote: { machines: ['mini'], buildMode: 'force' },
+    }),
+  );
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' }, ios: { runtime: '26.2' } }));
+
+  const { out, exitCode } = await settings(['unset', 'remote.buildMode', '--json']);
+
+  expect(exitCode).toBe(0);
+  expect(JSON.parse(out[0] ?? '')).toEqual({
+    key: 'remote.buildMode',
+    replacedBy: 'remote.build',
+    removed: [
+      { scope: 'machine', file: machine },
+      { scope: 'workspace', file: `${machine} (projects["${app}"].settings)` },
+      { scope: 'committed', file: join(app, '.stim.json') },
+    ],
+  });
+  const config = JSON.parse(readFileSync(machine, 'utf-8'));
+  expect(config.remote).toEqual({ machines: ['mini'] });
+  expect(config.projects[app].settings).toEqual({ ios: { runtime: '26.0' } });
+  expect(JSON.parse(readFileSync(join(app, '.stim.json'), 'utf-8'))).toEqual({ ios: { runtime: '26.2' } });
+  expect(JSON.parse((await settings(['--json'])).out[0] ?? '').unknown).toEqual([]);
+});
+
+test('unset of the removed remote.buildMode with --scope leaves the other layers alone', async () => {
+  const machine = join(home, 'config.json');
+  writeFileSync(machine, JSON.stringify({ version: 2, projects: {}, repos: {}, remote: { buildMode: 'force' } }));
+  writeFileSync(join(app, '.stim.json'), JSON.stringify({ remote: { buildMode: 'off' } }));
+
+  const { out } = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
+
+  expect(out).toEqual([`unset remote.buildMode in ${join(app, '.stim.json')}`]);
+  expect(JSON.parse(readFileSync(machine, 'utf-8')).remote).toEqual({ buildMode: 'force' });
+  const again = await settings(['unset', 'remote.buildMode', '--scope', 'committed']);
+  expect(again.out).toEqual(['remote.buildMode was not set in the committed layer.']);
+});
+
 test('set and unset edit .stim.json in place, keeping other keys and indentation', async () => {
   const file = join(app, '.stim.json');
   writeFileSync(
@@ -163,8 +280,10 @@ test('the viewer settings default to stim-desktop while Stim Desktop is installe
   let desktop = '/Applications/Stim.app';
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) =>
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
         file === 'osascript' ? desktop : stubbed.runFileQuiet(file, args, opts),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
+        file === 'osascript' ? Promise.resolve(desktop) : stubbed.runFileAsync(file, args, opts),
     }),
   );
   vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
@@ -199,9 +318,13 @@ test('a command run by Stim Desktop reports the Desktop viewer default without t
   const stubbed = getExecutor();
   setExecutor(
     Object.assign(Object.create(stubbed), {
-      runFileQuiet: (file: string, args: string[], opts: object) => {
+      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'osascript') throw new Error('Launch Services lookup ran');
         return stubbed.runFileQuiet(file, args, opts);
+      },
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
+        if (file === 'osascript') throw new Error('Launch Services lookup ran');
+        return stubbed.runFileAsync(file, args, opts);
       },
     }),
   );
@@ -324,6 +447,23 @@ test('a recording.enabled write that turns nothing off deletes nothing, whatever
   expect(existsSync(workspaceRecordingsDir(app))).toBe(true);
 });
 
+test('workspace.hidden is written to the workspace layer without --scope and cleared by the next use', async () => {
+  const other = join(base, 'other');
+  saveConfig({
+    version: 2,
+    projects: { [app]: {}, [other]: { settings: { workspace: { hidden: true } } } },
+    repos: {},
+  });
+
+  expect((await settings(['set', 'workspace.hidden', 'true'])).exitCode).toBe(0);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({ workspace: { hidden: true } });
+  expect((await settings(['set', 'workspace.hidden', 'true', '--scope', 'repo'])).exitCode).not.toBe(0);
+
+  recordWorkspaceUse(app);
+  expect(loadConfig()?.projects[app]?.settings).toEqual({});
+  expect(loadConfig()?.projects[other]?.settings).toEqual({ workspace: { hidden: true } });
+});
+
 test('archive settings persist in their declared layers and scoped homes resolve disabled', async () => {
   expect((await settings(['set', 'archive.enabled', 'false', '--scope', 'repo'])).exitCode).toBe(0);
   expect(loadConfig()?.repos).toMatchObject({ [join(repo, '.git')]: { settings: { archive: { enabled: false } } } });
@@ -345,16 +485,26 @@ test.each(['build', 'device'] as const)(
     const key = `remote.${role}PoolDisabled`;
     await settings(['set', 'remote.machines', '["mini","pending"]']);
     const credentials = JSON.stringify({
-      version: 1,
-      machines: ['mini', 'pending'].map((machine) => ({
-        machine,
-        nodeId: machine,
-        dnsName: `${machine}.tail.ts.net`,
-        deviceId: machine,
-        deviceToken: 'kept',
-        requestedAt: '2026-10-08T00:00:00.000Z',
-        state: machine === 'mini' ? 'approved' : 'pending',
-      })),
+      version: 2,
+      machines: [
+        {
+          machine: 'mini',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
+          deviceId: 'mini',
+          serverKey: 'K'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+        {
+          machine: 'pending',
+          transport: 'tailscale',
+          address: 'pending.tail.ts.net',
+          ticket: 'p'.repeat(42) + 'A',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'pending',
+        },
+      ],
     });
     const file = role === 'build' ? buildMachinesFile() : deviceHostMachinesFile();
     writeFileSync(file, credentials);
@@ -379,19 +529,53 @@ test.each(['build', 'device'] as const)(
   },
 );
 
+test('a device-pool member the tailnet reports as Linux or Windows cannot replace local, since it can never host', async () => {
+  await settings(['set', 'remote.machines', '["box"]']);
+  writeFileSync(
+    deviceHostMachinesFile(),
+    JSON.stringify({
+      version: 2,
+      machines: [
+        {
+          machine: 'box',
+          transport: 'tailscale',
+          address: 'box.tail.ts.net',
+          deviceId: 'id',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+          requestedAt: '2026-10-08T00:00:00.000Z',
+          state: 'approved',
+        },
+      ],
+    }),
+  );
+  const peer = (os: string) =>
+    JSON.stringify({
+      BackendState: 'Running',
+      Peer: { box: { ID: 'nBox', DNSName: 'box.tail.ts.net.', TailscaleIPs: ['100.64.0.9'], OS: os } },
+    });
+  for (const os of ['linux', 'windows']) {
+    tailscale = peer(os);
+    expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(1);
+    expect(loadConfig()?.remote?.devicePoolDisabled).toBeUndefined();
+  }
+  tailscale = peer('macOS');
+  expect((await settings(['set', 'remote.devicePoolDisabled', '["local"]'])).exitCode).toBe(0);
+});
+
 test('build and device approvals are independent and pending machines cannot replace local membership', async () => {
   await settings(['set', 'remote.machines', '["mini"]']);
   writeFileSync(
     buildMachinesFile(),
     JSON.stringify({
-      version: 1,
+      version: 2,
       machines: [
         {
           machine: 'mini',
-          nodeId: 'mini',
-          dnsName: 'mini.tail.ts.net',
+          transport: 'tailscale',
+          address: 'mini.tail.ts.net',
           deviceId: 'id',
-          deviceToken: 'token',
+          serverKey: 'KKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKA',
+          ticket: 'p'.repeat(42) + 'A',
           requestedAt: '2026-10-08T00:00:00.000Z',
           state: 'pending',
         },

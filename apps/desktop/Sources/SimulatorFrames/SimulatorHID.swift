@@ -65,6 +65,29 @@ enum TouchPhase {
   }
 }
 
+struct SimulatorTouchSequence {
+  private var originEdge: UInt32 = 0
+
+  mutating func edge(for phase: TouchPhase, at point: CGPoint, isMultiTouch: Bool = false) -> UInt32 {
+    if phase == .down {
+      originEdge = isMultiTouch ? 0 : Self.edge(at: point)
+    }
+    let edge = originEdge
+    if phase == .up { originEdge = 0 }
+    return edge
+  }
+
+  // Indigo's native screen-edge identifiers follow Siniulator's ScreenGeometry.edge:
+  // https://github.com/kmagiera/Siniulator/blob/e181521a32595c2e537e1ee6c359aae254dbfed3/Sources/Siniulator/ScreenView.swift#L32-L38
+  private static func edge(at point: CGPoint) -> UInt32 {
+    if point.y >= 0.97 { return 3 }
+    if point.y <= 0.03 { return 1 }
+    if point.x <= 0.03 { return 2 }
+    if point.x >= 0.97 { return 4 }
+    return 0
+  }
+}
+
 /// Input for one booted simulator. It uses the simulator's CoreDevice HID
 /// service when the runtime has one, and SimulatorKit's legacy HID client
 /// otherwise. `isConnected` turns false once the CoreDevice connection closes,
@@ -74,6 +97,7 @@ enum TouchPhase {
 /// Construction performs synchronous CoreSimulator XPC lookups and must run off the main thread.
 final class SimulatorHID {
   private let transport: Transport
+  private var touchSequence = SimulatorTouchSequence()
   private let legacyUntil = Date().addingTimeInterval(10)
 
   private enum Transport {
@@ -104,9 +128,10 @@ final class SimulatorHID {
 
   /// `point` is a fraction of the screen in its native orientation, origin top-left.
   func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint? = nil, screenID: UInt32 = 1) {
+    let edge = touchSequence.edge(for: phase, at: point, isMultiTouch: second != nil)
     switch transport {
-    case .coreDevice(let coreDevice): coreDevice.touch(phase, at: point, second: second, screenID: screenID)
-    case .legacy(let legacy): legacy.touch(phase, at: point, second: second, screenID: screenID)
+    case .coreDevice(let coreDevice): coreDevice.touch(phase, at: point, second: second, screenID: screenID, edge: edge)
+    case .legacy(let legacy): legacy.touch(phase, at: point, second: second, screenID: screenID, edge: edge)
     }
   }
 
@@ -211,12 +236,13 @@ final class CoreDeviceHID {
   }
 
   // dtuhidd's DigitizerTarget is 0 for the main screen and the screen ID for any other display.
-  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32, edge: UInt32) {
     let contact = xpc_dictionary_create(nil, nil, 0)
     xpc_dictionary_set_double(contact, "x", point.x)
     xpc_dictionary_set_double(contact, "y", point.y)
     let payload = dictionary([
-      "eventType": phase == .down ? 0 : phase == .move ? 1 : 2, "edge": 0, "target": UInt64(screenID == 1 ? 0 : screenID),
+      "eventType": phase == .down ? 0 : phase == .move ? 1 : 2, "edge": UInt64(edge),
+      "target": UInt64(screenID == 1 ? 0 : screenID),
     ])
     xpc_dictionary_set_value(payload, "pointOne", contact)
     if let second {
@@ -313,17 +339,17 @@ private final class LegacyHID {
   // The simulator's SimulatorHID addresses a display's digitizer by its screen
   // ID with bit 30 set, and backboardd aborts on a target it has no service
   // for. The main display keeps its legacy target.
-  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32) {
+  func touch(_ phase: TouchPhase, at point: CGPoint, second: CGPoint?, screenID: UInt32, edge: UInt32) {
     let target = screenID == 1 ? Self.mainScreenTarget : 0x4000_0000 | screenID
     var point = point
     // The builder returns nil for a drag that arrives within 16 ms of the previous message.
     let message: UnsafeMutableRawPointer?
     if var other = second {
       message = SimulatorKit.mouseMessage?(
-        &point, &other, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
+        &point, &other, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), edge)
     } else {
       message = SimulatorKit.mouseMessage?(
-        &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), 0)
+        &point, nil, target, UInt(phase.eventType.rawValue), CGSize(width: 1, height: 1), edge)
     }
     guard let message else { return }
     deliver(message)

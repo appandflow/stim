@@ -4,6 +4,9 @@ import { archiveLines, type ArchiveSelection } from './archives.ts';
 import type { AgentDeviceUsage, SwiftpmCacheUsage } from '@stim-cli/core/state';
 import { swiftpmCacheLines } from '../../devices/swiftpm-cache-usage-output.ts';
 import { agentDeviceLines } from '../../devices/agent-device-usage-output.ts';
+import { machineCacheLines } from '../../devices/machine-cache-usage-output.ts';
+import type { MachineCacheReport } from '../../devices/machine-cache-usage.ts';
+import { gradleVersionLines, type GradleVersionSweep } from './gradle-versions.ts';
 import { formatLongDuration, shortUdid } from '../../command-output.ts';
 import { claimRemoveCommand } from '../../ownership-claim.ts';
 import { formatBytes } from '../../fs-util.ts';
@@ -23,6 +26,8 @@ import type { WorkspaceLogs, WorkspaceLogsKeptCode } from './logs.ts';
 import {
   worktreePullRequestNote,
   worktreeRemovalReason,
+  type UnlistedWorktreeDir,
+  type WorktreeBuildState,
   type WorktreeSkipCode,
   type WorktreeSweep,
 } from './worktrees.ts';
@@ -36,11 +41,21 @@ import type {
   UnverifiedDevice,
 } from './devices.ts';
 import { unverifiedDeviceCommand } from './devices.ts';
+import type { StaleEasLedgerEntry } from './eas-ledger.ts';
 import type { StaleLedgerEntry } from './ledger.ts';
 import { statusCacheLines, type StaleStatusCache } from './status-caches.ts';
 import type { EasSessionSweep } from './eas-sessions.ts';
+import {
+  finishedDeviceLines,
+  ownedDeviceDiskLines,
+  type FinishedDevice,
+  type OwnedDeviceDisk,
+} from './finished-devices.ts';
 import { idleDeviceLines, type IdleDevice } from './idle.ts';
 import { recordingLines, type RecordingKeptCode, type WorkspaceRecordings } from './recordings.ts';
+import { tempLeftoverLines, tempLeftoverSection, type TempLeftoverReport } from './temp-leftovers.ts';
+import { trashLines, type TrashReport } from './trash.ts';
+import type { WorktreeDependencies } from './dependencies.ts';
 import { memoryCacheKind, memoryLines, type MemoryProcess, type MemoryReport, type WatchmanRoot } from './memory.ts';
 
 export interface GcReport {
@@ -57,8 +72,11 @@ export interface GcReport {
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
+  finishedDevices: FinishedDevice[];
+  ownedDeviceDisk: OwnedDeviceDisk[];
   staleDeviceRecords: StaleDeviceRecord[];
   staleLedgerEntries: StaleLedgerEntry[];
+  staleEasLedgerEntries: StaleEasLedgerEntry[];
   staleStatusCaches: StaleStatusCache[];
   buildLocks: { stale: BuildLockInfo[]; live: BuildLockInfo[]; unresolved?: BuildLockInfo[] };
   buildSlots: { stale: BuildSlotInfo[]; live: BuildSlotInfo[]; unresolved?: BuildSlotInfo[] };
@@ -68,8 +86,13 @@ export interface GcReport {
   easSessionSweep: EasSessionSweep;
   agentDeviceUsage?: AgentDeviceUsage | null;
   swiftpmCacheUsage?: SwiftpmCacheUsage | null;
+  machineCaches?: MachineCacheReport | null;
+  tempLeftovers?: TempLeftoverReport | null;
+  trash?: TrashReport | null;
+  gradleVersions?: GradleVersionSweep | null;
   caches: GcCache[];
   workspaceOutputs: WorkspaceOutputsReport | null;
+  worktreeDependencies?: WorktreeDependencies | null;
   workspaceLogs: WorkspaceLogs[];
   recordings: WorkspaceRecordings[];
   worktreeSweep?: WorktreeSweep | null;
@@ -188,6 +211,15 @@ function maintenanceReportLines(maintenance: MaintenancePreview | undefined): st
   return lines;
 }
 
+function staleEasLedgerLines(entries: StaleEasLedgerEntry[] = []): string[] {
+  if (!entries.length) return [];
+  return [
+    `Stale EAS ledger entries (${entries.length}) - the id is not a valid EAS session id and the workspace is gone:`,
+    ...entries.map((entry) => `  ${entry.id} (workspace ${entry.workspaceRoot})`),
+    '              --delete forgets the LEDGER ENTRY only; no EAS session is contacted.',
+  ];
+}
+
 export function formatGcReport(
   {
     maintenance,
@@ -203,8 +235,11 @@ export function formatGcReport(
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
+    finishedDevices,
+    ownedDeviceDisk,
     staleDeviceRecords = [],
     staleLedgerEntries = [],
+    staleEasLedgerEntries,
     staleStatusCaches = [],
     buildLocks = { stale: [], live: [], unresolved: [] },
     buildSlots = { stale: [], live: [], unresolved: [] },
@@ -214,8 +249,13 @@ export function formatGcReport(
     easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
     agentDeviceUsage = null,
     swiftpmCacheUsage,
+    machineCaches,
+    tempLeftovers,
+    trash,
+    gradleVersions,
     caches = [],
     workspaceOutputs = null,
+    worktreeDependencies,
     workspaceLogs = [],
     recordings = [],
     worktreeSweep = null,
@@ -227,6 +267,8 @@ export function formatGcReport(
 ): string[] {
   const lines: string[] = archiveLines(archives);
   const parkedHostedLines = formatParkedHostedDeviceReport(parkedHostedDevices, now);
+  const easLedgerLines = staleEasLedgerLines(staleEasLedgerEntries);
+  const finishedLines = finishedDeviceLines(finishedDevices);
   const staleLocks = buildLocks?.stale ?? [];
   const liveLocks = buildLocks?.live ?? [];
   const staleSlots = buildSlots?.stale ?? [];
@@ -244,14 +286,17 @@ export function formatGcReport(
       parkedHostedLines,
       orphanedDevices,
       staleDevices,
+      finishedLines,
       staleDeviceRecords,
       staleLedgerEntries,
+      easLedgerLines,
       staleStatusCaches,
       staleLocks,
       staleSlots,
       expiredLeases,
       easSessionSweep.orphaned,
       workspaceOutputs?.workspaces.filter((entry) => entry.willClear) ?? [],
+      dependencyCandidates(worktreeDependencies),
       workspaceLogs.filter((entry) => entry.willTrim),
       worktreeSweep?.worktrees.filter((entry) => !entry.skipped) ?? [],
     ].every((found) => found.length === 0)
@@ -284,6 +329,7 @@ export function formatGcReport(
   lines.push(...namedPortLines(orphanedPorts));
   lines.push(...orphanedWorkspaceLines(orphanedWorkspaces));
   lines.push(...worktreeSweepLines(worktreeSweep));
+  lines.push(...unlistedWorktreeLines(worktreeSweep));
 
   lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
@@ -313,6 +359,8 @@ export function formatGcReport(
     }
   }
 
+  lines.push(...finishedLines, ...ownedDeviceDiskLines(ownedDeviceDisk));
+
   lines.push(...idleDeviceLines(idleDevices));
 
   if (staleDeviceRecords.length) {
@@ -331,6 +379,8 @@ export function formatGcReport(
     for (const entry of staleLedgerEntries) lines.push(`  ${entry.kind} ${entry.id} is not on this machine`);
     lines.push('              --delete forgets the LEDGER ENTRY only; there is no device left to touch.');
   }
+
+  lines.push(...easLedgerLines);
 
   lines.push(...statusCacheLines(staleStatusCaches));
 
@@ -387,14 +437,33 @@ export function formatGcReport(
     for (const entry of skipped) lines.push(`  ${entry.dir}: ${entry.reason}`);
   }
 
+  lines.push(...worktreeDependencyLines(worktreeDependencies));
   lines.push(...workspaceLogLines(workspaceLogs));
   lines.push(...recordingLines(recordings));
   lines.push(...cacheLines(caches, workspaceOutputs));
   lines.push(...agentDeviceLines(agentDeviceUsage, true, now));
   lines.push(...swiftpmCacheLines(swiftpmCacheUsage, now));
+  lines.push(...machineCacheLines(machineCaches, now));
+  lines.push(...tempLeftoverLines(tempLeftovers));
+  lines.push(...trashLines(trash));
+  lines.push(...gradleVersionLines(gradleVersions));
   lines.push(...memoryLines(memory, memoryCacheKind(cacheScope), now));
   lines.push(...maintenanceReportLines(maintenance));
 
+  return lines;
+}
+
+function dependencyCandidates(found: WorktreeDependencies | null | undefined): string[] {
+  return found?.candidates.map(({ path }) => path) ?? [];
+}
+
+function worktreeDependencyLines(found: WorktreeDependencies | null | undefined): string[] {
+  if (!found || (!found.candidates.length && !found.skips.length)) return [];
+  const lines = [
+    `Worktree dependencies (${found.candidates.length} of ${found.candidates.length + found.skips.length} would be LIGHTENED; the next start, ios or android restores them with worktree warm):`,
+  ];
+  for (const { path } of found.candidates) lines.push(`  ${path}`, '              would be LIGHTENED');
+  for (const { target, reason } of found.skips) lines.push(`  ${target}`, `              kept: ${reason}`);
   return lines;
 }
 
@@ -445,7 +514,7 @@ function namedPortLines(ports: NonNullable<GcReport['orphanedPorts']> = []): str
   return [
     `Orphaned named ports (${ports.length}):`,
     ...ports.map(({ project, label, port }) => `  ${project}: ${label} (${port})`),
-    '              --delete stops TCP listeners and releases these allocations.',
+    '              --delete releases these allocations without stopping listeners.',
   ];
 }
 
@@ -464,13 +533,14 @@ function workspaceOutputLines(outputs: WorkspaceOutputsReport, bytes: number): s
   const lines = [
     `  ${formatBytes(bytes).padStart(10)}  Workspace build outputs (detected)`,
     `              ${outputs.root}`,
-    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace; workspace.json, state.json, logs and device records stay`,
+    `              ${WORKSPACE_OUTPUT_DIRS.join(', ')}, macOS Swift scratch and staged app bundles of each workspace, and the git-ignored in-tree build directories of its project; workspace.json, state.json, logs and device records stay`,
     `              ${REBUILD_COST}`,
   ];
   for (const w of outputs.workspaces) {
     const idle = w.idleDays === null ? 'last use unknown' : `idle ${w.idleDays}d`;
     lines.push(`    ${sizeText(w.bytes).padStart(8)}  ${w.projectRoot ?? w.dir} (${idle})`);
-    lines.push(w.willClear ? '                would be CLEARED' : `                kept: ${w.keptReason}`);
+    if (w.inTreeDirs.length) lines.push(`                with ${w.inTreeDirs.join(', ')}`);
+    lines.push(w.willClear ? '                would be LIGHTENED' : `                kept: ${w.keptReason}`);
   }
   return lines;
 }
@@ -485,30 +555,64 @@ function cacheLines(caches: readonly GcCache[], workspaceOutputs: WorkspaceOutpu
     if (outputs) lines.push(...workspaceOutputLines(outputs, outputBytes));
     for (const c of caches) {
       const tag = c.source ? ` (${c.source})` : '';
-      lines.push(`  ${formatBytes(c.bytes ?? 0).padStart(10)}  ${c.name}${tag}`);
+      lines.push(`  ${sizeText(c.bytes ?? null).padStart(10)}  ${c.name}${tag}`);
       lines.push(`              ${c.dir}`);
       if (c.note) lines.push(`              ${c.note}`);
+      if (c.sizeError) lines.push(`              ${c.sizeError}`);
       if (c.willEmpty) lines.push('              would be EMPTIED');
       else if (c.emptySkipped) lines.push(`              would be left alone: ${c.emptySkipped}`);
       else if (c.scopedEmpty?.emptySkipped) {
         lines.push(`              --delete --cache would leave it alone: ${c.scopedEmpty.emptySkipped}`);
       }
     }
-    lines.push(`  total: ${formatBytes(total)}`);
+    const incomplete = caches.some((c) => c.bytes === undefined) || outputs?.workspaces.some((w) => w.bytes === null);
+    lines.push(`  total: ${incomplete ? 'at least ' : ''}${formatBytes(total)}`);
     const doomed = caches.filter((c) => c.willEmpty);
     if (doomed.length) {
       const doomedBytes = doomed.reduce((n, c) => n + (c.bytes ?? 0), 0);
-      lines.push(`  would empty ${doomed.length} of these (${formatBytes(doomedBytes)})`);
+      lines.push(
+        `  would empty ${doomed.length} of these (${doomed.some((c) => c.bytes === undefined) ? 'at least ' : ''}${formatBytes(doomedBytes)})`,
+      );
     }
     const clearing = outputs?.workspaces.filter((w) => w.willClear) ?? [];
     if (clearing.length) {
       const clearBytes = clearing.reduce((n, w) => n + (w.bytes ?? 0), 0);
       lines.push(
-        `  would clear the build outputs of ${clearing.length} workspace${clearing.length === 1 ? '' : 's'} (${formatBytes(clearBytes)})`,
+        `  would lighten ${clearing.length} workspace${clearing.length === 1 ? '' : 's'}, freeing ${formatBytes(clearBytes)} of build outputs`,
       );
     }
   }
   return lines;
+}
+
+const BUILD_STATE_DIRS_SHOWN = 4;
+
+function buildStateLine(state: WorktreeBuildState | undefined): string | null {
+  if (!state?.dirs.length) return null;
+  const shown = state.dirs.slice(0, BUILD_STATE_DIRS_SHOWN).map((dir) => `${dir.path} ${sizeText(dir.bytes)}`);
+  const more = state.dirs.length > BUILD_STATE_DIRS_SHOWN ? ', ...' : '';
+  return `              in-tree build state ${sizeText(state.bytes)}: ${shown.join(', ')}${more}`;
+}
+
+function unlistedWorktreeLines(sweep: WorktreeSweep | null): string[] {
+  const unlisted = sweep?.unlisted ?? [];
+  if (!unlisted.length) return [];
+  const lines = [
+    `Directories under .worktrees that git does not list as worktrees (${unlisted.length}) - reported, never removed:`,
+  ];
+  for (const dir of unlisted) {
+    lines.push(`  ${dir.path} (${sizeText(dir.bytes)})`);
+    lines.push(`              ${unlistedWorktreeDetail(dir)}`);
+  }
+  return lines;
+}
+
+function unlistedWorktreeDetail(dir: UnlistedWorktreeDir): string {
+  return `git worktree list in ${dir.repository} does not show it, so gc cannot tell whether it holds work; look through it, then remove it with \`${unlistedWorktreeRemedy(dir)}\``;
+}
+
+function unlistedWorktreeRemedy(dir: UnlistedWorktreeDir): string {
+  return `rm -rf '${dir.path.replaceAll("'", "'\\''")}'`;
 }
 
 function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
@@ -532,11 +636,13 @@ function worktreeSweepLines(sweep: WorktreeSweep | null): string[] {
   for (const w of sweep.worktrees) {
     const age = w.idleDays === null ? '' : ` (idle ${w.idleDays}d)`;
     lines.push(`  ${w.path}${age}`);
+    const buildState = buildStateLine(w.buildState);
+    if (buildState) lines.push(buildState);
     const note = worktreePullRequestNote(w);
     lines.push(
       w.skipped
         ? `              kept: ${w.skipped}${note && !w.skipped.includes(note) ? ` (${note})` : ''}`
-        : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w)}`,
+        : `              would be REMOVED by \`stim worktree remove\`: ${worktreeRemovalReason(w, sweep)}`,
     );
   }
   if (removable.length) {
@@ -564,6 +670,22 @@ function jsonPullRequest(lookup: PullRequestLookup | null): GcJsonSections['link
   return pr ? { number: pr.number, state: pr.state, url: pr.url, containsHead: pr.containsHead } : null;
 }
 
+function linkedWorktreesJson(sweep: WorktreeSweep | null): GcJsonSections['linkedWorktrees'] {
+  if (!sweep) return [];
+  return sweep.worktrees.map((w) => ({
+    path: w.path,
+    idleDays: w.idleDays,
+    mergedInto: w.merge?.merged ? w.merge.into : null,
+    pullRequest: jsonPullRequest(w.pullRequest),
+    pullRequestUnknown: w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null,
+    willRemove: w.skipCode === null,
+    reason: w.skipCode,
+    detail: w.skipped ?? worktreeRemovalReason(w, sweep),
+    eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
+    buildState: w.buildState ?? null,
+  }));
+}
+
 /** The `gc --json` sections, in text report order. Sections contain entries or a report-only usage payload. */
 export interface GcJsonSections {
   archived?: ArchiveSelection['records'];
@@ -582,7 +704,9 @@ export interface GcJsonSections {
     reason: WorktreeSkipCode | null;
     detail: string;
     eligibleAt: string | null;
+    buildState: WorktreeBuildState | null;
   }[];
+  unlistedWorktreeDirectories: { path: string; repository: string; bytes: number | null; remedy: string }[];
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
@@ -603,8 +727,19 @@ export interface GcJsonSections {
     idleDays: number;
     bytes: number | null;
   }[];
+  finishedDevices: {
+    kind: 'ios' | 'android';
+    id: string;
+    name: string;
+    project: string;
+    slot: string | null;
+    bytes: number | null;
+    reason: string;
+  }[];
+  ownedDeviceDisk: OwnedDeviceDisk[];
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
+  staleEasLedgerEntries: { id: string; workspaceRoot: string }[];
   staleStatusCaches: { kind: 'disk-usage' | 'pull-request'; path: string; file: string; bytes: number }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
@@ -639,6 +774,7 @@ export interface GcJsonSections {
     reason: WorkspaceLogsKeptCode | null;
     detail: string | null;
   }[];
+  worktreeDependencies: { path: string; willDelete: boolean; detail: string | null }[];
   recordings: {
     dir: string;
     projectRoot: string | null;
@@ -652,6 +788,7 @@ export interface GcJsonSections {
   workspaceBuildOutputs: {
     dir: string;
     projectRoot: string | null;
+    inTreeDirs: string[];
     bytes: number | null;
     idleDays: number | null;
     willClear: boolean;
@@ -660,6 +797,10 @@ export interface GcJsonSections {
   }[];
   agentDevice: AgentDeviceUsage | null;
   swiftpmCache: SwiftpmCacheUsage | null;
+  machineCaches: MachineCacheReport | null;
+  tempLeftovers: ReturnType<typeof tempLeftoverSection>;
+  trash: TrashReport | null;
+  gradleVersions: GradleVersionSweep | null;
   caches: {
     name: string;
     dir: string;
@@ -689,8 +830,11 @@ export function gcReportSections({
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
+  finishedDevices = [],
+  ownedDeviceDisk = [],
   staleDeviceRecords = [],
   staleLedgerEntries = [],
+  staleEasLedgerEntries = [],
   staleStatusCaches = [],
   buildLocks = { stale: [], live: [], unresolved: [] },
   buildSlots = { stale: [], live: [], unresolved: [] },
@@ -700,9 +844,14 @@ export function gcReportSections({
   easSessionSweep = { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
   workspaceOutputs = null,
   workspaceLogs = [],
+  worktreeDependencies = null,
   recordings = [],
   agentDeviceUsage = null,
   swiftpmCacheUsage = null,
+  machineCaches = null,
+  tempLeftovers = null,
+  trash = null,
+  gradleVersions = null,
   caches = [],
   memory = null,
 }: Partial<GcReport>): GcJsonSections {
@@ -716,16 +865,12 @@ export function gcReportSections({
       projectRoot,
       bytes: bytes ?? null,
     })),
-    linkedWorktrees: (worktreeSweep?.worktrees ?? []).map((w) => ({
-      path: w.path,
-      idleDays: w.idleDays,
-      mergedInto: w.merge?.merged ? w.merge.into : null,
-      pullRequest: jsonPullRequest(w.pullRequest),
-      pullRequestUnknown: w.pullRequest && 'unavailable' in w.pullRequest ? w.pullRequest.unavailable : null,
-      willRemove: w.skipCode === null,
-      reason: w.skipCode,
-      detail: w.skipped ?? worktreeRemovalReason(w),
-      eligibleAt: w.eligibleAt === null ? null : new Date(w.eligibleAt).toISOString(),
+    linkedWorktrees: linkedWorktreesJson(worktreeSweep),
+    unlistedWorktreeDirectories: (worktreeSweep?.unlisted ?? []).map((dir) => ({
+      path: dir.path,
+      repository: dir.repository,
+      bytes: dir.bytes,
+      remedy: unlistedWorktreeRemedy(dir),
     })),
     parkedSimulators: parkedSims.map(({ udid, name, model, runtime, parkedAt, app, bytes, listed }) => ({
       udid,
@@ -769,6 +914,16 @@ export function gcReportSections({
       idleDays: d.idleDays,
       bytes: d.bytes ?? null,
     })),
+    finishedDevices: finishedDevices.map((d) => ({
+      kind: d.kind,
+      id: d.id,
+      name: d.name,
+      project: d.project,
+      slot: d.slot ?? null,
+      bytes: d.bytes ?? null,
+      reason: d.reason,
+    })),
+    ownedDeviceDisk,
     staleDeviceRecords: staleDeviceRecords.map((r) => ({
       kind: r.kind,
       id: r.id,
@@ -776,6 +931,7 @@ export function gcReportSections({
       slot: r.slot ?? null,
     })),
     staleLedgerEntries: staleLedgerEntries.map(({ kind, id }) => ({ kind, id })),
+    staleEasLedgerEntries: staleEasLedgerEntries.map(({ id, workspaceRoot }) => ({ id, workspaceRoot })),
     staleStatusCaches: staleStatusCaches.map(({ kind, path, file, bytes }) => ({ kind, path, file, bytes })),
     idleDevices: idleDevices.map(({ kind, id, name, project, slot, lastActivityAt, idleForMs, buildInProgress }) => ({
       kind,
@@ -827,6 +983,14 @@ export function gcReportSections({
       reason: w.keptCode,
       detail: w.keptReason,
     })),
+    worktreeDependencies: [
+      ...(worktreeDependencies?.candidates ?? []).map(({ path }) => ({ path, willDelete: true, detail: null })),
+      ...(worktreeDependencies?.skips ?? []).map(({ target, reason }) => ({
+        path: target,
+        willDelete: false,
+        detail: reason,
+      })),
+    ],
     recordings: recordings.map((r) => ({
       dir: r.dir,
       projectRoot: r.projectRoot,
@@ -840,6 +1004,7 @@ export function gcReportSections({
     workspaceBuildOutputs: (workspaceOutputs?.workspaces ?? []).map((w) => ({
       dir: w.dir,
       projectRoot: w.projectRoot,
+      inTreeDirs: w.inTreeDirs,
       bytes: w.bytes,
       idleDays: w.idleDays,
       willClear: w.willClear,
@@ -858,6 +1023,10 @@ export function gcReportSections({
     })),
     agentDevice: agentDeviceUsage,
     swiftpmCache: swiftpmCacheUsage,
+    machineCaches,
+    tempLeftovers: tempLeftoverSection(tempLeftovers),
+    trash,
+    gradleVersions,
     memory: memory?.processes ?? [],
     watchmanRoots: memory?.watchmanRoots ?? [],
     memoryNotices: (memory?.notices ?? []).map((message) => ({ message })),

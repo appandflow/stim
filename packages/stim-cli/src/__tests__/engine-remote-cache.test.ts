@@ -1,19 +1,15 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CONFIG_TIMEOUT_MS,
   EAS_PROVIDER_PACKAGE,
   LOCAL_PROVIDER_PACKAGE,
-  RESOLVE_TIMEOUT_MS,
-  UPLOAD_TIMEOUT_MS,
   WHOAMI_TIMEOUT_MS,
   checkEasAuth,
   dynamicConfigFile,
   easAuthNote,
   isEasAuthFailureText,
-  isProviderPlugin,
-  loadPlugin,
   loadProjectProvider,
   normalizeProvider,
   ownerFromConfig,
@@ -22,15 +18,11 @@ import {
   resolveEasCliBin,
   resetEasAuthCache,
   readProjectConfig,
-  resolveRemote,
   runOptionsFor,
-  uploadDestination,
-  uploadRemote,
-  type ProviderPlugin,
 } from '../engine/remote-cache.ts';
-import { makeError, makeWriter } from './_factories.ts';
+import { makeError } from './_factories.ts';
 import assert from 'node:assert';
-import type { NdjsonRecord } from '../ndjson.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
 
 let root: string;
 
@@ -52,15 +44,41 @@ function writeProviderModule(file: string, body: string) {
   return file;
 }
 
-const RECORDING_PROVIDER = (log: string, appPath: string | null) => `
-const fs = require('fs');
-const log = ${JSON.stringify(log)};
-function record(entry) { fs.appendFileSync(log, JSON.stringify(entry) + '\\n'); }
-module.exports.default = {
-  async resolveBuildCache(props) { record({ call: 'resolveBuildCache', props }); return ${JSON.stringify(appPath)}; },
-  async uploadBuildCache(props) { record({ call: 'uploadBuildCache', props }); return 'https://example.test/build'; },
-};
-`;
+describe.skipIf(process.platform === 'win32')('responsive project probes', () => {
+  test.each(['config', 'auth'])(
+    '%s discovery leaves the event loop responsive while its child is pending',
+    async (kind) => {
+      const binDir = join(root, 'node_modules', '.bin');
+      mkdirSync(binDir, { recursive: true });
+      const bin = join(binDir, kind === 'config' ? 'expo' : 'eas');
+      const output = kind === 'config' ? JSON.stringify({ android: { package: 'com.example.dynamic' } }) : 'fixture';
+      writeFileSync(bin, `#!/usr/bin/env node\nsetTimeout(() => console.log(${JSON.stringify(output)}), 100);\n`, {
+        mode: 0o755,
+      });
+      if (kind === 'config') writeProviderModule('app.config.js', 'module.exports = {};');
+      let finished = false;
+      const pending = (
+        kind === 'config'
+          ? readProjectConfig(root)
+          : checkEasAuth({ projectRoot: root, cache: null, resolveBin: () => ({ file: bin, source: 'project' }) })
+      ).then((result) => {
+        finished = true;
+        return result;
+      });
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(finished).toBe(false);
+      } finally {
+        const result = await pending;
+        expect(result).toMatchObject(
+          kind === 'config'
+            ? { config: { android: { package: 'com.example.dynamic' } } }
+            : { ok: true, account: 'fixture' },
+        );
+      }
+    },
+  );
+});
 
 describe('providerFromConfig', () => {
   test('reads the top-level key out of an app.json (nested under expo)', () => {
@@ -92,14 +110,13 @@ describe('providerFromConfig', () => {
 
 describe('normalizeProvider', () => {
   test("'eas' maps to the package the Expo CLI bundles for it", () => {
-    expect(normalizeProvider('eas')).toEqual({ name: 'eas', reference: EAS_PROVIDER_PACKAGE, options: {} });
+    expect(normalizeProvider('eas')).toEqual({ name: 'eas', reference: EAS_PROVIDER_PACKAGE });
   });
 
-  test('{ plugin } carries its options through', () => {
-    expect(normalizeProvider({ plugin: '@acme/cache', options: { bucket: 'x' } })).toEqual({
-      name: '@acme/cache',
-      reference: '@acme/cache',
-      options: { bucket: 'x' },
+  test('recognizes the explicit EAS module reference', () => {
+    expect(normalizeProvider({ plugin: EAS_PROVIDER_PACKAGE })).toEqual({
+      name: EAS_PROVIDER_PACKAGE,
+      reference: EAS_PROVIDER_PACKAGE,
     });
   });
 
@@ -121,23 +138,21 @@ describe('runOptionsFor', () => {
   });
 });
 
-describe('isProviderPlugin', () => {
-  test('accepts the current pair and the deprecated one', () => {
-    expect(isProviderPlugin({ resolveBuildCache() {}, uploadBuildCache() {} })).toBeTruthy();
-    expect(isProviderPlugin({ resolveRemoteBuildCache() {}, uploadRemoteBuildCache() {} })).toBeTruthy();
-  });
+function writeDynamicConfigProject() {
+  writeProviderModule('app.config.js', 'module.exports = {};');
+  mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
+  writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
+}
 
-  test('rejects half a plugin', () => {
-    expect(isProviderPlugin({ resolveBuildCache() {} })).toBe(false);
-    expect(isProviderPlugin(null)).toBe(false);
-  });
-});
+function expoConfigSource(config: Record<string, unknown>): FingerprintSource[] {
+  return [{ type: 'contents', id: 'expoConfig', contents: JSON.stringify(config), reasons: ['expoConfig'], hash: 'h' }];
+}
 
 describe('readProjectConfig', () => {
-  test('a static app.json is parsed directly, with no child process at all', () => {
+  test('a static app.json is parsed directly, with no child process at all', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'eas' } });
     let ran = false;
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         ran = true;
         return '{}';
@@ -148,18 +163,18 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toBe('eas');
   });
 
-  test('no config at all is simply no config', () => {
-    expect(readProjectConfig(root, { run: () => '{}' })).toEqual({ config: null, source: null });
+  test('no config at all is simply no config', async () => {
+    expect(await readProjectConfig(root, { run: () => '{}' })).toEqual({ config: null, source: null });
   });
 
-  test("a dynamic config is evaluated by the PROJECT's own expo binary, bounded", () => {
+  test("a dynamic config is evaluated by the PROJECT's own expo binary, bounded", async () => {
     writeAppJson({ expo: { name: 'ignored' } });
     writeProviderModule('app.config.js', 'module.exports = {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
 
     const calls: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: (file, args, opts) => {
         calls.push({ file, args, opts });
         return JSON.stringify({ name: 'app', buildCacheProvider: { plugin: './p.cjs' } });
@@ -175,10 +190,29 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toEqual({ plugin: './p.cjs' });
   });
 
-  test('a dynamic config with no installed expo is unavailable, never guessed from app.json', () => {
+  test('the config child runs with Expo telemetry off unless the user chose a value', async () => {
+    writeDynamicConfigProject();
+    const seen: (Record<string, string> | undefined)[] = [];
+    const run = (_file: string, _args: string[], opts: { env?: Record<string, string> }) => {
+      seen.push(opts.env);
+      return '{}';
+    };
+    await readProjectConfig(root, { run });
+    const original = process.env.EXPO_NO_TELEMETRY;
+    process.env.EXPO_NO_TELEMETRY = '0';
+    try {
+      await readProjectConfig(root, { run });
+    } finally {
+      if (original === undefined) delete process.env.EXPO_NO_TELEMETRY;
+      else process.env.EXPO_NO_TELEMETRY = original;
+    }
+    expect(seen).toEqual([{ EXPO_NO_TELEMETRY: '1' }, {}]);
+  });
+
+  test('a dynamic config with no installed expo is unavailable, never guessed from app.json', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'eas' } });
     writeProviderModule('app.config.ts', 'export default {};');
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         throw new Error('should not run');
       },
@@ -187,16 +221,17 @@ describe('readProjectConfig', () => {
     expect(read.unavailable).toMatch(/`expo` package is not resolvable/);
   });
 
-  test('a HOISTED monorepo evaluates the config with the workspace-root expo', () => {
+  test('a HOISTED monorepo evaluates the config with the workspace-root expo', async () => {
     const app = join(root, 'apps', 'mobile');
     mkdirSync(join(app, 'node_modules'), { recursive: true });
     writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
     writeFileSync(join(app, 'app.config.ts'), 'export default {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
+    mkdirSync(join(root, '.git'));
 
     const calls: { file: string; args: string[] }[] = [];
-    const read = readProjectConfig(app, {
+    const read = await readProjectConfig(app, {
       run: (file, args) => {
         calls.push({ file, args });
         return JSON.stringify({ name: 'app', buildCacheProvider: 'eas' });
@@ -210,11 +245,11 @@ describe('readProjectConfig', () => {
     expect(providerFromConfig(read.config)).toBe('eas');
   });
 
-  test('an expo config that fails (or times out) is unavailable with the reason', () => {
+  test('an expo config that fails (or times out) is unavailable with the reason', async () => {
     writeProviderModule('app.config.js', 'module.exports = {};');
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'expo'), '#!/bin/sh\n');
-    const read = readProjectConfig(root, {
+    const read = await readProjectConfig(root, {
       run: () => {
         const e = new Error('ETIMEDOUT: expo config --json\nstack line');
         throw e;
@@ -225,25 +260,9 @@ describe('readProjectConfig', () => {
     expect(!read.unavailable.includes('stack line')).toBeTruthy();
   });
 
-  test('a malformed app.json is unavailable rather than a crash', () => {
+  test('a malformed app.json is unavailable rather than a crash', async () => {
     writeFileSync(join(root, 'app.json'), '{ not json');
-    expect(readProjectConfig(root).unavailable).toMatch(/app\.json could not be parsed/);
-  });
-});
-
-describe('loadPlugin', () => {
-  test('resolves a relative module reference against the PROJECT, and unwraps .default', async () => {
-    writeProviderModule('fake-provider.cjs', RECORDING_PROVIDER(join(root, 'calls.log'), '/tmp/x.app'));
-    const loadedPlugin = await loadPlugin(root, './fake-provider.cjs');
-    expect(typeof loadedPlugin.resolveBuildCache).toBe('function');
-    expect(typeof loadedPlugin.uploadBuildCache).toBe('function');
-  });
-
-  test('a module that is not a provider is refused by name', async () => {
-    writeProviderModule('not-a-provider.cjs', 'module.exports = { hello: 1 };');
-    await expect(() => loadPlugin(root, './not-a-provider.cjs')).rejects.toThrow(
-      /does not export resolveBuildCache and uploadBuildCache/,
-    );
+    expect((await readProjectConfig(root)).unavailable).toMatch(/app\.json could not be parsed/);
   });
 });
 
@@ -270,14 +289,17 @@ describe('loadProjectProvider', () => {
     expect(await loadProjectProvider(root)).toEqual({ none: true });
   });
 
-  test('a { plugin } provider is loaded from the project and named for the phase line', async () => {
-    writeProviderModule('fake-provider.cjs', RECORDING_PROVIDER(join(root, 'calls.log'), null));
-    writeAppJson({ expo: { buildCacheProvider: { plugin: './fake-provider.cjs', options: { a: 1 } } } });
+  test('custom Expo cache modules are refused without evaluating project code', async () => {
+    const evaluated = join(root, 'evaluated');
+    writeProviderModule(
+      'fake-provider.cjs',
+      `require('node:fs').writeFileSync(${JSON.stringify(evaluated)}, 'loaded'); module.exports = { resolveBuildCache() {}, uploadBuildCache() {} };`,
+    );
+    writeAppJson({ expo: { buildCacheProvider: { plugin: './fake-provider.cjs' } } });
     const result = await loadProjectProvider(root);
-    expect(result.name).toBe('./fake-provider.cjs');
-    assert(result.provider);
-    expect(result.provider.options).toEqual({ a: 1 });
-    expect(typeof result.provider.plugin.resolveBuildCache).toBe('function');
+    expect(result.unavailable).toMatch(/Custom Expo buildCacheProvider plugins are not supported/);
+    expect(result.provider).toBeUndefined();
+    expect(existsSync(evaluated)).toBe(false);
   });
 
   test("'eas' without the package installed is a REASON, never an install", async () => {
@@ -292,12 +314,6 @@ describe('loadProjectProvider', () => {
     expect(await loadProjectProvider(root)).toEqual({ none: true });
   });
 
-  test('a provider that cannot be loaded is unavailable, with the reason', async () => {
-    writeAppJson({ expo: { buildCacheProvider: { plugin: './missing.cjs' } } });
-    const result = await loadProjectProvider(root);
-    expect(result.unavailable).toMatch(/could not be loaded/);
-  });
-
   test('an invalid provider value is reported, not thrown', async () => {
     writeAppJson({ expo: { buildCacheProvider: 'my-bucket' } });
     const result = await loadProjectProvider(root);
@@ -305,250 +321,68 @@ describe('loadProjectProvider', () => {
   });
 });
 
-function plugin(overrides: Partial<ProviderPlugin> = {}) {
-  return {
-    provider: {
-      plugin: { resolveBuildCache: async () => null, uploadBuildCache: async () => null, ...overrides },
-      options: { o: 1 },
-    },
+describe('loadProjectProvider with the fingerprint config', () => {
+  const countingRun = () => {
+    const calls: string[][] = [];
+    return {
+      calls,
+      run: (_file: string, args: string[]) => {
+        calls.push(args);
+        return JSON.stringify({ name: 'app' });
+      },
+    };
   };
-}
 
-describe('resolveRemote', () => {
-  test("hands the provider the Expo CLI's exact props, and returns the path it answers with", async () => {
-    const appPath = join(root, 'Fixture.app');
-    mkdirSync(appPath);
-    let seen: { props: unknown; options: unknown } | undefined;
-    const { provider } = plugin({
-      resolveBuildCache: async (props, options) => {
-        seen = { props, options };
-        return appPath;
-      },
+  test('a dynamic config the fingerprint evaluated is not evaluated again', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const result = await loadProjectProvider(root, { run, sources: expoConfigSource({ name: 'app' }) });
+    expect(result).toEqual({ none: true });
+    expect(calls).toEqual([]);
+  });
+
+  test("the fingerprint's buildCacheProvider is the one used", async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const result = await loadProjectProvider(root, {
+      run,
+      sources: expoConfigSource({ buildCacheProvider: { plugin: './p.cjs' } }),
     });
-    const result = await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'abc' });
-    expect(result).toEqual({ appPath });
-    assert(seen);
-    expect(seen.props).toEqual({
-      fingerprintHash: 'abc',
-      platform: 'ios',
-      runOptions: { configuration: 'Debug' },
-      projectRoot: root,
+    expect(result.unavailable).toMatch(/Custom Expo buildCacheProvider plugins are not supported/);
+    expect(calls).toEqual([]);
+  });
+
+  test('without an expoConfig source the config is evaluated once', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    const unrelated: FingerprintSource[] = [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'h' }];
+    expect(await loadProjectProvider(root, { run, sources: unrelated })).toEqual({ none: true });
+    expect(await loadProjectProvider(root, { run, sources: [] })).toEqual({ none: true });
+    expect(calls).toEqual([
+      ['config', '--json', root],
+      ['config', '--json', root],
+    ]);
+  });
+
+  test('the EAS provider keeps its owner from the fingerprint, and reads it when the fingerprint dropped it', async () => {
+    writeDynamicConfigProject();
+    const { calls, run } = countingRun();
+    await loadProjectProvider(root, {
+      run,
+      sources: expoConfigSource({ buildCacheProvider: 'eas', owner: 'th3rd-wave' }),
     });
-    expect(seen.options).toEqual({ o: 1 });
+    expect(calls).toEqual([]);
+    await loadProjectProvider(root, { run, sources: expoConfigSource({ buildCacheProvider: 'eas' }) });
+    expect(calls).toEqual([['config', '--json', root]]);
   });
 
-  test('a plugin that computes its own fingerprint hash is preferred, as in the CLI', async () => {
-    const appPath = join(root, 'Fixture.app');
-    mkdirSync(appPath);
-    let hash = null;
-    const { provider } = plugin({
-      calculateFingerprintHash: async () => 'eas-side-hash',
-      resolveBuildCache: async (props) => {
-        hash = (props as { fingerprintHash?: unknown }).fingerprintHash;
-        return appPath;
-      },
+  test('a static app.json is read from the file, not from the fingerprint', async () => {
+    writeAppJson({ expo: { buildCacheProvider: { plugin: LOCAL_PROVIDER_PACKAGE } } });
+    const { calls, run } = countingRun();
+    expect(await loadProjectProvider(root, { run, sources: expoConfigSource({ buildCacheProvider: 'eas' }) })).toEqual({
+      none: true,
     });
-    await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'ours' });
-    expect(hash).toBe('eas-side-hash');
-  });
-
-  test('a calculateFingerprintHash that fails falls back to the fingerprint Stim already has', async () => {
-    const appPath = join(root, 'Fixture.app');
-    mkdirSync(appPath);
-    let hash = null;
-    const { provider } = plugin({
-      calculateFingerprintHash: async () => {
-        throw new Error('not logged in');
-      },
-      resolveBuildCache: async (props) => {
-        hash = (props as { fingerprintHash?: unknown }).fingerprintHash;
-        return appPath;
-      },
-    });
-    await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'ours' });
-    expect(hash).toBe('ours');
-  });
-
-  test('the deprecated resolveRemoteBuildCache is still called when it is what the plugin has', async () => {
-    const appPath = join(root, 'Fixture.app');
-    mkdirSync(appPath);
-    const provider = {
-      plugin: { resolveRemoteBuildCache: async () => appPath, uploadRemoteBuildCache: async () => null },
-      options: {},
-    };
-    expect(await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a' })).toEqual({
-      appPath,
-    });
-  });
-
-  test('a miss is null', async () => {
-    const { provider } = plugin();
-    expect(await resolveRemote({ provider, platform: 'android', projectRoot: root, fingerprintHash: 'a' })).toBe(null);
-  });
-
-  test('a provider that throws is a note, not a failure', async () => {
-    const { provider } = plugin({
-      resolveBuildCache: async () => {
-        throw new Error('EAS session expired\ndetail');
-      },
-    });
-    const result = await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a' });
-    expect(result).toEqual({ failed: 'EAS session expired' });
-  });
-
-  test('a path the provider returned that does not exist is refused', async () => {
-    const { provider } = plugin({ resolveBuildCache: async () => join(root, 'gone.app') });
-    const result = await resolveRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a' });
-    assert(result);
-    expect(result.failed).toMatch(/does not exist/);
-  });
-
-  test('a provider that never answers times out instead of hanging the loop', async () => {
-    const { provider } = plugin({ resolveBuildCache: () => new Promise(() => {}) });
-    const started = Date.now();
-    const result = await resolveRemote({
-      provider,
-      platform: 'ios',
-      projectRoot: root,
-      fingerprintHash: 'a',
-      timeoutMs: 30,
-    });
-    expect(result).toEqual({ timedOut: true });
-    expect(Date.now() - started < 5000).toBeTruthy();
-  });
-
-  test('no provider and no fingerprint are both plain nulls', async () => {
-    expect(await resolveRemote({ provider: null, platform: 'ios', fingerprintHash: 'a' })).toBe(null);
-    expect(await resolveRemote({ ...plugin(), platform: 'ios', fingerprintHash: null })).toBe(null);
-  });
-});
-
-describe('uploadRemote', () => {
-  test("hands the provider the built path with the CLI's props", async () => {
-    let seen: { props: unknown; options: unknown } | undefined;
-    const { provider } = plugin({
-      uploadBuildCache: async (props, options) => {
-        seen = { props, options };
-        return 'https://example.test/build';
-      },
-    });
-    const result = await uploadRemote({
-      provider,
-      platform: 'android',
-      projectRoot: root,
-      fingerprintHash: 'abc',
-      buildPath: '/b/app.apk',
-    });
-    expect(result).toEqual({ uploaded: true });
-    assert(seen);
-    expect(seen.props).toEqual({
-      projectRoot: root,
-      platform: 'android',
-      fingerprintHash: 'abc',
-      buildPath: '/b/app.apk',
-      runOptions: { variant: 'debug' },
-    });
-  });
-
-  test('the deprecated uploadRemoteBuildCache is still called when it is what the plugin has', async () => {
-    let called = false;
-    const provider = {
-      plugin: {
-        resolveRemoteBuildCache: async () => null,
-        uploadRemoteBuildCache: async () => {
-          called = true;
-          return 'https://example.test/build';
-        },
-      },
-      options: {},
-    };
-    expect(
-      await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' }),
-    ).toEqual({ uploaded: true });
-    expect(called).toBe(true);
-  });
-
-  test('an upload that resolves no destination is a failure, not an upload', async () => {
-    const legacy = {
-      plugin: { resolveRemoteBuildCache: async () => null, uploadRemoteBuildCache: async () => {} },
-      options: {},
-    };
-    for (const provider of [
-      plugin({ uploadBuildCache: async () => null }).provider,
-      plugin({ uploadBuildCache: async () => '  ' }).provider,
-      legacy,
-    ]) {
-      expect(
-        await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' }),
-      ).toEqual({ failed: 'the provider returned no upload destination' });
-    }
-  });
-
-  test('an upload that resolves nothing after printing an auth failure reports that line', async () => {
-    const { provider } = plugin({
-      uploadBuildCache: async () => {
-        console.log('Uploading build to EAS');
-        console.log('eas-cli error: Error: npx exited with non-zero code: 1\nError: Not logged in');
-        return null;
-      },
-    });
-    const result = await tapStreams(() =>
-      uploadRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        buildPath: '/b.app',
-        logWriter: records().writer,
-      }),
-    );
-    expect(result.value).toEqual({ failed: 'Error: Not logged in' });
-  });
-
-  test('a throwing upload is a note', async () => {
-    const { provider } = plugin({
-      uploadBuildCache: async () => {
-        throw new Error('403 forbidden');
-      },
-    });
-    expect(
-      await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: '/b.app' }),
-    ).toEqual({ failed: '403 forbidden' });
-  });
-
-  test('an upload that never finishes is abandoned at the bound', async () => {
-    const { provider } = plugin({ uploadBuildCache: () => new Promise(() => {}) });
-    expect(
-      await uploadRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        buildPath: '/b.app',
-        timeoutMs: 30,
-      }),
-    ).toEqual({ timedOut: true });
-  });
-
-  test('nothing to upload is skipped without calling the provider', async () => {
-    let called = false;
-    const { provider } = plugin({
-      uploadBuildCache: async () => {
-        called = true;
-      },
-    });
-    expect(
-      await uploadRemote({ provider, platform: 'ios', projectRoot: root, fingerprintHash: 'a', buildPath: null }),
-    ).toEqual({ skipped: true });
-    expect(called).toBe(false);
-  });
-});
-
-describe('the budgets', () => {
-  test('are bounded and ordered: a resolve blocks the loop, an upload runs beside it', () => {
-    expect(RESOLVE_TIMEOUT_MS).toBe(30_000);
-    expect(UPLOAD_TIMEOUT_MS).toBe(60_000);
-    expect(CONFIG_TIMEOUT_MS).toBe(30_000);
+    expect(calls).toEqual([]);
   });
 });
 
@@ -557,266 +391,6 @@ describe('dynamicConfigFile', () => {
     expect(dynamicConfigFile(root)).toBe(null);
     writeProviderModule('app.config.ts', '');
     expect(dynamicConfigFile(root)).toBe('app.config.ts');
-  });
-});
-
-function tapStreams(fn: (streams: { out: string[]; err: string[] }) => unknown) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const originalOut = process.stdout.write;
-  const originalErr = process.stderr.write;
-  const originalLog = console.log;
-  process.stdout.write = ((chunk: unknown, enc?: unknown, cb?: unknown) => {
-    out.push(String(chunk));
-    if (typeof enc === 'function') enc();
-    else if (typeof cb === 'function') cb();
-    return true;
-  }) as typeof process.stdout.write;
-  process.stderr.write = ((chunk: unknown, enc?: unknown, cb?: unknown) => {
-    err.push(String(chunk));
-    if (typeof enc === 'function') enc();
-    else if (typeof cb === 'function') cb();
-    return true;
-  }) as typeof process.stderr.write;
-  const restore = () => {
-    process.stdout.write = originalOut;
-    process.stderr.write = originalErr;
-    console.log = originalLog;
-  };
-  return Promise.resolve()
-    .then(() => fn({ out, err }))
-    .then(
-      (value) => {
-        restore();
-        return { value, out, err };
-      },
-      (error) => {
-        restore();
-        throw error;
-      },
-    );
-}
-
-function records() {
-  const written: NdjsonRecord[] = [];
-  return {
-    written,
-    writer: makeWriter({
-      write: (record) => {
-        written.push(record as NdjsonRecord);
-        return true;
-      },
-    }),
-  };
-}
-
-describe('provider output containment', () => {
-  test('a provider that logs never reaches stdout: it goes to stderr and into the build log', async () => {
-    const appPath = join(root, 'Fixture.app');
-    mkdirSync(appPath);
-    const log = records();
-    const { provider } = plugin({
-      resolveBuildCache: async () => {
-        console.log('Searching builds with matching fingerprint on EAS servers');
-        process.stdout.write('half a line');
-        process.stdout.write(' and the rest\n');
-        return appPath;
-      },
-    });
-    const { value, out, err } = await tapStreams(() =>
-      resolveRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        logWriter: log.writer,
-      }),
-    );
-    expect(value).toEqual({ appPath });
-    expect(out).toEqual([]);
-    expect(err.join('')).toMatch(/Searching builds with matching fingerprint/);
-    expect(err.join('')).toMatch(/half a line and the rest/);
-    expect(log.written.map((r) => ({ src: r.src, level: r.level, event: r.event }))).toEqual([
-      { src: 'build', level: 'debug', event: 'provider' },
-      { src: 'build', level: 'debug', event: 'provider' },
-    ]);
-    expect(log.written[1]?.msg).toBe('half a line and the rest');
-  });
-
-  test('stdout is restored when the provider returns, throws, or is abandoned', async () => {
-    const LEAK = 'provider-line-that-must-never-reach-stdout';
-    const cases = [
-      plugin({
-        resolveBuildCache: async () => {
-          console.log(LEAK);
-          return null;
-        },
-      }),
-      plugin({
-        resolveBuildCache: async () => {
-          console.log(LEAK);
-          throw new Error('boom');
-        },
-      }),
-      plugin({
-        resolveBuildCache: () => {
-          console.log(LEAK);
-          return new Promise(() => {});
-        },
-      }),
-    ];
-    for (const { provider } of cases) {
-      const { out } = await tapStreams(async () => {
-        await resolveRemote({
-          provider,
-          platform: 'ios',
-          projectRoot: root,
-          fingerprintHash: 'a',
-          timeoutMs: 30,
-          logWriter: records().writer,
-        });
-        console.log('{"payload":true}');
-      });
-      expect(out.join('').includes('{"payload":true}')).toBeTruthy();
-      expect(!out.join('').includes(LEAK)).toBeTruthy();
-    }
-  });
-
-  test('an abandoned provider that prints after its budget still cannot reach stdout', async () => {
-    let release: () => void = () => {};
-    const done = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const { provider } = plugin({
-      resolveBuildCache: async () => {
-        await done;
-        console.log('late line from a call nothing is waiting for');
-        return null;
-      },
-    });
-    const { out, err } = await tapStreams(async () => {
-      const result = await resolveRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        timeoutMs: 20,
-        logWriter: records().writer,
-      });
-      expect(result).toEqual({ timedOut: true });
-      console.log('{"payload":true}');
-      release();
-      await done;
-      await new Promise((r) => setTimeout(r, 20));
-    });
-    expect(out.join('').includes('{"payload":true}')).toBeTruthy();
-    expect(!out.join('').includes('late line from a call')).toBeTruthy();
-    expect(err.join('')).toMatch(/late line from a call nothing is waiting for/);
-  });
-
-  test('nested provider calls restore in order, and the inner one does not free stdout early', async () => {
-    const inner = plugin({
-      resolveBuildCache: async () => {
-        console.log('inner');
-        return null;
-      },
-    }).provider;
-    const { provider } = plugin({
-      resolveBuildCache: async () => {
-        await resolveRemote({
-          provider: inner,
-          platform: 'ios',
-          projectRoot: root,
-          fingerprintHash: 'a',
-          logWriter: records().writer,
-        });
-        console.log('outer, after the inner call returned');
-        return null;
-      },
-    });
-    const { out, err } = await tapStreams(async () => {
-      await resolveRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        logWriter: records().writer,
-      });
-      console.log('{"payload":true}');
-    });
-    expect(out.join('').includes('{"payload":true}')).toBeTruthy();
-    expect(!out.join('').includes('outer, after the inner call returned')).toBeTruthy();
-    expect(err.join('')).toMatch(/inner/);
-    expect(err.join('')).toMatch(/outer, after the inner call returned/);
-  });
-
-  test('an upload names where it is going when the provider printed it', async () => {
-    const notes: string[] = [];
-    const { provider } = plugin({
-      uploadBuildCache: async () => {
-        console.log('Uploading build to https://expo.dev/accounts/acme/projects/app/builds/abc');
-        return 'https://example.test/build';
-      },
-    });
-    const result = await tapStreams(() =>
-      uploadRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        buildPath: '/b.app',
-        logWriter: records().writer,
-        note: (line) => notes.push(line),
-      }),
-    );
-    expect(result.value).toEqual({
-      uploaded: true,
-      destination: 'https://expo.dev/accounts/acme/projects/app/builds/abc',
-    });
-    expect(notes.length).toBe(1);
-    expect(notes[0]).toMatch(/^cache {7}uploading to https:\/\/expo\.dev\/accounts\/acme/);
-  });
-
-  test('an upload that names no destination says nothing extra', async () => {
-    const notes: string[] = [];
-    const { provider } = plugin({
-      uploadBuildCache: async () => {
-        console.log('Uploading build to EAS');
-        return 'https://example.test/build';
-      },
-    });
-    const result = await tapStreams(() =>
-      uploadRemote({
-        provider,
-        platform: 'ios',
-        projectRoot: root,
-        fingerprintHash: 'a',
-        buildPath: '/b.app',
-        logWriter: records().writer,
-        note: (line) => notes.push(line),
-      }),
-    );
-    expect(result.value).toEqual({ uploaded: true });
-    expect(notes).toEqual([]);
-  });
-});
-
-describe('uploadDestination', () => {
-  test('prefers a URL, falls back to an owner/slug, and is null otherwise', () => {
-    expect(uploadDestination(['Uploading build to https://expo.dev/accounts/acme/projects/app (2.1 MB)'])).toBe(
-      'https://expo.dev/accounts/acme/projects/app',
-    );
-    expect(uploadDestination(['Uploading build to acme/my-app'])).toBe('acme/my-app');
-    expect(uploadDestination(['Uploading build to @acme/my-app...'])).toBe('@acme/my-app');
-    expect(uploadDestination(['Uploading build to EAS'])).toBe(null);
-    expect(uploadDestination([])).toBe(null);
-    expect(uploadDestination(null)).toBe(null);
-  });
-
-  test('reads through the colour codes a provider prints', () => {
-    expect(uploadDestination(['\u001b[2mUploading build to\u001b[22m https://expo.dev/x/y'])).toBe(
-      'https://expo.dev/x/y',
-    );
   });
 });
 
@@ -902,8 +476,8 @@ describe('checkEasAuth', () => {
       throw makeError('Command failed', { status: exitCode, stdout, stderr });
     };
 
-  test('a logged-in session whose accounts include the owner is ok', () => {
-    const status = checkEasAuth({
+  test('a logged-in session whose accounts include the owner is ok', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: '/bin/eas', source: 'project' }),
@@ -913,14 +487,14 @@ describe('checkEasAuth', () => {
     expect(status.account).toBe('janic');
   });
 
-  test('no eas binary anywhere is its own code, with an install remedy', () => {
-    const status = checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
+  test('no eas binary anywhere is its own code, with an install remedy', async () => {
+    const status = await checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
     expect(status.code).toBe('no-cli');
     expect(status.remedy).toMatch(/eas-cli/);
   });
 
-  test('a logged-out session is a definitive failure naming both ways back in', () => {
-    const status = checkEasAuth({
+  test('a logged-out session is a definitive failure naming both ways back in', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: 'eas', source: 'path' }),
       run: whoami('Not logged in\n', 1),
@@ -930,8 +504,8 @@ describe('checkEasAuth', () => {
     expect(status.remedy).toMatch(/EXPO_TOKEN/);
   });
 
-  test('an owner no account covers is a wrong-account failure naming both', () => {
-    const status = checkEasAuth({
+  test('an owner no account covers is a wrong-account failure naming both', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: 'eas', source: 'path' }),
@@ -942,8 +516,8 @@ describe('checkEasAuth', () => {
     expect(status.owner).toBe('th3rd-wave');
   });
 
-  test('an owner is never contradicted by an account list that could not be read', () => {
-    const status = checkEasAuth({
+  test('an owner is never contradicted by an account list that could not be read', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       owner: 'th3rd-wave',
       resolveBin: () => ({ file: 'eas', source: 'path' }),
@@ -952,8 +526,8 @@ describe('checkEasAuth', () => {
     expect(status.ok).toBe(true);
   });
 
-  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', () => {
-    const status = checkEasAuth({
+  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', async () => {
+    const status = await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: 'eas', source: 'path' }),
       run: () => {
@@ -964,7 +538,7 @@ describe('checkEasAuth', () => {
     expect(status.unknown).toMatch(/timed out|ETIMEDOUT/);
   });
 
-  test('whoami runs ONCE per command run, however many times it is asked', () => {
+  test('whoami runs ONCE per command run, however many times it is asked', async () => {
     let runs = 0;
     const args = {
       projectRoot: root,
@@ -975,15 +549,15 @@ describe('checkEasAuth', () => {
         return 'janic\n';
       },
     };
-    checkEasAuth(args);
-    checkEasAuth(args);
-    checkEasAuth(args);
+    await checkEasAuth(args);
+    await checkEasAuth(args);
+    await checkEasAuth(args);
     expect(runs).toBe(1);
   });
 
-  test('it is bounded, and it asks the binary it resolved', () => {
+  test('it is bounded, and it asks the binary it resolved', async () => {
     const seen: { file: string; args: string[]; opts?: { timeoutMs?: number } }[] = [];
-    checkEasAuth({
+    await checkEasAuth({
       projectRoot: root,
       resolveBin: () => ({ file: '/p/node_modules/.bin/eas', source: 'project' }),
       run: (file, args, opts) => {
@@ -1006,6 +580,7 @@ describe('resolveEasCliBin', () => {
     writeFileSync(join(app, 'package.json'), JSON.stringify({ name: 'mobile' }));
     mkdirSync(join(root, 'node_modules', '.bin'), { recursive: true });
     writeFileSync(join(root, 'node_modules', '.bin', 'eas'), '#!/bin/sh\n');
+    mkdirSync(join(root, '.git'));
 
     const found = resolveEasCliBin(app, {
       lookupPath: () => {
@@ -1053,14 +628,5 @@ describe('easAuthNote', () => {
   test('anything else has no note of its own', () => {
     expect(easAuthNote({ code: 'unknown' })).toBe(null);
     expect(easAuthNote(null)).toBe(null);
-  });
-});
-
-describe('loadProjectProvider owner', () => {
-  test('carries the project owner alongside the provider, for the auth check', async () => {
-    writeProviderModule('owned-provider.cjs', RECORDING_PROVIDER(join(root, 'calls.log'), null));
-    writeAppJson({ expo: { owner: 'th3rd-wave', buildCacheProvider: { plugin: './owned-provider.cjs' } } });
-    const loaded = await loadProjectProvider(root);
-    expect(loaded.owner).toBe('th3rd-wave');
   });
 });

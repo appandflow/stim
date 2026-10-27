@@ -1,26 +1,75 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import assert from 'node:assert';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { appendFileSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  type WatchOptions,
+  appendFileSync,
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  realpathSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
+import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
-import { makeConfig } from './_factories.ts';
+import { makeConfig, makeEnvironmentState } from './_factories.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { captureProcessToken } from '../process-identity.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { createRefreshScheduler, statusChange, watchStatusSources, type RefreshKind } from '../status-watch.ts';
+import {
+  createRefreshScheduler,
+  gitChange,
+  statusChange,
+  watchChangeKey,
+  watchPayload,
+  watchStatusSources,
+  type RefreshKind,
+} from '../status-watch.ts';
+import type {
+  MachineOwner,
+  MaintenancePass,
+  MaintenanceStatus,
+  StatusPayload,
+  WorktreeFacts,
+} from '@stim-cli/core/state';
 
 const watchListeners = vi.hoisted(() => new Map<string, (event: string, name: string | null) => void>());
+const nativeEvents = vi.hoisted(() => ({ enabled: false, generation: 0, ignorePath: '' }));
 
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
   return {
     ...fs,
-    watch: (path: string, listener: (event: string, name: string | null) => void) => {
-      const watcher = fs.watch(path, () => {});
+    watch: (
+      path: string,
+      options: WatchOptions | ((event: string, name: string | null) => void),
+      callback?: (event: string, name: string | null) => void,
+    ) => {
+      const listener = typeof options === 'function' ? options : callback;
+      assert(listener);
+      const generation = nativeEvents.generation;
+      const file = fs.statSync(path).isFile();
+      const watcher = fs.watch(path, (event, name) => {
+        if (
+          nativeEvents.enabled &&
+          path !== nativeEvents.ignorePath &&
+          (!file || generation === nativeEvents.generation)
+        )
+          listener(event, name === null ? null : String(name));
+      });
       watchListeners.set(path, listener);
-      watcher.once('close', () => watchListeners.delete(path));
+      watcher.once('close', () => {
+        if (watchListeners.get(path) === listener) watchListeners.delete(path);
+      });
       return watcher;
     },
   };
@@ -162,51 +211,264 @@ test('a log append or build detail needs only a log refresh; other state changes
   expect(statusChange('eas', 'ledger.lock')).toBe(null);
 });
 
-test('the simulator poller shares its last readable listing until it ages out or Stim state changes', async () => {
-  vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'Date'] });
+test('a HEAD, index or ref change in a repository or a linked worktree refreshes status; objects, logs and locks do not', () => {
+  for (const name of ['HEAD', 'index', 'packed-refs', 'FETCH_HEAD', 'refs/heads/feature/x', 'worktrees/wt-1/HEAD'])
+    expect(gitChange(name)).toBe(true);
+  expect(gitChange('worktrees/wt-1/index')).toBe(true);
+  expect(gitChange('worktrees/wt-1')).toBe(true);
+  expect(gitChange(null)).toBe(true);
+  for (const name of ['objects/ab/cdef', 'logs/HEAD', 'index.lock', 'refs/heads/main.lock', 'worktrees/wt-1/logs/HEAD'])
+    expect(gitChange(name)).toBe(false);
+});
+
+describe('watchPayload', () => {
+  const owner = (overrides: Partial<MachineOwner> = {}): MachineOwner => ({
+    kind: 'simulator',
+    name: 'sim',
+    workspace: '/w/a',
+    id: 'UDID',
+    owned: true,
+    cpuPercent: 10,
+    residentMb: 500,
+    memoryMb: 300,
+    processes: 6,
+    ...overrides,
+  });
+  const payload = (overrides: Partial<StatusPayload> = {}): StatusPayload => ({
+    environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 300 })],
+    capacity: { liveCount: 1, committedMb: 300, totalMemoryMb: 16384, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+    machine: { memorySource: 'footprint', owners: [owner()] },
+    ...overrides,
+  });
+  const jittered = (): StatusPayload =>
+    payload({
+      environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 311 })],
+      capacity: { liveCount: 1, committedMb: 311, totalMemoryMb: 16384, overCapacity: false },
+      machine: {
+        memorySource: 'footprint',
+        owners: [owner({ cpuPercent: 14, residentMb: 490, memoryMb: 311, processes: 7 })],
+      },
+    });
+
+  test('usage that moved less than a step prints the previous payload byte for byte', () => {
+    const previous = watchPayload(null, payload());
+    expect(JSON.stringify(watchPayload(previous, jittered()))).toBe(JSON.stringify(previous));
+  });
+
+  test.each([
+    ['cpu', { cpuPercent: 15 }],
+    ['footprint memory', { memoryMb: 284 }],
+  ])('a %s move of one step prints the owner row with its current process count', (_name, change) => {
+    const previous = watchPayload(null, payload());
+    const next = payload({ machine: { memorySource: 'footprint', owners: [owner({ ...change, processes: 9 })] } });
+    expect(watchPayload(previous, next).machine?.owners[0]).toEqual(owner({ ...change, processes: 9 }));
+  });
+
+  test('a step is measured from the last printed value, so slow drift still prints', () => {
+    const at = (memoryMb: number) => payload({ environments: [makeEnvironmentState({ path: '/w/a', memoryMb })] });
+    const first = watchPayload(null, at(300));
+    const second = watchPayload(first, at(310));
+    const third = watchPayload(second, at(317));
+    expect([first, second, third].map((p) => p.environments[0]!.memoryMb)).toEqual([300, 300, 317]);
+  });
+
+  test('capacity keeps its sum below a step and changes at a step or when overCapacity flips', () => {
+    const previous = watchPayload(null, payload());
+    const capacity = (committedMb: number, overCapacity = false) =>
+      watchPayload(previous, payload({ capacity: { liveCount: 1, committedMb, totalMemoryMb: 16384, overCapacity } }))
+        .capacity;
+    expect(capacity(315).committedMb).toBe(300);
+    expect(capacity(316).committedMb).toBe(316);
+    expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
+  });
+
+  test('a slot usage change prints while the memory sum is held', () => {
+    const devices = (inUse: number) => ({ max: 2, inUse, holders: [] });
+    const previous = watchPayload(null, payload({ capacity: { ...payload().capacity, devices: devices(1) } }));
+    const next = watchPayload(
+      previous,
+      payload({ capacity: { ...payload().capacity, committedMb: 310, devices: devices(2) } }),
+    );
+    expect(next.capacity).toMatchObject({ committedMb: 300, devices: { inUse: 2 } });
+  });
+
+  test('load is held until it moves a whole step from the last printed value or its state changes', () => {
+    const at = (loadPerCore: number, state: 'free' | 'busy' = 'busy') =>
+      payload({ capacity: { ...payload().capacity, load: { cpus: 14, loadPerCore, busyAt: 2, limit: null, state } } });
+    const first = watchPayload(null, at(17.6));
+    const held = watchPayload(first, at(18.5));
+    const moved = watchPayload(held, at(18.6));
+    expect([first, held, moved].map((p) => p.capacity.load?.loadPerCore)).toEqual([17.6, 17.6, 18.6]);
+    expect(JSON.stringify(held)).toBe(JSON.stringify(first));
+    expect(watchPayload(watchPayload(null, at(2.3)), at(3.3)).capacity.load?.loadPerCore).toBe(3.3);
+    expect(watchPayload(watchPayload(null, at(2.1)), at(1.9, 'free')).capacity.load?.state).toBe('free');
+  });
+
+  test('a new, gone or changed-ownership owner prints the current rows', () => {
+    const previous = watchPayload(null, payload());
+    const rows = (owners: MachineOwner[]) =>
+      watchPayload(previous, payload({ machine: { memorySource: 'footprint', owners } })).machine?.owners;
+    expect(rows([owner(), owner({ name: 'metro', id: '8081' })])).toHaveLength(2);
+    expect(rows([])).toEqual([]);
+    expect(rows([owner({ owned: false })])?.[0]?.owned).toBe(false);
+  });
+
+  test('machine usage appearing or its memory source changing prints the current machine', () => {
+    const previous = watchPayload(null, payload());
+    expect(watchPayload(previous, payload({ machine: null })).machine).toBeNull();
+    const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
+    expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
+    expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
+  });
+});
+
+describe('watchChangeKey', () => {
+  const pr = (checkedAt: string, state: 'open' | 'merged' = 'open'): WorktreeFacts['pullRequest'] => ({
+    number: 7,
+    url: 'https://github.com/o/r/pull/7',
+    title: 'T',
+    state,
+    checks: null,
+    reviewDecision: null,
+    checkedAt,
+  });
+  const passAt = (at: number): MaintenancePass => ({
+    startedAt: at,
+    durationMs: at % 100,
+    trigger: 'status-watch',
+    mode: 'on',
+    freedBytes: 0,
+    actions: 0,
+    stopped: 0,
+    blocked: [],
+  });
+  const maintenance = (at: number, overrides: Partial<MaintenanceStatus> = {}): MaintenanceStatus => ({
+    mode: 'on',
+    lastChecks: { pressure: at, size: at, worktree: at, sweep: at },
+    pressure: null,
+    sizes: [],
+    lastPass: passAt(at),
+    running: null,
+    recent: [],
+    plan: [],
+    ...overrides,
+  });
+  const payload = (
+    at: number,
+    state: 'open' | 'merged' = 'open',
+    extra: Partial<StatusPayload> = {},
+  ): StatusPayload => ({
+    environments: [
+      makeEnvironmentState({
+        path: '/w/a',
+        worktree: { path: '/w/a', pullRequest: pr(`2026-10-10T00:00:${at}Z`, state) },
+      }),
+    ],
+    capacity: { liveCount: 0, committedMb: 0, totalMemoryMb: 16384, overCapacity: false },
+    deviceLeases: [],
+    unprovisionedWorktrees: [{ path: '/w/b', pullRequest: pr(`2026-10-10T00:00:${at}Z`) }],
+    simctlAvailable: true,
+    machine: null,
+    maintenance: maintenance(at),
+    ...extra,
+  });
+
+  test('a payload that differs only in bookkeeping timestamps has the same key', () => {
+    const running = { startedAt: '2026-10-10T00:00:11Z', trigger: 'status-watch' };
+    expect(watchChangeKey(payload(10, 'open', { maintenance: maintenance(10, { running }) }))).toBe(
+      watchChangeKey(
+        payload(20, 'open', { maintenance: maintenance(20, { running: { ...running, startedAt: 'x' } }) }),
+      ),
+    );
+  });
+
+  test.each([
+    ['pull request state', payload(20, 'merged')],
+    [
+      'maintenance trigger',
+      payload(20, 'open', {
+        maintenance: { ...maintenance(20), lastPass: { ...passAt(20), trigger: 'timer' } },
+      }),
+    ],
+    ['archived', payload(20, 'open', { archived: [] })],
+  ])('a %s change gives a new key', (_name, next) => {
+    expect(watchChangeKey(next)).not.toBe(watchChangeKey(payload(10)));
+  });
+
+  test('the key is not the printed payload: masking leaves the payload untouched', () => {
+    const value = payload(10);
+    watchChangeKey(value);
+    expect(value.unprovisionedWorktrees[0]?.pullRequest?.checkedAt).toBe('2026-10-10T00:00:10Z');
+  });
+});
+
+test('CoreSimulator device set writes report a simulator change at once; the slow poll shares its listing until then', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   const home = mkdtempSync(join(tmpdir(), 'stim-watch-sims-'));
   vi.stubEnv('STIM_HOME', home);
   vi.stubEnv('HOME', home);
   vi.stubEnv('USERPROFILE', home);
+  const developer = join(home, 'Developer');
+  const deviceSet = join(developer, 'CoreSimulator', 'Devices');
+  const udid = '3A2178C2-DB3D-4B23-876E-4BC6BFD5AE32';
+  mkdirSync(developer);
   const listing = (state: string) =>
     JSON.stringify({
       devices: {
         'com.apple.CoreSimulator.SimRuntime.iOS-27-0': [
-          { udid: 'U1', name: 'stim-a', state, isAvailable: true, deviceTypeIdentifier: 'iPhone' },
+          { udid, name: 'stim-a', state, isAvailable: true, deviceTypeIdentifier: 'iPhone' },
         ],
       },
     });
   let output = listing('Shutdown');
+  let reads = 0;
   setExecutor({
     findExecutable: () => null,
     spawn(file: string) {
       const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
       if (file !== 'xcrun') return child;
-      setTimeout(() => {
-        child.stdout.end(output);
-        child.emit('close', 0);
-      }, 10);
+      reads++;
+      child.stdout.write(output);
+      setTimeout(() => child.emit('close', 0), 10);
       return child;
     },
   });
-  const sources = watchStatusSources({ home, onChange: () => {}, platform: 'darwin' });
+  const changes: string[] = [];
+  const sources = watchStatusSources({ home, deviceSet, onChange: (kind) => changes.push(kind), platform: 'darwin' });
   try {
-    expect(sources.simulatorListing()).toBe(null);
     await vi.advanceTimersByTimeAsync(20);
-    expect(sources.simulatorListing()).toBe(listing('Shutdown'));
+    expect([reads, sources.simulatorListing()]).toEqual([1, listing('Shutdown')]);
 
+    mkdirSync(join(developer, 'CoreSimulator'));
+    watchListeners.get(developer)?.('rename', 'CoreSimulator');
+    expect(changes).toEqual([]);
+    mkdirSync(join(deviceSet, udid), { recursive: true });
+    watchListeners.get(join(developer, 'CoreSimulator'))?.('rename', 'Devices');
+    expect(changes).toEqual(['full']);
+
+    await vi.advanceTimersByTimeAsync(20);
     output = listing('Booted');
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sources.simulatorListing()).toBe(listing('Booted'));
+    watchListeners.get(join(deviceSet, udid))?.('rename', 'data');
+    expect(changes).toHaveLength(2);
+    for (let i = 0; i < 5; i++) watchListeners.get(join(deviceSet, udid))?.('rename', 'device.plist');
+    expect(sources.simulatorListing()).toBe(null);
+
+    await vi.advanceTimersByTimeAsync(30);
+    expect([reads, changes.length, sources.simulatorListing()]).toEqual([4, 8, listing('Booted')]);
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(reads).toBe(4);
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect([reads, changes.length, sources.simulatorListing()]).toEqual([5, 8, listing('Booted')]);
 
     writeFileSync(join(home, 'config.json'), '{}');
-    watchListeners.get(home)!('change', 'config.json');
+    watchListeners.get(home)?.('change', 'config.json');
     expect(sources.simulatorListing()).toBe(null);
-    await vi.advanceTimersByTimeAsync(5000);
-    expect(sources.simulatorListing()).toBe(listing('Booted'));
 
     output = 'not json';
-    await vi.advanceTimersByTimeAsync(11_000);
+    await vi.advanceTimersByTimeAsync(61_000);
     expect(sources.simulatorListing()).toBe(null);
   } finally {
     sources.stop();
@@ -214,6 +476,137 @@ test('the simulator poller shares its last readable listing until it ages out or
     vi.useRealTimers();
     rmSync(home, { recursive: true, force: true });
     vi.unstubAllEnvs();
+  }
+});
+
+test.skipIf(process.platform !== 'darwin').each(['replacement and recreation', 'missed event repair'])(
+  'native simulator metadata supports %s',
+  async (scenario) => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const home = mkdtempSync(join(tmpdir(), 'stim-watch-plist-'));
+    vi.stubEnv('STIM_HOME', home);
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const deviceSet = join(home, 'Devices');
+    const udid = '3A2178C2-DB3D-4B23-876E-4BC6BFD5AE32';
+    const plist = join(deviceSet, udid, 'device.plist');
+    mkdirSync(join(deviceSet, udid), { recursive: true });
+    writeFileSync(plist, 'Shutdown');
+    setExecutor({
+      findExecutable: () => null,
+      spawn(file: string) {
+        const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+        if (file !== 'xcrun') return child;
+        let devices: { udid: string; name: string; state: string; isAvailable: boolean }[] = [];
+        try {
+          devices = [{ udid, name: 'stim-a', state: readFileSync(plist, 'utf8'), isAvailable: true }];
+        } catch {}
+        child.stdout.write(JSON.stringify({ devices: { runtime: devices } }));
+        queueMicrotask(() => child.emit('close', 0));
+        return child;
+      },
+    });
+    nativeEvents.enabled = true;
+    const sources = watchStatusSources({
+      home,
+      deviceSet,
+      onChange: () => {},
+      platform: 'darwin',
+      simctlIntervalMs: 500,
+    });
+    const observed = async (state: string | undefined) => {
+      await vi.waitFor(
+        () => {
+          const listing = sources.simulatorListing();
+          assert(listing);
+          assert.equal(JSON.parse(listing).devices.runtime[0]?.state, state);
+        },
+        { timeout: 5000 },
+      );
+    };
+    try {
+      await observed('Shutdown');
+      if (scenario === 'replacement and recreation') {
+        for (const state of ['Booted', 'Shutdown']) {
+          writeFileSync(`${plist}.next`, state);
+          renameSync(`${plist}.next`, plist);
+          await observed(state);
+        }
+        unlinkSync(plist);
+        await observed(undefined);
+        writeFileSync(plist, 'Shutdown');
+        await observed('Shutdown');
+      } else {
+        nativeEvents.enabled = false;
+        nativeEvents.ignorePath = deviceSet;
+        nativeEvents.generation++;
+        writeFileSync(`${plist}.next`, 'Booted');
+        renameSync(`${plist}.next`, plist);
+        await vi.advanceTimersByTimeAsync(500);
+        nativeEvents.enabled = true;
+        await observed('Booted');
+        vi.clearAllTimers();
+        await vi.waitFor(
+          () => {
+            writeFileSync(plist, 'Shutdown');
+            const listing = sources.simulatorListing();
+            assert(listing);
+            assert.equal(JSON.parse(listing).devices.runtime[0]?.state, 'Shutdown');
+          },
+          { timeout: 2000 },
+        );
+      }
+    } finally {
+      sources.stop();
+      nativeEvents.enabled = false;
+      nativeEvents.ignorePath = '';
+      vi.useRealTimers();
+      resetExecutor();
+      rmSync(home, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    }
+  },
+);
+
+test('macOS workspace events refresh state and flat logs but ignore generated trees', () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-watch-workspaces-'));
+  vi.stubEnv('STIM_HOME', home);
+  vi.stubEnv('HOME', home);
+  vi.stubEnv('USERPROFILE', home);
+  vi.stubEnv('ANDROID_HOME', join(home, 'sdk'));
+  const workspaces = join(home, 'workspaces');
+  mkdirSync(join(workspaces, 'app', 'logs'), { recursive: true });
+  setExecutor({ findExecutable: () => null });
+  const changes: RefreshKind[] = [];
+  const sources = watchStatusSources({
+    home,
+    deviceSet: null,
+    platform: 'darwin',
+    onChange: (kind) => changes.push(kind),
+  });
+  try {
+    const changed = watchListeners.get(workspaces);
+    assert(changed);
+    for (const name of ['app', 'app/state.json', 'new/ended-agents.json', 'app/logs']) changed('rename', name);
+    for (const name of ['app/build-detail.json', 'app/logs/metro.ndjson']) changed('change', name);
+    expect(changes).toEqual(['full', 'full', 'full', 'full', 'light', 'light']);
+    changes.length = 0;
+    for (const name of [
+      'app/build/outputs/state.json',
+      'app/web/Default/History',
+      'app/logs/nested/state.json',
+      'app/state.lock',
+      'app/logs/metro.ndjson.lock.claims',
+    ])
+      changed('change', name);
+    expect(changes).toEqual([]);
+    changed('change', null);
+    expect(changes).toEqual(['full']);
+  } finally {
+    sources.stop();
+    resetExecutor();
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
   }
 });
 
@@ -250,19 +643,25 @@ describe('stim status --watch --json', () => {
     };
   }
 
-  function startWatch(controlledWatch = false) {
-    if (controlledWatch) {
-      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
-    }
+  /** An adb whose `track-devices` records its pid and stays up; the pid file's path. */
+  function adbShim(silent = false): string {
     const androidHome = join(root, 'sdk');
     mkdirSync(join(androidHome, 'platform-tools'), { recursive: true });
     const adb = join(androidHome, 'platform-tools', 'adb');
     const adbPid = join(root, 'adb.pid');
     writeFileSync(
       adb,
-      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; ${controlledWatch ? '' : 'printf 0000;'} exec /bin/sleep 600; fi\n`,
+      `#!/bin/sh\nif [ "$1" = track-devices ]; then echo $$ > '${adbPid}'; ${silent ? '' : 'printf 0000;'} exec /bin/sleep 600; fi\n`,
     );
     chmodSync(adb, 0o755);
+    return adbPid;
+  }
+
+  function startWatch(controlledWatch = false) {
+    if (controlledWatch) {
+      writeFileSync(agentSessionsCacheFile(), JSON.stringify({ discoveredAt: new Date().toISOString(), sessions: [] }));
+    }
+    const adbPid = adbShim(controlledWatch);
     const preload = new URL('./_status-watch-preload.mjs', import.meta.url).href;
     const args = [...(controlledWatch ? ['--import', preload] : []), cli, 'status', '--watch', '--json'];
     const proc = spawn(process.execPath, args, {
@@ -322,7 +721,7 @@ describe('stim status --watch --json', () => {
     writeFileSync(join(dir, 'state.json'), '{}');
     process.env.STIM_ARCHIVE_ENABLED = 'true';
     try {
-      archiveWorkspace(app, 'worktree-remove');
+      await archiveWorkspace(app, 'worktree-remove');
     } finally {
       delete process.env.STIM_ARCHIVE_ENABLED;
     }
@@ -364,16 +763,15 @@ describe('stim status --watch --json', () => {
       });
       appendFileSync(log, record(2, 'error'));
       if (notify) proc.send({ path: workspaceLogsDir(app), name: 'metro.ndjson' });
-      await (notify ? until(() => lines.length === 2, 20_000) : changed);
+      await (notify ? until(() => lines.length === 2, 3000) : changed);
       expect(lines).toHaveLength(2);
       expect(errors(lines[1]!)).toBe(1);
     },
     40_000,
   );
 
-  test.skipIf(process.platform !== 'darwin')(
-    'machine usage refreshes on the light interval with no state change; skipped off macOS, where no simulator runs',
-    async () => {
+  describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
+    async function machineWatch(cpuExpr: string) {
       const udid = 'AAAAAAAA-0000-4000-8000-000000000001';
       saveConfig(
         makeConfig({
@@ -393,28 +791,167 @@ describe('stim status --watch --json', () => {
       });
       writeFileSync(join(bin, 'xcrun'), `#!/bin/sh\nprintf '%s' '${list}'\n`);
       const count = join(root, 'ps.count');
+      const moved = join(root, 'cpu.moved');
       writeFileSync(
         join(bin, 'ps'),
         [
           '#!/bin/sh',
+          `[ -f '${moved}' ] && up=1 || up=0`,
           `n=0; [ -f '${count}' ] && read n < '${count}'; n=$((n + 1)); echo $n > '${count}'`,
-          `echo "100 1 1024 $n.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
+          `echo "100 1 1024 ${cpuExpr}.0 Sat Sep 26 15:33:49 2026 launchd_sim /Users/me/Library/Developer/CoreSimulator/Devices/${udid}/data/var/run/launchd_bootstrap.plist"`,
         ].join('\n'),
       );
       chmodSync(join(bin, 'xcrun'), 0o755);
       chmodSync(join(bin, 'ps'), 0o755);
-      const cpu = (line: string) => JSON.parse(line).machine.owners[0].cpuPercent;
-      const startedAt = Date.now();
       const { lines } = startWatch();
       await until(() => lines.length > 0);
-      let seen = 0;
-      while (seen !== lines.length) {
-        seen = lines.length;
-        await new Promise((resolve) => setTimeout(resolve, 6000));
+      return {
+        lines,
+        cpu: (line: string) => JSON.parse(line).machine.owners[0].cpuPercent as number,
+        reads: () => Number(readFileSync(count, 'utf-8')),
+        moveCpu: () => writeFileSync(moved, ''),
+      };
+    }
+
+    test('a CPU move past a step prints a new line without any state change; skipped off macOS, where no simulator runs', async () => {
+      const { lines, cpu, reads, moveCpu } = await machineWatch('$((up ? 20 : 10))');
+      const before = cpu(last(lines));
+      await until(() => reads() >= 2, 30_000);
+      moveCpu();
+      await until(() => cpu(last(lines)) > before, 25_000);
+      expect(cpu(last(lines))).toBe(20);
+    }, 40_000);
+
+    test('CPU jitter below a step prints no line even though the process table is read again', async () => {
+      const { lines, cpu, reads } = await machineWatch('$((50 + n % 2))');
+      const before = cpu(last(lines));
+      const seen = lines.length;
+      await until(() => reads() > 2, 30_000);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      expect(lines).toHaveLength(seen);
+      expect(cpu(last(lines))).toBe(before);
+    }, 40_000);
+  });
+
+  function last(lines: string[]): string {
+    const line = lines.at(-1);
+    assert(line !== undefined);
+    return line;
+  }
+
+  async function quiet(lines: string[], ms = 1500) {
+    let seen = -1;
+    while (seen !== lines.length) {
+      seen = lines.length;
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    }
+  }
+
+  function linkGit() {
+    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
+    mkdirSync(join(root, 'bin'), { recursive: true });
+    writeFileSync(join(root, 'bin', 'git'), `#!/bin/sh\nexec '${real}' "$@"\n`);
+    chmodSync(join(root, 'bin', 'git'), 0o755);
+    const run = (cwd: string, args: string[]) =>
+      execFileSync(real, ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
+        cwd,
+        stdio: 'ignore',
+        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+      });
+    const base = realpathSync(root);
+    const repo = join(base, 'repo');
+    mkdirSync(repo);
+    run(repo, ['init', '-q', '-b', 'main']);
+    writeFileSync(join(repo, 'package.json'), '{}');
+    run(repo, ['add', '.']);
+    run(repo, ['commit', '-q', '-m', 'init']);
+    const app = join(base, 'app');
+    run(repo, ['worktree', 'add', '-q', '-b', 'feature', app]);
+    saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+    return { app, run };
+  }
+
+  const git = (line: string) => JSON.parse(line).environments[0].worktree?.git ?? null;
+
+  test.skipIf(process.platform === 'win32')(
+    'a state write prints a line within 2 s through the real filesystem watcher; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const app = join(root, 'app');
+      mkdirSync(app);
+      saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
+      writeWorkspaceState(app, {});
+      const { lines } = startWatch();
+      await until(() => lines.length > 0);
+      await quiet(lines);
+      const before = lines.length;
+      writeWorkspaceState(app, { warm: { phase: 'ready', at: new Date().toISOString() } });
+      await until(() => lines.length > before, 2000);
+      expect(JSON.parse(last(lines)).environments[0].phase).toBe('ready');
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a commit in a worktree prints its git summary within 3 s; skipped on win32, which cannot run the sh git and adb shims',
+    async () => {
+      const { app, run } = linkGit();
+      writeFileSync(join(app, 'new.txt'), 'x');
+      const { lines } = startWatch();
+      await until(() => lines.length > 0 && git(last(lines)) !== null);
+      await quiet(lines);
+      expect(git(last(lines))).toMatchObject({ untracked: 1 });
+      const before = lines.length;
+      run(app, ['add', 'new.txt']);
+      run(app, ['commit', '-q', '-m', 'add']);
+      await until(() => lines.length > before && git(last(lines))?.untracked === 0, 3000);
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'the first line does not wait for git, and the git summary follows; skipped on win32, which cannot run the sh git and adb shims',
+    async () => {
+      linkGit();
+      const { lines } = startWatch();
+      await until(() => lines.length > 0);
+      expect(git(last(lines.slice(0, 1)))).toBeNull();
+      await until(() => git(last(lines)) !== null, 20_000);
+      expect(git(last(lines))).toMatchObject({ changed: 0, untracked: 0 });
+    },
+    40_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'a supervisor that exits without writing state prints a line within 4 s; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const sleeper = spawn('/bin/sleep', ['600'], { stdio: 'ignore' });
+      try {
+        const pid = sleeper.pid;
+        const processToken = pid && captureProcessToken(pid);
+        assert(pid && processToken);
+        const app = join(root, 'app');
+        saveConfig(
+          makeConfig({
+            projects: {
+              [app]: {
+                label: 'watched',
+                platforms: {},
+                supervisor: { pid, processToken, port: 400, startedAt: '1700000000000' },
+              },
+            },
+          }),
+        );
+        const { lines } = startWatch();
+        await until(() => lines.length > 0);
+        await quiet(lines);
+        expect(JSON.parse(last(lines)).environments[0].supervisor).toMatchObject({ pid });
+        const before = lines.length;
+        sleeper.kill('SIGKILL');
+        await until(() => lines.length > before, 4000);
+        expect(JSON.parse(last(lines)).environments[0].supervisor).toBeNull();
+      } finally {
+        sleeper.kill('SIGKILL');
       }
-      const before = cpu(lines.at(-1)!);
-      await until(() => lines.length > seen, 28_000 - (Date.now() - startedAt));
-      expect(cpu(lines.at(-1)!)).toBeGreaterThan(before);
     },
     40_000,
   );
@@ -422,6 +959,9 @@ describe('stim status --watch --json', () => {
   test.skipIf(process.platform === 'win32')(
     'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
     async () => {
+      const home = process.env.STIM_HOME;
+      assert(home);
+      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
       const { proc, exited, adbPid } = startWatch();
       await until(() => {
         try {
@@ -432,11 +972,47 @@ describe('stim status --watch --json', () => {
       });
       const tracker = Number(readFileSync(adbPid, 'utf-8'));
       expect(alive(tracker)).toBe(true);
+      const stoppedAt = Date.now();
       proc.kill('SIGTERM');
       expect(await exited).toBe(0);
+      expect(Date.now() - stoppedAt).toBeLessThan(8000);
       await until(() => !alive(tracker), 5000);
     },
     30_000,
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'the status worker stops adb when asked to stop; skipped on win32, which cannot run the sh adb shim',
+    async () => {
+      const home = process.env.STIM_HOME;
+      assert(home);
+      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
+      const adbPid = adbShim();
+      const worker = new Worker(new URL('../status-worker.ts', import.meta.url), {
+        env: watchEnv(),
+        workerData: { cwd: root },
+      });
+      const exited = new Promise<number>((resolve) => worker.once('exit', resolve));
+      try {
+        await until(() => {
+          try {
+            return readFileSync(adbPid, 'utf-8').trim() !== '';
+          } catch {
+            return false;
+          }
+        }, 20_000);
+        const tracker = Number(readFileSync(adbPid, 'utf-8'));
+        expect(alive(tracker)).toBe(true);
+        const stoppedAt = Date.now();
+        worker.postMessage('stop');
+        expect(await exited).toBe(0);
+        expect(Date.now() - stoppedAt).toBeLessThan(8000);
+        await until(() => !alive(tracker), 5000);
+      } finally {
+        await worker.terminate();
+      }
+    },
+    40_000,
   );
 
   test('exits when stdout closes', async () => {

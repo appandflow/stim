@@ -9,8 +9,22 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO = join(HERE, '..', '..');
 const SCRIPT = join(REPO, 'scripts', 'release-prep.mjs');
-const PACKAGE_DIRS = ['core', 'cache', 'metro', 'expo-build-cache', 'stim-cli', 'ci', 'server'];
-const ACCEPTED_RANGES = new Set(['workspace:^', 'workspace:~', 'workspace:*']);
+const PACKAGE_DIRS = [
+  'core',
+  'cache',
+  'cache-s3',
+  'agent-driver',
+  'agent-driver-agent-device',
+  'metro',
+  'expo-build-cache',
+  'stim-cli',
+  'ci',
+  'transport',
+  'transport-tailscale',
+  'transport-local',
+  'server',
+];
+const EXACT_RANGE = 'workspace:*';
 
 const manifestIn = (root, dir) => join(root, 'packages', dir, 'package.json');
 const readManifest = (root, dir) => JSON.parse(readFileSync(manifestIn(root, dir), 'utf8'));
@@ -30,7 +44,7 @@ const makeWorkspace = () => {
   const root = mkdtempSync(join(tmpdir(), 'stim-release-prep-'));
   for (const file of ['pnpm-workspace.yaml', 'pnpm-lock.yaml']) cpSync(join(REPO, file), join(root, file));
   cpSync(join(REPO, 'patches'), join(root, 'patches'), { recursive: true });
-  for (const dir of ['website', 'apps/mobile', 'apps/demo-server']) {
+  for (const dir of ['website', 'apps/mobile', 'apps/demo-server', '.github/actions/stim-ci']) {
     mkdirSync(join(root, dir), { recursive: true });
     cpSync(join(REPO, dir, 'package.json'), join(root, dir, 'package.json'));
   }
@@ -57,10 +71,10 @@ test('--check accepts the repository as it stands', () => {
   const result = spawnSync(process.execPath, [SCRIPT, '--check'], { cwd: REPO, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /packages at \d+\.\d+\.\d+/);
-  assert.match(result.stdout, /inter-package ranges, all workspace:/);
+  assert.match(result.stdout, /inter-package ranges, all workspace:\*/);
 });
 
-test('the published packages share one version and only bare workspace: ranges', () => {
+test('the published packages share one version and only workspace:* ranges', () => {
   const versions = new Set(PACKAGE_DIRS.map((dir) => readManifest(REPO, dir).version));
   assert.equal(versions.size, 1, `versions are not in lockstep: ${[...versions].join(', ')}`);
 
@@ -69,21 +83,23 @@ test('the published packages share one version and only bare workspace: ranges',
     for (const group of ['dependencies', 'devDependencies', 'peerDependencies']) {
       for (const [name, range] of Object.entries(pkg[group] ?? {})) {
         if (name !== 'stim' && !name.startsWith('@stim-cli/')) continue;
-        assert.equal(ACCEPTED_RANGES.has(range), true, `packages/${dir} ${group}.${name} is "${range}"`);
+        assert.equal(range, EXACT_RANGE, `packages/${dir} ${group}.${name} is "${range}"`);
       }
     }
   }
 });
 
-test('--check refuses a versioned dependency on the renamed CLI', () => {
+test('--check refuses an internal range that is not workspace:*', () => {
   withWorkspace((root) => {
-    const core = readManifest(root, 'core');
-    core.devDependencies = { ...core.devDependencies, stim: '^1.0.0' };
-    writeFileSync(manifestIn(root, 'core'), `${JSON.stringify(core, null, 2)}\n`);
+    for (const range of ['^1.0.0', 'workspace:^']) {
+      const core = readManifest(root, 'core');
+      core.devDependencies = { ...core.devDependencies, stim: range };
+      writeFileSync(manifestIn(root, 'core'), `${JSON.stringify(core, null, 2)}\n`);
 
-    const result = runPrep(root, '--check');
-    assert.equal(result.status, 1, result.stdout);
-    assert.match(result.stderr, /devDependencies\.stim is "\^1\.0\.0", not one of workspace:/);
+      const result = runPrep(root, '--check');
+      assert.equal(result.status, 1, result.stdout);
+      assert.ok(result.stderr.includes(`devDependencies.stim is "${range}", not "workspace:*"`), result.stderr);
+    }
   });
 });
 
@@ -101,7 +117,7 @@ test('a bump rewrites every published version and leaves the lockfile alone', ()
     assert.notEqual(before, '99.0.0');
 
     const cli = readManifest(root, 'stim-cli');
-    assert.equal(cli.dependencies['@stim-cli/core'], 'workspace:^', 'the bump must not touch the ranges');
+    assert.equal(cli.dependencies['@stim-cli/core'], 'workspace:*', 'the bump must not touch the ranges');
     assert.equal(
       readFileSync(join(root, 'pnpm-lock.yaml'), 'utf8'),
       lockBefore,
@@ -138,7 +154,7 @@ test('a manifest the bump cannot rewrite leaves every version where it was', () 
   });
 });
 
-test('pnpm pack substitutes the workspace ranges the CLI ships with', () => {
+test('pnpm pack ships the CLI internal dependencies as exact versions', () => {
   const out = mkdtempSync(join(tmpdir(), 'stim-release-pack-'));
   try {
     const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
@@ -154,7 +170,7 @@ test('pnpm pack substitutes the workspace ranges the CLI ships with', () => {
     assert.equal(shipped.name, 'stim');
     assert.equal(shipped.version, version);
     for (const name of ['@stim-cli/cache', '@stim-cli/core', '@stim-cli/metro']) {
-      assert.equal(shipped.dependencies[name], `^${version}`);
+      assert.equal(shipped.dependencies[name], version);
     }
     assert.equal(shipped.devDependencies['@stim-cli/expo-build-cache'], version);
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false, 'a workspace: range reached the tarball');
@@ -163,7 +179,7 @@ test('pnpm pack substitutes the workspace ranges the CLI ships with', () => {
   }
 });
 
-test('the packed CI runner depends on an installable matching Stim version', () => {
+test('the packed CI runner depends on the exact matching Stim version', () => {
   const out = mkdtempSync(join(tmpdir(), 'stim-ci-pack-'));
   try {
     const packed = execFileSync('pnpm', ['pack', '--pack-destination', out], {
@@ -174,7 +190,7 @@ test('the packed CI runner depends on an installable matching Stim version', () 
       .split('\n')
       .at(-1);
     const shipped = JSON.parse(execFileSync('tar', ['-xzOf', packed, 'package/package.json'], { encoding: 'utf8' }));
-    assert.equal(shipped.dependencies.stim, `^${readManifest(REPO, 'stim-cli').version}`);
+    assert.equal(shipped.dependencies.stim, readManifest(REPO, 'stim-cli').version);
     assert.equal(JSON.stringify(shipped).includes('workspace:'), false);
   } finally {
     rmSync(out, { recursive: true, force: true });

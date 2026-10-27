@@ -1,3 +1,4 @@
+import type { StimContext } from '@stim-cli/core';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +7,13 @@ import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, waitForChild } from '../process-output.ts';
-import { cleanLine } from '../supervisor/server-expo.ts';
+import { runOperationFile } from './operation-exec.ts';
+import { bundleInvocation } from './node-cli.ts';
+import { spawnDeclared } from './spawn-claims.ts';
+import { throwIfCancelled } from '../cancellation.ts';
+import { killOnAbort } from '../workspace/git-read.ts';
+import { operationState } from './operation-state.ts';
+import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 
 export const JS_BUNDLE_NAME = 'main.jsbundle';
@@ -26,9 +33,9 @@ export function hermesEnabledFromProperties(text: unknown): boolean {
   return raw !== 'false' && raw !== false;
 }
 
-export function readHermesEnabled(root: string): boolean {
+export function readHermesEnabled(iosDir: string): boolean {
   try {
-    return hermesEnabledFromProperties(readFileSync(join(root, 'ios', 'Podfile.properties.json'), 'utf-8'));
+    return hermesEnabledFromProperties(readFileSync(join(iosDir, 'Podfile.properties.json'), 'utf-8'));
   } catch {
     return true;
   }
@@ -129,23 +136,37 @@ export function assetCatalogTarget(infoPlist: unknown): AssetCatalogTarget | nul
 }
 
 // plutil -convert json refuses a whole plist that holds <data> or <date>, so read single keys.
-function readPlistKey(e: Executor, plist: string, key: string, format: 'raw' | 'json'): string | null {
+// plutil on macOS 15 prints the missing-key error on stdout, not stderr.
+async function readPlistKey(
+  context: StimContext | undefined,
+  e: Executor,
+  plist: string,
+  key: string,
+  format: 'raw' | 'json',
+): Promise<string | null> {
   try {
-    return e.runFile('plutil', ['-extract', key, format, '-o', '-', plist]);
+    return await runOperationFile(context, e, 'plutil', ['-extract', key, format, '-o', '-', plist], {
+      timeoutMs: 10_000,
+    });
   } catch (err) {
-    if (/No value at that key path/.test(describe(err))) return null;
+    const stdout = typeof err === 'object' && err !== null && 'stdout' in err ? String(err.stdout) : '';
+    if (/No value at that key path/.test(`${describe(err)}\n${stdout}`)) return null;
     throw err;
   }
 }
 
-function readAssetCatalogTarget(e: Executor, plist: string): AssetCatalogTarget | null {
-  const flag = readPlistKey(e, plist, 'RCTUseAssetCatalog', 'raw');
+async function readAssetCatalogTarget(
+  context: StimContext | undefined,
+  e: Executor,
+  plist: string,
+): Promise<AssetCatalogTarget | null> {
+  const flag = await readPlistKey(context, e, plist, 'RCTUseAssetCatalog', 'raw');
   if (flag === null) return null;
-  const families = readPlistKey(e, plist, 'UIDeviceFamily', 'json');
+  const families = await readPlistKey(context, e, plist, 'UIDeviceFamily', 'json');
   return assetCatalogTarget({
     RCTUseAssetCatalog: flag,
-    DTPlatformName: readPlistKey(e, plist, 'DTPlatformName', 'raw'),
-    MinimumOSVersion: readPlistKey(e, plist, 'MinimumOSVersion', 'raw'),
+    DTPlatformName: await readPlistKey(context, e, plist, 'DTPlatformName', 'raw'),
+    MinimumOSVersion: await readPlistKey(context, e, plist, 'MinimumOSVersion', 'raw'),
     UIDeviceFamily: families === null ? undefined : JSON.parse(families),
   });
 }
@@ -213,10 +234,14 @@ const IOS_FRAMEWORK_UPDATES_MANIFEST = join(
   UPDATES_MANIFEST_NAME,
 );
 
-export function hermescPath(root: string, { exists = existsSync }: { exists?: (p: string) => boolean } = {}): string {
+export function hermescPath(
+  root: string,
+  iosDir: string,
+  { exists = existsSync }: { exists?: (p: string) => boolean } = {},
+): string {
   const candidates = [
     join(root, 'node_modules', 'hermes-compiler', 'hermesc', 'osx-bin', 'hermesc'),
-    join(root, 'ios', 'Pods', 'hermes-engine', 'destroot', 'bin', 'hermesc'),
+    join(iosDir, 'Pods', 'hermes-engine', 'destroot', 'bin', 'hermesc'),
     join(root, 'node_modules', 'react-native', 'sdks', 'hermesc', 'osx-bin', 'hermesc'),
   ];
   return candidates.find(exists) ?? candidates[candidates.length - 1]!;
@@ -242,7 +267,9 @@ export type JsSwapResult = {
 };
 
 export async function swapJsBundle({
+  context,
   root,
+  iosDir,
   isExpo,
   cachedAppPath,
   logWriter = null,
@@ -255,7 +282,9 @@ export async function swapJsBundle({
   heartbeatMs = HEARTBEAT_INTERVAL_MS,
   onHeartbeat = (line: string) => console.error(line),
 }: {
+  context?: StimContext;
   root: string;
+  iosDir: string;
   isExpo: boolean;
   cachedAppPath: string;
   logWriter?: NdjsonWriter | null;
@@ -283,10 +312,11 @@ export async function swapJsBundle({
     tmp = mkdtemp();
     appCopy = join(tmp, basename(cachedAppPath));
     try {
-      e.runFile('cp', ['-c', '-R', cachedAppPath, appCopy]);
+      await runOperationFile(context, e, 'cp', ['-c', '-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     } catch {
+      throwIfCancelled(context ? (operationState(context).runSignal ?? context.signal) : undefined, 'JS swap');
       removeTemporaryEntry(appCopy);
-      e.runFile('cp', ['-R', cachedAppPath, appCopy]);
+      await runOperationFile(context, e, 'cp', ['-R', cachedAppPath, appCopy], { timeoutMs: 'unbounded' });
     }
   } catch (err) {
     return fail('copy', `could not copy ${cachedAppPath} aside: ${describe(err)}`);
@@ -295,7 +325,7 @@ export async function swapJsBundle({
   let catalogTarget: AssetCatalogTarget | null;
   const infoPlistPath = join(appCopy, 'Info.plist');
   try {
-    catalogTarget = readAssetCatalogTarget(e, infoPlistPath);
+    catalogTarget = await readAssetCatalogTarget(context, e, infoPlistPath);
   } catch (err) {
     return fail('catalog', `could not read ${infoPlistPath}: ${describe(err)}`);
   }
@@ -336,11 +366,15 @@ export async function swapJsBundle({
   };
   let child: ChildProcess;
   try {
-    child = spawn(command.file, command.args, {
-      cwd: root,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, FORCE_COLOR: '0' },
-    });
+    const invocation = bundleInvocation(root, isExpo, command.args.slice(1));
+    child = spawnDeclared(context, () =>
+      spawn(invocation.file, invocation.args, {
+        cwd: root,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
+      }),
+    );
+    killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);
   } catch (err) {
     return fail('bundle', `could not run ${command.file} ${command.args[0]}: ${describe(err)}`);
   }
@@ -380,16 +414,18 @@ export async function swapJsBundle({
 
   let hermes = false;
   let note: string | undefined;
-  const wantsHermes = hermesEnabled ?? readHermesEnabled(root);
+  const wantsHermes = hermesEnabled ?? readHermesEnabled(iosDir);
   if (wantsHermes) {
-    const hermesc = hermescPath(root);
+    const hermesc = hermescPath(root, iosDir);
     if (!exists(hermesc)) {
       note = `hermesc not found at ${hermesc}; embedding the plain JS bundle instead of Hermes bytecode`;
     } else {
       const hbc = join(tmp, `${JS_BUNDLE_NAME}.hbc`);
       try {
-        e.runFile(hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }));
-        e.runFile('mv', [hbc, bundleOutput]);
+        await runOperationFile(context, e, hermesc, hermescArgs({ bundle: bundleOutput, out: hbc }), {
+          timeoutMs: 'unbounded',
+        });
+        await runOperationFile(context, e, 'mv', [hbc, bundleOutput], { timeoutMs: 30_000 });
         hermes = true;
       } catch (err) {
         return fail('hermesc', `hermesc failed on ${bundleOutput}: ${describe(err)}`);
@@ -398,8 +434,8 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)]);
-    e.runFile('cp', ['-R', `${assetsDest}/.`, `${appCopy}/`]);
+    await runOperationFile(context, e, 'cp', [bundleOutput, join(appCopy, JS_BUNDLE_NAME)], { timeoutMs: 'unbounded' });
+    await runOperationFile(context, e, 'cp', ['-R', `${assetsDest}/.`, `${appCopy}/`], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('replace', `could not replace the JS bundle inside ${appCopy}: ${describe(err)}`);
   }
@@ -410,9 +446,12 @@ export async function swapJsBundle({
       rmSync(catalogBundle, { recursive: true, force: true });
       if (readdirSync(catalogDir).some((name) => name.endsWith('.imageset'))) {
         mkdirSync(catalogBundle);
-        const output = e.runFile(
+        const output = await runOperationFile(
+          context,
+          e,
           'xcrun',
           actoolArgs({ catalog: catalogDir, out: catalogBundle, target: catalogTarget }),
+          { timeoutMs: 'unbounded' },
         );
         if (!exists(join(catalogBundle, 'Assets.car'))) {
           return fail(
@@ -448,7 +487,7 @@ export async function swapJsBundle({
   }
 
   try {
-    e.runFile('codesign', ['--force', '--sign', '-', appCopy]);
+    await runOperationFile(context, e, 'codesign', ['--force', '--sign', '-', appCopy], { timeoutMs: 'unbounded' });
   } catch (err) {
     return fail('codesign', `codesign --force --sign - ${appCopy} failed: ${describe(err)}`);
   }

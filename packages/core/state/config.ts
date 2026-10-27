@@ -1,16 +1,22 @@
-import { existsSync, mkdirSync } from 'node:fs';
-import { join, sep } from 'node:path';
-import { configDir, withDirLock } from '../index.ts';
-import type { Config, ConcurrencyLimits, ProjectRecord } from './config-types.ts';
+import { createHash } from 'node:crypto';
+import { isAbsolute, join, sep, win32 } from 'node:path';
+import { ambientEnv } from '../context.ts';
+import { configDir, ensurePrivateDir, withDirLock, withDirLockAsync } from '../index.ts';
+import type { Config, ConcurrencyLimits, PlatformDeviceLimits, ProjectRecord } from './config-types.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
 import { configLockPath, getConfigPath } from './paths.ts';
 
 export function withConfigLock<T>(fn: () => T): T {
   return withDirLock(configLockPath(), fn, {
-    ensureParent: () => {
-      const dir = configDir();
-      if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    },
+    ensureParent: () => ensurePrivateDir(configDir()),
+  });
+}
+
+/** Waits for the config lock without blocking the event loop. The signal cancels acquisition; `fn` runs synchronously. */
+export function withConfigLockAsync<T>(fn: () => T, signal?: AbortSignal): Promise<T> {
+  return withDirLockAsync(configLockPath(), fn, {
+    ensureParent: () => ensurePrivateDir(configDir()),
+    signal,
   });
 }
 
@@ -31,7 +37,23 @@ function configCorrupt(reason: string, path: string = getConfigPath()): Error {
 /** The build worker root: `server.workerRoot` when it is absolute, else `$STIM_HOME/build-worker`. */
 export function buildWorkerRoot(config: Config | null = loadConfig()): string {
   const configured = config?.server?.workerRoot;
-  return typeof configured === 'string' && configured.startsWith('/') ? configured : join(configDir(), 'build-worker');
+  return typeof configured === 'string' && isAbsolute(configured) ? configured : join(configDir(), 'build-worker');
+}
+
+/**
+ * A short directory at the drive root that stands in for the build worker directory `path` on Windows. The NDK's
+ * ninja is not long-path aware (STIM_PATH_TOO_LONG), and it opens paths under the checkout and under the Gradle user
+ * home's transforms cache, both of which are too long under the worker root. A subst drive does not help: Node's
+ * native realpath, which expo-modules-autolinking uses, resolves it back to the long path.
+ */
+export function windowsShortDir(path: string, systemDrive: string = process.env.SystemDrive ?? 'C:'): string {
+  const id = createHash('sha256').update(path.toLowerCase()).digest('hex').slice(0, 6);
+  return win32.join(`${systemDrive}\\`, 'sw', id);
+}
+
+/** The ASCII key a Windows build worker records beside a `windowsShortDir` to tell which `kind` and `path` it serves. */
+export function windowsShortDirKey(kind: 'checkout' | 'gradle', path: string): string {
+  return createHash('sha256').update(`${kind}:${path.toLowerCase()}`).digest('hex');
 }
 
 export function loadConfig(): Config | null {
@@ -72,6 +94,7 @@ function registryFromJson(
   if (!isJsonObject(value)) throw configCorrupt(`has a ${key} that is not an object: ${JSON.stringify(value)}`, path);
   const registry: Record<string, Record<string, unknown>> = {};
   for (const [name, entry] of Object.entries(value)) {
+    if (name === '__proto__') continue;
     if (!isJsonObject(entry)) {
       throw configCorrupt(
         `has a ${key} entry ${JSON.stringify(name)} that is not an object: ${JSON.stringify(entry)}`,
@@ -88,12 +111,23 @@ export function getProject(projectPath: string): ProjectRecord | null {
   return cfg?.projects?.[projectPath] || null;
 }
 
-export function getConcurrencyLimits({ env = process.env }: { env?: NodeJS.ProcessEnv } = {}): ConcurrencyLimits {
+export function getConcurrencyLimits({ env = ambientEnv() }: { env?: NodeJS.ProcessEnv } = {}): ConcurrencyLimits {
   const cfg = loadConfig();
   const c = cfg?.concurrency || {};
   return {
     maxBuilds: resolveLimit(env.STIM_MAX_BUILDS, c.maxBuilds),
     maxDevices: resolveLimit(env.STIM_MAX_DEVICES, c.maxDevices),
+  };
+}
+
+export function getPlatformDeviceLimits({
+  env = ambientEnv(),
+}: { env?: NodeJS.ProcessEnv } = {}): PlatformDeviceLimits {
+  const c = loadConfig()?.concurrency || {};
+  return {
+    ios: resolveLimit(env.STIM_MAX_IOS_DEVICES, c.maxIosDevices),
+    android: resolveLimit(env.STIM_MAX_ANDROID_DEVICES, c.maxAndroidDevices),
+    macos: resolveLimit(env.STIM_MAX_MACOS_APPS, c.maxMacosApps),
   };
 }
 
@@ -115,7 +149,7 @@ function parseMax(raw: unknown, strings: boolean): number | null {
 
 export function getParkedMax(
   platform: 'ios' | 'android',
-  { config, env = process.env }: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
+  { config, env = ambientEnv() }: { config?: Config | null; env?: NodeJS.ProcessEnv } = {},
 ): ParkedMax {
   const { key, env: envKey } = MAX_SETTING[platform];
   const fromEnv = env[envKey];
@@ -152,24 +186,9 @@ export function getProjectSettings(projectPath: string): Record<string, unknown>
   return getProject(projectPath)?.settings || {};
 }
 
-export function getProjectSetting(projectPath: string, dottedKey: string): unknown {
-  return readNested(getProjectSettings(projectPath), dottedKey);
-}
-
 export function getRepoSettings(gitCommonDir: string): Record<string, unknown> {
   const cfg = loadConfig();
   return cfg?.repos?.[gitCommonDir]?.settings || {};
-}
-
-function readNested(obj: unknown, dottedKey: string): unknown {
-  if (!obj) return undefined;
-  const keys = dottedKey.split('.');
-  let cur: unknown = obj;
-  for (const k of keys) {
-    if (cur == null || typeof cur !== 'object') return undefined;
-    cur = (cur as Record<string, unknown>)[k];
-  }
-  return cur;
 }
 
 export function isPathPrefix(prefix: string, path: string): boolean {
@@ -202,12 +221,4 @@ export function allMetroPorts(): number[] {
   return Object.values(cfg.projects)
     .map((p) => p.metroPort)
     .filter((p) => typeof p === 'number');
-}
-
-export function findProjectByMetroPort(port: number): string | null {
-  const cfg = loadConfig();
-  for (const [path, proj] of Object.entries(cfg?.projects || {})) {
-    if (proj.metroPort === port) return path;
-  }
-  return null;
 }

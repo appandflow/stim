@@ -34,14 +34,18 @@ function chromeCandidates(
 /** The installed Chrome or Chromium executable Stim launches, or null when none is installed. */
 export function findChrome({
   host = process.platform,
+  env = process.env,
+  home = env.HOME || env.USERPROFILE || homedir(),
   exists = existsSync,
   findExecutable = (name: string) => getExecutor().findExecutable(name),
 }: {
   host?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  home?: string;
   exists?: (path: string) => boolean;
   findExecutable?: (name: string) => string | null;
 } = {}): string | null {
-  const installed = chromeCandidates(host).find((path) => exists(path));
+  const installed = chromeCandidates(host, { home, env }).find((path) => exists(path));
   if (installed) return installed;
   for (const name of PATH_NAMES) {
     const found = findExecutable(name);

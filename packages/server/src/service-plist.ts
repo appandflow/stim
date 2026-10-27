@@ -1,21 +1,18 @@
 import { delimiter, isAbsolute, join, relative } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
-import type { ServeRoute } from './tailscale.ts';
+import type { ServeRecord } from '@stim-cli/transport-tailscale';
 
 export class ServiceError extends Error {}
 
 export const DEFAULT_LABEL = 'dev.stim.server';
 export const DEFAULT_PORT = 7787;
-const THROTTLE_SECONDS = 30;
+export const THROTTLE_SECONDS = 30;
 
 const LABEL_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const JOB_KEYS = ['STIM_HOME', 'SHELL'];
 
-export interface ServeRecord {
-  port: number;
-  /** Whether `service install` created the `tailscale serve` route, so `uninstall` removes it. */
-  created: boolean;
-}
+export { planServe, type ServeRecord } from '@stim-cli/transport-tailscale';
 
 export interface ServiceSpec {
   label: string;
@@ -23,7 +20,7 @@ export interface ServiceSpec {
   node: string;
   script: string;
   port: number;
-  /** `KEY=VALUE` entries and directories the server applies after it reads the login shell's environment. */
+  /** `KEY=VALUE` entries and directories the server applies after it reads the login shell's environment. The plist keeps the values in `EnvironmentVariables`, not in the server's arguments. */
   env: string[];
   pathPrepend: string[];
   /** Variables of the launchd job itself: `STIM_HOME` and `SHELL` of the installing process. */
@@ -57,15 +54,21 @@ const illegal = (value: string) =>
     return code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d;
   });
 
-/** Returns the first problem in the `--env` and `--path-prepend` values, or null when both are usable. */
-export function validateServeEnvironment(env: string[], pathPrepend: string[]): string | null {
+/**
+ * Returns the first problem in the `--env` and `--path-prepend` values, or null when both are usable. `serving` also
+ * accepts a bare `KEY`, which the serving command reads from its own environment, and tolerates `STIM_HOME` and
+ * `SHELL`, which a plist written by an earlier release can carry and `applyServeEnvironment` ignores.
+ */
+export function validateServeEnvironment(env: string[], pathPrepend: string[], serving = false): string | null {
   if ([...env, ...pathPrepend].some(illegal)) {
     return '--env and --path-prepend values cannot contain control characters.';
   }
   for (const entry of env) {
-    const parsed = parseEnvAssignment(entry);
+    const parsed = serving && ENV_KEY_PATTERN.test(entry) ? { key: entry } : parseEnvAssignment(entry);
     if (typeof parsed === 'string') return parsed;
-    if (parsed.key === 'STIM_HOME') return '--env cannot set STIM_HOME; start stim-server with STIM_HOME set instead.';
+    if (!serving && JOB_KEYS.includes(parsed.key)) {
+      return `--env cannot set ${parsed.key}; start stim-server with ${parsed.key} set instead.`;
+    }
   }
   for (const dir of pathPrepend) {
     if (!isAbsolute(dir) || dir.includes(delimiter))
@@ -77,17 +80,31 @@ export function validateServeEnvironment(env: string[], pathPrepend: string[]): 
 /**
  * The environment stim-server runs with: the login shell's, then each `--env` entry, then the `--path-prepend`
  * directories in front of `PATH`, first directory first. Both flags apply after the login shell's environment
- * replaces the process environment, so they survive it.
+ * replaces the process environment, so they survive it. A bare `KEY` entry takes its value from `source`, the
+ * environment launchd gave the process; one that `source` lacks is skipped with a line on stderr. `STIM_HOME` and
+ * `SHELL` entries are skipped the same way: the job takes them from the installing process.
  */
 export function applyServeEnvironment(
   base: NodeJS.ProcessEnv,
   env: string[],
   pathPrepend: string[],
+  source: NodeJS.ProcessEnv = process.env,
+  warn: (line: string) => void = console.error,
 ): NodeJS.ProcessEnv {
   const result: NodeJS.ProcessEnv = { ...base };
   for (const entry of env) {
     const parsed = parseEnvAssignment(entry);
-    if (typeof parsed !== 'string') result[parsed.key] = parsed.value;
+    const name = typeof parsed === 'string' ? entry : parsed.key;
+    if (JOB_KEYS.includes(name)) {
+      warn(`stim-server: ignoring --env ${name}; the service takes it from the process that installed it.`);
+    } else if (typeof parsed !== 'string') {
+      result[name] = parsed.value;
+    } else if (ENV_KEY_PATTERN.test(entry)) {
+      const value = source[entry];
+      if (value === undefined)
+        warn(`stim-server: --env ${entry} has no value in the service environment; skipping it.`);
+      else result[entry] = value;
+    }
   }
   if (pathPrepend.length) {
     result.PATH = [...pathPrepend, ...(result.PATH ? [result.PATH] : [])].join(delimiter);
@@ -95,11 +112,25 @@ export function applyServeEnvironment(
   return result;
 }
 
-function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
+export function environmentValues(env: string[]): Map<string, string> {
+  const values = new Map<string, string>();
+  for (const entry of env) {
+    const parsed = parseEnvAssignment(entry);
+    if (typeof parsed !== 'string' && !JOB_KEYS.includes(parsed.key)) values.set(parsed.key, parsed.value);
+  }
+  return values;
+}
+
+/** `env` as the plist stores it: one `KEY=VALUE` per key, the last value winning, without the keys the job supplies. */
+export function normalizeEnv(env: string[]): string[] {
+  return [...environmentValues(env)].map(([name, value]) => `${name}=${value}`);
+}
+
+export function serverArguments(spec: Pick<ServiceSpec, 'port' | 'env' | 'pathPrepend'>): string[] {
   return [
     '--port',
     String(spec.port),
-    ...spec.env.flatMap((entry) => ['--env', entry]),
+    ...[...environmentValues(spec.env).keys()].flatMap((name) => ['--env', name]),
     ...spec.pathPrepend.flatMap((dir) => ['--path-prepend', dir]),
   ];
 }
@@ -127,8 +158,9 @@ export function renderPlist(spec: ServiceSpec): string {
     ),
     '\t</array>',
   ];
-  const environment = Object.entries(spec.environment);
-  if (environment.length) {
+  const environment = new Map(Object.entries(spec.environment));
+  for (const [name, value] of environmentValues(spec.env)) environment.set(name, value);
+  if (environment.size) {
     lines.push(key('EnvironmentVariables', '\t'), '\t<dict>');
     for (const [name, value] of environment) lines.push(key(name, '\t\t'), string(value, '\t\t'));
     lines.push('\t</dict>');
@@ -185,10 +217,20 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
 }
 
-/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
-export function parseInstalledPlist(value: unknown): InstalledService | null {
-  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
-  const programArguments = strings(value.ProgramArguments);
+/** What a job file records besides its arguments, read by `parseInstalledPlist` and `parseUnit`. */
+export interface JobFields {
+  label: string;
+  programArguments: string[];
+  environment: Record<string, unknown>;
+  logPath: string | null;
+  managed: boolean;
+  servePort: unknown;
+  serveCreated: boolean;
+  previousScript: unknown;
+}
+
+export function installedService(job: JobFields): InstalledService {
+  const { programArguments, environment } = job;
   const host =
     programArguments[1] === 'run' && programArguments[0]?.endsWith('/Contents/MacOS/stim-host')
       ? programArguments[0]
@@ -202,14 +244,16 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     const next = args[index + 1];
     if (next === undefined) break;
     if (flag === '--port') port = Number(next);
-    if (flag === '--env') env.push(next);
+    if (flag === '--env') {
+      const stored = environment[next];
+      if (next.includes('=')) env.push(next);
+      else if (typeof stored === 'string') env.push(`${next}=${stored}`);
+    }
     if (flag === '--path-prepend') pathPrepend.push(next);
   }
-  const environment = isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {};
-  const meta = isJsonObject(value.StimService) ? value.StimService : {};
-  const servePort = meta.ServePort;
+  const servePort = job.servePort;
   return {
-    label: value.Label,
+    label: job.label,
     host,
     node,
     script,
@@ -217,15 +261,31 @@ export function parseInstalledPlist(value: unknown): InstalledService | null {
     env,
     pathPrepend,
     stimHome: typeof environment.STIM_HOME === 'string' ? environment.STIM_HOME : null,
-    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
-    managed: meta.Managed === true,
+    logPath: job.logPath,
+    managed: job.managed,
     serve:
       typeof servePort === 'number' && Number.isInteger(servePort)
-        ? { port: servePort, created: meta.ServeCreated === true }
+        ? { port: servePort, created: job.serveCreated }
         : null,
-    previousScript: typeof meta.PreviousScript === 'string' ? meta.PreviousScript : null,
+    previousScript: typeof job.previousScript === 'string' ? job.previousScript : null,
     programArguments,
   };
+}
+
+/** Reads `plutil -convert json` output of a plist `renderPlist` wrote. */
+export function parseInstalledPlist(value: unknown): InstalledService | null {
+  if (!isJsonObject(value) || typeof value.Label !== 'string') return null;
+  const meta = isJsonObject(value.StimService) ? value.StimService : {};
+  return installedService({
+    label: value.Label,
+    programArguments: strings(value.ProgramArguments),
+    environment: isJsonObject(value.EnvironmentVariables) ? value.EnvironmentVariables : {},
+    logPath: typeof value.StandardOutPath === 'string' ? value.StandardOutPath : null,
+    managed: meta.Managed === true,
+    servePort: meta.ServePort,
+    serveCreated: meta.ServeCreated === true,
+    previousScript: meta.PreviousScript,
+  });
 }
 
 /** The job's `ProgramArguments` with the server script, which follows the launcher, `run` and node, set to `script`. */
@@ -259,28 +319,29 @@ export function parseLaunchctlPrint(output: string): LaunchdJob {
   };
 }
 
-/**
- * What `install --serve` does about the node's `tailscale serve` config: refuse a Funnel route or an unreadable
- * config, keep a route that already reaches the port (remembering whether an earlier install created it), or
- * create one.
- */
-export function planServe(
-  route: ServeRoute,
-  target: number,
-  previous: ServeRecord | null,
-): { record: ServeRecord; create: boolean } | { refusal: string } {
-  if (route.state === 'funneled') {
-    return {
-      refusal: `refusing to serve. Tailscale Funnel is on for port ${route.ports.join(', ')}, which proxies to port ${target}, so it is reachable from the public internet. Remove that handler (see \`tailscale serve status\`), then run install again.`,
-    };
+const parseVersion = (v: string) => /^(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/.exec(v);
+
+export function compareVersions(a: string, b: string): number {
+  const aa = parseVersion(a),
+    bb = parseVersion(b);
+  if (!aa || !bb) throw new ServiceError(`Cannot compare stim-server versions ${a} and ${b}.`);
+  for (let i = 1; i <= 3; i++) {
+    const diff = Number(aa[i]) - Number(bb[i]);
+    if (diff) return diff;
   }
-  if (route.state === 'unknown') {
-    return { refusal: `could not read \`tailscale serve status --json\` (${route.reason}); not changing the route.` };
+  if (!aa[4] || !bb[4]) return aa[4] ? -1 : bb[4] ? 1 : 0;
+  const ap = aa[4].split('.'),
+    bp = bb[4].split('.');
+  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
+    const x = ap[i],
+      y = bp[i];
+    if (x === y) continue;
+    if (x === undefined || y === undefined) return x === undefined ? -1 : 1;
+    if (/^\d+$/.test(x) && /^\d+$/.test(y)) return Number(x) - Number(y);
+    if (/^\d+$/.test(x) !== /^\d+$/.test(y)) return /^\d+$/.test(x) ? -1 : 1;
+    return x < y ? -1 : 1;
   }
-  if (route.state === 'routed') {
-    return { record: { port: route.port, created: previous?.port === route.port && previous.created }, create: false };
-  }
-  return { record: { port: route.port, created: true }, create: true };
+  return 0;
 }
 
 const RELEASE_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;

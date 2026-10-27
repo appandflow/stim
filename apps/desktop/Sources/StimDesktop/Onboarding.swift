@@ -25,7 +25,7 @@ final class Onboarding: ObservableObject {
     var nodePath: String?
     var brewPath: String?
     var skillPath: String?
-    /// `HOME` in the login shell's environment, where the setup commands run and the skills CLI installs.
+    /// `HOME` in Stim Desktop's environment, where the setup commands run and the skills CLI installs.
     var home: String
     var androidSDK: String?
     var javaHome: String?
@@ -98,9 +98,16 @@ final class Onboarding: ObservableObject {
     report.flatMap { StimRelease.offer(installed: $0.stim, latest: latestStim, owner: $0.stimOwner) }
   }
 
-  /// Asks the registry when the last answer is a day old; offline leaves the cached answer and tries again later.
-  func refreshLatestStim() {
-    guard !fetchingLatest, StimRelease.isDue(lastChecked: releases.checkedAt, now: Date()) else { return }
+  /// Asks the registry when the last answer is older than `interval` or older than the installed `stim`; offline
+  /// leaves the cached answer and tries again later.
+  func refreshLatestStim(interval: TimeInterval = StimRelease.checkInterval) {
+    var installed: SemanticVersion?
+    if case .compatible(let version)? = report?.stim { installed = version }
+    guard !fetchingLatest,
+      StimRelease.isDue(
+        lastChecked: releases.checkedAt, now: Date(), interval: interval, installed: installed,
+        cachedLatest: latestStim)
+    else { return }
     fetchingLatest = true
     Task {
       defer { fetchingLatest = false }
@@ -116,7 +123,6 @@ final class Onboarding: ObservableObject {
     let defaults = UserDefaults.standard
     let stimOverride = defaults.string(forKey: AppPreferences.Key.stimExecutable)
     let serverOverride = defaults.string(forKey: AppPreferences.Key.stimServerExecutable) ?? ""
-    let offersViewer = !progress.skipsOnboarding && !defaults.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
     Task {
       let environment = await environment.value
       let launched = await cli.value
@@ -127,10 +133,6 @@ final class Onboarding: ObservableObject {
         let compatibility = CLICompatibility.check(
           executable: stim.executable, versionOutput: await stim.versionOutput(), minimum: StimCLI.minimumVersion)
         let server = await StimServerCLI.resolve(environment: environment, override: serverOverride) { packages }
-        let viewerKeys =
-          compatibility.isCompatible && offersViewer
-          ? (try? await stim.settings(cwd: NSHomeDirectory())).map { DesktopViewerSettings.unset(in: $0.settings) } ?? []
-          : []
         var node = stim.launcher?.runtime
         if node == nil { node = await NodeRuntime.probe(environment: stim.environment, home: home) }
         let nodePath = node?.path ?? SetupChecks.tool("node", environment: stim.environment)
@@ -150,7 +152,7 @@ final class Onboarding: ObservableObject {
             && (stim.executable != launched.executable || stim.launcher?.source != launched.launcher?.source),
           server: serverCompatibility,
           serverPath: server.executable,
-          viewerKeys: viewerKeys,
+          viewerKeys: [],
           node: CLICompatibility.check(
             executable: nodePath, versionOutput: node?.version, minimum: SetupChecks.nodeMinimum),
           nodePath: nodePath,
@@ -171,6 +173,7 @@ final class Onboarding: ObservableObject {
             && server.launcher?.runtime?.isSupported != true)
       }.value
       self.report = report
+      refreshLatestStim()
       setup.stim = report.stim
       setup.node = report.node
       setup.brewPath = report.brewPath
@@ -181,7 +184,22 @@ final class Onboarding: ObservableObject {
         launchDecided = true
         if let step = progress.stepAtLaunch(setup) { presentGuide(at: step) }
       }
+      await refreshViewerSettings()
     }
+  }
+
+  private var offersViewer: Bool {
+    !progress.skipsOnboarding && !UserDefaults.standard.bool(forKey: AppPreferences.Key.viewerOfferDismissed)
+  }
+
+  func refreshViewerSettings() async {
+    guard let report, report.stim.isCompatible, offersViewer else { return }
+    guard
+      let settings = try? await readServerSettings(
+        cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+    else { return }
+    guard self.report?.stimPath == report.stimPath, self.report?.stim.isCompatible == true, offersViewer else { return }
+    self.report?.viewerKeys = DesktopViewerSettings.unset(in: settings.settings)
   }
 
   private var home: String { report?.home ?? NSHomeDirectory() }

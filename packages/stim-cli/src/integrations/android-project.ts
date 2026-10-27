@@ -1,0 +1,130 @@
+import type { StimContext } from '@stim-cli/core';
+import type { BuildCacheCapability, CacheProvider } from '@stim-cli/cache';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
+import type { BuildMissReason } from '@stim-cli/core/state';
+import type { AndroidBuildPlan, AndroidRunPlan } from '../commands/android/plan.ts';
+import type { AndroidPlanOptions } from '../commands/android/next-build.ts';
+import type { ProjectPlanResult } from './project-plan.ts';
+import type { AndroidRuntimeKind, AndroidRuntimePlan } from '../commands/android/launch.ts';
+import type { AndroidWriter, FailExtra } from '../commands/android/types.ts';
+import type { BuildAndroidResult } from '../engine/gradle.ts';
+import type { LoadProjectProviderResult } from '../engine/remote-cache.ts';
+import type { BuildPhase } from '../engine/build-progress.ts';
+import type { RunEstimates } from '../engine/stats.ts';
+import type { chooseBuildMachine, offloadBuild } from '../offload/client.ts';
+import type { ResolvedProjectSettings, SettingsObject } from '../workspace/settings.ts';
+import type { NativeGradleArtifactReceipt } from './native-gradle-artifact-inputs.ts';
+
+interface AndroidBuildTarget {
+  abi: string | null;
+}
+
+interface AndroidArtifactIdentity {
+  hash: string;
+  key: string;
+}
+
+export interface AndroidSourcePreparation {
+  identity: AndroidArtifactIdentity | null;
+  rekeyedBy: string[];
+  cacheRefusal: string | null;
+  androidPackage?: string | null;
+}
+
+export interface AndroidArtifactRecipe {
+  providerCache?(provider: CacheProvider): BuildCacheCapability | undefined;
+  identity(): Promise<AndroidArtifactIdentity | { cacheIneligible: string }>;
+  /** The background check of a memoized fingerprint that identity() used, if any. */
+  fingerprintCheck?(): FingerprintCheck | null;
+  cache(compiled?: boolean): BuildCacheCapability;
+  prepare(beforePrepare: () => void): Promise<void>;
+  reconcile(): Promise<AndroidSourcePreparation>;
+  validate(): Promise<AndroidArtifactIdentity | null>;
+  materialize(
+    key: string,
+    path: string,
+  ): Promise<{ apkPath: string; directory: string | null; androidPackage?: string } | null>;
+  compile(): Promise<BuildAndroidResult>;
+  explain(rekeyedBy: string[]): { reason: BuildMissReason; diff: Record<string, unknown> | null };
+  untrackedLine(): string | null;
+  expoCache: {
+    load(): Promise<LoadProjectProviderResult>;
+    runOptions: { variant?: string; abi?: string; compiler?: string; buildProfile?: string } | null;
+  } | null;
+  offload: {
+    supportsUncachedArtifacts?: boolean;
+    uncachedArtifacts?: boolean;
+    unsupported: string | null;
+    target():
+      | Parameters<typeof chooseBuildMachine>[0]['target']
+      | Promise<Parameters<typeof chooseBuildMachine>[0]['target']>;
+    request: Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'android' }>;
+    fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
+    unchanged(): Promise<boolean>;
+  } | null;
+}
+
+export interface AndroidArtifactContext {
+  operation?: StimContext;
+  artifactScope?: {
+    key: string;
+    validate(): Promise<void>;
+    record?(identity: AndroidArtifactIdentity, receipt: NativeGradleArtifactReceipt): void;
+  };
+  root: string;
+  buildLog: string;
+  writer: AndroidWriter;
+  settings: SettingsObject;
+  buildPlan: AndroidBuildPlan['build'];
+  target: AndroidBuildTarget;
+  phase: (label: unknown, text: string) => void;
+  out: (line: string) => void;
+  step: (phase: BuildPhase) => void;
+  estimates: () => RunEstimates;
+}
+
+export interface AndroidProject {
+  plan?(
+    options: AndroidPlanOptions,
+    resolved: ResolvedProjectSettings,
+    operation: StimContext,
+  ): Promise<ProjectPlanResult>;
+  isExpo: boolean;
+  packageRemedy: string;
+  appIds():
+    | { bundleId: string | null; androidPackage: string | null; androidPackageProblem?: string | null }
+    | Promise<{ bundleId: string | null; androidPackage: string | null; androidPackageProblem?: string | null }>;
+  variantProblem(variant: string | null): { code: string; reason: string; remedy: string } | null;
+  targets: readonly AndroidRunPlan['target']['kind'][];
+  /** Refuses a run that a local build would fail before it prepares a device. */
+  preflight?(target: {
+    abi: string | null;
+    variant: string | null;
+  }): { code: string; reason: string; remedy: string } | null;
+  eas: boolean;
+  runtimeKind(build: Pick<AndroidBuildPlan['build'], 'release'>): AndroidRuntimeKind;
+  runtime(args: {
+    build: AndroidBuildPlan['build'];
+    prepareMetro: AndroidRuntimePlan['prepare'];
+    phase: AndroidArtifactContext['phase'];
+  }): AndroidRuntimePlan;
+  artifact(context: AndroidArtifactContext): AndroidArtifactRecipe;
+}
+
+export interface AndroidArtifactFailure {
+  code: string | undefined;
+  message: string | null | undefined;
+  remedy: string | null | undefined;
+  extra: FailExtra;
+}
+
+export class AndroidRecipeRefusal extends Error {
+  readonly failure: AndroidArtifactFailure;
+  readonly missReason?: BuildMissReason;
+
+  constructor(failure: AndroidArtifactFailure, missReason?: BuildMissReason) {
+    super(failure.message ?? failure.code);
+    this.failure = failure;
+    this.missReason = missReason;
+  }
+}

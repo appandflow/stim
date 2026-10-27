@@ -125,10 +125,13 @@ Generated iOS fixtures use the committed
 [`simslim-profile.json`](../test/e2e/native/simslim-profile.json) to reduce
 background services while running several simulators. Install the prerequisite
 with `brew install mobai-app/tap/simslim`; CI does this automatically. The profile
-keeps App Store/push/media, web/universal links, connectivity, diagnostics, and
-miscellaneous system services. It disables widgets, Siri, search, account sync,
-PIM, family, health, photos, bundled apps, and messaging, which these blank-app
-scenarios do not exercise. Review the profile when adding feature-specific QA.
+keeps only SimSlim's ads, diagnostics and telemetry category enabled. SpringBoard,
+app installation and launch, and networking belong to no SimSlim category, so
+SimSlim never disables them. It disables every other category: widgets, Siri, search, account
+sync, App Store/push/media, PIM, web/universal links, family, health, photos,
+bundled apps, messaging, connectivity and miscellaneous services, which these
+blank-app scenarios do not exercise. Review the profile when adding
+feature-specific QA.
 Supplied `--app-dir` projects retain their own settings. Stock simulator boot
 and memory behavior require a separate run against a project without a profile.
 
@@ -264,7 +267,27 @@ PATH).
   Repository development needs
   Node 22.18 or later because tsdown has the higher floor. A Windows lane,
   `test (windows)`, repeats install, build, typecheck and the unit suite on
-  `windows-latest`.
+  `windows-latest`. A macOS lane, `test (macos)`, runs on `macos-15` the unit
+  test files that skip or branch on darwin, which the Linux and Windows lanes
+  cannot run. `scripts/ci-darwin-unit-test-files.mjs` derives the list from
+  the test sources (`process.platform` compared with `'darwin'`, plus the
+  `/bin/zsh` and case-insensitive-filesystem gates), so a new gated file joins
+  without a workflow edit. It runs each selected file in full, with a 60 second
+  test timeout, and uploads `unit-test-timings-macos`. Like every `ci.yml` job
+  it is part of the `merge gate` poll on a pull request and does not run in the
+  merge queue.
+
+- **`stim-ci.yml`** -- "Stim CI dogfood": builds, launches, probes and stops
+  the mobile app on iOS (`xcode-27`) and Android (`ubuntu-latest`) and the
+  Desktop app on macOS (`macos-15`) through the `stim-ci` action, twice per job
+  to cover the warm path. It runs on dispatch, on a pull request labeled
+  `e2e-smoke`, and on a push to `main` that changes `apps/mobile`,
+  `apps/desktop`, `packages/ci`, `packages/core`, `packages/stim-cli`,
+  `scripts/ci`, the action or the workflow. A change to the other packages or
+  to the lockfile does not start it on push; a pull request label or dispatch
+  runs it on demand.
+  No workflow uses a larger runner, because larger runners are billed per minute
+  even on public repositories.
 
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
@@ -275,7 +298,7 @@ PATH).
   | event               | suites                                                                                              |
   | ------------------- | --------------------------------------------------------------------------------------------------- |
   | push to `main`      | smoke on iOS, Linux Android and Windows Android                                                     |
-  | nightly schedule    | loop on every platform                                                                              |
+  | nightly schedule    | loop on iOS, Linux Android and Windows Android                                                      |
   | `workflow_dispatch` | the `suite` input (`smoke` \| `loop` \| `caches` \| `pool` \| `all`, default `loop`)                |
   | pull request        | the union of its labels `e2e-smoke`, `e2e-loop`, `e2e-caches`, `e2e-pool`, `e2e-all`; none, nothing |
 
@@ -284,8 +307,9 @@ PATH).
   `scripts/e2e-plan.mjs` (unit-tested in `scripts/e2e-plan.test.mjs`), which
   turns event, labels and input into one suite list per platform, filtered by
   what the platform supports: iOS smoke, loop, caches, pool; Linux Android
-  smoke, loop, caches; Windows Android smoke, loop. Each platform job reads its
-  list as the `suite` matrix axis and is skipped when the list is empty. The
+  smoke, loop, caches; Windows Android smoke and loop. Each
+  platform job reads its list as the `suite` matrix axis and is skipped when
+  the list is empty. The
   smoke is one framework per platform: Expo on iOS and Linux, bare on Windows.
   The `caches` selection raises the job timeout to 120 minutes (per
   variant it pays one more cold compile than the loop suite -- the single-flight
@@ -320,12 +344,31 @@ found`, and the build-cache lanes print `build cache: HIT <key>` or
   `build cache: MISS`. Build logs (`build-*.ndjson`) are uploaded as artifacts
   on failure.
 
+### Merge gate
+
+`merge-gate.yml` runs on every pull request with no path filter, so it exists
+even when `ci.yml`, `desktop.yml` and `mobile.yml` are skipped by their path
+filters. Its one job, `merge gate`, waits at least 75 seconds so later-starting
+workflows register, then polls (every 30 seconds, every 60 after ten minutes)
+until every other check run, workflow run and commit status on the head SHA has
+completed. It fails if any ended with a conclusion other than `success`,
+`neutral` or `skipped`, or a status of `failure` or `error`. A cancelled run
+that a newer run of the same workflow on the SHA replaced does not count. It
+times out after 90 minutes, and a run waiting for approval counts as pending. A failed API call fails the job instead of passing it. After re-running a failed workflow, re-run the
+`merge gate` job; it reads the latest results. It also re-runs on label changes
+because `e2e-*` labels start more checks. In the merge queue (`merge_group`) the
+same job instead runs the merged-result validation.
+
+A ruleset should require only `merge gate`. Requiring `test (node 22)` or any
+other path-filtered check leaves pull requests that skip it waiting forever.
+
 ### Assumptions a reviewer must confirm
 
 - `xcode-27` is a GitHub **preview** image (actions/runner-images#14404). It can
-  queue longer and break sooner than a GA image, and `xcode-27-xlarge` is the
-  only other size. The iOS lane is worth that because Swift compilation caching
-  cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
+  queue longer and break sooner than a GA image, and its larger size,
+  `xcode-27-xlarge`, is billed per minute even on public repositories, so no
+  workflow uses it. The iOS lane is worth the preview risk because Swift
+  compilation caching cannot be exercised anywhere else: the `macos-26` images top out at Xcode 26.6.
 - The image's Xcode still has to suit the RN/Expo template the fixture creates,
   and this is now the likelier failure: `xcode-27` ships only the iOS 27 SDK and
   the iOS 27 simulator runtimes, with no older runtime to fall back to. A
@@ -384,7 +427,15 @@ and profile reconciliation, then shuts it down through Stim. It does not start
 Metro, build the app, or populate the native artifact cache. Stock fixtures
 and Android do not take this preparation path.
 
-The loop still asserts three distinct simulators are booted simultaneously.
+The iOS loop asserts that two distinct simulators, the default slot and the
+`second` slot, are booted simultaneously, and that stopping `second` leaves the
+default slot booted. The Linux Android loop adds a `third` slot and asserts three
+distinct emulators. The 3-vCPU, 7 GB `xcode-27` runner spends most of the job in
+each new simulator's first boot, so the iOS loop does not run a third simulator
+or a per-slot `--device-type` override. The CI job also turns off Spotlight
+indexing before it installs anything. The
+Windows Android loop runs one emulator at a time and skips the named-slot proof, because
+the 4-vCPU runner starves the adb server and the package verifier with two (#3086).
 Cache suites still require a cold artifact miss and race two commands against
 one empty cache. The preparation reduces overlapping first-boot work; it does
 not establish that host memory caused earlier failures or guarantee enough

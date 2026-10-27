@@ -36,6 +36,8 @@ struct LogsView: View {
 
   private struct RunKey: Hashable {
     var connected: Bool = false
+    var client: ObjectIdentifier?
+    var home: String?
     var path: String
     var query: LogQuery
   }
@@ -70,7 +72,11 @@ struct LogsView: View {
       try? await Task.sleep(for: .milliseconds(350))
       if !Task.isCancelled { query.search = search }
     }
-    .task(id: RunKey(connected: archive != nil && server.isOpen, path: archive?.id ?? env?.path ?? "", query: effectiveQuery)) {
+    .task(
+      id: RunKey(
+        connected: server.isOpen, client: server.client.map(ObjectIdentifier.init), home: server.statsConnection?.home,
+        path: archive?.id ?? env?.path ?? "", query: effectiveQuery)
+    ) {
       if let archive {
         var unavailable = "Connecting to stim-server"
         if case .unavailable(let reason) = server.link { unavailable = reason }
@@ -81,7 +87,7 @@ struct LogsView: View {
       guard let cliTask = cli else { return }
       let cli = await cliTask.value
       guard !Task.isCancelled, let env else { return }
-      let session = model.start(effectiveQuery, cli: cli, cwd: env.path)
+      let session = model.start(effectiveQuery, cli: cli, connection: server.statsConnection, cwd: env.path)
       while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
       model.stop(session: session)
     }
@@ -264,7 +270,7 @@ struct LogsView: View {
 
   static func help(_ source: LogSource) -> String {
     switch source {
-    case .metro: return "metro: the bundler, and everything Expo prints in expo-child mode"
+    case .metro: return "metro: the bundler, and everything Expo or metro.command prints"
     case .client: return "client: in-app console logs and redboxes (bare React Native)"
     case .device: return "device: simulator, emulator or device logs of the app process"
     case .build: return "build: native builds, installs and launches"

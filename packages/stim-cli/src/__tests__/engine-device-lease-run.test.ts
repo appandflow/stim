@@ -1,8 +1,10 @@
+import { operationState } from '../engine/operation-state.ts';
+import { testContext } from './_context.ts';
 import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { VERIFY_TIMEOUT_MS } from '../engine/launch-verify.ts';
+import { MANIFEST_VERIFY_TIMEOUT_MS, VERIFY_TIMEOUT_MS } from '../engine/launch-verify.ts';
 import { APP_READINESS_TIMEOUT_MS } from '../engine/app-readiness.ts';
 import { deviceLeasePath, parseLease, takeLease, type LeaseIo, type WorkspaceLeases } from '../engine/device-lease.ts';
 import {
@@ -14,7 +16,7 @@ import {
   appIdMatch,
   leaseStepMs,
   parseDeviceWait,
-  releaseLeaseOnSignal,
+  releaseLeaseOnAbort,
   runLease,
   waitFlagConflict,
 } from '../engine/device-lease-run.ts';
@@ -119,7 +121,9 @@ describe('the flags that steer the wait', () => {
     expect(leaseStepMs(0)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(1000)).toBe(LEASE_STEP_FLOOR_MS);
     expect(leaseStepMs(INSTALL_MS)).toBe(INSTALL_MS);
-    expect(leaseStepMs(DEBUG_VERIFY_STEP_MS)).toBeGreaterThanOrEqual(VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS);
+    expect(leaseStepMs(DEBUG_VERIFY_STEP_MS)).toBeGreaterThanOrEqual(
+      MANIFEST_VERIFY_TIMEOUT_MS + APP_READINESS_TIMEOUT_MS,
+    );
   });
 });
 
@@ -366,37 +370,25 @@ describe('waiting for a device another workspace holds', () => {
   });
 });
 
-describe('a run cut short by a signal', () => {
-  test('SIGINT and SIGTERM release the lease and exit 130 and 143', () => {
-    const handlers = new Map<string, () => void>();
+describe('a run cut short by an abort', () => {
+  test("an abort of the run's operation releases the lease once and marks the cancellation handled", () => {
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
     const released: number[] = [];
-    const exits: number[] = [];
-    const stop = releaseLeaseOnSignal(() => released.push(1), {
-      on: (signal, handler) => handlers.set(signal, handler),
-      off: (signal) => handlers.delete(signal),
-      exit: (code) => exits.push(code),
-    });
-
-    expect([...handlers.keys()].toSorted()).toEqual(['SIGINT', 'SIGTERM']);
-    handlers.get('SIGINT')?.();
-    handlers.get('SIGTERM')?.();
-    expect(released).toHaveLength(2);
-    expect(exits).toEqual([130, 143]);
-
-    stop();
-    expect(handlers.size).toBe(0);
+    releaseLeaseOnAbort(context, () => released.push(1));
+    controller.abort('SIGINT');
+    controller.abort('SIGTERM');
+    expect(released).toHaveLength(1);
+    expect(operationState(context).handled).toBe(true);
   });
 
-  test('the normal release takes the handlers back off', () => {
-    const handlers = new Map<string, () => void>();
-    const stop = releaseLeaseOnSignal(() => {}, {
-      on: (signal, handler) => handlers.set(signal, handler),
-      off: (signal) => handlers.delete(signal),
-      exit: () => {},
-    });
+  test('the normal release stops listening, so a later abort releases nothing', () => {
+    const controller = new AbortController();
+    const released: number[] = [];
+    const stop = releaseLeaseOnAbort(testContext({ signal: controller.signal }), () => released.push(1));
     stop();
-    stop();
-    expect(handlers.size).toBe(0);
+    controller.abort('SIGINT');
+    expect(released).toEqual([]);
   });
 });
 

@@ -30,7 +30,7 @@ export interface PlacementRecord {
   fallback?: { code: string; msg: string; machine?: string };
 }
 
-/** `machine` is `local` when the run stays on this Mac. */
+/** `machine` is `local` when the run stays on this machine. */
 function placementRecord(
   input: Omit<PlacementRecord, 'src' | 'level' | 'msg' | 'event'> & { event?: PlacementRecord['event'] },
 ): PlacementRecord {
@@ -52,11 +52,13 @@ function skippedCandidates(skipped: PlacementSkip[]): PlacementCandidate[] {
 
 export function devicePlacementRecord({
   platform,
+  selected = 'auto',
   fromFlag,
   easFallback = false,
   placed,
 }: {
-  platform: 'ios' | 'android';
+  platform: 'ios' | 'android' | 'macos';
+  selected?: string;
   fromFlag: boolean;
   easFallback?: boolean;
   placed: { placement: { machine?: string; reason: string }; code: string; skipped: PlacementSkip[] };
@@ -65,7 +67,7 @@ export function devicePlacementRecord({
     kind: 'device',
     platform,
     settings: [
-      { key: `${platform}.remote`, value: 'auto', from: fromFlag ? 'flag' : 'setting' },
+      { key: `${platform}.remote`, value: selected, from: fromFlag ? 'flag' : 'setting' },
       ...(easFallback ? [{ key: 'remote.easFallback', value: 'true', from: 'setting' as const }] : []),
     ],
     candidates: skippedCandidates(placed.skipped),
@@ -74,8 +76,8 @@ export function devicePlacementRecord({
 }
 
 /**
- * The record for where a build runs. `stays` is the reason this Mac builds it, `chose` the remote Mac that takes it,
- * and `fallback` why a remote Mac that was meant to build it did not.
+ * The record for where a build runs. `stays` is the reason this machine builds it, `chose` the remote machine that takes it,
+ * and `fallback` why a remote machine that was meant to build it did not.
  */
 export function buildPlacementRecord({
   platform,
@@ -106,7 +108,7 @@ export function buildPlacementRecord({
   return placementRecord({
     ...base,
     event: outcome.event ?? 'build_placement',
-    choice: { machine: 'local', code, msg: 'building on this Mac' },
+    choice: { machine: 'local', code, msg: 'building on this machine' },
     fallback: { code, msg: reason, ...(machine ? { machine } : {}) },
   });
 }

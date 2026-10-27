@@ -15,6 +15,13 @@ public enum PhysicalScreen: Equatable, Sendable {
   case stream(control: String?)
   case message(String, remedy: String? = nil)
 
+  /// The local server Desktop connected to is not the one it bundles; Desktop starts its own once that one stops.
+  static func olderServer(showing what: String) -> PhysicalScreen {
+    .message(
+      "The stim-server on this port is older than Stim Desktop and cannot show \(what). Update or stop it so Stim Desktop starts its own."
+    )
+  }
+
   /// `now` decides an expired lease before `stim status` drops the device.
   public init(device: DeviceRef, link: ServerLink, now: Date) {
     if case .macos = device, let machine = device.hostedMachine {
@@ -39,8 +46,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       case .unavailable(let reason): self = .message(reason)
       case .open(let features, let capabilities):
         guard features?.contains("\(device.platform)-hosted") == true else {
-          self = .message(
-            "Update stim-server to see this simulator's screen.", remedy: "npm install --global @stim-cli/server@latest")
+          self = Self.olderServer(showing: "this simulator's screen")
           return
         }
         self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")
@@ -70,7 +76,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("physical-\(device.platform)") == true else {
-        self = .message("Update stim-server to see this device's screen.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this device's screen")
         return
       }
       if device.platform == "ios" {
@@ -79,6 +85,48 @@ public enum PhysicalScreen: Equatable, Sendable {
         self = .stream(control: "Stim Desktop's stim-server pairing is read only.")
       } else {
         self = .stream(control: nil)
+      }
+    }
+  }
+
+  /// A device a paired server reports, which Stim Desktop shows only through that server: its own simulators,
+  /// emulators and phones, and the iOS, Android and macOS sessions it hosts on other Macs. `server` names the paired
+  /// machine. A remedy would be a command for that machine, so none is offered.
+  public init(pairedDevice device: DeviceRef, server: String, link: ServerLink, now: Date) {
+    switch device {
+    case .ios, .android: break
+    case .macos where device.hostedMachine != nil: break
+    default:
+      self = .message("Stim Desktop shows this device only on the Mac that runs it.")
+      return
+    }
+    if let machine = device.hostedMachine {
+      if device.state == "stopped" {
+        self = .message("The \(platformName(device.platform)) session on \(machineName(machine)) stopped.")
+        return
+      }
+    } else if let expires = device.leaseExpiresAt, expires <= now {
+      self = .message("The workspace's lease on this device ended.")
+      return
+    } else if !device.isRunning {
+      self = .message(device.isPhysical ? "Not connected to \(server)." : "Not running on \(server).")
+      return
+    }
+    switch link {
+    case .connecting:
+      self = .message("Connecting to \(server)")
+    case .unavailable(let reason):
+      self = .message(reason)
+    case .open(let features, let capabilities):
+      let feature =
+        device.hostedMachine != nil
+        ? "\(device.platform)-hosted" : device.isPhysical ? "physical-\(device.platform)" : nil
+      if let feature, features?.contains(feature) != true {
+        self = .message("Update stim-server on \(server) to show this device's screen.")
+      } else if device.isPhysical, device.platform == "ios" {
+        self = .stream(control: "stim-server shows an iPhone's screen but does not drive it.")
+      } else {
+        self = .stream(control: capabilities.contains("control") ? nil : "\(server) lets this Mac view only.")
       }
     }
   }
@@ -92,7 +140,7 @@ public enum PhysicalScreen: Equatable, Sendable {
       self = .message(reason)
     case .open(let features, let capabilities):
       guard features?.contains("macos-hosted") == true else {
-        self = .message("Update stim-server to see this app's window.", remedy: "npm install --global @stim-cli/server@latest")
+        self = Self.olderServer(showing: "this app's window")
         return
       }
       self = .stream(control: capabilities.contains("control") ? nil : "Stim Desktop's stim-server pairing is read only.")

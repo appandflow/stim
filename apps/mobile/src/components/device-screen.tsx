@@ -6,7 +6,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { Text } from '@/components/text';
 import type { DeviceStream } from '@/hooks/device-stream';
-import { StimVideoView, supportsFrameOrientation } from '../../modules/stim-video/src';
+import { callback } from 'react-native-nitro-modules';
+import { StimVideoView } from 'react-native-stim-session';
 
 /**
  * A device's live `stream`, filling the view, which the caller sizes to the device's aspect ratio: H.264 video
@@ -34,16 +35,16 @@ export function DeviceScreen({
   return (
     <View style={[styles.screen, style]} accessibilityLabel={screenLabel}>
       <StimVideoView
-        streamId={stream.streamId}
+        stream={stream.stream ?? undefined}
         style={StyleSheet.absoluteFill}
-        onKeyframeNeeded={stream.requestKeyframe}
-        {...(supportsFrameOrientation ? { onOrientationCleared: stream.orientationCleared } : {})}
+        onKeyframeNeeded={callback(stream.requestKeyframe)}
+        onOrientationCleared={callback(stream.orientationCleared)}
       />
       {stream.frame && !stream.video ? (
         <Image
           key={stream.frame.duo?.revision ?? 'raw'}
           source={{ uri: `data:${stream.frame.mime};base64,${stream.frame.data}` }}
-          recyclingKey={`${stream.streamId}/${stream.frame.duo?.revision ?? stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
+          recyclingKey={`${stream.frame.subscription}/${stream.frame.duo?.revision ?? stream.frame.artworkTurns ?? ''}/${stream.frame.width}x${stream.frame.height}`}
           onDisplay={stream.frame.duo ? () => stream.frameDisplayed(stream.frame!.duo!.revision) : undefined}
           style={StyleSheet.absoluteFill}
           contentFit="contain"
@@ -58,6 +59,7 @@ export function DeviceScreen({
       {children}
       {__DEV__ ? (
         <StreamStats
+          stream={stream}
           meter={stream.meter}
           mode={stream.video ? 'video' : stream.frame ? 'jpeg' : null}
           requested={requested}
@@ -68,10 +70,12 @@ export function DeviceScreen({
 }
 
 function StreamStats({
+  stream,
   meter,
   mode,
   requested,
 }: {
+  stream: DeviceStream;
   meter: DeviceStream['meter'];
   mode: 'video' | 'jpeg' | null;
   requested?: { fps: number; maxEdge: number };
@@ -85,12 +89,12 @@ function StreamStats({
       const rate = fps.toFixed(0);
       const bitrate = kbps.toFixed(0);
       const latency = latencyMs?.toFixed(0) ?? '-';
-      setText(t`H.264 ${rate} fps ${bitrate} kbps ${latency} ms${asked}`);
+      setText(t`H.264 ${rate} fps ${bitrate} kbps ${latency} ms${asked}` + timingLabel(stream));
     };
     show();
     const timer = setInterval(show, 500);
     return () => clearInterval(timer);
-  }, [meter, mode, asked]);
+  }, [meter, mode, asked, stream]);
   return text ? (
     <Text variant="caption2" style={styles.stats} pointerEvents="none">
       {text}
@@ -99,6 +103,19 @@ function StreamStats({
 }
 
 const askedLabel = (fps: number, edge: number) => t` (asked ${fps}fps/${edge}px)`;
+
+/** Development builds' native timing: decrypt and route in the session, then decode queue and present. */
+function timingLabel(stream: DeviceStream): string {
+  const session = stream.sessionTiming();
+  if (!session?.enabled || !stream.stream) return '';
+  const video = stream.stream.timing();
+  if (!video.enabled) return '';
+  const decrypt = session.meanDecryptMs.toFixed(2);
+  const route = session.meanRouteMs.toFixed(2);
+  const present = video.meanPresentMs.toFixed(1);
+  const dropped = video.dropped + session.droppedVideoMessages;
+  return t`\ndecrypt ${decrypt} ms, route ${route} ms, present ${present} ms, ${dropped} dropped`;
+}
 
 const styles = StyleSheet.create((theme) => ({
   screen: { backgroundColor: theme.media.frame, overflow: 'hidden', justifyContent: 'center' },

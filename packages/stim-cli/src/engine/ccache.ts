@@ -1,5 +1,5 @@
 import { readFileSync, realpathSync } from 'node:fs';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
 import { machineNumber } from '../budget.ts';
@@ -8,8 +8,17 @@ import { getExecutor } from '../exec.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
 import type { CcacheActivity } from './build-facts.ts';
+import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
 export const CCACHE_MAX_SIZE = '5G';
+
+export function ccacheInstallCommand(platform: NodeJS.Platform = process.platform): string {
+  return platform === 'darwin'
+    ? 'brew install ccache'
+    : platform === 'linux'
+      ? 'sudo apt install ccache'
+      : 'install ccache';
+}
 
 // ccache manual, "SLOPPINESS": pch_defines is required for a precompiled
 // header to be reusable at all, and time_macros lets a translation unit that
@@ -155,30 +164,42 @@ function canonical(root: string): string {
 
 export function resolveCcache({
   root,
+  layout = defaultAndroidLayout(root),
   dir = sharedCcache(),
   lookup = lookupCcache,
+  env = process.env,
   onNote = (line: string) => console.error(line),
 }: {
   root: string;
+  layout?: AndroidLayout;
   dir?: string;
   lookup?: () => string | null;
+  env?: NodeJS.ProcessEnv;
   onNote?: (line: string) => void;
 }): CcacheSetup | null {
   const binary = lookup();
   if (!binary) {
-    onNote(chalk.dim(phaseLine('cache', 'ccache off (not installed; brew install ccache)')));
+    onNote(chalk.dim(phaseLine('cache', `ccache off (not installed; ${ccacheInstallCommand()})`)));
     return null;
   }
 
-  const declared = projectCmakeLauncher(readOrNull(join(root, 'android', 'app', 'build.gradle')));
+  const { moduleDir } = layout;
+  const declared = projectCmakeLauncher(
+    readOrNull(join(moduleDir, 'build.gradle')) ?? readOrNull(join(moduleDir, 'build.gradle.kts')),
+  );
   if (declared) {
-    onNote(chalk.dim(phaseLine('cache', `ccache off (android/app/build.gradle sets ${declared} itself)`)));
+    onNote(
+      chalk.dim(
+        phaseLine('cache', `ccache off (${join(relative(root, moduleDir), 'build.gradle')} sets ${declared} itself)`),
+      ),
+    );
     return null;
   }
 
   const statsLog = ccacheStatsLog(root);
   register({
     dir,
+    registeredBy: root,
     name: 'ccache',
     prune: 'atomic',
     note: 'ccache keeps itself under CCACHE_MAXSIZE, so it is emptied whole or not at all',
@@ -187,6 +208,12 @@ export function resolveCcache({
   return {
     dir,
     statsLog,
-    env: ccacheEnvironment({ binary, dir, workspaceRoot: canonical(root), statsLog, maxSize: ccacheMaxSize() }),
+    env: ccacheEnvironment({
+      binary,
+      dir,
+      workspaceRoot: canonical(root),
+      statsLog,
+      maxSize: ccacheMaxSize(loadConfig(), env),
+    }),
   };
 }

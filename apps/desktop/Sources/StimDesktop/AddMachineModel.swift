@@ -8,7 +8,7 @@ final class AddMachineModel {
     var status: () async -> Data?
     var health: (String, Int) async -> Tailnet.Health?
     var journal: (String, Int, String) async -> SetupPortProbe.Outcome
-    var doctor: (String, Bool, [String: String]) async throws -> DoctorReport
+    var doctor: (String, Bool, String?) async throws -> DoctorReport
     var readSettings: () async throws -> SettingsPayload
     var writeSetting: (String, String?) async throws -> Void
     var version: () async -> String?
@@ -20,12 +20,14 @@ final class AddMachineModel {
 
   typealias Page = SetupPage
   var page: Page = .setup
-  var mode: WizardMode = .off
+  var mode: WizardMode? = .local
   private(set) var toolsStatus: BuildMachineStatus?
   private(set) var androidStatus: BuildMachineStatus?
   private(set) var toolFindings: [DoctorReport.Finding] = []
   private(set) var androidFindings: [DoctorReport.Finding] = []
   var checksAndroid: Bool { wizard.capabilities.contains(.build) }
+  var os: TailnetOS { wizard.mac?.os ?? .macOS }
+  var buildsAndroidOnly: Bool { os != .macOS }
   let sample: SampleBuildModel?
   var preparingSample: Bool { sample?.preparing == true }
   var testOutcome: BuildTest.Outcome {
@@ -54,8 +56,10 @@ final class AddMachineModel {
   private var preferredMachineID: String?
   private var prefersHostedSimulators = false
   var selectedId: String?
+  private(set) var existingId: String?
   var manualPort = ""
   var isFixture = false
+  var fixtureRegistered: ([String], [BuildMachineStatus]?)?
   private var tailscaleRead = false
   var checkingTailscale: Bool { !isFixture && !tailscaleRead }
   private let checkout: String?
@@ -65,6 +69,7 @@ final class AddMachineModel {
   @ObservationIgnored private var modeWritten = false
   @ObservationIgnored private var stopped = false
   @ObservationIgnored private var checkingJournal = false
+  @ObservationIgnored private var doctorRunning = false
   @ObservationIgnored private var checkingTools = false
   @ObservationIgnored private var clock = SetupRefreshClock()
 
@@ -77,6 +82,7 @@ final class AddMachineModel {
   }
 
   convenience init(cli: Task<StimCLI, Never>, settings: MachineSettingsStore, checkout: String?) {
+    let reader = MachineAccessReader(cli: cli) { ServerSession.shared.statsConnection }
     self.init(
       checkout: checkout,
       dependencies: Dependencies(
@@ -86,10 +92,13 @@ final class AddMachineModel {
         },
         health: { await Tailnet.health(dnsName: $0, port: $1) },
         journal: Self.fetchJournal,
-        doctor: { cwd, ask, environment in
-          try await cli.value.machineAccess(cwd: cwd, ask: ask, extraEnvironment: environment)
+        doctor: { cwd, ask, ticket in
+          try await reader.report(cwd: cwd, ask: ask, ticket: ticket)
         },
-        readSettings: { try await cli.value.settings(cwd: NSHomeDirectory()) },
+        readSettings: {
+          try await readServerSettings(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: NSHomeDirectory())
+        },
         writeSetting: { key, value in
           switch await settings.write(key, value: value, scope: .machine, cwd: NSHomeDirectory()) {
           case .success(.written): return
@@ -102,13 +111,13 @@ final class AddMachineModel {
           let server = await StimServerCLI.resolve(
             environment: cli.environment,
             override: UserDefaults.standard.string(forKey: AppPreferences.Key.stimServerExecutable))
-          var output = await server.versionOutput()
-          if output == nil { output = await cli.versionOutput() }
-          return output?.trimmingCharacters(in: .whitespacesAndNewlines)
+          // Without a stim-server version the sheet stays on resolving and offers no command: any other version, such
+          // as the stim CLI's, could pin a release this Mac's server does not run. The onboarding popup flags it.
+          return await server.versionOutput()?.trimmingCharacters(in: .whitespacesAndNewlines)
         },
         toolsDoctor: { cwd, platform in
-          let output = try await WizardToolsDoctor.read(cli: await cli.value, cwd: cwd, platform: platform)
-          return output
+          try await readPlatformDoctor(
+            cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: cwd, platform: platform)
         },
         tailscaleInstall: {
           let environment = await cli.value.environment
@@ -117,8 +126,8 @@ final class AddMachineModel {
       ), sample: SampleBuildModel(cli: cli))
   }
 
-  static func fetchJournal(dnsName: String, port: Int, hash: String) async -> SetupPortProbe.Outcome {
-    guard let url = URL(string: "https://\(dnsName):\(port)/setup/\(hash)") else { return .unreachable }
+  static func fetchJournal(dnsName: String, port: Int, journal: String) async -> SetupPortProbe.Outcome {
+    guard let url = URL(string: "https://\(dnsName):\(port)/setup/\(journal)") else { return .unreachable }
     var request = URLRequest(url: url)
     request.timeoutInterval = 3
     request.cachePolicy = .reloadIgnoringLocalCacheData
@@ -133,12 +142,30 @@ final class AddMachineModel {
   }
 
   var selected: Tailnet.Peer? { peers.first { $0.id == selectedId } }
+
+  func added(_ peer: Tailnet.Peer) -> AddedMachine? {
+    let check = machines?.check(in: checkout)
+    let known = fixtureRegistered ?? (machines?.entries ?? [], check?.problem == nil ? check?.statuses : nil)
+    return OffloadMachines.added(peer.mac, entries: known.0, statuses: known.1)
+  }
+  var checkingAdded: Bool { machines?.isBusy == true }
+  private var selectablePeers: [Tailnet.Peer] { peers.filter { added($0) == nil } }
+  var existingPeer: Tailnet.Peer? { peers.first { $0.id == existingId && added($0) != nil } }
+
+  func choose(_ peer: Tailnet.Peer) {
+    if added(peer) == nil {
+      existingId = nil
+      selectedId = peer.id
+    } else {
+      existingId = peer.id
+    }
+  }
   var reachability: Tailnet.Reachability {
     Tailnet.reachability(statusJSON: statusJSON, peer: selected, install: tailscaleInstall)
   }
   enum MacList: Equatable { case empty, offlineOnly, available }
   var macList: MacList {
-    peers.isEmpty ? .empty : peers.contains(where: \.online) ? .available : .offlineOnly
+    selectablePeers.isEmpty ? .empty : selectablePeers.contains(where: \.online) ? .available : .offlineOnly
   }
   var tailscaleRunning: Bool { reachability != .tailscaleMissing && reachability != .tailscaleStopped }
   var known: SetupKnown {
@@ -149,16 +176,22 @@ final class AddMachineModel {
   }
   var olderThanSetup: String? {
     guard let text = wizard.mac.flatMap({ health[$0.id]?.version }), let found = SemanticVersion(text),
-      found < SemanticVersion("1.16.0")!
+      found < setupTicketVariableVersion
     else { return nil }
     return text
   }
+  /// This Mac's stim-server version when it predates `setupTicketVariableVersion`, so no command is offered.
+  var serverTooOldForSetup: String? {
+    guard let version, let found = SemanticVersion(version), found < setupTicketVariableVersion else { return nil }
+    return version
+  }
   var command: String? {
     if checkout == nil, sample != nil, commandKnown == nil { return nil }
-    guard let version, let selfNode, let ticket = wizard.ticket ?? draftTicket else { return nil }
+    guard serverTooOldForSetup == nil else { return nil }
+    guard let version, selfNode != nil, let ticket = wizard.ticket ?? draftTicket else { return nil }
     return setupCommand(
-      version: version, client: selfNode.id, ticket: ticket,
-      capabilities: wizard.capabilities, known: commandKnown ?? known)
+      version: version, ticket: ticket,
+      capabilities: wizard.capabilities, known: commandKnown ?? known, os: os)
   }
 
   func start() async {
@@ -190,16 +223,17 @@ final class AddMachineModel {
     guard !busy else { return }
     if doctorPath != nil, wizard.ticket != nil { wizard.hasWorkspace = true }
     if dueOnly {
-      for read in clock.due(wizard.refreshes(page: page), now: now) { await refresh(read) }
+      for read in clock.due(wizard.refreshes(page: page, now: now), now: now) { await refresh(read) }
     } else {
       var done: Set<SetupRefresh> = []
-      while let read = wizard.refreshes(page: page).first(where: { !done.contains($0) }) {
+      while let read = wizard.refreshes(page: page, now: now).first(where: { !done.contains($0) }) {
         done.insert(read)
         clock.ran(read, now: now)
         await refresh(read)
       }
     }
     if page == .setup, wizard.ticket != nil, wizard.phase != .cancelled { await send(.tick) }
+    if page == .setup, wizard.advancesToTools(now: now) { await openTools() }
   }
 
   private func refresh(_ read: SetupRefresh) async {
@@ -231,7 +265,7 @@ final class AddMachineModel {
   }
 
   private func restoreMode() async {
-    do { try await dependencies.writeSetting("remote.buildMode", nil) } catch { modeWritten = true }
+    do { try await dependencies.writeSetting("remote.build", nil) } catch { modeWritten = true }
   }
 
   func preselect(machineID: String?, hostedSimulators: Bool) {
@@ -241,7 +275,7 @@ final class AddMachineModel {
   }
 
   private func applyPreselection() {
-    if selectedId == nil, let preferredMachineID, peers.contains(where: { $0.id == preferredMachineID }) {
+    if selectedId == nil, let preferredMachineID, selectablePeers.contains(where: { $0.id == preferredMachineID }) {
       selectedId = preferredMachineID
     }
   }
@@ -272,7 +306,7 @@ final class AddMachineModel {
   func pick() async {
     guard reachability == .ready, let selected, selfNode != nil else { return }
     await send(.macChosen(selected.mac))
-    if wizard.phase == .choose, prefersHostedSimulators {
+    if wizard.phase == .choose, prefersHostedSimulators, !selected.mac.buildsAndroidOnly {
       setCapability(.deviceHost, enabled: true)
       setCapability(.build, enabled: false)
     }
@@ -280,7 +314,7 @@ final class AddMachineModel {
     clock.ran(.approvals, now: dependencies.now())
     if let checkout {
       do {
-        let report = try await dependencies.doctor(checkout, false, [:])
+        let report = try await dependencies.doctor(checkout, false, nil)
         await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
       } catch { self.error = error.localizedDescription }
     } else {
@@ -298,12 +332,13 @@ final class AddMachineModel {
     guard version != nil, selfNode != nil, !busy else { return }
     busy = true
     defer { busy = false }
+    error = nil
     do {
       sample?.prepare()
       if checkout == nil, let sample {
         await sample.waitForPreparation()
         guard sample.sampleReady else { return }
-        let report = try await dependencies.doctor(sample.folder, false, [:])
+        let report = try await dependencies.doctor(sample.folder, false, nil)
         await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
         wizard.hasWorkspace = true
       }
@@ -311,7 +346,7 @@ final class AddMachineModel {
       wizard.settings = SetupWizard.Settings(
         builds: payload.entry("remote.machines")?.value.strings ?? [],
         hosts: payload.entry("remote.machines")?.value.strings ?? [],
-        mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
+        mode: payload.entry("remote.build")?.value.string, modeOrigin: payload.entry("remote.build")?.origin)
       commandKnown = known
       let current = dependencies.now()
       if let draft = draftTicket, current < draft.expiresAt {
@@ -353,7 +388,7 @@ final class AddMachineModel {
 
   private func checkJournal() async {
     guard !isFixture, !busy, !checkingJournal, wizard.phase != .expiredCommand,
-      let mac = wizard.mac, let ticket = wizard.ticket, selfNode != nil
+      let mac = wizard.mac, let ticket = wizard.ticket, let journalName = ticket.journal, selfNode != nil
     else { return }
     guard wizard.hasWorkspace else { return }
     checkingJournal = true
@@ -362,13 +397,13 @@ final class AddMachineModel {
     guard let status, Tailnet.selfNode(statusJSON: status)?.id == selfNode?.id,
       Tailnet.peers(statusJSON: status).contains(where: { $0.mac == mac && $0.online })
     else {
-      error = "The selected Mac is no longer reachable as the pinned tailnet node. Check Tailscale on \(mac.hostName)."
+      error = "The selected machine is no longer reachable as the pinned tailnet node. Check Tailscale on \(mac.hostName)."
       return
     }
     let ports = wizard.port.map { [$0] } ?? Array(7443...7452)
     let outcomes = await withTaskGroup(of: (Int, SetupPortProbe.Outcome).self) { group in
       for port in ports {
-        group.addTask { (port, await self.dependencies.journal(mac.dnsName, port, ticket.hash)) }
+        group.addTask { (port, await self.dependencies.journal(mac.dnsName, port, journalName)) }
       }
       var results: [Int: SetupPortProbe.Outcome] = [:]
       for await (port, answer) in group { results[port] = answer }
@@ -377,14 +412,14 @@ final class AddMachineModel {
     guard !Task.isCancelled, !stopped, wizard.ticket == ticket, wizard.phase != .cancelled else { return }
     switch SetupPortProbe.resolve(outcomes) {
     case .found(let port, let journal):
-      guard journal.client.nodeId == selfNode?.id, journal.expiresAt == ticket.isoExpires else { return }
+      guard journal.expiresAt == ticket.isoExpires else { return }
       if wizard.journal == nil, !wizard.entriesWritten {
         do {
           let payload = try await dependencies.readSettings()
           wizard.settings = SetupWizard.Settings(
             builds: payload.entry("remote.machines")?.value.strings ?? [],
             hosts: payload.entry("remote.machines")?.value.strings ?? [],
-            mode: payload.entry("remote.buildMode")?.value.string, modeOrigin: payload.entry("remote.buildMode")?.origin)
+            mode: payload.entry("remote.build")?.value.string, modeOrigin: payload.entry("remote.build")?.origin)
         } catch {
           self.error = error.localizedDescription
           return
@@ -411,7 +446,16 @@ final class AddMachineModel {
 
   @discardableResult private func runDoctor(ask: Bool, ticket: String? = nil) async throws -> Bool {
     guard !isFixture, let checkout = doctorPath else { return false }
-    let report = try await dependencies.doctor(checkout, ask, ticket.map { ["STIM_ACCESS_TICKET": $0] } ?? [:])
+    while doctorRunning { try await Task.sleep(for: .milliseconds(50)) }
+    doctorRunning = true
+    let report: DoctorReport
+    do {
+      report = try await dependencies.doctor(checkout, ask, ticket)
+      doctorRunning = false
+    } catch {
+      doctorRunning = false
+      throw error
+    }
     await send(.doctorReported(build: match(report.remoteMachines), host: match(report.deviceHosts)))
     return true
   }
@@ -449,6 +493,11 @@ final class AddMachineModel {
     wizard.mac.map { SetupPortProbe.entry(machine: $0.machine, port: wizard.port ?? 7443) }
   }
   var tools: [WizardTool] {
+    if buildsAndroidOnly {
+      return toolsReport(
+        journal: wizard.journal, status: androidStatus, capabilities: wizard.capabilities, android: androidStatus != nil,
+        findings: androidFindings, androidOnly: true)
+    }
     var rows = toolsReport(
       journal: wizard.journal, status: toolsStatus, capabilities: wizard.capabilities, findings: toolFindings)
     if checksAndroid, androidStatus != nil || wizard.journal != nil {
@@ -461,7 +510,7 @@ final class AddMachineModel {
     }
     return rows
   }
-  var toolsBlock: Bool { tools.contains { $0.blocks } }
+  var installStatus: BuildMachineStatus? { buildsAndroidOnly ? androidStatus : toolsStatus }
 
   func openTools() async {
     guard wizard.phase == .approved else { return }
@@ -477,11 +526,22 @@ final class AddMachineModel {
       checkingTools = false
       clock.ran(.tools, now: dependencies.now())
     }
+    if buildsAndroidOnly {
+      do {
+        let report = try await doctor(cwd, "android")
+        androidStatus = match(report.remoteMachines)
+        androidFindings = report.findings
+        error = nil
+        if let androidStatus { await machines?.readRemoteServers([androidStatus]) }
+      } catch { self.error = error.localizedDescription }
+      return
+    }
     do {
       let report = try await doctor(cwd, "ios")
       toolsStatus = match(report.remoteMachines)
       toolFindings = report.findings
       error = nil
+      if let toolsStatus { await machines?.readRemoteServers([toolsStatus]) }
     } catch {
       self.error = error.localizedDescription
       return
@@ -494,9 +554,10 @@ final class AddMachineModel {
   func openTest() {
     page = .test
     if wizard.capabilities.contains(.build), let entry = machineEntry {
-      sample?.run(entry: entry)
+      sample?.run(entry: entry, platform: testPlatform)
     }
   }
+  var testPlatform: String { buildsAndroidOnly ? "android" : "ios" }
   func closeTest() async {
     await sample?.end()
     page = .summary
@@ -506,7 +567,7 @@ final class AddMachineModel {
     do {
       let payload = try await dependencies.readSettings()
       mode = WizardMode.defaultChoice(
-        changedMode: wizard.modeChanged, current: payload.entry("remote.buildMode")?.value.string)
+        changedMode: wizard.modeChanged, current: payload.entry("remote.build")?.value.string)
       if choosesSimulators, let entry = machineEntry {
         let ios = payload.entry("ios.remote")?.value.string
         let android = payload.entry("android.remote")?.value.string
@@ -524,8 +585,8 @@ final class AddMachineModel {
     defer { busy = false }
     do {
       let payload = try await dependencies.readSettings()
-      if payload.entry("remote.buildMode")?.value.string != mode.rawValue {
-        try await dependencies.writeSetting("remote.buildMode", mode.rawValue)
+      if let mode, payload.entry("remote.build")?.value.string != mode.rawValue {
+        try await dependencies.writeSetting("remote.build", mode.rawValue)
       }
       modeWritten = false
       if choosesSimulators, let entry = machineEntry, let simulators {
@@ -551,7 +612,7 @@ final class AddMachineModel {
         let payload = try await dependencies.readSettings()
         let entry = SetupPortProbe.entry(machine: mac.machine, port: port)
         if wizard.modeChanged, !modeWritten {
-          try await dependencies.writeSetting("remote.buildMode", "off")
+          try await dependencies.writeSetting("remote.build", "local")
           modeWritten = true
         }
         let entries = payload.entry("remote.machines")?.value.strings ?? []
@@ -571,7 +632,7 @@ final class AddMachineModel {
         }
         addedEntries = [:]
         if modeWritten {
-          try await dependencies.writeSetting("remote.buildMode", nil)
+          try await dependencies.writeSetting("remote.build", nil)
           modeWritten = false
         }
       case .forgetPairing: try await runDoctor(ask: true)
@@ -589,6 +650,26 @@ final class AddMachineModel {
       status.offloadable = true
       toolsStatus = status
       switch fixture {
+      case .linuxTools:
+        page = .tools
+        androidStatus = try! JSONDecoder().decode(
+          BuildMachineStatus.self,
+          from: Data(
+            """
+            {"machine":"ubuntu","state":"approved","offloadable":false,"problems":[
+            {"code":"ndk","reason":"no NDK 27.1.12297006 there"}]}
+            """.utf8))
+        androidFindings = try! JSONDecoder().decode(
+          DoctorReport.self,
+          from: Data(
+            """
+            {"project":"/fixture","findings":[
+            {"code":"build-machine-ndk","level":"cost","title":"Remote machine ubuntu lacks this project's NDK","detail":"no NDK 27.1.12297006 there","fix":"Install the missing package with sdkmanager in the Android SDK stim-server on ubuntu uses (its ANDROID_HOME, else ~/Library/Android/sdk on macOS or ~/Android/Sdk on Linux)."}]}
+            """.utf8)
+        ).findings
+      case .linuxSummary:
+        page = .summary
+        mode = .auto
       case .toolsOK: page = .tools
       case .toolsFixes:
         page = .tools
@@ -606,9 +687,9 @@ final class AddMachineModel {
           from: Data(
             """
             {"project":"/fixture","findings":[
-            {"code":"build-machine-xcode","level":"cost","title":"Remote Mac mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
-            {"code":"build-machine-bundler","level":"cost","title":"Remote Mac mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
-            {"code":"build-machine-stim-build","level":"cost","title":"Remote Mac mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this Mac."}]}
+            {"code":"build-machine-xcode","level":"cost","title":"Remote machine mini has a different Xcode","detail":"Xcode mismatch","fix":"Install and select the same Xcode on mini and this Mac (`xcode-select -p` on each)."},
+            {"code":"build-machine-bundler","level":"cost","title":"Remote machine mini lacks Bundler","detail":"No Bundler","fix":"Install Bundler (`gem install bundler`) on mini, on the PATH its stim-server's login shell sets."},
+            {"code":"build-machine-stim-build","level":"cost","title":"Remote machine mini has a different Stim build","detail":"Stim build mismatch","fix":"Update stim-server on mini to the same Stim build as this machine: there, run `stim-server service update --release <version>` for this machine's release."}]}
             """.utf8)
         ).findings
       case .toolsBusy:
@@ -617,7 +698,7 @@ final class AddMachineModel {
           BuildMachineStatus.self,
           from: Data(
             """
-            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"Build Mac is taking another build; this does not block Next."}]}
+            {"machine":"mini","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"busy (taking another build; this does not block Next)"}]}
             """.utf8))
       case .toolsAndroid:
         page = .tools
@@ -629,9 +710,7 @@ final class AddMachineModel {
             """.utf8))
       default:
         page = [.summaryAuto, .summaryNever, .summaryUndo, .summarySkippedAfterFailure].contains(fixture) ? .summary : .test
-        var events: [BuildTest.Event] = [
-          .prepared, .start, .offload(.success), .timings(times), .localStart, .localFinished(passed: true, ms: 250000),
-        ]
+        var events: [BuildTest.Event] = [.prepared, .start, .offload(.success), .timings(times)]
         switch fixture {
         case .testPreparingSample: events = []
         case .sampleFailed:
@@ -641,8 +720,6 @@ final class AddMachineModel {
               remedy: nil)
           ]
         case .offloading: events = [.prepared, .start, .progress("Syncing the sample checkout")]
-        case .offloaded: events.removeLast(2)
-        case .localBuilding: events.removeLast()
         case .testFailed:
           let refusal = try! JSONDecoder().decode(
             CommandRefusal.self,
@@ -661,13 +738,13 @@ final class AddMachineModel {
         }
         sample?.fixture(
           events,
-          lines: fixture == .offloading || fixture == .localBuilding
+          lines: fixture == .offloading
             ? [
               .init(text: "$ stim ios --remote-build mini --no-build-cache --json", kind: .command),
               .init(text: "offer accepted; syncing checkout", kind: .output),
               .init(text: "built on mini in 2:52: offer 0:01, sync 0:03, build 2:41, fetch 0:04", kind: .ok),
             ] : [])
-        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .off : .auto
+        mode = fixture == .summaryNever || fixture == .summarySkippedAfterFailure ? .local : .auto
       }
     }
 
@@ -682,7 +759,7 @@ final class AddMachineModel {
       selectedId = peers.first?.id
       self.health = health
       healthChecked = Set(peers.filter(\.online).map(\.id))
-      version = "1.16.0"
+      version = "1.21.0"
       draftTicket = ticket
     }
   }

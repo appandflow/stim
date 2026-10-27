@@ -22,8 +22,7 @@ public struct ProjectStats: Decodable, Sendable {
   public var project: Scope?
 }
 
-/// Where this Mac's compiling builds ran and why: the `offload` part of `stim stats --json`, nil from a stim that
-/// predates it.
+/// Where this Mac's compiling builds ran and why: the `offload` part of `stim stats --json`.
 public struct BuildPlacements: Decodable, Sendable {
   public struct Today: Decodable, Sendable {
     public var here: Int
@@ -76,7 +75,7 @@ public struct BuildPlacements: Decodable, Sendable {
       let name = machine.map(machineName)
       switch decision {
       case .here: return "Built here"
-      case .offloaded: return "Built on \(name ?? "a remote Mac")"
+      case .offloaded: return "Built on \(name ?? "a remote machine")"
       case .fellBack: return name.map { "Built here after \($0)" } ?? "Built here after offloading"
       case .unknown: return "Built"
       }

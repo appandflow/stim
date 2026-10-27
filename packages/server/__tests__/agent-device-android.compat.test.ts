@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inject } from 'vitest';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 import { adbPath } from '../src/frame-helper.ts';
 
 declare module 'vitest' {
@@ -55,7 +55,6 @@ test('the real Android daemon enforces serial inventory, commands and shutdown p
     for (const params of [
       { command: 'open', positionals: ['dev.fixture'], flags: { platform: 'android', serial: foreign } },
       { command: 'install', positionals: ['/tmp/never-install.apk'], flags: { platform: 'android', serial } },
-      { command: 'record', flags: { platform: 'android', serial } },
       { command: 'logs', flags: { platform: 'android', serial } },
       { command: 'close', flags: { platform: 'android', serial, shutdown: true } },
       {

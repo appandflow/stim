@@ -18,14 +18,8 @@ export interface CreatedSession {
   daemon: RemoteDaemon | null;
 }
 
-export interface SessionSummary {
+export interface ScopedSessionSummary {
   id: string;
-  name: string | null;
-  status: string | null;
-  platform: string | null;
-}
-
-export interface ScopedSessionSummary extends Omit<SessionSummary, 'name' | 'status' | 'platform'> {
   name: string;
   status: string;
   platform: 'ios' | 'android';
@@ -100,7 +94,6 @@ export function createSessionArgs({
     '--name',
     ownedSessionName(label),
   ];
-  // EAS duration limits vary by account, so omit the flag unless the caller sets a limit.
   if (maxDurationMinutes) args.push('--max-duration-minutes', String(maxDurationMinutes));
   if (device) args.push('--device', device);
   return args;
@@ -227,19 +220,6 @@ export function parseCreatedSession(stdout: string): CreatedSession | null {
     url: str(data.deviceRunSessionUrl),
     daemon: remoteDaemonFrom(data.remoteConfig),
   };
-}
-
-export function parseSessionList(stdout: string): SessionSummary[] {
-  const data = parseJson(stdout);
-  if (!isRecord(data) || !Array.isArray(data.sessions)) return [];
-  const out: SessionSummary[] = [];
-  for (const raw of data.sessions) {
-    if (!isRecord(raw)) continue;
-    const id = str(raw.id);
-    if (!id) continue;
-    out.push({ id, name: str(raw.name), status: str(raw.status), platform: str(raw.platform) });
-  }
-  return out;
 }
 
 export function parseSessionListPage(

@@ -24,6 +24,7 @@ const native = vi.hoisted(() => ({
   uninstall: vi.fn<(udid: string, bundleId: string) => void>(),
   choice: vi.fn<() => { deviceTypeId: string; runtimeId: string; deviceType: string; runtime: string }>(),
   pressure: vi.fn<() => string | null>(),
+  mute: vi.fn<(udid: string) => Promise<void>>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => native.pressure() }));
 vi.mock('../devices/ios.ts', () => ({
@@ -35,6 +36,9 @@ vi.mock('../devices/ios.ts', () => ({
   uninstallIosApp: (udid: string, bundleId: string) => native.uninstall(udid, bundleId),
   createOwnedIosSim: (...args: unknown[]) => native.create(...args),
   bootIosSim: (...args: Parameters<typeof native.boot>) => native.boot(...args),
+}));
+vi.mock('../engine/device-ios.ts', () => ({
+  muteBootedSimulator: (udid: string) => native.mute(udid),
 }));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedIosSim: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
@@ -88,14 +92,51 @@ test('records exact ownership before boot, keeps the host viewer closed and veri
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
 });
 
-test.each(['inventory', 'memory'])('refuses unknown or unsafe %s before creation', async (failure) => {
-  if (failure === 'inventory')
-    native.inventory.mockImplementation(() => {
-      throw new Error('bad inventory');
-    });
-  if (failure === 'memory') native.pressure.mockReturnValue(null);
+test('mutes the exact simulator after boot on prepare and again after an adoption reset', async () => {
+  const order: string[] = [];
+  native.boot.mockImplementation(() => {
+    order.push('boot');
+    simulatorState = 'Booted';
+  });
+  native.apps.mockReturnValue([]);
+  native.keychain.mockImplementation(() => {
+    order.push('reset');
+  });
+  native.mute.mockImplementation(async (target) => {
+    order.push(`mute:${target}`);
+  });
+  await runHostedDevice('prepare', {});
+  expect(order).toEqual(['boot', `mute:${udid}`]);
+  native.teardown.mockImplementation(() => {
+    simulatorState = 'Shutdown';
+    return { status: 'torn-down' };
+  });
+  await runHostedDevice('park', {});
+  order.length = 0;
+  await runHostedDevice('adopt', {});
+  expect(order).toEqual(['boot', 'reset', `mute:${udid}`]);
+});
+
+test('does not mute a simulator whose boot was not verified', async () => {
+  native.boot.mockResolvedValue(undefined);
+  await runHostedDevice('prepare', {});
+  expect(native.mute).not.toHaveBeenCalled();
+});
+
+test('refuses an unknown inventory before creation', async () => {
+  native.inventory.mockImplementation(() => {
+    throw new Error('bad inventory');
+  });
   expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'stopped', device: null });
   expect(native.create).not.toHaveBeenCalled();
+});
+
+test('prepare and adoption trust the offer instead of sampling memory pressure again', async () => {
+  native.pressure.mockReturnValue(null);
+  await parkedSimulator();
+  expect(native.create).toHaveBeenCalledOnce();
+  native.apps.mockImplementation(() => []);
+  expect(await runHostedDevice('adopt', {})).toMatchObject({ state: 'ready', device: { udid } });
 });
 
 test('retains a lost creation outcome and refuses missing or foreign ledger ownership on stop', async () => {

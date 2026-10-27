@@ -1,10 +1,12 @@
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
+import { git } from '../workspace/git.ts';
 import { readAndroidCasToolchain, resolveAndroidCompilerCache } from '../engine/android-cas.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { projectCmakeLauncher } from '../engine/ccache.ts';
-import { projectOptimizations } from '../workspace/settings.ts';
+import { resolveOptimizations } from '../optimizations.ts';
+import { defaultAndroidLayout, type AndroidLayout, type SettingsObject } from '../workspace/settings.ts';
 
 export interface CxxLauncherState {
   path: string;
@@ -26,8 +28,8 @@ function children(path: string): string[] {
   }
 }
 
-function moduleRoots(root: string): string[] {
-  const modules = [join(root, 'android', 'app')];
+function moduleRoots(root: string, layout: AndroidLayout): string[] {
+  const modules = [layout.moduleDir];
   const dependencies = join(root, 'node_modules');
   for (const name of children(dependencies)) {
     if (name.startsWith('.')) continue;
@@ -41,7 +43,7 @@ function moduleRoots(root: string): string[] {
 function cacheFiles(base: string, depth = 0): string[] {
   const files: string[] = [];
   for (const name of children(base)) {
-    if (depth === 0 && /^stim-[a-f0-9]{16}$/.test(name)) continue;
+    if (depth === 0 && /^(?:stim-[a-f0-9]{16}|[a-f0-9]{4})$/.test(name)) continue;
     const path = join(base, name);
     const entry = lstatSync(path);
     if (entry.isSymbolicLink()) continue;
@@ -51,8 +53,11 @@ function cacheFiles(base: string, depth = 0): string[] {
   return files;
 }
 
-export function readCxxLauncherStates(root: string): CxxLauncherState[] {
-  return moduleRoots(root).flatMap((module) =>
+export function readCxxLauncherStates(
+  root: string,
+  layout: AndroidLayout = defaultAndroidLayout(root),
+): CxxLauncherState[] {
+  return moduleRoots(root, layout).flatMap((module) =>
     cacheFiles(join(module, '.cxx')).map((path) => ({
       path: relative(root, path),
       launcher: parseCmakeCacheLauncher(readFileSync(path, 'utf8')),
@@ -72,9 +77,10 @@ function contained(root: string, path: string): boolean {
   return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-function selectedCompilerCache(root: string): string | null {
+function selectedCompilerCache(settings: SettingsObject | null): string | null {
+  if (!settings) return null;
   try {
-    return resolveAndroidCompilerCache({ optimizations: projectOptimizations(root), use: readAndroidCasToolchain })
+    return resolveAndroidCompilerCache({ optimizations: resolveOptimizations(settings), use: readAndroidCasToolchain })
       .optimizations.android.compilerCache;
   } catch {
     return null;
@@ -90,14 +96,18 @@ export interface CxxRepairResult {
  * Keep every native build stopped until repair finishes. The supplemental
  * cache-lock check cannot detect uncached builds, release-swap fallback, or direct Gradle.
  */
-export function repairCxxLauncherState(root: string): CxxRepairResult {
+export function repairCxxLauncherState(
+  root: string,
+  settings: SettingsObject | null,
+  layout: AndroidLayout = defaultAndroidLayout(root),
+): CxxRepairResult {
   const canonicalRoot = realpathSync(root);
   const result: CxxRepairResult = { removed: [], refused: [] };
-  if (selectedCompilerCache(root) !== 'ccache') return result;
+  if (selectedCompilerCache(settings) !== 'ccache') return result;
   const ccache = getExecutor().findExecutable('ccache');
   if (!ccache) return result;
-  const appOverrides = declaredLauncher(join(root, 'android', 'app'));
-  const states = readCxxLauncherStates(root);
+  const appOverrides = declaredLauncher(layout.moduleDir);
+  const states = readCxxLauncherStates(root, layout);
   const targets = states.filter(({ launcher }) => {
     if (!launcher) return true;
     const command = launcher.split(';')[0]?.trim();
@@ -117,12 +127,9 @@ export function repairCxxLauncherState(root: string): CxxRepairResult {
         throw new Error('generated directory resolves outside this checkout');
       if (realpathSync(cxx) !== join(realpathSync(dirname(cxx)), '.cxx')) throw new Error('.cxx is a symbolic link');
       const gitPath = relative(canonicalRoot, canonicalTarget);
-      const tracked = getExecutor().runFile('git', ['ls-files', '-z', '--', `:(literal)${gitPath}`], {
-        cwd: canonicalRoot,
-        timeoutMs: 5000,
-      });
+      const tracked = git(canonicalRoot, ['ls-files', '-z', '--', `:(literal)${gitPath}`], { timeoutMs: 5000 });
       if (tracked) throw new Error('directory contains tracked files');
-      getExecutor().runFile('git', ['check-ignore', '-q', '--', gitPath], { cwd: canonicalRoot, timeoutMs: 5000 });
+      git(canonicalRoot, ['check-ignore', '-q', '--', gitPath], { timeoutMs: 5000 });
       const androidLocks = listBuildLocks().filter((lock) => lock.platform === 'android');
       if (androidLocks.some((lock) => lock.unresolved)) {
         throw new Error('an Android build lock holder cannot be identified, so a build may be active');

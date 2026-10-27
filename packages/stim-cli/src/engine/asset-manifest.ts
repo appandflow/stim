@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
 interface AssetManifestEntry {
   path: string;
@@ -124,10 +125,16 @@ export function androidModuleDirs(
 export function findGeneratedResDir(
   root: string,
   variant: string | null,
-  { list = safeList }: { list?: (dir: string) => string[] } = {},
+  {
+    list = safeList,
+    layout = defaultAndroidLayout(root),
+  }: { list?: (dir: string) => string[]; layout?: AndroidLayout } = {},
 ): string | null {
-  for (const module of androidModuleDirs(root, { list })) {
-    const base = join(root, 'android', module, 'build', 'generated', 'res');
+  const modules = layout.custom
+    ? [layout.moduleDir]
+    : androidModuleDirs(root, { list }).map((m) => join(root, 'android', m));
+  for (const moduleDir of modules) {
+    const base = join(moduleDir, 'build', 'generated', 'res');
     const names = list(base);
     if (names.length === 0) continue;
     const picked = pickGeneratedResDir(names, variant, names.includes('react') ? list(join(base, 'react')) : []);
@@ -140,15 +147,17 @@ export function captureAssetManifest(
   root: string,
   {
     variant = null,
+    layout = defaultAndroidLayout(root),
     findDir = findGeneratedResDir,
     read = readAssetManifest,
   }: {
     variant?: string | null;
+    layout?: AndroidLayout;
     findDir?: typeof findGeneratedResDir;
     read?: typeof readAssetManifest;
   } = {},
 ): AssetManifest | null {
-  const dir = findDir(root, variant);
+  const dir = findDir(root, variant, { layout });
   return dir ? read(dir) : null;
 }
 

@@ -720,6 +720,62 @@ describe('oversee, what needs a person', () => {
     stateOf.state = null;
   });
 
+  it.each([
+    ['lease', env({ physicalDevices: [lease(T0 + MIN)] }), T0 + MIN, `lease-ios-default:${PATH}`],
+    [
+      'EAS session',
+      env({ remoteDevices: [{ sessionId: 'test-session', startedAt: iso(T0) }] }),
+      T0 + 30 * MIN,
+      `eas-test-session:${PATH}`,
+    ],
+  ] as const)('schedules the %s attention boundary without a changed input', (_name, workspace, due, id) => {
+    const status = input([workspace]);
+    const initial = oversee(null, status, ALL, T0);
+    expect(initial.notifications).toEqual([]);
+    expect(initial.wakeAt).toBe(due);
+    const before = oversee(initial.state, status, ALL, due - 1);
+    expect(before.notifications).toEqual([]);
+    expect(before.wakeAt).toBe(due);
+    const at = oversee(before.state, status, ALL, due);
+    expect(at.notifications.map((notification) => notification.id)).toEqual([id]);
+    expect(at.wakeAt).toBeNull();
+    expect(oversee(at.state, status, ALL, due + 1).notifications).toEqual([]);
+  });
+
+  it('updates a lease deadline when it renews and clears it when the lease is removed', () => {
+    const initial = oversee(null, input([env({ physicalDevices: [lease(T0 + MIN)] })]), ALL, T0);
+    const renewed = oversee(initial.state, input([env({ physicalDevices: [lease(T0 + 2 * MIN)] })]), ALL, T0 + MIN);
+    expect(renewed.notifications).toEqual([]);
+    expect(renewed.wakeAt).toBe(T0 + 2 * MIN);
+    expect(oversee(renewed.state, input([env()]), ALL, T0 + MIN).wakeAt).toBeNull();
+  });
+
+  it('schedules the next attention boundary after the earliest workspace becomes due', () => {
+    const status = input([
+      env({ physicalDevices: [lease(T0 + MIN)] }),
+      env({ path: `${PATH}-eas`, remoteDevices: [{ sessionId: 'test-session', startedAt: iso(T0) }] }),
+    ]);
+    const initial = oversee(null, status, ALL, T0);
+    expect(initial.wakeAt).toBe(T0 + MIN);
+    const first = oversee(initial.state, status, ALL, T0 + MIN);
+    expect(first.wakeAt).toBe(T0 + 30 * MIN);
+    const second = oversee(first.state, status, ALL, T0 + 30 * MIN);
+    expect(second.notifications.map((notification) => notification.id)).toEqual([`eas-test-session:${PATH}-eas`]);
+    expect(second.wakeAt).toBeNull();
+  });
+
+  it('does not schedule unattended EAS attention while an agent drives the workspace', () => {
+    const status = input([
+      env({ ios: driven(T0), remoteDevices: [{ sessionId: 'test-session', startedAt: iso(T0) }] }),
+    ]);
+    const prefs = { ...ALL, stuckMinutes: 60 };
+    const initial = oversee(null, status, prefs, T0);
+    expect(initial.wakeAt).toBe(T0 + 60 * MIN);
+    const atEasThreshold = oversee(initial.state, status, prefs, T0 + 30 * MIN);
+    expect(atEasThreshold.notifications).toEqual([]);
+    expect(atEasThreshold.wakeAt).toBe(T0 + 60 * MIN);
+  });
+
   it('notifies an expired lease once per episode and again after it went away', () => {
     const expired = env({ physicalDevices: [lease(T0)] });
     expect(watch(T0 + MIN, [env()])).toEqual([]);

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import { acquireAvdClaim } from '../devices/avd-claim.ts';
-import { clearDevice, loadConfig, setDevice, withConfigLock } from '../workspace/config.ts';
+import { clearDevice, loadConfig, setDevice, withConfigLockAsync } from '../workspace/config.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
   claimRemoveCommand,
@@ -16,13 +16,13 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   createOwnedAvd,
-  listAvds,
+  listAvdsAsync,
   ownedAvdDeviceProfile,
   ownedAvdName,
   ownedAvdSystemImage,
-  resolveOwnedAvdSerial,
+  resolveOwnedAvdSerialAsync,
 } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 
@@ -81,7 +81,7 @@ export async function prepareOwnedAvd({
   configure: (avdName: string) => void;
   teardown?: typeof teardownOwnedAvd;
 }): Promise<PreparedAvd> {
-  const allocation = withConfigLock(() => {
+  const allocation = await withConfigLockAsync(() => {
     const previous = deviceSlotPlatforms(loadConfig()?.projects?.[projectPath], slot)?.android;
     if (previous?.avdName && previous.avdName !== previousAvdName) {
       throw new Error(`Another Stim run assigned AVD ${previous.avdName} to this workspace. Retry to use it.`);
@@ -128,8 +128,15 @@ export async function prepareOwnedAvd({
       );
     }
   };
+  const releaseReservation = () =>
+    withConfigLockAsync(() => {
+      if (!isDeepStrictEqual(currentRecord(), reservation)) return;
+      if (previous) setDevice(projectPath, 'android', previous, slot);
+      else clearDevice(projectPath, 'android', slot, avdName);
+    });
   let prepared: PreparedAvd;
   let child: ChildProcess | undefined;
+  let spawnAttempted = false;
   const creationRunning = () => child?.pid !== undefined && processGroupAlive(child.pid);
   let configurationFailure: { error: unknown } | undefined;
   try {
@@ -138,6 +145,7 @@ export async function prepareOwnedAvd({
         systemImage,
         deviceProfile,
         spawn: (...args) => {
+          spawnAttempted = true;
           markClaimChildPending(claim);
           child = getExecutor().spawn(...args);
           if (child.pid !== undefined) {
@@ -166,23 +174,26 @@ export async function prepareOwnedAvd({
       prepared = { ...creation.result, created: true };
     } catch (error) {
       const message = String((error as Error)?.message || error);
-      if (!message.includes('already exists')) throw error;
+      if (!message.includes('already exists')) {
+        if (!spawnAttempted) await releaseReservation();
+        throw error;
+      }
       try {
-        if (!listAvds().includes(avdName)) {
+        if (!(await listAvdsAsync()).includes(avdName)) {
           throw new AvdRecoveryError(
             `AVD ${avdName} already exists on disk but is not listed by the emulator. ${message}`,
             'Run `npx stim gc` to inspect orphaned owned AVDs, then `npx stim gc --delete` to reclaim those safe to delete. Retry `stim android` after cleanup; keep any AVD that GC cannot verify.',
             error,
           );
         }
-        withConfigLock(assertReservation);
-        const resolved = resolveOwnedAvdSerial(avdName);
+        await withConfigLockAsync(assertReservation);
+        const resolved = await resolveOwnedAvdSerialAsync(avdName);
         if (resolved.missing || resolved.notOwned) {
           throw new Error(`AVD ${avdName} could not be verified for recovery. Retry after checking its registration.`, {
             cause: error,
           });
         }
-        if (!resolved.serial) assertOwnedAvdStopped(avdName);
+        if (!resolved.serial) await assertOwnedAvdStoppedAsync(avdName);
         prepared = {
           avdName,
           created: false,
@@ -193,11 +204,7 @@ export async function prepareOwnedAvd({
             : {}),
         };
       } catch (recoveryError) {
-        withConfigLock(() => {
-          if (!isDeepStrictEqual(currentRecord(), reservation)) return;
-          if (previous) setDevice(projectPath, 'android', previous, slot);
-          else clearDevice(projectPath, 'android', slot, avdName);
-        });
+        await releaseReservation();
         if (recoveryError instanceof AvdRecoveryError) throw recoveryError;
         throw new AvdRecoveryError(
           `Could not recover owned AVD ${avdName}: ${String((recoveryError as Error)?.message || recoveryError)}`,
@@ -214,7 +221,7 @@ export async function prepareOwnedAvd({
       }
     }
     if (!configurationFailure) {
-      withConfigLock(() => {
+      await withConfigLockAsync(() => {
         assertReservation();
         setDevice(
           projectPath,
@@ -240,12 +247,10 @@ export async function prepareOwnedAvd({
   }
   if (configurationFailure) {
     const { error } = configurationFailure;
-    const cleanup = teardown(avdName, {
+    const cleanup = await teardown(avdName, {
       del: true,
       owner: { projectPath, slot, expectedRecord: reservation },
-      onRemoved: () => {
-        clearDevice(projectPath, 'android', slot, avdName);
-      },
+      onRemoved: () => withConfigLockAsync(() => clearDevice(projectPath, 'android', slot, avdName)),
     });
     const kept = cleanup.status === 'failed' || cleanup.status === 'skipped';
     const orphan = kept

@@ -133,7 +133,7 @@ stim stop`}
   up as device errors in `stim logs --errors`. The page still loads.
 - `stim stop` closes Chrome but leaves the dev server running. Use
   `stim ports stop web` to stop it. In a linked worktree, `stim worktree remove`
-  stops both and deletes the profile.
+  closes Chrome and deletes the profile, but leaves the dev server running.
 
 Try it with an agent:
 

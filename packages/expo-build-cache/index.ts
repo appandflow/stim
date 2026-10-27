@@ -8,14 +8,14 @@ import {
   hostSimulatorArch,
   registerCache,
   resolveArtifact,
-  storeArtifact,
+  storeArtifactAsync,
 } from '@stim-cli/core';
 import type { BuildRunOptions as RunOptions } from '@stim-cli/core';
 
 export { buildCacheKey };
 
 let registeredDir: string | null = null;
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 
 export function cacheRoot(): string {
   return buildCacheRoot();
@@ -140,12 +140,15 @@ export async function uploadBuildCache({
   fingerprintHash,
   buildPath,
   runOptions,
+  signal,
 }: {
   platform: string;
   fingerprintHash: string;
   buildPath?: string;
   runOptions?: RunOptions;
+  signal?: AbortSignal;
 }): Promise<string | null> {
+  signal?.throwIfAborted();
   registerOnce();
   if (!buildPath || !fs.existsSync(buildPath)) return null;
 
@@ -160,11 +163,23 @@ export async function uploadBuildCache({
 
   let stored: string | null;
   try {
-    stored = storeArtifact(dest, buildPath, {
-      runFile: execFileSync,
+    stored = await storeArtifactAsync(dest, buildPath, {
+      ...(signal ? { signal } : {}),
+      runFile: (file, args) =>
+        new Promise<void>((resolve, reject) => {
+          let failure: Error | null = null;
+          const child = execFile(file, args, { signal }, (error) => {
+            failure = error;
+          });
+          child.once('close', () => {
+            if (failure) reject(failure);
+            else resolve();
+          });
+        }),
       onRenameError: (staging) => fs.rmSync(staging, { recursive: true, force: true }),
     });
   } catch (error) {
+    signal?.throwIfAborted();
     console.warn(
       `[build-cache] could not store ${platform} ${shortKey(key, fingerprintHash)}: ${(error as Error).message}`,
     );

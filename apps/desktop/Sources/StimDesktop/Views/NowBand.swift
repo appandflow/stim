@@ -65,6 +65,7 @@ struct MachineResourceSummary: View {
 
 struct NowBand: View {
   @ObservedObject var status: StatusStore
+  var metrics: MetricsStore
   var gc: GcReportStore
   @EnvironmentObject private var actions: ActionCenter
   @State private var reclaiming: (title: String, offer: GcReport.MemoryReclaim)?
@@ -107,6 +108,11 @@ struct NowBand: View {
           }
         }
         .padding(.horizontal, Space.xl)
+        if metrics.memory?.pressure == .warning || metrics.memory?.pressure == .critical {
+          ForEach(status.payload?.maintenance?.memoryCulprits ?? []) { culprit in
+            culpritRow(culprit)
+          }
+        }
         if let machine = status.payload?.machine, !machine.owners.isEmpty {
           let actionWidth = actionWidth(machine.owners)
           let shown = showsAll ? machine.ranked[...] : machine.ranked.prefix(3)
@@ -163,6 +169,31 @@ struct NowBand: View {
     return owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
   }
 
+  private func culpritRow(_ culprit: MaintenanceStatus.MemoryCulprit) -> some View {
+    Card {
+      HStack(alignment: .top, spacing: Space.md) {
+        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Color(Tone.warning))
+          .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: Space.xs) {
+          Text("\(culprit.name) uses \(Format.fileSize(culprit.bytes))").font(.stim(.callout, weight: .semibold))
+          if let command = culprit.command {
+            Text(command).font(.stim(.callout, mono: true)).textSelection(.enabled)
+            if let note = culprit.note { Text(note).foregroundStyle(Palette.secondary) }
+          } else {
+            Text("Stim knows no safe restart for this process. Quit it only if you know what it is.")
+              .foregroundStyle(Palette.secondary)
+          }
+        }
+        Spacer(minLength: 0)
+        if let command = culprit.command {
+          CopyButton(command, help: "Copy the command that frees this memory")
+        }
+      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
   private func header(actionWidth: CGFloat) -> some View {
     HStack(spacing: Space.md) {
       Text("Process group").frame(maxWidth: .infinity, alignment: .leading)
@@ -197,8 +228,8 @@ struct NowBand: View {
         .accessibilityLabel("CPU, \(formatPercent(owner.cpuPercent))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
-      Text(Format.memory(Int64(owner.memory) * 1_048_576))
-        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memory) * 1_048_576))")
+      Text(Format.memory(Int64(owner.memoryMb) * 1_048_576))
+        .accessibilityLabel("Memory, \(Format.memory(Int64(owner.memoryMb) * 1_048_576))")
         .monospacedDigit()
         .frame(width: Self.valueWidth, alignment: .trailing)
       if actionWidth > 0 { action(owner).frame(width: actionWidth, alignment: .trailing) }

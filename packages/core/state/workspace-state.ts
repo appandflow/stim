@@ -1,8 +1,8 @@
-import { readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { isJsonObject, readJsonObject } from './json-file.ts';
 import { agentSessionOf } from './status-measures.ts';
-import { workspaceLogsDir, workspaceStateFile } from './paths.ts';
+import { workspaceLogsDir, workspaceMetadataFile, workspaceStateFile } from './paths.ts';
 import {
   BUILD_PHASES,
   BUILD_RESULTS,
@@ -198,8 +198,8 @@ function missChange(value: unknown): BuildMissChange | null {
 
 /** A recorded miss reason in the shape status reports, without `baseline.cacheKey`; null when malformed. */
 export function parseMissReason(value: unknown): BuildMissReason | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (typeof record.kind !== 'string' || !MISS_KINDS.has(record.kind) || typeof record.summary !== 'string')
     return null;
   const changes = (Array.isArray(record.changes) ? record.changes : [])
@@ -212,8 +212,10 @@ export function parseMissReason(value: unknown): BuildMissReason | null {
     summary: record.summary,
     changes,
     changeCount:
-      Number.isInteger(record.changeCount) && (record.changeCount as number) >= changes.length
-        ? (record.changeCount as number)
+      typeof record.changeCount === 'number' &&
+      Number.isInteger(record.changeCount) &&
+      record.changeCount >= changes.length
+        ? record.changeCount
         : changes.length,
     baseline:
       baseline &&
@@ -256,8 +258,8 @@ export function buildDiagnostics(value: unknown): BuildDiagnostic[] {
 }
 
 function devicePlacement(value: unknown): DevicePlacement | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const record = value;
   if (
     (record.decision !== 'local' &&
       record.decision !== 'hosted' &&
@@ -285,19 +287,21 @@ export function readDevicePlacement(
 }
 
 function lastBuildReport(platform: BuildPlatform, value: unknown): LastBuildReport | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (record.platform !== platform || (record.status !== 'ok' && record.status !== 'failed')) return null;
+  if (!isJsonObject(value)) return null;
+  const record = value;
+  if (record.platform !== platform) return null;
+  const status = record.status === 'success' ? 'ok' : record.status;
+  if (status !== 'ok' && status !== 'failed') return null;
   if (typeof record.startedAt !== 'string') return null;
   const durationMs = typeof record.durationMs === 'number' && record.durationMs >= 0 ? record.durationMs : null;
   const finished = new Date(Date.parse(record.startedAt) + (durationMs ?? Number.NaN));
   const reason =
     record.cacheHit === 'local' || record.cacheHit === 'remote' ? null : parseMissReason(record.missReason);
-  const diagnostics = record.status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
+  const diagnostics = status === 'failed' ? buildDiagnostics(record.diagnostics) : [];
   const placed = devicePlacement(record.devicePlacement);
   return {
     platform,
-    status: record.status,
+    status,
     cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
     cacheSkipped: record.cacheSkipped === true,
     durationMs,
@@ -345,11 +349,14 @@ function historyEntry(platform: BuildPlatform, value: unknown): BuildHistoryEntr
   const report = lastBuildReport(platform, value);
   if (!report) return null;
   const record = value as Record<string, unknown>;
-  const result = (BUILD_RESULTS as readonly unknown[]).includes(record.result)
-    ? (record.result as BuildResult)
-    : report.status === 'ok'
+  const result =
+    record.status === 'success'
       ? 'succeeded'
-      : 'failed';
+      : (BUILD_RESULTS as readonly unknown[]).includes(record.result)
+        ? (record.result as BuildResult)
+        : report.status === 'ok'
+          ? 'succeeded'
+          : 'failed';
   return {
     ...report,
     result,
@@ -395,9 +402,38 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
   return candidates.length ? Math.max(...candidates) : NaN;
 }
 
+/**
+ * When an ios, android or macos run last finished in the workspace, from its recorded builds (a cache hit counts),
+ * in epoch milliseconds; NaN when it records none. Dev server starts, reloads and logs do not count.
+ */
+export function lastNativeUseFrom(state: WorkspaceState | null): number {
+  const runs = [
+    ...Object.values(readLastBuilds(state)),
+    ...Object.values(readBuildHistory(state)).flatMap((entries) => entries.slice(0, 1)),
+  ];
+  const times = runs.map((run) => Date.parse(run.finishedAt ?? run.startedAt)).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : NaN;
+}
+
 export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
 
+/**
+ * When the workspace was last used, in epoch milliseconds. A workspace that recorded no use falls back to the mtime
+ * of its workspace.json, which is written once when the workspace is created, so it is a lower bound on the last
+ * use. NaN when its state.json exists but does not parse, or when workspace.json cannot be read either.
+ */
 export function workspaceLastUsed(root: string): number {
+  const used = recordedLastUse(root);
+  if (Number.isFinite(used)) return used;
+  if (existsSync(workspaceStateFile(root)) && readWorkspaceState(root) === null) return NaN;
+  try {
+    return statSync(workspaceMetadataFile(root)).mtimeMs;
+  } catch {
+    return NaN;
+  }
+}
+
+function recordedLastUse(root: string): number {
   const logs = workspaceLogsDir(root);
   let mtimes: number[] = [];
   try {

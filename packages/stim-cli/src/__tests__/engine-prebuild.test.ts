@@ -7,13 +7,12 @@ import {
   PREBUILD_ERROR,
   nativeDirInFingerprint,
   nativeDirName,
-  needsPrebuild,
   planPrebuild,
+  planPrebuildAsync,
   prebuildAction,
   prebuildRefusal,
   recordPrebuild,
   runPrebuild,
-  shouldPrebuild,
 } from '../engine/prebuild.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readClaimSet } from '../ownership-claim.ts';
@@ -44,24 +43,9 @@ function installFakeExpoBin() {
 }
 
 describe('the decision', () => {
-  test('shouldPrebuild is expo AND no native directory, nothing else', () => {
-    expect(shouldPrebuild({ isExpo: true, nativeDirExists: false })).toBe(true);
-    expect(shouldPrebuild({ isExpo: true, nativeDirExists: true })).toBe(false);
-    expect(shouldPrebuild({ isExpo: false, nativeDirExists: false })).toBe(false);
-    expect(shouldPrebuild({ isExpo: false, nativeDirExists: true })).toBe(false);
-  });
-
   test('nativeDirName maps the platform to its directory', () => {
     expect(nativeDirName('ios')).toBe('ios');
     expect(nativeDirName('android')).toBe('android');
-  });
-
-  test('needsPrebuild reads the directory off the disk', () => {
-    expect(needsPrebuild(root, 'ios', true)).toBe(true);
-    mkdirSync(join(root, 'ios'), { recursive: true });
-    expect(needsPrebuild(root, 'ios', true)).toBe(false);
-    expect(needsPrebuild(root, 'android', true)).toBe(true);
-    expect(needsPrebuild(root, 'android', false)).toBe(false);
   });
 
   test('prebuildAction regenerates a native dir outside the key unless its recorded prebuild ran on this fingerprint', () => {
@@ -94,34 +78,37 @@ describe('the decision', () => {
     ).toBe(false);
   });
 
-  test('planPrebuild compares the recorded prebuild fingerprint and refuses a git-tracked or unreadable checkout', () => {
-    process.env.STIM_HOME = join(root, 'stim-home');
-    try {
-      mkdirSync(join(root, 'ios'), { recursive: true });
-      writeFileSync(join(root, 'ios', 'Podfile'), '');
-      const plan = (fingerprint: string) =>
-        planPrebuild(root, 'ios', {
-          isExpo: true,
-          fingerprint,
-          sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
-        });
-      expect(plan('abc')).toBe('regenerate');
-      recordPrebuild(root, 'ios', 'abc');
-      recordPrebuild(root, 'android', 'def');
-      expect(plan('abc')).toBe('none');
-      expect(plan('abd')).toBe('regenerate');
+  test.each([planPrebuild, planPrebuildAsync])(
+    'prebuild planning compares the recorded fingerprint and refuses a git-tracked or unreadable checkout',
+    async (planner) => {
+      process.env.STIM_HOME = join(root, 'stim-home');
+      try {
+        mkdirSync(join(root, 'ios'), { recursive: true });
+        writeFileSync(join(root, 'ios', 'Podfile'), '');
+        const plan = (fingerprint: string) =>
+          planner(root, 'ios', {
+            isExpo: true,
+            fingerprint,
+            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
+          });
+        expect(await plan('abc')).toBe('regenerate');
+        recordPrebuild(root, 'ios', 'abc');
+        recordPrebuild(root, 'android', 'def');
+        expect(await plan('abc')).toBe('none');
+        expect(await plan('abd')).toBe('regenerate');
 
-      writeFileSync(join(root, '.git'), 'gitdir: /nonexistent/stim-broken-worktree\n');
-      expect(plan('abd')).toBe('refuse');
-      rmSync(join(root, '.git'));
+        writeFileSync(join(root, '.git'), 'gitdir: /nonexistent/stim-broken-worktree\n');
+        expect(await plan('abd')).toBe('refuse');
+        rmSync(join(root, '.git'));
 
-      execFileSync('git', ['init', '-q', root]);
-      execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);
-      expect(plan('abd')).toBe('refuse');
-    } finally {
-      delete process.env.STIM_HOME;
-    }
-  });
+        execFileSync('git', ['init', '-q', root]);
+        execFileSync('git', ['-C', root, 'add', 'ios/Podfile']);
+        expect(await plan('abd')).toBe('refuse');
+      } finally {
+        delete process.env.STIM_HOME;
+      }
+    },
+  );
 
   test('prebuildRefusal names the bare-project case and nothing else', () => {
     const refusal = prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: false });
@@ -221,20 +208,27 @@ describe('runPrebuild', () => {
     ]);
   });
 
-  test('regenerating adds --clean to the fixed prebuild invocation', async () => {
+  test.each([
+    ['57.0.26', false, ['--no-clean']],
+    ['56.1.16', false, []],
+    ['57.0.26', true, ['--clean']],
+  ])('a prebuild over an existing ios/ with expo %s and clean %s', async (version, clean, extra) => {
     installFakeExpoBin();
+    mkdirSync(join(root, 'node_modules', 'expo'), { recursive: true });
+    writeFileSync(join(root, 'node_modules', 'expo', 'package.json'), JSON.stringify({ name: 'expo', version }));
     mkdirSync(join(root, 'ios'), { recursive: true });
     const spawnCalls: SpawnCall[] = [];
     const result = await runPrebuild(root, 'ios', collectingWriter(), {
       isExpo: true,
-      clean: true,
+      clean,
       spawnFn: (cmd, args, opts) => {
         spawnCalls.push({ cmd, args, opts });
-        return fakeExpoChild({});
+        return fakeExpoChild({ lines: ['Error: [ios.dangerous]: withIosDangerousBaseMod'], code: 1 });
       },
     });
-    expect(result.ok).toBe(true);
-    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', '--clean']);
+    expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', ...extra]);
+    expect(result.failed).toBe(true);
+    expect(result.remedy ?? '').toMatch(clean ? /^$/ : /delete ios\/ and run again/);
   });
 
   test('a non-zero exit comes back as {failed, lastLines}', async () => {

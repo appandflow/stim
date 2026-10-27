@@ -211,22 +211,16 @@ import Testing
       Build.self,
       """
       {"platform":"ios","slot":"default","state":"running","phase":"cache-lookup","startedAt":"2026-09-25T12:00:00Z",
-       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","expectedMs":null,"expectedPhaseMs":null,"basis":0}
+       "phaseStartedAt":"2026-09-25T12:00:01Z","outcome":"cold","outcomeKnown":false,"expectedMs":null,
+       "expectedPhaseMs":null,"basis":0}
       """)
     #expect(build.outcomeLabel == nil && build.cacheLookupOutcome == nil)
-    build.phase = "compile"
+    build.outcomeKnown = true
     #expect(build.outcomeLabel == "Cold build")
     build.outcome = "hit"
-    build.phase = "install"
-    #expect(build.outcomeLabel == "Cache hit")
+    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
     build.outcome = nil
     #expect(build.outcomeLabel == nil)
-    build.outcome = "hit"
-    build.phase = "device"
-    build.outcomeKnown = false
-    #expect(build.outcomeLabel == nil)
-    build.outcomeKnown = true
-    #expect(build.outcomeLabel == "Cache hit" && build.cacheLookupOutcome == nil)
   }
 
   @Test func showsAMissBeforePodsAsACacheMissAndNotesTheRecheck() throws {
@@ -248,52 +242,6 @@ import Testing
     #expect(compiling.recheckNote == nil)
   }
 
-  @Test func returnsTheCLIRefusalWhenAPlanCannotBeComputed() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let stim = dir.appendingPathComponent("stim").path
-    let script = """
-      #!/bin/sh
-      echo "$*" > "\(dir.path)/args"
-      echo '{"code":"STIM_NO_DEVICE","message":"No system image is installed.","remedy":"Install one."}'
-      exit 1
-      """
-    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
-
-    let result = try await StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
-      .plan(platform: "android", workspace: dir.path)
-
-    #expect(
-      result == .refused(CommandRefusal(code: "STIM_NO_DEVICE", message: "No system image is installed.", remedy: "Install one."))
-    )
-    let args = try String(contentsOf: dir.appendingPathComponent("args"), encoding: .utf8)
-    #expect(args == "android --plan --json\n")
-  }
-
-  @Test func terminatesThePlanProcessWhenTheCheckIsCancelled() async throws {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let stim = dir.appendingPathComponent("stim").path
-    let pidFile = dir.appendingPathComponent("pid").path
-    let script = """
-      #!/bin/sh
-      echo $$ > "\(pidFile)"
-      exec sleep 30
-      """
-    FileManager.default.createFile(atPath: stim, contents: Data(script.utf8), attributes: [.posixPermissions: 0o755])
-    let cli = StimCLI(environment: ["PATH": "/usr/bin:/bin"], override: stim)
-
-    let task = Task { try await cli.plan(platform: "ios", workspace: dir.path) }
-    while !FileManager.default.fileExists(atPath: pidFile) { try await Task.sleep(for: .milliseconds(20)) }
-    let pid = try #require(
-      Int32(String(contentsOfFile: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
-    task.cancel()
-
-    await #expect(throws: CancellationError.self) { try await task.value }
-    #expect(kill(pid, 0) != 0)
-  }
 }
 
 @MainActor

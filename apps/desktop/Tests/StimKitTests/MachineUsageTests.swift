@@ -9,13 +9,13 @@ import Testing
       {"environments":[{"path":"/w/a","live":true,"memoryMb":1200,"memorySource":"footprint","warnings":[]}],
        "machine":{"memorySource":"footprint","owners":[
         {"kind":"simulator","name":"stim-app (iPhone 17)","workspace":"/w/a","slot":"tablet","id":"UDID","owned":true,"cpuPercent":12,"residentMb":2071,"memoryMb":1200,"processes":310},
-        {"kind":"gpu","name":"future","workspace":null,"id":null,"owned":false,"cpuPercent":1,"residentMb":2,"processes":1}
+        {"kind":"gpu","name":"future","workspace":null,"id":null,"owned":false,"cpuPercent":1,"residentMb":2,"memoryMb":2,"processes":1}
       ]}}
       """
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(json.utf8))
     let owners = try #require(payload.machine?.owners)
-    #expect(owners[0].kind == .simulator && owners[0].slot == "tablet" && owners[0].memory == 1200)
-    #expect(owners[1].kind == .other && owners[1].memory == 2)
+    #expect(owners[0].kind == .simulator && owners[0].slot == "tablet" && owners[0].memoryMb == 1200)
+    #expect(owners[1].kind == .other && owners[1].memoryMb == 2)
     #expect(payload.machine?.memorySource == .footprint && payload.environments[0].memorySource == .footprint)
     #expect(payload.environments[0].footprintBytes == Int64(1200) * 1_048_576)
     let estimate = #"{"environments":[{"path":"/w/b","live":true,"memoryMb":2200,"memorySource":"estimate","warnings":[]}]}"#
@@ -50,9 +50,9 @@ import Testing
 
   @Test func ranksByMemoryThenCpuThenName() {
     let usage = MachineUsage(owners: [
-      MachineOwner(kind: .shared, name: "b", cpuPercent: 5, residentMb: 10),
-      MachineOwner(kind: .shared, name: "a", cpuPercent: 5, residentMb: 10),
-      MachineOwner(kind: .build, name: "build", cpuPercent: 220, residentMb: 1960),
+      MachineOwner(kind: .shared, name: "b", cpuPercent: 5, memoryMb: 10),
+      MachineOwner(kind: .shared, name: "a", cpuPercent: 5, memoryMb: 10),
+      MachineOwner(kind: .build, name: "build", cpuPercent: 220, memoryMb: 1960),
       MachineOwner(kind: .simulator, name: "sim", cpuPercent: 5, residentMb: 8000, memoryMb: 1500),
     ])
     #expect(usage.ranked.map(\.name) == ["build", "sim", "a", "b"])

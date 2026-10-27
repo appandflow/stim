@@ -16,6 +16,7 @@ interface IosDeviceRecord {
   owned?: boolean;
   serial?: string;
   simslimManaged?: boolean;
+  simslimApplied?: { profile: string; springBoardPid: number };
   schemeApprovals?: string[];
   [key: string]: unknown;
 }
@@ -77,30 +78,46 @@ export interface ConcurrencyLimits {
   maxDevices: number;
 }
 
+export interface PlatformDeviceLimits {
+  ios: number;
+  android: number;
+  macos: number;
+}
+
 export interface StimConfig {
   version?: number;
+  homeId?: string;
   projects: Record<string, ProjectRecord>;
   repos: Record<string, RepoRecord>;
   tempDir?: unknown;
   iosSimulatorApp?: unknown;
   androidEmulatorApp?: unknown;
   optimizations?: unknown;
-  concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
+  concurrency?: {
+    maxBuilds?: unknown;
+    maxDevices?: unknown;
+    maxIosDevices?: unknown;
+    maxAndroidDevices?: unknown;
+    maxMacosApps?: unknown;
+  };
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };
   hosting?: { agentDriver?: unknown };
   debug?: { logs?: unknown };
   server?: {
+    buildsPaused?: unknown;
+    devicesPaused?: unknown;
     acceptClientBuilds?: unknown;
+    lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;
     gradleDaemonIdleMinutes?: unknown;
   };
   remote?: {
     machines?: unknown;
+    easMaxDurationMinutes?: unknown;
     build?: unknown;
-    buildMode?: unknown;
     buildPoolDisabled?: unknown;
     devicePoolDisabled?: unknown;
   };

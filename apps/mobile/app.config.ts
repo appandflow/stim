@@ -26,6 +26,7 @@ const config: ExpoConfig = {
       RCTUseAssetCatalog: true,
     },
     appleTeamId: 'R7E8P23K3N',
+    associatedDomains: ['applinks:stim.appandflow.com'],
   },
   android: {
     package: id,
@@ -63,13 +64,11 @@ const config: ExpoConfig = {
     ['expo-notifications', { mode: dev ? 'development' : 'production' }],
     '@sentry/react-native/expo',
     './plugins/sentry-upload-only-with-token',
+    './plugins/exclude-client-key-from-backup',
   ],
   experiments: {
     typedRoutes: true,
     reactCompiler: true,
-    inlineModules: {
-      watchedDirectories: ['modules/stim-video/ios', 'modules/stim-video/android'],
-    },
   },
   extra: {
     router: {},
@@ -79,7 +78,16 @@ const config: ExpoConfig = {
     },
   },
   owner: 'app_and_flow',
-  runtimeVersion: { policy: 'fingerprint' },
+  // @expo/cli sets EXPO_DEV_SERVER_ORIGIN in the dev server, which its runtimeversion:resolve child inherits. That child
+  // recomputes the fingerprint on every manifest request (expo/expo#46415); the dev launcher ignores the runtime.
+  // `expo run:* --configuration Release` sets the variable too before it builds, so the command must match as well,
+  // and eas-cli passes --workflow where the dev server does not.
+  runtimeVersion:
+    process.env.EXPO_DEV_SERVER_ORIGIN &&
+    process.argv.includes('runtimeversion:resolve') &&
+    !process.argv.includes('--workflow')
+      ? 'dev-server'
+      : { policy: 'fingerprint' },
   updates: {
     url: 'https://u.expo.dev/1e92e2da-38f5-415b-b82e-72f4edd2b2bc',
     requestHeaders: { 'expo-channel-name': dev ? 'development' : 'production' },

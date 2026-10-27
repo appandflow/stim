@@ -1,0 +1,36 @@
+{
+  "name": "@stim-cli/transport-tailscale",
+  "version": "1.32.0",
+  "description": "Tailscale transport for stim-server: tailnet-only serve route, whois identity and peer pinning.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/appandflow/stim.git",
+    "directory": "packages/transport-tailscale"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "main": "dist/index.mjs",
+  "types": "dist/index.d.mts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "module-sync": "./dist/index.mjs",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "scripts": {
+    "build": "tsdown"
+  },
+  "dependencies": {
+    "@stim-cli/core": "workspace:*",
+    "@stim-cli/transport": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

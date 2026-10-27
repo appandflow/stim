@@ -1,22 +1,46 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, readlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { configDir } from '@stim-cli/core';
 import {
+  DEVICE_HOST_LIMITS,
   HOSTED_APP_CHUNK_BYTES,
+  HOSTED_PARKED_CANDIDATES,
+  hostedWorkerSettleMs,
   hostedMacosAppSlot,
   isJsonObject,
   readDeviceHostMachines,
   type DeviceHostMachineCredential,
+  type HostedAppOffer,
 } from '@stim-cli/core/state';
+import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { pinnedEndpoint } from '../offload/tailnet.ts';
+import {
+  diagnoseConnectFailure,
+  resolveEndpoint,
+  SERVER_OUTDATED,
+  type ConnectFailure,
+  type Endpoint,
+} from '../offload/tailnet.ts';
 import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 export const POLL_MS: number = 500;
-/** Covers 90s stop + 15s final logs + three 10s worker group-settle bounds, with 45s for polling and transport. */
-export const SESSION_TIMEOUT_MS: number = 90_000 + 15_000 + 3 * 10_000 + 45_000;
-export const INSTALL_TIMEOUT_MS: number = 5 * 60_000;
+export const HOSTED_POLL_MARGIN_MS: number = 45_000;
+export const HOSTED_REQUEST_MARGIN_MS: number = 5_000;
+const workerBoundMs = (deadlineMs: number): number => deadlineMs + hostedWorkerSettleMs();
+export const SESSION_TIMEOUT_MS: number =
+  hostedWorkerSettleMs() +
+  workerBoundMs(DEVICE_HOST_LIMITS.logsMs) +
+  2 * workerBoundMs(DEVICE_HOST_LIMITS.stopMs) +
+  HOSTED_POLL_MARGIN_MS;
+export const PREPARE_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const INSTALL_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.prepareMs) + HOSTED_POLL_MARGIN_MS;
+export const OFFER_TIMEOUT_MS: number = workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + HOSTED_REQUEST_MARGIN_MS;
+export const RESERVE_TIMEOUT_MS: number =
+  HOSTED_PARKED_CANDIDATES * (workerBoundMs(DEVICE_HOST_LIMITS.offerMs) + workerBoundMs(DEVICE_HOST_LIMITS.stopMs)) +
+  workerBoundMs(DEVICE_HOST_LIMITS.offerMs) +
+  HOSTED_REQUEST_MARGIN_MS;
 
 interface ManifestFile {
   path: string;
@@ -39,7 +63,6 @@ export interface HostConnection {
   connection: BuildConnection;
 }
 
-export const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms));
 export const sha256 = (content: Buffer): string => createHash('sha256').update(content).digest('hex');
 
 function credentialRefusal(message: string, remedy = 'Run stim doctor.'): Error & { code: string; remedy: string } {
@@ -70,59 +93,114 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const credential = credentials.find((each) => each.machine === machine);
   if (!credential)
     throw credentialRefusal(
-      `This Mac has not asked ${machine} for hosting access. Run stim doctor --fix.`,
+      `This machine has not asked ${machine} for hosting access. Run stim doctor --fix.`,
       'Run stim doctor --fix.',
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} approves it with stim-server devices grant ${credential.deviceId} --device-host; then run stim doctor.`;
-    throw credentialRefusal(`${machine} has not confirmed hosting access for this Mac. ${remedy}`, remedy);
+    const remedy = `A person on ${machine} runs the stim-server setup command stim doctor --fix printed; then run stim doctor.`;
+    throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;
 }
 
-/** Connects only to the pinned node of an approved remote Mac, and only when it grants `device-host`. */
+function turnedAway(machine: string, opened: ConnectFailure): string | null {
+  if (opened.code === SERVER_OUTDATED)
+    return `${machine} runs a stim-server that speaks an older protocol than this Stim. Run stim doctor for the command that updates it there, then retry.`;
+  if (opened.refused) return `${machine} refused this machine: ${opened.failure.replace(/\.+$/, '')}. Run stim doctor.`;
+  return null;
+}
+
+/** Connects only to the stim-server that proves it holds the approved machine's pinned key, and only for `device-host`. */
 export async function connectHost(
   machine: string,
   timeoutMs: number = CONNECT_TIMEOUT_MS,
   strict = false,
+  signal?: AbortSignal,
 ): Promise<HostConnection> {
+  signal?.throwIfAborted();
   const credential = hostingCredential(machine);
-  const target = pinnedEndpoint(credential);
+  const target = await resolveEndpoint(credential, undefined, signal);
+  signal?.throwIfAborted();
   if (typeof target === 'string')
     throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'STIM_HOSTING_REFUSED' });
-  const opened = await BuildConnection.open(target, credential.deviceToken, timeoutMs, 'device-host').catch(
+  const opened = await BuildConnection.open(target, credential.serverKey!, timeoutMs, 'device-host', signal).catch(
     (error: unknown) => {
       throw Object.assign(
-        new Error(`${machine} is unreachable. Check stim-server and its tailnet serve route on ${machine}.`, {
+        new Error(`${machine} is unreachable. Run stim doctor to see which layer failed.`, {
           cause: error,
         }),
         { code: strict ? 'STIM_HOSTING_REFUSED' : 'closed' },
       );
     },
   );
+  if (signal?.aborted && opened instanceof BuildConnection) opened.close();
+  signal?.throwIfAborted();
   if (!(opened instanceof BuildConnection)) {
+    const refusal = turnedAway(machine, opened);
+    const diagnosis = refusal === null ? await diagnoseConnectFailure(machine, opened, signal) : null;
     throw Object.assign(
       new Error(
-        opened.refused
-          ? `${machine} refused this Mac: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]').replace(/\.+$/, '')}. Run stim doctor.`
-          : `${machine} is unreachable: ${opened.failure.replaceAll(credential.deviceToken, '[redacted]')}. Check stim-server and its tailnet serve route on ${machine}.`,
+        refusal ??
+          diagnosis?.message ??
+          `${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`,
       ),
       {
         code: strict ? 'STIM_HOSTING_REFUSED' : opened.refused ? 'STIM_HOSTING_REFUSED' : (opened.code ?? 'closed'),
         hostCode: opened.code,
+        ...(diagnosis ? { remedy: diagnosis.remedy } : {}),
       },
     );
   }
   return { machine, credential, connection: opened };
 }
 
-const gatewaySecrets = new WeakMap<HostConnection, string>();
+/**
+ * Opens `device-host` connections to `machine` for a caller that retries on its own, as `connectHost` does but without
+ * diagnosing failures, resolving the machine's address again only after one fails. Only a failure a retry cannot fix,
+ * such as a refusal or a missing approval, carries a `STIM_` code; Tailscale not running or not listing the machine is
+ * worth retrying.
+ */
+export function hostConnector(machine: string): () => Promise<BuildConnection> {
+  let resolving: Promise<Endpoint | string> | undefined;
+  return async () => {
+    const credential = hostingCredential(machine);
+    const pending = (resolving ??= resolveEndpoint(credential));
+    const target = await pending.catch((error: unknown) => {
+      if (resolving === pending) resolving = undefined;
+      throw error;
+    });
+    if (typeof target === 'string') {
+      if (resolving === pending) resolving = undefined;
+      throw Object.assign(new Error(`Stim does not connect to ${machine}: ${target}.`), { code: 'closed' });
+    }
+    const opened = await BuildConnection.open(target, credential.serverKey!, CONNECT_TIMEOUT_MS, 'device-host').catch(
+      (error: unknown): ConnectFailure => ({
+        failure: error instanceof Error ? error.message : String(error),
+        refused: false,
+      }),
+    );
+    if (opened instanceof BuildConnection) return opened;
+    const refusal = turnedAway(machine, opened);
+    if (refusal !== null) throw credentialRefusal(refusal);
+    if (resolving === pending) resolving = undefined;
+    throw Object.assign(
+      new Error(`${machine} is unreachable: ${opened.failure}. Run stim doctor to see which layer failed.`),
+      { code: opened.code ?? 'closed' },
+    );
+  };
+}
 
-function redactHostText(host: HostConnection, message: string): string {
-  for (const secret of [host.credential.deviceToken, gatewaySecrets.get(host)]) {
-    if (secret) message = message.replaceAll(secret, '[redacted]');
-  }
-  return message;
+export function requireHostedAppMode(
+  host: HostConnection,
+  platform: 'ios' | 'android',
+  mode?: HostedAppOffer['mode'],
+): void {
+  if (mode !== 'process') return;
+  if (!host.connection.supports(platform === 'ios' ? 'hosted-ios-process' : 'hosted-android-process'))
+    throw credentialRefusal(
+      `${host.machine} does not support hosted ${platform} process apps.`,
+      `Update stim-server on ${host.machine} to a version supporting hosted ${platform} process apps, then retry.`,
+    );
 }
 
 export async function call(
@@ -131,17 +209,13 @@ export async function call(
   params: unknown,
   timeoutMs?: number,
 ): Promise<Record<string, unknown>> {
-  if (method === 'device-host.metro.open' && isJsonObject(params) && typeof params.secret === 'string')
-    gatewaySecrets.set(host, params.secret);
   const reply = await host.connection.request(method, params, timeoutMs);
   if ('error' in reply)
-    throw Object.assign(new Error(`${host.machine} refused ${method}: ${redactHostText(host, reply.error.message)}`), {
+    throw Object.assign(new Error(`${host.machine} refused ${method}: ${reply.error.message}`), {
       code: reply.error.code,
     });
   if (!isJsonObject(reply.result)) throw new Error(`${host.machine} answered ${method} without a result.`);
-  return typeof reply.result.notice === 'string'
-    ? { ...reply.result, notice: redactHostText(host, reply.result.notice) }
-    : reply.result;
+  return reply.result;
 }
 
 export function hostedSession(
@@ -190,7 +264,7 @@ export function probeHostedSession(
   placement: { machine: string; session: string; device?: unknown; platform?: 'ios' | 'android' },
   { timeoutMs = 3000, ttlMs = 10_000 }: ProbeOptions = {},
 ): Promise<HostedSessionProbe> {
-  const key = JSON.stringify([placement.machine, placement.session]);
+  const key = JSON.stringify([configDir(), placement.machine, placement.session]);
   const cached = probeCache.get(key);
   if (ttlMs > 0 && cached && cached.expiresAt > Date.now()) return cached.promise;
   const promise = probeSession(placement, timeoutMs);
@@ -247,20 +321,31 @@ export async function settle(
   passing: string[],
   timeoutMs: number,
   platform: 'ios' | 'android' | 'macos' = 'macos',
+  signal?: AbortSignal,
 ): Promise<HostedSession> {
   const deadline = Date.now() + timeoutMs;
+  const what = `wait for hosted session ${session.id}`;
   while (passing.includes(session.state)) {
+    throwIfCancelled(signal, what);
     if (Date.now() > deadline)
       throw new Error(`The hosted session ${session.id} on ${host.machine} stayed ${session.state}.`);
-    await sleep(POLL_MS);
+    await cancellableSleep(POLL_MS, { signal, what });
     session = await attach(host, session.id, undefined, platform);
   }
   return session;
 }
 
+const reason = (session: HostedSession): string => (session.notice ? `: ${session.notice.replace(/\.+$/, '')}` : '');
+
 export function unknownSession(host: HostConnection, session: HostedSession): Error {
   return new Error(
-    `The hosted session ${session.id} on ${host.machine} is in an unknown state${session.notice ? `: ${session.notice}` : ''}. Run stim stop to reconcile it.`,
+    `The hosted session ${session.id} on ${host.machine} is in an unknown state${reason(session)}. Run stim stop to reconcile it.`,
+  );
+}
+
+export function stoppedSession(host: HostConnection, session: HostedSession): Error {
+  return new Error(
+    `The hosted session ${session.id} on ${host.machine} stopped before it was ready${reason(session)}. Retry when the host can take it; it needs no stim stop.`,
   );
 }
 
@@ -295,6 +380,9 @@ export function bundleManifest(bundle: string): { files: ManifestFile[]; content
   return { files, content };
 }
 
+/** stim-server answers one connection's requests in arrival order, so chunks sent in order reach it in order. */
+const UPLOAD_WINDOW = 64;
+
 export async function upload(
   host: HostConnection,
   ids: { session: string; attempt: string },
@@ -303,20 +391,40 @@ export async function upload(
 ): Promise<void> {
   if (!Array.isArray(missing))
     throw new Error(`${host.machine} answered device-host.app.offer without missing content.`);
-  for (const entry of missing) {
+  const files = missing.map((entry) => {
     const read = isJsonObject(entry) && typeof entry.sha256 === 'string' ? content.get(entry.sha256) : undefined;
-    if (!read || !isJsonObject(entry) || typeof entry.offset !== 'number') {
+    if (!read || !isJsonObject(entry) || typeof entry.sha256 !== 'string' || typeof entry.offset !== 'number') {
       throw new Error(`${host.machine} asked for content this app does not have.`);
     }
-    const bytes = read();
-    let offset = entry.offset;
-    do {
-      const data = bytes.subarray(offset, offset + HOSTED_APP_CHUNK_BYTES).toString('base64');
-      const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: entry.sha256, offset, data })).offset;
-      if (typeof next !== 'number' || (next <= offset && next !== bytes.length)) {
+    return { digest: entry.sha256, start: entry.offset, read };
+  });
+  const inFlight = new Set<Promise<void>>();
+  let failure: Error | undefined;
+  const send = async (digest: string, offset: number, end: number, data: string): Promise<void> => {
+    try {
+      const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: digest, offset, data })).offset;
+      if (typeof next !== 'number' || next < end) {
         throw new Error(`${host.machine} did not accept app content at byte ${offset}.`);
       }
-      offset = next;
+    } catch (error) {
+      failure ??= error instanceof Error ? error : new Error(String(error));
+    }
+  };
+  for (const { digest, start, read } of files) {
+    if (failure) break;
+    const bytes = read();
+    let offset = start;
+    do {
+      if (inFlight.size >= UPLOAD_WINDOW) await Promise.race(inFlight);
+      if (failure) break;
+      const end = Math.min(offset + HOSTED_APP_CHUNK_BYTES, bytes.length);
+      const pending = send(digest, offset, end, bytes.subarray(offset, end).toString('base64')).finally(() =>
+        inFlight.delete(pending),
+      );
+      inFlight.add(pending);
+      offset = end;
     } while (offset < bytes.length);
   }
+  await Promise.all(inFlight);
+  if (failure) throw failure;
 }

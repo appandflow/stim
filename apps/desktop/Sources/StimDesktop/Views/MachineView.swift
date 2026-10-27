@@ -22,6 +22,8 @@ struct MachineView: View {
   @AppStorage("settingsTab") private var settingsTab = "app"
   @State private var selectedMachine: String?
   @State private var selectedTab: MachineTab = .overview
+  @State private var selectedPairing: String?
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @State private var selection: Set<FreeAction>?
   @State private var confirming: [StimCommand]?
   @State private var removing: WorkspaceStorage?
@@ -40,6 +42,10 @@ struct MachineView: View {
     selectedMachine.flatMap { (buildMachines.entries ?? []).contains($0) ? $0 : nil }
   }
 
+  private var pairing: PairedServers.Entry? {
+    selectedPairing.flatMap { id in pairedSessions.entries.first { $0.id == id } }
+  }
+
   var body: some View {
     let report = reportCache.value(
       for: StorageReportInputs(
@@ -51,15 +57,15 @@ struct MachineView: View {
         header
         machineChoices
         Divider()
-        if selectedTab == .overview,
+        if pairing == nil, selectedTab == .overview,
           let variant = Tips.emptyState(
             gate: tips.established, machines: buildMachines.entries, settingsError: buildMachines.settings.error,
-            selectedMachine: machine, macs: buildMachines.macs)
+            selectedMachine: machine, peers: buildMachines.peers)
         {
           BuildMachinesEmptyState(
             add: {
               OpenRequests.shared.addMachine = AddMachineRequest(
-                machineID: Tips.firstMac(buildMachines.macs)?.id, hostedSimulators: false)
+                machineID: Tips.preselected(buildMachines.peers, hostedSimulators: false)?.id, hostedSimulators: false)
             }, needsTailscale: variant == .tailscale)
         }
         if let failure = buildMachines.settingsFailure {
@@ -69,7 +75,11 @@ struct MachineView: View {
           Text("Could not load build history: \(error)")
             .font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
         }
-        if let machine {
+        if let pairing {
+          PairedMachineSection(
+            entry: pairing, session: pairedSessions.sessions[pairing.id], status: status.paired[pairing.id],
+            work: RemoteWork.list(status.ownedEnvironments).filter { $0.owner == .paired(pairing.id) })
+        } else if let machine {
           MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
         } else {
           MachineHeading(icon: "laptopcomputer", title: Host.current().localizedName ?? "This Mac", subtitle: "This Mac") {
@@ -83,13 +93,14 @@ struct MachineView: View {
               metrics: metrics, volume: lowestVolume, minimumFreeBytes: minimumFreeBytes, compact: width < 620)
             if width >= 820 {
               HStack(alignment: .top, spacing: Space.xl) {
-                NowBand(status: status, gc: gc).frame(maxWidth: .infinity)
+                NowBand(status: status, metrics: metrics, gc: gc).frame(maxWidth: .infinity)
                 cleanupSummary(report).frame(width: 240)
               }
             } else {
-              NowBand(status: status, gc: gc)
+              NowBand(status: status, metrics: metrics, gc: gc)
               cleanupSummary(report)
             }
+            CapacitySection(status: status)
             ThisMacPlacements(model: buildMachines, limit: 3)
           case .builds:
             ThisMacPlacements(model: buildMachines, showsEmpty: true)
@@ -173,11 +184,12 @@ struct MachineView: View {
       HStack(spacing: Space.md) {
         Button {
           selectedMachine = nil
+          selectedPairing = nil
         } label: {
-          machineLabel("This Mac", subtitle: "Local", tone: nil, selected: machine == nil)
+          machineLabel("This Mac", subtitle: "Local", tone: nil, selected: machine == nil && pairing == nil)
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(machine == nil ? .isSelected : [])
+        .accessibilityAddTraits(machine == nil && pairing == nil ? .isSelected : [])
         #if DEBUG
           ForEach(previewMachineNames, id: \.self) { name in
             Button {
@@ -192,27 +204,41 @@ struct MachineView: View {
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
           Button {
             selectedMachine = entry
+            selectedPairing = nil
           } label: {
             let readiness = buildMachines.check(in: checkout)?.statuses.first { $0.machine == entry }?.readiness
             machineLabel(
               machineName(entry), subtitle: readiness?.title ?? "Not checked", tone: readiness?.tone ?? .neutral,
-              selected: machine == entry)
+              selected: machine == entry && pairing == nil)
           }
           .buttonStyle(.plain)
-          .accessibilityAddTraits(machine == entry ? .isSelected : [])
+          .accessibilityAddTraits(machine == entry && pairing == nil ? .isSelected : [])
           .help(entry)
+        }
+        ForEach(pairedSessions.entries) { entry in
+          Button {
+            selectedPairing = entry.id
+          } label: {
+            Label(pairedName(entry), systemImage: "link")
+          }
+          .buttonStyle(.stim(pairing?.id == entry.id ? .primary : .secondary, .regular))
+          .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
+          .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
         }
       }
       .fixedSize(horizontal: true, vertical: false)
-      Picker("Machine", selection: Binding(get: { machine }, set: { selectedMachine = $0 })) {
-        Text("This Mac").tag(String?.none)
+      Picker("Machine", selection: Binding(get: { choice }, set: { choose($0) })) {
+        Text("This Mac").tag(MachineChoice?.none)
         #if DEBUG
           ForEach(previewMachineNames, id: \.self) { name in
-            Text("\(name) (preview)").tag(Optional("preview:\(name)")).disabled(true)
+            Text("\(name) (preview)").tag(Optional(MachineChoice.buildMachine("preview:\(name)"))).disabled(true)
           }
         #endif
         ForEach(buildMachines.entries ?? [], id: \.self) { entry in
-          Text(verbatim: machineName(entry)).tag(Optional(entry))
+          Text(verbatim: machineName(entry)).tag(Optional(MachineChoice.buildMachine(entry)))
+        }
+        ForEach(pairedSessions.entries) { entry in
+          Text(verbatim: pairedName(entry)).tag(Optional(MachineChoice.paired(entry.id)))
         }
       }
       .pickerStyle(.menu)
@@ -264,6 +290,33 @@ struct MachineView: View {
       Spacer(minLength: 0)
     }
     .background(alignment: .bottom) { Rectangle().fill(Palette.border).frame(height: 1) }
+  }
+
+  private enum MachineChoice: Hashable {
+    case buildMachine(String)
+    case paired(String)
+  }
+
+  private var choice: MachineChoice? {
+    if let pairing { return .paired(pairing.id) }
+    return machine.map { .buildMachine($0) }
+  }
+
+  private func choose(_ choice: MachineChoice?) {
+    switch choice {
+    case .buildMachine(let entry):
+      selectedMachine = entry
+      selectedPairing = nil
+    case .paired(let id):
+      selectedPairing = id
+    case nil:
+      selectedMachine = nil
+      selectedPairing = nil
+    }
+  }
+
+  private func pairedName(_ entry: PairedServers.Entry) -> String {
+    pairedSessions.sessions[entry.id]?.name ?? entry.pairing?.name ?? "Paired machine"
   }
 
   private var header: some View {
@@ -340,7 +393,7 @@ struct MachineView: View {
       }
     } trailing: {
       if !plan.isEmpty {
-        Button("Free Disk Space") { autopilot.runPressurePlan(trigger: .manual, present: true) }
+        Button("Free Disk Space") { autopilot.runPressurePlan() }
           .buttonStyle(.stim(.primary))
           .help("stim gc --delete")
       }

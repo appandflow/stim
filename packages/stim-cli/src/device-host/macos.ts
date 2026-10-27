@@ -18,10 +18,10 @@ import { withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   hostedMacosAppSlot,
+  hostedMemoryRefusal,
   hostedMacosBundleId,
   isJsonObject,
   readHostedDevice,
-  readMacosRecord,
   type HostedMacosChoice,
   type HostedMacosDevice,
   type MacosAppRecord,
@@ -29,8 +29,8 @@ import {
 import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressure } from '../host-memory.ts';
 import { macosProcess, requiredMacosRecord } from '../macos/state.ts';
-import { stopMacosAppHeld } from '../macos/stop.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
+import { stopHostedBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
+import { waitForMacosRegistration } from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -38,8 +38,6 @@ import { materializeHostedApp, newer } from './app.ts';
 import type { HostedWorkerResult } from './worker.ts';
 
 export function selectHostedMacos(): HostedMacosChoice {
-  if (readHostMemoryPressure(getExecutor()) !== 'normal')
-    throw new Error('Host memory pressure is unknown or elevated.');
   const macosVersion = getExecutor().runFile('sw_vers', ['-productVersion'], {
     timeoutMs: 10000,
     killSignal: 'SIGKILL',
@@ -118,6 +116,10 @@ export async function runHostedMacosApp(
     if (mode === 'prepare') {
       recorded = existsSync(join(home, 'hosted-device.json'));
       if (recorded) throw new Error('Attach or stop the existing hosted macOS session.');
+      const memoryRefusal = hostedMemoryRefusal(
+        readHostMemoryPressure(getExecutor()) ?? readHostMemoryPressure(getExecutor()),
+      );
+      if (memoryRefusal) throw new Error(memoryRefusal);
       const selected = { ...selectHostedMacos(), appSlot: request.appSlot };
       assertHostedDeviceLedger(home, `macos-${request.appSlot}`, 'macos');
       writeRecord(home, 'hosted-device.json', selected);
@@ -129,11 +131,12 @@ export async function runHostedMacosApp(
     if (device.appSlot !== request.appSlot) throw new Error('The hosted macOS app slot changed.');
     assertHostedDeviceLedger(home, `macos-${device.appSlot}`, 'macos');
     const runRoot = join(realpathSync(home), 'macos-app');
+    const area = realpathSync(join(home, '..'));
     if (mode === 'stop') {
       if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
+      await stopHostedBundleInstances(area);
       const bundleId = preferenceIdentity(home, device.appSlot);
       if (bundleId) removePreferences(bundleId);
-      const area = realpathSync(join(home, '..'));
       assertInside(area, home);
       removeAppData(realpathSync(home), join(home, 'app-home'));
       const apps = join(home, '..', 'apps');
@@ -189,6 +192,7 @@ export async function runHostedMacosApp(
     }
     exec.runFile('codesign', ['--force', '--sign', '-', bundle], options);
     if (requiredMacosRecord(runRoot)) await stopMacosAppHeld(runRoot);
+    await stopHostedBundleInstances(area);
     const previousId = preferenceIdentity(home, device.appSlot);
     if (previousId && previousId !== bundleId) removePreferences(previousId);
     mkdirSync(runRoot, { recursive: true, mode: 0o700 });
@@ -212,7 +216,6 @@ export async function runHostedMacosApp(
     mkdirSync(temporary, { mode: 0o700, recursive: true });
     const fd = openSync(join(home, 'macos-supervisor.log'), 'a', 0o600);
     let child;
-    let spawnError: Error | undefined;
     const env: NodeJS.ProcessEnv = {};
     for (const key of ['PATH', 'LANG', 'LC_ALL', 'LC_CTYPE', 'USER', 'LOGNAME', 'SHELL', 'TERM'])
       if (process.env[key] !== undefined) env[key] = process.env[key];
@@ -220,32 +223,17 @@ export async function runHostedMacosApp(
     try {
       child = exec.spawn(process.execPath, [spawnEntry('macos-run'), canonicalRunRoot, launch.launchId], {
         detached: true,
-        stdio: ['ignore', fd, fd],
+        stdio: ['ignore', fd, fd, 'ipc'],
         cwd: canonicalRunRoot,
         env,
-      });
-      child.once('error', (error) => {
-        spawnError = error;
       });
       child.unref();
     } finally {
       closeSync(fd);
     }
     const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (spawnError) throw spawnError;
-      const current = readMacosRecord(canonicalRunRoot);
-      if (
-        current?.launchId === launch.launchId &&
-        current.app &&
-        current.supervisor &&
-        inspectProcessIdentity(current.app) === 'same' &&
-        inspectProcessIdentity(current.supervisor) === 'same'
-      )
-        return { state: 'installed', device, launched: true, pid: current.app.pid };
-      if (child.exitCode !== null || child.signalCode !== null) break;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
+    const current = await waitForMacosRegistration(canonicalRunRoot, launch.launchId, child, deadline);
+    if (current?.app) return { state: 'installed', device, launched: true, pid: current.app.pid };
     throw new Error('The hosted macOS app did not register. See macos-supervisor.log in the worker home.');
   } catch (error) {
     return {

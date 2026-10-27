@@ -6,11 +6,12 @@ struct DevicePlacementView: View {
 
   var body: some View {
     if let placement = device.placement {
-      Label("on \(placement.machine)", systemImage: "desktopcomputer")
+      Label(placement.machine, systemImage: "desktopcomputer")
         .font(.stim(.caption))
         .foregroundStyle(Palette.tertiary)
         .lineLimit(1)
         .help(placement.reason ?? "")
+        .accessibilityLabel("Running on \(placement.machine)")
     }
   }
 }

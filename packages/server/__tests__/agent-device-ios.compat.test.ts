@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { inject } from 'vitest';
-import { AgentDeviceDriver } from '../src/agent-device-driver.ts';
+import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 
 declare module 'vitest' {
   export interface ProvidedContext {
@@ -47,7 +47,11 @@ vi.mock('node:child_process', async (original) => ({
     queueMicrotask(() => child.stdout.write('Proxy listening at http://127.0.0.1:4310\n'));
     return child;
   },
-  execFile: (_command: string, ...args: unknown[]) => (args.at(-1) as (error: null, stdout: string) => void)(null, ''),
+  execFile: (_command: string, ...args: unknown[]) =>
+    (args.at(-1) as (error: null, stdout: string) => void)(
+      null,
+      Array.isArray(args[0]) && args[0].includes('--version') ? '0.21.31' : '',
+    ),
 }));
 vi.mock('@stim-cli/core/process-identity', async (original) => {
   const actual = await original<typeof import('@stim-cli/core/process-identity')>();
@@ -99,11 +103,11 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
     import { join } from 'node:path';
     import { pathToFileURL } from 'node:url';
     const root = process.env.STIM_AGENT_DEVICE_SOURCE;
-    const { parseDaemonPolicy } = await import(pathToFileURL(join(root, 'src/daemon-policy-file.ts')));
+    const { parseDaemonPolicy } = await import(pathToFileURL(join(root, 'packages/daemon-contracts/src/daemon-policy-file.ts')));
     const { assertDaemonPolicyAdmitsRequest, restrictDeviceInventoryToDaemonPolicy } =
-      await import(pathToFileURL(join(root, 'src/daemon/daemon-policy.ts')));
+      await import(pathToFileURL(join(root, 'packages/daemon/src/core/daemon-policy.ts')));
     const { resolveDeviceClaimRoot } =
-      await import(pathToFileURL(join(root, 'src/daemon/device/device-claim-paths.ts')));
+      await import(pathToFileURL(join(root, 'packages/host-kit/src/internal/path-resolution.ts')));
     const file = process.env.AGENT_DEVICE_DAEMON_POLICY;
     const raw = JSON.parse(readFileSync(file, 'utf8'));
     const policy = parseDaemonPolicy(raw, file);
@@ -119,7 +123,7 @@ test('upstream accepts the hosted policy, agrees on its digest and filters inven
       local: await gateways.localOnly.discover(),
       provider: await gateways.providerFirst.discover(),
       workspace: process.cwd(),
-      claims: resolveDeviceClaimRoot(),
+      claims: resolveDeviceClaimRoot(process.env),
     }));
   `;
   const driver = new AgentDeviceDriver({

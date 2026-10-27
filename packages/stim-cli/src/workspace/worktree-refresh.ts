@@ -1,17 +1,24 @@
 import type { ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { workspaceName } from '@stim-cli/core';
 import { formatDuration, formatElapsed, phaseLine } from '../command-output.ts';
 import { getConfigDir } from './config.ts';
-import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValid } from '../dependency-state.ts';
+import {
+  type DependencyState,
+  dependencyState,
+  hasInstalledDependencies,
+  installedNpmTreeProblems,
+} from '../dependency-state.ts';
 import { DEPS_ERROR, podsAreStale, readPodState, runCaptured, runPodInstall } from '../engine/deps.ts';
 import { NO_INSTALLER_CLAIM, type InstallerClaim } from '../engine/warm-claim.ts';
 import { HEARTBEAT_INTERVAL_MS } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
+import { git, gitQuiet } from './git.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { locallyKnownUpstream, resolveFullRef, type UpstreamState } from './worktree.ts';
+import type { IosProjectDir } from './settings.ts';
 
 export interface RefreshFailure {
   code: string;
@@ -112,16 +119,20 @@ function checkoutFactLine(branch: string, plan: Exclude<CheckoutPlan, { kind: 'd
 interface InstallEvidence {
   lock: string;
   hash: string;
+  patches: string;
   completed: boolean;
+  treeProblems: string | null;
 }
 
 export interface DepsInputs {
   lockfile: string | null;
   lockfileChanged: boolean;
+  patchesChanged: boolean;
   installed: boolean;
-  treeValid: boolean | null;
+  treeProblems: string | null;
   lastInstall: InstallEvidence | null;
   lockHash: string | null;
+  patchesHash: string;
 }
 
 export interface StepPlan {
@@ -132,19 +143,25 @@ export interface StepPlan {
 /**
  * Whether to install, decided against the lockfile as it stands now rather than against what HEAD did.
  * A lockfile that did not move is not evidence that its dependencies are installed: an install that was
- * interrupted leaves a present node_modules behind and moves HEAD no further.
+ * interrupted leaves a present node_modules behind and moves HEAD no further. A `patches/` change counts
+ * as a dependency change because patch-package applies it only on a fresh install. A tree `npm ls` already
+ * rejected right after the last completed install, with the same problems, is not one another install would fix.
  */
 export function depsPlan({
   lockfile,
   lockfileChanged,
+  patchesChanged,
   installed,
-  treeValid,
+  treeProblems,
   lastInstall,
   lockHash,
+  patchesHash,
 }: DepsInputs): StepPlan {
   if (!lockfile) return { run: false, reason: 'no lockfile in this repository' };
   if (!installed) return { run: true, reason: 'no installed dependencies' };
-  if (treeValid === false) return { run: true, reason: `the installed tree does not match ${lockfile}` };
+  if (treeProblems && lastInstall?.treeProblems !== treeProblems) {
+    return { run: true, reason: `the installed tree does not match ${lockfile}` };
+  }
   if (lastInstall) {
     if (!lastInstall.completed) return { run: true, reason: `the last install of ${lastInstall.lock} did not finish` };
     if (lastInstall.lock !== lockfile)
@@ -152,9 +169,13 @@ export function depsPlan({
     if (lockHash === null || lastInstall.hash !== lockHash) {
       return { run: true, reason: `${lockfile} does not match the last completed install` };
     }
+    if (lastInstall.patches !== patchesHash) {
+      return { run: true, reason: 'patches/ does not match the last completed install' };
+    }
     return { run: false, reason: `${lockfile} matches the last completed install` };
   }
   if (lockfileChanged) return { run: true, reason: `${lockfile} changed` };
+  if (patchesChanged) return { run: true, reason: 'patches/ changed' };
   return { run: false, reason: `${lockfile} unchanged` };
 }
 
@@ -164,18 +185,54 @@ export function depsPlan({
  * nothing about this one, and no record at all is the state of every repository before its first refresh.
  */
 export function incompleteInstallRefusal(root: string, appDir: string): RefreshFailure | null {
-  const dependencies = dependencyState(existsSync(appDir) ? appDir : root);
-  if (!dependencies) return null;
-  const last = readInstallEvidence(dependencies.root);
-  if (!last || last.completed || last.lock !== dependencies.lock) return null;
-  const hash = lockfileHash(dependencies.root, dependencies.lock);
-  if (hash === null || last.hash !== hash) return null;
-  return {
-    code: 'STIM_DEPS_INCOMPLETE',
-    message: `Refusing to copy from ${dependencies.root}: the last install of ${dependencies.lock} there did not finish, so its dependencies are partial.`,
-    lines: [],
-    remedy: `Run \`stim worktree warm --refresh\` to install them in the source checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
-  };
+  for (const dependencies of dependencyStates(root, appDir)) {
+    const last = readInstallEvidence(dependencies.root);
+    if (!last || last.completed || last.lock !== dependencies.lock) continue;
+    const hash = lockfileHash(dependencies.root, dependencies.lock);
+    if (hash === null || last.hash !== hash) continue;
+    return {
+      code: 'STIM_DEPS_INCOMPLETE',
+      message: `Refusing to copy from ${dependencies.root}: the last install of ${dependencies.lock} there did not finish, so its dependencies are partial.`,
+      lines: [],
+      remedy: `Run \`stim worktree warm --refresh\` to install them in the source checkout -- it reinstalls rather than skipping, because no completed install of this ${dependencies.lock} is recorded -- then warm again.`,
+    };
+  }
+  return null;
+}
+
+function dependencyStates(root: string, appDir: string): DependencyState[] {
+  const app = dependencyState(existsSync(appDir) ? appDir : root);
+  const top = dependencyState(root, root);
+  const carried =
+    top &&
+    top.root !== app?.root &&
+    (hasInstalledDependencies(top.root, top.installed) || readInstallEvidence(top.root));
+  return [app, carried ? top : null].filter((state): state is DependencyState => state !== null);
+}
+
+/**
+ * An npm project whose own `.npmrc` sets `ignore-scripts` gets no lifecycle scripts from `npm ci`, its own
+ * postinstall included. `npm run` still runs a named script under that setting, so the project's postinstall
+ * (usually patch-package) runs explicitly; dependencies' install scripts stay blocked.
+ */
+function skippedPostinstall(dependencies: DependencyState): boolean {
+  if (dependencies.lock !== 'package-lock.json') return false;
+  let postinstall: unknown;
+  try {
+    postinstall = JSON.parse(readFileSync(join(dependencies.root, 'package.json'), 'utf-8'))?.scripts?.postinstall;
+  } catch {
+    return false;
+  }
+  if (typeof postinstall !== 'string' || !postinstall.trim()) return false;
+  try {
+    const value = getExecutor().runFile('npm', ['config', 'get', 'ignore-scripts'], {
+      cwd: dependencies.root,
+      timeoutMs: 30_000,
+    });
+    return value === 'true';
+  } catch {
+    return false;
+  }
 }
 
 export interface PodsInputs {
@@ -183,15 +240,16 @@ export interface PodsInputs {
   hasPodfile: boolean;
   podfileLockChanged: boolean;
   stale: { noPods?: boolean; stale: boolean; reason?: string };
+  dir?: string;
 }
 
-export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale }: PodsInputs): StepPlan {
-  if (!hasIos) return { run: false, reason: 'no ios/ directory' };
-  if (!hasPodfile) return { run: false, reason: 'no ios/Podfile' };
-  if (stale.noPods) return { run: false, reason: 'no ios/Pods and no ios/Podfile.lock' };
-  if (podfileLockChanged) return { run: true, reason: 'ios/Podfile.lock changed' };
-  if (stale.stale) return { run: true, reason: stale.reason ?? 'ios/Pods does not match ios/Podfile.lock' };
-  return { run: false, reason: 'ios/Podfile.lock unchanged' };
+export function podsPlan({ hasIos, hasPodfile, podfileLockChanged, stale, dir = 'ios/' }: PodsInputs): StepPlan {
+  if (!hasIos) return { run: false, reason: `no ${dir || './'} directory` };
+  if (!hasPodfile) return { run: false, reason: `no ${dir}Podfile` };
+  if (stale.noPods) return { run: false, reason: `no ${dir}Pods and no ${dir}Podfile.lock` };
+  if (podfileLockChanged) return { run: true, reason: `${dir}Podfile.lock changed` };
+  if (stale.stale) return { run: true, reason: stale.reason ?? `${dir}Pods does not match ${dir}Podfile.lock` };
+  return { run: false, reason: `${dir}Podfile.lock unchanged` };
 }
 
 export type DefaultBranchNote = { kind: 'match' } | { kind: 'warn' | 'unknown'; lines: string[] };
@@ -234,22 +292,50 @@ function lockfileHash(depsRoot: string, lockfile: string): string | null {
   }
 }
 
+function hashPatches(depsRoot: string): string {
+  const dir = join(depsRoot, 'patches');
+  let names: string[];
+  try {
+    names = readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.patch'))
+      .map((entry) => relative(dir, join(entry.parentPath, entry.name)))
+      .toSorted();
+  } catch {
+    return '';
+  }
+  if (!names.length) return '';
+  const hash = createHash('sha256');
+  for (const name of names)
+    hash
+      .update(name)
+      .update('\0')
+      .update(readFileSync(join(dir, name)))
+      .update('\0');
+  return hash.digest('hex');
+}
+
 function readInstallEvidence(depsRoot: string): InstallEvidence | null {
   try {
     const parsed = JSON.parse(readFileSync(installRecordFile(depsRoot), 'utf-8'));
     if (!parsed || typeof parsed !== 'object') return null;
     if (typeof parsed.lock !== 'string' || typeof parsed.hash !== 'string') return null;
-    return { lock: parsed.lock, hash: parsed.hash, completed: parsed.completed === true };
+    return {
+      lock: parsed.lock,
+      hash: parsed.hash,
+      patches: typeof parsed.patches === 'string' ? parsed.patches : '',
+      completed: parsed.completed === true,
+      treeProblems: typeof parsed.treeProblems === 'string' ? parsed.treeProblems : null,
+    };
   } catch {
     return null;
   }
 }
 
-function writeInstallEvidence(depsRoot: string, lockfile: string, hash: string | null, completed: boolean): void {
+function writeInstallEvidence(depsRoot: string, evidence: InstallEvidence): void {
   const file = installRecordFile(depsRoot);
   const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
   mkdirSync(join(getConfigDir(), 'warm-installs'), { recursive: true });
-  writeFileSync(tmp, JSON.stringify({ lock: lockfile, hash: hash ?? '', completed }));
+  writeFileSync(tmp, JSON.stringify(evidence));
   try {
     renameSync(tmp, file);
   } catch (error) {
@@ -258,8 +344,18 @@ function writeInstallEvidence(depsRoot: string, lockfile: string, hash: string |
   }
 }
 
+function pendingInstallEvidence(dependencies: DependencyState): InstallEvidence {
+  return {
+    lock: dependencies.lock,
+    hash: lockfileHash(dependencies.root, dependencies.lock) ?? '',
+    patches: dependencies.lock === 'package-lock.json' ? hashPatches(dependencies.root) : '',
+    completed: false,
+    treeProblems: null,
+  };
+}
+
 function restoreInstallEvidence(depsRoot: string, prior: InstallEvidence | null): void {
-  if (prior) writeInstallEvidence(depsRoot, prior.lock, prior.hash, prior.completed);
+  if (prior) writeInstallEvidence(depsRoot, prior);
   else rmSync(installRecordFile(depsRoot), { force: true });
 }
 
@@ -273,13 +369,12 @@ function inProgressOperation(gitDir: string): MainCheckoutState['operation'] {
 }
 
 function readMainCheckoutState(root: string): MainCheckoutState {
-  const exec = getExecutor();
-  const gitDir = exec.runFileQuiet('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
+  const gitDir = gitQuiet(root, ['rev-parse', '--path-format=absolute', '--git-dir'])?.trim();
   // `git diff HEAD` compares the working tree to HEAD, so it misses a staged edit
   // whose working file was restored to the HEAD contents without resetting the index.
-  const worktreeChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', 'HEAD']);
-  const indexChanged = exec.runFileQuiet('git', ['-C', root, 'diff', '--name-only', '--cached', 'HEAD']);
-  const branch = exec.runFileQuiet('git', ['-C', root, 'symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
+  const worktreeChanged = gitQuiet(root, ['diff', '--name-only', 'HEAD']);
+  const indexChanged = gitQuiet(root, ['diff', '--name-only', '--cached', 'HEAD']);
+  const branch = gitQuiet(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])?.trim() || null;
   const paths = [worktreeChanged, indexChanged].flatMap((out) =>
     (out ?? '')
       .split('\n')
@@ -301,32 +396,25 @@ function resolveDefaultBranch(root: string, settings: SettingsObject): string | 
       ? (worktree as { defaultBranch?: unknown }).defaultBranch
       : undefined;
   if (typeof configured === 'string' && configured.trim()) return configured.trim();
-  const head = getExecutor()
-    .runFileQuiet('git', ['-C', root, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
-    ?.trim();
+  const head = gitQuiet(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])?.trim();
   if (!head) return null;
   const cut = head.indexOf('/');
   return cut > 0 ? head.slice(cut + 1) : head;
 }
 
 function branchRemote(root: string, branch: string): string {
-  return (
-    getExecutor()
-      .runFileQuiet('git', ['-C', root, 'config', `branch.${branch}.remote`])
-      ?.trim() || 'origin'
-  );
+  return gitQuiet(root, ['config', `branch.${branch}.remote`])?.trim() || 'origin';
 }
 
 function remoteUpstreamIsCurrent(root: string, branch: string): boolean {
-  const exec = getExecutor();
-  const merge = exec.runFileQuiet('git', ['-C', root, 'config', '--get-all', `branch.${branch}.merge`])?.trim();
+  const merge = gitQuiet(root, ['config', '--get-all', `branch.${branch}.merge`])?.trim();
   if (!merge) return true;
   if (!merge.startsWith('refs/') || merge.includes('\n')) return false;
   const remote = branchRemote(root, branch);
   if (remote === '.') return true;
   const local = resolveFullRef(root, '@{upstream}');
   if (!local) return false;
-  const advertised = exec.runFileQuiet('git', ['-C', root, 'ls-remote', '--exit-code', '--refs', '--', remote, merge], {
+  const advertised = gitQuiet(root, ['ls-remote', '--exit-code', '--refs', '--', remote, merge], {
     timeoutMs: FETCH_TIMEOUT_MS,
     env: { GIT_TERMINAL_PROMPT: '0' },
   });
@@ -344,7 +432,7 @@ function gitPath(...parts: string[]): string {
 
 function pathChangedBetween(root: string, from: string, to: string, path: string): boolean {
   if (from === to || !from || !to) return false;
-  const out = getExecutor().runFileQuiet('git', ['-C', root, 'diff', '--name-only', from, to, '--', path]);
+  const out = gitQuiet(root, ['diff', '--name-only', from, to, '--', path]);
   return Boolean(out && out.trim());
 }
 
@@ -402,7 +490,7 @@ async function runInstallCommand({
 
 function fastForward(root: string, upstream: string): { ok: boolean; lines: string[] } {
   try {
-    getExecutor().runFile('git', ['-C', root, 'merge', '--ff-only', '--end-of-options', upstream]);
+    git(root, ['merge', '--ff-only', '--end-of-options', upstream], { write: true, timeoutMs: 'unbounded' });
     return { ok: true, lines: [] };
   } catch (error) {
     const reported = String((error as { stderr?: unknown })?.stderr || (error as Error)?.message || error);
@@ -421,6 +509,7 @@ export interface RefreshOptions {
   root: string;
   appDir: string;
   settings: SettingsObject;
+  iosProject: IosProjectDir;
   emit: (line: string) => void;
   spawnFn?: SpawnFn | null;
   now?: () => number;
@@ -441,6 +530,7 @@ export async function refreshMainCheckout({
   root,
   appDir,
   settings,
+  iosProject,
   emit,
   spawnFn = null,
   now = Date.now,
@@ -486,7 +576,8 @@ export async function refreshMainCheckout({
   if (inspectOnly) {
     if (!remoteUpstreamIsCurrent(root, branch)) return { mutation: 'fetch upstream' };
   } else {
-    const fetched = getExecutor().runFileQuiet('git', ['-C', root, 'fetch', '--prune', branchRemote(root, branch)], {
+    const fetched = gitQuiet(root, ['fetch', '--prune', branchRemote(root, branch)], {
+      write: true,
       timeoutMs: FETCH_TIMEOUT_MS,
       env: { GIT_TERMINAL_PROMPT: '0' },
     });
@@ -502,10 +593,14 @@ export async function refreshMainCheckout({
   // The evidence that an install may be owed has to be durable before HEAD moves: the fast-forward runs
   // the repository's own hooks, and a retry that finds HEAD already moved, a node_modules present and no
   // evidence at all would call that installed.
-  const depsBefore = dependencyState(existsSync(appDir) ? appDir : root);
-  const priorInstall = depsBefore ? readInstallEvidence(depsBefore.root) : null;
-  const marked = plan.kind === 'fast-forward' ? depsBefore : null;
-  if (marked) writeInstallEvidence(marked.root, marked.lock, lockfileHash(marked.root, marked.lock), false);
+  const depsBefore = dependencyStates(root, appDir);
+  const priorInstalls = new Map(depsBefore.map((entry) => [entry.root, readInstallEvidence(entry.root)]));
+  const marked = plan.kind === 'fast-forward' ? depsBefore : [];
+  for (const entry of marked) writeInstallEvidence(entry.root, pendingInstallEvidence(entry));
+  const restoreMarked = (depsRoot: string) => {
+    if (marked.some((entry) => entry.root === depsRoot))
+      restoreInstallEvidence(depsRoot, priorInstalls.get(depsRoot) ?? null);
+  };
 
   let head = before;
   if (plan.kind === 'fast-forward') {
@@ -525,66 +620,110 @@ export async function refreshMainCheckout({
   const note = defaultBranchNote(branch, resolveDefaultBranch(root, settings));
   if (note.kind !== 'match') for (const line of note.lines) emit(phaseLine('', line));
 
-  const dependencies = dependencyState(existsSync(appDir) ? appDir : root);
-  const installed = dependencies ? hasInstalledDependencies(dependencies.root, dependencies.installed) : false;
-  // The hash the installer is about to consume. Re-reading the file at completion records whatever was
-  // committed while the install ran, which is not what got installed.
-  const consumed = dependencies ? lockfileHash(dependencies.root, dependencies.lock) : null;
-  const deps = depsPlan({
-    lockfile: dependencies?.lock ?? null,
-    lockfileChanged: dependencies
-      ? pathChangedBetween(root, before, head, gitPath(relative(root, dependencies.root), dependencies.lock))
-      : false,
-    installed,
-    treeValid:
-      dependencies?.lock === 'package-lock.json' && installed ? installedNpmTreeIsValid(dependencies.root) : null,
-    lastInstall: priorInstall,
-    lockHash: consumed,
-  });
-  const depsSubject = `source ${dependencies?.root ?? root}: ${deps.reason}`;
-  if (deps.run && dependencies) {
-    if (inspectOnly) return { mutation: deps.reason };
-    writeInstallEvidence(dependencies.root, dependencies.lock, consumed, false);
-    const install = await runInstallCommand({
-      command: dependencies.command,
-      cwd: dependencies.root,
-      spawnFn: spawn,
-      now,
-      heartbeatMs,
-      onHeartbeat: emit,
+  const dependencyRoots = dependencyStates(root, appDir);
+  for (const entry of marked)
+    if (!dependencyRoots.some((other) => other.root === entry.root)) restoreMarked(entry.root);
+  if (!dependencyRoots.length) emit(stepLine('deps', `source ${root}: no lockfile in this repository`, 'skipped'));
+  const owed: { dependencies: DependencyState; subject: string }[] = [];
+  for (const dependencies of dependencyRoots) {
+    const installed = hasInstalledDependencies(dependencies.root, dependencies.installed);
+    const depsDir = relative(root, dependencies.root);
+    // What the installer is about to consume. Re-reading the files at completion records whatever was
+    // committed while the install ran, which is not what got installed.
+    const consumed = pendingInstallEvidence(dependencies);
+    const deps = depsPlan({
+      lockfile: dependencies.lock,
+      lockfileChanged: pathChangedBetween(root, before, head, gitPath(depsDir, dependencies.lock)),
+      patchesChanged:
+        dependencies.lock === 'package-lock.json' &&
+        pathChangedBetween(root, before, head, gitPath(depsDir, 'patches/*.patch')),
+      installed,
+      treeProblems:
+        dependencies.lock === 'package-lock.json' && installed ? installedNpmTreeProblems(dependencies.root) : null,
+      lastInstall: priorInstalls.has(dependencies.root)
+        ? (priorInstalls.get(dependencies.root) ?? null)
+        : readInstallEvidence(dependencies.root),
+      lockHash: consumed.hash || null,
+      patchesHash: consumed.patches,
     });
-    emit(stepLine('deps', depsSubject, `${dependencies.command} (${formatDuration(install.durationMs)})`));
-    const running = await awaitSpawnedWork(`\`${dependencies.command}\``);
-    if (!install.ok) {
-      return {
-        code: DEPS_ERROR,
-        message: String(install.reason),
-        lines: install.lastLines,
-        remedy: `Run \`cd ${dependencies.root} && ${dependencies.command}\` and fix what it reports, then run warm again.`,
-      };
+    const depsSubject = `source ${dependencies.root}: ${deps.reason}`;
+    if (deps.run) {
+      if (inspectOnly) return { mutation: deps.reason };
+      owed.push({ dependencies, subject: depsSubject });
+      continue;
     }
-    if (running) return running;
-    writeInstallEvidence(dependencies.root, dependencies.lock, consumed, true);
-  } else {
-    if (marked) restoreInstallEvidence(marked.root, priorInstall);
+    restoreMarked(dependencies.root);
     emit(stepLine('deps', depsSubject, 'skipped'));
+  }
+  for (const { dependencies, subject: depsSubject } of owed) {
+    const consumed = pendingInstallEvidence(dependencies);
+    writeInstallEvidence(dependencies.root, consumed);
+    const runStep = async (command: string, subject: string, remedy: string): Promise<RefreshFailure | null> => {
+      const install = await runInstallCommand({
+        command,
+        cwd: dependencies.root,
+        spawnFn: spawn,
+        now,
+        heartbeatMs,
+        onHeartbeat: emit,
+      });
+      emit(stepLine('deps', subject, `${command} (${formatDuration(install.durationMs)})`));
+      const running = await awaitSpawnedWork(`\`${command}\``);
+      if (!install.ok) {
+        return {
+          code: DEPS_ERROR,
+          message: String(install.reason),
+          lines: install.lastLines,
+          remedy: `Run \`cd ${dependencies.root} && ${remedy}\` and fix what it reports, then run warm again.`,
+        };
+      }
+      return running;
+    };
+    const postinstall = skippedPostinstall(dependencies) ? 'npm run postinstall' : null;
+    const installFailure = await runStep(
+      dependencies.command,
+      depsSubject,
+      postinstall ? `${dependencies.command} && ${postinstall}` : dependencies.command,
+    );
+    if (installFailure) return installFailure;
+    if (postinstall) {
+      const postinstallFailure = await runStep(
+        postinstall,
+        `source ${dependencies.root}: ignore-scripts skipped postinstall`,
+        postinstall,
+      );
+      if (postinstallFailure) return postinstallFailure;
+    }
+    writeInstallEvidence(dependencies.root, {
+      ...consumed,
+      completed: true,
+      treeProblems: dependencies.lock === 'package-lock.json' ? installedNpmTreeProblems(dependencies.root) : null,
+    });
   }
 
   const app = relative(root, appDir) || '.';
   const where = `source ${appDir}: `;
-  const podState = readPodState(appDir);
+  const ios = iosProject;
+  const podState = readPodState(appDir, ios.dir);
   const pods = podsPlan({
-    hasIos: existsSync(join(appDir, 'ios')),
+    hasIos: existsSync(ios.dir),
     hasPodfile: podState.hasPodfile,
-    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, 'ios', 'Podfile.lock')),
-    stale: podsAreStale(podState.lockText, podState.manifestText),
+    podfileLockChanged: pathChangedBetween(root, before, head, gitPath(app, ios.relative, 'Podfile.lock')),
+    stale: podsAreStale(podState.lockText, podState.manifestText, podState.dir),
+    dir: podState.dir,
   });
   if (!pods.run) {
     emit(stepLine('pods', `${where}${pods.reason}`, 'skipped'));
     return null;
   }
   if (inspectOnly) return { mutation: pods.reason };
-  const result = await runPodInstall(appDir, null, { spawnFn: spawn, now, heartbeatMs, onHeartbeat: emit });
+  const result = await runPodInstall(appDir, null, {
+    spawnFn: spawn,
+    now,
+    heartbeatMs,
+    onHeartbeat: emit,
+    directory: ios.dir,
+  });
   const podCommand = result.command ?? 'pod install';
   emit(
     stepLine(

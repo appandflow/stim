@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -20,7 +20,7 @@ a paired phone starts with it on. Turning the flag off does not stop a running
 Stim Mobile connects to a Mac running Stim Desktop or `stim-server`. It shows
 workspaces, builds, devices and logs. Choose view-only or view-and-control access
 when pairing in Desktop. CLI pairings are read-only unless you pass `--control`.
-It can keep connections to several paired Macs.
+It can keep connections to several paired machines.
 
 ## Install
 
@@ -60,7 +60,7 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Serve to phones
 
-On the Mac, open **Stim > Settings > Phones > Pair a Phone...**, or choose
+On the Mac, open **Stim > Settings > Paired Devices > Pair a Phone...**, or choose
 **Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
 walks through getting Stim Mobile and Tailscale on your phone, connecting both
 devices to the same tailnet, turning on serving, scanning a code, and confirming
@@ -112,15 +112,22 @@ stim-server pair --json
 <TabItem value="npx" label="npx">
 
 ```bash
-npx --yes --package @stim-cli/server@1.16.0 stim-server pair --json
+npx --yes --package @stim-cli/server@1.21.0 stim-server pair --json
 ```
 
 </TabItem>
 </Tabs>
 
-Use its endpoint and pairing token for manual entry. The server binds the
-resulting device token to the phone's tailnet node; the token alone does not
-permit a connection from another node.
+Use its endpoint and pairing token for manual entry. The phone spends the
+token once in the server's authentication handshake, and the server then
+recognizes the phone by its own key, which the phone keeps in its Keychain or
+Keystore. The QR code also carries the server key's fingerprint, which the phone
+checks before it pairs; afterwards it accepts only that server key. Every
+connection is encrypted, so the app accepts plain `ws://` endpoints on private
+networks as well as `wss://`.
+
+Pairings made with an older phone app must pair again. A Mac whose `stim-server`
+predates protocol 2 shows **Update stim-server on this Mac**.
 
 ### Read and control access
 
@@ -129,7 +136,7 @@ replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
 To allow input, choose **Allow Control** from the phone's menu in Desktop's
-**Settings > Phones**, or run `stim-server devices grant <id> --control` on
+**Settings > Paired Devices**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
@@ -161,7 +168,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Phones**, choose **Revoke...** from the phone's menu, or run
+In Desktop's **Settings > Paired Devices**, choose **Revoke...** from the phone's menu, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
@@ -177,31 +184,52 @@ the server's authorization, use the Mac-side action above.
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
 
+Each machine the phone pairs with reports the work it started, including
+work it placed on another machine. A Home row names that machine on the build
+line, such as **Pods** beside `janics-mac-mini-2` for an offloaded build, and on
+the context line for running hosted simulators, emulators and macOS apps. The
+workspace page, build sheet and device tiles show it too. Each row stays under
+the server that owns it, and the phone pairs only with those servers. See
+[remote machines](./remote-machines.md).
+
 The build sheet shows build and device slot waits alongside the current phase,
 with the number of slots in use and a live elapsed wait timer. A device slot
-wait can overlap compilation. Older CLIs omit this information.
+wait can overlap compilation. Older CLIs omit this information. While the run
+boots its simulator or emulator, builds the app's first JS bundle in Metro, or
+waits for the app to report ready, the phase reads **Booting simulator**,
+**Bundling JS** with Metro's percentage once Metro reports one, or **Waiting
+for app ready**.
+
+A Mac's status sheet shows its load per core with the state `stim` reports (**Free**,
+**Busy** or **Holding new builds**). While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, it also shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
+`6 / 6`. A full device meter lists the devices holding the slots, with the slot and how long
+each has been idle. The phone cannot stop them; stop a slot from Stim Desktop or with
+`stim stop --slot`. A meter reads `? / 6` when `stim` could not count the devices.
+Older `stim` versions send none of these fields, and the sheet omits them.
 
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed
-and controlled through the main Mac's relay, with **Serve to phones** enabled.
-See [remote Macs](./remote-machines.md) for host setup.
+and controlled through the main machine's relay, with **Serve to phones** enabled.
+See [remote machines](./remote-machines.md) for host setup.
 
 The phone cannot start a build, create a worktree, edit or stage source files,
-set up a remote Mac, or approve access requests. Have your coding agent run
+set up a remote machine, or approve access requests. Have your coding agent run
 the app on the Mac, then watch it from the phone. It does not run your project's
 native app on the phone itself.
 
 ### Archived workspaces
 
-Choose **Archived** in Filters to see removed workspaces in the same repository
-and worktree groups as active ones. Rows keep their branch or folder title and app
+**Show** in Filters takes any combination of Active, Idle, Not set up and
+Archived; **All** selects all four. Choose **Archived** to see removed workspaces
+in the same repository and worktree groups as active ones. Rows keep their branch or folder title and app
 label, with removal time, size and an expiry indicator. A PR snapshot shows its
 number and title; only a merged outcome shows a state label.
 
 An archive uses the workspace page with read-only Status, Build, Logs and Work
 cards. Status shows removal, last activity, retention dates, size by content and
 activity totals. Build opens the shared history sheet, including durations,
-cache results, failures and remote Macs. Logs reads saved archive logs. Work
+cache results, failures and remote machines. Logs reads saved archive logs. Work
 shows ended sessions, their durations and the branch's final commit. Recordings
 replace devices and open replay at the recorded time, including notification
 links. Expired logs and recordings are marked.

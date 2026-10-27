@@ -1,87 +1,136 @@
 import Combine
-import CryptoKit
 import Foundation
 import StimKit
 
-/// The device token Stim Desktop holds for the stim-server of one Stim home, in a file only the user can read under
-/// Application Support. The server issued it to a loopback connection, so it refuses the token from any other node.
-struct LocalServerCredential: Codable, Equatable {
-  var deviceID: String
-  var deviceToken: String
-
-  /// The release app, as `scripts/release.sh` bundles it. Any other build pairs as Stim Dev with its own token, so it
-  /// can share this Mac's stim-server with the release app.
-  static let isRelease = Bundle.main.bundleIdentifier == "dev.stim.desktop"
-
-  private static func file(home: String) -> URL {
-    let digest = SHA256.hash(data: Data(home.utf8)).prefix(8).map { String(format: "%02x", $0) }.joined()
-    return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("\(isRelease ? "Stim Desktop" : "Stim Dev")/stim-server/\(digest).json")
-  }
-
-  static func load(home: String) -> LocalServerCredential? {
-    (try? Data(contentsOf: file(home: home))).flatMap { try? JSONDecoder().decode(LocalServerCredential.self, from: $0) }
-  }
-
-  func save(home: String) {
-    let file = Self.file(home: home)
-    let manager = FileManager.default
-    guard let data = try? JSONEncoder().encode(self),
-      (try? manager.createDirectory(
-        at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700])) != nil
-    else { return }
-    let temporary = file.appendingPathExtension("tmp")
-    guard manager.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
-      return
-    }
-    _ = try? manager.replaceItemAt(file, withItemAt: temporary)
-  }
-
-  static func delete(home: String) {
-    try? FileManager.default.removeItem(at: file(home: home))
-  }
-}
-
-/// Stim Desktop's own connection to the stim-server `ServerController` runs or found on this Mac, over loopback.
-/// It pairs with control through `stim-server pair --control` the first time, and once more when the server no longer
-/// knows its token, then stops until the server restarts. A read-only pairing gets control through
-/// `stim-server devices grant`, once per server.
+/// A connection to the stim-server that owns what a view shows. `shared` is Stim Desktop's own connection to the
+/// stim-server `ServerController` runs or found on this Mac, over that server's Unix socket under its Stim home, where
+/// the server gives this user every local capability without pairing. While `ServerController` holds a provisional
+/// adoption, it serves only the status feed. A paired server's session connects over the pairing's Noise transport
+/// and offers none of the connections that name this Mac's Stim home.
 @MainActor final class ServerSession: ObservableObject {
   static let shared = ServerSession(controller: .shared)
-  static let deviceName = LocalServerCredential.isRelease ? PairedDevice.desktopName : PairedDevice.devDesktopName
 
-  @Published private(set) var client: ServerClient?
-  @Published private(set) var state = ServerClient.State.idle
-
-  private let controller: ServerController
-  private var watch: AnyCancellable?
-  private var key: String?
-  private var repaired = false
-  private var granted = false
-
-  init(controller: ServerController) {
-    self.controller = controller
-    watch = controller.$state.sink { [weak self] state in
-      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(state) } }
+  /// The session of the server that owns a workspace or device; nil for a pairing with no session.
+  static func session(for owner: ServerOwner) -> ServerSession? {
+    switch owner {
+    case .local: return shared
+    case .paired(let id): return PairedServerSessions.shared.sessions[id]
     }
   }
 
-  /// The id of the paired device this app is, on the Stim home `home`, so the Phones list can leave it out.
-  static func ownDeviceID(home: String) -> String? {
-    LocalServerCredential.load(home: home)?.deviceID
+  static func link(for owner: ServerOwner) -> ServerLink {
+    session(for: owner)?.link ?? .connecting
+  }
+
+  static func screen(for device: OwnedDevice, now: Date) -> PhysicalScreen {
+    let name = session(for: device.owner)?.name ?? ""
+    return device.screen(link: link(for: device.owner), now: now, server: name.isEmpty ? "the paired machine" : name)
+  }
+
+  /// The name the server shows for this connection: the release app, as `scripts/release.sh` bundles it, or Stim Dev.
+  static let clientName = Bundle.main.bundleIdentifier == "dev.stim.desktop" ? "Stim Desktop" : "Stim Dev"
+  /// The first protocol served on the Unix socket.
+  static let protocolVersion = 2
+
+  /// The connection, once the adoption it was made for is verified.
+  @Published private(set) var client: ServerClient?
+  @Published private(set) var state = ServerClient.State.idle
+  let owner: ServerOwner
+
+  private let controller: ServerController?
+  @Published private(set) var name: String
+  @Published private(set) var offlineSince: Date?
+  private var connection: ServerClient?
+  private var watch: AnyCancellable?
+  private var adoptionWatch: AnyCancellable?
+  private var key: String?
+
+  init(controller: ServerController) {
+    owner = .local
+    name = "stim-server"
+    self.controller = controller
+    watch = controller.$state.sink { [weak self] _ in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
+    }
+    adoptionWatch = controller.$provisional.sink { [weak self] _ in
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.follow(controller.state) } }
+    }
+  }
+
+  init(pairing: PairedServer, client: ServerClient, offlineSince: Date? = nil) {
+    owner = .paired(pairing.id)
+    self.offlineSince = offlineSince
+    name = pairing.name
+    controller = nil
+    connection = client
+    self.client = client
+    state = client.state
+  }
+
+  fileprivate func follow(pairing: PairedServer, client: ServerClient) {
+    guard controller == nil, client === connection else { return }
+    if name != pairing.name { name = pairing.name }
+    if state != client.state {
+      if case .open = state { offlineSince = Date() } else if case .open = client.state { offlineSince = nil }
+      state = client.state
+    }
   }
 
   var isOpen: Bool { client?.isOpen == true }
 
+  var pairedAccess: PairedAccess? {
+    guard case .paired = owner else { return nil }
+    var deviceID: String?
+    if case .open(let hello) = state { deviceID = hello.device?.id }
+    return PairedAccess(state: state, server: name.isEmpty ? "the paired machine" : name, deviceID: deviceID)
+  }
+
+  func runPairedAction(_ action: String, workspace: String) async throws {
+    guard case .paired(let id) = owner, let client, pairedAccess?.actions.contains(action) == true else {
+      throw ServerError(code: "forbidden", message: pairedAccess?.reason ?? "This server does not offer \(action).")
+    }
+    do {
+      _ = try await client.request("action", ["action": .string(action), "workspace": .string(workspace)])
+    } catch let error as ServerError where error.code == "forbidden" {
+      PairedServers.shared.reconnect(id: id)
+      throw error
+    }
+  }
+
   var statsConnection: (client: ServerClient, home: String)? {
-    guard let client, case .running(let health, _) = controller.state,
+    guard let client, let feed = feedConnection, feed.client === client else { return nil }
+    return feed
+  }
+
+  var localActionConnection: (client: ServerClient, home: String)? {
+    guard let feed = statsConnection, feed.client.hasDesktopAuthority, controller?.desktopBootstrap != nil else {
+      return nil
+    }
+    return feed
+  }
+
+  /// The connection for the status feed, which reads only, so it is offered while the adoption is provisional.
+  var feedConnection: (client: ServerClient, home: String)? {
+    guard let controller, let connection, case .running(let health, _) = controller.state,
       key == "\(controller.port) \(health.stimHome) \(health.version)"
     else { return nil }
-    return (client, health.stimHome)
+    return (connection, health.stimHome)
   }
 
   var link: ServerLink {
+    guard let controller else {
+      switch state {
+      case .idle, .connecting: return .connecting
+      case .open(let hello): return .open(features: hello.features, capabilities: hello.capabilities)
+      case .waiting(_, let reason): return .unavailable("Can't reach \(name): \(reason) Retrying.")
+      case .refused(let error): return .unavailable(error.message)
+      }
+    }
+    if case .running(let health, _) = controller.state, health.protocolVersion < Self.protocolVersion {
+      return .unavailable(
+        "This stim-server \(health.version) is too old for this Stim Desktop. Update it, or clear the stim-server override in Settings."
+      )
+    }
     guard client != nil else {
       switch controller.state {
       case .starting, .off, .running: return .connecting
@@ -99,67 +148,116 @@ struct LocalServerCredential: Codable, Equatable {
   }
 
   private func follow(_ state: ServerController.State) {
+    guard let controller else { return }
     guard case .running(let health, _) = state else {
       replace(key: nil, health: nil)
       return
     }
     let key = "\(controller.port) \(health.stimHome) \(health.version)"
-    if key != self.key { replace(key: key, health: health) }
+    let verified = controller.adoption.allowsWrites(home: health.stimHome)
+    if key != self.key || (verified && client == nil && connection?.isOpen != true) {
+      replace(key: key, health: health)
+    } else if verified, client !== connection {
+      client = connection
+    }
   }
 
   private func replace(key: String?, health: ServerHealth?) {
-    client?.stop()
+    guard let controller else { return }
+    connection?.stop()
+    connection = nil
     client = nil
     self.key = key
     self.state = .idle
-    repaired = false
-    granted = false
-    guard let health, let endpoint = URL(string: "ws://127.0.0.1:\(controller.port)") else { return }
+    guard let health, health.protocolVersion >= Self.protocolVersion else { return }
     let home = health.stimHome
+    let socket = StimHome.localSocket(home: home)
     let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
-    var pairing = false
     let client = ServerClient(
-      endpoint: endpoint, clientName: Self.deviceName, clientVersion: version,
-      auth: { [controller] in
-        if let credential = LocalServerCredential.load(home: home) {
-          pairing = false
-          return .device(token: credential.deviceToken)
-        }
-        let cli = await controller.cli()
-        let port = controller.port
-        let code = try await cli.pair(port: port, control: true)
-        pairing = true
-        return .pairing(token: code.qr.pairingToken, deviceName: Self.deviceName)
-      })
+      endpoint: socket, clientName: Self.clientName, clientVersion: version, serverPort: controller.port,
+      bootstrap: { [controller] in controller.desktopBootstrap })
     client.onState = { [weak self, weak client] state in
-      guard let self, let client, client === self.client else { return }
+      guard let self, let client, client === self.connection else { return }
       self.state = state
-      switch state {
-      case .open(let hello):
-        if let token = hello.deviceToken, let device = hello.device {
-          LocalServerCredential(deviceID: device.id, deviceToken: token).save(home: home)
-          self.controller.reloadDevices()
-        }
-        self.repaired = false
-        if !hello.capabilities.contains("control"), !self.granted, let id = hello.device?.id {
-          self.granted = true
-          Task {
-            let cli = await self.controller.cli()
-            guard (try? await cli.grant(id, control: true)) != nil,
-              client === self.client
-            else { return }
-            client.stop()
-            client.start()
-          }
-        }
-      case .refused(let error) where error.code == "unauthorized" && !pairing && !self.repaired:
-        self.repaired = true
-        LocalServerCredential.delete(home: home)
-        client.start()
-      default: break
+    }
+    connection = client
+    if controller.adoption.allowsWrites(home: home) { self.client = client }
+    client.start()
+  }
+}
+
+@MainActor final class PairedServerSessions: ObservableObject {
+  static let shared = PairedServerSessions()
+
+  @Published private(set) var sessions: [String: ServerSession] = [:]
+  @Published private(set) var entries: [PairedServers.Entry] = []
+  private var servers: PairedServers?
+  private var offlineSince: [String: Date] = [:]
+  private var knownLocalServerID: String?
+
+  func setEnabled(_ enabled: Bool) {
+    if enabled, servers == nil {
+      let servers = PairedServers.shared
+      self.servers = servers
+      servers.onChange = { [weak self, weak servers] in
+        guard let self, let servers, self.servers === servers else { return }
+        self.sync(servers, localServerID: self.lastLocalServerID())
+      }
+      servers.start()
+    } else if !enabled, let servers {
+      self.servers = nil
+      servers.onChange = nil
+      servers.stop()
+      sessions = [:]
+      entries = []
+    }
+  }
+
+  func localServerChanged() {
+    guard let servers else { return }
+    sync(servers, localServerID: lastLocalServerID())
+  }
+
+  private func lastLocalServerID() -> String? {
+    if let id = Self.localServerID { knownLocalServerID = id }
+    return knownLocalServerID
+  }
+
+  static var localServerID: String? {
+    if case .open(let hello) = ServerSession.shared.state { return hello.server.id }
+    return nil
+  }
+
+  func sync(_ servers: PairedServers, localServerID: String?) {
+    var next: [String: ServerSession] = [:]
+    var shown: [PairedServers.Entry] = []
+    for entry in servers.entries {
+      guard let pairing = entry.pairing else { continue }
+      let client = servers.client(for: pairing.id)
+      if let local = localServerID, pairing.serverID == local || client?.helloServerID == local { continue }
+      shown.append(entry)
+      if let previous = sessions[pairing.id] {
+        offlineSince[pairing.id] = previous.isOpen ? Date() : previous.offlineSince
+      }
+      guard let client else { continue }
+      if let session = sessions[pairing.id], session.client === client {
+        session.follow(pairing: pairing, client: client)
+        next[pairing.id] = session
+      } else {
+        next[pairing.id] = ServerSession(pairing: pairing, client: client, offlineSince: offlineSince[pairing.id])
       }
     }
-    self.client = client
-    client.start()
+    offlineSince = offlineSince.filter { id, _ in shown.contains { $0.id == id } }
+    sessions = next
+    entries = shown.sorted {
+      ($0.pairing?.name.lowercased() ?? "", $0.id) < ($1.pairing?.name.lowercased() ?? "", $1.id)
+    }
+  }
+}
+
+extension ServerClient {
+  fileprivate var helloServerID: String? {
+    if case .open(let hello) = state { return hello.server.id }
+    return nil
   }
 }

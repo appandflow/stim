@@ -2,7 +2,12 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { sharedCompilationCache } from '@stim-cli/core/state';
-import { measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { cacheBlocked, measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { buildLockPath } from '../engine/build-lock.ts';
+import { cacheClaimRoot } from '../cache/cache-claim.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { plantClaim } from './_factories.ts';
+import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as hostMemory from '../host-memory.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -67,7 +72,7 @@ test.skipIf(process.platform === 'darwin')(
   },
 );
 
-test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', () => {
+test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', async () => {
   const app = join(home, 'app');
   mkdirSync(app);
   saveConfig({ projects: { [app]: {} }, repos: {} });
@@ -96,7 +101,7 @@ test('high load defers scans and every measured output/cache uses a bounded du c
   load.mockReturnValue([0, 0, 0]);
   expect(sizeScanDeferred(resolveMaintenanceSettings(null, {})!)).toBe(false);
   const failures: string[] = [];
-  const sizes = measureSizes(100, (target) => failures.push(target));
+  const sizes = await measureSizes(100, (target) => failures.push(target));
   expect(sizes).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ category: 'workspace-outputs', workspace: app, bytes: 123 * 1024, measuredAt: 100 }),
@@ -112,4 +117,31 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     expect(call.timeout).toBe(120_000);
   }
   expect(existsSync(sentinel)).toBe(true);
+});
+
+const cas = () => ({
+  name: 'Swift compilation cache',
+  dir: sharedCompilationCache(),
+  category: 'compilation-cache' as const,
+});
+
+test('only a claim on the Swift compilation cache blocks emptying it, not build locks or slots', () => {
+  const dir = sharedCompilationCache();
+  const token = captureProcessToken(process.ppid);
+  if (!token) throw new Error('no process identity for the parent process');
+  plantClaim(buildLockPath('ios', 'app'), 'exclusive', { pid: process.ppid, processToken: token });
+  const slot = tryAcquireBuildSlot({ max: 2, root: '/w/ios' });
+  expect(cacheBlocked(cas(), [])).toBeUndefined();
+  releaseBuildSlot(slot);
+  const claim = plantClaim(
+    cacheClaimRoot(dir),
+    'shared',
+    { pid: process.ppid, processToken: token },
+    {
+      details: { platform: 'ios', projectRoot: '/w/ios' },
+    },
+  );
+  expect(cacheBlocked(cas(), [])).toBe(`the ios build (pid ${process.ppid} in /w/ios) may be using it`);
+  writeFileSync(claim, '{');
+  expect(cacheBlocked(cas(), [])).toBe(`the cache claim ${claim} is unresolved, so a build may be using it`);
 });

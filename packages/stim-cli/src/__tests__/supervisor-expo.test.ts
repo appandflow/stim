@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { parseNdjsonText } from '../ndjson.ts';
+import { type NdjsonWriter, parseNdjsonText } from '../ndjson.ts';
 import {
   expoProxyEnv,
   cleanLine,
@@ -22,6 +22,7 @@ import {
   metroStoreConfirmedRoot,
   metroStoreRoot,
 } from '../supervisor/metro-store.ts';
+import { trackDevServerActivity } from '../supervisor/idle-stop.ts';
 import { IMPOSSIBLE_PID, makeChildProcess } from './_factories.ts';
 
 const ESC = '\u001B';
@@ -258,6 +259,51 @@ describe('startExpoServer', () => {
       (r) => !String(r.event).startsWith('cache_store_'),
     );
     expect(records.map((r) => r.msg)).toEqual(['PluginError: Failed to resolve plugin', 'a different line']);
+  });
+
+  test('bundle responses that start and finish within a second are all logged and leave the idle tracker with no open request', async () => {
+    fakeBin();
+    const child = fakeChild();
+    let clock = 1_000_000;
+    const activity = trackDevServerActivity(() => clock);
+    const written: Record<string, unknown>[] = [];
+    const writer = {
+      file: join(root, 'metro.ndjson'),
+      write(record: unknown) {
+        activity.record(record);
+        written.push(record as Record<string, unknown>);
+        return true;
+      },
+    } as unknown as NdjsonWriter;
+    await startExpoServer({ root, port: 8115, logsDir: join(root, 'logs'), writer, spawnFn: () => child });
+    const line = (stage: 'started' | 'finished', requestId: string) =>
+      `stim-bundle-response: ${JSON.stringify({
+        ts: clock,
+        src: 'metro',
+        level: 'debug',
+        event: `bundle_response_${stage}`,
+        platform: 'ios',
+        requestId,
+        msg: `ios bundle response ${stage}`,
+      })}\n`;
+    child.stderr!.emit('data', line('started', 'a'));
+    child.stdout!.emit('data', 'iOS Bundling index.js\n');
+    child.stderr!.emit('data', line('started', 'b'));
+    child.stderr!.emit('data', line('started', 'c'));
+    for (const id of ['a', 'b', 'c']) child.stderr!.emit('data', line('finished', id));
+
+    const bundle = written.filter((r) => String(r.event).startsWith('bundle_response_'));
+    expect(bundle.map((r) => `${r.event}:${r.requestId}`)).toEqual([
+      'bundle_response_started:a',
+      'bundle_response_started:b',
+      'bundle_response_started:c',
+      'bundle_response_finished:a',
+      'bundle_response_finished:b',
+      'bundle_response_finished:c',
+    ]);
+    const quietSince = clock;
+    clock += 3_600_000;
+    expect(activity.lastActivityAt()).toBe(quietSince);
   });
 
   test('the child inherits the supervisor process environment (#33)', async () => {
@@ -546,6 +592,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(
       expoMetroStoreEnv({
         root: '/w/app',
+        port: 8082,
         storeRoot: '/cache/app',
         adapterPath: adapter,
         existingOverride: '/w/app/custom-metro.cjs',
@@ -554,6 +601,7 @@ describe('the Metro store injected into an Expo child', () => {
       EXPO_OVERRIDE_METRO_CONFIG: adapter,
       STIM_METRO_STORE: '/cache/app',
       STIM_PROJECT_ROOT: '/w/app',
+      STIM_METRO_PORT: '8082',
       STIM_EXPO_METRO_CONFIG: '/w/app/custom-metro.cjs',
     });
   });
@@ -590,11 +638,11 @@ describe('the Metro store injected into an Expo child', () => {
     delete process.env.EXPO_OVERRIDE_METRO_CONFIG;
   });
 
-  test('Expo SDK 53 runs normally without Stim Metro cache env', async () => {
+  test('Expo SDK 53 runs normally without Stim Metro cache env or request records', async () => {
     fakeBin(root, 53);
     const logsDir = join(root, '.stim', 'logs');
     const calls: { opts: SpawnOptions }[] = [];
-    await startExpoServer({
+    const handle = await startExpoServer({
       root,
       port: 8119,
       logsDir,
@@ -609,6 +657,7 @@ describe('the Metro store injected into an Expo child', () => {
     expect(env.STIM_METRO_STORE).toBe(undefined);
     const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
     expect(String(records.find((record) => record.event === 'cache_store_skipped')?.msg)).toContain('predates');
+    expect(handle.observesRequests).toBe(false);
   });
 
   test.each(['machine', 'project', 'native-invalid'])(
@@ -638,7 +687,7 @@ describe('the Metro store injected into an Expo child', () => {
       process.env.NODE_OPTIONS = '--enable-source-maps';
       const logsDir = join(root, '.stim', 'logs');
       const calls: { opts: SpawnOptions }[] = [];
-      await startExpoServer({
+      const handle = await startExpoServer({
         root,
         port: 8121,
         logsDir,
@@ -651,6 +700,7 @@ describe('the Metro store injected into an Expo child', () => {
       expect(env.NODE_OPTIONS).toBe('--enable-source-maps');
       expect(env.STIM_METRO_STORE).toBe('');
       expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe(expoMetroConfigPath());
+      expect(handle.observesRequests).toBe(true);
       const records = parseNdjsonText(readFileSync(join(logsDir, 'metro.ndjson'), 'utf-8'));
       expect(records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
     },

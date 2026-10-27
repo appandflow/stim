@@ -7,7 +7,13 @@ import type { StatusPayload } from '@/protocol/types';
 
 const status = fixture.payload as StatusPayload;
 const clone = (): StatusPayload => JSON.parse(JSON.stringify(status)) as StatusPayload;
-const mac = (id: string, name = `Mac ${id}`): PairedMac => ({ id, name, endpoint: `ws://${id}`, pairedAt: '' });
+const mac = (id: string, name = `Mac ${id}`): PairedMac => ({
+  id,
+  name,
+  endpoint: `ws://${id}`,
+  pairedAt: '',
+  serverKey: 'k',
+});
 const OPEN = { kind: 'open', server: {}, actions: [], capabilities: [] } as never;
 
 function memoryStore(): KeyValueStore & { data: Map<string, string> } {
@@ -53,6 +59,31 @@ describe('createMachineStore', () => {
     machines.receiveStatus('a', clone());
     expect(listener).not.toHaveBeenCalled();
     expect(machines.store.getState()).toBe(before);
+  });
+
+  it('binds equal live snapshots to the home that authenticated the connection', () => {
+    const machines = createMachineStore();
+    const opened = (id: string) => ({
+      kind: 'open' as const,
+      server: { name: 'Mac', version: '1', stim: '1', id },
+      protocol: 1,
+      actions: [],
+      capabilities: ['read'],
+      features: [],
+      deviceId: null,
+    });
+    machines.patchLink('a', { state: opened('first-home') });
+    machines.receiveStatus('a', clone());
+    expect(machines.store.getState().snapshots.a.source?.server.id).toBe('first-home');
+    machines.patchLink('a', { state: opened('other-home') });
+    expect(machines.store.getState().snapshots.a.source?.server.id).toBe('first-home');
+    machines.receiveStatus('a', clone());
+    expect(machines.store.getState().snapshots.a.source?.server.id).toBe('other-home');
+    const reconnect = opened('other-home');
+    machines.patchLink('a', { state: reconnect });
+    expect(machines.store.getState().snapshots.a.source).not.toBe(reconnect);
+    machines.receiveStatus('a', clone());
+    expect(machines.store.getState().snapshots.a.source).toBe(reconnect);
   });
 
   it('keeps unchanged workspace items when one workspace changes', () => {

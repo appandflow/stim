@@ -1,3 +1,6 @@
+import { configDir } from '@stim-cli/core';
+import { openWorkspaceLogs } from '../engine/logs.ts';
+import { followAgentActions } from '../devices/agent-actions-follow.ts';
 import { parseDeviceSlotOption } from '../devices/device-slots.ts';
 import chalk from 'chalk';
 import type { ChalkInstance } from 'chalk';
@@ -12,25 +15,27 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import {
+  runId,
   buildCriteria,
+  buildLedgerDir,
+  gcLogDir,
+  readBuildLedger,
+  readGcLog,
   compileGrep,
   fileSizes,
   followLogs,
   logFiles,
   parseSince,
   queryLogs,
-  queryJsonLogs,
-  readLogRecords,
-  readMacosRecord,
   recordMatches,
   sortByTs,
 } from '@stim-cli/core/state';
-import { createAgentActionReader, workspaceAgentTargets } from '../devices/agent-actions.ts';
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { captureWorkspaceCrashes } from '../diagnostics/native-crash.ts';
+import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+
+const MACHINE_SOURCES = ['gc', 'builds'];
 
 const LEVEL_WIDTH = 5;
 const SRC_WIDTH = 6;
@@ -98,7 +103,11 @@ interface SourcesResult {
 export function validateSources(sources: string | string[] | undefined | null): SourcesResult {
   if (sources === undefined || sources === null) return { sources: undefined };
   const list = Array.isArray(sources) ? sources : [sources];
-  if (list.includes('all')) return { sources: [...SOURCES] };
+  if (list.includes('gc') && list.length > 1)
+    return { error: '--source gc reads the machine-wide gc log and cannot be combined with other sources.' };
+  if (list.includes('builds') && list.length > 1)
+    return { error: '--source builds reads the machine-wide build ledger and cannot be combined with other sources.' };
+  if (list.includes('all')) return { sources: SOURCES.filter((source) => !MACHINE_SOURCES.includes(source)) };
   const unknown = list.filter((s) => !SOURCES.includes(s));
   if (unknown.length > 0) {
     return {
@@ -185,7 +194,7 @@ export default function logsCommand(program: Command): void {
     )
     .option(
       '--source <s...>',
-      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all',
+      'Only these sources: metro, client, device, build, agent, maintenance, placement, or all; gc alone reads the machine-wide gc log of what gc and maintenance cleared, and builds alone reads the machine-wide ledger of native builds',
     )
     .option('--level <l>', `Minimum level: ${LEVELS.join(', ')}`)
     .option('--since <d>', 'Only records newer than this, e.g. 30s, 5m, 2h')
@@ -198,6 +207,13 @@ export default function logsCommand(program: Command): void {
     .option('--follow', 'Keep streaming new records until interrupted')
     .option('--json', 'Emit the raw records, one per line (valid NDJSON; zero matches is zero bytes, exit 0)')
     .action(async (opts: LogsOptions) => {
+      const requested = [opts.source ?? []].flat();
+      const [only] = requested;
+      if (requested.length === 1 && only !== undefined && MACHINE_SOURCES.includes(only)) {
+        const { minLevel, tail } = validateOptions(opts);
+        printMachineLog(only === 'gc' ? GC_LOG : BUILD_LEDGER, opts, opts.errors ? 'error' : minLevel, tail);
+        return;
+      }
       const root = findCommandWorkspace(process.cwd());
       if (!root) {
         refuseNoProject({ json: false });
@@ -205,40 +221,10 @@ export default function logsCommand(program: Command): void {
       }
       const dir = workspaceLogsDir(root);
 
-      let sources: string[] | undefined;
-      if (opts.source !== undefined) {
-        const checked = validateSources(opts.source);
-        if (checked.error) fail(checked.error);
-        sources = checked.sources;
-      }
-
-      let minLevel: string | undefined;
-      if (opts.level !== undefined) {
-        const checked = validateLevel(opts.level);
-        if (checked.error) fail(checked.error);
-        minLevel = checked.level;
-      }
-
-      if (opts.since !== undefined) {
-        const parsed = parseSince(opts.since);
-        if (parsed.error) fail(parsed.error);
-      }
-
-      let tail: number | undefined;
-      if (opts.tail !== undefined) {
-        const parsed = parseTail(opts.tail);
-        if (parsed.error) fail(parsed.error);
-        tail = parsed.n;
-      }
-
-      if (opts.grep !== undefined) {
-        const compiled = compileGrep(opts.grep);
-        if (compiled.error) fail(compiled.error);
-      }
+      const { sources, minLevel, tail } = validateOptions(opts);
 
       requireLogsWorkspace(root, dir);
-
-      const hostedReachable = await syncHostedLogs(root);
+      recordWorkspaceUse(root);
 
       const query = {
         slot: opts.slot,
@@ -265,20 +251,32 @@ export default function logsCommand(program: Command): void {
         console.log(formatRecord(rendered, { paint: record?.level ? LEVEL_COLOURS[record.level] : undefined }));
       };
 
-      const captured = captureWorkspaceCrashes(root, dir);
-      const offsets = opts.follow ? fileSizes(dir) : null;
-      const workspaceTimeline = opts.follow ? readLogRecords(dir) : captured;
-      const agentSince = workspaceTimeline[0]?.ts ?? (opts.follow ? Date.now() : undefined);
-      const project = loadConfig()?.projects?.[root];
-      const readAgent =
-        (sources ? sources.includes('agent') : !opts.errors) && agentSince !== undefined
-          ? createAgentActionReader({
-              targets: () => workspaceAgentTargets(project, readMacosRecord(root)),
-              sinceTs: agentSince,
-            })
-          : null;
-      const timeline = readAgent ? sortByTs([...workspaceTimeline, ...readAgent()]) : workspaceTimeline;
-      const rawRecords = (opts.json ? queryJsonLogs : queryLogs)({ ...query, records: timeline });
+      const context = {
+        home: configDir(),
+        buildCache: null,
+        projectRoot: root,
+        cwd: root,
+        runId: runId(),
+        env: process.env,
+        signal: new AbortController().signal,
+        output: (stream: 'stdout' | 'stderr', text: string) => process[stream].write(text),
+      };
+      const { view, readAgent, hostedReachable } = await openWorkspaceLogs(context, query, Boolean(opts.follow));
+      const offsets = opts.follow ? view.sizes : null;
+      const identities = opts.follow ? view.identities : null;
+      let timeline: NdjsonRecord[] = [];
+      let rawRecords: NdjsonRecord[];
+      try {
+        const extra =
+          (await readAgent?.(opts.json ? { tail: query.tail, matches: view.filter(query) } : undefined)) ?? [];
+        if (opts.json) rawRecords = await view.query({ ...query, extra });
+        else {
+          timeline = sortByTs([...(await view.query()), ...extra]);
+          rawRecords = queryLogs({ ...query, records: timeline });
+        }
+      } finally {
+        await view.close();
+      }
       const supervisorPort = readWorkspaceState(root)?.supervisor?.port;
       const records = opts.json
         ? rawRecords
@@ -327,27 +325,120 @@ export default function logsCommand(program: Command): void {
       const stop = followLogs({
         dir,
         offsets,
+        identities,
         criteria,
         onRecord: emit,
         errorContext: opts.errors ? (opts.json ? 'field' : 'msg') : undefined,
       });
-      const agentTimer = readAgent
-        ? setInterval(() => {
-            for (const record of readAgent()) if (recordMatches(record, criteria)) emit(record);
-          }, 500)
+      const stopAgent = readAgent
+        ? followAgentActions(context, readAgent, (record) => {
+            if (recordMatches(record, criteria)) emit(record);
+          })
         : null;
       const stopHosted = followHostedLogs(root, !hostedReachable);
       const finish = () => {
         stop();
         stopHosted?.();
         stopReader();
-        if (agentTimer) clearInterval(agentTimer);
+        stopAgent?.();
         process.exit(0);
       };
       const stopReader = watchStdoutReader(finish);
       process.on('SIGINT', finish);
       process.on('SIGTERM', finish);
     });
+}
+
+function validateOptions(opts: LogsOptions): { sources?: string[]; minLevel?: string; tail?: number } {
+  let sources: string[] | undefined;
+  if (opts.source !== undefined) {
+    const checked = validateSources(opts.source);
+    if (checked.error) fail(checked.error);
+    sources = checked.sources;
+  }
+
+  let minLevel: string | undefined;
+  if (opts.level !== undefined) {
+    const checked = validateLevel(opts.level);
+    if (checked.error) fail(checked.error);
+    minLevel = checked.level;
+  }
+
+  if (opts.since !== undefined) {
+    const parsed = parseSince(opts.since);
+    if (parsed.error) fail(parsed.error);
+  }
+
+  let tail: number | undefined;
+  if (opts.tail !== undefined) {
+    const parsed = parseTail(opts.tail);
+    if (parsed.error) fail(parsed.error);
+    tail = parsed.n;
+  }
+
+  if (opts.grep !== undefined) {
+    const compiled = compileGrep(opts.grep);
+    if (compiled.error) fail(compiled.error);
+  }
+  return { sources, minLevel, tail };
+}
+
+interface MachineLog {
+  source: string;
+  dir: () => string;
+  read: () => NdjsonRecord[];
+  /** Identifies a record when the file is rewritten while following, so it is not printed twice. */
+  key?: (record: NdjsonRecord) => string;
+}
+
+const GC_LOG: MachineLog = { source: 'gc', dir: gcLogDir, read: readGcLog };
+
+const BUILD_LEDGER: MachineLog = {
+  source: 'builds',
+  dir: buildLedgerDir,
+  read: readBuildLedger,
+  key: (record) => `${record.id}:${record.ts}`,
+};
+
+function printMachineLog(
+  log: MachineLog,
+  opts: LogsOptions,
+  minLevel: string | undefined,
+  tail: number | undefined,
+): void {
+  const printed = new Set<string>();
+  const emit = (record: NdjsonRecord) => {
+    if (opts.follow && log.key) {
+      const key = log.key(record);
+      if (printed.has(key)) return;
+      printed.add(key);
+    }
+    console.log(
+      opts.json
+        ? JSON.stringify(record)
+        : formatRecord(record, { paint: record.level ? LEVEL_COLOURS[record.level] : undefined }),
+    );
+  };
+  const query = { sources: [log.source], minLevel, since: opts.since, grep: opts.grep };
+  const dir = log.dir();
+  const offsets = opts.follow ? fileSizes(dir) : null;
+  const all = log.read();
+  const records = queryLogs({ ...query, records: all, tail });
+  for (const record of records) emit(record);
+  if (opts.follow && log.key) for (const record of all) printed.add(log.key(record));
+  if (!opts.follow) {
+    if (records.length === 0 && !opts.json) console.error(chalk.dim(`No matching log records in ${dir}`));
+    return;
+  }
+  const stop = followLogs({ dir, offsets, criteria: buildCriteria(query), onRecord: emit });
+  const finish = () => {
+    stop();
+    stopReader();
+    process.exit(0);
+  };
+  const stopReader = watchStdoutReader(finish);
+  process.on('SIGINT', finish);
+  process.on('SIGTERM', finish);
 }
 
 function fail(message: string): never {

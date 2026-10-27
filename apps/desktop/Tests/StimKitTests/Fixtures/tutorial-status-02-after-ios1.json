@@ -19,7 +19,8 @@
             "changeCount": 0,
             "baseline": null,
             "rekeyedBy": []
-          }
+          },
+          "fingerprint": null
         }
       },
       "builds": {
@@ -52,7 +53,9 @@
               "device": 29,
               "install": 9070,
               "launch": 7953
-            }
+            },
+            "fingerprint": null,
+            "cacheKey": null
           }
         ]
       },
@@ -82,8 +85,17 @@
         },
         "name": "Tutorial simulator",
         "udid": "tutorial-simulator"
-      }
+      },
+      "memoryMb": 0
     }
   ],
-  "archived": []
+  "archived": [],
+  "capacity": {
+    "liveCount": 1,
+    "committedMb": 0,
+    "totalMemoryMb": 49152,
+    "overCapacity": false
+  },
+  "deviceLeases": [],
+  "simctlAvailable": true
 }

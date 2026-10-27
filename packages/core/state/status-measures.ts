@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
-import { readJsonObject } from './json-file.ts';
+import { isJsonObject, readJsonObject } from './json-file.ts';
 import {
   agentSessionsCacheFile,
   diskUsageCacheDir,
@@ -78,13 +78,20 @@ export function listStatusCacheEntries(): StatusCacheEntry[] {
   return entries;
 }
 
-/** A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. */
+/**
+ * A worktree's cached pull request lookup: the branch and HEAD it was looked up for, and when. `containsHead` and
+ * `endedAt` (epoch milliseconds) carry the lookup's pull request facts; entries written before them leave them out.
+ * `partial` marks a lookup made without the title, checks and review decision.
+ */
 export interface PullRequestCacheEntry {
   path: string;
   branch: string;
   head: string;
   checkedAt: string;
   pullRequest: WorktreePullRequest | null;
+  containsHead?: boolean;
+  endedAt?: number | null;
+  partial?: true;
 }
 
 const PR_STATES = new Set(['open', 'draft', 'merged', 'closed']);
@@ -92,8 +99,8 @@ const REVIEW_DECISIONS = new Set(['approved', 'changes-requested', 'review-requi
 
 function pullRequestOf(value: unknown): WorktreePullRequest | null | undefined {
   if (value === null) return null;
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const pr = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return undefined;
+  const pr = value;
   if (!Number.isInteger(pr.number) || typeof pr.url !== 'string' || typeof pr.title !== 'string') return undefined;
   if (!PR_STATES.has(pr.state as string) || typeof pr.checkedAt !== 'string') return undefined;
   const checks = pr.checks as Record<string, unknown> | null | undefined;
@@ -124,7 +131,17 @@ export function readPullRequestCache(path: string): PullRequestCacheEntry | null
   if (typeof entry.checkedAt !== 'string') return null;
   const pullRequest = pullRequestOf(entry.pullRequest);
   if (pullRequest === undefined) return null;
-  return { path, branch: entry.branch, head: entry.head, checkedAt: entry.checkedAt, pullRequest };
+  const { containsHead, endedAt } = entry;
+  return {
+    path,
+    branch: entry.branch,
+    head: entry.head,
+    checkedAt: entry.checkedAt,
+    pullRequest,
+    ...(typeof containsHead === 'boolean' ? { containsHead } : {}),
+    ...(endedAt === null || (typeof endedAt === 'number' && Number.isFinite(endedAt)) ? { endedAt } : {}),
+    ...(entry.partial === true ? { partial: true as const } : {}),
+  };
 }
 
 /** The cached size of the folder at `path`, or null before it was measured. */
@@ -153,8 +170,8 @@ export function readBuildDetail(root: string, claimId: string): BuildDetail | nu
   const file = readJsonObject(workspaceBuildDetailFile(root));
   if (!file || file.claimId !== claimId) return null;
   const detail = file.detail;
-  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) return null;
-  const raw = detail as Record<string, unknown>;
+  if (!isJsonObject(detail)) return null;
+  const raw = detail;
   if (typeof raw.updatedAt !== 'string') return null;
   return {
     step: (NATIVE_BUILD_STEPS as readonly unknown[]).includes(raw.step) ? (raw.step as BuildDetail['step']) : null,
@@ -166,7 +183,7 @@ export function readBuildDetail(root: string, claimId: string): BuildDetail | nu
   };
 }
 
-/** The coding-agent sessions `status --watch` last found running on this Mac, and when it looked. */
+/** The coding-agent sessions `status --watch` last found running on this machine, and when it looked. */
 export interface AgentSessionsCache {
   discoveredAt: string;
   sessions: AgentSession[];
@@ -178,8 +195,8 @@ function optionalString(value: unknown): string | undefined {
 
 /** An agent session as Stim wrote it to its cache or workspace state, or null when it is not one. */
 export function agentSessionOf(value: unknown): AgentSession | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const raw = value as Record<string, unknown>;
+  if (!isJsonObject(value)) return null;
+  const raw = value;
   if (!(AGENT_TOOLS as readonly unknown[]).includes(raw.tool)) return null;
   if (typeof raw.sessionId !== 'string' || !raw.sessionId || typeof raw.cwd !== 'string' || !raw.cwd) return null;
   const session: AgentSession = { tool: raw.tool as AgentSession['tool'], sessionId: raw.sessionId, cwd: raw.cwd };
@@ -191,7 +208,7 @@ export function agentSessionOf(value: unknown): AgentSession | null {
   if (title) session.title = title;
   if (startedAt) session.startedAt = startedAt;
   if (lastActiveAt) session.lastActiveAt = lastActiveAt;
-  if (Number.isInteger(raw.pid) && (raw.pid as number) > 0) session.pid = raw.pid as number;
+  if (typeof raw.pid === 'number' && Number.isInteger(raw.pid) && raw.pid > 0) session.pid = raw.pid;
   if (openUrl) session.openUrl = openUrl;
   if (webUrl) session.webUrl = webUrl;
   return session;

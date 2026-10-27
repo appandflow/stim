@@ -16,21 +16,11 @@ public struct ReplayTimeline: Equatable, Sendable {
     public var collapsed = false
   }
 
-  /// A "stopped" label under a gap, `left` and `width` in points along the track.
-  public struct GapLabel: Equatable, Sendable {
-    public var start: Double
-    public var text: String
-    public var left: Double
-    public var width: Double
-  }
-
   /// A stop longer than this takes only this much of the track, so hours stopped do not squeeze the footage flat.
   public static let longGapMs = 60_000.0
   /// The track's length is a whole number of these, so it rescales at most once per step as footage grows. It shrinks
   /// only by two steps or more, so footage that hovers around a step as stim-server prunes it does not flip the scale.
   public static let windowStepMs = 60_000.0
-  static let labelCharWidth = 6.5
-  static let labelGap = 6.0
 
   public var start: Double
   public var end: Double
@@ -112,28 +102,6 @@ public struct ReplayTimeline: Equatable, Sendable {
     }
     return end
   }
-
-  /// The "stopped" labels to draw under the track's gaps, at most one per place: each is centred under its gap and
-  /// kept inside the track, and a label that would overlap a longer stop's is left out. `width` is the track's in
-  /// points; `measure` gives a label's width, by default estimated from its length as the phone does.
-  public func gapLabels(width: Double, measure: (String) -> Double = Self.estimatedWidth) -> [GapLabel] {
-    var placed: [GapLabel] = []
-    let gaps = pieces.filter(\.isGap).sorted { $0.end - $0.start > $1.end - $1.start }
-    for gap in gaps {
-      let text = "stopped \(Format.roundedDuration(ms: gap.end - gap.start))"
-      let labelWidth = measure(text).rounded(.up)
-      if labelWidth > width { continue }
-      let center = (gap.from + gap.to) / 2 * width
-      let left = min(max(0, center - labelWidth / 2), width - labelWidth)
-      let overlaps = placed.contains {
-        left < $0.left + $0.width + Self.labelGap && $0.left < left + labelWidth + Self.labelGap
-      }
-      if !overlaps { placed.append(GapLabel(start: gap.start, text: text, left: left, width: labelWidth)) }
-    }
-    return placed.sorted { $0.left < $1.left }
-  }
-
-  public static func estimatedWidth(_ text: String) -> Double { Double(text.count) * labelCharWidth }
 
   /// Where to land for a marker: a little before it, so the action plays out on screen.
   public func seekTime(for marker: ReplayMarker, leadMs: Double = 1500) -> Double {

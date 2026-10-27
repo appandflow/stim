@@ -5,7 +5,7 @@ import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
-import { countLiveOwnedDevices, type DeviceCountExclusion } from '../engine/device-capacity.ts';
+import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -38,13 +38,13 @@ async function main(): Promise<void> {
     exclude = input.exclude as DeviceCountExclusion[];
   }
   if (input.mode === 'count') {
-    process.stdout.write(`${JSON.stringify(countLiveOwnedDevices({}, { exclude }))}\n`);
+    process.stdout.write(`${JSON.stringify(countLiveOwnedDevicesByPlatform({}, { exclude }))}\n`);
     return;
   }
   if (input.mode === 'offer') {
     const request = parseHostedOfferRequest(input);
     if (!request) throw new Error('Invalid hosted offer selectors.');
-    process.stdout.write(`${JSON.stringify(inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
+    process.stdout.write(`${JSON.stringify(await inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
     return;
   }
   if (process.platform !== 'darwin') {
@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       !Number.isFinite(input.since)
     )
       throw new Error('Invalid hosted native log request.');
-    const more = (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
+    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
       process.env.STIM_HOME,
       input.session as string,
       input.attempt as string,

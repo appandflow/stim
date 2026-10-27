@@ -103,6 +103,15 @@ KEYS STIM READS
                         The \`--runtime\` flag overrides this per invocation,
                         and an uninstalled version refuses the same way,
                         naming the layer the value came from
+  ios.scheme            e.g. "RNTester" -- the shared Xcode scheme to build
+                        when the workspace lists several and none matches
+                        its name, which otherwise refuses with
+                        STIM_NO_SCHEME. The \`--scheme\` flag overrides it
+                        per invocation; an \`--eas-profile\` build reads only
+                        the flag. Part of the cache key, like the flag, so
+                        it also skips the older Expo buildCacheProvider tier,
+                        which may key only on the fingerprint. Workspace or
+                        committed scope.
   ios.configuration     e.g. "Release" -- the Xcode configuration to build
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
@@ -110,10 +119,36 @@ KEYS STIM READS
                         embedded JS, no Metro, cache keyed -release-sim, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
-  ios.remote            "proxy", "eas", or a named approved Mac from
-                        remote.machines, with the same meaning as --remote.
-                        "auto" places on an approved Mac when this Mac is full or
-                        busy. Unset runs here. See lifecycle hosted-ios.
+  ios.remote            where the simulator runs, with the same meaning as
+                        --remote: "local" here, even when a lower layer says
+                        otherwise; "auto" here, and on an approved Mac from
+                        remote.machines when this machine is full or busy;
+                        "remote" on the first approved Mac in remote.machines
+                        order with room, here only when none takes it;
+                        "remote-only" the same but never here; a named
+                        approved Mac exactly that Mac; "proxy" or "eas" a
+                        remote device backend. Unset runs here. A --device run
+                        ignores it. See lifecycle hosted-ios.
+  ios.projectPath       directory under the app holding a bare React Native
+                        app's Xcode project and Podfile; default "ios". "."
+                        is the app directory itself (RNTester's layout).
+                        Detection, pod install, xcodebuild, the bundle id,
+                        doctor, worktree warm and remove, and remote builds
+                        all use it. A subdirectory is fingerprinted the way
+                        ios/ is; "." hashes every top-level entry except
+                        node_modules, Pods, build, android, .stim.json and
+                        anything git ignores, so a JS edit misses the build
+                        cache instead of risking a stale build. Workspace or committed scope. ios refuses
+                        with STIM_BAD_ARG a path that escapes the app or
+                        holds no .xcworkspace or .xcodeproj, and any value
+                        on an Expo app, whose prebuild writes ios/.
+  ios.simslim           "on" or "off"; default "off", machine or project
+                        layers. "on" slims every Stim-owned iOS simulator
+                        with SimSlim's default categories when no
+                        ios.simslimProfile is set; a profile always wins. A
+                        workspace, repo or committed "off" opts that app out
+                        of a machine "on" and restores stock services. See
+                        \`stim guide lifecycle simslim\`.
   ios.simslimProfile    a SimSlim JSON profile under the app directory,
                         at most 64 KiB. Install the
                         external tool once with
@@ -122,12 +157,12 @@ KEYS STIM READS
                         iOS work after reviewing service tradeoffs; see
                         \`stim guide lifecycle simslim\`. Each local \`stim ios\`
                         reconciles the profile on its Stim-owned simulator.
-                        The first change can reboot it; a matching profile is a
-                        fast no-op. Removing the setting restores stock services
-                        when Stim applied the profile. Absolute paths, root or
+                        The first change can reboot it; an unchanged profile on
+                        the same boot is skipped. Removing the setting
+                        restores stock services when Stim applied the profile. Absolute paths, root or
                         symlink escapes, and missing files are refused before
                         simulator creation. Remote and unowned simulators are
-                        never changed.
+                        never slimmed.
   ios.signingIdentity   e.g. "Apple Development: Jane (TEAMID5678)" -- the
                         keychain identity to re-seal a \`--device\` build with,
                         overriding the one Stim derives from the artifact's own
@@ -141,6 +176,19 @@ KEYS STIM READS
                         name: Stim is non-interactive, so it refuses an
                         ambiguous identity rather than picking one. It wins
                         over ios.signingIdentity.
+  ios.appStoreConnectKeyPath, ios.appStoreConnectKeyId, ios.appStoreConnectIssuerId
+                        machine scope only; STIM_ASC_KEY_PATH, STIM_ASC_KEY_ID
+                        and STIM_ASC_ISSUER_ID each override their own
+                        setting when set and non-empty. The absolute
+                        path of an App Store Connect API key (.p8), its key
+                        ID and its issuer ID. Only \`stim device provision
+                        ios\` reads them, passing them to xcodebuild as
+                        -authenticationKeyPath/-authenticationKeyID/
+                        -authenticationKeyIssuerID instead of the Xcode
+                        account, so provisioning works on a Mac where nobody
+                        signs in to Xcode. Set all three or none; Stim never
+                        reads the key file or prints its path. Builds never
+                        use them.
   ios.lanHost           e.g. "192.168.1.42" -- the address a phone uses to
                         reach this workspace's Metro on an \`ios --device\`
                         Debug run, pinning the interface on a multi-NIC Mac
@@ -224,6 +272,26 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         and hw.audioOutput for that headless launch. With
                         androidEmulatorApp "stim-desktop" on macOS, -gpu host
                         overrides hw.gpu.mode the same way.
+  android.gradleRoot    directory holding gradlew and settings.gradle(.kts),
+                        relative to the app; default "android". It may sit
+                        outside the app but not outside the repository:
+                        RNTester in the React Native monorepo uses "../..".
+  android.module        the app's Gradle project path; default ":app", e.g.
+                        ":packages:rn-tester:android:app". Its directory is
+                        Gradle's default mapping from the root and must hold
+                        a build.gradle(.kts). With either set, Gradle runs
+                        from the root with qualified tasks such as
+                        <module>:assembleDebug; both values join the cache
+                        key and the remote build job, and the root's
+                        settings, build script, gradle.properties and
+                        gradle/ are fingerprinted. Native sources Gradle
+                        builds from elsewhere in the repository are not:
+                        list them in fingerprint.config.js extraSources.
+                        android refuses with STIM_BAD_ARG a root outside the
+                        repository or without settings.gradle, a module
+                        without a build script, and either value on an Expo
+                        app, whose prebuild writes android/. Workspace or
+                        committed scope.
   android.variant       e.g. "productionDebug" -- the gradle variant to
                         assemble and install on a project with product
                         flavors. A repo like tlon-mobile with
@@ -239,31 +307,61 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         build: embedded JS, no Metro, cache keyed on the
                         variant, and an APK re-pack on cache hits. See
                         \`guide lifecycle release\`.
+  android.artifactInputs a native Gradle APK cache declaration:
+                        complete: true, ignored: [exact repository-relative files],
+                        outputs: [generated repository-relative directories],
+                        localFiles: [exact project-relative or absolute files],
+                        environment: [variable names]. complete promises all
+                        inputs are repeatable and dependencies pinned. Include
+                        signing keys and every external or environment input.
+                        Missing local files and environment values are hashed
+                        as absent. Configured files providers can share the APK
+                        and verification receipt. Input values stay local;
+                        this is not build-worker transfer authorization.
+                        See the native Android guide.
+  android.offloadInputs a native Gradle build-worker declaration:
+                        {"complete":true,"ignored":[],"outputs":["build","app/build"]}.
+                        complete confirms Git-visible source plus the exact
+                        repository-relative ignored files suffice for this
+                        build. outputs names generated directories reported
+                        by AGP; recorded outputs can survive worker sync.
+                        Omitted optional inputs can change build results.
+                        Worker APK caching also requires artifactInputs. See
+                        \`stim guide lifecycle native-android\` for input,
+                        privacy and worker requirements.
   android.keystore      the keystore a RE-PACKED release APK is signed with,
                         absolute or relative to the project root. Unset means
                         android/app/debug.keystore, which every RN and Expo
                         android project carries -- the right default, because
                         what this signs is a local emulator install and never
                         anything distributed. Set it only when the release
-                        variant must be signed with the repo's own key.
+                        variant must be signed with the repo's own key. A
+                        value in the committed .stim.json must resolve
+                        inside the repository (symlinks included); an
+                        absolute path outside it needs --scope workspace
+                        or repo.
   android.keystorePassword
                         the password for it. apksigner's SCHEMED form is
                         passed through unchanged (\`env:MY_KS_PASS\`,
                         \`file:/keys/pw.txt\`, \`stdin\`), which is how a
                         committed .stim.json avoids carrying a secret; a
-                        bare string is used as the literal password. Unset
-                        means the debug keystore's fixed "android".
-  android.remote        "proxy", "eas", or a named approved Mac in
-                        remote.machines; "auto" places on an approved Mac when
-                        this Mac is full or busy. Unset runs here.
-                        See lifecycle hosted-android.
-  remote.easFallback    true lets "auto" (ios.remote, android.remote or
-                        --remote auto) run the simulator or emulator on a
-                        billed EAS Simulator when this Mac is at its
-                        concurrency.maxDevices cap (or has runs queued) and no
-                        remote.machines Mac takes the run, instead of waiting
+                        bare string (or \`pass:<password>\`) is the literal
+                        password, handed to apksigner through its
+                        environment, never its command line. Unset means
+                        the debug keystore's fixed "android".
+  android.remote        where the emulator runs, with the same words as
+                        ios.remote: "local", "auto", "remote", "remote-only",
+                        a named approved Mac in remote.machines, "proxy" or
+                        "eas". Unset runs here. A --device run ignores it. See
+                        lifecycle hosted-android.
+  remote.easFallback    true lets "auto" or "remote" (ios.remote, android.remote
+                        or --remote) run the simulator or emulator on a
+                        billed EAS Simulator when this machine is at a
+                        device cap (concurrency.maxDevices or a per-platform
+                        cap, or has runs queued) and no
+                        remote.machines entry takes the run, instead of waiting
                         or refusing with STIM_AT_CAPACITY. Default false. A
-                        busy Mac with a free slot never uses it. Stim checks
+                        busy machine with a free slot never uses it. Stim checks
                         first that the run could use --remote eas (eas-cli
                         with simulator commands, eas simulator:availability,
                         agent-device, the default slot, a reachable Metro);
@@ -271,6 +369,17 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         project scope; a committed value opts in everyone who
                         runs the app. Only the user enables it. See lifecycle
                         hosted-ios.
+  remote.easMaxDurationMinutes
+                        Minutes after which EAS stops each EAS Simulator session
+                        Stim creates (--remote eas or the easFallback), so a
+                        session nobody ended stops billing. A positive integer;
+                        default 30. Machine scope only. stop and gc --delete
+                        still end a session sooner; a run after the cap expires
+                        replaces the stopped session. Stim passes it to eas sim
+                        as --max-duration-minutes. EAS rejects a value above the
+                        account plan's session limit, so raise it only as far
+                        as the plan allows. A run reuses a live session without
+                        checking its remaining time.
   metro.tunnel          selects how a remote device reaches this workspace's
                         Metro after remote intent exists. Plain \`start\` stays
                         local. For Expo and bare React Native, "auto" (default)
@@ -285,6 +394,21 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         foreground serve process, never Funnel; "auto" never
                         selects it. The device must share the tailnet. See
                         \`guide metro\`. Any other value is refused as invalid.
+  metro.command         argv array that starts this app's dev server, for an
+                        app whose Metro only runs through its own command,
+                        e.g. ["node", "../react-native/cli.js", "start",
+                        "--port", "{port}"]. No shell; it runs from the app
+                        directory, and {port} becomes the reserved Metro port,
+                        which the command must pass. It replaces bare-inproc
+                        and expo-child with command-child (see \`guide
+                        metro\`). Workspace or committed scope.
+                        Metro must keep running from inside the app, which
+                        is how Stim proves it is this app's. Without Stim's
+                        Metro reporter, launches stay UNVERIFIED. start
+                        refuses with STIM_BAD_ARG a value that is not such an
+                        array or has no {port}, --reset-cache (put the
+                        command's own reset flag in metro.command instead),
+                        and any use on Windows.
   metro.ngrokUrl        the stable managed ngrok URL. It requires metro.tunnel
                         "ngrok" and passes --url to ngrok http. Stim owns
                         this process.
@@ -315,7 +439,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
   metro.warmupUrl.android
                         an HTTP(S) URL or a /path ending in .bundle, with the
                         full query the app uses, including a matching platform.
-                        Unset uses Expo's manifest or bare React Native defaults.
+                        Unset uses the app's most recent bundle request from
+                        the workspace's metro log, then Expo's manifest or the
+                        bare React Native defaults.
                         Stim preserves the path and query but always requests
                         this workspace's verified local Metro port; a supplied
                         host and port are ignored. No defaults are added to an
@@ -356,12 +482,24 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,
                         without shared URL schemes or an update feed
+  macos.artifactInputs  complete pinned, repeatable inputs producing a relocatable
+                        app for completed build caching. See stim guide macos.
   macos.arguments       string array passed directly to the executable;
                         see stim guide macos for the prototype's limits
   macos.assetCatalog    optional .xcassets directory relative to Package.swift,
                         compiled into Contents/Resources before signing
   macos.resources       map of Contents/Resources destinations to source paths
                         relative to Package.swift; see stim guide macos
+  macos.remote          where stim macos launches the app, with the words of
+                        ios.remote except "eas" and "proxy": "local" here;
+                        "auto" here unless this machine is busy, then an
+                        approved Mac in remote.machines; "remote" on the
+                        first approved Mac in order with room, here only when
+                        none takes it; "remote-only" the same but never here,
+                        which keeps the app from taking focus on this Mac; a
+                        named Mac exactly that Mac. The --remote flag
+                        overrides it. A recorded hosted app keeps its Mac
+                        until stim stop. Unset runs here. See stim guide macos.
   web.url               the page \`stim web\` opens in the owned Chrome, an
                         http:// or https:// URL. {port:<label>} becomes the
                         workspace's named port (allocated like \`stim ports
@@ -419,8 +557,9 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them from the environment or the machine layers.
 
 Each setting takes its documented type: string, array of strings, number,
-boolean, or object. ios.remote and android.remote accept backend names or
-tailnet machine names. metro.tunnel, web.viewport,
+boolean, or object. ios.remote, android.remote, macos.remote and remote.build
+accept placement words (local, auto, remote, remote-only) or tailnet machine
+names, and ios.remote and android.remote also the backend names. metro.tunnel, web.viewport,
 optimizations.android.compilerCache and optimizations.android.pch take only
 their listed choices. A value of the wrong
 type or outside those choices is refused by name on every command that resolves
@@ -453,11 +592,19 @@ machine's. They live under a top-level \`concurrency\` key in
     "concurrency": { "maxBuilds": 2, "maxDevices": 3 }
   }
 
-The keys are concurrency.maxBuilds and concurrency.maxDevices.
+The keys are concurrency.maxBuilds and concurrency.maxDevices, plus the
+per-platform device caps concurrency.maxIosDevices,
+concurrency.maxAndroidDevices and concurrency.maxMacosApps. A boot must fit
+its platform cap and concurrency.maxDevices; the per-platform caps only
+tighten (see \`guide lifecycle concurrency\`).
 
 or via the environment, which overrides the file:
 
   STIM_MAX_BUILDS=2 STIM_MAX_DEVICES=3 stim ios
+
+  concurrency.maxIosDevices      STIM_MAX_IOS_DEVICES
+  concurrency.maxAndroidDevices  STIM_MAX_ANDROID_DEVICES
+  concurrency.maxMacosApps       STIM_MAX_MACOS_APPS
 
 Unset, 0, or any non-positive value means NO enforcement -- the default, where
 Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
@@ -493,6 +640,9 @@ floors below; report measures and plans and deletes nothing; off disables it.
 STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
 maintenance.keep is a project setting: pin a workspace so a pass never clears
 its build outputs or removes its worktree.
+maintenance.idleStopHours takes machine or project layers, so one workspace can
+stop sooner, later or never. On a hosting Mac stim-server reads its machine value
+to stop a hosted session whose client has been gone that long.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
@@ -612,51 +762,116 @@ test suites and the end-to-end harness use one -- and a scoped config must not
 leave simulators on the machine it cannot account for. A redirected home that
 wants a pool says so with the variable.
 
-DESKTOP ACCESS TICKETS
-Stim Desktop's Add wizard sets STIM_ACCESS_TICKET for one \`doctor --fix\`
-run. Agents never set it, never run \`stim-server setup\`, never edit
+SETUP TICKETS
+A remote machine approves this one when a person there runs
+\`stim-server setup\` with this machine's setup ticket (32 random bytes, 43
+base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
+ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
+\`doctor --fix\` makes one and prints the setup command to run on the worker.
+Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
-Stim sends the ticket (43 base64url characters) only in build and device-host access
-requests and stores only its SHA-256 ticketHash. With --fix, a still-pending
-request is replaced when its ticketHash is missing or differs from the current
-ticket; matching hashes and approved credentials are preserved.
+Until setup approves, the worker answers unknown-secret and the entry stays
+pending; every doctor run tries again. The first connection after approval pins
+the worker's stim-server key in build-machines.json or device-host-machines.json,
+and every later connection must prove that key; the tailnet node and address
+never decide who the worker is. With --fix, a pending entry is replaced when
+STIM_ACCESS_TICKET names another ticket.
 Approved doctor entries under remoteMachines and deviceHosts include host
 { name, screenRecording, accessibility } when the worker reports it.
+A remote machine doctor cannot use carries a diagnosis { layer, code, title,
+message, remedy } naming the first layer that failed: Tailscale on this machine,
+the peer, the serve route, stim-server, or compatibility. Tell the user its
+message and remedy; the remedies run on the remote machine or in Tailscale, so
+agents do not run them. \`stim guide facts doctor\` lists the codes.
 
-REMOTE MACS AND PHONE APP
-When the user mentions slow builds, a busy Mac, a full disk or device limit, or
+REMOTE MACHINES AND PHONE APP
+When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Macs > Add (a Mac on the tailnet that builds or hosts simulators for
-this one) or Phones > Pair a Phone (the Stim phone app). Stim Desktop also
-suggests these itself, at most once a day and never during a build. Agents only
-tell the user: they never run \`stim-server setup\`, never edit \`remote.*\`,
-\`server.*\` or \`hosting.*\` for the user, and never approve requests.
+Remote Machines > Add (another machine on the tailnet that builds for this one,
+or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+app). Stim Desktop also suggests these itself, at most once a day and never
+during a build. Agents only tell the user: they never run \`stim-server setup\`,
+never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
+approve requests.
 
-REMOTE MACS ARE MACHINE-LEVEL
-\`remote.machines\` names the remote Macs this Mac may build on and host owned
+REMOTE MACHINES ARE MACHINE-LEVEL
+\`remote.machines\` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name with an optional serve port (default
 7443). Name each node and port once:
 
   stim settings set remote.machines '["janics-mac-mini"]'
   stim doctor --fix
 
-Automatic membership is separate from approval. In Desktop Settings > Remote Macs,
-use Automatic builds and Automatic simulators for this Mac or a configured remote.
-The equivalent machine settings list the excluded members; both default to []:
+The order of \`remote.machines\` is the priority order for every workload: the
+build, simulator, emulator and macOS app each go to the first listed machine that
+has approval, a free slot and a 5-minute load per core under that machine's own
+\`server.maxLoadPerCore\`, and the next one in order only when it does not. A
+machine at its caps, over its load limit, unreachable or lacking approval is
+skipped; load does not rank the machines that qualify, so the first one fills
+before the next is used. Put the fastest machine first and set the order with
+one command; \`stim doctor\` prints it as \`placement order\` and gives each
+machine a \`priority\` in its JSON:
+
+  stim settings set remote.machines '["fast-mini","slow-mini"]'
+
+A host reports its own load limit in its device offer; a stim-server older than
+that does not, and this machine's \`server.maxLoadPerCore\` stands in for it.
+
+REMOTE MACHINES ON THE LOCAL NETWORK
+A machine on the same local network, without Tailscale, is named
+\`local:<host>\`: its private IPv4 address or host name, with an optional
+stim-server port (default 7787). On the worker, a person first chooses where
+stim-server listens with the machine setting \`server.lanAddresses\`, a list of
+network interface names or private IPv4 addresses. It defaults to [], which
+listens on no local network address; wildcard, loopback, public and IPv6
+addresses are refused, and the running server applies a change within seconds.
+An interface name follows the interface onto whatever private network it
+joins, so name the address on a machine that moves between networks, and an
+interface only on a worker that stays put. Then the person runs the setup
+command \`stim doctor --fix\` prints here:
+
+  stim settings set server.lanAddresses '["10.0.0.92"]'     # on the worker
+  stim settings set remote.machines '["local:10.0.0.92"]'   # on this machine
+  stim doctor --fix
+
+Every connection runs Stim's Noise handshake, so plain WebSocket carries it
+without TLS, and the address never identifies anyone. Nothing on a local network
+vouches for the worker's key, so \`stim-server setup\` prints the worker's server
+key fingerprint and \`stim doctor --fix\`, run by a person in a terminal, shows
+the fingerprint the worker answered with and pins the key only after they
+confirm it matches. Until then the entry reports key-unconfirmed and is not
+used. Agents never answer that question. The printed setup command carries the
+ticket, which is a credential: whoever spends it first, after setup stores it,
+gets the approval, and on a local network that takes only the ticket and a
+route to the worker, not tailnet membership. Agents show it only to the user.
+Offloaded builds and hosted Debug and
+Release runs work there. Agent control of hosted iOS and Android Debug runs
+goes through a loopback port of this workspace's Metro supervisor, which
+carries it over its own authenticated connection; Release runs and hosted macOS
+apps there report agent control as none.
+\`stim-server pair\` puts \`ws://<address>:<port>\` in the phone pairing code
+when Tailscale is not running and \`server.lanAddresses\` is set.
+
+Automatic membership is separate from approval. In Desktop Settings > Remote
+Machines, use Builds enabled and Simulators enabled for this machine or a
+configured remote. The equivalent machine settings list the excluded members;
+both default to []:
 
   stim settings set remote.buildPoolDisabled '["local"]'
   stim settings set remote.devicePoolDisabled '["janics-mac-mini"]'
   stim settings unset remote.buildPoolDisabled
 
-Use local for this Mac and exact remote.machines entries for remotes, including
+Use local for this machine and exact remote.machines entries for remotes, including
 case and port. Names are not trimmed; unmatched entries exclude nothing. Copy the
 configured name or use Desktop's switches. Each pool
 must retain local or at least one configured remote already approved for that role.
 Offline approved members count as configured members, but placement still requires
-an available compatible host. Settings refuses removing the last member, including
-removing it from remote.machines. Disabling does not unpair a machine or stop a run.
+an available compatible host. A remote that tailscale status reports as running an
+OS other than macOS is never a device-pool member or hosting candidate, since it
+cannot host; an unknown OS counts as able to host. Settings refuses removing the
+last member, including removing it from remote.machines. Disabling does not unpair a machine or stop a run.
 
-These settings apply only to new automatic work requested by this Mac. They do not
+These settings apply only to new automatic work requested by this machine. They do not
 change which work other requesters send to a host. Named placement and --remote-build
 local bypass membership; the default device placement without --remote auto remains
 local. Existing local and hosted device sessions keep their owner. Cache hits remain
@@ -666,16 +881,33 @@ local alone does not trigger billed EAS fallback; an existing explicit EAS opt-i
 requires the physical device cap or queue condition. Restore membership before retrying or choose
 an explicit placement. Build and simulator memberships are independent.
 
-A remote Mac is used for a capability only after it grants that approval. Build
-and device-host approvals are separate: a Mac in the list that never granted
+A remote machine is used for a capability only after it grants that approval. Build
+and device-host approvals are separate: a machine in the list that never granted
 one is not an error, it is not used for that capability, and doctor reports
 it plainly.
 
+PAUSE INCOMING WORK
+On the worker machine, an operator can temporarily refuse new incoming builds or
+hosted sessions without revoking any clients:
+
+  stim settings set server.buildsPaused true
+  stim settings set server.devicesPaused true
+
+Both machine settings default to false. The running server reads changes without
+restarting and rechecks admission after an earlier offer. Running builds and
+existing iOS, Android and macOS hosted sessions continue; attach, cached artifact
+retrieval and stop remain available. Local CLI builds and devices are unaffected.
+These settings apply to every requesting machine, including explicit placement.
+Desktop's pool switches instead affect only that requester's automatic placement.
+Set either setting to false to resume that capability. A pause does not make the
+machine idle: wait for existing work to finish or stop the relevant sessions before
+benchmarking. Agents change these settings only when the user asks them to.
+
 DEVICE HOSTING
-Only \`doctor --fix\` asks for device-host access. A person on that Mac
-approves the printed id with \`stim-server devices grant <id> --device-host\`.
-A person can also run \`stim-server setup\` on the worker: one node, one ticket,
-one expiry, at most one request per capability, with a per-grant Y/n question (Enter approves) in a
+Only \`doctor --fix\` asks for device-host access: it makes a setup ticket and
+prints the command. A person approves by running \`stim-server setup\` on the
+worker with that ticket: one ticket, one expiry, one record per capability for
+the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
 terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
 approve requests. Setup never changes TCC or enables Funnel; an SSH-driven
 run is not offered. Without a terminal or --yes, setup refuses before installing
@@ -683,10 +915,10 @@ unless every chosen capability already has a matching approval. Desktop reuse
 requires an existing tailnet route. Ctrl-C or SIGTERM completes the journal,
 releases the setup claim and exits 1; a typed N also exits 1. Hosting grants
 include no read, control or build capability.
-On a remote Mac that hosts, Stim Desktop > Settings > Remote Macs > Running here lists the
-simulators, emulators and apps approved Macs run there, below Macs using this
-Mac. Stop asks for confirmation, ends the session and deletes or parks
-its device on that Mac. Parked sessions remain listed without Stop. The list
+On a remote Mac that hosts, Stim Desktop > Settings > Remote Machines > Running
+here lists the simulators, emulators and apps approved machines run there, below
+Macs Using This Mac. Stop asks for confirmation, ends the session and deletes
+or parks its device on that Mac. Parked sessions remain listed without Stop. The list
 refreshes every five seconds and stays hidden when the local server does not
 support it.
 $STIM_HOME/device-host-machines.json stores a private token and pinned tailnet
@@ -696,7 +928,7 @@ stim settings set ios.remote auto --scope machine (or android.remote; workspace,
 repo and committed scopes override the machine default),
 or per run stim ios --remote auto / stim ios --remote <machine>.
 New Desktop runs pass no --remote flag; recorded hosted sessions keep their
-machine until stim stop. Only devices outside this Mac show "on <machine>"
+machine until stim stop. Only devices outside this machine show "on <machine>"
 on tiles, workspace pages, viewer toolbars and sidebar rows, with the reason
 as hover text.
 Stim sends tokens only to the pinned node's own tailnet address,
@@ -707,9 +939,9 @@ An invalid remote.machines setting reports an error and preserves every saved cr
 replaced machine, run it, then re-add the name to request a new approval.
 A definite revoked or lapsed request can be requested again with --fix.
 An in-progress approval inspection reports busy rather than replacing its
-pending token. \`stim macos --remote <machine>\` runs a macOS app on an
-approved remote Mac (stim guide macos); \`ios\` and \`android\` do not yet
-place sessions on these Macs. To view or control a hosted macOS app, a person
+pending token. \`stim macos --remote <placement>\` or \`macos.remote\` runs a macOS
+app on an approved remote Mac (stim guide macos), and \`ios.remote\` and
+\`android.remote\` place simulators and emulators on them. To view or control a hosted macOS app, a person
 on that Mac approves Screen & System Audio Recording and Device Control and Data
 Access (Accessibility on macOS 26 and earlier) for Stim Host, the app
 \`stim-server service install\` runs the server under.
@@ -722,48 +954,76 @@ shared daemon only when that agent-device can lease a single app (its
 notice, and no client is handed the Mac's desktop. STIM_AGENT_DEVICE_BIN in
 stim-server's environment names an agent-device binary to use instead of
 ~/.local/bin/agent-device. Hosted iOS uses one daemon per simulator, pinned by
-its UDID policy; both Macs need agent-device 0.21.20 or later. Hosted Android
-uses one daemon per emulator, pinned by its serial policy, with agent-device
-0.21.22 or later on both Macs. See guide lifecycle
+its UDID policy. Hosted Android uses one daemon per emulator, pinned by its
+serial policy. Both machines need agent-device 0.21.30 or later. See guide lifecycle
 hosted-ios. \`doctor\` on that Mac notes an installed hosted app that runs while
 the setting is \`none\`.
 
 REMOTE BUILDS
-The same \`remote.machines\` list names the Macs that may build for this one:
+The same \`remote.machines\` list names the machines that may build for this one:
 
   {
     "remote": { "machines": ["janics-mac-mini"] }
   }
 
-\`doctor --fix\`, run in any app directory, asks each named Mac for build access and pins its tailnet
-node in $STIM_HOME/build-machines.json. A person approves the request on that
-Mac with \`stim-server devices grant <id> --build\`; doctor prints the id.
-A person can instead run \`stim-server setup\` on the worker with a node,
-ticket and expiry, under the approval rule above. Build never includes read
-or control.
-Stim connects to a named Mac only while its name still belongs to the pinned
+\`doctor --fix\`, run in any app directory, makes a setup ticket for each named
+machine and prints the \`stim-server setup\` command a person runs on that
+machine to approve this one, under the approval rule above. The next doctor run
+pins the worker's stim-server key in $STIM_HOME/build-machines.json. A build grant is full access
+to the account stim-server runs as: project code runs there unsandboxed, so it
+can grant itself read and control. Revoking it does not undo what that code
+already did. Grant it only to machines you trust.
+Stim connects to a named machine only while its name still belongs to the pinned
 node and never sends the token to another node. \`doctor\` reports each
-remote Mac's build pairing state and, for an approved one, asks it for one build
+remote machine's build pairing state and, for an approved one, asks it for one build
 offer and lists every reason it would not take this app's iOS build: no
-answer, another Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
+answer, an incompatible Stim build, CPU, Xcode, simulator SDK or CocoaPods, no
 Bundler for an app whose Gemfile.lock pins CocoaPods, no iPhone simulator on
 the runtime \`stim ios\` builds for here, low disk, or busy. With Package.swift
 and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
+A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
+Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
+build's toolchain, the client leaves pod install to it, and \`stim ios --remote
+<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. If
+that pod install changes Podfile.lock or the Xcode project, the build fails
+with fingerprint-mismatch; run pod install once on a Mac and commit the
+result. A client with an Xcode still needs the same one.
+Two machines build for each other when their Stim releases share a build
+compatibility version, which changes only when what a worker builds, how it
+builds, or the build messages change; their Stim builds can differ. A
+stim-server too old to report one needs the same Stim build as this machine.
 
 \`remote.build\` (machine scope, default auto) selects placement for
-\`ios\`, \`android\` and \`macos\`. \`--remote-build <auto|local|name>\`
+\`ios\`, \`android\` and \`macos\`. \`--remote-build <local|auto|remote|remote-only|name>\`
 overrides STIM_REMOTE_BUILD, which overrides the setting. A blank environment
-value is unset. Trimmed auto/local are case-insensitive. Machine names match
+value is unset. \`doctor\` flags an invalid value in the machine config or in
+STIM_REMOTE_BUILD before a build refuses on it. Trimmed placement words are case-insensitive. Machine names match
 configured names case-insensitively, with port 7443 when omitted; reports use
 the configured entry.
 
-  auto   follows remote.buildMode, considering only enabled automatic pool members
-  local  builds only on this Mac for this invocation
-  name   requires a matching entry in remote.machines, already paired and
-         approved for builds; ignores remote.buildMode and this Mac's load/slot gating
+  local        builds only on this machine for this invocation
+  auto         (default) here while this machine has capacity, a remote
+               machine from remote.machines when it does not; only enabled
+               automatic pool members count
+  remote       on the first remote machine in remote.machines order that
+               accepts the build, here only when none does
+  remote-only  the same, never here: when no remote machine accepts the build
+               it refuses with STIM_OFFLOAD_REFUSED
+  name         requires a matching entry in remote.machines, already paired and
+               approved for builds; ignores this machine's load/slot gating
 
-A name never prompts for pairing, tries another remote Mac or falls back here.
-Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote Mac and reason.
+\`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
+\`doctor\` and \`stim settings\` report any left in a config file or the environment,
+\`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
+replaces it (auto stays auto, force becomes remote, off becomes local), and
+\`stim settings unset remote.buildMode\` removes the leftover key from every layer
+that has it (--scope limits it to one).
+
+A name never prompts for pairing, tries another remote machine or falls back here.
+remote-only refuses instead of building here for a build that cannot leave this
+machine (device, Release, an unknown simulator runtime, the build cache off), and
+when no pairing or approval exists.
+Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
 Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
 the build cache off, and an unknown simulator runtime cannot build there and
 refuse on a cache miss. Invalid values, unlisted names and unpaired names refuse
@@ -771,12 +1031,17 @@ at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
 and records buildMachine with builtOn absent. Build failures retain the selected
 value; builtOn is here or the configured machine entry when compilation ran.
-Prebuild and pod install still run on this Mac before a named offload. A refusal
+Prebuild and pod install still run on this machine before a named offload; stim ios
+checks the machine's toolchain first. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
+A React Native offload sends the tracked and untracked files, and the gitignored
+files the native fingerprint hashes or the Expo config reads, such as .env.local
+and other Expo .env files, secrets included. Nothing under node_modules and no
+build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
+names the sources that differ and the files pod install or prebuild rewrote there.
 Run stim doctor --fix to ask for build access if not paired. A person on the
-worker finds the id with stim-server devices and approves it with
-stim-server devices grant <id> --build, or runs stim-server setup there with
-the client node, ticket and expiry. Check stim settings get remote.machines,
+worker approves it by running the stim-server setup command doctor printed, with
+its ticket and expiry. Check stim settings get remote.machines,
 or rerun with --remote-build auto or --remote-build local. Ctrl-C cancels
 the remote build without a local xcodebuild, Gradle or SwiftPM compile.
 
@@ -784,58 +1049,136 @@ Copyable agent prompt:
   Run stim ios --remote-build janics-mac-mini. If it refuses, report the
   STIM_OFFLOAD_REFUSED reason and remedy; do not retry with another placement.
 
-With remote.build auto, \`remote.buildMode\` decides where an iOS simulator Debug build or an Android
-emulator debug build or a stim macos SwiftPM Debug build compiles:
+Which remote machine takes a build that leaves this machine follows the order of
+\`remote.machines\`: the first machine that accepts it, meaning it has a free slot
+(\`concurrency.maxBuilds\`), enough disk, a matching toolchain, and a load per core
+under its own \`server.maxLoadPerCore\`. A machine past its limit is skipped like a
+full one and the next in order is tried; the first machine fills to its caps before
+the next one gets a build. A machine that already holds the exact completed
+artifact goes ahead of the order, since that needs no build. With \`auto\` the
+build leaves this machine only when it is busy:
 
-  auto   (default) here while this Mac has capacity: a free
+  auto   (default) here while this machine has capacity: a free
          \`concurrency.maxBuilds\` slot (always, with no build limit) and a
-         load per core under \`server.maxLoadPerCore\`. Otherwise on a
-         remote Mac that accepts the build and is expected to be faster:
-         while every slot here is busy, any remote Mac that accepts; while only
-         the load is high, one whose load per core is lower than this
-         Mac's. A Mac too old to report its load counts only while every
-         slot here is busy.
-  force  on a remote Mac whenever one accepts it
-  off    here when local remains enabled in the automatic build pool
+         load per core under \`server.maxLoadPerCore\`. Otherwise on the first
+         remote machine in order that accepts the build. A machine too old to
+         report its load counts only while every slot here is busy.
+  remote on the first remote machine in order that accepts the build, whatever
+         load this machine is under; here only when none does
+  remote-only  as remote, but when none does the build refuses
 
-Load per core is the 5-minute load average divided by the CPU count; a Mac's
-native builds are its Stim runs in prebuild, pods or compile on that Mac, not
+A worker that holds a matching dependency installation does not rank ahead of an
+earlier machine in the order; it only saves the install on the machine that gets
+the build. The worker checks the requested project, lockfile, install arguments
+and the major of the Node the app pins, and verifies that its modules and install
+marker remain present.
+
+The worker installs dependencies with the lockfile nearest the app: the first
+pnpm-lock.yaml, yarn.lock or package-lock.json in its directory or above it in
+the checkout, in the directory that holds it. An app with its own lockfile
+inside a larger repository installs its own dependencies there. In a pnpm
+workspace the worker installs every workspace package, as \`pnpm install\` does
+locally, because a native build can run a script of a package the app does not
+depend on.
+
+The worker runs the dependency install, prebuild, pods and xcodebuild with the
+Node the app pins, in its directory or the nearest one above it in the
+checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
+every offloaded iOS build, pinned or not, it writes the first node on its PATH
+(the pinned Node when it put one first) as NODE_BINARY in the iOS project's
+.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
+Gradle daemon keeps running React Native's node steps on the Node it started
+with. When no installed Node fits the pin, the steps run on the worker's node
+and a deps-failed or prebuild-failed reason names the pin and that Node's
+version. A change of the pinned Node's major reinstalls the dependencies.
+
+Load per core is the 5-minute load average divided by the CPU count; a machine's
+native builds are its Stim runs in prebuild, pods or compile on that machine, not
 the ones it offloaded.
 \`server.maxLoadPerCore\` (default 2) is also the busy threshold for
-automatic iOS and Android device placement. It is the load per core at which a Mac
-counts as saturated, both here and on a remote Mac.
+automatic iOS, Android and macOS placement. It is the load per core at which a
+machine counts as saturated: each machine applies its own value, and a remote
+machine past it is skipped like a full one. \`stim status\` shows this machine's
+load per core against it, as \`capacity.load\` in JSON.
 
-STIM_REMOTE_BUILD_MODE overrides it for one command. Device, Release and
+Device, Release and
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
-macOS uses matching Xcode and macOS SDK, with a per-client SwiftPM dependency
+macOS uses matching Xcode and macOS SDK (not when --remote-build and --remote name the
+same Mac; see stim guide macos), with a per-client SwiftPM dependency
 cache on the worker. It skips JavaScript dependencies, prebuild and pods; see
-stim guide macos. macOS artifacts are not cached.
+stim guide macos. Completed caching requires macos.artifactInputs and a locally
+verified compile; remote output is not published under an unverified client key.
 An offloaded iOS/Android build first runs prebuild (and \`pod install\` for iOS) here,
 then asks every paired machine what it can build. It takes one whose Stim
-build matches this Mac and CPU matches the target simulator, with enough disk, that does not decline,
-preferring the one that already holds this repository, then the least loaded,
+build matches this Mac and, for iOS and macOS, CPU matches the target simulator, with enough disk, that does not decline,
+taking the first in remote.machines order that qualifies,
 and moves to the next one in that order when a machine that offered fails the
 sync or refuses to start the build.
-For iOS the machine's Xcode and simulator SDK must match, and it needs an
-iPhone simulator on the target runtime. Its project-selected CocoaPods must match too, unless
-the app's Gemfile.lock pins CocoaPods: both Macs then run that version through
-bundler, so the machine needs only Bundler on its stim-server PATH and
-installs the pinned gems itself on the first build. The comparison selects
-the app's .ruby-version when installed, with pod install's UTF-8 locale defaults.
-For Android its JDK major
-version must match, and its Android SDK must hold the NDK, build-tools and
+After a local and configured-provider miss, native Xcode simulator builds can
+reuse an exact completed archive from an enabled paired worker. Its full key
+includes source, Xcode, SDK, architecture and target options. A hit skips sync
+and compilation even while the worker is busy or this machine has room. Missing or
+corrupt archives follow normal placement. Off mode and an explicit local build
+do not query peer caches. Older workers continue normal placement. This peer
+lookup also covers declared native Gradle worker APKs when the worker supports
+native-gradle-peer-cache. It rechecks current private inputs against the saved
+receipt at offer and fetch for the requested source, resolved variant, ABI and
+build options. Caller fingerprints stay null; worker keys stay worker-scoped.
+React Native and Expo development builds also query enabled paired workers
+with react-native-peer-cache after local and configured-provider misses. Their
+post-mutation fingerprint, native build choices and compatible toolchain must
+match. Completed archives survive worker checkout changes or removal; hits
+need no source upload or build slot. Disabled remote artifact reads skip this
+lookup. Release and physical-device builds keep their existing paths.
+SwiftPM, compiler and dependency caches use their existing paths.
+For iOS the machine's Xcode and simulator SDK must match. Its offer reports the
+developerDir xcode-select prints and the Xcode apps in /Applications (version,
+build, and license and first-launch checks while no Xcode works), so doctor's
+fix for no usable Xcode is the exact command to run there: sudo xcode-select -s
+<the Xcode with this machine's build, else the newest>/Contents/Developer when
+the Command Line Tools or another Xcode is selected, sudo xcodebuild -license
+accept and sudo xcodebuild -runFirstLaunch for the checks that fail, or xcodes
+install <version> with no Xcode app. A runtime the machine lacks gets
+xcodebuild -downloadPlatform iOS -buildVersion <version>, or a pointer to the
+Xcode problem when xcode-select is the cause. A stim-server that reports no
+developerDir keeps the prose fix. It also needs an
+iPhone simulator on the target runtime. A missing or different global CocoaPods
+keeps auto, remote and remote-only placement from choosing the machine for a project that does not
+pin it, unless the machine already holds the exact artifact; the placement line
+says why and doctor shows the install command. A named --remote-build still
+sends the build, and a pod install that fails there reports "pod install failed"
+with the fix on that machine. When the app's Gemfile.lock, in ios/ or the project
+root, pins CocoaPods, both machines run that version through
+bundler, so the machine needs Bundler on its stim-server PATH and
+installs the pinned gems itself on the first build. This Mac's side of the
+comparison runs \`pod --version\` in the directory pod install runs in. The comparison selects
+the app's .ruby-version when installed, otherwise rvm's or rbenv's default Ruby, and only when neither exists the GEM_HOME, GEM_PATH and Ruby-related PATH entries of the machine's login shell (read once with $SHELL -lic), unless the caller already sets GEM_HOME, with pod install's UTF-8 locale defaults. pod install, including the Bundler run, uses the same environment.
+For Android its CPU may differ, since the APK's ABIs come from the NDK, so an
+x86_64 Linux or Windows machine running stim-server can build for an Apple silicon Mac. Its JDK major
+version must match this machine's, which can be an installed JDK that is not the
+worker's default: its offer lists \`jdks\`, and a build sent with the build-jdk
+feature runs with JAVA_HOME at the one of that major. A major no installed JDK
+has gets the install command for the worker's OS as doctor's fix. A nearby major
+never counts (Gradle, AGP and Kotlin support and the shared build cache assume
+one JDK). Also, its Android SDK must hold the NDK, build-tools and
 compile platform that the project's React Native version names in
-gradle/libs.versions.toml; Gradle and AGP come from the synced project. When
+gradle/libs.versions.toml; Gradle and AGP come from the synced project. A
+package the SDK lacks is a note, not a blocker, when its offer reports the SDK
+licenses accepted (\`licenses/android-sdk-license\`) and the app's
+Gradle root's gradle.properties does not set android.builder.sdkDownload=false:
+Gradle downloads the package on the first build there (the NDK is about 1-2 GB).
+Otherwise it blocks, and doctor's fix is the sdkmanager commands to run on that
+machine; a stim-server that does not report its licenses keeps that rule. When
 no machine takes the build in auto placement, the run prints one line with each machine's
 reason, such as \`janics-mac-mini: busy (load at or above 2/core; load
 8.2/core, 2 builds) -> building here\`, and compiles here. It sends the files
 \`git ls-files -co --exclude-standard\` lists (the machine keeps only files it
 lacks, so an unignored secret such as \`.env\` is sent too), builds with
 Stim's own code there, refuses unless the fingerprint there equals this one,
-and brings the \`.app\` or APK back. An Android build there uses this Mac's
+and brings the \`.app\` or APK back. An Android build there uses this machine's
 variant, target ABI, Gradle build cache, PCH and compiler cache choices, so
 the APK matches the ABI-narrowed cache key. Stim checks the archive's sha256
 and fingerprints this checkout again before it stores the app under the
@@ -853,11 +1196,11 @@ interrupted while it reconnects, leaves it until those 5 minutes pass. With auto
 \`--json\` facts record the reason as offloadFallback. Offloading holds no
 local build slot; that fallback takes one. \`stim stats\` keeps where each
 compiling build ran and why (\`guide facts stats\`).
-An offloaded app lands only in this Mac's build cache, not in a remote cache
+An offloaded app lands only in this machine's build cache, not in a remote cache
 provider. A project whose xcodebuild changes its own fingerprinted inputs
 fails the offload fingerprint check: auto builds here; a named placement refuses.
 
-On a remote Mac that builds for others, stim-server keeps each client's checkouts, dependencies,
+On a remote machine that builds for others, stim-server keeps each client's checkouts, dependencies,
 DerivedData, compilation cache, ccache and Gradle home under
 \`server.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
 and Stim home per client and repository, and one Gradle home per client. It
@@ -866,21 +1209,23 @@ less than 10 GB free, while its own native builds and the offloaded one fill
 its \`concurrency.maxBuilds\`, or while its load per core is at or above its
 \`server.maxLoadPerCore\`, and reports the reason in its offer. It boots and
 installs nothing. While an offloaded build runs there, it holds one of that
-Mac's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
+machine's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
 and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
-~/Library/Android/sdk). The client's Gradle daemon stays warm there for
+~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon stays warm there for
 \`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
 ends; a new value applies from the next daemon) and never holds a build
 slot. While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled, the client is revoked, or the machine has less
 than 2 GB of memory available, and deleting the client's directory under the
 worker root stops it too.
-\`stim-server service install [--serve]\` on the remote Mac keeps stim-server
-running as a login LaunchAgent; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
-pin a PATH entry or variable such as a private CocoaPods that stim-server's
-login-shell environment would otherwise replace.
+\`stim-server service install [--serve]\` on a remote machine keeps stim-server
+running as a login LaunchAgent on macOS, a systemd user service on Linux
+(\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
+prints that command and never runs it), or a logon scheduled task on Windows; \`--path-prepend <dir>\` and \`--env KEY=VALUE\`
+pin a PATH entry or variable, such as a private CocoaPods, that stim-server's
+toolchain discovery does not find.
 \`stim-server service update --release <version>\` there moves the service to
 that exact stim-server release from the public npm registry once npm verifies
 its integrity and registry signatures; \`--from <dir>\` installs the packed
@@ -888,15 +1233,15 @@ packages of a checkout instead, with the same signature check on each npm
 dependency but none for Stim's own packages. It waits for offloaded builds and hosted
 sessions to finish, restarts the job, and switches back when the new server
 exits or does not answer within 90 seconds; \`stim-server service rollback\` returns
-to the previous server. A client Mac approved for builds or device hosting
+to the previous server. A client machine approved for builds or device hosting
 there can ask for the same update over its tailnet connection: an npm release
 always, and its own packed build only while \`server.acceptClientBuilds\` is
 true on that machine (default false).
 Replacing a loaded service waits up to 45 seconds for its existing listeners to
 release the port. Uninstall does not wait for the port. If stopping the old job
-or starting the new one fails, install restores the previous plist and attempts
-to restart a previously loaded LaunchAgent; if it cannot, it prints the
-launchctl bootout/bootstrap remedy. A running LaunchAgent does not prove readiness; check \`stim-server service status\`
+or starting the new one fails, install restores the previous plist or unit and attempts
+to restart a previously running service; if it cannot, it prints the
+launchctl bootout/bootstrap or systemctl --user daemon-reload/restart remedy. A running service does not prove readiness; check \`stim-server service status\`
 and its reported log. The server listens before it touches the Stim home; a
 read-only child process reads the Stim home, server and recording directories,
 and until it returns \`/health\` answers 503 with \`startup.state\` pending.
@@ -928,7 +1273,7 @@ stim-server records the screens of owned simulators, emulators and the
 Stim-owned Chrome page while an automation tool drives them or a paired client
 watches them, so the phone app can scrub back through them. It keeps the last
 15 minutes of footage per device under $STIM_HOME/workspaces/<id>/recordings/,
-on this Mac only, and serves it only to paired clients. \`recording.enabled\`
+on this machine only, and serves it only to paired clients. \`recording.enabled\`
 turns it off:
 
   stim settings set recording.enabled false --scope machine
@@ -942,6 +1287,19 @@ them within seconds, as soon as \`stim status\` shows recording.enabled false
 for them. Turning it back on records from then on. See \`guide cleanup\` for
 how recordings are removed otherwise.
 
+HIDE A WORKSPACE IN THE APPS
+\`workspace.hidden\` is a boolean, false by default, set only at workspace
+scope, so it needs no --scope. Run it from the workspace:
+
+  stim settings set workspace.hidden true
+  stim settings unset workspace.hidden
+
+\`stim status --json\` then reports hidden: true on that environment, and
+clients that read it list the workspace under Hidden. The next start, ios,
+android, web, macos, reload, logs or worktree warm in the workspace clears it, so
+a workspace in use is never hidden. \`worktree remove\` drops it with the
+workspace.
+
 STIM NEEDS NO PROJECT CHANGES TO RUN
 Nothing above is required to use Stim. The performance caches that used to
 be setup steps are supplied by Stim on the command lines it composes itself:
@@ -952,6 +1310,9 @@ be setup steps are supplied by Stim on the command lines it composes itself:
                SWIFT_OTHER_PREFIX_MAPPINGS on a Swift 6.4+ toolchain -- so no
                Podfile post_install block (Xcode 26+ only, and skipped when the
                project configured ccache, which defeats it)
+               Debug builds for the iOS simulator also get
+               DEBUG_INFORMATION_FORMAT=dwarf, which skips the dSYM bundle;
+               Release and device builds keep the project's setting
   gradlew      --build-cache -- so no org.gradle.caching=true in a committed
                gradle.properties. Debug builds add
                -PreactNativeArchitectures=<target ABI> when the owned
@@ -1008,8 +1369,11 @@ The example shows the defaults. Full setting names and behavior:
   optimizations.remoteBuildCache
     false skips both optional remote artifact providers, including loading
     their modules and authentication. Local artifact caching stays enabled.
-    Stim ships no network provider or hosted cache. Remote artifact reuse
-    requires a provider configured through cache.provider or Expo.
+    Install @stim-cli/cache-s3 and select it through cache.provider for S3-compatible storage,
+    including Cloudflare R2, or configure another provider through Expo.
+    Stim does not run a hosted cache service; credentials use the AWS SDK chain.
+    S3 file uploads retry connection resets up to three PUT attempts, reopening
+    the completed file each time. Cancellation also stops the retry delays.
   optimizations.releaseBundleSwap
     false always builds Release from source, including the current JS;
     it never installs an old embedded bundle. Fresh artifacts can still store.
@@ -1079,7 +1443,9 @@ PCH mode matches; disable artifact caching too to force native compilation. Lega
 cannot key these compiler profiles, so Stim skips that tier for custom profiles
 and Android CAS. Providers implementing the Stim key contract remain usable.
 Android compiler/PCH profiles also get separate CMake staging directories under
-<module>/.cxx/stim-<profile>, or under the project's custom staging root. Switching
+<module>/.cxx/stim-<profile> (<module>/.cxx/<first 4 profile characters> on
+Windows, where every character counts against MAX_PATH), or under the project's
+custom staging root. Switching
 backends in Stim selects the matching directory without deleting previous builds.
 These directories accumulate across profile changes and shim upgrades. Stim
 does not prune them; remove an obsolete generated profile only with all native
@@ -1168,5 +1534,9 @@ FileStore shards across 256 directories, a build cache is keyed
 platform instead of one entry. Pass prune: 'atomic' for a cache whose index
 references its own data (an LLVM CAS): it is then left alone by --older-than
 and emptied whole only by 'gc --delete --cache all'.
-Registration is idempotent and keyed on the directory.`,
+Registration is idempotent and keyed on the directory.
+dir must be absolute (a leading ~ is expanded) and dedicated to the cache.
+register throws for a path that is or contains the home directory, the system
+temporary directory, the Stim config directory or a filesystem root, and gc
+never prunes or empties such a directory.`,
 };

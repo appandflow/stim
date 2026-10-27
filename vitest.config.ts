@@ -24,7 +24,8 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    setupFiles: ['./vitest.setup.ts'],
+    globalSetup: ['./vitest.global-tmpdir.ts'],
+    setupFiles: ['./vitest.setup.ts', './vitest.reap-children.ts'],
     disableConsoleIntercept: true,
     // Real git and spawn work take several times longer on the hosted Windows
     // runner; a hang still fails, just later.
@@ -34,6 +35,7 @@ export default defineConfig({
       'packages/*/src/**/__tests__/**/*.test.ts',
       'packages/*/__tests__/**/*.test.ts',
       'scripts/**/*.test.mjs',
+      '.github/actions/stim-ci/src/**/*.test.ts',
       'website/scripts/**/*.test.mjs',
       'website/src/**/*.test.ts',
     ],

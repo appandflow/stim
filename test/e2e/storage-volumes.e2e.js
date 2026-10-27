@@ -4,13 +4,17 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../../packages/stim-cli/src/exec.ts';
+import { processContext } from '../../packages/stim-cli/src/cli-operation.ts';
 import { cloneIgnoredEntries } from '../../packages/stim-cli/src/workspace/worktree.ts';
-import { checkStorageLayout } from '../../packages/stim-cli/src/diagnostics/doctor-storage.ts';
+import {
+  checkStorageLayout,
+  checkWorktreeStorageLayout,
+} from '../../packages/stim-cli/src/diagnostics/doctor-storage.ts';
 
 test(
   'warm copies directly on the destination APFS volume despite a temporary override and clone fallback',
   { skip: process.platform !== 'darwin' },
-  () => {
+  async () => {
     const base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-volumes-e2e-')));
     const image = join(base, 'test.sparseimage');
     const volume = join(base, 'volume');
@@ -65,15 +69,20 @@ test(
         git(['worktree', 'add', '-qb', `linked-${fallback}`, target]);
         setExecutor({
           ...real,
-          runFile(file, args, opts) {
-            if (file !== 'cp') return real.runFile(file, args, opts);
+          async runFileAsync(file, args, opts) {
+            if (file !== 'cp') return real.runFileAsync(file, args, opts);
             assert.equal(args.at(-1), join(target, 'node_modules'));
             assert.equal(statSync(dirname(args.at(-1))).dev, statSync(source).dev);
             if (fallback && args[0] === '-Rc') throw new Error('force clone fallback');
-            return real.runFile(file, args, opts);
+            return real.runFileAsync(file, args, opts);
           },
         });
-        const result = cloneIgnoredEntries({ root: source, target, patterns: [] });
+        const result = await cloneIgnoredEntries({
+          root: source,
+          target,
+          patterns: [],
+          operation: processContext(target),
+        });
         assert.deepEqual(result.failed, []);
         assert.deepEqual(result.copied, ['node_modules']);
         assert.equal(result.cloned, !fallback);
@@ -89,7 +98,7 @@ test(
       );
       const crossVolume = join(base, 'linked-other-volume');
       git(['worktree', 'add', '-qb', 'linked-other-volume', crossVolume]);
-      const findings = checkStorageLayout(crossVolume, { platform: 'android' });
+      const findings = await checkWorktreeStorageLayout({ root: crossVolume, repoRoot: crossVolume, options: {} });
       const warmFinding = findings.find((finding) => finding.title === 'Worktree copy crosses filesystems');
       assert.ok(warmFinding);
       assert.match(warmFinding.detail, /cannot share file blocks across volumes/);

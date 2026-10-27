@@ -1,14 +1,22 @@
+import type { StimContext } from '@stim-cli/core';
+import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import chalk from 'chalk';
 import { formatLongDuration } from '../../command-output.ts';
-import { createActivityReader, idleForMs, type ActivityTarget, type DeviceActivity } from '../../devices/activity.ts';
-import { ownedAvdSerialResolver } from '../../devices/android.ts';
+import {
+  createActivityReader,
+  createActivityReaderAsync,
+  idleForMs,
+  type ActivityTarget,
+  type DeviceActivity,
+} from '../../devices/activity.ts';
+import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
 import type { IosSimRecord } from '../../devices/ios.ts';
 import { teardownOwnedAvd, teardownOwnedIosSim } from '../../devices/teardown.ts';
 import { ACTIVE_BUILD_KEY, activeBuildState, parseActiveBuild } from '../../engine/build-progress.ts';
 import type { Config } from '../../workspace/config.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
-import { recordGcResult } from './results.ts';
+import { GC_OUTPUT, type GcOutput } from './results.ts';
 
 export interface IdleDevice {
   kind: 'ios' | 'android';
@@ -40,16 +48,18 @@ export interface OwnedDeviceActivity {
   activity: DeviceActivity;
 }
 
-function findOwnedDeviceActivity({
+function findOwnedDeviceActivity<T>({
   config,
   sims,
   androidSerial,
   readActivity,
   deadProjects = [],
-}: Omit<IdleDeviceInputs, 'buildInProgress' | 'now'>): OwnedDeviceActivity[] {
+}: Omit<IdleDeviceInputs, 'buildInProgress' | 'now' | 'readActivity'> & {
+  readActivity: (target: ActivityTarget) => T;
+}): (Omit<OwnedDeviceActivity, 'activity'> & { activity: T })[] {
   const booted = new Map(sims.filter((sim) => sim.state === 'Booted').map((sim) => [sim.udid, sim.name]));
   const dead = new Set(deadProjects);
-  const found: OwnedDeviceActivity[] = [];
+  const found: (Omit<OwnedDeviceActivity, 'activity'> & { activity: T })[] = [];
   for (const [project, record] of Object.entries(config?.projects ?? {})) {
     if (dead.has(project)) continue;
     for (const { slot, platforms } of projectDeviceSlots(record)) {
@@ -82,7 +92,15 @@ function findOwnedDeviceActivity({
 }
 
 export function findIdleDevices({ buildInProgress, now, ...inputs }: IdleDeviceInputs): IdleDevice[] {
-  return findOwnedDeviceActivity(inputs)
+  return idleDevicesFromActivity(findOwnedDeviceActivity(inputs), buildInProgress, now);
+}
+
+function idleDevicesFromActivity(
+  devices: OwnedDeviceActivity[],
+  buildInProgress: (project: string) => boolean,
+  now: number,
+): IdleDevice[] {
+  return devices
     .filter((device) => device.activity.state === 'idle')
     .map(({ kind, id, name, project, slot, activity }) => ({
       kind,
@@ -117,12 +135,17 @@ export function workspaceBuildInProgress(project: string): boolean {
   }
 }
 
-function deviceActivityInputs(config: Config | null, sims: readonly IosSimRecord[], now: number) {
+function deviceActivityInputs(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number,
+  env?: NodeJS.ProcessEnv,
+) {
   const resolve = ownedAvdSerialResolver({ timeoutMs: 5000 });
   return {
     config,
     sims,
-    readActivity: createActivityReader({ now }),
+    readActivity: createActivityReader({ now, env }),
     androidSerial: (avdName: string) => {
       try {
         return resolve(avdName).serial ?? null;
@@ -137,8 +160,9 @@ export function collectOwnedDeviceActivity(
   config: Config | null,
   sims: readonly IosSimRecord[],
   now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
 ): OwnedDeviceActivity[] {
-  return findOwnedDeviceActivity(deviceActivityInputs(config, sims, now));
+  return findOwnedDeviceActivity(deviceActivityInputs(config, sims, now, env));
 }
 
 export function collectIdleDevices(
@@ -146,13 +170,81 @@ export function collectIdleDevices(
   sims: readonly IosSimRecord[],
   deadProjects: readonly string[],
   now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
 ): IdleDevice[] {
   return findIdleDevices({
-    ...deviceActivityInputs(config, sims, now),
+    ...deviceActivityInputs(config, sims, now, env),
     deadProjects,
     now,
     buildInProgress: workspaceBuildInProgress,
   });
+}
+
+async function deviceActivityInputsAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number,
+  env?: NodeJS.ProcessEnv,
+  deadProjects: readonly string[] = [],
+  signal?: AbortSignal,
+  operation?: StimContext,
+) {
+  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000, signal, operation });
+  const serials = new Map<string, string | null>();
+  for (const [project, record] of Object.entries(config?.projects ?? {})) {
+    signal?.throwIfAborted();
+    if (deadProjects.includes(project)) continue;
+    for (const { platforms } of projectDeviceSlots(record)) {
+      const android = platforms.android;
+      if (!android?.owned || !android.avdName || serials.has(android.avdName)) continue;
+      try {
+        serials.set(android.avdName, (await resolve(android.avdName)).serial ?? null);
+      } catch (error) {
+        if (error instanceof WorkspaceProcessCleanupError) throw error;
+        signal?.throwIfAborted();
+        serials.set(android.avdName, null);
+      }
+    }
+  }
+  return {
+    config,
+    sims,
+    readActivity: createActivityReaderAsync({ now, env, signal, operation }),
+    androidSerial: (name: string) => serials.get(name) ?? null,
+  };
+}
+
+export async function collectOwnedDeviceActivityAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<OwnedDeviceActivity[]> {
+  const devices = findOwnedDeviceActivity(
+    await deviceActivityInputsAsync(config, sims, now, env, [], signal, operation),
+  );
+  return Promise.all(devices.map(async (device) => Object.assign({}, device, { activity: await device.activity })));
+}
+
+export async function collectIdleDevicesAsync(
+  config: Config | null,
+  sims: readonly IosSimRecord[],
+  deadProjects: readonly string[],
+  now: number = Date.now(),
+  env?: NodeJS.ProcessEnv,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<IdleDevice[]> {
+  const pending = findOwnedDeviceActivity({
+    ...(await deviceActivityInputsAsync(config, sims, now, env, deadProjects, signal, operation)),
+    deadProjects,
+  });
+  const devices = await Promise.all(
+    pending.map(async (device) => Object.assign({}, device, { activity: await device.activity })),
+  );
+  return idleDevicesFromActivity(devices, workspaceBuildInProgress, now);
 }
 
 export function idleDeviceLines(devices: readonly IdleDevice[]): string[] {
@@ -168,27 +260,33 @@ export function idleDeviceLines(devices: readonly IdleDevice[]): string[] {
   ];
 }
 
-export function shutDownIdleDevices(
+export async function shutDownIdleDevices(
   devices: readonly IdleDevice[],
   idleMs: number,
-  recollect: () => IdleDevice[],
-): { failures: number; shutDown: IdleDevice[] } {
+  recollect: () => IdleDevice[] | Promise<IdleDevice[]>,
+  { log, record }: GcOutput = GC_OUTPUT,
+  signal?: AbortSignal,
+  operation?: StimContext,
+): Promise<{ failures: number; shutDown: IdleDevice[] }> {
+  signal?.throwIfAborted();
   const candidates = idleShutdownCandidates(devices, idleMs);
   const shutDown: IdleDevice[] = [];
   if (candidates.length === 0) {
-    console.log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
+    log(chalk.dim(`No owned device has been idle for ${formatLongDuration(idleMs)} or more.`));
     return { failures: 0, shutDown };
   }
-  const fresh = idleShutdownCandidates(recollect(), idleMs);
+  const fresh = idleShutdownCandidates(await recollect(), idleMs);
+  signal?.throwIfAborted();
   let failures = 0;
   for (const device of candidates) {
+    signal?.throwIfAborted();
     const what = `${device.kind} ${device.name}`;
     const current = fresh.find(
       (d) => d.kind === device.kind && d.id === device.id && d.project === device.project && d.slot === device.slot,
     );
     if (!current) {
-      console.log(chalk.dim(`Kept ${what}: it is no longer idle for ${formatLongDuration(idleMs)}.`));
-      recordGcResult('idleDevice', 'kept', device.name, {
+      log(chalk.dim(`Kept ${what}: it is no longer idle for ${formatLongDuration(idleMs)}.`));
+      record('idleDevice', 'kept', device.name, {
         id: device.id,
         detail: `it is no longer idle for ${formatLongDuration(idleMs)}`,
       });
@@ -196,24 +294,24 @@ export function shutDownIdleDevices(
     }
     const outcome =
       device.kind === 'ios'
-        ? teardownOwnedIosSim(device.id, { label: device.name })
-        : teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot } });
+        ? await teardownOwnedIosSim(device.id, { label: device.name, operation })
+        : await teardownOwnedAvd(device.id, { owner: { projectPath: device.project, slot: device.slot }, operation });
     if (outcome.status === 'torn-down') {
       shutDown.push(device);
-      console.log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
-      recordGcResult('idleDevice', 'done', device.name, {
+      log(chalk.green(`Shut down ${what}, idle ${formatLongDuration(current.idleForMs)}`));
+      record('idleDevice', 'done', device.name, {
         id: device.id,
         detail: `idle ${formatLongDuration(current.idleForMs)}`,
       });
     } else if (outcome.status === 'missing') {
-      console.log(chalk.dim(`${what} is already gone; nothing to shut down.`));
+      log(chalk.dim(`${what} is already gone; nothing to shut down.`));
     } else if (outcome.status === 'skipped') {
-      console.log(chalk.yellow(`Skipped ${what}: ${outcome.reason}`));
-      recordGcResult('idleDevice', 'kept', device.name, { id: device.id, detail: outcome.reason });
+      log(chalk.yellow(`Skipped ${what}: ${outcome.reason}`));
+      record('idleDevice', 'kept', device.name, { id: device.id, detail: outcome.reason });
     } else {
       failures++;
-      console.log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
-      recordGcResult('idleDevice', 'failed', device.name, { id: device.id, detail: outcome.reason });
+      log(chalk.red(`Failed to shut down ${what}: ${outcome.reason}`));
+      record('idleDevice', 'failed', device.name, { id: device.id, detail: outcome.reason });
     }
   }
   return { failures, shutDown };

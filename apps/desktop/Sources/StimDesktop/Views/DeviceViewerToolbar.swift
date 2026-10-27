@@ -5,6 +5,7 @@ import SwiftUI
 
 struct DeviceViewerToolbar: View {
   var device: DeviceRef
+  var owner: ServerOwner = .local
   var env: Workspace
   var usage: WorkspaceUsage?
   @Binding var takenOver: Bool
@@ -18,6 +19,7 @@ struct DeviceViewerToolbar: View {
   @State private var confirmingStop = false
   @EnvironmentObject private var actions: ActionCenter
   @ObservedObject private var server = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
 
   var body: some View {
     HStack(spacing: Space.md) {
@@ -93,7 +95,8 @@ struct DeviceViewerToolbar: View {
     HStack(spacing: Space.sm) {
       TimelineView(.periodic(from: .now, by: 30)) { context in
         if let badge = ActivityBadge(
-          device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
+          device.activity,
+          screenChangedAt: OwnedDevice(owner: owner, ref: device).activityKey.flatMap(ScreenActivity.shared.lastChange),
           now: context.date)
         {
           activityPill(badge)
@@ -158,6 +161,14 @@ struct DeviceViewerToolbar: View {
   }
 
   @ViewBuilder private var commands: some View {
+    if owner.isLocal {
+      localCommands
+    } else {
+      takeOverButton
+    }
+  }
+
+  @ViewBuilder private var localCommands: some View {
     let busy = actions.active(for: env.path) != nil
     if device.appStopped || (device.platform == "macos" && !device.isRunning) {
       DeviceRunButton(
@@ -171,7 +182,7 @@ struct DeviceViewerToolbar: View {
       webControls(browser, busy: busy)
     } else if case .macos = device {
       DeviceTileMenu(
-        device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
+        device: device, owner: owner, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: windowChoice,
         openBuildLogs: nil)
     } else if device.isRunning, !device.isPhysical {
       Button("Stop") {
@@ -187,10 +198,8 @@ struct DeviceViewerToolbar: View {
   }
 
   @ViewBuilder private var takeOverButton: some View {
-    if device.isInteractive,
-      (!device.isPhysical && device.hostedMachine == nil) || takenOver
-        || PhysicalScreen(device: device, link: server.link, now: Date()).canControl
-    {
+    let owned = OwnedDevice(owner: owner, ref: device)
+    if owned.offersControl(link: ServerSession.link(for: owner), now: Date()) || (takenOver && owned.isInteractive) {
       if takenOver {
         Button("Release Control", systemImage: "hand.raised.fill") { takenOver = false }
           .nativeIconStyle()
@@ -199,7 +208,6 @@ struct DeviceViewerToolbar: View {
           .accessibilityLabel("Release Control")
       } else {
         Button("Control", systemImage: "cursorarrow.rays") { takenOver = true }
-          .tutorialAnchor(.viewerControl, workspace: env.path)
           .accessibilityLabel("Control device")
           .nativeIconStyle()
           .fixedSize()

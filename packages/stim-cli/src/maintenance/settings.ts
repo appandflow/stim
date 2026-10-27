@@ -7,6 +7,8 @@ import {
   type MaintenanceMode,
 } from '@stim-cli/core/state';
 
+const PER_WORKSPACE = new Set(['maintenance.keep', 'maintenance.idleStopHours']);
+
 export interface MaintenanceSettings {
   mode: MaintenanceMode;
   invalid?: string;
@@ -25,10 +27,17 @@ export interface MaintenanceSettings {
   metroCacheMaxGb: number;
   swiftCompilationCacheMaxGb: number;
   worktreeCheckMinutes: number;
+  idleCheckMinutes: number;
   sweepHours: number;
   olderThanDays: number;
+  deviceIdleDays: number;
   protectRecentHours: number;
+  urgentFreeDiskGb: number;
+  criticalFreeDiskGb: number;
+  pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
+  removeIdleWorktrees: boolean;
+  gradleVersionIdleDays: number;
 }
 
 export function resolveMaintenanceSettings(
@@ -40,7 +49,7 @@ export function resolveMaintenanceSettings(
   let disabled = false;
   for (const setting of SETTINGS.filter(
     (entry) =>
-      (entry.key.startsWith('maintenance.') && entry.key !== 'maintenance.keep') || /^caches\..*MaxGb$/.test(entry.key),
+      (entry.key.startsWith('maintenance.') && !PER_WORKSPACE.has(entry.key)) || /^caches\..*MaxGb$/.test(entry.key),
   )) {
     const [group, name] = setting.key.split('.') as [string, string];
     const rawEnv = setting.env ? env[setting.env] : undefined;

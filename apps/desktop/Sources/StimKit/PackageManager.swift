@@ -21,7 +21,7 @@ public struct PackageManagerLayout: Equatable, Sendable {
   public var pnpmBin: String?
   /// `bun pm bin -g`: packages live in `../install/global/node_modules`.
   public var bunBin: String?
-  /// The managers found on the login shell's PATH.
+  /// The managers found on Stim Desktop's PATH.
   public var installed: [PackageManager]
 
   public init(

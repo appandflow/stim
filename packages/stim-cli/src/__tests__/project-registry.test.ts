@@ -1,3 +1,4 @@
+import { testContext } from './_context.ts';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -64,17 +65,32 @@ afterEach(() => {
 
 test('RN admission is independent of advertised platforms and composes with SwiftPM and configured web', () => {
   packageAt(dir);
-  expect(projectRegistry.detectPlatforms(dir, {})).toEqual([]);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual([]);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
   write(join(dir, 'Package.swift'));
   const settings = { macos: { product: 'App', infoPlist: 'Info.plist' }, web: { url: 'http://localhost:8000' } };
-  expect(projectRegistry.detectPlatforms(dir, settings)).toEqual(['macos', 'web']);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: settings,
+    }),
+  ).toEqual(['macos', 'web']);
   expect(projectRegistry.projectProblem(dir, 'dev-server')).toBeNull();
 
   write(join(dir, 'package.json'), JSON.stringify({ dependencies: { expo: '57.0.0' } }));
   write(join(dir, 'app.json'), JSON.stringify({ expo: { platforms: ['web'] } }));
-  expect(projectRegistry.detectPlatforms(dir, {})).toEqual(['web']);
+  expect(
+    projectRegistry.detectPlatforms(dir, {
+      context: { projectPath: dir, gitCommonDir: null, repoRoot: null },
+      settings: {},
+    }),
+  ).toEqual(['web']);
   expect(projectRegistry.projectProblem(dir, 'ios')).toBeNull();
   expect(projectRegistry.projectProblem(dir, 'android')).toBeNull();
 });
@@ -89,7 +105,9 @@ test('adding test integrations discovers the nearest independent app without cha
   expect(findCoreProjectRoot(nested)).toBe(dir);
   expect(projectRegistry.findProjectRoot(nested)).toBe(dir);
   expect(registry.findProjectRoot(nested)).toBe(app);
-  expect(registry.detectPlatforms(app, {})).toEqual(['ios', 'android']);
+  expect(
+    registry.detectPlatforms(app, { context: { projectPath: app, gitCommonDir: null, repoRoot: null }, settings: {} }),
+  ).toEqual(['ios', 'android']);
   expect(registry.projectProblem(app, 'ios')).toBeNull();
   expect(registry.projectProblem(app, 'android')).toBeNull();
   expect(registry.projectProblem(app, 'dev-server')?.kind).toBe('not-an-app');
@@ -163,7 +181,7 @@ test('symlinks resolve native ownership and workspace identity by canonical path
 
 test('unreadable relevant manifests refuse instead of falling back to another integration or registered app', () => {
   packageAt(dir);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   upsertProject(dir, {});
   const nested = join(dir, 'nested');
   write(join(nested, 'package.json'), '{');
@@ -178,7 +196,7 @@ test('unreadable relevant manifests refuse instead of falling back to another in
 
 test('registered redirects use integration admission while a nearer independent app retains its root', () => {
   packageAt(dir, false);
-  getExecutor().runFile('git', ['-C', dir, 'init', '-q']);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
   const app = join(dir, 'native');
   write(join(app, 'App.xcodeproj'));
   upsertProject(app, {});
@@ -198,4 +216,45 @@ test('explicit operation validation does not substitute an enclosing RN app', ()
   expect(problem?.kind).toBe('not-an-app');
   expect(problem?.message).toContain(join(child, 'package.json'));
   expect(projectRegistry.projectProblem(join(dir, 'src'), 'android')?.kind).toBe('not-an-app');
+});
+
+test.each([JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }), JSON.stringify({ name: 'tools' }), '{'])(
+  'SwiftPM selection is independent of the same-root package manifest %s',
+  async (manifest) => {
+    write(join(dir, 'Package.swift'));
+    write(join(dir, 'package.json'), manifest);
+    const selected = projectRegistry.selectMacos(dir);
+    if ('problem' in selected) throw new Error(selected.problem.message);
+    const project = await selected.load();
+    await expect(project.prepare(testContext({ projectRoot: dir, cwd: dir }), {})).rejects.toThrow(
+      expect.objectContaining({ code: 'STIM_BAD_ARG' }),
+    );
+  },
+);
+
+test('macOS selection uses the exact canonical package root and refuses multiple providers', () => {
+  write(join(dir, 'Package.swift'));
+  const alias = join(dir, 'alias');
+  symlinkSync(dir, alias, 'junction');
+  expect(projectRegistry.projectProblem(alias, 'macos')).toBeNull();
+  const nested = join(dir, 'Sources');
+  mkdirSync(nested);
+  expect(projectRegistry.selectMacos(nested)).toMatchObject({ problem: { kind: 'not-an-app' } });
+  const competing = createProjectRegistry([
+    ...projectIntegrations,
+    {
+      id: 'other-macos',
+      inspect: () => ({
+        root: false,
+        application: false,
+        platforms: () => ['macos'],
+        validate: (operation) => (operation === 'macos' ? null : undefined),
+      }),
+    },
+  ]);
+  const selected = competing.selectMacos(dir);
+  expect(selected).toMatchObject({ problem: { kind: 'ambiguous' } });
+  if (!('problem' in selected)) throw new Error('Competing macOS providers must refuse.');
+  expect(selected.problem.message).toContain('swift-package');
+  expect(selected.problem.message).toContain('other-macos');
 });

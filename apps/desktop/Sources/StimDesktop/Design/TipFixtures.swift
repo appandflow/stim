@@ -8,8 +8,12 @@
     var body: some View {
       ZStack(alignment: .bottom) {
         Palette.sidebar
-        TipCard(topic: topic, hasNext: true, perform: {}, next: {}, close: {})
-          .padding(Space.md)
+        TipCard(
+          topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: true, position: 1, total: 5, perform: {},
+          previous: {}, next: {},
+          close: {}
+        )
+        .padding(Space.md)
       }
       .frame(width: 272, height: 300)
     }
