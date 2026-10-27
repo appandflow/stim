@@ -602,7 +602,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_DEVICES',
-    description: 'Booted owned devices; 0 means no limit',
+    description:
+      'Booted owned iOS simulators and Android emulators together, and, separately, hosted macOS apps; 0 means no limit',
+  },
+  {
+    key: 'concurrency.maxIosDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_IOS_DEVICES',
+    description: 'Booted owned iOS simulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxAndroidDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_ANDROID_DEVICES',
+    description:
+      'Booted owned Android emulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxMacosApps',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_MACOS_APPS',
+    description: 'Hosted macOS apps, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'budget.minFreeDiskGb',
@@ -996,7 +1022,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
+      'When ios.remote or android.remote is auto or remote, this machine is at a device cap (concurrency.maxDevices or a per-platform cap) and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',

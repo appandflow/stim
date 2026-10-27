@@ -328,8 +328,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   configured remote machine for its readiness, capacity and build history.
   The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
   `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
-  one load per core, and Load keeps counting past that. While `concurrency.maxDevices` or
-  `concurrency.maxBuilds` is set, **This Mac** shows **Devices** and **Builds** meters, such as
+  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
   `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
   time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
   by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.

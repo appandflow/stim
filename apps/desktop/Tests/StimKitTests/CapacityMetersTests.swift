@@ -48,6 +48,21 @@ import Testing
       ])
   }
 
+  @Test func aPlatformCapShowsItsOwnMeterWithOrWithoutTheSharedDeviceCap() throws {
+    let capacity = try #require(
+      payload(
+        capacity:
+          #""platformDevices":{"ios":{"max":2,"inUse":2},"android":{"max":3,"inUse":null,"unknown":"adb did not answer"}}"#
+      ).capacity)
+    #expect(capacity.devices == nil)
+    #expect(
+      capacity.meters == [
+        CapacityMeter(kind: .ios, label: "iOS simulators", value: "2 / 2", isFull: true, reason: nil),
+        CapacityMeter(kind: .android, label: "Android emulators", value: "? / 3", isFull: false, reason: "adb did not answer"),
+      ])
+    #expect(capacity.meters.map(\.kind.countsDevices) == [true, true])
+  }
+
   @Test func deviceHoldersCarryIdleTimeAndAStopOnlyWhenAWorkspaceRecordsThem() throws {
     let status = try fixture()
     let devices = try #require(status.capacity?.devices)

@@ -193,8 +193,8 @@ waits for the app to report ready, the phase reads **Booting simulator**,
 for app ready**.
 
 A Mac's status sheet shows its load per core with the state `stim` reports (**Free**,
-**Busy** or **Holding new builds**). While `concurrency.maxDevices` or
-`concurrency.maxBuilds` is set, it also shows **Devices** and **Builds** meters, such as
+**Busy** or **Holding new builds**). While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, it also shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
 `6 / 6`. A full device meter lists the devices holding the slots, with the slot and how long
 each has been idle. The phone cannot stop them; stop a slot from Stim Desktop or with
 `stim stop --slot`. A meter reads `? / 6` when `stim` could not count the devices.

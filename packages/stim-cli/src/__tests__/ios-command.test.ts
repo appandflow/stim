@@ -3605,6 +3605,7 @@ describe('concurrency limits', () => {
             code: 'STIM_AT_CAPACITY',
             message: 'at capacity',
             remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+            max: 1,
           };
         },
       },
@@ -3625,7 +3626,7 @@ describe('concurrency limits', () => {
     expect(capacity.args.max).toBe(2);
     expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
     expect(recordCapacityRefusal).toHaveBeenCalledWith(
-      { platform: 'ios', max: 2, workspace: workspaceId(root) },
+      { platform: 'ios', max: 1, workspace: workspaceId(root) },
       expect.any(Number),
     );
     expect(errs.join('\n')).toContain('at capacity');

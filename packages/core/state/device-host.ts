@@ -86,6 +86,8 @@ export type HostedNativeOffer = {
     /** Available bytes on the Stim home volume, not necessarily the Android AVD volume. */
     workerDiskFreeBytes: number | null;
     localDevices?: number | { unknown: string };
+    /** Local owned simulators and emulators by platform; `localDevices` is their sum. Read by the server, never sent to clients. */
+    localPlatforms?: HostedLocalPlatformCounts | { unknown: string };
   };
   declined: string | null;
 } & (
@@ -100,6 +102,11 @@ export function hostedMemoryRefusal(pressure: unknown): string | null {
   return pressure === 'warning' || pressure === 'critical'
     ? `Host memory pressure is ${pressure}; hosted sessions wait until it is normal.`
     : 'Host memory pressure could not be read; retry shortly.';
+}
+
+export interface HostedLocalPlatformCounts {
+  ios: number;
+  android: number;
 }
 
 export type HostedDeviceOffer = HostedNativeOffer & {
@@ -259,11 +266,23 @@ export function parseHostedLocalDeviceCount(value: unknown): number | { unknown:
   return null;
 }
 
+const isCount = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
+
+export function parseHostedLocalPlatformCounts(value: unknown): HostedLocalPlatformCounts | { unknown: string } | null {
+  if (isJsonObject(value) && isCount(value.ios) && isCount(value.android))
+    return { ios: value.ios, android: value.android };
+  if (isJsonObject(value) && typeof value.unknown === 'string' && value.unknown)
+    return { unknown: value.unknown.slice(0, 4000) };
+  return null;
+}
+
 export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null {
   if (!isJsonObject(value) || !isJsonObject(value.resources)) return null;
   const { resources } = value;
   const local = parseHostedLocalDeviceCount(resources.localDevices);
   if (resources.localDevices !== undefined && local === null) return null;
+  const localPlatforms = parseHostedLocalPlatformCounts(resources.localPlatforms);
+  if (resources.localPlatforms !== undefined && localPlatforms === null) return null;
   if (
     (value.platform !== 'ios' && value.platform !== 'android' && value.platform !== 'macos') ||
     (value.declined !== null &&
@@ -333,6 +352,7 @@ export function parseHostedNativeOffer(value: unknown): HostedNativeOffer | null
       memoryPressure: resources.memoryPressure,
       workerDiskFreeBytes: resources.workerDiskFreeBytes,
       ...(local !== null ? { localDevices: local } : {}),
+      ...(localPlatforms !== null ? { localPlatforms } : {}),
     },
   } as HostedNativeOffer;
 }
