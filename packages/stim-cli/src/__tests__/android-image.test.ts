@@ -8,7 +8,6 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 
 const ARM = 'system-images;android-36;google_apis;arm64-v8a';
 const tmpFree = statfsSync(tmpdir());
-// installSystemImage refuses below 8 GB free on the SDK volume, before it runs sdkmanager.
 const roomToInstall = tmpFree.bavail * tmpFree.bsize >= 9 * 1024 ** 3;
 let root: string;
 let sdk: string;
