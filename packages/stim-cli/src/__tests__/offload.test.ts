@@ -944,6 +944,40 @@ describe('macOS build compatibility', () => {
   });
 });
 
+describe('a client without Xcode', () => {
+  const noXcode: BuildTarget = {
+    ...IOS,
+    local: { ...LOCAL, arch: 'x64', xcode: null, simulatorSdk: null, cocoapods: null },
+  };
+  const hosted: BuildTarget = { ...noXcode, local: { ...noXcode.local, arch: 'arm64' } };
+
+  it("takes the worker's Xcode, simulator SDK and CocoaPods as the build's toolchain", () => {
+    const worker = offer({ toolchain: { xcode: 'Xcode 27.1 / Build version 27A9275', simulatorSdk: '27.1' } });
+    expect(offerProblems(worker, hosted)).toEqual([]);
+    expect(toolchainNotes(hosted, worker.toolchain)).toEqual([]);
+  });
+
+  it('still refuses a different Stim build, CPU, a missing runtime and a worker without Xcode', () => {
+    expect(toolchainMismatches(noXcode, offer({ toolchain: { compat: 9 } }).toolchain).map((p) => p.code)).toEqual([
+      'stim-build',
+      'arch',
+    ]);
+    expect(toolchainMismatches(hosted, offer({ toolchain: { runtimes: [] } }).toolchain).map((p) => p.code)).toEqual([
+      'runtime',
+    ]);
+    expect(
+      toolchainMismatches(hosted, offer({ toolchain: { xcode: null, simulatorSdk: null } }).toolchain).map(
+        (p) => p.reason,
+      ),
+    ).toEqual(['no Xcode there', 'no simulator SDK there']);
+  });
+
+  it('keeps the Xcode match for a client that has another Xcode', () => {
+    const otherXcode: BuildTarget = { ...IOS, local: { ...LOCAL, xcode: 'Xcode 27.1 / Build version 27A9275' } };
+    expect(toolchainMismatches(otherXcode, offer().toolchain).map((p) => p.code)).toEqual(['xcode']);
+  });
+});
+
 describe('a worker that is not a Mac', () => {
   const linux = offer({
     toolchain: {

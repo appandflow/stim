@@ -401,6 +401,14 @@ function harness(overrides: LooseDeps = {}) {
       record('runPodInstall', args);
       return { ok: true, durationMs: 18000 };
     },
+    iosToolchain: async () => ({
+      stimBuild: 'fixture',
+      compat: 2,
+      arch: 'arm64',
+      xcode: 'Xcode 27.1 / Build version 27A9275',
+      simulatorSdk: '27.1',
+      cocoapods: null,
+    }),
     buildIos: async (args) => {
       record('buildIos', args);
       return makeIosBuildSuccess({ appPath, bundleId: 'com.example.app', durationMs: 161000, scheme: 'Fixture' });
@@ -2664,6 +2672,26 @@ describe('pods', () => {
       },
     );
     expect(calls.order.includes('runPodInstall')).toBeTruthy();
+  });
+
+  test('a machine without Xcode leaves pod install to the Mac that builds', async () => {
+    reserve();
+    const { calls, errs } = await run(
+      {},
+      {
+        readPodState: () => ({ hasPodfile: true, lockText: null, manifestText: null }),
+        iosToolchain: async () => ({
+          stimBuild: 'fixture',
+          compat: 2,
+          arch: 'arm64',
+          xcode: null,
+          simulatorSdk: null,
+          cocoapods: null,
+        }),
+      },
+    );
+    expect(calls.order).not.toContain('runPodInstall');
+    expect(errs.join('\n')).toMatch(/^ {2}pods +.*no Xcode here; the Mac that builds runs pod install/m);
   });
 
   test('a project with no CocoaPods at all is skipped silently', async () => {

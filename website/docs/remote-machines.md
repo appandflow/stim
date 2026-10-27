@@ -346,7 +346,13 @@ answer its permission prompts. A reused server must speak protocol 2 (stim-serve
 Setup refuses an older Desktop-run server with an update remedy and never
 downgrades a newer server.
 
-For iOS builds, Xcode and the simulator SDK must match. When the worker has no
+For iOS builds, Xcode and the simulator SDK must match. A client with no Xcode
+and no simulator SDK, such as a Linux or Windows machine, has nothing to match:
+the worker's Xcode, simulator SDK and CocoaPods are the build's toolchain, the
+client skips `pod install` and leaves it to the worker, and
+`stim ios --remote <mac> --remote-build <mac>` runs the app on a simulator that
+Mac hosts while Metro stays on the client. Native Xcode apps without React
+Native still need Xcode on the client. When the worker has no
 usable Xcode, `stim doctor` and the Tools step say why and give the command to
 run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`
 when an Xcode is installed but the Command Line Tools (which Homebrew selects)

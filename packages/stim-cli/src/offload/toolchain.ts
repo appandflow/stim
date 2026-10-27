@@ -631,11 +631,19 @@ export function cocoapodsInstall(here: string | null): Required<Pick<OffloadProb
   };
 }
 
+/**
+ * Whether this machine has no Xcode and no simulator SDK, so an iOS app it asks for can only be built, and only run,
+ * on a remote Mac: that Mac's own Xcode, simulator SDK and CocoaPods are the build's toolchain.
+ */
+export function buildsOnlyOnWorker(local: Pick<IosToolchain, 'xcode' | 'simulatorSdk'>): boolean {
+  return !local.xcode && !local.simulatorSdk;
+}
+
 export function cocoapodsDifference(
   target: Extract<BuildTarget, { platform: 'ios' }>,
   worker: WorkerToolchain,
 ): OffloadProblem | null {
-  if (target.native || target.cocoapodsPinned) return null;
+  if (target.native || target.cocoapodsPinned || buildsOnlyOnWorker(target.local)) return null;
   if (worker.os !== undefined && worker.os !== 'darwin') return null;
   const here = target.local.cocoapods;
   if (!worker.cocoapods) {
@@ -825,13 +833,23 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     return out;
   }
   const ios = target.local;
-  const xcode = !ios.xcode || worker.xcode !== ios.xcode ? xcodeProblem(ios, worker) : null;
+  const onWorker = buildsOnlyOnWorker(ios);
+  const xcode = onWorker
+    ? worker.xcode
+      ? null
+      : xcodeProblem(ios, worker, true)
+    : !ios.xcode || worker.xcode !== ios.xcode
+      ? xcodeProblem(ios, worker)
+      : null;
   if (xcode) out.push(xcode);
-  const selection = xcode !== null && diagnosesXcode(ios, worker);
-  if ((!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) && !selection) {
+  const selection = xcode !== null && (onWorker ? worker.developerDir !== undefined : diagnosesXcode(ios, worker));
+  const sdkDiffers = onWorker ? !worker.simulatorSdk : !ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk;
+  if (sdkDiffers && !selection) {
     out.push({
       code: 'simulator-sdk',
-      reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
+      reason: onWorker
+        ? 'no simulator SDK there'
+        : versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
   if (!target.native && target.cocoapodsPinned && !worker.bundler) {

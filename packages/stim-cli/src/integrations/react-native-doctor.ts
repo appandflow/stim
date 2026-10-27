@@ -54,7 +54,8 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       );
     },
     offloadTargets({ options: { platform, host = process.platform, operation }, settings, repoRoot }, iosRuntime) {
-      const checksIos = platform !== 'android' && host === 'darwin';
+      const iosDir = resolveIosProjectDir(settings, root).dir;
+      const checksIos = platform !== 'android' && (host === 'darwin' || existsSync(iosDir) || detectIsExpo(root));
       const androidDir = resolveAndroidLayout(settings, root, repoRoot ?? root).gradleRoot;
       const checksAndroid =
         platform === 'android' || (platform === undefined && (existsSync(androidDir) || detectIsExpo(root)));
@@ -62,7 +63,6 @@ export function reactNativeProjectDoctor(root: string): ProjectDoctor {
       return async () => {
         const targets: BuildTarget[] = [];
         if (checksIos) {
-          const iosDir = resolveIosProjectDir(settings, root).dir;
           const [local, runtime] = await Promise.all([iosToolchainAsync(root, iosDir), iosRuntime()]);
           targets.push({ platform: 'ios', local, runtime, cocoapodsPinned: bundlerPin(root, iosDir) !== null });
         }
