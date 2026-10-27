@@ -763,6 +763,13 @@ test('writes a recording only in the session state, one at a time, and removes i
   expect(existsSync(join(home, 'agent', 'recordings'))).toBe(false);
 });
 
+test('overlapping starts run only one recording', async () => {
+  await start();
+  const answers = await Promise.all([rpc(recordStart()), rpc(recordStart())]);
+  expect(answers.map((answer) => answer.status).toSorted()).toEqual([200, 400]);
+  expect(fixture.calls.filter((call) => call.body.includes('"record"'))).toHaveLength(1);
+});
+
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordOk = false;

@@ -885,18 +885,19 @@ export class AgentDeviceDriver implements HostedAgentDriver {
       this.answer(response, answer);
       return;
     }
-    if (recording) {
+    if (!(await this.admit(running, response))) return;
+    const current = this.recording;
+    if (current) {
       this.refuse(response, {
         id,
         rule: 'recording',
-        message: recording.capped
+        message: current.capped
           ? `The previous recording reached the ${durationLabel(this.options.maxRecordingMs)} limit and the hosting Mac stopped it; run record stop to download it before starting another.`
           : 'A recording is already running in this hosted session; run record stop before starting another.',
         details: { command: 'record' },
       });
       return;
     }
-    if (!(await this.admit(running, response))) return;
     const extension = typeof positionals[1] === 'string' ? extname(positionals[1]) : '.mp4';
     const dir = join(this.recordings, randomBytes(8).toString('hex'));
     const meta = isJsonObject(params.meta) ? params.meta : {};
