@@ -9,6 +9,7 @@ import {
   type HostedIosChoice,
   type HostedIosDevice,
 } from '@stim-cli/core/state';
+import { muteBootedSimulator } from '../engine/device-ios.ts';
 import {
   bootIosSim,
   createOwnedIosSim,
@@ -30,6 +31,10 @@ export type HostedWorkerResult = {
   launched?: true | 'unverified';
   /** The registered hosted macOS app process, for the host's agent driver. */
   pid?: number;
+};
+
+export const hostedNotify = (message: string): void => {
+  process.stderr.write(`${message}\n`);
 };
 
 function inventory(): ReturnType<typeof listAllIosSims> {
@@ -78,6 +83,7 @@ export async function runHostedDevice(
       await bootIosSim(device.udid, { openViewer: false });
       if (inventory().find((sim) => sim.udid === device!.udid)?.state !== 'Booted')
         throw new Error('Hosted simulator boot could not be verified.');
+      await muteBootedSimulator(device.udid, hostedNotify);
       return { state: 'ready', device };
     }
     device = readHostedDevice(home);
@@ -120,6 +126,7 @@ export async function runHostedDevice(
         renameSync(temporary, join(home, 'hosted-device.json'));
       });
       removeHostedAppData(home, { keepBlobs: true });
+      await muteBootedSimulator(device.udid, hostedNotify);
       return { state: 'ready', device };
     }
     if (mode === 'park') {

@@ -22,6 +22,7 @@ const native = vi.hoisted(() => ({
   reset: vi.fn<(_avd: string, _serial: string, keep: string) => Promise<void>>(),
   image: vi.fn<() => string | null>(),
   resolved: vi.fn<() => { notRunning?: true; missing?: true; notOwned?: true; serial?: string }>(),
+  mute: vi.fn<(serial: string, avdName: string) => Promise<void>>(),
 }));
 vi.mock('../host-memory.ts', () => ({ readHostMemoryPressure: () => null }));
 vi.mock('../devices/android.ts', () => ({
@@ -50,6 +51,9 @@ vi.mock('../devices/android.ts', () => ({
   resolveOwnedAvdSerialAsync: async () => native.resolved(),
   resetAdoptedAvd: (avd: string, serial: string, keep: string) => native.reset(avd, serial, keep),
   avdPathExists: (path: string) => existsSync(path),
+}));
+vi.mock('../engine/device-android.ts', () => ({
+  muteBootedEmulator: (serial: string, avdName: string) => native.mute(serial, avdName),
 }));
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedAvd: (...args: Parameters<typeof native.teardown>) => native.teardown(...args),
@@ -118,6 +122,36 @@ test('persists exact ownership before a viewer-free boot and stops only that AVD
   expect(native.create).toHaveBeenCalledTimes(1);
   expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'stopped', device: { avdName: avd } });
   expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, { del: true });
+});
+
+test('mutes the exact emulator after boot on prepare and after the adoption reset', async () => {
+  const order: string[] = [];
+  native.boot.mockImplementation((_avd, port) => {
+    order.push(`boot:${String(port)}`);
+    native.name.mockReturnValue(avd);
+  });
+  native.reset.mockImplementation(async () => {
+    order.push('reset');
+  });
+  native.mute.mockImplementation(async (serial, avdName) => {
+    order.push(`mute:${serial}:${avdName}`);
+  });
+  await runHostedAndroidDevice('prepare', request);
+  expect(order).toEqual(['boot:5554', `mute:emulator-5554:${avd}`]);
+  native.teardown.mockImplementation(() => {
+    native.name.mockReturnValue(null);
+    return { status: 'torn-down' };
+  });
+  await runHostedAndroidDevice('park', request);
+  order.length = 0;
+  await runHostedAndroidDevice('adopt', { ...request, consolePort: 5556 });
+  expect(order).toEqual(['boot:5556', 'reset', `mute:emulator-5556:${avd}`]);
+});
+
+test('does not mute an emulator whose boot was not verified', async () => {
+  native.wait.mockResolvedValue({ ok: false });
+  await runHostedAndroidDevice('prepare', request);
+  expect(native.mute).not.toHaveBeenCalled();
 });
 
 test('an occupied console port refuses before any native creation', async () => {
