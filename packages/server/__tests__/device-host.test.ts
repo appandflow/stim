@@ -1728,7 +1728,12 @@ test('offers schema-compatible SDK choices without creating a journal, claim, or
     expect(acceptsRequest({ id: 1, method: 'device-host.offer', params })).toBe(true);
     const answer = await host.offer('client', params);
     if ('error' in answer) throw new Error(answer.error.message);
-    expect(answer.result.capacity).toEqual({ running: 0, max: 1, available: 1, local: 0 });
+    expect(answer.result.capacity).toEqual({
+      running: 0,
+      max: 1,
+      available: 1,
+      ...(platform === 'macos' ? {} : { local: 0 }),
+    });
     expect(answer.result.declined).toBeNull();
     expect(answer.result.resources.maxLoadPerCore).toBe(2);
     expect(acceptsOffer(answer.result)).toBe(true);
@@ -1759,21 +1764,18 @@ test.each([
   await state(hosted.id, 'unknown');
   hostEnv.LOCAL_COUNT = JSON.stringify(local);
   const answer = await host.offer('client', { platform: 'ios' });
-  expect(JSON.parse(readFileSync(join(home, 'offer-exclude.json'), 'utf8'))).toEqual(
-    readHostedSessions().flatMap((record) =>
-      record.platform === 'ios' && record.state !== 'stopped' && record.device
-        ? [{ platform: 'ios', key: (record.device as { udid: string }).udid }]
-        : [],
-    ),
-  );
+  expect(readHostedSessions().find((record) => record.id === hosted.id)?.device).toBeNull();
+  expect(JSON.parse(readFileSync(join(home, 'offer-exclude.json'), 'utf8'))).toEqual([
+    { platform: 'ios', key: '12345678-1234-1234-1234-123456789abc' },
+  ]);
   expect(answer).toMatchObject({ result: { capacity: { running, max: 2, available, local } } });
   if ('error' in answer) throw new Error(answer.error.message);
   expect(answer.result.declined).toBe(
     typeof local !== 'number'
-      ? local.unknown
+      ? `Hosted device capacity is unknown: ${local.unknown}`
       : local === 0
         ? null
-        : '1 hosted + 1 local of 2 device reservations are occupied, including unresolved sessions.',
+        : 'Hosted device capacity is full: 1 hosted + 1 local of 2 device reservations are occupied, including unresolved sessions.',
   );
 });
 
@@ -1784,16 +1786,53 @@ test('binding reservations count local devices, refuse a full host and preserve 
   await state(first.id, 'ready');
   const next = { ...request, workspace: '/other', attempt: 'next' };
   expect(await host.reserve('other', next)).toMatchObject({
-    error: { code: 'device-busy', message: expect.stringContaining('1 hosted + 1 local of 2') },
+    error: {
+      code: 'device-busy',
+      message: expect.stringContaining('Hosted device capacity is full: 1 hosted + 1 local of 2'),
+    },
   });
   hostEnv.LOCAL_COUNT = JSON.stringify({ unknown: 'Host inventory unavailable.' });
   expect(await host.reserve('other', next)).toMatchObject({
-    error: { code: 'device-busy', message: 'Host inventory unavailable.' },
+    error: { code: 'device-busy', message: 'Hosted device capacity is unknown: Host inventory unavailable.' },
   });
   expect((await reserve()).id).toBe(first.id);
   hostEnv.LOCAL_COUNT = '0';
   expect(await host.reserve('other', next)).toHaveProperty('result.state', 'preparing');
   expect(readHostedSessions()).toHaveLength(2);
+});
+
+test('macOS app sessions and simulator sessions fill separate pools of concurrency.maxDevices', async () => {
+  hostEnv.STIM_MAX_DEVICES = '1';
+  hostEnv.LOCAL_COUNT = JSON.stringify({ unknown: 'Host inventory unavailable.' });
+  const macos = await reserve({ platform: 'macos', attempt: 'app' });
+  await state(macos.id, 'ready');
+  expect(existsSync(join(home, 'count-entered'))).toBe(false);
+  const full = await host.offer('client', { platform: 'macos' });
+  expect(full).toMatchObject({
+    result: {
+      capacity: { running: 1, max: 1, available: 0 },
+      declined:
+        'Hosted macOS capacity is full: 1 of 1 macOS app reservations are occupied, including unresolved sessions.',
+    },
+  });
+  expect(full).not.toHaveProperty('result.capacity.local');
+  expect(
+    await host.reserve('client', { ...request, platform: 'macos', attempt: 'app-2', slot: 'second' }),
+  ).toMatchObject({
+    error: { message: expect.stringContaining('Hosted macOS capacity is full') },
+  });
+
+  hostEnv.LOCAL_COUNT = '0';
+  const ios = await reserve({ attempt: 'sim' });
+  await state(ios.id, 'ready');
+  expect(await host.offer('client', { platform: 'ios' })).toMatchObject({
+    result: { capacity: { running: 1, max: 1, available: 0, local: 0 } },
+  });
+  host.stop('client', { session: macos.id });
+  await state(macos.id, 'stopped');
+  expect(await host.offer('client', { platform: 'macos' })).toMatchObject({
+    result: { capacity: { running: 0, max: 1, available: 1 }, declined: null },
+  });
 });
 
 test('uncapped reservations proceed without a local inventory probe', async () => {

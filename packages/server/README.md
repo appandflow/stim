@@ -783,12 +783,17 @@ for the host architecture and macOS version. Omit selectors for the same
 installed defaults used by reserve. The response includes `platform`, the
 selected SDK `choice` (runtime/model/image and host architecture), `resources`,
 `capacity` and a nullable `declined` reason. An unavailable SDK choice is `null`
-with a reason; unknown or elevated memory pressure declines. The query creates
+with a reason; elevated memory pressure, or a sample that cannot be read after one retry, declines with its own reason. The query creates
 no session, simulator, AVD or ownership claim.
 
-`capacity.running` counts every reservation not confirmed stopped, including
-unresolved sessions. `max` is `concurrency.maxDevices`; zero means uncapped and
-`available` is then `null`. Android offers also decline when all supported
+`capacity.running` counts every simulator or emulator reservation not confirmed
+stopped, including unresolved sessions, plus the host's own booted `stim-*`
+devices in `capacity.local`. A session's simulator counts once, whether or not
+its record names the device yet. A macOS offer counts only macOS app
+reservations against `max` and reports no `local`. `max` is
+`concurrency.maxDevices`; zero means uncapped and `available` is then `null`.
+A full pool, an uncountable host inventory and memory pressure each decline
+with a different reason. Android offers also decline when all supported
 console ports are already recorded as occupied. macOS offers decline when all
 64 app slots are reserved. Resource values are advisory:
 `cpus`, five-minute `loadPerCore`, `memoryFreeBytes`, `memoryPressure` (nullable
@@ -903,7 +908,10 @@ the worker's other devices.
 `concurrency.maxDevices` bounds hosted reservations atomically, including
 unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
-inventory or elevated/unknown memory pressure refuses native creation. This
+inventory refuses native creation. Memory pressure is decided once: when the
+offer is made for iOS and Android, and when the macOS worker prepares, each
+after one retry of an unreadable sample; adopting or preparing a simulator or
+emulator does not sample it again. This
 protocol slice does not change `stim ios` placement.
 
 ### Hosted Android session protocol
@@ -1063,7 +1071,7 @@ unresolved agent claims refuse replacement and deletion after restart too.
 ### Hosted macOS app sessions
 
 The same offer/reserve/attach/stop methods accept `platform: "macos"` without
-selectors. A macOS reservation counts toward `concurrency.maxDevices` and takes
+selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and each takes
 the lowest free `appSlot` from 1 through 64. Unresolved sessions retain their
 slot; only a confirmed stop frees it. The ready device describes the host's
 `architecture` (`arm64` or `x86_64`), `macosVersion` and `appSlot`. No simulator,

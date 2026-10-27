@@ -411,6 +411,7 @@ FULL TOPIC LIST
   stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
+  stim guide lifecycle tools      # device location|permission|push|network on the owned simulator or emulator
   stim guide lifecycle release    # Release configurations and ...Release variants
   stim guide api                  # typed run, stop, diagnostics and cancellation from the main package
   stim guide facts                # the --json payloads

@@ -330,9 +330,11 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
     pendingState = 'stopped';
     readyAt = Infinity;
-    notice = 'Host memory pressure is unknown or elevated.';
+    notice = 'Host memory pressure could not be read; retry shortly.';
     const result = String(await place().catch((error: unknown) => error));
-    expect(result).toContain('stopped before it was ready: Host memory pressure is unknown or elevated. Retry');
+    expect(result).toContain(
+      'stopped before it was ready: Host memory pressure could not be read; retry shortly. Retry',
+    );
     expect(result).not.toMatch(/unknown state|Run stim stop/);
     expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
   });

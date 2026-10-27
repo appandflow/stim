@@ -18,6 +18,7 @@ import { withDirLock } from '@stim-cli/core';
 import {
   assertHostedDeviceLedger,
   hostedMacosAppSlot,
+  hostedMemoryRefusal,
   hostedMacosBundleId,
   isJsonObject,
   readHostedDevice,
@@ -37,8 +38,6 @@ import { materializeHostedApp, newer } from './app.ts';
 import type { HostedWorkerResult } from './worker.ts';
 
 export function selectHostedMacos(): HostedMacosChoice {
-  if (readHostMemoryPressure(getExecutor()) !== 'normal')
-    throw new Error('Host memory pressure is unknown or elevated.');
   const macosVersion = getExecutor().runFile('sw_vers', ['-productVersion'], {
     timeoutMs: 10000,
     killSignal: 'SIGKILL',
@@ -117,6 +116,10 @@ export async function runHostedMacosApp(
     if (mode === 'prepare') {
       recorded = existsSync(join(home, 'hosted-device.json'));
       if (recorded) throw new Error('Attach or stop the existing hosted macOS session.');
+      const memoryRefusal = hostedMemoryRefusal(
+        readHostMemoryPressure(getExecutor()) ?? readHostMemoryPressure(getExecutor()),
+      );
+      if (memoryRefusal) throw new Error(memoryRefusal);
       const selected = { ...selectHostedMacos(), appSlot: request.appSlot };
       assertHostedDeviceLedger(home, `macos-${request.appSlot}`, 'macos');
       writeRecord(home, 'hosted-device.json', selected);

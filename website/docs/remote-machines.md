@@ -122,7 +122,7 @@ iOS simulator, use the machine name as the remote target:
 
 <StimTabs code={`stim ios --remote janics-mac-mini`} />
 
-The host's own owned devices count toward `concurrency.maxDevices`.
+The host's own owned devices count toward `concurrency.maxDevices`. Hosted macOS app sessions count against it separately from simulators and emulators.
 
 On the host, `stim-server devices` shows **Hosted here** rows with the client,
 platform, device, installed app, state and time; `--json` includes

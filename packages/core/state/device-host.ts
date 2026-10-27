@@ -96,6 +96,14 @@ export type HostedNativeOffer = {
   | { platform: 'macos'; choice: HostedMacosChoice | null }
 );
 
+/** Why a host's memory pressure refuses a hosted session, or null when it is `normal`. A missing sample is its own reason. */
+export function hostedMemoryRefusal(pressure: unknown): string | null {
+  if (pressure === 'normal') return null;
+  return pressure === 'warning' || pressure === 'critical'
+    ? `Host memory pressure is ${pressure}; hosted sessions wait until it is normal.`
+    : 'Host memory pressure could not be read; retry shortly.';
+}
+
 export type HostedDeviceOffer = HostedNativeOffer & {
   capacity: { running: number; max: number; available: number | null; local?: number | { unknown: string } };
 };

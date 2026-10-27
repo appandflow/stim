@@ -164,6 +164,7 @@
         "packages/stim-cli/src/commands/reload.ts",
         "packages/stim-cli/src/commands/device.ts",
         "packages/stim-cli/src/commands/device-provision.ts",
+        "packages/stim-cli/src/commands/device-tools.ts",
         "packages/stim-cli/src/commands/build-plan.ts",
         "packages/stim-cli/src/diagnostics/**",
         "packages/stim-cli/src/guide-status.ts"
