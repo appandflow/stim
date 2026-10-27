@@ -12,7 +12,7 @@ export interface PlacementHere {
   loadPerCore: number;
   maxLoadPerCore: number;
   memoryPressure: 'normal' | 'warning' | 'critical' | null;
-  devices: { count: number | null; max: number; queued: number };
+  devices: { count: number | null; max: number; queued: number; limit?: string };
   budgetRefusal: string | null;
 }
 
@@ -82,12 +82,15 @@ export function decideDevicePlacement(
   }
   const { platform, placement = 'auto', here, offers, buildMachine, noWait, eas } = inputs;
   const remoteFirst = prefersRemote(placement);
-  const { count, max, queued } = here.devices;
+  const { count, max, queued, limit } = here.devices;
   const room = max === 0 || (count !== null && count < max);
   const localEnabled = here.localEnabled !== false && mayRunHere(placement);
   const cannotTake = !localEnabled || !room || queued > 0;
   const atCapacity = count !== null && (!room || queued > 0);
-  const usage = max > 0 ? `${count} of ${max} devices in use` : `${count} devices in use, no device cap`;
+  const usage =
+    max > 0
+      ? `${count} of ${max} devices in use${limit ? ` (${limit})` : ''}`
+      : `${count} devices in use, no device cap`;
   const localReason = !mayRunHere(placement)
     ? 'remote-only never runs here'
     : !localEnabled

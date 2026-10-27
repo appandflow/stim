@@ -39,7 +39,7 @@ public struct StatusViews: Sendable {
   /// Applies one `workspaces` event.
   public mutating func applyWorkspaces(_ fields: [String: JSONValue]) -> Outcome {
     guard let number = fields["seq"]?.number else { return .unchanged }
-    let seq = Int(number)
+    guard let seq = ServerProtocol.exactInteger(number) else { return .gap }
     if case .object(let snapshot)? = fields["snapshot"] {
       (workspaceOrder, workspaces) = Self.keyed(snapshot["workspaces"])
       (worktreeOrder, worktrees) = Self.keyed(snapshot["worktrees"])

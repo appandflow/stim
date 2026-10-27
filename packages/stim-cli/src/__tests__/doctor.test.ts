@@ -1473,6 +1473,14 @@ test('checkConcurrency echoes the caps and the current live count when set', () 
   expect(f.detail).toMatch(/1 /);
 });
 
+test('checkConcurrency reports a per-platform cap on its own and states how it combines with maxDevices', () => {
+  const f = checkConcurrency({ platformMax: { ios: 2, android: 0, macos: 1 } });
+  assert(f);
+  expect(f.detail).toMatch(/maxDevices unlimited, maxIosDevices 2, maxMacosApps 1\./);
+  expect(f.detail).not.toMatch(/maxAndroidDevices/);
+  expect(f.detail).toMatch(/must also fit maxDevices/);
+});
+
 test('checkConcurrency says the live count is unknown, and why, instead of reporting zero', () => {
   const f = checkConcurrency({
     maxDevices: 3,

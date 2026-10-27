@@ -67,7 +67,7 @@ export interface AgentDriverInput {
 export interface AgentClientAccessInput {
   /** A grant naming this driver, as the client parsed it. */
   grant: HostedAgentIssuedGrant;
-  /** `https://<host>[:<port>]` followed by the grant's path. */
+  /** `https://<host>[:<port>]`, or the client's loopback relay `http://127.0.0.1:<port>`, followed by the grant's path. */
   baseUrl: string;
   /** Where the client writes `config`, with mode 0600. */
   file: string;

@@ -46,16 +46,17 @@ function serveConfig(routes: Record<number, string>, funneled: number[] = []): s
 // The fake tailscale is a script with a shebang, which Windows cannot execute.
 const withTailscale = describe.skipIf(process.platform === 'win32');
 
-function pairWith(serveStatus: string) {
+function pairWith(serveStatus: string, ...args: string[]) {
   const bin = join(home, 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'tailscale'), FAKE_TAILSCALE);
   chmodSync(join(bin, 'tailscale'), 0o755);
-  const result = spawnSync(process.execPath, [BIN, 'pair', '--port', '7787'], {
+  const result = spawnSync(process.execPath, [BIN, 'pair', '--port', '7787', ...args], {
     env: { ...process.env, STIM_HOME: home, PATH: `${bin}:${process.env.PATH}`, FAKE_SERVE_STATUS: serveStatus },
     encoding: 'utf8',
   });
-  const endpoint = result.status === 0 ? (JSON.parse(result.stdout) as { endpoint: string }).endpoint : null;
+  const printed = result.status === 0 ? JSON.parse(result.stdout) : null;
+  const endpoint: string | null = printed ? (printed.qr ?? printed).endpoint : null;
   return { status: result.status, endpoint, stderr: result.stderr };
 }
 
@@ -176,11 +177,25 @@ withTailscale('pair with Tailscale running', () => {
     AllowFunnel: { [`${DNS}:443`]: true },
   });
 
-  it('assumes port 7443 without a route and never suggests the funneled port', () => {
+  it('pairs on the direct tailnet address without a route and never suggests the funneled port', () => {
     const { endpoint, stderr } = pairWith(gmailFunnel);
-    expect(endpoint).toBe(`wss://${DNS}:7443`);
+    expect(endpoint).toBe('ws://100.64.0.1:7787');
     expect(stderr).toContain('`tailscale serve --bg --https=7443 http://127.0.0.1:7787`');
     expect(stderr).not.toContain('--https=443');
+  });
+
+  it('pairs on the direct tailnet address when tailscale serve status cannot be read', () => {
+    const { endpoint, stderr } = pairWith('not json');
+    expect(endpoint).toBe('ws://100.64.0.1:7787');
+    expect(stderr).toContain('tailnet address directly');
+    expect(stderr).not.toContain('tailscale serve --bg');
+  });
+
+  it('--json prints the same endpoint and still explains it on stderr', () => {
+    const { endpoint, stderr } = pairWith(gmailFunnel, '--json');
+    expect(endpoint).toBe('ws://100.64.0.1:7787');
+    expect(stderr).toContain('single use');
+    expect(stderr).toContain('tailnet address directly');
   });
 
   it('omits the port for a route on 443', () => {

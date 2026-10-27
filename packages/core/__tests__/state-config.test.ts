@@ -1,7 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getConcurrencyLimits, getParkedMax, getRepoSettings, loadConfig, withConfigLock } from '../state/config.ts';
+import {
+  getConcurrencyLimits,
+  getParkedMax,
+  getPlatformDeviceLimits,
+  getRepoSettings,
+  loadConfig,
+  withConfigLock,
+} from '../state/config.ts';
 import { withStateReadCache } from '../state/json-file.ts';
 import { readCreatedDevices } from '../state/ledgers.ts';
 
@@ -97,6 +104,23 @@ test('env overrides config, and 0/absent means no enforcement', () => {
     maxBuilds: 5,
     maxDevices: 0,
   });
+});
+
+test('getPlatformDeviceLimits is 0 unless set, reads config, and lets env override it without touching maxDevices', () => {
+  expect(getPlatformDeviceLimits({ env: {} })).toEqual({ ios: 0, android: 0, macos: 0 });
+  writeConfig({
+    version: 2,
+    projects: {},
+    repos: {},
+    concurrency: { maxDevices: 4, maxIosDevices: 2, maxAndroidDevices: 1, maxMacosApps: 3 },
+  });
+  expect(getPlatformDeviceLimits({ env: {} })).toEqual({ ios: 2, android: 1, macos: 3 });
+  expect(getPlatformDeviceLimits({ env: { STIM_MAX_IOS_DEVICES: '0', STIM_MAX_MACOS_APPS: '5' } })).toEqual({
+    ios: 0,
+    android: 1,
+    macos: 5,
+  });
+  expect(getConcurrencyLimits({ env: {} })).toEqual({ maxBuilds: 0, maxDevices: 4 });
 });
 
 test('a negative or garbage value reads as unlimited', () => {

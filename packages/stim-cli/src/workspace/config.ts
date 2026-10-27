@@ -31,6 +31,7 @@ export {
   findEnclosingWorktreeRoot,
   getConcurrencyLimits,
   getConfigPath,
+  getPlatformDeviceLimits,
   getProject,
   getProjectSettings,
   getRepoSettings,
@@ -41,6 +42,7 @@ export {
   type Config,
   type ConcurrencyLimits,
   type DeviceRecord,
+  type PlatformDeviceLimits,
   type ProjectRecord,
   type SupervisorRecord,
 } from '@stim-cli/core/state';

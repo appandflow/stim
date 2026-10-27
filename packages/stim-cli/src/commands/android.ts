@@ -1181,7 +1181,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         : null;
     if (capacity) {
       if (capacity.code === 'STIM_AT_CAPACITY') {
-        recordRefusal({ platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) }, now());
+        recordRefusal({ platform: PLATFORM, max: capacity.max, workspace: workspaceId(root) }, now());
       }
       return fail(capacity.code, capacity.message, capacity.remedy);
     }

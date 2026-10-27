@@ -889,6 +889,10 @@ msgstr "Android emulator"
 msgid "Android Emulator"
 msgstr "Android Emulator"
 
+#: src/lib/capacity.ts
+msgid "Android emulators"
+msgstr "Android emulators"
+
 #: src/lib/build-machines.ts
 msgid "Android platform missing"
 msgstr "Android platform missing"
@@ -2114,6 +2118,10 @@ msgstr "iOS device"
 #: src/screens/device-view.tsx
 msgid "iOS Simulator"
 msgstr "iOS Simulator"
+
+#: src/lib/capacity.ts
+msgid "iOS simulators"
+msgstr "iOS simulators"
 
 #: src/lib/machine-report.ts
 msgid "Its pull request is finished"

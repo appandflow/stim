@@ -2,7 +2,7 @@ import type { ServeRoute } from '@stim-cli/core/protocol';
 import { execFile } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import { delimiter, join, win32 } from 'node:path';
-import { isJsonObject } from '@stim-cli/core/state';
+import { isJsonObject, tailscaleEnv } from '@stim-cli/core/state';
 import { planServe } from './serve-plan.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
@@ -75,7 +75,7 @@ export function readRawTailscaleStatus(binary: string | null, env: NodeJS.Proces
     execFile(
       binary,
       ['status', '--json'],
-      { env, timeout: TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
+      { env: tailscaleEnv(env), timeout: TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
       (error, stdout) => {
         if (error) return resolve(null);
         try {
@@ -99,7 +99,7 @@ export function readTailscaleStatus(
     execFile(
       binary,
       ['status', '--json'],
-      { env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
+      { env: tailscaleEnv(env), timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
       (error, stdout) => {
         if (error) {
           const reason = error.killed ? 'it timed out' : error.message.split('\n')[0]!;
@@ -222,7 +222,7 @@ export function serveRoute(
     execFile(
       binary,
       ['serve', 'status', '--json'],
-      { env, timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
+      { env: tailscaleEnv(env), timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
       (error, stdout) => {
         let route: ServeRoute;
         try {
@@ -267,7 +267,7 @@ export async function setupServeRoute(
     execFile(
       binary,
       ['serve', '--bg', `--https=${plan.record.port}`, `http://127.0.0.1:${target}`],
-      { env, timeout: 10_000, killSignal: 'SIGKILL', encoding: 'utf8' },
+      { env: tailscaleEnv(env), timeout: 10_000, killSignal: 'SIGKILL', encoding: 'utf8' },
       (error, stdout, stderr) => {
         if (!error) return resolve();
         const detail = [stdout.trim(), stderr.trim()].filter(Boolean).join('\n');
@@ -305,13 +305,18 @@ function parseWhois(value: unknown): TailnetIdentity | null {
 export function whois(binary: string | null, env: NodeJS.ProcessEnv, ip: string): Promise<TailnetIdentity | null> {
   if (!binary) return Promise.resolve(null);
   return new Promise((resolve) => {
-    execFile(binary, ['whois', '--json', ip], { env, timeout: TIMEOUT_MS, encoding: 'utf8' }, (error, stdout) => {
-      if (error) return resolve(null);
-      try {
-        resolve(parseWhois(JSON.parse(stdout)));
-      } catch {
-        resolve(null);
-      }
-    });
+    execFile(
+      binary,
+      ['whois', '--json', ip],
+      { env: tailscaleEnv(env), timeout: TIMEOUT_MS, encoding: 'utf8' },
+      (error, stdout) => {
+        if (error) return resolve(null);
+        try {
+          resolve(parseWhois(JSON.parse(stdout)));
+        } catch {
+          resolve(null);
+        }
+      },
+    );
   });
 }

@@ -380,6 +380,9 @@ export function bundleManifest(bundle: string): { files: ManifestFile[]; content
   return { files, content };
 }
 
+/** stim-server answers one connection's requests in arrival order, so chunks sent in order reach it in order. */
+const UPLOAD_WINDOW = 64;
+
 export async function upload(
   host: HostConnection,
   ids: { session: string; attempt: string },
@@ -388,20 +391,40 @@ export async function upload(
 ): Promise<void> {
   if (!Array.isArray(missing))
     throw new Error(`${host.machine} answered device-host.app.offer without missing content.`);
-  for (const entry of missing) {
+  const files = missing.map((entry) => {
     const read = isJsonObject(entry) && typeof entry.sha256 === 'string' ? content.get(entry.sha256) : undefined;
-    if (!read || !isJsonObject(entry) || typeof entry.offset !== 'number') {
+    if (!read || !isJsonObject(entry) || typeof entry.sha256 !== 'string' || typeof entry.offset !== 'number') {
       throw new Error(`${host.machine} asked for content this app does not have.`);
     }
-    const bytes = read();
-    let offset = entry.offset;
-    do {
-      const data = bytes.subarray(offset, offset + HOSTED_APP_CHUNK_BYTES).toString('base64');
-      const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: entry.sha256, offset, data })).offset;
-      if (typeof next !== 'number' || (next <= offset && next !== bytes.length)) {
+    return { digest: entry.sha256, start: entry.offset, read };
+  });
+  const inFlight = new Set<Promise<void>>();
+  let failure: Error | undefined;
+  const send = async (digest: string, offset: number, end: number, data: string): Promise<void> => {
+    try {
+      const next = (await call(host, 'device-host.app.chunk', { ...ids, sha256: digest, offset, data })).offset;
+      if (typeof next !== 'number' || next < end) {
         throw new Error(`${host.machine} did not accept app content at byte ${offset}.`);
       }
-      offset = next;
+    } catch (error) {
+      failure ??= error instanceof Error ? error : new Error(String(error));
+    }
+  };
+  for (const { digest, start, read } of files) {
+    if (failure) break;
+    const bytes = read();
+    let offset = start;
+    do {
+      if (inFlight.size >= UPLOAD_WINDOW) await Promise.race(inFlight);
+      if (failure) break;
+      const end = Math.min(offset + HOSTED_APP_CHUNK_BYTES, bytes.length);
+      const pending = send(digest, offset, end, bytes.subarray(offset, end).toString('base64')).finally(() =>
+        inFlight.delete(pending),
+      );
+      inFlight.add(pending);
+      offset = end;
     } while (offset < bytes.length);
   }
+  await Promise.all(inFlight);
+  if (failure) throw failure;
 }

@@ -78,6 +78,12 @@ export interface ConcurrencyLimits {
   maxDevices: number;
 }
 
+export interface PlatformDeviceLimits {
+  ios: number;
+  android: number;
+  macos: number;
+}
+
 export interface StimConfig {
   version?: number;
   homeId?: string;
@@ -87,7 +93,13 @@ export interface StimConfig {
   iosSimulatorApp?: unknown;
   androidEmulatorApp?: unknown;
   optimizations?: unknown;
-  concurrency?: { maxBuilds?: unknown; maxDevices?: unknown };
+  concurrency?: {
+    maxBuilds?: unknown;
+    maxDevices?: unknown;
+    maxIosDevices?: unknown;
+    maxAndroidDevices?: unknown;
+    maxMacosApps?: unknown;
+  };
   pool?: { iosParkedMax?: unknown; androidParkedMax?: unknown };
   parked?: { ios?: unknown; android?: unknown };
   caches?: { buildCache?: unknown; metroCache?: unknown };

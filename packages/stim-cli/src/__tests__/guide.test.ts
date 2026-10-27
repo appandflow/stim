@@ -1054,8 +1054,10 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
   expect(hosted).toContain('hosted-ios-agent');
+  expect(hosted).toContain('hosted-agent-link');
   const android = renderSection('lifecycle', 'hosted-android');
   expect(android).toContain('hosted-android-agent');
+  expect(android).toContain('hosted-agent-link');
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');

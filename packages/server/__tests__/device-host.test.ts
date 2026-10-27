@@ -66,12 +66,13 @@ import { join } from 'node:path';
 const chunks = [];
 for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
+const localCount = () => { const value = JSON.parse(process.env.LOCAL_COUNT ?? '0'); return typeof value === 'number' ? { ios: value, android: 0 } : value; };
 if(input.mode === 'count') {
   writeFileSync(join(process.env.STIM_HOME,'count-entered'),String(process.pid));
   if(process.env.LOCAL_COUNT === 'hang') { process.on('SIGTERM',()=>{}); await new Promise(()=>setInterval(()=>{},1000)); }
   else {
     if(process.env.COUNT_GATE) while(!existsSync(process.env.COUNT_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
-    process.stdout.write(process.env.LOCAL_COUNT ?? '0');
+    process.stdout.write(JSON.stringify(localCount()));
   }
   if(process.env.LOCAL_COUNT !== 'hang') process.exit(0);
 } else if(input.mode === 'offer') {
@@ -85,7 +86,7 @@ if(input.mode === 'count') {
   const declined=request.deviceType==='unavailable'?'SDK unavailable':request.deviceType==='empty-reason'?'':null;
   const choice=request.platform==='macos' ? {architecture:'arm64',macosVersion:'27.0'} : request.platform==='ios' ? {deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64',udid:'not-a-device'} : {systemImage:'system-images;android-30;google_apis;arm64-v8a',deviceProfile:'pixel_6',architecture:'arm64-v8a'};
   writeFileSync(join(process.env.STIM_HOME,'offer-exclude.json'),JSON.stringify(input.exclude ?? null));
-  process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:JSON.parse(process.env.LOCAL_COUNT ?? '0')} : {})}}));
+  process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:'unknown' in localCount() ? localCount() : localCount().ios + localCount().android,localPlatforms:localCount()} : {})}}));
   process.exit(0);
 }
 const home = process.env.STIM_HOME;
@@ -1650,12 +1651,13 @@ test.each([
   ]);
   expect(answer).toMatchObject({ result: { capacity: { running, max: 2, available, local } } });
   if ('error' in answer) throw new Error(answer.error.message);
+  expect(answer.result.resources).not.toHaveProperty('localPlatforms');
   expect(answer.result.declined).toBe(
     typeof local !== 'number'
       ? `Hosted device capacity is unknown: ${local.unknown}`
       : local === 0
         ? null
-        : 'Hosted device capacity is full: 1 hosted + 1 local of 2 device reservations are occupied, including unresolved sessions.',
+        : 'Hosted device capacity is full: 1 hosted + 1 local of 2 device reservations are occupied (concurrency.maxDevices), including unresolved sessions.',
   );
 });
 
@@ -1692,7 +1694,7 @@ test('macOS app sessions and simulator sessions fill separate pools of concurren
     result: {
       capacity: { running: 1, max: 1, available: 0 },
       declined:
-        'Hosted macOS capacity is full: 1 of 1 macOS app reservations are occupied, including unresolved sessions.',
+        'Hosted macOS capacity is full: 1 of 1 macOS app reservations are occupied (concurrency.maxDevices), including unresolved sessions.',
     },
   });
   expect(full).not.toHaveProperty('result.capacity.local');
@@ -1712,6 +1714,70 @@ test('macOS app sessions and simulator sessions fill separate pools of concurren
   await state(macos.id, 'stopped');
   expect(await host.offer('client', { platform: 'macos' })).toMatchObject({
     result: { capacity: { running: 0, max: 1, available: 1 }, declined: null },
+  });
+});
+
+test('a per-platform cap refuses its own platform with the setting named and leaves other platforms to the shared cap', async () => {
+  hostEnv.STIM_MAX_DEVICES = '0';
+  hostEnv.STIM_MAX_IOS_DEVICES = '1';
+  hostEnv.LOCAL_COUNT = JSON.stringify({ ios: 0, android: 1 });
+  const first = await reserve();
+  await state(first.id, 'ready');
+  expect(await host.reserve('other', { ...request, workspace: '/other', attempt: 'next' })).toMatchObject({
+    error: {
+      code: 'device-busy',
+      message:
+        'Hosted iOS capacity is full: 1 hosted + 0 local of 1 iOS simulator reservations are occupied (concurrency.maxIosDevices), including unresolved sessions.',
+    },
+  });
+  expect(await host.offer('client', { platform: 'ios' })).toMatchObject({
+    result: { capacity: { running: 2, max: 0, available: 0 }, declined: expect.stringContaining('maxIosDevices') },
+  });
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 1, max: 0, available: null }, declined: null },
+  });
+});
+
+test('local simulators count against the platform cap of a hosted offer and the shared cap together', async () => {
+  hostEnv.STIM_MAX_DEVICES = '3';
+  hostEnv.STIM_MAX_ANDROID_DEVICES = '2';
+  hostEnv.LOCAL_COUNT = JSON.stringify({ ios: 1, android: 1 });
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { capacity: { running: 2, max: 3, available: 1 }, declined: null },
+  });
+  hostEnv.LOCAL_COUNT = JSON.stringify({ ios: 0, android: 2 });
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: {
+      capacity: { running: 2, max: 3, available: 0 },
+      declined: expect.stringContaining('0 hosted + 2 local of 2 Android emulator reservations'),
+    },
+  });
+  hostEnv.LOCAL_COUNT = JSON.stringify({ ios: 3, android: 0 });
+  expect(await host.offer('client', { platform: 'android' })).toMatchObject({
+    result: { declined: expect.stringContaining('(concurrency.maxDevices)') },
+  });
+});
+
+test('macOS apps obey concurrency.maxMacosApps and still obey concurrency.maxDevices', async () => {
+  hostEnv.STIM_MAX_DEVICES = '2';
+  hostEnv.STIM_MAX_MACOS_APPS = '1';
+  const first = await reserve({ platform: 'macos', attempt: 'app' });
+  await state(first.id, 'ready');
+  expect(await host.offer('client', { platform: 'macos' })).toMatchObject({
+    result: {
+      capacity: { running: 1, max: 2, available: 0 },
+      declined:
+        'Hosted macOS capacity is full: 1 of 1 macOS app reservations are occupied (concurrency.maxMacosApps), including unresolved sessions.',
+    },
+  });
+  hostEnv.STIM_MAX_MACOS_APPS = '5';
+  const second = await reserve({ platform: 'macos', attempt: 'app-2', slot: 'second' });
+  await state(second.id, 'ready');
+  expect(await host.offer('client', { platform: 'macos' })).toMatchObject({
+    result: {
+      declined:
+        'Hosted macOS capacity is full: 2 of 2 macOS app reservations are occupied (concurrency.maxDevices), including unresolved sessions.',
+    },
   });
 });
 

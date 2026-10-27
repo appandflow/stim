@@ -16,7 +16,7 @@ import { createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, delimiter, dirname, join } from 'node:path';
 import { clearFreeClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest } from '@stim-cli/core/state';
+import { isJsonObject, stimBuildDigest, tailscaleEnv } from '@stim-cli/core/state';
 import {
   answersAs,
   DEFAULT_LABEL,
@@ -315,7 +315,7 @@ export async function installJob(
       );
     }
     if (createRoute) {
-      const made = await run(tailscale, createRoute);
+      const made = await run(tailscale, createRoute, tailscaleEnv(process.env));
       if (!made.ok) throw new ServiceError(`\`tailscale ${createRoute.join(' ')}\` failed: ${made.stderr.trim()}`);
       routeCreated = true;
     }
@@ -328,7 +328,8 @@ export async function installJob(
     health = await waitForHealth(options.port, options.label);
   } catch (error) {
     if (oldPlist !== null) writeFileSync(path, oldPlist, { mode: 0o644 });
-    if (routeCreated && serve) await run(tailscale, ['serve', `--https=${serve.port}`, 'off']);
+    if (routeCreated && serve)
+      await run(tailscale, ['serve', `--https=${serve.port}`, 'off'], tailscaleEnv(process.env));
     if (bootstrapped) {
       try {
         await unload(options.label, options.port);
@@ -666,7 +667,7 @@ async function uninstallJob(label: string): Promise<string[]> {
   if (installed.host) notes.push(`Kept ${dirname(dirname(dirname(installed.host)))}; other service labels may use it.`);
   await unload(label, null);
   if (routeOff && tailscale) {
-    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off']);
+    const removed = await run(tailscale, ['serve', `--https=${routeOff}`, 'off'], tailscaleEnv(process.env));
     notes.push(
       removed.ok
         ? `Removed the tailscale serve route on https port ${routeOff}.`

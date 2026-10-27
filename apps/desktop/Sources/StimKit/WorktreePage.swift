@@ -163,7 +163,7 @@ public struct WorktreePage: Hashable, Sendable {
 
   public var errors: Int? {
     let counts = apps.compactMap { $0.logs?.errorsSinceMarker }
-    return counts.isEmpty ? nil : counts.reduce(0, +)
+    return counts.isEmpty ? nil : Format.sum(counts)
   }
 
   public var agents: [AgentSession] {

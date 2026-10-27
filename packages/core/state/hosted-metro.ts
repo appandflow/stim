@@ -10,12 +10,16 @@ export interface HostedMetroRequest {
   machine: string;
 }
 
-/** The supervisor's answer to a request: `ready` while the host holds one of its links, `error` when it cannot link. */
+/**
+ * The supervisor's answer to a request: `ready` while the host holds one of its links, `error` when it cannot link.
+ * `agentPort` is the loopback port that relays agent control of a session on a local network machine to its host.
+ */
 export interface HostedMetroLinks {
   id: string;
   processToken: string;
   ready?: true;
   error?: string;
+  agentPort?: number;
 }
 
 export function hostedMetroRequests(state: WorkspaceState | null): Record<string, HostedMetroRequest> {
@@ -45,7 +49,12 @@ export function hostedMetroLinks(state: WorkspaceState | null): Record<string, H
         typeof value.id === 'string' &&
         typeof value.processToken === 'string' &&
         (value.ready === undefined || value.ready === true) &&
-        (value.error === undefined || typeof value.error === 'string')
+        (value.error === undefined || typeof value.error === 'string') &&
+        (value.agentPort === undefined ||
+          (typeof value.agentPort === 'number' &&
+            Number.isInteger(value.agentPort) &&
+            value.agentPort > 0 &&
+            value.agentPort < 65536))
       );
     }),
   );

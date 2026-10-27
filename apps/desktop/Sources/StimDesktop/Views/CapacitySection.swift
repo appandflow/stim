@@ -71,14 +71,14 @@ struct CapacitySection: View {
 
   private func meterRow(_ meter: CapacityMeter) -> some View {
     ListRow {
-      Image(systemName: meter.kind == .devices ? "iphone" : "hammer").foregroundStyle(Palette.secondary).frame(width: 18)
+      Image(systemName: meter.kind.countsDevices ? "iphone" : "hammer").foregroundStyle(Palette.secondary).frame(width: 18)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.xxs) {
         Text(meter.label).font(.stim(.body, weight: .semibold))
         if let reason = meter.reason {
           Text(reason).font(.stim(.caption)).foregroundStyle(Palette.secondary)
         } else if meter.isFull {
-          Text(meter.kind == .devices ? "New devices wait for a slot." : "New builds wait for a slot.")
+          Text(meter.kind.countsDevices ? "New devices wait for a slot." : "New builds wait for a slot.")
             .font(.stim(.caption)).foregroundStyle(Palette.secondary)
         }
       }

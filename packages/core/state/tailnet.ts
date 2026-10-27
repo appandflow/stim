@@ -33,6 +33,14 @@ function peerPresence(peer: Record<string, unknown>): Pick<TailnetPeer, 'online'
   };
 }
 
+/**
+ * The environment to run the Tailscale CLI with. The macOS Tailscale.app CLI prints "The Tailscale GUI failed to start"
+ * instead of its output when `TERM` is unset, as under launchd (https://github.com/appandflow/stim/issues/4500).
+ */
+export function tailscaleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return env.TERM ? env : { ...env, TERM: 'dumb' };
+}
+
 export type MachineTransport = 'tailscale' | 'local';
 
 /**

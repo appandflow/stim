@@ -769,6 +769,12 @@ export interface OrphanedAvdDirectory {
   ino: number;
 }
 
+export function avdStorageExists(avdName: string): boolean {
+  return avdStorageRoots().some(
+    (root) => avdPathExists(join(root, `${avdName}.ini`)) || avdPathExists(join(root, `${avdName}.avd`)),
+  );
+}
+
 export function avdPathExists(path: string): boolean {
   try {
     lstatSync(path);
@@ -1792,6 +1798,34 @@ export async function getAvdNameForSerialAsync(
 
 export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: number } = {}): ResolvedAvdSerial {
   return ownedAvdSerialResolver(opts)(avdName);
+}
+
+const ANDROID_LOCATION_VARIABLES = [
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_AVD_HOME',
+  'ANDROID_EMULATOR_HOME',
+  'ANDROID_USER_HOME',
+  'ANDROID_SDK_HOME',
+] as const;
+
+/**
+ * True when `error` is the emulator binary failing to spawn on a machine with no Android SDK or AVD
+ * location configured. Nothing Stim started can be running through a tool that does not exist. An
+ * explicitly configured location may name an unmounted volume, so it keeps the failure, and so does a
+ * missing adb. An emulator started from another environment still has AVD data on disk, which callers check
+ * before they act on this.
+ */
+export function isEmulatorToolAbsent(error: unknown, env: NodeJS.ProcessEnv = ambientEnv()): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    error.code === 'ENOENT' &&
+    'path' in error &&
+    typeof error.path === 'string' &&
+    /^emulator(?:\.exe)?$/.test(error.path) &&
+    !ANDROID_LOCATION_VARIABLES.some((name) => env[name])
+  );
 }
 
 /**
