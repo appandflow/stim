@@ -72,7 +72,7 @@ public struct RowDevices: Equatable, Sendable {
 extension Format {
   /// "45 minutes", "1 hour 5 minutes": `duration` spelled out for assistive technology.
   public static func spokenDuration(_ seconds: TimeInterval) -> String {
-    let minutes = Int(max(0, seconds) / 60)
+    let minutes = Format.int(max(0, seconds) / 60)
     if minutes < 1 { return "less than a minute" }
     if minutes < 60 { return countLabel(minutes, "minute") }
     let hours = countLabel(minutes / 60, "hour")

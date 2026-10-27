@@ -24,7 +24,7 @@ public enum Format {
 
   /// `value` truncated to an Int, with NaN as zero and a value past Int's range as its bound, so a number another
   /// machine reports cannot trap.
-  static func int(_ value: Double) -> Int {
+  public static func int(_ value: Double) -> Int {
     if value.isNaN { return 0 }
     if value >= 0x1p63 { return .max }
     if value <= -0x1p63 { return .min }
