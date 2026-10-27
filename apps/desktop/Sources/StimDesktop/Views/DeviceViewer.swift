@@ -352,7 +352,7 @@ private struct ReplayingContent<Content: View>: View {
           .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true), replayable: $2) }
           .removeDuplicates()
       ) { shown = $0 }
-      .onReceive(replay.$replay.map { ($0?.rate ?? 0) > 0 }.removeDuplicates()) { if $0 { onPlay() } }
+      .onReceive(replay.playbackStarts) { onPlay() }
   }
 }
 
