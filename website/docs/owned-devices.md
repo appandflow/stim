@@ -936,10 +936,12 @@ which the client downloads, rather than arbitrary host destinations.
 `agent-device record start [path] --remote-config <file>` records the simulator, and
 `record stop` downloads the video to that path, or `./recording-<time>.mp4`, on
 your machine. The hosting Mac writes the recording only in the session's private
-agent-device state and deletes it after the download, on stop, on revocation and
-when the session's daemon restarts. One recording runs per session; a second
-`record start`, a host output path and `record` inside `batch` are refused. The
-host stops a recording after 10 minutes, and the next `record stop` downloads it.
+agent-device state and deletes the files after the download, on stop, on
+revocation and when the session's daemon restarts. One recording runs per
+session; a second `record start`, a host output path, `record` inside `batch` and
+a `record stop` from another agent-device session are refused. The host stops a
+recording after 10 minutes; a `record stop` within the next 15 minutes downloads
+it.
 A finished recording over 512 MiB is deleted instead. A hosting Mac whose Stim
 predates hosted recording refuses `record` as a command outside its allowed list.
 

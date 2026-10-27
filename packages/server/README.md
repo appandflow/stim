@@ -1104,11 +1104,15 @@ Hosted iOS and Android sessions allow `record start` and `record stop`, outside
 (directory mode 0700), so the daemon writes the video, its chunks and gesture
 telemetry only there. `record stop` returns them as daemon artifacts, which the
 client downloads over `GET /artifacts/<id>` on the same agent route, and the
-daemon deletes each file after its download. One recording runs per session; a
-second start is refused with rule `recording`. After 10 minutes the adapter sends
-`record stop` itself under the session's tenant and answers the client's next
-`record stop` with that result. A finished recording over 512 MiB is deleted and
-`record stop` fails with `STIM_RECORDING_TOO_LARGE`. Driver stop and daemon start
+daemon deletes each file after its download, or after 15 minutes. One recording
+runs per session; a second start, and a stop naming another agent-device session,
+are refused with rule `recording`. Any daemon answer to the matching stop ends
+the recording. After 10 minutes the adapter sends `record stop` itself under the
+session's tenant, retrying every 30 seconds until the daemon answers, and answers
+the client's next `record stop` within 15 minutes with that result. A finished
+recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
+fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
+answers 500 instead of rejecting. Driver stop and daemon start
 delete the `recordings` directory. Hosted macOS refuses `record`, because
 agent-device's `macos-app` lease does not allow it.
 

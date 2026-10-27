@@ -181,8 +181,8 @@ async function rpc(params: object, method = 'agent_device.command', path = '/rpc
   return rpcBody({ id: 4, method, params }, path);
 }
 
-async function rpcBody(body: object, path = '/rpc') {
-  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
+async function rpcBody(body: object | string, path = '/rpc') {
+  const request = Object.assign(Readable.from([Buffer.from(typeof body === 'string' ? body : JSON.stringify(body))]), {
     url: `/device-host/agent/${SESSION}${path}`,
     method: 'POST',
     headers: { authorization: 'Bearer client-private' },
@@ -815,7 +815,7 @@ test('stops a recording at the time limit and hands that stop to the next client
   const answer = await rpcBody({
     id: 'client-stop',
     method: 'agent_device.command',
-    params: { command: 'record', positionals: ['stop'] },
+    params: { command: 'record', session: 'default', positionals: ['stop'] },
   });
   expect(JSON.parse(answer.text)).toEqual({
     jsonrpc: '2.0',
@@ -826,7 +826,10 @@ test('stops a recording at the time limit and hands that stop to the next client
   expect((await rpc(recordStart())).status).toBe(200);
 });
 
-test('deletes a finished recording over the size limit instead of handing it back', async () => {
+test.each([
+  { stop: 'client', maxRecordingMs: 600_000 },
+  { stop: 'time limit', maxRecordingMs: 200 },
+])('deletes a recording over the size limit after a $stop stop', async ({ maxRecordingMs }) => {
   await driver.stop();
   driver = new AgentDeviceDriver({
     env: { STIM_AGENT_DEVICE_BIN: join(home, 'agent-device.mjs') },
@@ -834,15 +837,52 @@ test('deletes a finished recording over the size limit instead of handing it bac
     claimRoot: join(home, 'claims'),
     device: { session: SESSION, udid: UDID },
     maxRecordingBytes: 10,
+    maxRecordingMs,
   });
   await start();
   await rpc(recordStart());
   const output = forwardedRecord().params.positionals[1];
   writeFileSync(output, 'more than ten bytes');
-  const answer = JSON.parse((await rpc({ command: 'record', positionals: ['stop'] })).text);
+  await vi.waitFor(() => {
+    if (maxRecordingMs < 600_000 && existsSync(join(output, '..'))) throw new Error('waiting for the time-limit stop');
+  });
+  const answer = JSON.parse((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).text);
   expect(answer).toMatchObject({
     id: 4,
     result: { ok: false, error: { details: { reason: 'STIM_RECORDING_TOO_LARGE' } } },
   });
   expect(existsSync(join(output, '..'))).toBe(false);
+});
+
+test('a stop the daemon answers with a failure ends the recording', async () => {
+  await start();
+  await rpc(recordStart());
+  const output = forwardedRecord().params.positionals[1];
+  fixture.recordOk = false;
+  expect(JSON.parse((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).text)).toMatchObject({
+    result: { ok: false },
+  });
+  expect(existsSync(join(output, '..'))).toBe(false);
+  fixture.recordOk = true;
+  expect((await rpc(recordStart())).status).toBe(200);
+});
+
+test('a stop from another agent-device session keeps the running recording', async () => {
+  await start();
+  await rpc(recordStart());
+  const calls = fixture.calls.length;
+  const other = await rpc({ command: 'record', session: 'other', positionals: ['stop'] });
+  expect(other.status).toBe(400);
+  expect(JSON.parse(other.text).error.data.details.rule).toBe('recording');
+  expect(fixture.calls).toHaveLength(calls);
+  expect((await rpc(recordStart())).status).toBe(400);
+  expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
+});
+
+test('a request too deep to serialize fails without rejecting the relay', async () => {
+  await start();
+  const depth = 12_000;
+  const body = `{"id":9,"method":"agent_device.command","params":{"command":"snapshot","flags":${'{"a":'.repeat(depth)}1${'}'.repeat(depth)}}}`;
+  vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+  expect((await rpcBody(body)).status).toBe(500);
 });
