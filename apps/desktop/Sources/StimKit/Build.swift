@@ -61,7 +61,7 @@ public struct Build: Decodable, Hashable, Sendable {
     let remaining =
       remainingMs <= 0
       ? "longer than usual"
-      : remainingMs < 60_000 ? "under a minute left" : "about \(Int((remainingMs / 60_000).rounded(.up))) min left"
+      : remainingMs < 60_000 ? "under a minute left" : "about \(Format.int((remainingMs / 60_000).rounded(.up))) min left"
     let fraction = steadyFraction("\(key)|top", min(elapsedMs / expectedMs, 0.99))
     return BuildProgress(elapsedMs: elapsedMs, fraction: fraction, remaining: remaining)
   }

@@ -208,6 +208,13 @@ import Testing
     #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.1)
   }
 
+  @Test func anEstimatePastIntsRangeDoesNotTrap() throws {
+    var build = try #require(workspace.build)
+    build.slot = "estimate"
+    build.expectedMs = 1e300
+    #expect(build.progress(at: Date()).remaining == "about 9223372036854775807 min left")
+  }
+
   @Test func leavesABuildWithoutHistoryIndeterminate() throws {
     var build = try #require(workspace.build)
     build.expectedMs = nil
