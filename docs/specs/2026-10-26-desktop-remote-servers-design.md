@@ -107,7 +107,8 @@ Desktop and the phone show a session, build or device only under the server
 that reports it.
 
 - **Same server.** Two paired entries are the same server when their pinned
-  server keys are equal. Pairing refuses a second entry with "Already paired".
+  server keys are equal. Pairing refuses a second entry with "Already paired"
+  before the token is spent (see Handshake).
 - **Identity.** Desktop keys everything about a pairing on its local pairing
   id and the pinned key's fingerprint. `hello.server.id` is supplied by the
   server, so a compromised server controls it. It is only a hint.
@@ -154,10 +155,12 @@ The handshake is the phone's flow, as specified by
 lookup prefix, the prologue, the PSK derivation and the message-type framing.
 
 1. Run `Noise_XXpsk2` with the token.
-2. Check the server's static key against the fingerprint before sending
-   message 3. A mismatch aborts before the token proves anything to that key.
+2. After message 2, check the server's static key against the fingerprint,
+   and against every existing pin. A mismatch aborts with "Wrong server", and
+   a key that is already pinned aborts with "Already paired". Both happen
+   before message 3, so the token is never spent and no record is left.
 3. Send the device name in message 3: the Mac's name, chosen by the client.
-4. Send `hello`, then pin the server key.
+4. Write the Keychain item with the pin, then send `hello`.
 
 Later connections use `Noise_XX` against the pin. A changed key refuses with
 "This machine's server key changed". Desktop never re-pins a key on its own;
@@ -192,8 +195,8 @@ and without it for `ws://`. `ServerClient.connect()` runs its Unix-socket
 checks only for a `file:` endpoint.
 
 The transport surfaces the WebSocket close code and reason.
-`ServerProtocol.refusalCodes` matches the phone's `sessionRefusal`
-(`apps/mobile/src/lib/connection.ts`) exactly:
+`ServerProtocol.refusalCodes` takes the network refusals of the phone's
+`sessionRefusal` (`apps/mobile/src/lib/connection.ts`):
 
 - `server-outdated`, from close 4400 "unexpected binary frame" by a protocol 1
   server;
@@ -202,7 +205,9 @@ The transport surfaces the WebSocket close code and reason.
 - `unauthorized`;
 - `protocol-unsupported`.
 
-Desktop then stops retrying instead of feeding the server's failed-handshake
+`other-server` stays for the local socket's adoption check. `pairing-expired`,
+a protocol 1 leftover, is replaced by `unknown-secret`. Desktop then stops
+retrying instead of feeding the server's failed-handshake
 lockout. A `handshake-failed` close stays retryable, as on the phone, because
 it can be transient.
 
@@ -691,8 +696,9 @@ only through their owning client's server.
    - Owner identity throughout, per-server sidebar sections and owner labels.
    - Remote entries on Machines.
    - Hosted devices and offloaded builds as their owning server reports them.
-2. **Phone labels.** Where-it-runs labels for hosted devices and offloaded
-   builds. This can ship alongside phase 1.
+2. **Phone owner label.** The owner name on workspace cards when several
+   machines are paired, and a Linux-owner mock fixture. The where-it-runs
+   labels already exist. This can ship alongside phase 1.
 3. **Control.** A `--control` pairing gets Stop, Reload, device control
    (including hosted devices through the relay) and recording.
 4. **Later.**
@@ -748,7 +754,9 @@ another machine can reach, so they carry `review: needs-human`.
   - A remote device with `host == nil` never resolves to a local simulator.
 - **Server tests, A.** These run in the Linux CI job:
   - `pair` on a host without a serve route prints the tailnet IP endpoint;
-  - status off macOS never calls `xcrun`.
+  - status off macOS never calls `xcrun`;
+  - `hello` on Linux omits the macOS-local features and keeps `ios-hosted`,
+    `android-hosted` and `macos-hosted`.
 - **Real pairing with Linux, B.** This runs on floco after the maintainer
   approves the VM changes.
   1. Run `stim-server service install`. `service status` shows linger and an
