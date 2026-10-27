@@ -812,7 +812,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   then until SpringBoard has finished starting, which \`simctl launch\` needs.
   Booted alone does not end that wait. The failure names the udid and the wait.
   After boot, a process-spawn probe must finish within 30 seconds before
-  installation. If it fails, the refusal includes observed host memory pressure
+  installation. A probe that times out while the simulator still reports Booted
+  is retried for about three minutes, since a loaded host can leave a booted
+  simulator unresponsive for a while; a timeout on a simulator that no longer
+  reports Booted, and any other probe failure, refuse at once. If it
+  fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
   The same probe lists the simulator's launchd jobs and requires a running

@@ -113,7 +113,7 @@ jobs:
           project: ${{ matrix.project }}
           command: node ../../scripts/ci/app-smoke.mjs
           artifacts: stim-ci-results/${{ matrix.platform }}/warm
-          timeout: '600'
+          timeout: '900'
           artifact-name: stim-ci-${{ matrix.platform }}-warm
           retention-days: '7'
 
