@@ -185,14 +185,15 @@ export default function remoteCommand(program: Command, version: string, io: Tai
           await io.status(),
         );
         if (before === null) throw invalidSetting();
+        const removed = before.includes(machine);
+        const busy = `another run holds the hosting credentials, so this machine's credentials for ${machine} were kept.`;
         if (!(await forgetDeviceHostMachine(machine)))
           throw refusal(
             'STIM_CLAIM_REFUSED',
-            `Another run holds the hosting credentials, so this machine's credentials for ${machine} were kept.`,
+            removed ? `Removed ${machine} from remote.machines, but ${busy}` : `Nothing changed: ${busy}`,
             `Run \`stim remote remove ${machine}\` again after it finishes.`,
           );
         await forgetBuildMachine(machine);
-        const removed = before.includes(machine);
         if (opts.json) {
           console.log(
             JSON.stringify({ machine, removed, forgot: credentials.length > 0, machines: after, revoke, pending }),
