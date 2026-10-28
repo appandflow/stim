@@ -557,7 +557,7 @@ struct WorkspaceDetail: View {
           Color.clear.contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .disabled(status.headerAction == nil)
+        .disabled(status.headerAction == nil || (!access.isLocal && !OwnedDevice(owner: access.owner, ref: device).isInteractive))
         .help(
           status.headerAction == nil
             ? "" : canControl ? "Control \(device.label) or replay what it recorded" : "View \(device.label)"

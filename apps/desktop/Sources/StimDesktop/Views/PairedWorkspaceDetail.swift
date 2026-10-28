@@ -2,9 +2,6 @@ import StimKit
 import StimStores
 import SwiftUI
 
-/// How the workspace screens treat the workspace they show: this Mac's own, or one a paired server owns and reports.
-/// A workspace screen reads it from the environment; the default is this Mac's own workspace, which leaves every
-/// control as it is.
 struct WorkspaceAccess {
   var owner: ServerOwner = .local
   var serverName = ""
@@ -21,24 +18,18 @@ struct WorkspaceAccess {
   var canControl: Bool { access?.canControl == true }
 
   func offers(_ action: String) -> Bool { access?.actions.contains(action) == true }
-
-  /// Why a control that needs this Mac's files, logs or `stim` cannot work on the owner's workspace; nil on this Mac's own.
   var unavailableReason: String? {
     isLocal
       ? nil : "This needs files, logs or stim on \(serverName). Stim Desktop shows the workspace as \(serverName) reports it."
   }
-
-  /// Why `action` cannot run through the owner.
   func reason(for action: String) -> String {
-    access?.reason ?? "\(serverName) does not offer \(action)."
+    access?.reason ?? "Waiting for \(serverName)."
   }
 }
 
 extension EnvironmentValues {
   @Entry var workspaceAccess = WorkspaceAccess.local
 }
-
-/// A paired server's workspace on the regular workspace screen, fed from the status payload that server reported.
 struct PairedWorkspaceDetail: View {
   @ObservedObject var store: StatusStore
   var key: WorkspaceKey
@@ -140,8 +131,6 @@ private struct ObservedSession<Content: View>: View {
 
   var body: some View { content() }
 }
-
-/// The paired workspace's Stop and Reload App buttons, each enabled only when the owning server offers it.
 struct PairedWorkspaceActions: View {
   var env: Workspace
   @Environment(\.workspaceAccess) private var access
@@ -177,9 +166,6 @@ struct PairedWorkspaceActions: View {
     }
   }
 }
-
-/// Under the header of a paired workspace: whose it is, what this Mac may do with it, the path there, whether the
-/// connection is live and the last action's outcome.
 struct PairedOwnerLine: View {
   var env: Workspace
   @Environment(\.workspaceAccess) private var access
