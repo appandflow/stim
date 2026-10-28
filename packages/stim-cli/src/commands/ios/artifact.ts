@@ -37,6 +37,7 @@ import {
 } from '../../engine/remote-cache.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
+import { retainFailedTranscript } from '../../engine/failed-transcript.ts';
 import { COMPILATION_CACHE_NOT_RUN, compilationCacheActivityLine } from '../../engine/xcode.ts';
 import type { NdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy } from '../../optimizations.ts';
@@ -815,14 +816,15 @@ export async function acquireIosArtifact(
     if (!result.ok) {
       phase('build', `FAILED after ${formatDuration(result.durationMs)}`);
       printDiagnostics(note, result);
+      const transcript = retainFailedTranscript(logFile);
       const report = result.compilationCacheCorruption
         ? await clearCorruptCompilationCache(result.compilationCacheCorruption, root)
-        : { code: result.code, ...xcodeFailureReport(result, logFile) };
+        : { code: result.code, ...xcodeFailureReport(result, transcript) };
       fail({
         code: report.code,
         message: report.message,
         remedy: report.remedy,
-        logPath: logFile,
+        logPath: transcript,
         build: { ...buildFailure, diagnostics: result.diagnostics },
       });
     }

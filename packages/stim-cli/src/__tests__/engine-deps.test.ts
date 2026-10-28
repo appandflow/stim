@@ -1,5 +1,14 @@
 import assert from 'node:assert';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 import {
@@ -981,5 +990,40 @@ describe('extractPodDiagnostics', () => {
     expect(extracted.lines).toHaveLength(16);
     expect(extracted.lines[0]).toBe('[!] The one line that matters');
     expect(extracted.lines[15]).toBe('(+6 more [!] lines in the build log)');
+  });
+});
+
+describe('runPodInstall after node_modules was reinstalled (#4570)', () => {
+  function layout(nodeModulesAge: number) {
+    mkdirSync(join(root, 'ios', 'Pods'), { recursive: true });
+    mkdirSync(join(root, 'node_modules'), { recursive: true });
+    const manifest = join(root, 'ios', 'Pods', 'Manifest.lock');
+    writeFileSync(manifest, 'PODS: []\n');
+    const now = Date.now() / 1000;
+    utimesSync(manifest, now - 100, now - 100);
+    writeFileSync(join(root, 'node_modules', '.package-lock.json'), '{}');
+    utimesSync(join(root, 'node_modules', '.package-lock.json'), now + nodeModulesAge, now + nodeModulesAge);
+    utimesSync(join(root, 'node_modules'), now - 500, now - 500);
+    return manifest;
+  }
+
+  test('deletes Manifest.lock so pod install reruns prepare_command', async () => {
+    const manifest = layout(100);
+    let presentWhenPodRan: boolean | null = null;
+    const result = await runPodInstall(root, collectingWriter(), {
+      spawnFn: () => {
+        presentWhenPodRan = existsSync(manifest);
+        return fakePodChild();
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(presentWhenPodRan).toBe(false);
+  });
+
+  test('keeps Manifest.lock when node_modules is older than the last pod install', async () => {
+    const manifest = layout(-300);
+    const result = await runPodInstall(root, collectingWriter(), { spawnFn: () => fakePodChild() });
+    expect(result.ok).toBe(true);
+    expect(existsSync(manifest)).toBe(true);
   });
 });

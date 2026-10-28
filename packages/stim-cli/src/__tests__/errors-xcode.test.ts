@@ -5,7 +5,7 @@ import {
   describeDiagnostic,
 } from '../engine/errors-xcode.ts';
 import type { Diagnostic } from '../engine/errors-xcode.ts';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -420,5 +420,51 @@ describe('describeDiagnostic', () => {
     expect(describeDiagnostic(null)).toBe('');
     expect(describeDiagnostic(undefined)).toBe('');
     expect(describeDiagnostic('not an object' as unknown as Diagnostic)).toBe('');
+  });
+});
+
+describe('a failed script phase', () => {
+  const transcript = readFileSync(new URL('./fixtures/xcodebuild-script-phase-failure.txt', import.meta.url), 'utf-8')
+    .split('\n')
+    .filter((line) => !line.startsWith('# '));
+
+  test('leads with the failed phase and the error its wrapped output ended on, not the first diagnostics', () => {
+    const collector = createXcodeDiagnosticCollector();
+    for (const line of transcript) collector.push(line);
+    const messages = collector.diagnostics.map((d) => d.message);
+    expect(messages.slice(0, 5)).toEqual([
+      'Build phase failed: "Bundle React Native code and images" (target ExampleApp)',
+      'Auth token is required for this request. Please run `sentry-cli login` and try again!',
+      'Add --log-level=[info|debug] or export SENTRY_LOG_LEVEL=[info|debug] to see more output.',
+      'Please attach the full debug log to all bug reports.',
+      'To disable source maps auto upload, set SENTRY_DISABLE_AUTO_UPLOAD=true in your environment variables. Or to allow failing upload, set SENTRY_ALLOW_FAILURE=true',
+    ]);
+  });
+
+  test('never reports the wrapper prefix or bash xtrace as a diagnostic', () => {
+    const collector = createXcodeDiagnosticCollector();
+    for (const line of transcript) collector.push(line);
+    for (const { message } of collector.diagnostics) {
+      expect(message).not.toMatch(/^sentry-cli - /);
+      expect(message).not.toMatch(/^\++ /);
+    }
+  });
+
+  test('names every failed phase once and leaves other failed commands to the compiler diagnostics', () => {
+    const collector = createXcodeDiagnosticCollector();
+    for (const line of [
+      '** BUILD FAILED **',
+      'The following build commands failed:',
+      "\tPhaseScriptExecution [CP]\\ Embed\\ Pods /x/Script-1.sh (in target 'A' from project 'P')",
+      "\tPhaseScriptExecution Run\\ Script /x/Script-2.sh (in target 'B' from project 'P')",
+      "\tPhaseScriptExecution Run\\ Script /x/Script-2.sh (in target 'B' from project 'P')",
+      "\tCompileC /x/main.o /x/main.m normal arm64 (in target 'C' from project 'P')",
+      '(4 failures)',
+    ])
+      collector.push(line);
+    expect(collector.diagnostics.map((d) => d.message)).toEqual([
+      'Build phase failed: "[CP] Embed Pods" (target A)',
+      'Build phase failed: "Run Script" (target B)',
+    ]);
   });
 });
