@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/transport-local",
-  "version": "1.35.0",
+  "version": "1.36.0",
   "description": "Local network transport for stim-server: plain WebSocket on chosen private addresses, protected by Stim's Noise session.",
   "license": "MIT",
   "repository": {
