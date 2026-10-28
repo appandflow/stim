@@ -9288,7 +9288,7 @@ describe('strict remote machine selection', () => {
     expect(failure.remedy).toContain('brew install cocoapods');
   });
 
-  function offloadedRelease(peerArtifact: boolean) {
+  function offloadedRelease(cacheHit: boolean) {
     const artifactPath = join(root, 'fetched.app');
     mkdirSync(artifactPath, { recursive: true });
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
@@ -9299,7 +9299,7 @@ describe('strict remote machine selection', () => {
       ok: true,
       machine: 'mini',
       artifactPath,
-      ...(peerArtifact && { cacheHit: true, peerArtifact }),
+      ...(cacheHit && { cacheHit }),
       compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
       ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
       timings: {

@@ -757,8 +757,6 @@ export type OffloadOutcome =
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
       cacheHit?: boolean;
-      /** The machine sent an archive from its artifact cache with no build job, so a non-Debug app carries its builder's JS. */
-      peerArtifact?: true;
       /** The fingerprint the machine built under after its own pod install, when it differs from the requested one. */
       builtFingerprint?: string;
       androidPackage?: string;
@@ -1846,7 +1844,7 @@ export async function offloadBuild(
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
-      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit, result.reused === true),
+      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit || result.reused === true),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
       timings: {
         offerMs: choice.offerMs,
@@ -1872,16 +1870,9 @@ export async function offloadBuild(
 function offloadCacheActivity(
   platform: BuildRequest['platform'],
   activity: unknown,
-  fromCache: boolean,
-  reused: boolean,
-): Pick<Extract<OffloadOutcome, { ok: true }>, 'cacheHit' | 'peerArtifact' | 'compilationCache' | 'ccache'> {
-  if (fromCache || reused)
-    return {
-      cacheHit: true,
-      ...(fromCache ? { peerArtifact: true } : {}),
-      compilationCache: COMPILATION_CACHE_NOT_RUN,
-      ccache: CCACHE_NOT_RUN,
-    };
+  cacheHit: boolean,
+): Pick<Extract<OffloadOutcome, { ok: true }>, 'cacheHit' | 'compilationCache' | 'ccache'> {
+  if (cacheHit) return { cacheHit: true, compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
   return {
     compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
     ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,

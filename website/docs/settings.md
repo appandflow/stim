@@ -551,9 +551,9 @@ iOS, Android and macOS placement. It is the load per core at which a machine
 counts as saturated: each machine applies its own value, a remote machine
 declines offloaded builds past it, and automatic placement skips it.
 
-Device, Release and
+Device builds, Android release variants,
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
-iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
+iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 

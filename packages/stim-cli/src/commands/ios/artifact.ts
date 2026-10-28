@@ -660,7 +660,7 @@ export async function acquireIosArtifact(
             (await recipe.cache().store({
               ...cacheTarget(storeKey),
               sourcePath: outcome.artifactPath,
-              overwrite: !useBuildCache || (embedsJs(runtime) && !outcome.peerArtifact),
+              overwrite: !useBuildCache || (embedsJs(runtime) && !outcome.cacheHit),
             })) ?? null;
         } catch (e) {
           reason = `could not store the app: ${(e as Error)?.message || e}`;
@@ -674,7 +674,7 @@ export async function acquireIosArtifact(
     step('compile');
     const prepared = !stored
       ? null
-      : outcome.ok && outcome.peerArtifact
+      : outcome.ok && outcome.cacheHit
         ? await installableCachedApp(stored)
         : await recipe.materialize(stored, { fresh: true, ownTemporary: (directory) => run.own(directory) });
     if (!outcome.ok || !prepared) {

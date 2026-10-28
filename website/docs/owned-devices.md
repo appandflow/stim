@@ -793,7 +793,7 @@ The host boots headless; this machine's viewer setting is ignored.
 `--slot`, `--scheme`, `--configuration` and `--eas-profile` work as usual.
 Model and runtime selectors use the host's installed choices. The build targets
 its simulator architecture. `--remote-build` independently selects a compatible
-Debug build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
+build worker. A named host never falls back: `STIM_HOSTING_REFUSED` names
 unreachable, declined or uncertain placement and its reason.
 
 Metro stays on this machine. Its supervisor opens authenticated connections to the
