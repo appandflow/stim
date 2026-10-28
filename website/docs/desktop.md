@@ -46,7 +46,7 @@ The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
 A person on a remote Mac approves another machine by running the
 `stim-server setup` command that machine's Add Machine wizard or
-`stim doctor --fix` printed.
+`stim remote add` printed.
 Placement is set by config or agents: use
 `stim settings set ios.remote auto --scope machine` (or `android.remote`; a
 workspace, repo or committed value overrides the machine default),

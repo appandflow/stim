@@ -14,6 +14,7 @@ import {
   withConfigLockAsync,
   validateAutomaticPool,
   cannotHost,
+  isJsonObject,
   type Config,
   type DeviceRecord,
   type ProjectRecord,
@@ -311,6 +312,30 @@ export async function writeConfigSettingAsync(
       ? await tailscaleStatusAsync(signal)
       : null;
   return withConfigLockAsync(() => applyConfigSetting(target, dottedKey, value, status), signal);
+}
+
+/**
+ * Replaces machine-scope `remote.machines` with `change` applied to the list read under the config lock, so a
+ * concurrent writer's entries are kept. `status` is the `tailscale status` the automatic device pool check reads.
+ * Returns the list before and after; null before when the setting is not a list of strings, in which case nothing is
+ * written.
+ */
+export async function updateRemoteMachinesAsync(
+  change: (machines: string[]) => string[],
+  status: unknown,
+  signal?: AbortSignal,
+): Promise<{ before: string[] | null; after: string[] }> {
+  signal?.throwIfAborted();
+  return withConfigLockAsync(() => {
+    const remote: unknown = loadConfig()?.remote;
+    const current: unknown = remote === undefined ? [] : isJsonObject(remote) ? (remote.machines ?? []) : null;
+    if (!Array.isArray(current) || !current.every((each) => typeof each === 'string'))
+      return { before: null, after: [] };
+    const after = change(current);
+    if (after.length !== current.length || after.some((each, at) => each !== current[at]))
+      applyConfigSetting({ scope: 'machine' }, 'remote.machines', after, status);
+    return { before: current, after };
+  }, signal);
 }
 
 function applyConfigSetting(target: ConfigSettingsTarget, dottedKey: string, value: unknown, status: unknown): boolean {

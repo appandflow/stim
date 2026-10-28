@@ -80,6 +80,11 @@ async function updateCredentials(
   else withDirLock(buildMachinesLock(), write, options);
 }
 
+export async function forgetBuildMachine(machine: string): Promise<void> {
+  if (readBuildMachines().some((each) => each.machine === machine))
+    await updateCredentials((credentials) => credentials.filter((each) => each.machine !== machine));
+}
+
 /**
  * Where this machine stands with one `remote.machines` entry, as `stim doctor --json` reports it under
  * `remoteMachines`. `dnsName` is the peer's MagicDNS name when the name resolved; `deviceId` is the id the worker
@@ -359,7 +364,7 @@ async function inspectMachine(
         finding: note(
           `Remote machine ${entry} has not approved this machine for builds`,
           'This machine has not asked it for build access.',
-          'Run `stim doctor --fix` to make a setup ticket and print the command to run there.',
+          `Run \`stim remote add ${entry}\` to make a setup ticket and print the command to run there.`,
         ),
       };
     case 'key-changed':
@@ -368,7 +373,7 @@ async function inspectMachine(
         finding: note(
           `Remote machine ${entry} answered with a different server key`,
           `${address} did not prove it holds the stim-server key this machine pinned at approval. Stim does not connect to it.`,
-          `If that machine or its Stim home was replaced, remove ${entry} from remote.machines, run \`stim doctor --fix\` to forget the old pairing, then add it back and run \`stim doctor --fix\` again.`,
+          `If that machine or its Stim home was replaced, run \`stim remote remove ${entry}\` to forget the old pairing, then \`stim remote add ${entry}\`.`,
         ),
       };
     case 'unconfirmed':
@@ -395,7 +400,7 @@ async function inspectMachine(
         finding: note(
           `Build request to ${entry} lapsed`,
           `${entry} did not approve this machine before its setup ticket expired at ${outcome.credential.expiresAt}.`,
-          'Run `stim doctor --fix` to make a new ticket.',
+          `Run \`stim remote add ${entry}\` to make a new ticket.`,
         ),
       };
     case 'revoked':
@@ -404,7 +409,7 @@ async function inspectMachine(
         finding: note(
           `Remote machine ${entry} no longer accepts this machine for builds`,
           `${outcome.reason} It was revoked.`,
-          'Run `stim doctor --fix` to ask again.',
+          `Run \`stim remote add ${entry}\` to ask again.`,
         ),
       };
     case 'outdated': {
@@ -465,13 +470,15 @@ async function inspectMachine(
 /**
  * Doctor findings and a report for each `remote.machines` entry. The worker's stim-server key is pinned on first
  * contact; every later connection must prove it holds that key. With `fix`, makes a setup ticket for a named machine
- * this machine holds no pairing for, or that revoked it, and forgets pairings of machines no longer named. With
+ * this machine holds no pairing for, or that revoked it. With `forget`, which defaults to `fix`, forgets pairings of
+ * machines not in `entries`. With
  * `check`, each approved machine is asked for one build offer and reports every reason it would not take this
  * project's build.
  */
 export async function inspectBuildMachines(
   {
     fix,
+    forget = fix,
     check = null,
     version = '<version>',
     tickets = new Map(),
@@ -479,6 +486,7 @@ export async function inspectBuildMachines(
     confirmKey,
   }: {
     fix: boolean;
+    forget?: boolean;
     check?: OffloadCheck | null;
     version?: string;
     tickets?: GeneratedTickets;
@@ -501,7 +509,7 @@ export async function inspectBuildMachines(
     };
   }
   const unnamed = (each: BuildMachineCredential) => !entries.includes(each.machine);
-  if (fix && readBuildMachines().some(unnamed)) {
+  if (forget && readBuildMachines().some(unnamed)) {
     await updateCredentials((credentials) => credentials.filter((each) => !unnamed(each)), operation);
   }
   if (entries.length === 0) return { findings: [], machines: [] };

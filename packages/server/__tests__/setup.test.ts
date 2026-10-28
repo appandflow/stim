@@ -309,7 +309,7 @@ test.each([false, true])(
     expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id']);
     expect(f.stored).toEqual([['build']]);
     expect(f.secretLive()).toBe(false);
-    expect(firstWaitOutput?.includes('`stim doctor`')).toBe(fromDoctor);
+    expect(firstWaitOutput?.includes('`stim remote list`')).toBe(fromDoctor);
   },
 );
 

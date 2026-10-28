@@ -304,7 +304,7 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([expect.objectContaining({ state: 'key-changed' })]);
       expect(findings[0]).toMatchObject({
         detail: expect.stringContaining('10.0.0.92 did not prove it holds the stim-server key'),
-        fix: expect.stringContaining(`remove ${LAN} from remote.machines`),
+        fix: expect.stringContaining(`stim remote remove ${LAN}`),
       });
       expect(readBuildMachines()[0]?.serverKey).toBe(SERVER_KEY);
     });
@@ -388,7 +388,7 @@ describe('inspectBuildMachines', () => {
       expect(findings).toEqual([
         expect.objectContaining({
           fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim doctor --fix` here\.$/,
+            /^On mini, run `stim-server service update --release 9\.9\.9` \(add `--label <name>` for a custom service label; .*\), then run `stim remote add mini` here\.$/,
           ),
         }),
       ]);
@@ -570,7 +570,7 @@ describe('inspectBuildMachines', () => {
     const { io, calls } = fakeIo([]);
     const { machines, findings } = await inspectBuildMachines({ fix: false }, io, ['mini']);
     expect(machines).toEqual([expect.objectContaining({ state: 'lapsed' })]);
-    expect(findings[0]!.fix).toContain('stim doctor --fix');
+    expect(findings[0]!.fix).toContain('stim remote add mini');
     expect(calls).toEqual([]);
     await inspectBuildMachines({ fix: true }, fakeIo([notYet]).io, ['mini']);
     expect(readBuildMachines()[0]!.ticket).not.toBe(old);

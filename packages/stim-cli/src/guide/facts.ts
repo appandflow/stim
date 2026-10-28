@@ -566,7 +566,7 @@ leased until <time>" for each one.`,
                   local: machine that approved this one but whose key no
                   person confirmed, so nothing pinned it; fingerprint is the
                   key's fingerprint to compare with the one stim-server setup
-                  printed there, and only stim doctor --fix in a terminal asks.
+                  printed there, and only stim remote add or doctor --fix in a terminal asks.
                   A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
                   stim-server service update command to run there.

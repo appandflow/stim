@@ -990,13 +990,13 @@ that config. Run stim stop when finished. If the host refuses, report its reason
 ## Paired Mac hosting approval
 
 Device-host approval is separate from build offloading and phone control. On the
-client machine, set `remote.machines` to the expected tailnet names, then run
-`stim doctor --fix` in an app directory to request approval. Doctor stores a
+client machine, run `stim remote add <machine>` from any directory to add the
+machine to `remote.machines` and request approval. Stim stores a
 separate private, node-pinned credential and reports its state under
 `deviceHosts` in JSON. iOS and macOS can run on a named approved Mac.
 See [machine settings](/docs/settings#machine-settings).
 A person approves `device-host` access by running the `stim-server setup`
-command that Stim Desktop's Add Machine flow or `stim doctor --fix` on the
+command that Stim Desktop's Add Machine flow or `stim remote add` on the
 requesting machine shows, with that machine's setup ticket. Inspect approvals
 with `stim-server devices` and remove one with `stim-server devices revoke <id>`.
 Hosting approval permits that client's native app code to run in its own

@@ -170,7 +170,7 @@ free its memory now. Doctor never runs either command.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
-`--fix` requests approval, retries a revoked or lapsed request, and
+`--fix` (and [`stim remote add`](#remote), outside an app) requests approval, retries a revoked or lapsed request, and
 forgets names removed from the setting. It makes a setup ticket and prints the
 `stim-server setup` command a person on the hosting Mac runs. Setup tickets stay
 private. The first connection after approval pins the Mac's stim-server key,
@@ -194,9 +194,9 @@ stim-server too old to speak protocol 2 (`outdated`, with the
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the
-pairing of a machine no longer named. It never accepts a different key: remove
-the machine from `remote.machines` and run `--fix` to forget the old pairing,
-then add it back. `--json` lists
+pairing of a machine no longer named. It never accepts a different key: run
+`stim remote remove <machine>` to forget the old pairing, then
+`stim remote add <machine>`. `--json` lists
 each named machine's build approval under `remoteMachines`, and its device-host
 approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `lapsed`, `key-changed`, `outdated`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
@@ -342,8 +342,8 @@ can compile on a paired remote machine instead: see `remote.build` in
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
   a named offload, after a check of the worker's toolchain. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
-  Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker approves it by running the `stim-server setup` command doctor
+  Run `stim remote add <machine>` to ask for build access if not approved; a person on
+  the worker approves it by running the `stim-server setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
@@ -622,8 +622,8 @@ can compile on a paired remote machine instead: see `remote.build` in
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
   a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
-  Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker approves it by running the `stim-server setup` command doctor
+  Run `stim remote add <machine>` to ask for build access if not approved; a person on
+  the worker approves it by running the `stim-server setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
@@ -1246,6 +1246,49 @@ lists keys Stim does not read. `android.keystorePassword` is sensitive: it
 prints as `********`, and `committed` accepts only an `env:` or `file:`
 reference for it. `set` and `unset --json` print the layer written, its file,
 and the setting's entry after the write.
+
+## `remote`
+
+```text
+stim remote add <machine> [--json]
+stim remote list [--json]
+stim remote remove <machine> [--json]
+```
+
+Manages [`remote.machines`](./settings.md#machine-settings), the remote
+machines this machine builds on and hosts devices on, from any directory; no
+app checkout is needed. `<machine>` is a tailnet name, optionally with
+`:<port>` of its serve route (default 7443), or `local:<host>` with an
+optional stim-server port (default 7787).
+
+- `add` appends the machine to the machine-scope list, keeping the entries
+  already there, and asks it for build and device-host approval. It prints the
+  `stim-server setup` command, with a setup ticket, that a person runs on that
+  machine to approve this one. Adding a machine already in the list asks it
+  again when its request lapsed or was revoked, and otherwise reports its state.
+  A name that is not a tailnet name or `local:` address refuses with
+  `STIM_BAD_ARG` and writes nothing.
+- `list` contacts every listed machine, in placement order, and reports its
+  build and device-host approval. It asks nothing new; it completes the
+  connection to a machine that approved since the last contact. For a
+  `local:` machine, run it in a terminal to confirm the server key fingerprint.
+- `remove` drops the entry and forgets this machine's credentials for it. The
+  remote machine keeps its approval until a person there runs the
+  `stim-server devices revoke <id>` command `remove` prints.
+
+```bash
+stim remote add janics-mac-mini
+stim remote list
+stim remote remove janics-mac-mini
+```
+
+The states are the ones `stim doctor --json` reports under `remoteMachines`
+(`build` here) and `deviceHosts` (`deviceHost` here). `list --json` prints
+`{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
+--json` prints `{ machine, added, machines, build, deviceHost, findings }`,
+where `machines` is the list after the change; `remove --json` prints
+`{ machine, removed, forgot, machines, revoke }`. `stim settings set
+remote.machines` replaces the whole list; use it to change the order.
 
 ## `status`
 
@@ -2388,8 +2431,8 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 A person on the worker machine runs `stim-server setup` to set it up and approve
 build and/or device-host access for the machine holding one setup ticket, until
 one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
-flow shows the command, and `stim doctor --fix` prints it on a machine without
-Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
+flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
+prints it on a machine without Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.

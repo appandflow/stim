@@ -339,9 +339,9 @@ ON ANOTHER MAC
 
 stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
-in remote.machines and approved: stim doctor --fix makes a setup ticket, a
-person on that Mac runs stim-server setup with that ticket and expiry (guide
-settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+in remote.machines and approved: stim remote add <machine> adds it and makes a
+setup ticket, a person on that Mac runs stim-server setup with that ticket and
+expiry (guide settings), and stim remote list then pins that Mac's stim-server key. Stim goes ahead
 only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; with a named Mac it never launches here
 instead.

@@ -370,7 +370,7 @@ test.each(['declined', 'capacity', 'pressure', 'unresolved'])('strict %s refusal
 test('missing configuration and approval keep their existing credential remedies', async () => {
   await expect(prepareHostedIos('other', {})).rejects.toMatchObject({ code: 'STIM_BAD_ARG' });
   rmSync(deviceHostMachinesFile());
-  await expect(prepareHostedIos('mini', {})).rejects.toThrow('Run stim doctor --fix');
+  await expect(prepareHostedIos('mini', {})).rejects.toThrow('Run stim remote add mini');
   expect(methods).toEqual([]);
 });
 
@@ -670,18 +670,36 @@ test.each(['missing', 'pending', 'unreadable', 'invalid-config', 'unlisted'])(
     expect(result).toMatchObject({
       failure: {
         code: reason === 'unlisted' ? 'STIM_BAD_ARG' : 'STIM_HOSTING_REFUSED',
-        message: expect.stringContaining(reason === 'invalid-config' ? 'stim guide settings' : 'stim doctor'),
+        message: expect.stringContaining(
+          reason === 'invalid-config'
+            ? 'stim guide settings'
+            : reason === 'missing' || reason === 'unlisted' || reason === 'pending'
+              ? 'stim remote add'
+              : 'stim doctor',
+        ),
       },
     });
     expect(result).toMatchObject({
       failure: {
         message: expect.stringContaining(
-          reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'remote.machines' : 'stim doctor',
+          reason === 'pending'
+            ? 'stim-server setup'
+            : reason === 'invalid-config'
+              ? 'remote.machines'
+              : reason === 'missing' || reason === 'unlisted'
+                ? 'stim remote add'
+                : 'stim doctor',
         ),
       },
     });
     const expectedRemedy = expect.stringContaining(
-      reason === 'pending' ? 'stim-server setup' : reason === 'invalid-config' ? 'stim guide settings' : 'stim doctor',
+      reason === 'pending'
+        ? 'stim-server setup'
+        : reason === 'invalid-config'
+          ? 'stim guide settings'
+          : reason === 'missing'
+            ? 'stim remote add'
+            : 'stim doctor',
     );
     expect('failure' in result ? result.failure.remedy : null).toEqual(
       reason === 'unlisted' ? undefined : expectedRemedy,

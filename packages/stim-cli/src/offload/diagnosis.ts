@@ -274,7 +274,7 @@ export function unconfirmedKeyFinding(code: string, entry: string, fingerprint: 
     level: 'note',
     title: `Remote machine ${entry} needs its server key confirmed`,
     detail: `${entry} approved this machine and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then this machine does not use ${entry}.`,
-    fix: `Run \`stim doctor --fix\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
+    fix: `Run \`stim remote list\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
   };
 }
 

@@ -625,7 +625,7 @@ or approve requests; use Desktop or perform the setup yourself.
 
 For a new machine with both capabilities selected, Desktop generates this
 command, with the ticket and expiry filled in. On a machine without Desktop,
-`stim doctor --fix` makes the ticket and prints the same command:
+`stim remote add <machine>` makes the ticket and prints the same command:
 
 <Tabs groupId="stim-invocation" defaultValue="global">
 <TabItem value="global" label="Global">
@@ -654,7 +654,7 @@ Run the actual copied command on the worker. The ticket goes in
 `STIM_SETUP_TICKET`, not an argument, because other users on the worker can
 read a process's arguments; setup refuses `--ticket` and `--client`. The ticket
 is 32 random bytes the requesting machine made, and it alone names that machine.
-Desktop tickets last 30 minutes, tickets from `stim doctor --fix` just under two hours;
+Desktop tickets last 30 minutes, tickets from `stim remote add` or `stim doctor --fix` just under two hours;
 setup accepts a future expiry at most two hours away. `--yes` above belongs
 to npx. It does not skip setup's per-grant Y/n questions. Setup's own `--yes`
 flag approves without those questions and is required for new approvals
@@ -705,34 +705,43 @@ npx --yes --package @stim-cli/server@1.21.0 stim-server service install --serve
 </TabItem>
 </Tabs>
 
-On your main machine, add the machine and request access from an app directory.
-This example sets the list to one entry; keep any remote machines you already use.
-Use the route's actual port if it differs from 7443. `stim doctor --fix` asks
-the machine for both approvals:
+On your main machine, add the machine and request access. This works from any
+directory and keeps the remote machines already in `remote.machines`. Add
+`:<port>` to the name if the route listens on another port than 7443.
+`stim remote add` asks the machine for both approvals:
 
-<StimTabs
-code={`stim settings set remote.machines '["janics-mac-mini"]'
-stim doctor --fix`}
-/>
+<StimTabs code={`stim remote add janics-mac-mini`} />
 
-`stim doctor --fix` prints a `stim-server setup` command with a new setup
+`stim remote add` prints a `stim-server setup` command with a new setup
 ticket. A person on the worker runs it there to approve this machine, as in
 [Use the Desktop wizard](#use-the-desktop-wizard); it asks once for build and once for
 device hosting. Approve only what you want to use; a listed machine that never granted an approval
-is not used for it, and `stim doctor` says so.
-Tickets from `stim doctor --fix` expire just under two hours later. While a request is pending, `stim doctor --json`
-reports its `expiresAt`; after it lapses doctor reports `lapsed`, and
-`stim doctor --fix` asks again. Run `stim doctor` on the main machine to check
-approval and compatibility before running the app.
-When Doctor prints a setup command, run it on the worker and approve the requested
-access there. Then run `stim doctor` again on the requesting machine to complete
-the connection. That setup command also prints this reminder after approval;
-ordinary setup commands do not add the Doctor-specific instruction.
+is not used for it, and `stim remote list` says so.
+Tickets from `stim remote add` expire just under two hours later. While a request is pending, `stim remote list --json`
+reports its `expiresAt`; after it lapses it reports `lapsed`, and
+`stim remote add` asks again. After a person approves on the worker, run
+`stim remote list` on the main machine to complete the connection. That setup
+command also prints this reminder after approval; setup commands from Stim
+Desktop do not add it. Run `stim doctor` in an app directory to also check
+that the machine can build that app.
+
+```bash
+stim remote list
+stim remote remove janics-mac-mini
+```
+
+`stim remote list` reports each machine's build and device-host approval in
+placement order and asks nothing new. `stim remote remove` drops the entry and
+forgets this machine's credentials for it; the worker keeps its approval until
+a person there runs the `stim-server devices revoke <id>` command it prints.
+`stim settings set remote.machines` replaces the whole list; use it to reorder
+machines. `stim doctor --fix` in an app directory still asks every listed
+machine that has not been asked.
 
 A worker whose stim-server predates protocol 2 cannot authenticate this machine.
 `stim doctor` reports it as `outdated` and names the update: run
 `stim-server service update --release <version>` there with this machine's
-Stim version, then `stim doctor --fix` here.
+Stim version, then `stim remote add <machine>` here.
 
 If active builds or hosted simulators prevent that update, add `--no-wait` to
 the service update command. This interrupts the server's active work during
@@ -847,19 +856,17 @@ as step 4 of the manual path below.
    `service rollback` work as on a Mac, and an approved client can update the
    server remotely.
 
-4. On your main machine, add the machine to `remote.machines`, which takes a
-   JSON array of tailnet names, and run `stim doctor --fix`:
+4. On your main machine, add the machine to `remote.machines`:
 
    ```bash
-   stim settings set remote.machines '["stim-linux-worker"]'
-   stim doctor --fix
+   stim remote add stim-linux-worker
    ```
 
-   Doctor prints a setup command with a one-time ticket. Run it on the Linux
+   It prints a setup command with a one-time ticket. Run it on the Linux
    machine (add `--yes` over a non-interactive SSH session), then run
-   `stim doctor --fix` again so the client finishes the pairing. Both carry
+   `stim remote list` so the client finishes the connection. The command carries
    `--build` only. Setup on Linux refuses `--device-host` and skips Stim Host
-   and the permission steps. `stim doctor --fix` does not ask a machine that
+   and the permission steps. `stim remote add` does not ask a machine that
    Tailscale reports as running an OS other than macOS for device-host access,
    since it can never grant it.
 
@@ -937,22 +944,19 @@ only on a worker that stays on one network:
 
 On this machine, add the worker and ask for access:
 
-<StimTabs
-code={`stim settings set remote.machines '["local:10.0.0.92"]'
-stim doctor --fix`}
-/>
+<StimTabs code={`stim remote add local:10.0.0.92`} />
 
-On the worker, run the `stim-server setup` command doctor printed; on a Linux or
+On the worker, run the `stim-server setup` command it printed; on a Linux or
 Windows worker, which takes builds only, leave out `--device-host`. Setup checks
 that stim-server listens on the local network, and skips the tailnet route when
 Tailscale is not running there. It prints the endpoints and the worker's
 **server key fingerprint**, and waits for this machine.
 
-Then run `stim doctor --fix` again on this machine, **in a terminal**. It shows
+Then run `stim remote list` on this machine, **in a terminal**. It shows
 the fingerprint the worker answered with and asks whether it matches the one
 setup printed. Answer `y` only when it does. Stim pins the worker's key only
 then, and every later connection must prove that key. Until a person confirms,
-`stim doctor` reports the machine as `key-unconfirmed` and Stim does not use it.
+`stim remote list` reports the machine as `key-unconfirmed` and Stim does not use it.
 Stim never answers this question for you, and neither should an agent.
 
 Nothing on a local network vouches for a machine the way a tailnet does: an
@@ -1021,8 +1025,7 @@ the Windows machine:
    `install` says so when the first `node.exe` on `PATH` is not the Node that
    runs the server.
 
-3. On your main machine, add it to `remote.machines` and run
-   `stim doctor --fix` as above. Run the setup command it prints on the
+3. On your main machine, run `stim remote add <machine>` as above. Run the setup command it prints on the
    Windows machine, or the one the Desktop wizard generates; both carry
    `--build` only. Setup on Windows
    refuses `--device-host` and skips Stim Host and the permission steps.
@@ -1104,8 +1107,8 @@ until the next wizard reuses it or its removal succeeds.
 **Cancel** removes only entries the wizard added, restores the mode only if
 it changed it, and runs doctor to forget removed pairings. Worker grants
 remain until revoked there. After finishing, use **Settings > Remote Machines >
-Remove** on the main machine. Remove the corresponding `remote.machines` entry
-as well if you enabled hosting, then run `stim doctor --fix` to forget it.
+Remove** on the main machine, or run `stim remote remove <machine>`, which also
+forgets this machine's credentials for it.
 
 On the worker, run the summary's `stim-server devices revoke <id>` for each
 grant you want to remove. Optional `stim-server service uninstall --label
