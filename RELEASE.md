@@ -365,34 +365,34 @@ and repeat the affected gate rather than waiving it.
    green:
 
    ```bash
+   release_commit=<release-commit-sha> ci_event=push ci_branch=main
    repo=appandflow/stim
-   : "${ci_event:=push}" "${ci_branch:=main}"
    (
-     set -euo pipefail
      gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=merge_group&per_page=100" |
        jq -e -r --arg sha "$release_commit" '
          [.workflow_runs[] | select(.name == "Merge gate" and .head_sha == $sha)]
          | sort_by(.created_at) | last
          | select(.conclusion == "success")
-         | "merge gate ok: run \(.id) on \(.head_branch)"'
+         | "merge gate ok: run \(.id) on \(.head_branch)"' || { echo "merge gate not green"; exit 1; }
 
      run_id=$(gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=$ci_event&per_page=100" |
        jq -e -r --arg sha "$release_commit" --arg branch "$ci_branch" '
          [.workflow_runs[] | select(.name == "CI" and .head_branch == $branch and .head_sha == $sha)]
-         | sort_by(.created_at) | last | .id')
+         | sort_by(.created_at) | last | .id') || { echo "no CI run for the commit"; exit 1; }
      echo "CI run $run_id"
 
-     while :; do
-       run_status=$(gh api "repos/$repo/actions/runs/$run_id" --jq .status)
+     for _ in $(seq 120); do
+       run_status=$(gh api "repos/$repo/actions/runs/$run_id" --jq .status) || exit 1
        gate=$(gh api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" | jq -c '
          [.jobs[] | select(.name | IN("test (node 22)", "test (node 24)", "published runtime (node 22.12.0)"))
-          | {name, status, conclusion}]')
+          | {name, status, conclusion}]') || exit 1
        echo "$gate"
        [ "$run_status" = completed ] && break
        jq -e 'length == 3 and all(.status == "completed")' <<<"$gate" >/dev/null && break
        sleep 30
      done
-     jq -e 'length == 3 and all(.conclusion == "success")' <<<"$gate" >/dev/null && echo "release gate: green"
+     jq -e 'length == 3 and all(.conclusion == "success")' <<<"$gate" >/dev/null || { echo "release gate NOT green"; exit 1; }
+     echo "release gate: green"
    )
    ```
 
@@ -409,13 +409,12 @@ and repeat the affected gate rather than waiving it.
    That run also starts the full Windows suite; do not wait for it.
 
    ```bash
-   git push origin "$release_commit:refs/heads/release-ci/X.Y.Z"
+   git push origin <release-commit-sha>:refs/heads/release-ci/X.Y.Z
    gh workflow run ci.yml --ref release-ci/X.Y.Z
-   ci_event=workflow_dispatch ci_branch=release-ci/X.Y.Z
    ```
 
-   Run the check again in the same shell session so the two variables carry
-   over; the check keeps values that are already set.
+   Run the check again with the first line changed to set `ci_event` to
+   `workflow_dispatch` and `ci_branch` to `release-ci/X.Y.Z`.
 
    A fix creates a new commit and repeats steps 2 to 4. Never tag a commit
    that has not passed this gate. Delete `release-ci/X.Y.Z` once the tag is
