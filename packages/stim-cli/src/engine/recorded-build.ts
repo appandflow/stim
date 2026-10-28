@@ -43,7 +43,7 @@ export function readRecordedBuild(root: string, key: string): RecordedBuild | nu
   };
 }
 
-export const NO_RECORDED_BUILD = 'STIM_NO_RECORDED_BUILD';
+const NO_RECORDED_BUILD = 'STIM_NO_RECORDED_BUILD';
 
 export interface RecordedBuildRefusal {
   code: string;
