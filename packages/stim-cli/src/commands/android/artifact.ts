@@ -17,6 +17,7 @@ import {
   type ProviderCallResult,
 } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
+import type { RecordedBuild } from '../../engine/recorded-build.ts';
 import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
@@ -990,4 +991,25 @@ export async function acquireAndroidArtifact(
 
 function tail(lines: unknown, n = FALLBACK_LINES): string[] {
   return (Array.isArray(lines) ? lines : []).slice(-n);
+}
+
+/** Presents the APK a recorded build left in the workspace as an already prepared artifact: no cache, build or APK swap. */
+export function recordedAndroidArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedAndroidArtifact } {
+  return {
+    ok: true,
+    artifact: {
+      apkPath: recorded.appPath,
+      androidPackage: recorded.bundleId,
+      apkPackage: recorded.bundleId,
+      fingerprintCheck: null,
+      release: () => {},
+      waitedForBuild: null,
+      ccache: CCACHE_NOT_RUN,
+      uploadPending: null,
+      providerUpload: null,
+      providerName: null,
+      remote: null,
+      abandonedRemote: false,
+    },
+  };
 }

@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as iosOperation from '../commands/ios.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -4716,6 +4717,44 @@ describe('release skips Metro entirely', () => {
     expect(first.calls.args.launchIosApp.metroPort).toBe(null);
     const second = await run({ configuration: 'Debug' }, { resolveSettings: () => settings });
     expect(second.calls.order).toContain('startDevServer');
+  });
+});
+
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle', 'installIosApp'])
+      expect(calls.order).not.toContain(step);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or JS swap', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Release' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture.app',
+    });
+    const { exitCode, calls } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(null);
+    expect(calls.args.installIosApp.appPath).toBe(recorded);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle']) expect(calls.order).not.toContain(step);
+  });
+
+  test('is refused when the selectors differ from the recorded build', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Debug' }), {
+      appPath: recorded,
+      bundleId: null,
+    });
+    const { exitCode, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
   });
 });
 

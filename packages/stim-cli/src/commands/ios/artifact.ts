@@ -64,6 +64,7 @@ import {
   requireLocalBuild,
 } from '../../offload/selection.ts';
 import { workspaceDir } from '../../workspace/paths.ts';
+import type { RecordedBuild } from '../../engine/recorded-build.ts';
 import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build-facts.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
@@ -1019,4 +1020,31 @@ export async function acquireIosArtifact(
     },
   };
   return { ok: true, artifact };
+}
+
+/** Presents the app a recorded build left in the workspace as an already prepared artifact: no cache, build or JS swap. */
+export function recordedIosArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedIosArtifact } {
+  return {
+    ok: true,
+    artifact: {
+      path: recorded.appPath,
+      bundleId: recorded.bundleId,
+      cache: {
+        identity: null,
+        hit: false,
+        providerName: null,
+        buildMachine: 'local',
+        offloadedTo: null,
+        offloadFallback: null,
+        readEnabled: false,
+        missReason: null,
+        waitedForBuild: null,
+        compilation: COMPILATION_CACHE_NOT_RUN,
+      },
+      failureFields: {},
+      completeUploads: async () => false,
+      release: () => {},
+      cancelFingerprintCheck: () => {},
+    },
+  };
 }

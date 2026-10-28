@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { StimOptions } from 'stim';
 import type { CIFailure } from './index.ts';
 
 export interface CIContextOptions {
   projectRoot: string;
+  /** Writes result, test and diagnostic files here; without it nothing is written. */
   artifactsDir?: string;
   home?: string;
   buildCache?: string;
@@ -34,7 +34,8 @@ export function prepareCI<T extends CIContextOptions>(
 ): {
   options: T;
   projectRoot: string;
-  artifactsDir: string;
+  /** Null when the caller asked for no result, test or diagnostic files. */
+  artifactsDir: string | null;
   timeout: AbortSignal | undefined;
   signal: AbortSignal | undefined;
 } {
@@ -56,10 +57,12 @@ export function prepareCI<T extends CIContextOptions>(
     };
   }
   const projectRoot = realpathSync(options.projectRoot);
-  const artifactsDir = options.artifactsDir ? resolve(options.artifactsDir) : mkdtempSync(join(tmpdir(), 'stim-ci-'));
-  mkdirSync(artifactsDir, { recursive: true });
-  if (readdirSync(artifactsDir).length > 0) {
-    throw new Error(`Artifacts directory must be empty: ${artifactsDir}. Choose a new directory for this run.`);
+  const artifactsDir = options.artifactsDir ? resolve(options.artifactsDir) : null;
+  if (artifactsDir) {
+    mkdirSync(artifactsDir, { recursive: true });
+    if (readdirSync(artifactsDir).length > 0) {
+      throw new Error(`Artifacts directory must be empty: ${artifactsDir}. Choose a new directory for this run.`);
+    }
   }
   const timeout = options.timeoutMs === undefined ? undefined : AbortSignal.timeout(options.timeoutMs);
   const signals = [options.signal, timeout].filter((value): value is AbortSignal => value !== undefined);
