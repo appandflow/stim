@@ -297,6 +297,21 @@ import Testing
     return (answered, recorder.errors)
   }
 
+  @Test func aPairedServerWorkspaceListOverTheLimitIsDroppedAndReported() async throws {
+    let (client, socket) = try await openClient(endpoint: URL(string: "ws://100.64.0.2:7787")!)
+    defer { client.stop() }
+    let recorder = Recorder()
+    let feed = feed(recorder)
+    feed.use(client)
+    await settle()
+    await subscribe(socket)
+    socket.reply(workspaces((0...10_000).map { "/w/\($0)" }))
+    #expect(await until { !recorder.errors.isEmpty })
+    #expect(recorder.errors == ["The paired server's workspace list is too large."])
+    #expect(recorder.payloads.isEmpty)
+    #expect(recorder.delivering.allSatisfy { !$0 })
+  }
+
   @Test func aPairedServerThatRepeatsItsArchiveCursorFailsTheRead() async throws {
     let read = try await pageArchives(limit: 10) { _ in
       .object(["archived": .array([archive("a")]), "usage": .null, "next": .string("same")])
