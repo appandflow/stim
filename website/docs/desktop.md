@@ -260,7 +260,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
-  screen, wrapping when space is tight.
+  screen, wrapping when space is tight. An already-running app stays visible
+  during rebuilds; take **Control** to keep using it while the next build compiles.
   Local iOS input connects in the background and drops clicks and keys while
   the screen shows **Connecting input** or **Input unavailable**. Lookups time
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's

@@ -539,8 +539,7 @@ struct DeviceTile: View {
   }
 
   private var buildCovered: Bool {
-    guard showsCovers, !interactive, let build else { return false }
-    return build.phase != "launch" || device.app?.state != "running"
+    showsCovers && !interactive && build != nil && device.app?.state != "running"
   }
 
   @ViewBuilder private var screenCover: some View {
