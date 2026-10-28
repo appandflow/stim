@@ -324,3 +324,23 @@ test('RN cache queries cross the wire with platform-specific toolchains and refu
     ).toBe(false);
   }
 });
+
+test('the build.start wire schema accepts podsOnWorker as a boolean and refuses other fields', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'build.start', params });
+  const request = {
+    repo: 'example-app',
+    project: 'apps/mobile',
+    platform: 'macos',
+    fingerprint: 'abc123',
+    stimBuild: 'build-1',
+    macos: { product: 'App', infoPlist: 'Info.plist', bundleId: 'dev.example.app' },
+  };
+  expect(accepts(request)).toBe(true);
+  expect(accepts({ ...request, podsOnWorker: true })).toBe(true);
+  expect(accepts({ ...request, podsOnWorker: false })).toBe(true);
+  for (const podsOnWorker of ['yes', 1, null]) expect(accepts({ ...request, podsOnWorker })).toBe(false);
+  expect(accepts({ ...request, unknownField: true })).toBe(false);
+});
