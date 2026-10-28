@@ -31,8 +31,7 @@ import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
-import { recordBuild } from '../../engine/recorded-build.ts';
-import { recordedBuildKey } from '../../engine/recorded-build.ts';
+import { recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
 import { lastBuildRecord } from './result.ts';
 import {
   iosProjectPathError,

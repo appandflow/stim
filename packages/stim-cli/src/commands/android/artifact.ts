@@ -993,8 +993,16 @@ function tail(lines: unknown, n = FALLBACK_LINES): string[] {
   return (Array.isArray(lines) ? lines : []).slice(-n);
 }
 
-/** Presents the APK a recorded build left in the workspace as an already prepared artifact: no cache, build or APK swap. */
-export function recordedAndroidArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedAndroidArtifact } {
+/** Installs the APK a recorded build left in the workspace as is when there is one: no cache, build or APK swap. */
+export async function acquireAndroidArtifactOrRecorded(
+  recorded: RecordedBuild | null,
+  request: AndroidArtifactRequest,
+  deps: AndroidArtifactDeps,
+): Promise<AndroidArtifactResult> {
+  return recorded ? recordedAndroidArtifact(recorded) : acquireAndroidArtifact(request, deps);
+}
+
+function recordedAndroidArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedAndroidArtifact } {
   return {
     ok: true,
     artifact: {

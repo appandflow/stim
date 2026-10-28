@@ -7,8 +7,8 @@ import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
-import { acquireIosArtifact, recordedIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
-import { noRecordedBuildFailure, readRecordedBuild, recordedBuildKey } from '../engine/recorded-build.ts';
+import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
@@ -279,12 +279,15 @@ function iosProjectTargetRefusal(
     physical,
     easProfile,
     placement,
+    recordedRefusal,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
+    recordedRefusal: RecordedBuildRefusal | null;
   },
 ): FailArgs | null {
+  if (recordedRefusal) return recordedRefusal;
   const target = physical
     ? 'physical'
     : placement
@@ -645,16 +648,17 @@ async function runIos(
   const isExpo = integration.isExpo;
   const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
-  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  const recordedLookup = lookupRecordedBuild(opts.recordedBuild, root, {
+    platform: 'ios',
+    scheme: buildScheme,
+    configuration: builtConfiguration,
+  });
+  const capabilityRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    easProfile: opts.easProfile,
+    recordedRefusal: recordedLookup.refusal,
+  });
   if (capabilityRefusal) return fail(capabilityRefusal);
-  const recordedBuild = opts.recordedBuild
-    ? readRecordedBuild(
-        root,
-        recordedBuildKey({ platform: 'ios', scheme: buildScheme, configuration: builtConfiguration }),
-      )
-    : null;
-  if (opts.recordedBuild && !recordedBuild)
-    return fail(noRecordedBuildFailure('ios', { scheme: buildScheme, configuration: builtConfiguration }));
   const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
     root,
@@ -695,7 +699,11 @@ async function runIos(
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   deviceSlotWait.automatic = Boolean(remoteSelection.auto);
-  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  const targetRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    placement: remoteSelection,
+    recordedRefusal: null,
+  });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
@@ -1118,65 +1126,64 @@ async function runIos(
       });
       const acquiredArtifact = unlessCancelled(
         context,
-        recordedBuild
-          ? recordedIosArtifact(recordedBuild)
-          : await acquireIosArtifact(
-              {
-                context,
-                root,
-                logFile,
-                configuration,
-                buildMachine,
+        await acquireIosArtifactOrRecorded(
+          recordedLookup.build,
+          {
+            context,
+            root,
+            logFile,
+            configuration,
+            buildMachine,
+            physical,
+            recipe: integration.artifact({
+              operation: context,
+              root,
+              logFile,
+              configuration,
+              buildScheme,
+              buildProfile,
+              ...iosArtifactTargetInputs({
+                udid,
                 physical,
-                recipe: integration.artifact({
-                  operation: context,
-                  root,
-                  logFile,
-                  configuration,
-                  buildScheme,
-                  buildProfile,
-                  ...iosArtifactTargetInputs({
-                    udid,
-                    physical,
-                    remote: Boolean(remoteDevice),
-                    hosted: hostedTarget,
-                    simulatorArch,
-                    lanAddress,
-                    metroPort,
-                    settings,
-                  }),
-                  optimizations: optimizations.ios,
-                  easProfile: opts.easProfile,
-                  cache: cachePolicy,
-                  phase,
-                  note,
-                  logWriter,
-                  estimates,
-                  step: progress.step,
-                  setPodsMs: (ms) => stats.setPodsMs(ms),
-                }),
-                cache: {
-                  policy: cachePolicy,
-                  providerConfig: cacheProviderConfig,
-                  disabledByFlag: opts.buildCache === false,
-                },
-                easBuild,
-                maxBuilds: limits.maxBuilds,
-                progress: {
-                  phase,
-                  note,
-                  logWriter,
-                  stats,
-                  step: progress.step,
-                  miss: progress.miss,
-                  hit: progress.hit,
-                  place: progress.place,
-                  waitingOn: progress.waitingOn,
-                  waitingFor: progress.waitingFor,
-                },
-              },
-              d,
-            ),
+                remote: Boolean(remoteDevice),
+                hosted: hostedTarget,
+                simulatorArch,
+                lanAddress,
+                metroPort,
+                settings,
+              }),
+              optimizations: optimizations.ios,
+              easProfile: opts.easProfile,
+              cache: cachePolicy,
+              phase,
+              note,
+              logWriter,
+              estimates,
+              step: progress.step,
+              setPodsMs: (ms) => stats.setPodsMs(ms),
+            }),
+            cache: {
+              policy: cachePolicy,
+              providerConfig: cacheProviderConfig,
+              disabledByFlag: opts.buildCache === false,
+            },
+            easBuild,
+            maxBuilds: limits.maxBuilds,
+            progress: {
+              phase,
+              note,
+              logWriter,
+              stats,
+              step: progress.step,
+              miss: progress.miss,
+              hit: progress.hit,
+              place: progress.place,
+              waitingOn: progress.waitingOn,
+              waitingFor: progress.waitingFor,
+            },
+          },
+          d,
+        ),
       );
       if (!acquiredArtifact.ok) {
         compilationCache = acquiredArtifact.compilationCache;

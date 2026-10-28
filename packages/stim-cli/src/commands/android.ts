@@ -137,8 +137,8 @@ import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifact, recordedAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
-import { noRecordedBuildFailure, readRecordedBuild, recordedBuildKey } from '../engine/recorded-build.ts';
+import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
+import { lookupRecordedBuild } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
@@ -894,6 +894,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       signal: context.signal,
       slot,
       easProfile,
+      recordedBuild: recordedBuildRequested,
       variant: variantFlag,
       systemImage: systemImageFlag,
       deviceProfile: deviceProfileFlag,
@@ -944,13 +945,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
   const { variant, release } = buildPlan;
-  const recordedBuild = recordedBuildRequested
-    ? readRecordedBuild(root, recordedBuildKey({ platform: 'android', configuration: variant ?? 'debug' }))
-    : null;
-  if (recordedBuildRequested && !recordedBuild) {
-    const refusal = noRecordedBuildFailure('android', { configuration: variant ?? 'debug' });
-    return fail(refusal.code, refusal.message, refusal.remedy);
-  }
+  const recordedLookup = lookupRecordedBuild(recordedBuildRequested, root, {
+    platform: 'android',
+    configuration: variant,
+  });
   const runtimeKind = integration.runtimeKind(buildPlan);
   const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
@@ -1341,73 +1339,72 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logsDir,
         root,
       });
-    const acquiredArtifact = recordedBuild
-      ? recordedAndroidArtifact(recordedBuild)
-      : await acquireAndroidArtifact(
-          {
-            context,
-            root,
-            buildLog,
-            writer,
-            recipe: integration.artifact({
-              operation: context,
-              root,
-              buildLog,
-              writer,
-              settings,
-              buildPlan,
-              target: await androidBuildOptions({
-                release,
-                physical,
-                device,
-                variant,
-                deviceAbi,
-                targetAbiOnly: buildPlan.targetAbiOnly,
-                hostedAbi: hostedTarget?.choice.architecture,
-              }),
-              phase,
-              out,
-              step: progress.step,
-              estimates,
-            }),
-            targetOffloadRefusal: physical
-              ? 'device builds build here'
-              : remoteDevice
-                ? 'remote device builds build here'
-                : null,
-            buildPlan,
-            cacheProviderConfig,
-            requestedBuildCache,
-            easBuild,
-            androidPackage,
-            record,
-            maxBuilds: limits.maxBuilds,
-            progress: {
-              phase,
-              out,
-              stats,
-              step: progress.step,
-              miss: progress.miss,
-              hit: progress.hit,
-              place: progress.place,
-              waitingOn: progress.waitingOn,
-              waitingFor: progress.waitingFor,
-            },
-          },
-          {
-            acquireLock,
-            releaseLock,
-            waitForBuild,
-            easAuth,
-            resolveRemoteBuild,
-            uploadRemoteBuild,
-            loadCacheProviderModule,
-            storedAppId,
-            acquireSlot,
-            releaseSlot,
-            now,
-          },
-        );
+    const acquiredArtifact = await acquireAndroidArtifactOrRecorded(
+      recordedLookup.build,
+      {
+        context,
+        root,
+        buildLog,
+        writer,
+        recipe: integration.artifact({
+          operation: context,
+          root,
+          buildLog,
+          writer,
+          settings,
+          buildPlan,
+          target: await androidBuildOptions({
+            release,
+            physical,
+            device,
+            variant,
+            deviceAbi,
+            targetAbiOnly: buildPlan.targetAbiOnly,
+            hostedAbi: hostedTarget?.choice.architecture,
+          }),
+          phase,
+          out,
+          step: progress.step,
+          estimates,
+        }),
+        targetOffloadRefusal: physical
+          ? 'device builds build here'
+          : remoteDevice
+            ? 'remote device builds build here'
+            : null,
+        buildPlan,
+        cacheProviderConfig,
+        requestedBuildCache,
+        easBuild,
+        androidPackage,
+        record,
+        maxBuilds: limits.maxBuilds,
+        progress: {
+          phase,
+          out,
+          stats,
+          step: progress.step,
+          miss: progress.miss,
+          hit: progress.hit,
+          place: progress.place,
+          waitingOn: progress.waitingOn,
+          waitingFor: progress.waitingFor,
+        },
+      },
+      {
+        acquireLock,
+        releaseLock,
+        waitForBuild,
+        easAuth,
+        resolveRemoteBuild,
+        uploadRemoteBuild,
+        loadCacheProviderModule,
+        storedAppId,
+        acquireSlot,
+        releaseSlot,
+        now,
+      },
+    );
     if (!acquiredArtifact.ok) {
       ccacheActivity = acquiredArtifact.ccache;
       const { failure } = acquiredArtifact;

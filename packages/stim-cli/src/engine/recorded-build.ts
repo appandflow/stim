@@ -17,7 +17,8 @@ export function recordedBuildKey(selectors: {
   scheme?: string | null;
   configuration?: string | null;
 }): string {
-  return [selectors.platform, selectors.scheme ?? '', selectors.configuration ?? ''].join('|');
+  const configuration = selectors.configuration ?? (selectors.platform === 'ios' ? 'Debug' : 'debug');
+  return [selectors.platform, selectors.scheme ?? '', configuration].join('|');
 }
 
 export function recordBuild(root: string, key: string, build: Omit<RecordedBuild, 'builtAt'>): void {
@@ -44,25 +45,30 @@ export function readRecordedBuild(root: string, key: string): RecordedBuild | nu
 
 export const NO_RECORDED_BUILD = 'STIM_NO_RECORDED_BUILD';
 
-export function noRecordedBuildFailure(
-  platform: 'ios' | 'android',
-  selectors: { scheme?: string | null; configuration?: string | null },
-): {
+export interface RecordedBuildRefusal {
   code: string;
   message: string;
   remedy: string;
-  details: { platform: string; scheme: string | null; configuration: string | null };
-} {
-  const described = [
-    selectors.scheme && `scheme ${selectors.scheme}`,
-    selectors.configuration && selectors.configuration,
-  ]
+}
+
+/** The recorded build a `recordedBuild` run installs, or the refusal when it asked for one and there is none. */
+export function lookupRecordedBuild(
+  requested: boolean | undefined,
+  root: string,
+  selectors: { platform: 'ios' | 'android'; scheme?: string | null; configuration?: string | null },
+): { build: RecordedBuild | null; refusal: RecordedBuildRefusal | null } {
+  if (!requested) return { build: null, refusal: null };
+  const build = readRecordedBuild(root, recordedBuildKey(selectors));
+  if (build) return { build, refusal: null };
+  const described = [selectors.scheme && `scheme ${selectors.scheme}`, selectors.configuration]
     .filter(Boolean)
     .join(', ');
   return {
-    code: NO_RECORDED_BUILD,
-    message: `No recorded ${platform} build${described ? ` (${described})` : ''} exists for this checkout, so there is no app to install.`,
-    remedy: 'Build the app first with the same selectors, then run again.',
-    details: { platform, scheme: selectors.scheme ?? null, configuration: selectors.configuration ?? null },
+    build: null,
+    refusal: {
+      code: NO_RECORDED_BUILD,
+      message: `No recorded ${selectors.platform} build${described ? ` (${described})` : ''} exists for this checkout, so there is no app to install.`,
+      remedy: 'Build the app first with the same selectors, then run again.',
+    },
   };
 }

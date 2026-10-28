@@ -1022,8 +1022,16 @@ export async function acquireIosArtifact(
   return { ok: true, artifact };
 }
 
-/** Presents the app a recorded build left in the workspace as an already prepared artifact: no cache, build or JS swap. */
-export function recordedIosArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedIosArtifact } {
+/** Installs the app a recorded build left in the workspace as is when there is one: no cache, build or JS swap. */
+export async function acquireIosArtifactOrRecorded(
+  recorded: RecordedBuild | null,
+  request: IosArtifactRequest,
+  d: IosArtifactDeps,
+): Promise<IosArtifactResult> {
+  return recorded ? recordedIosArtifact(recorded) : acquireIosArtifact(request, d);
+}
+
+function recordedIosArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedIosArtifact } {
   return {
     ok: true,
     artifact: {

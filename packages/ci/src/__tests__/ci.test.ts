@@ -78,7 +78,7 @@ it('gives the command exact target facts and retains persisted diagnostics after
   });
   expect(JSON.parse(readFileSync(result.diagnostics.path!, 'utf8')).records).toEqual([{ message: 'running' }]);
   expect(existsSync(active)).toBe(false);
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(0);
   expect(process.cwd()).toBe(cwd);
   expect(process.env.STIM_HOME).toBe(home);
 });
@@ -92,7 +92,7 @@ it('preserves a test failure when diagnostics and cleanup also fail', async () =
   expect(result.failure?.code).toBe('STIM_CI_TEST_FAILED');
   expect(result.diagnostics.error?.message).toBe('cannot read logs');
   expect(result.cleanup.error?.message).toBe('cannot stop device');
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).exitCode).toBe(23);
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(23);
 });
 
 it('reports a missing test executable as exit code 1 in the result and saved JSON', async () => {
@@ -101,7 +101,7 @@ it('reports a missing test executable as exit code 1 in the result and saved JSO
   expect(result.exitCode).toBe(1);
   expect(result.failure?.code).toBe('STIM_CI_TEST_FAILED');
   expect(result.test?.error).toContain('ENOENT');
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).exitCode).toBe(1);
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(1);
   expect(existsSync(active)).toBe(false);
 });
 
@@ -170,14 +170,14 @@ it('does not touch native resources when cancelled before setup', async () => {
 
 it('refuses reused artifacts before setup so earlier evidence cannot describe a new run', async () => {
   const first = await runCI(options);
-  const evidence = readFileSync(first.resultPath!, 'utf8');
+  const evidence = readFileSync(first.resultPath ?? '', 'utf8');
   lifecycle.run.mockImplementation(async () => {
     writeFileSync(active, 'should not start');
     throw new Error('a later setup failure');
   });
   await expect(runCI(options)).rejects.toThrow(/Artifacts directory must be empty/);
   expect(existsSync(active)).toBe(false);
-  expect(readFileSync(first.resultPath!, 'utf8')).toBe(evidence);
+  expect(readFileSync(first.resultPath ?? '', 'utf8')).toBe(evidence);
 });
 
 it('uses a fresh signal for cleanup after a real test process times out', async () => {
@@ -221,7 +221,7 @@ it.each([0, 23])(
     expect(result.failure?.code).toBe(exitCode ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_CANCELLED');
     expect(result.cleanup.result?.ok).toBe(true);
     expect(existsSync(active)).toBe(false);
-    expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).exitCode).toBe(exitCode || 130);
+    expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(exitCode || 130);
   },
 );
 
@@ -233,7 +233,7 @@ it('records cancellation during diagnostics before saving the result', async () 
   });
   const result = await runCI({ ...options, signal: controller.signal });
   expect(result.exitCode).toBe(130);
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).failure.code).toBe('STIM_CI_CANCELLED');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).failure.code).toBe('STIM_CI_CANCELLED');
   expect(existsSync(active)).toBe(false);
 });
 
@@ -252,7 +252,7 @@ it('does not extend the setup and test timeout into cleanup', async () => {
   try {
     const result = await runCI({ ...options, timeoutMs: 1234 });
     expect(result.exitCode).toBe(0);
-    expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(0);
     expect(result.cleanup.result?.ok).toBe(true);
   } finally {
     timeoutSpy.mockRestore();
@@ -289,7 +289,7 @@ it('the CLI reports SIGTERM during cleanup as exit 130 and saves the same result
     expect(process.exitCode).toBe(130);
     const result = JSON.parse(stdout.join(''));
     expect(result.failure.code).toBe('STIM_CI_CANCELLED');
-    expect(JSON.parse(readFileSync(result.resultPath!, 'utf8'))).toEqual(result);
+    expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8'))).toEqual(result);
     expect(existsSync(active)).toBe(false);
   } finally {
     output.mockRestore();
@@ -311,7 +311,9 @@ it('records refused diagnostic copies without replacing the primary test failure
   expect(result.diagnostics.files).toBeUndefined();
   expect(result.diagnostics.error?.message).toContain('regular directory');
   expect(readFileSync(join(outside, 'native.log'), 'utf8')).toBe('outside evidence');
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).diagnostics.error.message).toContain('regular directory');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).diagnostics.error.message).toContain(
+    'regular directory',
+  );
 });
 
 function recordEnvironment(): string {

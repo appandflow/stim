@@ -61,7 +61,9 @@ test('a throwing reporter cannot interrupt owned process cleanup or redirect its
     expect(result.cleanup.result?.ok).toBe(true);
     expect(result.cleanup.error).toBeUndefined();
     expect(result.reportingError?.message).toBe('reporter unavailable');
-    expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).reportingError.message).toBe('reporter unavailable');
+    expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).reportingError.message).toBe(
+      'reporter unavailable',
+    );
     expect(JSON.parse(readFileSync(result.diagnostics.path!, 'utf8')).directory).toBe(
       join(home, 'workspaces', workspaceName(root), 'logs'),
     );

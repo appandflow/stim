@@ -68,7 +68,7 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   const result = await buildCI(options);
   expect(result.exitCode).toBe(0);
   expect(readFileSync(result.artifactPath!, 'utf8')).toBe('compiled apk');
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).stage).toBe('build');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).stage).toBe('build');
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(readFileSync(active, 'utf8')).toBe('running');
   expect(lifecycle.stop).not.toHaveBeenCalled();
@@ -93,7 +93,7 @@ test('export failure reports an artifact failure and keeps the reports', async (
   expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
   expect(result.failure?.message).toContain('ENOENT');
   expect(result.artifactPath).toBeNull();
-  expect(JSON.parse(readFileSync(result.resultPath!, 'utf8')).failure).toEqual(result.failure);
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).failure).toEqual(result.failure);
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(existsSync(active)).toBe(true);
   expect(lifecycle.stop).not.toHaveBeenCalled();
