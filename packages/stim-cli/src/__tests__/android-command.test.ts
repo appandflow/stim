@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as androidOperation from '../commands/android.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -47,7 +48,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, parse } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
@@ -4784,6 +4785,37 @@ describe('release skips Metro entirely', () => {
   });
 });
 
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    const h = harness({ variant: 'productionRelease', recordedBuild: true, build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_RECORDED_BUILD');
+    expect(h.calls.install).toHaveLength(0);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or APK swap', async () => {
+    const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
+    mkdirSync(dirname(recorded), { recursive: true });
+    writeFileSync(recorded, 'apk');
+    recordBuild(root, recordedBuildKey({ platform: 'android', configuration: 'productionRelease' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture',
+    });
+    const h = harness({
+      variant: 'productionRelease',
+      recordedBuild: true,
+      resolveCached: never('the cache lookup'),
+      swapApk: never('the APK swap'),
+      build: never('the build'),
+      storeCached: never('storeBuild'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.apkPath).toBe(recorded);
+  });
+});
+
 describe('the release APK swap', () => {
   const cached = '/cache/android/entry/app-production-release.apk';
 
@@ -4867,30 +4899,6 @@ describe('the release APK swap', () => {
     expect(result.facts.cacheHit).toBe('local');
     expect(labelled(h.stderr, 'swap')[1]).toMatch(/hermes bytecode repacked \(store\), zipaligned and re-signed/);
     expect(existsSync(join(root, 'apk-swap'))).toBe(false);
-  });
-
-  test('skipJsSwap installs the cached release APK as is, without a swap', async () => {
-    const h = harness({
-      variant: 'productionRelease',
-      skipJsSwap: true,
-      resolveCached: (_platform: string, _key: string) => cached,
-      swapApk: never('the APK swap'),
-      build: never('the build'),
-      storeCached: never('storeBuild'),
-    });
-    const result = await h.run();
-    expect(result.ok).toBe(true);
-    expect(h.calls.install[0]?.apkPath).toBe(cached);
-    assert(result.facts);
-    expect(result.facts.appPath).toBe(cached);
-    expect(labelled(h.stderr, 'swap')[0]).toMatch(/skipped/);
-  });
-
-  test('skipJsSwap on a debug variant is refused before any build work', async () => {
-    const h = harness({ variant: 'productionDebug', skipJsSwap: true, build: never('the build') });
-    const result = await h.run();
-    expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_BAD_ARG');
   });
 
   test('android.keystore / android.keystorePassword reach the swap', async () => {

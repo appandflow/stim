@@ -44,7 +44,12 @@ beforeEach(() => {
   writeFileSync(active, 'running');
   const apkPath = join(root, 'built.apk');
   writeFileSync(apkPath, 'compiled apk');
-  options = { projectRoot: root, build: { platform: 'android' }, artifactsDir: join(root, 'artifacts') };
+  options = {
+    projectRoot: root,
+    build: { platform: 'android' },
+    artifactsDir: join(root, 'artifacts'),
+    exportPath: join(root, 'artifacts', 'app.apk'),
+  };
   lifecycle.create.mockClear();
   lifecycle.build.mockReset().mockResolvedValue({ platform: 'android', facts: { apkPath } } as StimBuildResult);
   lifecycle.stop.mockReset().mockImplementation(async () => {
@@ -63,10 +68,19 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   const result = await buildCI(options);
   expect(result.exitCode).toBe(0);
   expect(readFileSync(result.artifactPath!, 'utf8')).toBe('compiled apk');
-  expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).stage).toBe('build');
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).stage).toBe('build');
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(readFileSync(active, 'utf8')).toBe('running');
   expect(lifecycle.stop).not.toHaveBeenCalled();
+});
+
+test('without --export or --artifacts a build writes no files and only records the build', async () => {
+  const before = readdirSync(root).toSorted();
+  const result = await buildCI({ projectRoot: root, build: { platform: 'android' } });
+  expect(result.exitCode).toBe(0);
+  expect(result).toMatchObject({ artifactsDir: null, resultPath: null, artifactPath: null });
+  expect(readdirSync(root).toSorted()).toEqual(before);
+  expect(lifecycle.diagnostics).not.toHaveBeenCalled();
 });
 
 test('export failure reports an artifact failure and keeps the reports', async () => {
@@ -79,7 +93,7 @@ test('export failure reports an artifact failure and keeps the reports', async (
   expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
   expect(result.failure?.message).toContain('ENOENT');
   expect(result.artifactPath).toBeNull();
-  expect(JSON.parse(readFileSync(result.resultPath, 'utf8')).failure).toEqual(result.failure);
+  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).failure).toEqual(result.failure);
   expect(existsSync(result.diagnostics.path!)).toBe(true);
   expect(existsSync(active)).toBe(true);
   expect(lifecycle.stop).not.toHaveBeenCalled();
@@ -90,7 +104,7 @@ test.skipIf(process.platform === 'win32')('a failed archive export removes the p
     platform: 'ios',
     facts: { appPath: join(root, 'Missing.app') },
   } as StimBuildResult);
-  const result = await buildCI(options);
+  const result = await buildCI({ ...options, exportPath: join(root, 'artifacts', 'app.tar.gz') });
   expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
   expect(readdirSync(options.artifactsDir!).filter((name) => name.startsWith('app.'))).toEqual([]);
 });
@@ -118,7 +132,11 @@ test.skipIf(process.platform === 'win32')(
     chmodSync(executable, 0o755);
     symlinkSync('Native', join(app, 'Contents', 'Current'));
     lifecycle.build.mockResolvedValue({ platform: 'macos', facts: { bundle: app } } as StimBuildResult);
-    const result = await buildCI({ ...options, build: { platform: 'macos' } });
+    const result = await buildCI({
+      ...options,
+      build: { platform: 'macos' },
+      exportPath: join(root, 'artifacts', 'app.tar.gz'),
+    });
     expect(result.exitCode).toBe(0);
     const extracted = join(root, 'extracted');
     mkdirSync(extracted);
@@ -169,7 +187,7 @@ test('CLI build needs no command and refuses platform-incompatible selectors bef
     expect(lifecycle.build).toHaveBeenCalledTimes(calls);
     await main(['run', '--platform', 'ios', '--abi', 'x86', '--project', root, '--', 'true']);
     expect(process.exitCode).toBe(1);
-    expect(errors.join('')).toContain('--arch and --abi only apply to build-only.');
+    expect(errors.join('')).toContain('--abi only applies to build.');
   } finally {
     process.exitCode = prior;
   }

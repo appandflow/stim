@@ -1,8 +1,19 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
 import { diagnosticArtifactFiles } from '@stim-cli/ci/artifacts';
@@ -14,12 +25,13 @@ interface Inputs {
   command: string;
   version: string;
   cli: string;
+  /** Empty when no result, test or diagnostic files were requested. */
   artifacts: string;
+  exportPath: string;
   home: string;
   cache: string;
   timeout: string;
   upload: boolean;
-  skipJsSwap: boolean;
   artifactName: string;
   retentionDays: number;
 }
@@ -44,8 +56,8 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   }
   const upload = input('upload-artifacts') || 'true';
   if (upload !== 'true' && upload !== 'false') throw new Error('upload-artifacts must be true or false.');
-  const skipJsSwap = input('skip-js-swap') || 'false';
-  if (skipJsSwap !== 'true' && skipJsSwap !== 'false') throw new Error('skip-js-swap must be true or false.');
+  if (input('export') && platform === 'web')
+    throw new Error('export does not apply to web projects, which have no native build.');
   const retention = input('retention-days') || '0';
   if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) {
     throw new Error('retention-days must be a non-negative whole number.');
@@ -56,12 +68,12 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     command,
     version,
     cli: cli ? resolve(root, cli) : '',
-    artifacts: resolve(root, input('artifacts') || 'stim-ci-results'),
+    artifacts: input('artifacts') ? resolve(root, input('artifacts')) : '',
+    exportPath: input('export') ? resolve(root, input('export')) : '',
     home: input('home') ? resolve(root, input('home')) : '',
     cache: input('build-cache') ? resolve(root, input('build-cache')) : '',
     timeout,
-    upload: upload === 'true',
-    skipJsSwap: skipJsSwap === 'true',
+    upload: upload === 'true' && Boolean(input('artifacts')),
     artifactName: input('artifact-name') || `stim-ci-${platform}-${randomUUID()}`,
     retentionDays: Number(retention),
   };
@@ -110,98 +122,109 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   return result;
 }
 
+async function installCli(version: string, root: string): Promise<{ cli: string; code: number }> {
+  const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-action', version);
+  const cli = join(base, 'node_modules', '@stim-cli', 'ci', 'dist', 'stim-ci.mjs');
+  if (existsSync(cli)) return { cli, code: 0 };
+  const staging = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-install-'));
+  try {
+    const code = await execute(
+      'npm',
+      ['install', '--prefix', staging, '--ignore-scripts', '--no-audit', '--no-fund', `@stim-cli/ci@${version}`],
+      root,
+    );
+    if (code !== 0) return { cli, code };
+    mkdirSync(dirname(base), { recursive: true });
+    try {
+      renameSync(staging, base);
+    } catch {
+      if (!existsSync(cli)) {
+        rmSync(base, { recursive: true, force: true });
+        cpSync(staging, base, { recursive: true, verbatimSymlinks: true });
+      }
+    }
+    return { cli, code: 0 };
+  } finally {
+    rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 export async function runAction(): Promise<number> {
   const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
   const options = readInputs((name) => core.getInput(name, { trimWhitespace: name !== 'command' }), root);
-  mkdirSync(options.artifacts, { recursive: true });
-  options.artifacts = realpathSync(options.artifacts);
-  const resultPath = join(options.artifacts, 'result.json');
-  core.setOutput('result', resultPath);
-  core.setOutput('artifacts', options.artifacts);
-  if (readdirSync(options.artifacts).length) {
-    throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
-  }
-  let installation: string | undefined;
-  try {
-    let cli = options.cli;
-    if (!cli) {
-      installation = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-action-'));
-      const code = await execute(
-        'npm',
-        [
-          'install',
-          '--prefix',
-          installation,
-          '--ignore-scripts',
-          '--no-audit',
-          '--no-fund',
-          `@stim-cli/ci@${options.version}`,
-        ],
-        root,
-      );
-      if (code !== 0) return code;
-      cli = join(installation, 'node_modules', '@stim-cli', 'ci', 'dist', 'stim-ci.mjs');
+  let resultPath = '';
+  if (options.artifacts) {
+    mkdirSync(options.artifacts, { recursive: true });
+    options.artifacts = realpathSync(options.artifacts);
+    resultPath = join(options.artifacts, 'result.json');
+    core.setOutput('result', resultPath);
+    core.setOutput('artifacts', options.artifacts);
+    if (readdirSync(options.artifacts).length) {
+      throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
     }
-    const args = [
-      cli,
-      'run',
-      '--platform',
-      options.platform,
-      '--project',
-      options.project,
-      '--artifacts',
-      options.artifacts,
-      '--timeout',
-      options.timeout,
-    ];
-    if (options.home) args.push('--home', options.home);
-    if (options.cache) args.push('--build-cache', options.cache);
-    if (options.skipJsSwap) args.push('--skip-js-swap');
-    args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
-    const started = Date.now();
-    let code = await execute(process.execPath, args, root);
-    let result: CIResult | null;
+  }
+  let cli = options.cli;
+  if (!cli) {
+    const installed = await installCli(options.version, root);
+    if (installed.code !== 0) return installed.code;
+    cli = installed.cli;
+  }
+  const common = ['--platform', options.platform, '--project', options.project, '--timeout', options.timeout];
+  if (options.home) common.push('--home', options.home);
+  if (options.cache) common.push('--build-cache', options.cache);
+  const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
+  if (built && options.platform !== 'web') {
+    const buildArgs = [cli, 'build', ...common];
+    if (options.exportPath) buildArgs.push('--export', options.exportPath);
+    const buildCode = await execute(process.execPath, buildArgs, root);
+    if (buildCode !== 0) return buildCode;
+  }
+  const args = [cli, 'run', ...common];
+  if (options.artifacts) args.push('--artifacts', options.artifacts);
+  args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
+  const started = Date.now();
+  let code = await execute(process.execPath, args, root);
+  let result: CIResult | null = null;
+  if (options.artifacts) {
     try {
       result = currentResult(resultPath, options, started);
     } catch (error) {
       core.warning(String(error));
       return code || 1;
     }
-    if (options.upload) {
-      try {
-        const files = await diagnosticArtifactFiles(options.artifacts);
-        if (!files.length) throw new Error('No diagnostic artifact files were produced.');
-        const uploaded = await new DefaultArtifactClient().uploadArtifact(
-          options.artifactName,
-          files,
-          options.artifacts,
-          { retentionDays: options.retentionDays },
-        );
-        if (uploaded.id === undefined) throw new Error('GitHub did not return an artifact ID.');
-        core.setOutput('artifact-id', uploaded.id);
-        core.setOutput(
-          'artifact-url',
-          `${process.env.GITHUB_SERVER_URL ?? 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}/artifacts/${uploaded.id}`,
-        );
-      } catch (error) {
-        core.warning(`Diagnostic artifact upload failed: ${String(error)}`);
-        code ||= 1;
-      }
-    }
-    if (process.env.GITHUB_STEP_SUMMARY) {
-      try {
-        core.summary.addHeading('Stim CI', 2).addTable([
-          ['Platform', options.platform],
-          ['Exit code', String(code)],
-          ['Duration', result ? `${Math.round(result.durationMs / 1000)}s` : 'Result unavailable'],
-        ]);
-        await core.summary.write();
-      } catch (error) {
-        core.warning(`Could not write the job summary: ${String(error)}`);
-      }
-    }
-    return code;
-  } finally {
-    if (installation) rmSync(installation, { recursive: true, force: true });
   }
+  if (options.upload) {
+    try {
+      const files = await diagnosticArtifactFiles(options.artifacts);
+      if (!files.length) throw new Error('No diagnostic artifact files were produced.');
+      const uploaded = await new DefaultArtifactClient().uploadArtifact(
+        options.artifactName,
+        files,
+        options.artifacts,
+        { retentionDays: options.retentionDays },
+      );
+      if (uploaded.id === undefined) throw new Error('GitHub did not return an artifact ID.');
+      core.setOutput('artifact-id', uploaded.id);
+      core.setOutput(
+        'artifact-url',
+        `${process.env.GITHUB_SERVER_URL ?? 'https://github.com'}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}/artifacts/${uploaded.id}`,
+      );
+    } catch (error) {
+      core.warning(`Diagnostic artifact upload failed: ${String(error)}`);
+      code ||= 1;
+    }
+  }
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    try {
+      core.summary.addHeading('Stim CI', 2).addTable([
+        ['Platform', options.platform],
+        ['Exit code', String(code)],
+        ['Duration', result ? `${Math.round(result.durationMs / 1000)}s` : 'Result unavailable'],
+      ]);
+      await core.summary.write();
+    } catch (error) {
+      core.warning(`Could not write the job summary: ${String(error)}`);
+    }
+  }
+  return code;
 }

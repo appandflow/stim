@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as iosOperation from '../commands/ios.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -636,25 +637,14 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
   }
 });
 
-test('the iOS API run passes skipJsSwap through and marks the facts', async () => {
-  const seen: unknown[] = [];
-  const adapter = vi.spyOn(iosOperation, 'runIosOperation').mockImplementation(async (_context, _path, options) => {
-    seen.push(options?.skipJsSwap);
-    return {
-      facts: iosFacts({ udid: UDID, fingerprint: FINGERPRINT, appPath: '/cache/Fixture.app', cacheHit: 'local' }),
-      uploadsAbandoned: false,
-    };
+test('the API refuses recordedBuild together with a physical device or a remote host', async () => {
+  const stim = createStim({ projectRoot: root, home: tmpHome });
+  await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
   });
-  try {
-    const stim = createStim({ projectRoot: root, home: tmpHome });
-    const skipped = await stim.run({ platform: 'ios', configuration: 'Release', skipJsSwap: true });
-    const swapped = await stim.run({ platform: 'ios', configuration: 'Release' });
-    expect(seen).toEqual([true, undefined]);
-    expect(skipped.facts).toMatchObject({ jsSwapSkipped: true, appPath: '/cache/Fixture.app' });
-    expect(swapped.facts).not.toHaveProperty('jsSwapSkipped');
-  } finally {
-    adapter.mockRestore();
-  }
+  await expect(stim.run({ platform: 'android', recordedBuild: true, remote: 'mini' })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+  });
 });
 
 describe('the project gate', () => {
@@ -4740,6 +4730,44 @@ describe('release skips Metro entirely', () => {
   });
 });
 
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle', 'installIosApp'])
+      expect(calls.order).not.toContain(step);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or JS swap', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Release' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture.app',
+    });
+    const { exitCode, calls } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(null);
+    expect(calls.args.installIosApp.appPath).toBe(recorded);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle']) expect(calls.order).not.toContain(step);
+  });
+
+  test('is refused when the selectors differ from the recorded build', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Debug' }), {
+      appPath: recorded,
+      bundleId: null,
+    });
+    const { exitCode, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
+  });
+});
+
 describe('the release cache key and the JS swap', () => {
   test('the key differs from debug: -release-sim vs -debug-sim-arm64', async () => {
     reserve();
@@ -4770,25 +4798,6 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(calls.args.readBundleId).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(errs.join('\n')).toMatch(/^  swap {8}/m);
-  });
-
-  test('skipJsSwap installs the cached release app as is, without a swap', async () => {
-    const cached = '/cache/ios/entry/Fixture.app';
-    const { exitCode, calls, errs } = await run(
-      { configuration: 'Release', skipJsSwap: true },
-      { resolveBuild: () => cached, swapJsBundle: async () => assert.fail('the JS swap ran') },
-    );
-    expect(exitCode).toBe(null);
-    expect(calls.order).not.toContain('swapJsBundle');
-    expect(calls.args.installIosApp.appPath).toBe(cached);
-    expect(errs.join('\n')).toMatch(/^  swap {8}skipped/m);
-  });
-
-  test('skipJsSwap on a Debug run is refused before any build work', async () => {
-    const { exitCode, calls, errs } = await run({ skipJsSwap: true });
-    expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
-    expect(calls.order).not.toContain('installIosApp');
   });
 
   test.each(['boot refusal', 'install refusal', 'install exception'])(

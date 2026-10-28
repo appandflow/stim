@@ -131,7 +131,6 @@ function reactNativeAndroidArtifact(
     out,
     step,
     estimates,
-    skipJsSwap,
   }: AndroidArtifactContext,
   isExpo: boolean,
   layout: AndroidLayout,
@@ -171,10 +170,6 @@ function reactNativeAndroidArtifact(
 
   const materialize: AndroidArtifactRecipe['materialize'] = async (key, cachedPath) => {
     if (!release) return { apkPath: cachedPath, directory: null };
-    if (skipJsSwap) {
-      phase('swap', `skipped (skipJsSwap): the cached ${variant} APK is installed with its builder's JS`);
-      return { apkPath: cachedPath, directory: null };
-    }
     phase('swap', `regenerating this workspace's JS for the cached ${variant} APK`);
     let keystore;
     try {

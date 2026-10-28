@@ -1,9 +1,13 @@
 # Stim CI action
 
-This bundled TypeScript action installs and invokes `@stim-cli/ci`. The package owns
-build/launch, the test process, cancellation, diagnostics and cleanup. The
+This bundled TypeScript action installs and invokes `@stim-cli/ci`. It runs
+`stim-ci build` and then `stim-ci run` in one step: build is the only step that
+compiles, and run installs and launches the app that build recorded, then runs the
+test. The package owns the build, the test process, cancellation and cleanup. The
 action maps inputs, outputs and the GitHub job summary, and uploads diagnostic
-evidence with the official GitHub artifact toolkit.
+evidence with the official GitHub artifact toolkit when `artifacts` is set. iOS and
+Android always build first. macOS builds first only with `export`, and web never
+builds; `stim-ci run` builds a macOS app itself.
 
 Use a macOS or Linux runner with Bash. Windows runners are refused. The Action
 uses GitHub's Node.js 24 runtime; install the app's dependencies and native tools
@@ -33,20 +37,24 @@ When testing this repository, use the built checkout:
 Once the package and action revision are released, other repositories can
 reference `appandflow/stim/.github/actions/stim-ci@<commit>` and replace
 `cli-path` with `version: '<exact published version>'`. Pin both independently.
-The action installs that exact npm version with lifecycle scripts disabled.
-
-`skip-js-swap: 'true'` is for a Release run whose test supplies its own JS
-bundle. Stim then installs the native artifact without regenerating its JS and
-`run.json` carries `jsSwapSkipped` and the artifact's `appPath`. A Debug run is
-refused with `STIM_BAD_ARG`.
+The action installs that exact npm version once per runner, with lifecycle scripts disabled,
+into a version-keyed directory under the runner tool cache (or the runner temp directory),
+and invokes the installed script for both build and run. A later step or job on the same
+runner reuses it without another `npm install`. `cli-path` skips the install.
 
 `command` is Bash source, executed in the app directory with `-e` and
 `pipefail`. Treat it like a workflow `run:` step: keep untrusted PR titles,
 comments and other event text out of it. Supply test inputs as environment
 variables instead. All other action inputs are passed as argument values.
 
-The `result` and `artifacts` outputs are absolute paths available within the job.
-By default, the Action uploads `result.json`, `run.json`, test stdout/stderr,
+The build step writes no result or diagnostic files, so a failed build is reported only in the job log and the step exits without upload or summary. Nothing is collected unless `artifacts` is set. Without it the action writes no result,
+test or diagnostic file, copies no logs and uploads nothing, and the `result` and
+`artifacts` outputs are not set; the build and run results still print to the job log.
+`export` also writes the built app to the given path, an APK for Android or a tar.gz for
+iOS and macOS; without it build only records the app for run. Export is never uploaded.
+
+With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
+The Action uploads `result.json`, `run.json`, test stdout/stderr,
 `diagnostics.json`, and copied diagnostic/compiler logs on success and failure.
 It never uploads app bundles, APKs, caches, arbitrary test files, symlinks, or
 files referenced by log records. Raw log collection requires a `@stim-cli/ci`
@@ -56,7 +64,8 @@ version containing that feature.
 default artifact name is unique to each invocation; a supplied `artifact-name`
 must be unique within the workflow run, including matrix jobs and retries.
 `retention-days: '0'` uses the repository retention setting. Set
-`upload-artifacts: 'false'` to keep only local files or use another transport.
+`upload-artifacts: 'false'` to keep only local files or use another transport; it applies only
+when `artifacts` is set.
 The toolkit upload service requires GitHub.com; use the opt-out on GitHub
 Enterprise Server. Upload failures fail an otherwise successful Action and
 preserve an earlier nonzero Stim CI exit code. The saved result continues to

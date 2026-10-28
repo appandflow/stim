@@ -89,7 +89,6 @@ it('validates explicit inputs and preserves command source and argument paths', 
     ['timeout', '0'],
     ['retention-days', '-1'],
     ['upload-artifacts', 'perhaps'],
-    ['skip-js-swap', 'sometimes'],
   ]) {
     expect(() => readInputs((key) => (key === name ? value! : (github.inputs[key] ?? '')), root, 'linux')).toThrow(
       /required|must/,
@@ -136,16 +135,6 @@ test.skipIf(process.platform === 'win32')(
     expect(github.output).toHaveBeenCalledWith('result', join(root, 'results/result.json'));
   },
 );
-
-test.skipIf(process.platform === 'win32')('passes --skip-js-swap to stim-ci only when requested', async () => {
-  fixture(0);
-  expect(await runAction()).toBe(0);
-  expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))).not.toContain('--skip-js-swap');
-  rmSync(join(root, 'results'), { recursive: true, force: true });
-  github.inputs['skip-js-swap'] = 'true';
-  expect(await runAction()).toBe(0);
-  expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))).toContain('--skip-js-swap');
-});
 
 test.skipIf(process.platform === 'win32')(
   'returns a failure when requested upload fails after a passing run',
@@ -241,5 +230,70 @@ test.skipIf(process.platform === 'win32')(
     expect(github.output).toHaveBeenCalledWith('artifacts', target);
     expect(github.upload.mock.calls[0]![1]).toEqual([join(target, 'result.json'), join(target, 'test.stderr.log')]);
     expect(github.upload.mock.calls[0]![2]).toBe(target);
+  },
+);
+
+function recorder(): { calls(): string[][] } {
+  const log = join(root, 'calls.jsonl');
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `import { appendFileSync } from 'node:fs'; appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + '\\n');`,
+  );
+  return {
+    calls: () =>
+      existsSync(log)
+        ? readFileSync(log, 'utf8')
+            .trim()
+            .split('\n')
+            .map((line): string[] => JSON.parse(line))
+        : [],
+  };
+}
+
+test.skipIf(process.platform === 'win32')(
+  'builds once, then runs, and writes and uploads nothing without artifacts',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    github.inputs.export = 'out/app.tar.gz';
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    expect(build?.slice(0, 3)).toEqual(['build', '--platform', 'ios']);
+    expect(build).toEqual(expect.arrayContaining(['--export', join(root, 'out/app.tar.gz')]));
+    expect(build).not.toContain('--artifacts');
+    expect(run?.[0]).toBe('run');
+    expect(run).not.toContain('--artifacts');
+    expect(github.upload).not.toHaveBeenCalled();
+    expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
+  },
+);
+
+test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
+  const seen = recorder();
+  delete github.inputs.artifacts;
+  github.inputs.platform = 'android';
+  writeFileSync(join(root, 'fixture.mjs'), `process.exitCode = process.argv[2] === 'build' ? 7 : 0;`);
+  expect(await runAction()).toBe(7);
+  github.inputs.platform = 'web';
+  recorder();
+  expect(await runAction()).toBe(0);
+  expect(seen.calls().map((call) => call[0])).toEqual(['run']);
+});
+
+test.skipIf(process.platform === 'win32')(
+  'reuses the CLI installed for this version without installing again',
+  async () => {
+    const seen = recorder();
+    const script = join(root, 'tools', 'stim-ci-action', '1.2.3', 'node_modules/@stim-cli/ci/dist/stim-ci.mjs');
+    mkdirSync(join(script, '..'), { recursive: true });
+    writeFileSync(script, readFileSync(join(root, 'fixture.mjs'), 'utf8'));
+    vi.stubEnv('RUNNER_TOOL_CACHE', join(root, 'tools'));
+    delete github.inputs['cli-path'];
+    github.inputs.version = '1.2.3';
+    delete github.inputs.artifacts;
+    github.inputs.platform = 'web';
+    expect(await runAction()).toBe(0);
+    expect(seen.calls()).toHaveLength(1);
   },
 );

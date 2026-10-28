@@ -43,7 +43,15 @@ export interface StimOptions {
   onProgress?: (event: StimProgress) => void;
 }
 
-export type StimRunOptions = PlatformRunOptions & { signal?: AbortSignal };
+export type StimRunOptions = PlatformRunOptions & {
+  /**
+   * iOS and Android: install and launch the app the last `build` with the same scheme and configuration or variant
+   * recorded in this workspace, without fingerprinting, building or replacing its JS. Refuses with
+   * STIM_NO_RECORDED_BUILD when there is none. Not part of the private Desktop transport.
+   */
+  recordedBuild?: boolean;
+  signal?: AbortSignal;
+};
 
 export type StimRunResult =
   | { platform: 'ios'; facts: IosFacts }

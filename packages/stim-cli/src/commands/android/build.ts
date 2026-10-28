@@ -27,13 +27,19 @@ import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
+import { recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
+import { resolveVariant } from './support.ts';
+import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
 import { finishAndroidUpload, persistLastBuild } from './result.ts';
 import type { AndroidRecord } from './types.ts';
 import type { AndroidArtifactContext } from '../../integrations/android-project.ts';
 
-export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'>;
+export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'> & {
+  /** Downloads this EAS profile's completed development build instead of compiling; not part of the Desktop transport. */
+  easProfile?: string;
+};
 
 export interface AndroidBuildFacts {
   /** Owned copy, retained with this workspace until explicitly removed. */
@@ -82,6 +88,7 @@ export async function buildAndroidOperation(
       settings,
       settingsContext,
       env: context.env,
+      easProfile: options.easProfile,
       variant: options.variant ?? null,
       buildCache: options.buildCache !== false,
     },
@@ -140,6 +147,21 @@ export async function buildAndroidOperation(
         stats.setProject(projectKey);
         progress.estimate(projectKey);
         const record: AndroidRecord = { buildMachine: placement.selected, configuration: plan.plan.build.variant };
+        const easBuild = await resolveEasDevelopmentBuild({
+          context,
+          root,
+          platform: 'android',
+          profile: options.easProfile,
+          note,
+          isExpo: integration.isExpo,
+          physical: false,
+          selectors: [options.variant],
+          buildCache: options.buildCache,
+          env: context.env,
+          signal: runCancellationSignal(context) ?? context.signal,
+        });
+        if (isEasBuildFailure(easBuild))
+          throw Object.assign(new Error(easBuild.message ?? easBuild.code), easBuild, { details: easBuild });
         let artifact: PreparedAndroidArtifact | undefined;
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
@@ -181,7 +203,7 @@ export async function buildAndroidOperation(
               buildPlan: { ...plan.plan.build, ...(cachePolicy ? { cache: cachePolicy } : {}) },
               cacheProviderConfig: plan.plan.cacheProviderConfig,
               requestedBuildCache: options.buildCache !== false,
-              easBuild: null,
+              easBuild,
               androidPackage: (await integration.appIds()).androidPackage,
               record,
               maxBuilds: getConcurrencyLimits().maxBuilds,
@@ -284,6 +306,14 @@ export async function buildAndroidOperation(
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
           if (built && !failureAfterCleanup) {
             finishRecord('ok');
+            recordBuild(
+              root,
+              recordedBuildKey({ platform: 'android', configuration: resolveVariant(options.variant, settings) }),
+              {
+                appPath: built.apkPath,
+                bundleId: built.androidPackage,
+              },
+            );
             stats.record({
               failed: false,
               cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,

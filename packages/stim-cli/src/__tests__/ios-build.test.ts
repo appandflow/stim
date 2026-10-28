@@ -22,6 +22,7 @@ import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.t
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import * as buildProgress from '../engine/build-progress.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
+import { readRecordedBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
@@ -172,6 +173,8 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'ios' });
   const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
   expect(cold.cacheHit).toBe(false);
+  const key = recordedBuildKey({ platform: 'ios', configuration: 'Release' });
+  expect(readRecordedBuild(root, key)).toMatchObject({ appPath: cold.appPath, bundleId: cold.bundleId });
   expect(readWorkspaceState(root)).not.toHaveProperty('ios');
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
   const existing = { udid: 'existing', devicePlacement: { machine: 'mini' } };
@@ -194,6 +197,7 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   const edited = await buildIosOperation(buildContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
+  expect(readRecordedBuild(root, key)?.appPath).toBe(edited.appPath);
   expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
   expect(getProject(root)).not.toBeNull();
   expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();

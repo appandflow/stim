@@ -6,13 +6,16 @@ declare const STIM_CI_VERSION: string;
 const HELP = `Usage: stim-ci build --platform <ios|android|macos> [options]
        stim-ci run --platform <ios|android|macos|web> [options] -- <command> [args...]
 
-Build exports an artifact without starting or stopping an app.
-Run builds and launches an app, runs a test command, collects diagnostics, and stops it.
-The final result is JSON on stdout; progress and test output go to stderr.
+Build is the only step that compiles. It records the app for this checkout, platform and
+selectors, and exports it only with --export.
+Run installs and launches the app the last matching build recorded, runs a test command, and
+stops the app. It never builds; with no recorded build it refuses and names the build to run.
+The final result is JSON on stdout; progress and test output go to stderr. No result, test or
+diagnostic file is written unless --artifacts is given.
 
 Options:
   --project <path>       Project directory (default: current directory)
-  --artifacts <path>     Results directory (default: a fresh temporary directory)
+  --artifacts <path>     Empty directory for result, test and diagnostic files (default: write none)
   --home <path>          Explicit Stim home (default: job-local on GitHub-hosted runners)
   --build-cache <path>   Native artifact cache directory
   --timeout <seconds>    Setup and test timeout (cleanup has its own deadline)
@@ -24,11 +27,9 @@ Build selectors (build and run):
   --configuration <name> iOS configuration
   --variant <name>       Android variant
 
-Run-only selectors:
-  --skip-js-swap         Release only: install the native artifact without regenerating its JS.
-                         The test supplies the bundle; run.json facts carry jsSwapSkipped and appPath.
-
-Build-only selectors:
+Build-only options:
+  --eas-profile <name>   Download this EAS profile's completed development build instead of compiling
+  --export <path>        Also write the app here: an APK for Android, a tar.gz for iOS and macOS
   --arch <name>          iOS architecture: arm64, x86_64, all
   --abi <name>           Android ABI: arm64-v8a, armeabi-v7a, x86, x86_64, all
 `;
@@ -53,7 +54,8 @@ function parse(argv: string[]): Invocation {
       variant: { type: 'string' },
       arch: { type: 'string' },
       abi: { type: 'string' },
-      'skip-js-swap': { type: 'boolean' },
+      'eas-profile': { type: 'string' },
+      export: { type: 'string' },
     },
   });
   const stage = positionals[0];
@@ -71,11 +73,11 @@ function parse(argv: string[]): Invocation {
     buildCache: values['build-cache'],
     timeoutMs,
   };
-  if (stage === 'build' && values['skip-js-swap'] !== undefined) throw new Error('--skip-js-swap only applies to run.');
-  if (values['skip-js-swap'] && platform !== 'ios' && platform !== 'android')
-    throw new Error('--skip-js-swap only applies to iOS and Android.');
-  if (stage === 'run' && (values.arch !== undefined || values.abi !== undefined))
-    throw new Error('--arch and --abi only apply to build-only.');
+  for (const flag of ['arch', 'abi', 'eas-profile', 'export'] as const) {
+    if (stage === 'run' && values[flag] !== undefined) throw new Error(`--${flag} only applies to build.`);
+  }
+  if (values['eas-profile'] !== undefined && platform !== 'ios' && platform !== 'android')
+    throw new Error('--eas-profile only applies to iOS and Android.');
   if (
     platform !== 'ios' &&
     (values.scheme !== undefined || values.configuration !== undefined || values.arch !== undefined)
@@ -84,7 +86,7 @@ function parse(argv: string[]): Invocation {
   if (platform !== 'android' && (values.variant !== undefined || values.abi !== undefined))
     throw new Error('--variant and --abi only apply to Android.');
   if (stage === 'build') {
-    if (separator >= 0) throw new Error('Build-only does not take a test command. Use stim-ci run to launch and test.');
+    if (separator >= 0) throw new Error('Build does not take a test command. Use stim-ci run to launch and test.');
     if (platform === 'web')
       throw new Error('Web projects have no native build artifact. Use stim-ci run --platform web.');
     if (values.arch !== undefined && !['arm64', 'x86_64', 'all'].includes(values.arch))
@@ -98,24 +100,25 @@ function parse(argv: string[]): Invocation {
             scheme: values.scheme,
             configuration: values.configuration,
             arch: values.arch as 'arm64' | 'x86_64' | 'all' | undefined,
+            easProfile: values['eas-profile'],
           }
         : platform === 'android'
           ? {
               platform,
               variant: values.variant,
               abi: values.abi as 'arm64-v8a' | 'armeabi-v7a' | 'x86' | 'x86_64' | 'all' | undefined,
+              easProfile: values['eas-profile'],
             }
           : { platform };
-    return { stage, options: { ...common, build } };
+    return { stage, options: { ...common, build, exportPath: values.export } };
   }
   if (separator < 0) throw new Error('Separate the test command with --.');
   if (!command[0]) throw new Error('A test command is required after --.');
-  const skipJsSwap = values['skip-js-swap'] ? { skipJsSwap: true } : {};
   const run: CIOptions['run'] =
     platform === 'ios'
-      ? { platform, scheme: values.scheme, configuration: values.configuration, ...skipJsSwap }
+      ? { platform, scheme: values.scheme, configuration: values.configuration }
       : platform === 'android'
-        ? { platform, variant: values.variant, ...skipJsSwap }
+        ? { platform, variant: values.variant }
         : { platform };
   return { stage, options: { ...common, run, command: command as [string, ...string[]] } };
 }

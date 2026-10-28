@@ -7,7 +7,8 @@ import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
-import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
+import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
@@ -278,22 +279,15 @@ function iosProjectTargetRefusal(
     physical,
     easProfile,
     placement,
-    skipJsSwap,
-    release,
+    recordedRefusal,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
-    skipJsSwap?: boolean;
-    release?: boolean;
+    recordedRefusal: RecordedBuildRefusal | null;
   },
 ): FailArgs | null {
-  if (skipJsSwap && release === false)
-    return {
-      code: 'STIM_BAD_ARG',
-      message: 'Skipping the JS swap only applies to a non-Debug configuration; a Debug app loads its JS from Metro.',
-      remedy: 'Pass a Release configuration, or drop skipJsSwap.',
-    };
+  if (recordedRefusal) return recordedRefusal;
   const target = physical
     ? 'physical'
     : placement
@@ -654,11 +648,15 @@ async function runIos(
   const isExpo = integration.isExpo;
   const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
+  const recordedLookup = lookupRecordedBuild(opts.recordedBuild, root, {
+    platform: 'ios',
+    scheme: buildScheme,
+    configuration: builtConfiguration,
+  });
   const capabilityRefusal = iosProjectTargetRefusal(integration, {
     physical,
     easProfile: opts.easProfile,
-    skipJsSwap: opts.skipJsSwap,
-    release,
+    recordedRefusal: recordedLookup.refusal,
   });
   if (capabilityRefusal) return fail(capabilityRefusal);
   const simSnapshot = createIosSimSnapshot();
@@ -701,7 +699,11 @@ async function runIos(
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   deviceSlotWait.automatic = Boolean(remoteSelection.auto);
-  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  const targetRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    placement: remoteSelection,
+    recordedRefusal: null,
+  });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
@@ -1124,7 +1126,8 @@ async function runIos(
       });
       const acquiredArtifact = unlessCancelled(
         context,
-        await acquireIosArtifact(
+        await acquireIosArtifactOrRecorded(
+          recordedLookup.build,
           {
             context,
             root,
@@ -1151,7 +1154,6 @@ async function runIos(
               }),
               optimizations: optimizations.ios,
               easProfile: opts.easProfile,
-              skipJsSwap: opts.skipJsSwap,
               cache: cachePolicy,
               phase,
               note,

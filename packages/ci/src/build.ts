@@ -1,4 +1,4 @@
-import { copyFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createStim, type StimBuildOptions, type StimBuildResult } from 'stim';
 import { runCommand } from './command.ts';
@@ -9,6 +9,8 @@ type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
 
 export interface CIBuildOptions extends CIContextOptions {
   build: WithoutSignal<StimBuildOptions>;
+  /** Also writes the app here as a portable APK (Android) or tar.gz (iOS, macOS); without it the build is only recorded for `run`. */
+  exportPath?: string;
 }
 
 export interface CIBuildResult {
@@ -16,10 +18,10 @@ export interface CIBuildResult {
   stage: 'build';
   projectRoot: string;
   platform: StimBuildOptions['platform'];
-  artifactsDir: string;
-  resultPath: string;
-  buildPath: string;
-  /** Portable APK or tar.gz bundle preserving executable permissions and symlinks. */
+  artifactsDir: string | null;
+  resultPath: string | null;
+  buildPath: string | null;
+  /** The exported APK or tar.gz bundle preserving executable permissions and symlinks; null unless an export was requested. */
   artifactPath: string | null;
   startedAt: string;
   durationMs: number;
@@ -30,7 +32,7 @@ export interface CIBuildResult {
   diagnostics: { path: string | null; error?: CIFailure };
 }
 
-/** Builds and exports an artifact without starting or stopping a workspace runtime. */
+/** Builds the app and records it for `runCI` without starting or stopping a workspace runtime. */
 export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
   const { options, projectRoot, artifactsDir, timeout, signal } = prepareCI(input);
   const started = Date.now();
@@ -40,8 +42,8 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
     projectRoot,
     platform: options.build.platform,
     artifactsDir,
-    resultPath: join(artifactsDir, 'result.json'),
-    buildPath: join(artifactsDir, 'build.json'),
+    resultPath: artifactsDir ? join(artifactsDir, 'result.json') : null,
+    buildPath: artifactsDir ? join(artifactsDir, 'build.json') : null,
     artifactPath: null,
     startedAt: new Date(started).toISOString(),
     durationMs: 0,
@@ -73,13 +75,13 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
     attempted = true;
     result.build = await stim.build({ ...options.build, signal });
     signal?.throwIfAborted();
-    writeJson(result.buildPath, result.build);
-    if (result.build.platform === 'android') {
-      exporting = join(artifactsDir, 'app.apk');
+    if (result.buildPath) writeJson(result.buildPath, result.build);
+    if (input.exportPath) exporting = resolve(input.exportPath);
+    if (exporting) mkdirSync(dirname(exporting), { recursive: true });
+    if (exporting && result.build.platform === 'android') {
       copyFileSync(result.build.facts.apkPath, exporting);
-    } else {
+    } else if (exporting && result.build.platform !== 'android') {
       const bundle = result.build.platform === 'ios' ? result.build.facts.appPath : result.build.facts.bundle;
-      exporting = join(artifactsDir, 'app.tar.gz');
       const packed = await runCommand({
         command: ['tar', '-czf', exporting, '-C', dirname(bundle), '--', basename(bundle)],
         cwd: projectRoot,
@@ -96,7 +98,7 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
         });
     }
     signal?.throwIfAborted();
-    result.artifactPath = exporting;
+    result.artifactPath = exporting ?? null;
     result.exitCode = 0;
   } catch (error) {
     result.failure = failure(error, result.build ? 'STIM_CI_ARTIFACT_FAILED' : 'STIM_CI_BUILD_FAILED');
@@ -118,7 +120,7 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
         result.reportingError ??= failure(error, 'STIM_CI_REPORT_FAILED');
       }
     }
-    if (attempted) {
+    if (attempted && artifactsDir) {
       try {
         const diagnostics = await stim.diagnostics({ tail: 1000, signal: AbortSignal.timeout(10_000) });
         result.diagnostics.path = join(artifactsDir, 'diagnostics.json');
@@ -132,13 +134,15 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
       result.failure = result.reportingError;
     }
     result.durationMs = Date.now() - started;
-    try {
-      writeJson(result.resultPath, result);
-    } catch (error) {
-      result.reportingError = failure(error, 'STIM_CI_REPORT_FAILED');
-      if (result.exitCode === 0) {
-        result.exitCode = 1;
-        result.failure = result.reportingError;
+    if (result.resultPath) {
+      try {
+        writeJson(result.resultPath, result);
+      } catch (error) {
+        result.reportingError = failure(error, 'STIM_CI_REPORT_FAILED');
+        if (result.exitCode === 0) {
+          result.exitCode = 1;
+          result.failure = result.reportingError;
+        }
       }
     }
   }

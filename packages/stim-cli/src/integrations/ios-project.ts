@@ -83,7 +83,6 @@ export interface IosArtifactContext {
     signingSha1: string | null;
   } | null;
   easProfile?: string;
-  skipJsSwap?: boolean;
   optimizations: Optimizations['ios'];
   cache: ReturnType<typeof artifactCachePolicy>;
   phase(name: unknown, text: string): void;

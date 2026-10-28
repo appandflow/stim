@@ -1,5 +1,5 @@
 name: Run Stim CI
-description: Build and launch an app, run a test command, and retain diagnostics through stim-ci.
+description: Build an app once, then install and launch it, run a test command and stop it through stim-ci.
 inputs:
   platform:
     description: ios, android, macos, or web.
@@ -15,20 +15,18 @@ inputs:
   cli-path:
     description: Built stim-ci executable from the checkout, relative to the repository root.
   artifacts:
-    description: Empty diagnostics directory relative to the repository root. Use a different path for each run.
-    default: stim-ci-results
+    description: Empty directory relative to the repository root for result, test and diagnostic files. Without it no such file is written and nothing is uploaded. Use a different path for each run.
+  export:
+    description: Also write the built app to this path relative to the repository root, as an APK for Android or a tar.gz for iOS and macOS. Not for web.
   home:
     description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
   build-cache:
     description: Optional local build cache directory restored by the workflow.
-  skip-js-swap:
-    description: Release only. Install the native artifact without regenerating its JS because the test supplies the bundle; needs a @stim-cli/ci version that has --skip-js-swap.
-    default: 'false'
   timeout:
     description: Session timeout in seconds.
     default: '1800'
   upload-artifacts:
-    description: Upload result, test and diagnostic logs to GitHub, including on failure. Set false for local paths only.
+    description: Upload result, test and diagnostic logs to GitHub, including on failure. Applies only when artifacts is set. Set false for local paths only.
     default: 'true'
   artifact-name:
     description: Unique GitHub artifact name. Defaults to a generated name for this invocation.
@@ -37,9 +35,9 @@ inputs:
     default: '0'
 outputs:
   result:
-    description: Absolute path to result.json.
+    description: Absolute path to result.json, when artifacts is set.
   artifacts:
-    description: Absolute diagnostics directory.
+    description: Absolute diagnostics directory, when artifacts is set.
   artifact-id:
     description: Uploaded GitHub artifact ID, when an upload succeeds.
   artifact-url:
