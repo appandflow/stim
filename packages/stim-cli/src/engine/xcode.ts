@@ -23,6 +23,7 @@ import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';
 import { killOnAbort } from '../workspace/git-read.ts';
+import { readPlistFile } from './app-schemes.ts';
 
 export interface XcodeProject {
   kind?: string;
@@ -384,10 +385,12 @@ export async function readBundleId(
       timeoutMs: 10_000,
     });
     const trimmed = String(value).trim();
-    return trimmed === '' ? null : trimmed;
-  } catch {
-    return null;
-  }
+    if (trimmed !== '') return trimmed;
+  } catch {}
+  const plist = readPlistFile(join(appPath, 'Info.plist'));
+  const id =
+    typeof plist === 'object' && plist !== null && 'CFBundleIdentifier' in plist ? plist.CFBundleIdentifier : null;
+  return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
 }
 
 export function parseBundleExecutable(plistJson: unknown): string | null {

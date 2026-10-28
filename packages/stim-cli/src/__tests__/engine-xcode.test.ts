@@ -855,6 +855,39 @@ describe('reading the bundle id', () => {
     expect(calls).toEqual(['plutil', 'defaults']);
   });
 
+  test('reads a binary Info.plist in process when neither plutil nor defaults exists', async () => {
+    const value = 'com.example.app';
+    const string = (text: string) => Buffer.concat([Buffer.from([0x5f, 0x10, text.length]), Buffer.from(text)]);
+    const objects = [Buffer.from([0xd1, 1, 2]), string('CFBundleIdentifier'), string(value)];
+    const offsets = objects.map((_, i) => 8 + objects.slice(0, i).reduce((n, o) => n + o.length, 0));
+    const tableAt = 8 + objects.reduce((n, o) => n + o.length, 0);
+    const trailer = Buffer.alloc(32);
+    trailer.writeUInt8(1, 6);
+    trailer.writeUInt8(1, 7);
+    trailer.writeBigUInt64BE(3n, 8);
+    trailer.writeBigUInt64BE(BigInt(tableAt), 24);
+    const dir = mkdtempSync(join(tmpdir(), 'stim-bplist-'));
+    const app = join(dir, 'App.app');
+    mkdirSync(app);
+    writeFileSync(
+      join(app, 'Info.plist'),
+      Buffer.concat([Buffer.from('bplist00'), ...objects, Buffer.from(offsets), trailer]),
+    );
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () => {
+        throw Object.assign(new Error('spawnSync ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    try {
+      expect(await readBundleId(app)).toBe(value);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('both failing is null rather than a throw out of a build', async () => {
     setExecutor({
       run: () => '',
