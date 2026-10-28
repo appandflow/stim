@@ -2005,6 +2005,7 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+              podsOnWorker: { type: 'boolean' },
               fingerprintIgnored: {
                 type: 'array',
                 maxItems: 20000,
