@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import {
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -121,7 +122,6 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   return result;
 }
 
-/** Installs the pinned @stim-cli/ci once per runner and version; later steps and jobs on the runner reuse it. */
 async function installCli(version: string, root: string): Promise<{ cli: string; code: number }> {
   const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), 'stim-ci-action', version);
   const cli = join(base, 'node_modules', '@stim-cli', 'ci', 'dist', 'stim-ci.mjs');
@@ -137,8 +137,11 @@ async function installCli(version: string, root: string): Promise<{ cli: string;
     mkdirSync(dirname(base), { recursive: true });
     try {
       renameSync(staging, base);
-    } catch (error) {
-      if (!existsSync(cli)) throw error;
+    } catch {
+      if (!existsSync(cli)) {
+        rmSync(base, { recursive: true, force: true });
+        cpSync(staging, base, { recursive: true, verbatimSymlinks: true });
+      }
     }
     return { cli, code: 0 };
   } finally {

@@ -1024,7 +1024,6 @@ export async function acquireIosArtifact(
   return { ok: true, artifact };
 }
 
-/** Installs the app a recorded build left in the workspace as is when there is one: no cache, build or JS swap. */
 export async function acquireIosArtifactOrRecorded(
   recorded: RecordedBuild | null,
   request: IosArtifactRequest,

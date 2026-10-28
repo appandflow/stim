@@ -19,7 +19,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import "child_process";
 import "timers";
 import { spawn } from "node:child_process";
-import fs, { existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
+import fs, { cpSync, existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
 import { dirname, join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
@@ -97616,7 +97616,6 @@ function currentResult(path, options, started) {
 	if (result.version !== 1 || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
 	return result;
 }
-/** Installs the pinned @stim-cli/ci once per runner and version; later steps and jobs on the runner reuse it. */
 async function installCli(version, root) {
 	const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-action", version);
 	const cli = join(base, "node_modules", "@stim-cli", "ci", "dist", "stim-ci.mjs");
@@ -97642,8 +97641,17 @@ async function installCli(version, root) {
 		mkdirSync(dirname(base), { recursive: true });
 		try {
 			renameSync(staging, base);
-		} catch (error) {
-			if (!existsSync$1(cli)) throw error;
+		} catch {
+			if (!existsSync$1(cli)) {
+				rmSync(base, {
+					recursive: true,
+					force: true
+				});
+				cpSync(staging, base, {
+					recursive: true,
+					verbatimSymlinks: true
+				});
+			}
 		}
 		return {
 			cli,

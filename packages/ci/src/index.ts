@@ -187,7 +187,6 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   return result;
 }
 
-/** The `stim-ci build` invocation that records the app a `run` with these selectors installs. */
 function buildCommand({ run, home, buildCache }: CIOptions, projectRoot: string): string {
   const flags = [`--platform ${run.platform}`];
   if (projectRoot !== realpathSync(process.cwd())) flags.push(`--project ${JSON.stringify(projectRoot)}`);

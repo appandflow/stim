@@ -336,7 +336,11 @@ export async function buildIosOperation(
             finish('ok', built.appPath);
             recordBuild(
               root,
-              recordedBuildKey({ platform: 'ios', scheme: buildScheme, configuration: built.configuration }),
+              recordedBuildKey({
+                platform: 'ios',
+                scheme: resolveSchemeSelection({ scheme: options.scheme }, settings),
+                configuration: resolveConfiguration(options.configuration, settings),
+              }),
               { appPath: built.appPath, bundleId: built.bundleId },
             );
             stats.record({

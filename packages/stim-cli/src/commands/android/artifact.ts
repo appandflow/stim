@@ -994,7 +994,6 @@ function tail(lines: unknown, n = FALLBACK_LINES): string[] {
   return (Array.isArray(lines) ? lines : []).slice(-n);
 }
 
-/** Installs the APK a recorded build left in the workspace as is when there is one: no cache, build or APK swap. */
 export async function acquireAndroidArtifactOrRecorded(
   recorded: RecordedBuild | null,
   request: AndroidArtifactRequest,

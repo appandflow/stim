@@ -34,7 +34,6 @@ export function prepareCI<T extends CIContextOptions>(
 ): {
   options: T;
   projectRoot: string;
-  /** Null when the caller asked for no result, test or diagnostic files. */
   artifactsDir: string | null;
   timeout: AbortSignal | undefined;
   signal: AbortSignal | undefined;

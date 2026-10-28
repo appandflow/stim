@@ -637,6 +637,16 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
   }
 });
 
+test('the API refuses recordedBuild together with a physical device or a remote host', async () => {
+  const stim = createStim({ projectRoot: root, home: tmpHome });
+  await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+  });
+  await expect(stim.run({ platform: 'android', recordedBuild: true, remote: 'mini' })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+  });
+});
+
 describe('the project gate', () => {
   test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
     reserve();

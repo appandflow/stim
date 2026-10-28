@@ -4,14 +4,12 @@ import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace
 
 const RECORDED_BUILDS_KEY = 'recordedBuilds';
 
-/** The app a finished `build` left in the workspace for `run` to install as is. */
 export interface RecordedBuild {
   appPath: string;
   bundleId: string | null;
   builtAt: string;
 }
 
-/** Selectors a build and a run both resolve the same way; arch and ABI are not run selectors. */
 export function recordedBuildKey(selectors: {
   platform: 'ios' | 'android';
   scheme?: string | null;
@@ -31,7 +29,6 @@ export function recordBuild(root: string, key: string, build: Omit<RecordedBuild
   }));
 }
 
-/** The recorded build for these selectors whose app is still on disk, else null. */
 export function readRecordedBuild(root: string, key: string): RecordedBuild | null {
   const recorded = readWorkspaceState(root)?.[RECORDED_BUILDS_KEY];
   const entry = isJsonObject(recorded) ? recorded[key] : null;
@@ -51,7 +48,6 @@ export interface RecordedBuildRefusal {
   remedy: string;
 }
 
-/** The recorded build a `recordedBuild` run installs, or the refusal when it asked for one and there is none. */
 export function lookupRecordedBuild(
   requested: boolean | undefined,
   root: string,

@@ -47,7 +47,7 @@ runner reuses it without another `npm install`. `cli-path` skips the install.
 comments and other event text out of it. Supply test inputs as environment
 variables instead. All other action inputs are passed as argument values.
 
-Nothing is collected unless `artifacts` is set. Without it the action writes no result,
+The build step writes no result or diagnostic files, so a failed build is reported only in the job log and the step exits without upload or summary. Nothing is collected unless `artifacts` is set. Without it the action writes no result,
 test or diagnostic file, copies no logs and uploads nothing, and the `result` and
 `artifacts` outputs are not set; the build and run results still print to the job log.
 `export` also writes the built app to the given path, an APK for Android or a tar.gz for

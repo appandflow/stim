@@ -28,6 +28,7 @@ import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
+import { resolveVariant } from './support.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
@@ -305,10 +306,14 @@ export async function buildAndroidOperation(
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
           if (built && !failureAfterCleanup) {
             finishRecord('ok');
-            recordBuild(root, recordedBuildKey({ platform: 'android', configuration: built.variant }), {
-              appPath: built.apkPath,
-              bundleId: built.androidPackage,
-            });
+            recordBuild(
+              root,
+              recordedBuildKey({ platform: 'android', configuration: resolveVariant(options.variant, settings) }),
+              {
+                appPath: built.apkPath,
+                bundleId: built.androidPackage,
+              },
+            );
             stats.record({
               failed: false,
               cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
