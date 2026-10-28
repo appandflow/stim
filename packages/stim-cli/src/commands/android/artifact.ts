@@ -1,3 +1,4 @@
+import { retainFailedTranscript } from '../../engine/failed-transcript.ts';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
@@ -819,7 +820,7 @@ export async function acquireAndroidArtifact(
         diagnostics: extracted,
         buildDiagnostics: diagnostics,
         lines: extracted.length ? [] : tail(built.lastLines),
-        logPath: displayPath(root, buildLog),
+        logPath: displayPath(root, retainFailedTranscript(buildLog)),
       });
       throw new ArtifactRefusal(phaseFailure);
     }

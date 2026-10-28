@@ -2856,7 +2856,9 @@ describe('a failed build', () => {
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
-    expect(labelled(h.stderr, 'log')[0]).toBe(phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson')));
+    expect(labelled(h.stderr, 'log')[0]).toBe(
+      phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson.failed')),
+    );
   });
 
   test('falls back to the last transcript lines when nothing could be extracted', async () => {

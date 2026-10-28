@@ -1167,6 +1167,8 @@ THE ONE CASE GC WILL NOT REAP
   global, so \`worktree remove\` reclaims them along with everything else in
   the global workspace directory. Each build starts its transcript file over, so the log
   holds one run and a workspace you keep building in does not accumulate them.
+  A failed build also leaves a copy of its transcript (<log>.failed) that the
+  next failed build replaces; \`gc\` does not trim it, \`worktree remove\` does.
 
   Simulators are large and live in the CoreSimulator device set, not in your
   project. If the disk is filling up, Stim's own devices are usually not the
