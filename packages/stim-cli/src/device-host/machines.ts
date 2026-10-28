@@ -10,6 +10,7 @@ import {
   deviceHostMachinesLock,
   acceptsShape,
   cannotHost,
+  currentTailnet,
   isJsonObject,
   localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
@@ -17,6 +18,7 @@ import {
   readDeviceHostMachines,
   settingDefinition,
   type DeviceHostMachineCredential,
+  wrongTailnet,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
@@ -257,11 +259,17 @@ export async function inspectDeviceHostMachines(
       }
       const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
+        const stored = credentials.find((each) => each.machine === machine);
+        const diagnosis = notOnTailnetDiagnosis(
+          machine,
+          peer === 'ambiguous',
+          stored ? wrongTailnet(stored, current) : null,
+        );
         inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
+      const signedIn = local ? null : currentTailnet(current);
       const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
       const dnsName = peer ? { dnsName: peer.dnsName } : {};
       const nodeRoute = peer ? `${peer.nodeId}:${parsed.port}` : `local:${parsed.name}:${parsed.port}`;
@@ -287,6 +295,7 @@ export async function inspectDeviceHostMachines(
         access: 'device-host',
         endpoint: target,
         address: peer?.dnsName ?? parsed.name,
+        ...(signedIn ? { tailnet: signedIn } : {}),
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: async (next) => {
@@ -316,6 +325,7 @@ export async function inspectDeviceHostMachines(
         machine,
         ...dnsName,
         ...(saved?.deviceId ? { deviceId: saved.deviceId } : {}),
+        ...(saved?.tailnet ? { tailnet: saved.tailnet } : {}),
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
       if (outcome.state === 'approved') {

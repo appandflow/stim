@@ -41,6 +41,63 @@ export function tailscaleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env.TERM ? env : { ...env, TERM: 'dumb' };
 }
 
+/**
+ * The tailnet a Mac was signed in to, from `tailscale status --json` `CurrentTailnet`: `name` is its account name,
+ * `suffix` its MagicDNS suffix when MagicDNS is on, `id` its StableID.
+ */
+export interface TailnetIdentity {
+  name: string;
+  suffix?: string;
+  id?: string;
+}
+
+/** The tailnet a `tailscale status --json` reading is signed in to, or null when the status does not name one. */
+export function currentTailnet(status: unknown): TailnetIdentity | null {
+  const current = isJsonObject(status) && isJsonObject(status.CurrentTailnet) ? status.CurrentTailnet : null;
+  if (!current) return null;
+  return parseTailnetIdentity({ name: current.Name, suffix: current.MagicDNSSuffix, id: current.StableID }) ?? null;
+}
+
+/** A stored `TailnetIdentity`, or undefined when it is malformed. */
+export function parseTailnetIdentity(value: unknown): TailnetIdentity | undefined {
+  if (!isJsonObject(value) || typeof value.name !== 'string' || !value.name) return undefined;
+  const { name, suffix, id } = value;
+  return {
+    name,
+    ...(typeof suffix === 'string' && suffix ? { suffix: suffix.toLowerCase() } : {}),
+    ...(typeof id === 'string' && id ? { id } : {}),
+  };
+}
+
+/** Whether two identities name one tailnet: by StableID, else MagicDNS suffix, else account name. */
+export function sameTailnet(a: TailnetIdentity, b: TailnetIdentity): boolean {
+  if (a.id && b.id) return a.id === b.id;
+  if (a.suffix && b.suffix) return a.suffix === b.suffix;
+  return a.name === b.name;
+}
+
+export interface WrongTailnet {
+  recorded: TailnetIdentity;
+  current: TailnetIdentity;
+  /** The MagicDNS suffix of the tailnet that owns the machine, when it differs from the recorded one (shared in). */
+  owner?: string;
+}
+
+/**
+ * Whether this Mac is signed in to another tailnet than the one it was on when a machine approved it. Null for a
+ * credential with no recorded tailnet, a status that names none, or the same tailnet.
+ */
+export function wrongTailnet(
+  credential: { address?: string; tailnet?: TailnetIdentity },
+  status: unknown,
+): WrongTailnet | null {
+  const recorded = credential.tailnet;
+  const current = currentTailnet(status);
+  if (!recorded || !current || sameTailnet(recorded, current)) return null;
+  const owner = credential.address?.split('.').slice(1).join('.').toLowerCase();
+  return { recorded, current, ...(owner && recorded.suffix && owner !== recorded.suffix ? { owner } : {}) };
+}
+
 export type MachineTransport = 'tailscale' | 'local';
 
 /**

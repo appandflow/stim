@@ -581,7 +581,7 @@ leased until <time>" for each one.`,
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
   remoteMachines  one { machine, state, diagnosis?, dnsName?, fingerprint?, deviceId?,
-                  requestedAt?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
+                  requestedAt?, tailnet?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
                   before approval), "key-changed", "key-unconfirmed" (as in
@@ -593,6 +593,9 @@ leased until <time>" for each one.`,
                   (deviceHosts carries it too); the codes are
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
+                  peer-wrong-tailnet (no peer is named so, and this Mac is
+                  signed in to another tailnet than the one it was on when the
+                  machine approved it; both are named),
                   peer-offline (with last seen), peer-no-answer (the connection
                   got no reply and tailscale ping fails), route-missing (nothing accepts
                   connections on the serve port), route-tls, route-http-error
