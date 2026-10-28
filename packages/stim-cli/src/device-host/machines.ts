@@ -129,7 +129,6 @@ async function store(machines: DeviceHostMachineCredential[], operation?: StimCo
   else withDirLock(deviceHostMachinesLock(), write, options);
 }
 
-/**
 /** Forgets this machine's hosting credential for `machine`; false when another run holds the credential claim. */
 export async function forgetDeviceHostMachine(machine: string): Promise<boolean> {
   const claim = tryAcquireClaim({ root: deviceHostMachinesClaims(), mode: 'exclusive', label: 'device-host approval' });

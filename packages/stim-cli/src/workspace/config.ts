@@ -328,7 +328,8 @@ export async function updateRemoteMachinesAsync(
   signal?.throwIfAborted();
   return withConfigLockAsync(() => {
     const remote: unknown = loadConfig()?.remote;
-    const current: unknown = remote === undefined ? [] : isJsonObject(remote) ? (remote.machines ?? []) : null;
+    const current: unknown =
+      remote === undefined ? [] : isJsonObject(remote) ? (remote.machines === undefined ? [] : remote.machines) : null;
     if (!Array.isArray(current) || !current.every((each) => typeof each === 'string'))
       return { before: null, after: [] };
     const after = change(current);

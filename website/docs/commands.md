@@ -170,8 +170,9 @@ free its memory now. Doctor never runs either command.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
-`--fix` (and [`stim remote add`](#remote), outside an app) requests approval, retries a revoked or lapsed request, and
-forgets names removed from the setting. It makes a setup ticket and prints the
+`--fix` requests approval, retries a revoked or lapsed request, and forgets
+names removed from the setting; [`stim remote add`](#remote) also requests and
+retries approval, outside an app. It makes a setup ticket and prints the
 `stim-server setup` command a person on the hosting Mac runs. Setup tickets stay
 private. The first connection after approval pins the Mac's stim-server key,
 and a Mac that cannot prove that key is refused; unreadable credentials and
@@ -1287,7 +1288,8 @@ The states are the ones `stim doctor --json` reports under `remoteMachines`
 `{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
 --json` prints `{ machine, added, machines, build, deviceHost, findings }`,
 where `machines` is the list after the change; `remove --json` prints
-`{ machine, removed, forgot, machines, revoke }`. `stim settings set
+`{ machine, removed, forgot, machines, revoke, pending }`, where `pending` means a request
+was still unanswered here, so the worker may hold an approval `revoke` cannot name. `stim settings set
 remote.machines` replaces the whole list; use it to change the order.
 
 ## `status`

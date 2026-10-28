@@ -172,27 +172,31 @@ export default function remoteCommand(program: Command, version: string, io: Tai
     .option('--json', 'print the result as JSON')
     .action((machine: string, opts: { json?: boolean }) =>
       run(Boolean(opts.json), async () => {
-        const { before, after } = await updateRemoteMachinesAsync(
-          (machines) => machines.filter((each) => each !== machine),
-          await io.status(),
-        );
-        if (before === null) throw invalidSetting();
+        if (configuredMachines() === null) throw invalidSetting();
         const credentials = [...readBuildMachines(), ...readDeviceHostMachines()].filter(
           (each) => each.machine === machine,
         );
         const revoke = [...new Set(credentials.flatMap((each) => (each.deviceId ? [each.deviceId] : [])))].map(
           (id) => `stim-server devices revoke ${id}`,
         );
-        await forgetBuildMachine(machine);
+        const pending = credentials.some((each) => !each.deviceId);
         if (!(await forgetDeviceHostMachine(machine)))
           throw refusal(
             'STIM_CLAIM_REFUSED',
-            `Removed ${machine} from remote.machines, but another run holds the hosting credentials, so this machine still holds its hosting credential for ${machine}.`,
+            `Another run holds the hosting credentials, so ${machine} was not removed.`,
             `Run \`stim remote remove ${machine}\` again after it finishes.`,
           );
+        await forgetBuildMachine(machine);
+        const { before, after } = await updateRemoteMachinesAsync(
+          (machines) => machines.filter((each) => each !== machine),
+          await io.status(),
+        );
+        if (before === null) throw invalidSetting();
         const removed = before.includes(machine);
         if (opts.json) {
-          console.log(JSON.stringify({ machine, removed, forgot: credentials.length > 0, machines: after, revoke }));
+          console.log(
+            JSON.stringify({ machine, removed, forgot: credentials.length > 0, machines: after, revoke, pending }),
+          );
           return;
         }
         if (!removed && !credentials.length) {
@@ -207,6 +211,12 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         if (revoke.length)
           console.log(
             chalk.dim(`  -> ${machine} keeps this machine's approval until a person there runs: ${revoke.join('; ')}`),
+          );
+        if (pending)
+          console.log(
+            chalk.dim(
+              `  -> A request to ${machine} was still pending here. If a person there approved it, find this machine in \`stim-server devices\` there and revoke it.`,
+            ),
           );
       }),
     );
