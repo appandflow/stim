@@ -3372,6 +3372,33 @@ describe('devClientScheme', () => {
     },
   );
 
+  test("reads the scheme from the bundle's binary Info.plist where plutil does not exist", () => {
+    const dir = project(null, withDevClient);
+    const app = join(dir, 'Fixture.app');
+    mkdirSync(app);
+    writeFileSync(
+      join(app, 'Info.plist'),
+      Buffer.from(
+        'YnBsaXN0MDDYAQIDBAUGBwgJCgsMDRgtMF8QEkNGQnVuZGxlSWRlbnRpZmllcl8QGE5TQ2FtZXJhVXNhZ2VEZXNjcmlwdGlvbl8Q' +
+          'EkxTUmVxdWlyZXNJUGhvbmVPU18QE0NGQnVuZGxlRGlzcGxheU5hbWVfEBBDRkJ1bmRsZVVSTFR5cGVzXxAbTFNBcHBsaWNhdGlv' +
+          'blF1ZXJpZXNTY2hlbWVzXlVJRGV2aWNlRmFtaWx5XFJDVE1ldHJvUG9ydF8QD2NvbS5leGFtcGxlLmFwcG8QHQBVAHMAZQBzACAA' +
+          'dABoAGUAIABjAGEAbQBlAHIAYQAgIBMAIABmAG8AcgAgAHAAaABvAHQAbwBzAC4JaABDAGEAZgDpACAAQQBwAHCjDhIV0Q8QXxAS' +
+          'Q0ZCdW5kbGVVUkxTY2hlbWVzohEJV2V4YW1wbGXRExRfEBBDRkJ1bmRsZVR5cGVSb2xlVkVkaXRvctEPFqEXW2V4cCtleGFtcGxl' +
+          'rxAUGRobHB0eHyAhIiMkJSYnKCkqKyxScTBScTFScTJScTNScTRScTVScTZScTdScThScTlTcTEwU3ExMVNxMTJTcTEzU3ExNFNx' +
+          'MTVTcTE2U3ExN1NxMThTcTE5oi4vEAEQAhEfkgAIABkALgBJAF4AdACHAKUAtADBANMBEAERASIBJgEpAT4BQQFJAUwBXwFmAWkB' +
+          'awF3AY4BkQGUAZcBmgGdAaABowGmAakBrAGwAbQBuAG8AcABxAHIAcwB0AHUAdcB2QHbAAAAAAAAAgEAAAAAAAAAMQAAAAAAAAAA' +
+          'AAAAAAAAAd4=',
+        'base64',
+      ),
+    );
+    const exec = makeExecutor({
+      runFile: () => {
+        throw Object.assign(new Error('spawnSync plutil ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    expect(devClientScheme(dir, app, { exec })).toBe('exp+example');
+  });
+
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
     const exec = makeExecutor({
