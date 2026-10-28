@@ -161,8 +161,7 @@ run takes platform plus its options:
   macos:   remoteBuild, remote
   web:     headed (default false)
 iOS and Android also accept slot, metroCheck, buildCache, remoteBuild, remote,
-device, wait, easProfile and skipJsSwap (Release only: a cache hit is installed
-without the JS swap; facts report jsSwapSkipped and appPath). device: true auto-selects a physical device; a
+device, wait and easProfile. device: true auto-selects a physical device; a
 string pins its UDID or serial. wait takes seconds as a string, such as '30'.
 wait: false refuses a full owned-device slot immediately; on a physical device
 it bypasses another workspace's lease and can replace its running app, as CLI

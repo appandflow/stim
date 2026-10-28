@@ -636,27 +636,6 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
   }
 });
 
-test('the iOS API run passes skipJsSwap through and marks the facts', async () => {
-  const seen: unknown[] = [];
-  const adapter = vi.spyOn(iosOperation, 'runIosOperation').mockImplementation(async (_context, _path, options) => {
-    seen.push(options?.skipJsSwap);
-    return {
-      facts: iosFacts({ udid: UDID, fingerprint: FINGERPRINT, appPath: '/cache/Fixture.app', cacheHit: 'local' }),
-      uploadsAbandoned: false,
-    };
-  });
-  try {
-    const stim = createStim({ projectRoot: root, home: tmpHome });
-    const skipped = await stim.run({ platform: 'ios', configuration: 'Release', skipJsSwap: true });
-    const swapped = await stim.run({ platform: 'ios', configuration: 'Release' });
-    expect(seen).toEqual([true, undefined]);
-    expect(skipped.facts).toMatchObject({ jsSwapSkipped: true, appPath: '/cache/Fixture.app' });
-    expect(swapped.facts).not.toHaveProperty('jsSwapSkipped');
-  } finally {
-    adapter.mockRestore();
-  }
-});
-
 describe('the project gate', () => {
   test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
     reserve();
@@ -4770,25 +4749,6 @@ describe('the release cache key and the JS swap', () => {
     expect(calls.args.installIosApp.appPath).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(calls.args.readBundleId).toBe(join(root, 'js-swap', 'Fixture.app'));
     expect(errs.join('\n')).toMatch(/^  swap {8}/m);
-  });
-
-  test('skipJsSwap installs the cached release app as is, without a swap', async () => {
-    const cached = '/cache/ios/entry/Fixture.app';
-    const { exitCode, calls, errs } = await run(
-      { configuration: 'Release', skipJsSwap: true },
-      { resolveBuild: () => cached, swapJsBundle: async () => assert.fail('the JS swap ran') },
-    );
-    expect(exitCode).toBe(null);
-    expect(calls.order).not.toContain('swapJsBundle');
-    expect(calls.args.installIosApp.appPath).toBe(cached);
-    expect(errs.join('\n')).toMatch(/^  swap {8}skipped/m);
-  });
-
-  test('skipJsSwap on a Debug run is refused before any build work', async () => {
-    const { exitCode, calls, errs } = await run({ skipJsSwap: true });
-    expect(exitCode).toBe(1);
-    expect(errs.join('\n')).toMatch(/STIM_BAD_ARG/);
-    expect(calls.order).not.toContain('installIosApp');
   });
 
   test.each(['boot refusal', 'install refusal', 'install exception'])(

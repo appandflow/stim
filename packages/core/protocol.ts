@@ -2027,8 +2027,6 @@ interface NativeRunOptions {
   device?: string | boolean;
   wait?: string | boolean;
   easProfile?: string;
-  /** Release only: install the cached or built native artifact without regenerating its JS; the caller supplies the bundle. */
-  skipJsSwap?: boolean;
 }
 
 /** Artifact-only selectors shared by the in-process API and private Desktop transport. */

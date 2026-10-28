@@ -24,10 +24,6 @@ Build selectors (build and run):
   --configuration <name> iOS configuration
   --variant <name>       Android variant
 
-Run-only selectors:
-  --skip-js-swap         Release only: install the native artifact without regenerating its JS.
-                         The test supplies the bundle; run.json facts carry jsSwapSkipped and appPath.
-
 Build-only selectors:
   --arch <name>          iOS architecture: arm64, x86_64, all
   --abi <name>           Android ABI: arm64-v8a, armeabi-v7a, x86, x86_64, all
@@ -53,7 +49,6 @@ function parse(argv: string[]): Invocation {
       variant: { type: 'string' },
       arch: { type: 'string' },
       abi: { type: 'string' },
-      'skip-js-swap': { type: 'boolean' },
     },
   });
   const stage = positionals[0];
@@ -71,9 +66,6 @@ function parse(argv: string[]): Invocation {
     buildCache: values['build-cache'],
     timeoutMs,
   };
-  if (stage === 'build' && values['skip-js-swap'] !== undefined) throw new Error('--skip-js-swap only applies to run.');
-  if (values['skip-js-swap'] && platform !== 'ios' && platform !== 'android')
-    throw new Error('--skip-js-swap only applies to iOS and Android.');
   if (stage === 'run' && (values.arch !== undefined || values.abi !== undefined))
     throw new Error('--arch and --abi only apply to build-only.');
   if (
@@ -110,12 +102,11 @@ function parse(argv: string[]): Invocation {
   }
   if (separator < 0) throw new Error('Separate the test command with --.');
   if (!command[0]) throw new Error('A test command is required after --.');
-  const skipJsSwap = values['skip-js-swap'] ? { skipJsSwap: true } : {};
   const run: CIOptions['run'] =
     platform === 'ios'
-      ? { platform, scheme: values.scheme, configuration: values.configuration, ...skipJsSwap }
+      ? { platform, scheme: values.scheme, configuration: values.configuration }
       : platform === 'android'
-        ? { platform, variant: values.variant, ...skipJsSwap }
+        ? { platform, variant: values.variant }
         : { platform };
   return { stage, options: { ...common, run, command: command as [string, ...string[]] } };
 }

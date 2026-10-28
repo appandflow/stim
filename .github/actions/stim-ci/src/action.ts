@@ -19,7 +19,6 @@ interface Inputs {
   cache: string;
   timeout: string;
   upload: boolean;
-  skipJsSwap: boolean;
   artifactName: string;
   retentionDays: number;
 }
@@ -44,8 +43,6 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   }
   const upload = input('upload-artifacts') || 'true';
   if (upload !== 'true' && upload !== 'false') throw new Error('upload-artifacts must be true or false.');
-  const skipJsSwap = input('skip-js-swap') || 'false';
-  if (skipJsSwap !== 'true' && skipJsSwap !== 'false') throw new Error('skip-js-swap must be true or false.');
   const retention = input('retention-days') || '0';
   if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) {
     throw new Error('retention-days must be a non-negative whole number.');
@@ -61,7 +58,6 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     cache: input('build-cache') ? resolve(root, input('build-cache')) : '',
     timeout,
     upload: upload === 'true',
-    skipJsSwap: skipJsSwap === 'true',
     artifactName: input('artifact-name') || `stim-ci-${platform}-${randomUUID()}`,
     retentionDays: Number(retention),
   };
@@ -156,7 +152,6 @@ export async function runAction(): Promise<number> {
     ];
     if (options.home) args.push('--home', options.home);
     if (options.cache) args.push('--build-cache', options.cache);
-    if (options.skipJsSwap) args.push('--skip-js-swap');
     args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
     const started = Date.now();
     let code = await execute(process.execPath, args, root);

@@ -770,7 +770,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
           remedy: error?.remedy,
           details: error,
         });
-      return { platform: 'ios', facts: options.skipJsSwap ? { ...result.facts, jsSwapSkipped: true } : result.facts };
+      return { platform: 'ios', facts: result.facts };
     }
     case 'android': {
       const result = await runAndroidOperation(context, root, options);
@@ -781,10 +781,7 @@ async function run(context: StimContext, options: StimRunOptions): Promise<StimR
           remedy: result.error?.remedy,
           details: result.error,
         });
-      return {
-        platform: 'android',
-        facts: options.skipJsSwap ? { ...result.facts, jsSwapSkipped: true } : result.facts,
-      };
+      return { platform: 'android', facts: result.facts };
     }
     case 'macos': {
       const record = await runMacos(context, root, note(context), options.remote, options.remoteBuild);

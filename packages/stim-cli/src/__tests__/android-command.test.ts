@@ -4867,30 +4867,6 @@ describe('the release APK swap', () => {
     expect(existsSync(join(root, 'apk-swap'))).toBe(false);
   });
 
-  test('skipJsSwap installs the cached release APK as is, without a swap', async () => {
-    const h = harness({
-      variant: 'productionRelease',
-      skipJsSwap: true,
-      resolveCached: (_platform: string, _key: string) => cached,
-      swapApk: never('the APK swap'),
-      build: never('the build'),
-      storeCached: never('storeBuild'),
-    });
-    const result = await h.run();
-    expect(result.ok).toBe(true);
-    expect(h.calls.install[0]?.apkPath).toBe(cached);
-    assert(result.facts);
-    expect(result.facts.appPath).toBe(cached);
-    expect(labelled(h.stderr, 'swap')[0]).toMatch(/skipped/);
-  });
-
-  test('skipJsSwap on a debug variant is refused before any build work', async () => {
-    const h = harness({ variant: 'productionDebug', skipJsSwap: true, build: never('the build') });
-    const result = await h.run();
-    expect(result.ok).toBe(false);
-    expect(result.error?.code).toBe('STIM_BAD_ARG');
-  });
-
   test('android.keystore / android.keystorePassword reach the swap', async () => {
     writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.keystore', 'android/app/release.jks');
     writeConfigSetting({ scope: 'workspace', projectPath: root }, 'android.keystorePassword', 'env:MY_KS');

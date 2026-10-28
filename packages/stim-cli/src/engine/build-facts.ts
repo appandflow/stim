@@ -62,8 +62,6 @@ export interface IosFacts {
   appPath?: string | null;
   bundleId?: string | null;
   installSkipped: boolean;
-  /** Set by the API when `skipJsSwap` was requested: Stim injected no JS, so the app carries the JS of whoever built `appPath`. */
-  jsSwapSkipped?: true;
   launched: LaunchStatus;
   metroPort?: number | null;
   logs: LogsInfo;
@@ -100,8 +98,6 @@ export interface AndroidFacts {
   appPath: string | null;
   bundleId: string | null;
   installSkipped: boolean;
-  /** Set by the API when `skipJsSwap` was requested: Stim injected no JS, so the app carries the JS of whoever built `appPath`. */
-  jsSwapSkipped?: true;
   launched: LaunchStatus;
   ccache: CcacheActivity;
   debugHttpHost: string | null;

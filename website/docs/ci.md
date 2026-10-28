@@ -89,13 +89,6 @@ The command receives `STIM_CI_DEVICE_ID`, `STIM_CI_APP_ID`, and
 Stim. Tests must use that exact target and implement app-specific readiness;
 `launched` can be `bundling` or `unverified`.
 
-A Release run whose test injects its own JS bundle can pass `--skip-js-swap`
-(`run: { skipJsSwap: true }`, or the action's `skip-js-swap: 'true'`) to skip
-the cache-hit regeneration of the default-entry JS into the cached artifact. Stim installs and
-launches the native artifact as built, so the launched app carries its builder's
-JS. `run.json` reports `jsSwapSkipped: true` and `appPath`, the native artifact
-to copy and inject into; Debug runs are refused with `STIM_BAD_ARG`.
-
 The [package reference](https://github.com/appandflow/stim/tree/main/packages/ci)
 documents the library, result schema, artifacts, cancellation, and cache rules.
 

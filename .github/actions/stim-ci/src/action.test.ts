@@ -89,7 +89,6 @@ it('validates explicit inputs and preserves command source and argument paths', 
     ['timeout', '0'],
     ['retention-days', '-1'],
     ['upload-artifacts', 'perhaps'],
-    ['skip-js-swap', 'sometimes'],
   ]) {
     expect(() => readInputs((key) => (key === name ? value! : (github.inputs[key] ?? '')), root, 'linux')).toThrow(
       /required|must/,
@@ -136,16 +135,6 @@ test.skipIf(process.platform === 'win32')(
     expect(github.output).toHaveBeenCalledWith('result', join(root, 'results/result.json'));
   },
 );
-
-test.skipIf(process.platform === 'win32')('passes --skip-js-swap to stim-ci only when requested', async () => {
-  fixture(0);
-  expect(await runAction()).toBe(0);
-  expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))).not.toContain('--skip-js-swap');
-  rmSync(join(root, 'results'), { recursive: true, force: true });
-  github.inputs['skip-js-swap'] = 'true';
-  expect(await runAction()).toBe(0);
-  expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))).toContain('--skip-js-swap');
-});
 
 test.skipIf(process.platform === 'win32')(
   'returns a failure when requested upload fails after a passing run',

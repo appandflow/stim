@@ -35,11 +35,6 @@ reference `appandflow/stim/.github/actions/stim-ci@<commit>` and replace
 `cli-path` with `version: '<exact published version>'`. Pin both independently.
 The action installs that exact npm version with lifecycle scripts disabled.
 
-`skip-js-swap: 'true'` is for a Release run whose test supplies its own JS
-bundle. Stim then installs the native artifact without regenerating its JS and
-`run.json` carries `jsSwapSkipped` and the artifact's `appPath`. A Debug run is
-refused with `STIM_BAD_ARG`.
-
 `command` is Bash source, executed in the app directory with `-e` and
 `pipefail`. Treat it like a workflow `run:` step: keep untrusted PR titles,
 comments and other event text out of it. Supply test inputs as environment
