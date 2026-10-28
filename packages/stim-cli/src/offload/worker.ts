@@ -778,6 +778,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
         note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
+        // CocoaPods refuses an external-source pod such as hermes-engine whose version differs from the one stored here
+        rmSync(join(iosProject.dir, 'Pods', 'Local Podspecs'), { recursive: true, force: true });
         const result = await time('podsMs', () =>
           runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
