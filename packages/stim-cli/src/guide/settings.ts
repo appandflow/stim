@@ -788,11 +788,12 @@ A remote machine approves this one when a person there runs
 \`stim-server setup\` with this machine's setup ticket (32 random bytes, 43
 base64url characters) in STIM_SETUP_TICKET. Stim Desktop's Add wizard makes the
 ticket and sets STIM_ACCESS_TICKET for one \`doctor --fix\` run; without it,
-\`doctor --fix\` makes one and prints the setup command to run on the worker.
+\`stim remote add <machine>\` or \`doctor --fix\` makes one and prints the setup
+command to run on the worker.
 Agents never set STIM_ACCESS_TICKET, never run \`stim-server setup\`, never edit
 \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never approve requests.
 Until setup approves, the worker answers unknown-secret and the entry stays
-pending; every doctor run tries again. The first connection after approval pins
+pending; every \`stim remote list\` or doctor run tries again. The first connection after approval pins
 the worker's stim-server key in build-machines.json or device-host-machines.json,
 and every later connection must prove that key; the tailnet node and address
 never decide who the worker is. With --fix, a pending entry is replaced when
@@ -808,8 +809,8 @@ agents do not run them. \`stim guide facts doctor\` lists the codes.
 REMOTE MACHINES AND PHONE APP
 When the user mentions slow builds, a busy machine, a full disk or device limit, or
 wanting updates away from the desk, tell them about Stim Desktop > Settings >
-Remote Machines > Add (another machine on the tailnet that builds for this one,
-or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
+Remote Machines > Add, or \`stim remote add <machine>\` in their terminal (another
+machine on the tailnet that builds for this one, or a Mac that also hosts simulators) or Phones > Pair a Phone (the Stim phone
 app). Stim Desktop also suggests these itself, at most once a day and never
 during a build. Agents only tell the user: they never run \`stim-server setup\`,
 never edit \`remote.*\`, \`server.*\` or \`hosting.*\` for the user, and never
@@ -818,10 +819,20 @@ approve requests.
 REMOTE MACHINES ARE MACHINE-LEVEL
 \`remote.machines\` names the remote machines this machine may build on and host owned
 simulator sessions on, by MagicDNS name with an optional serve port (default
-7443). Name each node and port once:
+7443). Name each node and port once. From any directory:
 
-  stim settings set remote.machines '["janics-mac-mini"]'
-  stim doctor --fix
+  stim remote add janics-mac-mini
+  stim remote list
+  stim remote remove janics-mac-mini
+
+\`stim remote add\` appends the machine to the machine-scope list, keeping the
+entries already there, asks it for build and device-host approval and prints
+the setup command for it. \`stim remote list\` contacts every listed machine
+and reports both approvals; it asks nothing new. \`stim remote remove\` drops the
+entry and forgets this machine's credentials for it; the remote machine keeps
+its approval until a person there runs the \`stim-server devices revoke\`
+command it prints. Each takes --json. \`stim settings set remote.machines\`
+replaces the whole list.
 
 The order of \`remote.machines\` is the priority order for every workload: the
 build, simulator, emulator and macOS app each go to the first listed machine that
@@ -849,16 +860,15 @@ addresses are refused, and the running server applies a change within seconds.
 An interface name follows the interface onto whatever private network it
 joins, so name the address on a machine that moves between networks, and an
 interface only on a worker that stays put. Then the person runs the setup
-command \`stim doctor --fix\` prints here:
+command \`stim remote add\` prints here:
 
   stim settings set server.lanAddresses '["10.0.0.92"]'     # on the worker
-  stim settings set remote.machines '["local:10.0.0.92"]'   # on this machine
-  stim doctor --fix
+  stim remote add local:10.0.0.92                           # on this machine
 
 Every connection runs Stim's Noise handshake, so plain WebSocket carries it
 without TLS, and the address never identifies anyone. Nothing on a local network
 vouches for the worker's key, so \`stim-server setup\` prints the worker's server
-key fingerprint and \`stim doctor --fix\`, run by a person in a terminal, shows
+key fingerprint and \`stim remote list\`, run by a person in a terminal, shows
 the fingerprint the worker answered with and pins the key only after they
 confirm it matches. Until then the entry reports key-unconfirmed and is not
 used. Agents never answer that question. The printed setup command carries the
@@ -925,8 +935,8 @@ machine idle: wait for existing work to finish or stop the relevant sessions bef
 benchmarking. Agents change these settings only when the user asks them to.
 
 DEVICE HOSTING
-Only \`doctor --fix\` asks for device-host access: it makes a setup ticket and
-prints the command. A person approves by running \`stim-server setup\` on the
+Only \`stim remote add\` and \`doctor --fix\` ask for device-host access: they
+make a setup ticket and print the command. A person approves by running \`stim-server setup\` on the
 worker with that ticket: one ticket, one expiry, one record per capability for
 the key that holds the ticket, with a per-grant Y/n question (Enter approves) in a
 terminal or \`--yes\` otherwise. Agents never run \`stim-server setup\` or
@@ -956,9 +966,11 @@ Stim sends tokens only to the pinned node's own tailnet address,
 with its MagicDNS name for TLS and Host routing. A changed node refuses
 access, and uncertain replies or unreadable credentials preserve the pin.
 An invalid remote.machines setting reports an error and preserves every saved credential.
-\`doctor --fix\` forgets entries removed from remote.machines; remove a
-replaced machine, run it, then re-add the name to request a new approval.
-A definite revoked or lapsed request can be requested again with --fix.
+\`stim remote remove\` forgets the credentials of the machine it removes, and
+\`doctor --fix\` forgets those of entries removed from remote.machines otherwise.
+For a replaced machine, run \`stim remote remove <machine>\`, then
+\`stim remote add <machine>\` to request a new approval. A definite revoked or
+lapsed request can be requested again with \`stim remote add\` or --fix.
 An in-progress approval inspection reports busy rather than replacing its
 pending token. \`stim macos --remote <placement>\` or \`macos.remote\` runs a macOS
 app on an approved remote Mac (stim guide macos), and \`ios.remote\` and
@@ -987,10 +999,11 @@ The same \`remote.machines\` list names the machines that may build for this one
     "remote": { "machines": ["janics-mac-mini"] }
   }
 
-\`doctor --fix\`, run in any app directory, makes a setup ticket for each named
-machine and prints the \`stim-server setup\` command a person runs on that
-machine to approve this one, under the approval rule above. The next doctor run
-pins the worker's stim-server key in $STIM_HOME/build-machines.json. A build grant is full access
+\`stim remote add <machine>\`, run in any directory, makes a setup ticket for
+that machine and prints the \`stim-server setup\` command a person runs on that
+machine to approve this one, under the approval rule above; \`doctor --fix\`,
+run in an app directory, does the same for every named machine. The next
+\`stim remote list\` or doctor run pins the worker's stim-server key in $STIM_HOME/build-machines.json. A build grant is full access
 to the account stim-server runs as: project code runs there unsandboxed, so it
 can grant itself read and control. Revoking it does not undo what that code
 already did. Grant it only to machines you trust.
@@ -1070,8 +1083,8 @@ files the native fingerprint hashes or the Expo config reads, such as .env.local
 and other Expo .env files, secrets included. Nothing under node_modules and no
 build output the fingerprint ignores is sent. A fingerprint-mismatch refusal
 names the sources that differ and the files pod install or prebuild rewrote there.
-Run stim doctor --fix to ask for build access if not paired. A person on the
-worker approves it by running the stim-server setup command doctor printed, with
+Run stim remote add <machine> to ask for build access if not approved. A person
+on the worker approves it by running the stim-server setup command it printed, with
 its ticket and expiry. Check stim settings get remote.machines,
 or rerun with --remote-build auto or --remote-build local. Ctrl-C cancels
 the remote build without a local xcodebuild, Gradle or SwiftPM compile.

@@ -1005,7 +1005,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key doctor --fix pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key stim remote add pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which stim remote add asks for separately. Change the list with stim remote add and stim remote remove',
   },
   {
     key: 'remote.buildPoolDisabled',

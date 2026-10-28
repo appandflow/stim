@@ -547,9 +547,8 @@ README for result types, cancellation, cache policy, and coordination findings.`
 
 If Stim is not installed globally, replace stim with npx stim.
 
-  stim settings set remote.machines '["janics-mac-mini"]'
-  stim doctor --fix
-  stim doctor
+  stim remote add janics-mac-mini
+  stim remote list
   stim android --remote janics-mac-mini --device-profile pixel_7
   stim status --json
   stim reload android
@@ -709,10 +708,9 @@ and show records already copied here.`,
 
 If Stim is not installed globally, replace stim with npx stim.
 
-  stim settings set remote.machines '["janics-mac-mini"]'
-  stim doctor --fix
-  # A person there runs the stim-server setup command doctor printed.
-  stim doctor
+  stim remote add janics-mac-mini
+  # A person there runs the stim-server setup command it printed.
+  stim remote list
   stim ios --remote janics-mac-mini --device-type "iPhone 17 Pro" --runtime "iOS 27.0"
   stim status --json
   stim reload ios

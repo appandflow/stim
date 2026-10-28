@@ -120,7 +120,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
     );
   if (values.client !== undefined)
     throw new SetupRefusal(
-      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim doctor --fix` on the requesting machine.',
+      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim remote add <this machine>` on the requesting machine.',
     );
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
@@ -1107,9 +1107,9 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
         const waiting = preflight.lan
-          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          ? `Waiting for the requesting machine to reconnect. Run \`stim remote list\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
           : deps.fromDoctor
-            ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
+            ? 'Waiting for the requesting machine to reconnect. Run `stim remote list` on that machine to finish.'
             : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
         step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
         while (deps.now() < Date.parse(opts.expiresAt)) {

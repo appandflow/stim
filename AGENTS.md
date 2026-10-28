@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -350,8 +350,8 @@ outside it moves to its own issue and pull request.
   output, and is never passed to an external executable.
 - **Build access.** stim-server's `build` capability lets another machine on the
   tailnet run its project code on this machine to build. The requesting machine
-  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim doctor --fix`,
-  which prints the command), and a person approves it by running
+  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim remote add`
+  or `stim doctor --fix`, which print the command), and a person approves it by running
   `stim-server setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
   Running setup is the worker-side approval: a person on the
   worker approves the key holding one ticket, once per capability, until one

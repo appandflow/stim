@@ -52,7 +52,7 @@ Branch on the code, never on the message.`,
   on the host to enable handoff and native logs (hello features hosted-ios-data
   for iOS and hosted-android-data for Android).
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
-  approval keeps the doctor --fix and stim-server setup remedies.`,
+  approval keeps the stim remote add and stim-server setup remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
@@ -434,9 +434,9 @@ fingerprint reads, such as .env.local. Make the named input agree on both Macs,
 for example by committing the lockfile pod install rewrote there; pairing does
 not change it.
 
-Run stim doctor --fix to ask for build access if not paired. Check
-stim settings get remote.machines. A person on the worker approves this machine
-by running the stim-server setup command doctor --fix printed, with its ticket
+Run stim remote add <machine> to ask for build access if not approved. Check
+stim remote list. A person on the worker approves this machine
+by running the stim-server setup command stim remote add printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
 Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.

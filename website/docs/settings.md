@@ -420,11 +420,14 @@ or, for a machine on the local network without Tailscale, as `local:` and its
 private IPv4 address or host name with an optional stim-server port (default
 7787); that machine lists where it listens in `server.lanAddresses`, which is
 empty by default. See [Local network, without Tailscale](./remote-machines.md#local-network-without-tailscale).
-Name each node and port once. Set it with
-`stim settings set remote.machines '["janics-mac-mini"]'`, then run
-`stim doctor --fix` in an app directory. Build and device-host approvals are
+Name each node and port once. Add one with `stim remote add janics-mac-mini`
+from any directory: it appends the machine to the list, keeping the entries
+already there, and asks it for approval. `stim remote list` reports each
+machine's approvals, and `stim remote remove <machine>` drops an entry and
+forgets its credentials. `stim settings set remote.machines` replaces the whole
+list. Build and device-host approvals are
 separate, and a remote machine is used only for what it approved; a listed machine that
-never granted one is not used for it, and doctor reports it. Doctor makes a setup
+never granted one is not used for it, and `stim remote list` reports it. `stim remote add` makes a setup
 ticket and prints the `stim-server setup` command a person runs on the remote
 machine to approve this one; one ticket covers builds and hosting. Hosting approval grants no
 read, control or build access. [`stim macos --remote <placement>`](./macos.md#run-it-on-another-mac)
@@ -439,9 +442,10 @@ reports approval under `deviceHosts` in JSON. The first connection after
 approval pins the remote machine's stim-server key, and every later connection
 must prove that key; a different key reports `key-changed` and refuses access.
 Uncertain replies or unreadable credentials preserve the pin. To approve a
-replaced machine, remove the name, run `stim doctor --fix` to forget it, then
-re-add it and run `--fix` again. Only `--fix` makes a setup ticket, asks again
-after a revoked or `lapsed` request, or forgets names removed from the setting.
+replaced machine, run `stim remote remove <machine>`, then
+`stim remote add <machine>`. Only `stim remote add` and `stim doctor --fix` make a
+setup ticket or ask again after a revoked or `lapsed` request; `stim remote remove`
+and `stim doctor --fix` forget the credentials of names removed from the setting.
 A pending request reports its ticket's `expiresAt`. A concurrent approval
 inspection reports `busy` instead of replacing a pending ticket.
 
@@ -458,9 +462,10 @@ For a setup walkthrough covering build and hosting approvals, see [Remote machin
 For builds, the same `remote.machines` list names the machines on your tailnet
 that may build for this one, optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443).
-`stim doctor --fix` in any app directory makes a setup ticket for each named
+`stim remote add <machine>`, from any directory, makes a setup ticket for that
 machine and prints the `stim-server setup` command a person runs there to
-approve this one. The next doctor run pins that machine's stim-server key, and
+approve this one; `stim doctor --fix` in an app directory does the same for every
+named machine. The next `stim remote list` or doctor run pins that machine's stim-server key, and
 Stim connects only to a server that proves it holds that key. Doctor reports each remote machine's build pairing state under `remoteMachines`.
 
 The order of `remote.machines` is the priority order for every workload. A
@@ -502,10 +507,10 @@ back locally. Missing configuration/pairing, denied or pending approval,
 unreachability or a changed server key, incompatible toolchain/CPU/runtime,
 low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
-message names the worker and the concrete reason. Run `stim doctor --fix` to
-ask for build access if not paired. Check `stim settings get remote.machines`;
+message names the worker and the concrete reason. Run `stim remote add <machine>` to
+ask for build access if not approved. Check `stim remote list`;
 a person on the worker approves this machine by running the `stim-server setup`
-command doctor printed. To change placement,
+command it printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
 Device, Android release variant, `--remote`, Android CAS compiler,

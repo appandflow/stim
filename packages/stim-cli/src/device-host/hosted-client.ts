@@ -80,7 +80,7 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   if (!configured.includes(machine)) {
     throw Object.assign(
       new Error(
-        `${machine} is not in remote.machines. Add it with stim settings set remote.machines, then run stim doctor --fix to ask it for hosting access.`,
+        `${machine} is not in remote.machines. Run stim remote add ${machine} to add it and ask it for hosting access.`,
       ),
       { code: 'STIM_BAD_ARG' },
     );
@@ -94,11 +94,11 @@ function hostingCredential(machine: string): DeviceHostMachineCredential {
   const credential = credentials.find((each) => each.machine === machine);
   if (!credential)
     throw credentialRefusal(
-      `This machine has not asked ${machine} for hosting access. Run stim doctor --fix.`,
-      'Run stim doctor --fix.',
+      `This machine has not asked ${machine} for hosting access. Run stim remote add ${machine}.`,
+      `Run stim remote add ${machine}.`,
     );
   if (credential.state !== 'approved') {
-    const remedy = `A person on ${machine} runs the stim-server setup command stim doctor --fix printed; then run stim doctor.`;
+    const remedy = `A person on ${machine} runs the stim-server setup command stim remote add ${machine} printed; then run stim remote list.`;
     throw credentialRefusal(`${machine} has not confirmed hosting access for this machine. ${remedy}`, remedy);
   }
   return credential;

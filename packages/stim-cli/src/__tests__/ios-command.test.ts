@@ -8624,9 +8624,9 @@ describe('iOS placement on a hosting Mac', () => {
     const result = await run({ remote: 'mini', json }, { prepareHostedIos });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('STIM_HOSTING_REFUSED');
-    expect(result.stderr).toContain('stim doctor --fix');
+    expect(result.stderr).toContain('stim remote add mini');
     expect(result.logs).toHaveLength(json ? 1 : 0);
-    const expected = expect.objectContaining({ code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim doctor --fix.' });
+    const expected = expect.objectContaining({ code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim remote add mini.' });
     expect(result.logs.map((line) => JSON.parse(line))).toEqual(json ? [expected] : []);
     expect(result.calls.order).not.toContain('buildIos');
   });

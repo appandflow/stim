@@ -228,8 +228,8 @@ export function outdatedServer(
     title: `Remote machine ${entry} runs an older stim-server`,
     detail: `The stim-server on ${entry} speaks an older protocol than this Stim, so it cannot authenticate this machine.`,
     fix: command
-      ? `${update}, then run this there to approve this machine: ${command}\nAfter approving, run \`stim doctor\` on this machine to reconnect.`
-      : `${update}, then run \`stim doctor --fix\` here.`,
+      ? `${update}, then run this there to approve this machine: ${command}\nAfter approving, run \`stim remote list\` on this machine to reconnect.`
+      : `${update}, then run \`stim remote add ${entry}\` here.`,
   };
 }
 
@@ -595,7 +595,7 @@ export function keyConfirmer(ask: ((question: string) => Promise<boolean>) | nul
 /** The remedy for a pending request: the printed setup command, or where the person finds it. */
 export function setupRemedy(entry: string, command: string | null): string {
   return command
-    ? `A person on ${entry} runs this there to approve this machine: ${command}\nAfter approving, run \`stim doctor\` on this machine to reconnect.`
+    ? `A person on ${entry} runs this there to approve this machine: ${command}\nAfter approving, run \`stim remote list\` on this machine to reconnect.`
     : `A person on ${entry} runs the \`stim-server setup\` command Stim Desktop showed for this machine.`;
 }
 
