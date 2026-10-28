@@ -19,6 +19,9 @@ struct BuildSection: View {
   #endif
   @EnvironmentObject private var checks: BuildPlanChecks
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.workspaceAccess) private var access
+
+  private var inert: Bool { readOnly || !access.isLocal }
 
   private var running: Build? { env.build.flatMap { $0.isRunning ? $0 : nil } }
 
@@ -53,7 +56,7 @@ struct BuildSection: View {
       }
     }
     .task(id: trigger) {
-      guard !readOnly else { return }
+      guard !inert else { return }
       while !Task.isCancelled {
         checkUsed()
         try? await Task.sleep(for: .seconds(30))
@@ -62,7 +65,7 @@ struct BuildSection: View {
   }
 
   private func checkUsed() {
-    guard !readOnly else { return }
+    guard !inert else { return }
     if running != nil || actions.active(for: env.path) != nil {
       return checks.cancel(workspace: env.path, platforms: cancellationPlatforms)
     }
@@ -91,7 +94,8 @@ struct BuildSection: View {
           Button("Details") { openBuild(BuildSheetSelection(workspace: env.path, platform: platform)) }
             .buttonStyle(.stim())
             .fixedSize()
-            .help("Open build details")
+            .disabled(!access.isLocal)
+            .help(access.unavailableReason ?? "Open build details")
           if building == nil && !readOnly { runButton(platform) }
         }
         if let projectSubtitle { Text(projectSubtitle).font(.stim(.footnote)).foregroundStyle(Palette.secondary) }
@@ -100,13 +104,13 @@ struct BuildSection: View {
             .accessibilityLabel("Building on \(host)")
         }
         if let building {
-          RunningBuildDetail(env: env, build: building)
+          RunningBuildDetail(env: env, build: building).disabled(!access.isLocal)
         } else {
           VStack(alignment: .leading, spacing: Space.sm) {
             Text("Last Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
             lastBuild(platform)
           }
-          if !readOnly {
+          if !inert {
             Divider().overlay(Palette.border)
             VStack(alignment: .leading, spacing: Space.sm) {
               Text("Next Build").font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.secondary)
@@ -150,11 +154,12 @@ struct BuildSection: View {
     }
     .buttonStyle(.stim(.primary))
     .fixedSize()
-    .disabled(running != nil || actions.active(for: env.path) != nil)
+    .disabled(!access.isLocal || running != nil || actions.active(for: env.path) != nil)
     .help(
-      platform == "macos"
-        ? "stim macos: builds the Swift package and launches the app"
-        : "stim \(platform): the default slot and configuration; builds if needed, installs and launches"
+      access.unavailableReason
+        ?? (platform == "macos"
+          ? "stim macos: builds the Swift package and launches the app"
+          : "stim \(platform): the default slot and configuration; builds if needed, installs and launches")
     )
   }
 
@@ -176,7 +181,7 @@ struct BuildSection: View {
       }
       OffloadFallbackLine(build: last)
       if let diagnostics = last.diagnostics, !diagnostics.isEmpty {
-        BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path)
+        BuildDiagnosticsView(diagnostics: diagnostics, workspace: env.path).disabled(!access.isLocal)
       }
     } else {
       InlineEmpty("No build recorded")
@@ -298,6 +303,7 @@ struct BuildHistoryRow: View {
   var entry: BuildHistoryEntry
   var now: Date
   var open: () -> Void
+  @Environment(\.workspaceAccess) private var access
 
   private var color: Color {
     switch entry.result {
@@ -334,7 +340,8 @@ struct BuildHistoryRow: View {
       }
     }
     .buttonStyle(.hoverRow(outset: Space.xs))
-    .help("Open build details")
+    .disabled(!access.isLocal)
+    .help(access.unavailableReason ?? "Open build details")
   }
 }
 

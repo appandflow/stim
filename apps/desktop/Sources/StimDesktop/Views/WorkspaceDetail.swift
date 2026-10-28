@@ -28,6 +28,7 @@ struct WorkspaceDetail: View {
   @EnvironmentObject private var actions: ActionCenter
   @EnvironmentObject private var checks: BuildPlanChecks
   @ObservedObject private var server = ServerSession.shared
+  @Environment(\.workspaceAccess) private var access
   @Environment(\.windowSize) private var windowSize
   @Environment(\.tutorialHint) private var tutorialHint
   @Environment(\.tutorialLogsHighlight) private var tutorialLogsHighlight
@@ -124,8 +125,8 @@ struct WorkspaceDetail: View {
     .navigationTitle(workspace.names.title)
     .sheet(item: $viewing) { viewed in
       DeviceViewer(
-        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? workspace, deviceID: viewed.id, machine: machine,
-        windowSize: windowSize,
+        cli: cli, env: page.apps.first { $0.path == viewed.workspace } ?? workspace, deviceID: viewed.id, owner: access.owner,
+        machine: machine, windowSize: windowSize,
         revealInLogs: { slot, at in
           logWorkspacePath = viewed.workspace
           revealAgentActions(slot: slot, at: at)
@@ -191,20 +192,21 @@ struct WorkspaceDetail: View {
       buildSheet = nil
     }
     .onReceive(OpenRequests.shared.$viewer) { request in
-      guard let request, page.apps.contains(where: { $0.path == request.workspace }) else { return }
+      guard access.isLocal, let request, page.apps.contains(where: { $0.path == request.workspace }) else { return }
       OpenRequests.shared.viewer = nil
       viewing = request
     }
     .onAppear {
+      guard access.isLocal else { return }
       if page.isUnified || !page.apps.contains(where: { $0.path == logWorkspacePath }) { logWorkspacePath = selectedPath }
     }
     .onChange(of: selectedPath) {
-      if page.isUnified {
+      if access.isLocal && page.isUnified {
         logWorkspacePath = selectedPath
       }
     }
     .task(id: page.apps.map { "\($0.path)|\($0.finishedRunsStamp)" }.joined(separator: "\n")) {
-      guard readsServer, archive == nil else { return }
+      guard readsServer, archive == nil, access.isLocal else { return }
       if page.isUnified {
         for app in page.apps {
           let path = app.path
@@ -250,6 +252,12 @@ struct WorkspaceDetail: View {
       }
       .padding(.horizontal, PageInset.horizontal)
       .padding(.vertical, Space.md)
+      if !access.isLocal {
+        PairedOwnerLine(env: workspace)
+          .frame(maxWidth: .infinity, alignment: .leading)
+          .padding(.horizontal, PageInset.horizontal)
+          .padding(.bottom, Space.md)
+      }
       let earlier = ArchivedWorkspace.newestFirst(
         archived.filter { archive in page.apps.contains { archive.isEarlierRun(of: $0.path) } })
       if archive == nil && !earlier.isEmpty {
@@ -279,6 +287,8 @@ struct WorkspaceDetail: View {
           Group {
             if archivedPage?.logsExpired == true {
               InlineEmpty("Logs expired").padding(Space.xxl)
+            } else if let reason = access.unavailableReason {
+              InlineEmpty("Logs are not available. \(reason)").padding(Space.xxl)
             } else if !readsServer {
               InlineEmpty("Archived logs are read through stim-server.").padding(Space.xxl)
             } else {
@@ -504,9 +514,12 @@ struct WorkspaceDetail: View {
       VStack(spacing: Space.lg) {
         NoDeviceArt()
         Text("No Devices").font(.stim(.headline))
-        Text("Run stim ios or stim android to launch your app.")
-          .foregroundStyle(Palette.secondary)
-          .multilineTextAlignment(.center)
+        Text(
+          access.isLocal
+            ? "Run stim ios or stim android to launch your app." : "\(access.serverName) reports no devices for this workspace."
+        )
+        .foregroundStyle(Palette.secondary)
+        .multilineTextAlignment(.center)
       }
       .padding(Space.huge)
       .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -518,11 +531,12 @@ struct WorkspaceDetail: View {
     _ device: DeviceRef, focused: Bool, cardWidth: CGFloat, cardHeight: CGFloat, owner: Workspace? = nil, project: String? = nil
   ) -> some View {
     let workspace = owner ?? self.workspace
-    let canControl = OwnedDevice(owner: .local, ref: device).offersControl(link: server.link, now: Date())
+    let canControl = OwnedDevice(owner: access.owner, ref: device).offersControl(
+      link: access.isLocal ? server.link : access.link, now: Date())
     let build = workspace.runningBuild(for: device)
     let status = DeviceTileStatus(device: device, canControl: canControl, building: build != nil)
     let tile = DeviceTile(
-      device: device, screenHeight: 900, workspace: workspace.path, project: project,
+      device: device, owner: access.owner, screenHeight: 900, workspace: workspace.path, project: project,
       build: build,
       usage: device.isRunning ? workspace.usage(of: device, machine: machine) : nil,
       presence: workspace.appPresence(device),
@@ -531,7 +545,7 @@ struct WorkspaceDetail: View {
       status: status,
       maxWidth: cardWidth, maxCardHeight: cardHeight,
       showsScreen: viewing?.id != device.id || viewing?.workspace != workspace.path,
-      onBuildLogs: macosBuildLogs(device, workspace: workspace.path), clickThrough: true
+      onBuildLogs: access.isLocal ? macosBuildLogs(device, workspace: workspace.path) : nil, clickThrough: true
     )
     return
       tile

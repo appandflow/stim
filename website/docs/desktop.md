@@ -706,9 +706,12 @@ copy, keeps pairings only until it quits and says so in the sheet.
 
 Once paired, the machine gets its own section in the sidebar, below this Mac's
 projects, with its name, a connection dot and **View Only**, or **View and Control**
-for a control pairing. Its workspaces open a page that names the machine
-controlling them, such as "Viewing floco · read-only" or "Controlled by floco",
-and where each device and build runs, such as "Running on janics-mac-mini-2".
+for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+with the devices, build, Metro and agent sections the machine reports, and a line
+under the header that names the machine controlling them, such as "Viewing floco ·
+read-only" or "Controlled by floco". Controls that need the machine's files, logs or
+`stim`, such as **Run**, **Show Logs**, build **Details** and **Review Changes**, are
+disabled with the reason as their help text.
 **Machines** lists the paired machine after your build machines, with its
 capacity, its hosted devices and its offloaded builds. When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the

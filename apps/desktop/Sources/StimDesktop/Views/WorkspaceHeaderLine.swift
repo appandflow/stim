@@ -12,6 +12,7 @@ struct WorkspaceHeaderLine: View {
   var openLogs: () -> Void
   var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.workspaceAccess) private var access
 
   #if DEBUG
     @Environment(\.fixtureDate) private var fixtureDate
@@ -21,7 +22,9 @@ struct WorkspaceHeaderLine: View {
 
   var body: some View {
     let apps = page?.apps ?? [env]
-    let active = page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first
+    let active =
+      access.isLocal
+      ? page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first : nil
     let buildingApp = apps.first { $0.build?.isRunning == true }
     let running = buildingApp?.build
     HStack(spacing: Space.md) {
@@ -47,7 +50,9 @@ struct WorkspaceHeaderLine: View {
         Text(active.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
         Button("Show Output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
       }
-      if let page {
+      if !access.isLocal {
+        PairedWorkspaceActions(env: env)
+      } else if let page {
         WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
           .padding(.trailing, -PageInset.menuGlyphOverhang)
       } else {
@@ -176,6 +181,7 @@ struct StageLine: View {
   var inlineWorkspace: String? = nil
   var gitWorkspace: String? = nil
   var openBuild: (BuildSheetSelection) -> Void
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     let stage = env.stage(now: now)
@@ -200,7 +206,8 @@ struct StageLine: View {
           BuildInlineProgress(build: build, now: now)
         }
         .buttonStyle(.hoverRow())
-        .help("Open build details")
+        .disabled(!access.isLocal)
+        .help(access.unavailableReason ?? "Open build details")
         .accessibilityHint("Opens the running build's details")
       }
       if let chip = GitChip(env.worktree) {
@@ -229,6 +236,7 @@ struct GitChipButton: View {
   var worktree: WorktreeInfo
   var workspace: String
   var readOnly = false
+  @Environment(\.workspaceAccess) private var access
   @State private var shown = false
   @State private var reviewing = false
   @State private var openError: String?
@@ -261,8 +269,10 @@ struct GitChipButton: View {
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      GitPopover(worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly)
-        .presentationBackground(Palette.surface)
+      GitPopover(
+        worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly, reviewUnavailable: access.unavailableReason
+      )
+      .presentationBackground(Palette.surface)
     }
     .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
     .alert("Could Not Open Changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
@@ -296,6 +306,7 @@ struct GitPopover: View {
   var reviewChanges: () -> Void
   var readOnly = false
   var branchFallback = "Detached HEAD"
+  var reviewUnavailable: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -310,6 +321,8 @@ struct GitPopover: View {
       if !readOnly {
         Button("Review Changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
           .buttonStyle(.stim())
+          .disabled(reviewUnavailable != nil)
+          .help(reviewUnavailable ?? "")
       }
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)

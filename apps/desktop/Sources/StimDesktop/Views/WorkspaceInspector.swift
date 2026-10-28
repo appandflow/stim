@@ -13,6 +13,7 @@ struct Inspector: View {
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
   var archive: ArchivedPage? = nil
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     ScrollView {
@@ -29,7 +30,9 @@ struct Inspector: View {
         }
 
         if archive == nil {
-          ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
+          if access.isLocal || !env.usage(machine: nil).isEmpty {
+            ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
+          }
 
           MetroLogsSection(
             env: env, reportsBundles: reportsBundles,
@@ -49,7 +52,10 @@ struct Inspector: View {
                 var query = LogQuery()
                 if archive == nil { query.sources = [.client, .device] }
                 openLogs(query)
-              }.buttonStyle(.stim()).fixedSize()
+              }
+              .buttonStyle(.stim()).fixedSize()
+              .disabled(!access.isLocal)
+              .help(access.unavailableReason ?? "")
             }
           }
           if archive?.logsExpired == true {
@@ -275,6 +281,7 @@ struct MetroLogsSection: View {
   var showsHeading = true
   var appLabel: String? = nil
   var openLogs: () -> Void
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -285,7 +292,8 @@ struct MetroLogsSection: View {
           Button("Show Logs", action: openLogs)
             .buttonStyle(.stim())
             .fixedSize()
-            .help("Open Metro logs in the workspace log viewer")
+            .disabled(!access.isLocal)
+            .help(access.unavailableReason ?? "Open Metro logs in the workspace log viewer")
         }
       }
       if let metro = env.metro, let health = env.metroHealth {
@@ -300,6 +308,7 @@ struct MetroLogsSection: View {
           if !showsHeading {
             Spacer(minLength: Space.sm)
             Button("Show Logs", action: openLogs).buttonStyle(.stim()).fixedSize()
+              .disabled(!access.isLocal).help(access.unavailableReason ?? "")
           }
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")

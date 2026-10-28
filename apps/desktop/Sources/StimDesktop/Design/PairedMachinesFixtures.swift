@@ -54,6 +54,13 @@
                   "host":{"machine":"janics-mac-mini-2:7443","session":"bot-ios-1",
                           "device":{"name":"iPhone 17 Pro","runtime":"iOS 27.0"}},
                   "activity":{"state":"driven","driver":{"tool":"Claude Code"},"basis":["driver"]}},
+           "stage":{"kind":"building","platform":"android","since":"\#(started)","closedApps":[]},
+           "worktree":{"path":"/home/bot/work/app/.worktrees/fix-login","branch":"fix/login-redirect",
+                       "repository":"/home/bot/work/app",
+                       "git":{"changed":2,"untracked":0,"upstream":"origin/fix/login-redirect","ahead":1,"behind":0},
+                       "gitChip":{"parts":[{"kind":"arrows","ahead":1,"behind":0},{"kind":"changed","count":2}],"ci":"passing"},
+                       "pullRequest":{"number":412,"url":"https://example.invalid/pull/412","title":"Fix the login redirect",
+                                      "state":"open","checks":{"passing":4,"failing":0,"pending":0}}},
            "build":{"platform":"android","slot":"default","state":"running","phase":"compile","startedAt":"\#(started)",
                     "phaseStartedAt":"\#(phase)","basis":0,
                     "placement":{"host":"janics-mac-mini-2:7443","phase":"pods","startedAt":"\#(started)",
@@ -73,34 +80,47 @@
 
     var body: some View {
       let key = WorkspaceKey(owner: .paired(pairing.id), path: "/home/bot/work/app/.worktrees/fix-login")
-      HStack(spacing: 0) {
-        List {
-          PairedSidebarSection(
-            entry: entry, session: nil, status: status, options: SidebarOptions(),
-            selection: .pairedWorkspace(key), state: state)
+      VStack(spacing: 0) {
+        if let workspace = payload?.environments.first {
+          let cli = Task { StimCLI(environment: [:]) }
+          WorkspaceDetail(
+            cli: cli, statsReader: StatsReader(cli: cli, server: { nil }), env: workspace,
+            page: WorktreePage.groups(environments: [workspace])[0], selectedPath: workspace.path, sampled: [:],
+            usage: nil, machine: nil, reportsBundles: false, history: OwnerHistory(), inspector: .column,
+            inspectorWidth: .constant(320), focusedID: .constant(nil), logQuery: .constant(LogQuery()),
+            logWorkspacePath: .constant(nil)
+          )
+          .environment(
+            \.workspaceAccess,
+            WorkspaceAccess(
+              owner: key.owner, serverName: "floco", access: access,
+              link: offline
+                ? .unavailable("Can't reach floco: The machine stopped answering. Retrying.")
+                : .open(features: ["ios-hosted", "android-hosted"], capabilities: capabilities),
+              connectionLine: offline
+                ? "Offline since \(now.addingTimeInterval(-300).formatted(date: .omitted, time: .shortened)). This is the last status floco reported."
+                : nil))
         }
-        .frame(width: 300)
-        .scrollContentBackground(.hidden)
-        .background(Palette.sidebar)
         Divider()
-        ScrollView {
-          VStack(alignment: .leading, spacing: Space.xxl) {
-            if let workspace = payload?.environments.first {
-              PairedWorkspacePage(
-                owned: OwnedWorkspace(owner: key.owner, workspace: workspace), serverName: "floco",
-                connectionLine: offline
-                  ? "Offline since \(now.addingTimeInterval(-300).formatted(date: .omitted, time: .shortened)). This is the last status floco reported."
-                  : nil,
-                access: access, view: { _ in })
-            }
-            Divider()
+        HStack(spacing: 0) {
+          List {
+            PairedSidebarSection(
+              entry: entry, session: nil, status: status, options: SidebarOptions(),
+              selection: .pairedWorkspace(key), state: state)
+          }
+          .frame(width: 300)
+          .scrollContentBackground(.hidden)
+          .background(Palette.sidebar)
+          Divider()
+          ScrollView {
             PairedMachineSection(
               entry: entry, session: nil, status: status,
               work: RemoteWork.list((payload?.environments ?? []).map { OwnedWorkspace(owner: key.owner, workspace: $0) })
             )
-            .padding(.horizontal, Space.xxxl)
+            .padding(Space.xxl)
           }
         }
+        .frame(height: 170)
       }
     }
   }
