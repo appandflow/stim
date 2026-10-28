@@ -32,7 +32,7 @@ export function readBundleSchemes(
 
 const APPLE_EPOCH_SECONDS = 978_307_200;
 
-function readPlistFile(file: string): PlistValue | null {
+export function readPlistFile(file: string): PlistValue | null {
   try {
     const data = readFileSync(file);
     return data.subarray(0, 8).toString('latin1') === 'bplist00'
