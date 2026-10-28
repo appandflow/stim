@@ -131,6 +131,24 @@ async function store(machines: DeviceHostMachineCredential[], operation?: StimCo
   else withDirLock(deviceHostMachinesLock(), write, options);
 }
 
+function notOnTailnet(
+  machine: string,
+  ambiguous: boolean,
+  stored: DeviceHostMachineCredential | undefined,
+  current: unknown,
+) {
+  const diagnosis = notOnTailnetDiagnosis(machine, ambiguous, stored ? wrongTailnet(stored, current) : null);
+  return {
+    diagnosis,
+    report: {
+      machine,
+      state: 'not-on-tailnet' as const,
+      ...(stored?.tailnet ? { tailnet: stored.tailnet } : {}),
+      diagnosis,
+    },
+  };
+}
+
 /**
  * Reports the device-host approval of each remote machine, separate from its build approval. Only --fix makes a setup
  * ticket or forgets credentials; every server key stays pinned.
@@ -259,13 +277,13 @@ export async function inspectDeviceHostMachines(
       }
       const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        const stored = credentials.find((each) => each.machine === machine);
-        const diagnosis = notOnTailnetDiagnosis(
+        const { report, diagnosis } = notOnTailnet(
           machine,
           peer === 'ambiguous',
-          stored ? wrongTailnet(stored, current) : null,
+          credentials.find((each) => each.machine === machine),
+          current,
         );
-        inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
+        inspected.machines.push(report);
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }

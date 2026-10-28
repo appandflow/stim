@@ -94,7 +94,7 @@ export function wrongTailnetDiagnosis(entry: string, wrong: WrongTailnet): Remot
     layer: 'peer',
     code: 'peer-wrong-tailnet',
     title: 'Other Tailscale account',
-    message: `${entry} approved this Mac while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. This Mac is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
+    message: `This Mac asked ${entry} for access while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. This Mac is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
     remedy: `Switch Tailscale on this Mac to ${tailnetLabel(wrong.recorded)}${owner}, then run \`stim doctor\` again.`,
   };
 }

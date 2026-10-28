@@ -594,8 +594,9 @@ leased until <time>" for each one.`,
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
                   peer-wrong-tailnet (no peer is named so, and this Mac is
-                  signed in to another tailnet than the one it was on when the
-                  machine approved it; both are named),
+                  signed in to another tailnet than the one it was on when it
+                  asked the machine for access; both are named; tailnet is
+                  { name, suffix?, id? }),
                   peer-offline (with last seen), peer-no-answer (the connection
                   got no reply and tailscale ping fails), route-missing (nothing accepts
                   connections on the serve port), route-tls, route-http-error
