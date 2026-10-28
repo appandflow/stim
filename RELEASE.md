@@ -424,7 +424,7 @@ and repeat the affected gate rather than waiving it.
 
    ```bash
    git fetch origin
-   git tag -a vX.Y.Z -m "vX.Y.Z" "$release_commit"
+   git tag -a vX.Y.Z -m "vX.Y.Z" <release-commit-sha>
    git push origin vX.Y.Z
    ```
 
@@ -534,7 +534,7 @@ and repeat the affected gate rather than waiving it.
 
   ```bash
   gh run list --workflow "Post-release validation" --branch vX.Y.Z --json databaseId,status,conclusion,url
-  gh api "repos/appandflow/stim/actions/runs?head_sha=$release_commit&event=push&per_page=100" \
+  gh api "repos/appandflow/stim/actions/runs?head_sha=<release-commit-sha>&event=push&per_page=100" \
     --jq '.workflow_runs[] | select(.name == "CI" or .name == "Native E2E") | [.name, .status, .conclusion, .html_url] | @tsv'
   ```
 
