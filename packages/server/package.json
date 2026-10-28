@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/server",
-  "version": "1.32.0",
+  "version": "1.35.0",
   "description": "Serves Stim status to paired clients over Tailscale, and runs reload and stop for clients granted control.",
   "license": "MIT",
   "repository": {
@@ -33,7 +33,6 @@
   "dependencies": {
     "@stim-cli/agent-driver": "workspace:*",
     "@stim-cli/agent-driver-agent-device": "workspace:*",
-    "@stim-cli/cache": "workspace:*",
     "@stim-cli/core": "workspace:*",
     "@stim-cli/transport": "workspace:*",
     "@stim-cli/transport-local": "workspace:*",

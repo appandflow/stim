@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { isJsonObject, type Config } from '@stim-cli/core/state';
+import { isJsonObject, readCreatedDevices, type Config } from '@stim-cli/core/state';
 import { getExecutor } from '../../exec.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
@@ -57,6 +57,7 @@ interface InventorySystemImage {
   package: string;
   directory: string;
   avdCount: number;
+  stimInstalled: boolean;
   command: string;
 }
 
@@ -158,7 +159,7 @@ function buildInventory({
   sims: readonly IosSimRecord[];
   avds: readonly AvdRecord[];
   runtimes: readonly SimRuntimeRecord[];
-  systemImages: readonly { pkg: string; directory: string }[];
+  systemImages: readonly { pkg: string; directory: string; stimInstalled: boolean }[];
   config: Config | null;
   deadProjects?: readonly string[];
   env: NodeJS.ProcessEnv;
@@ -252,6 +253,7 @@ function buildInventory({
       package: image.pkg,
       directory: image.directory,
       avdCount: avdsByImage.get(image.pkg) ?? 0,
+      stimInstalled: image.stimInstalled,
       command: sdkmanagerCommand(image.pkg, env),
     })),
   };
@@ -373,13 +375,19 @@ export async function collectInventory(
     }
   }
   const imagesRoot = join(androidHome(env), 'system-images');
+  const installedByStim = readCreatedDevices().systemImages;
   const images = listInstalledSystemImages(
     (error) => notices.push(unreadableNotice('Android system images', error, env)),
     env,
-  ).map((image) => ({
-    pkg: image.pkg,
-    directory: join(imagesRoot, `android-${image.api}`, image.tag, image.arch),
-  }));
+    { includePartial: true },
+  ).map((image) => {
+    const directory = join(imagesRoot, `android-${image.api}`, image.tag, image.arch);
+    let canonical = directory;
+    try {
+      canonical = realpathSync(directory);
+    } catch {}
+    return { pkg: image.pkg, directory, stimInstalled: installedByStim.has(canonical) };
+  });
   return {
     ...buildInventory({
       sims,

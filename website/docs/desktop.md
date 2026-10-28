@@ -183,9 +183,10 @@ prompt shows only while it is the current step. The step lists only workspace
 issues that block it, as a sentence with its fix below; Finish and Delete hide
 the warnings that stopping the workspaces causes.
 
-Progress stays in this app's preferences. Closing the panel preserves it;
-Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
-its path, and an archived tour opens at Delete the Test App. Every step has
+Progress stays in this app's preferences. Closing the panel preserves it and
+keeps the tutorial closed at later launches; Help > Stim Tutorial, the Discover page and the
+tutorial tip reopen it where you left off. An unfinished tutorial you have not closed
+resumes at launch when Stim still lists its path, and an archived tour opens at Delete the Test App. Every step has
 **Skip step**, which moves on without waiting for a signal. It records the step as
 done when its checks are all ticked or Desktop detected it, and as skipped
 otherwise. Steps Desktop detects move on by themselves; the first step explains this. The bottom-left **Restart Tutorial** control is the only restart button on the summary screen, which starts over at Get the Test App as on a
@@ -705,9 +706,12 @@ copy, keeps pairings only until it quits and says so in the sheet.
 
 Once paired, the machine gets its own section in the sidebar, below this Mac's
 projects, with its name, a connection dot and **View Only**, or **View and Control**
-for a control pairing. Its workspaces open a page that names the machine
-controlling them, such as "Viewing floco · read-only" or "Controlled by floco",
-and where each device and build runs, such as "Running on janics-mac-mini-2".
+for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+with the devices, build, Metro and agent sections the machine reports, and a line
+under the header that names the machine controlling them, such as "Viewing floco ·
+read-only" or "Controlled by floco". Controls that need the machine's files, logs or
+`stim`, such as **Run**, **Show Logs**, build **Details** and **Review Changes**, are
+disabled with the reason as their help text.
 **Machines** lists the paired machine after your build machines, with its
 capacity, its hosted devices and its offloaded builds. When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the

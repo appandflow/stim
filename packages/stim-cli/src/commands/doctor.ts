@@ -11,6 +11,7 @@ import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import {
   projectSettingsContextAsync,
+  resolveAndroidLayout,
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
@@ -34,7 +35,8 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import { runDoctor } from '../diagnostics/doctor.ts';
+import { androidImageDecision, runDoctor } from '../diagnostics/doctor.ts';
+import { installSystemImage } from '../devices/android-image.ts';
 import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
@@ -480,7 +482,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());
@@ -505,6 +507,25 @@ export default function doctorCommand(
             console.error(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
             process.exitCode = 1;
           }
+        }
+        const image =
+          settings &&
+          androidImageDecision(
+            opts.platform,
+            resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root),
+            settings,
+            process.env,
+          );
+        if (image?.kind === 'install') {
+          const installed = await installSystemImage({
+            pkg: image.pkg,
+            env: process.env,
+            note: (line) => console.error(phaseLine('image', line)),
+          });
+          if (!installed.ok) {
+            console.error(phaseLine('image', `${installed.message} ${installed.remedy}`));
+            process.exitCode = 1;
+          } else if (installed.installed) console.error(phaseLine('image', `installed ${image.pkg}`));
         }
         const nestedToFix = await inspectNestedWorktrees(root);
         const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));

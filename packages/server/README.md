@@ -790,6 +790,15 @@ selected SDK `choice` (runtime/model/image and host architecture), `resources`,
 with a reason; elevated memory pressure, or a sample that cannot be read after one retry, declines with its own reason. The query creates
 no session, simulator, AVD or ownership claim.
 
+An Android offer whose image is not installed on the host carries
+`installImage`, the sdkmanager package the host installs before it creates the
+AVD, when the host's machine `android.installImages` is `auto`, the image
+matches its ABI, its SDK licenses are accepted and it has cmdline-tools and
+8 GB free. Otherwise the offer declines with the command to run on the host.
+Reserve then runs the install in the server's own Stim home and `ANDROID_HOME`,
+for up to 30 minutes, while the session stays `preparing`; an install that
+fails stops the session with the refusal as its `notice`.
+
 `capacity.running` counts every simulator or emulator reservation not confirmed
 stopped, including unresolved sessions, plus the host's own booted `stim-*`
 devices in `capacity.local`. A session's simulator counts once, whether or not
@@ -1884,7 +1893,11 @@ connected since stim-server started keeps its directory when revoked.
   checkout has no copy of. With the `fingerprint-tracked` feature, it can
   send `fingerprintTracked`, the top-level entry names of `project` that its
   git tracks although an ignore pattern matches them, which the machine's
-  empty index would skip. It returns `{ "job" }`. It fails with
+  empty index would skip. With the `build-reuse-artifact` feature, a caller
+  that sets `podsOnWorker` can also set `reuseArtifact: true` when its cache
+  reads allow it; a job whose fingerprint after `pod install` differs from
+  `fingerprint` then returns the development archive this machine retained
+  under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

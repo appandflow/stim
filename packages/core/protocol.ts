@@ -82,6 +82,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -139,6 +140,7 @@ export const FEATURES = [
   'server-update',
   'build-compat',
   'build-jdk',
+  'build-reuse-artifact',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
@@ -1234,6 +1236,18 @@ export interface BuildStartParams {
   /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
   jdk?: string;
   cacheArtifact?: boolean;
+  /**
+   * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
+   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
+   * reports its own instead of refusing. An older machine ignores it.
+   */
+  podsOnWorker?: boolean;
+  /**
+   * With `podsOnWorker`, from a caller that saw `build-reuse-artifact`: the client's cache reads allow the machine to
+   * return the development app it retained under its own fingerprint after pod install instead of compiling. A
+   * non-Debug request never carries it, because a retained app carries its builder's JS.
+   */
+  reuseArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -1262,6 +1276,8 @@ export type BuildJobOutcome =
       ok: true;
       artifact: BuildArtifactResult;
       fingerprint: string | null;
+      /** The machine returned the app it retained under `fingerprint` instead of compiling. */
+      reused?: true;
       sourceDigest?: string;
       androidPackage?: string;
       compilationCache: Record<string, unknown>;

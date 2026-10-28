@@ -69,8 +69,11 @@ version. The tools Stim starts inherit the override.
   With no SDK there and no `android/local.properties`, `stim doctor --platform
 android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
   before Gradle runs.
-- For an emulator, an installed Android system image matching the host:
-  `arm64-v8a` on ARM64 or `x86_64` on x64.
+- For an emulator, an Android system image matching the host: `arm64-v8a` on
+  ARM64 or `x86_64` on x64. When none is installed, `stim android` installs
+  `system-images;android-36;google_apis;<host ABI>` with the SDK's
+  `cmdline-tools/latest/bin/sdkmanager`, which needs the SDK licenses accepted
+  (`sdkmanager --licenses`) and 8 GB free.
 - A working Java and Gradle setup for the project.
 - Without a JDK or the Android SDK, a React Native or Expo app builds and runs
   on a paired machine approved for builds and hosted emulators:

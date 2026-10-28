@@ -139,7 +139,7 @@ reported to the client. An Android emulator's media volume is set to zero
 the same way; neither changes the host's own volume. Debug keeps Metro on this machine
 and carries it over connections this machine opens to the host, so the host
 never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
-`--remote-build` independently selects a compatible worker for a Debug cache
+`--remote-build` independently selects a compatible worker for a cache
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
@@ -272,7 +272,12 @@ stim stop`} />
 
 `android.remote` sets the default (machine scope for every app on this machine; a workspace, repo or committed value overrides it). `--system-image` and
 `--device-profile` select choices installed on the host; the build targets
-its offered ABI. `--remote-build` remains independent. Named hosting is strict:
+its offered ABI. When the host has no matching system image and its machine
+`android.installImages` is `auto`, stim-server installs one with the host's own
+SDK before it creates the emulator, and the client prints
+`image  installing <package> on <mac>` while it waits. The host's licenses must
+already be accepted there; otherwise the run refuses with the command to run on
+the host. `--remote-build` remains independent. Named hosting is strict:
 refusal or an unreachable host fails with `STIM_HOSTING_REFUSED`. Stop before
 changing hosts or moving between local and hosted devices. `--device` with
 `--remote <machine>`, a running local emulator in that slot, and
@@ -374,9 +379,15 @@ Install the client CLI globally or run it with npx:
 
 <StimInstallTabs />
 
-A remote machine can compile iOS simulator Debug, Android emulator debug and
-macOS SwiftPM Debug apps. Android builds on a
-worker machine need Java and the Android SDK. Device and Release/non-Debug builds,
+A remote machine can compile iOS simulator Debug and Release apps, Android
+emulator debug and macOS SwiftPM Debug apps. An iOS Release app built there
+carries the JavaScript of the checkout this machine synced, including gitignored
+`.env.production` files, so a machine without Xcode, such as Linux, can run
+`stim ios --configuration Release --remote-build <mac>`. The worker bundles it
+in its own environment: an `EXPO_PUBLIC_` variable set only in this shell is not
+applied; put it in an `.env` file.
+Android builds on a
+worker machine need Java and the Android SDK. Device builds, Android release variants,
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 
@@ -392,11 +403,18 @@ and no simulator SDK, such as a Linux or Windows machine, has nothing to match:
 the worker's Xcode, simulator SDK and CocoaPods are the build's toolchain, the
 client skips `pod install` and leaves it to the worker, and
 `stim ios --remote <mac> --remote-build <mac>` runs the app on a simulator that
-Mac hosts while Metro stays on the client. The worker's `pod install` must not
-change files the fingerprint covers, so commit `Podfile.lock` and the
-CocoaPods-integrated Xcode project; otherwise the build fails with
-`fingerprint-mismatch`, and the fix is to run `pod install` once on a Mac and
-commit what it changed. Native Xcode apps without React Native still need Xcode
+Mac hosts while Metro stays on the client. When the worker's `pod install`, or
+a file it generates there such as the `.xcworkspace`, changes only
+fingerprint sources in the iOS project, the worker fingerprints again and builds
+and stores the app under its own fingerprint after `pod install`, and the client
+stores it under that key too. The client's own fingerprint does not compute
+that key, so each run offloads and runs `pod install` on the worker again; unless
+`--no-build-cache` is passed, the worker then reuses the app it built under that
+key instead of compiling. A stale `Podfile.lock` is worth regenerating on a Mac
+and committing. Any other difference, such as the
+app config, still fails with `fingerprint-mismatch`. A client with Xcode runs
+`pod install` itself, so there a change on the worker fails with
+`fingerprint-mismatch`. Native Xcode apps without React Native still need Xcode
 on the client. When the worker has no
 usable Xcode, `stim doctor` and the Tools step say why and give the command to
 run on the worker: `sudo xcode-select -s /Applications/<Xcode>.app/Contents/Developer`

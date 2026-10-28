@@ -226,7 +226,12 @@ test('gc names a ledgered browser profile whose directory is gone, never one on 
   const gone = '/stim/workspaces/a/web/profile';
   const kept = '/stim/workspaces/b/web/profile';
   const unmounted = '/Volumes/Off/stim/workspaces/c/web/profile';
-  const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([gone, kept, unmounted]) };
+  const ledger = {
+    ios: new Set<string>(),
+    android: new Set<string>(),
+    web: new Set([gone, kept, unmounted]),
+    systemImages: new Set<string>(),
+  };
   const present = new Set(['/stim/workspaces', kept]);
   expect(staleBrowserProfiles(ledger, (path) => present.has(path))).toEqual([{ kind: 'web', id: gone }]);
 });
@@ -238,7 +243,12 @@ test.skipIf(process.platform === 'win32')(
     mkdirSync(workspaces);
     symlinkSync(join(home, 'unmounted', 'ws'), join(workspaces, 'ws'));
     const profile = join(workspaces, 'ws', 'web', 'profile');
-    const ledger = { ios: new Set<string>(), android: new Set<string>(), web: new Set([profile]) };
+    const ledger = {
+      ios: new Set<string>(),
+      android: new Set<string>(),
+      web: new Set([profile]),
+      systemImages: new Set<string>(),
+    };
     expect(staleBrowserProfiles(ledger)).toEqual([]);
   },
 );

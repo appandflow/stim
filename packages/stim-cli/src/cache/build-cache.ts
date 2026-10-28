@@ -329,6 +329,12 @@ export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
   return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
+/** The env files only a production bundle of an Expo app reads, beside the ones `expoEnvFiles` lists. */
+export function expoProductionEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
+  return ['.env.production.local', '.env.production'];
+}
+
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');
 
 /**
@@ -696,6 +702,10 @@ function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
 }
 
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
+  return mergeMovedPackages(sourceListChanges(previous, current));
+}
+
+function sourceListChanges(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
     const name = sourceName(source);
@@ -720,7 +730,35 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   for (const [name, before] of previousByName) {
     if (!seen.has(name)) changes.push({ name, change: 'removed', reasons: before.reasons });
   }
-  return mergeMovedPackages(changes);
+  return changes;
+}
+
+/**
+ * Whether `current` differs from `previous` in at least one source, and only in file or directory sources whose
+ * normalized path lies inside `dir`.
+ */
+export function changedOnlyInside(previous: unknown[], current: unknown[], dir: string): boolean {
+  const contents = new Set(
+    current.flatMap((source) =>
+      typeof source === 'object' &&
+      source !== null &&
+      'type' in source &&
+      source.type === 'contents' &&
+      'id' in source &&
+      typeof source.id === 'string'
+        ? [source.id]
+        : [],
+    ),
+  );
+  const changes = sourceListChanges(previous, current);
+  return (
+    dir !== '.' &&
+    changes.length > 0 &&
+    changes.every(
+      ({ name }) =>
+        !contents.has(name) && posix.normalize(name) === name && (name === dir || name.startsWith(`${dir}/`)),
+    )
+  );
 }
 
 export function diffFingerprintSources({

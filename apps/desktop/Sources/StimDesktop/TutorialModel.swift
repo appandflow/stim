@@ -123,10 +123,10 @@ final class TutorialModel: ObservableObject {
     let offered = AppPreferences.offersTutorial(defaults)
     if launchPending, let saved, offered {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
-        openPending = saved.step != "done"
+        openPending = saved.reopensAtLaunch
         launchPending = false
       } else if saved.tourPath == nil, saved.step != "done" {
-        openPending = true
+        openPending = saved.reopensAtLaunch
         launchPending = false
       }
     } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
@@ -182,6 +182,7 @@ final class TutorialModel: ObservableObject {
       logs = []
       viewerEventSequence = viewerEvents.last?.sequence ?? 0
     }
+    setDismissed(false)
     isOpen = true
     launchPending = false
     refresh(now: now)
@@ -236,9 +237,15 @@ final class TutorialModel: ObservableObject {
   }
 
   func close() {
+    setDismissed(true)
     isOpen = false
     openPending = false
     syncFollowers()
+  }
+
+  private func setDismissed(_ dismissed: Bool) {
+    progress.setDismissed(dismissed)
+    records.record?.dismissed = dismissed ? true : nil
   }
 
   func next() {

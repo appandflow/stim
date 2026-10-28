@@ -193,9 +193,14 @@ export function findBuildTool(
   return null;
 }
 
+/**
+ * Lists the system images in the SDK. An image sdkmanager is still installing, or left mid-install, is left out unless
+ * `includePartial` asks for it.
+ */
 export function listInstalledSystemImages(
   onUnreadable?: (error: unknown) => void,
   env: NodeJS.ProcessEnv = ambientEnv(),
+  { includePartial = false }: { includePartial?: boolean } = {},
 ): SystemImage[] {
   const root = join(androidHome(env), 'system-images');
   const images: SystemImage[] = [];
@@ -214,6 +219,9 @@ export function listInstalledSystemImages(
     const apiPath = join(root, apiDir);
     for (const tag of list(apiPath)) {
       for (const arch of list(join(apiPath, tag))) {
+        // sdkmanager (AbstractPackageOperation in cmdline-tools' tools.repository.jar) keeps `.installer` in a
+        // package's destination while it installs and deletes it when the package is complete.
+        if (!includePartial && existsSync(join(apiPath, tag, arch, '.installer'))) continue;
         images.push({ api: Number(m[1]), tag, arch, pkg: `system-images;${apiDir};${tag};${arch}` });
       }
     }

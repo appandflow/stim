@@ -1155,7 +1155,6 @@ describe('explicit build placement', () => {
   it.each([
     'device builds build here',
     '--remote builds build here',
-    'Release builds build here',
     'Apple Clang CAS builds build here',
     'the build cache is off',
     'the runtime of simulator U1 is unknown',
@@ -1164,12 +1163,13 @@ describe('explicit build placement', () => {
       expect.objectContaining({
         code: 'STIM_OFFLOAD_REFUSED',
         message: `mini: ${unsupported}, so a named remote machine cannot take it`,
+        remedy: expect.not.stringContaining('doctor --fix'),
       }),
     );
   });
 
-  it.each(['auto', 'remote', 'local'])('%s keeps unsupported Release and device builds here', (selected) => {
-    for (const unsupported of ['Release builds build here', 'device builds build here']) {
+  it.each(['auto', 'remote', 'local'])('%s keeps unsupported device and CAS builds here', (selected) => {
+    for (const unsupported of ['Apple Clang CAS builds build here', 'device builds build here']) {
       expect(offloadPlacement({ selected, here: IDLE, machines: 1, unsupported }).offload).toBe(false);
     }
   });

@@ -5,6 +5,8 @@ import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
+import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
 async function main(): Promise<void> {
@@ -18,7 +20,7 @@ async function main(): Promise<void> {
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   if (
     !isJsonObject(input) ||
-    !['prepare', 'stop', 'install', 'offer', 'count', 'logs', 'reverse', 'park', 'inspect', 'adopt'].includes(
+    !['prepare', 'stop', 'install', 'offer', 'count', 'image', 'logs', 'reverse', 'park', 'inspect', 'adopt'].includes(
       String(input.mode),
     )
   )
@@ -45,6 +47,20 @@ async function main(): Promise<void> {
     const request = parseHostedOfferRequest(input);
     if (!request) throw new Error('Invalid hosted offer selectors.');
     process.stdout.write(`${JSON.stringify(await inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
+    return;
+  }
+  if (input.mode === 'image') {
+    if (input.systemImage !== undefined && typeof input.systemImage !== 'string')
+      throw new Error('Invalid hosted image request.');
+    const image = await ensureSystemImage({
+      requested: input.systemImage ?? null,
+      policy: androidImageInstallPolicy(loadConfig()),
+      env: process.env,
+      note: () => {},
+    });
+    process.stdout.write(
+      `${JSON.stringify(image.ok ? { state: 'ready' } : { state: 'refused', notice: `${image.message} ${image.remedy}` })}\n`,
+    );
     return;
   }
   if (process.platform !== 'darwin') {

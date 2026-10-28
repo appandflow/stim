@@ -6,6 +6,7 @@ import {
   reactNativeArtifactReceipt,
   reactNativeArtifactToolchain,
   reactNativeBuildQuery,
+  reusedReactNativeArtifact,
 } from './react-native-artifact.ts';
 import { apkPackage, dumpApkManifest } from '../commands/android/support.ts';
 import {
@@ -31,7 +32,12 @@ import {
 import { basename, delimiter, dirname, join, relative, sep } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
-import { compareSourceLists, fingerprintProject, refingerprintAfterMutation } from '../cache/build-cache.ts';
+import {
+  changedOnlyInside,
+  compareSourceLists,
+  fingerprintProject,
+  refingerprintAfterMutation,
+} from '../cache/build-cache.ts';
 import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
@@ -134,6 +140,12 @@ export interface WorkerJob {
   /** The top-level entries the client counted although an ignore pattern matches them; this checkout has no index. */
   expectedTracked?: string[];
   cacheArtifact?: boolean;
+  /** The client has no Xcode and left pod install to this machine, which may then rekey sources in the iOS project. */
+  podsOnWorker?: boolean;
+  /** The client's cache reads allow the app stim-server retained under the fingerprint after this machine's pod install. */
+  reuseArtifact?: boolean;
+  /** The directory of stim-server's retained artifacts for this client's repository. */
+  artifactCache?: string;
   stimBuild?: string;
   compat?: number;
   /** The JDK major the client builds on; the build runs on an installed JDK of it when the default differs. */
@@ -159,6 +171,7 @@ export type WorkerResult =
       ok: true;
       artifact: { path: string; name: string; size: number; sha256: string };
       fingerprint: string | null;
+      reused?: true;
       androidPackage?: string;
       sourceDigest?: string;
       cacheArtifact?: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt };
@@ -473,6 +486,23 @@ function fingerprintMismatch(
 }
 
 /**
+ * Why the synced checkout does not build under the client's fingerprint, or null. A client without Xcode left pod
+ * install to this machine and cannot have the files it rewrites or generates in `iosDir`, so a fingerprint that
+ * differs only in sources there stands; any other difference, such as the app config, still refuses.
+ */
+function fingerprintRefusal(
+  job: WorkerJob,
+  iosDir: string,
+  built: { hash: string; sources: readonly unknown[] },
+  mutated: () => { steps: readonly string[]; files: readonly string[] },
+): string | null {
+  if (built.hash === job.expectedFingerprint) return null;
+  if (job.podsOnWorker && job.expectedSources && changedOnlyInside(job.expectedSources, [...built.sources], iosDir))
+    return null;
+  return fingerprintMismatch(job, built.hash, built.sources, mutated());
+}
+
+/**
  * Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`, and
  * reports which Node the build runs on.
  */
@@ -748,6 +778,8 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       const pods = podAction(podState, podsAreStale(podState.lockText, podState.manifestText, podState.dir));
       if (pods.install) {
         note('pods', `${pods.reason ?? 'Pods are stale'} -> pod install`);
+        // CocoaPods refuses an external-source pod such as hermes-engine whose version differs from the one stored here
+        rmSync(join(iosProject.dir, 'Pods', 'Local Podspecs'), { recursive: true, force: true });
         const result = await time('podsMs', () =>
           runPodInstall(realRoot, log, { directory: iosProject.dir, onHeartbeat: (line) => note('pods', line) }),
         );
@@ -774,19 +806,17 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
       sources = after.sources;
       if (mutations.includes('expo prebuild')) recordPrebuild(realRoot, platform, after.hash);
     }
-    if (fingerprint !== job.expectedFingerprint) {
-      return failed(
-        'fingerprint-mismatch',
-        fingerprintMismatch(job, fingerprint, sources, {
-          steps: mutations,
-          files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
-        }),
-      );
-    }
+    const refused = fingerprintRefusal(job, iosProject.relative, { hash: fingerprint, sources }, () => ({
+      steps: mutations,
+      files: mutations.length ? rewrittenFiles(src, job.manifest, mirrored.record) : [],
+    }));
+    if (refused) return failed('fingerprint-mismatch', refused);
 
     const tools = job.cacheArtifact ? await reactNativeArtifactToolchain(platform, realRoot, iosProject.dir) : null;
     const query = tools ? reactNativeBuildQuery(job, fingerprint, job.project, tools) : null;
     const receipt = query ? reactNativeArtifactReceipt(query, tools) : null;
+    const reused = await reuseRetained(job, query, mutations, time);
+    if (reused) return { ok: true, artifact: reused, fingerprint, reused: true, compilationCache: {}, timings };
     compiled =
       platform === 'android'
         ? await compileAndroid(job, realRoot, log, time, androidLayout)
@@ -843,6 +873,26 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
 }
 
 type Timer = <T>(key: keyof WorkerTimings, run: () => T | Promise<T>) => Promise<T>;
+
+/** The app stim-server retained under the fingerprint after `mutations`, in place of compiling; null builds. */
+async function reuseRetained(
+  job: WorkerJob,
+  query: ReturnType<typeof reactNativeBuildQuery>,
+  mutations: readonly string[],
+  time: Timer,
+): Promise<Awaited<ReturnType<typeof reusedReactNativeArtifact>>> {
+  if (!query) return null;
+  try {
+    const reused = await time('packageMs', () =>
+      reusedReactNativeArtifact(job, query, join(job.area, 'out', job.job), AbortSignal.timeout(600_000)),
+    );
+    if (reused) note('cache', `hit ${query.fingerprint.slice(0, 12)} (post-${mutations.join(', ')} key)`);
+    return reused;
+  } catch (error) {
+    note('cache', `could not reuse the retained app: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
 
 type Compiled =
   | {

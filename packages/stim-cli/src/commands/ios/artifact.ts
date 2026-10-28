@@ -68,7 +68,7 @@ import type { CacheHitLevel, CompilationCacheActivity } from '../../engine/build
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import type { IosDeps } from './dependencies.ts';
 import { finishIosUpload } from './result.ts';
-import { PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
+import { isReleaseConfiguration, PLATFORM, printDiagnostics, xcodeFailureReport } from './support.ts';
 import {
   IosRecipeRefusal as ArtifactRefusal,
   type IosArtifactRecipe,
@@ -179,6 +179,8 @@ export async function acquireIosArtifact(
 ): Promise<IosArtifactResult> {
   const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const cachePolicy = cache.policy;
+  const release = isReleaseConfiguration(configuration);
+  const embedsJs = (runtime: string) => release && !recipe.offload?.request(runtime).native;
   const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
   let useBuildCache = cachePolicy.read;
@@ -517,6 +519,7 @@ export async function acquireIosArtifact(
       if (
         placement.code === 'this-mac-free' &&
         runtime &&
+        !embedsJs(runtime) &&
         useBuildCache &&
         cachePolicy.remote &&
         recipe.offload !== undefined
@@ -568,7 +571,7 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
-      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native
+      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native && !release
         ? { reactNativeArtifact: { fingerprint: storeHash, request: offload.request(candidate.runtime) } }
         : {}),
       ...(useBuildCache &&
@@ -635,15 +638,30 @@ export async function acquireIosArtifact(
     let stored: string | null = null;
     let reason = outcome.ok ? null : outcome.reason;
     if (outcome.ok) {
+      const rekeyed = outcome.builtFingerprint ? recipe.offload?.rekeyed?.(outcome.builtFingerprint) : undefined;
       if (!(await recipe.offload!.unchanged())) {
         reason = 'the checkout here changed while it built';
       } else {
+        if (rekeyed) {
+          note(
+            chalk.dim(
+              phaseLine(
+                'fingerprint',
+                `${shortHash(storeHash)} -> ${shortHash(rekeyed.hash)} (as ${outcome.machine} built it)`,
+              ),
+            ),
+          );
+          storeHash = rekeyed.hash;
+          storeKey = rekeyed.key;
+          buildFailure = { ...buildFailure, fingerprint: storeHash, cacheKey: storeKey };
+        }
         try {
           stored =
-            (await recipe
-              .cache()
-              .store({ ...cacheTarget(storeKey), sourcePath: outcome.artifactPath, overwrite: !useBuildCache })) ??
-            null;
+            (await recipe.cache().store({
+              ...cacheTarget(storeKey),
+              sourcePath: outcome.artifactPath,
+              overwrite: !useBuildCache || (embedsJs(runtime) && !outcome.cacheHit),
+            })) ?? null;
         } catch (e) {
           reason = `could not store the app: ${(e as Error)?.message || e}`;
         }
@@ -654,7 +672,11 @@ export async function acquireIosArtifact(
     } catch {}
     throwIfCancelled(signal, 'offloaded build cache copy');
     step('compile');
-    const prepared = stored ? await installableCachedApp(stored) : null;
+    const prepared = !stored
+      ? null
+      : outcome.ok && outcome.cacheHit
+        ? await installableCachedApp(stored)
+        : await recipe.materialize(stored, { fresh: true, ownTemporary: (directory) => run.own(directory) });
     if (!outcome.ok || !prepared) {
       const why = reason ?? 'the stored app is not installable';
       if (candidate.cacheOnly) return false;

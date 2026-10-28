@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reactNativeArtifactIdentity, reactNativeArtifactQuery } from '@stim-cli/core';
-import { BuildArtifactCache } from '../src/build-artifact-cache.ts';
+import { BuildArtifactCache } from 'stim/build-artifact-cache';
 import { BuildHost } from '../src/build.ts';
 import * as artifactQuery from '../src/artifact-query.ts';
 import type { WebSocket } from 'ws';
@@ -627,6 +627,81 @@ else {
       });
       expect(Buffer.concat(frames.map((frame) => frame.subarray(32))).toString()).toBe('verified RN archive');
       expect(host.running()).toBe(0);
+    } finally {
+      session.close(false);
+      await host.close();
+    }
+  },
+);
+
+test.each([true, false])(
+  'an RN build under the fingerprint after the worker pod install is kept under that fingerprint only for a client that left pod install there: %s',
+  async (podsOnWorker) => {
+    const query = reactNativeArtifactQuery({
+      project: '',
+      fingerprint: 'after-pods',
+      platform: 'ios',
+      isExpo: false,
+      toolchain: { stimBuild: 'b1', arch: 'arm64', xcode: 'Xcode 27', simulatorSdk: '27', cocoapods: '1.16.2' },
+      ios: {
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: null,
+        projectPath: 'ios',
+        optimizations: { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
+      },
+    });
+    if (!query) throw new Error('Invalid fixture query.');
+    const worker = join(root, 'rn-worker.mjs');
+    await writeFile(
+      worker,
+      `
+import {createHash} from 'node:crypto';
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+const query = JSON.parse(process.env.TEST_RN_QUERY);
+const receipt={query,toolchain:{}};
+const hash = createHash('sha256').update(JSON.stringify(receipt)).digest('hex');
+if (process.argv[2].startsWith('offer')) console.log(JSON.stringify({...query.toolchain,runtimes:['iOS-27-0']}));
+else {
+ let text=''; for await (const chunk of process.stdin) text+=chunk; const input=JSON.parse(text);
+ const out=join(input.area,'out',input.job); mkdirSync(out,{recursive:true});
+ const bytes='rn archive'; writeFileSync(join(out,'app.tgz'),bytes);
+ console.log(JSON.stringify({type:'result',ok:true,fingerprint:query.fingerprint,
+  artifact:{name:'Sample.app',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')},
+  compilationCache:{},timings:{},reactNativeArtifact:{identity:{hash,key:'react-native-ios-'+hash},receipt}}));
+}
+`,
+    );
+    await mkdir(join(root, 'home'), { recursive: true });
+    await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100000 } }));
+    const host = new BuildHost({ worker, env: { ...process.env, TEST_RN_QUERY: JSON.stringify(query) } });
+    const session = host.session('builder', { OPEN: 1, readyState: 1, bufferedAmount: 0, send: () => {} }, () => {});
+    try {
+      const job = host.launch({
+        client: 'builder',
+        repo: 'rn-1',
+        session,
+        send: () => {},
+        job: {
+          platform: 'ios',
+          project: '',
+          expectedFingerprint: 'before-pods',
+          cacheArtifact: true,
+          ...(podsOnWorker ? { podsOnWorker } : {}),
+        },
+      });
+      if ('error' in job) throw new Error(job.error.message);
+      await job.done;
+      const offered = async (fingerprint: string) => {
+        const result = await host.offer('builder', { repo: 'rn-1', reactNativeArtifact: { ...query, fingerprint } });
+        if ('error' in result) throw new Error(result.error.message);
+        return result.result.artifact !== null;
+      };
+      expect({ before: await offered('before-pods'), after: await offered('after-pods') }).toEqual({
+        before: false,
+        after: podsOnWorker,
+      });
     } finally {
       session.close(false);
       await host.close();

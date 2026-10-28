@@ -17,6 +17,7 @@ import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
+import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -3371,6 +3372,33 @@ describe('devClientScheme', () => {
       expect(devClientScheme(dir, '/b/Fixture.app', { exec })).toBe('io.tlon.groups');
     },
   );
+
+  test("reads the scheme from the bundle's binary Info.plist where plutil does not exist", () => {
+    const dir = project(null, withDevClient);
+    const app = join(dir, 'Fixture.app');
+    mkdirSync(app);
+    writeFileSync(
+      join(app, 'Info.plist'),
+      Buffer.from(
+        'YnBsaXN0MDDYAQIDBAUGBwgJCgsMDRgtMF8QEkNGQnVuZGxlSWRlbnRpZmllcl8QGE5TQ2FtZXJhVXNhZ2VEZXNjcmlwdGlvbl8Q' +
+          'EkxTUmVxdWlyZXNJUGhvbmVPU18QE0NGQnVuZGxlRGlzcGxheU5hbWVfEBBDRkJ1bmRsZVVSTFR5cGVzXxAbTFNBcHBsaWNhdGlv' +
+          'blF1ZXJpZXNTY2hlbWVzXlVJRGV2aWNlRmFtaWx5XFJDVE1ldHJvUG9ydF8QD2NvbS5leGFtcGxlLmFwcG8QHQBVAHMAZQBzACAA' +
+          'dABoAGUAIABjAGEAbQBlAHIAYQAgIBMAIABmAG8AcgAgAHAAaABvAHQAbwBzAC4JaABDAGEAZgDpACAAQQBwAHCjDhIV0Q8QXxAS' +
+          'Q0ZCdW5kbGVVUkxTY2hlbWVzohEJV2V4YW1wbGXRExRfEBBDRkJ1bmRsZVR5cGVSb2xlVkVkaXRvctEPFqEXW2V4cCtleGFtcGxl' +
+          'rxAUGRobHB0eHyAhIiMkJSYnKCkqKyxScTBScTFScTJScTNScTRScTVScTZScTdScThScTlTcTEwU3ExMVNxMTJTcTEzU3ExNFNx' +
+          'MTVTcTE2U3ExN1NxMThTcTE5oi4vEAEQAhEfkgAIABkALgBJAF4AdACHAKUAtADBANMBEAERASIBJgEpAT4BQQFJAUwBXwFmAWkB' +
+          'awF3AY4BkQGUAZcBmgGdAaABowGmAakBrAGwAbQBuAG8AcABxAHIAcwB0AHUAdcB2QHbAAAAAAAAAgEAAAAAAAAAMQAAAAAAAAAA' +
+          'AAAAAAAAAd4=',
+        'base64',
+      ),
+    );
+    const exec = makeExecutor({
+      runFile: () => {
+        throw Object.assign(new Error('spawnSync plutil ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    expect(devClientScheme(dir, app, { exec })).toBe('exp+example');
+  });
 
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
@@ -9260,19 +9288,143 @@ describe('strict remote machine selection', () => {
     expect(failure.remedy).toContain('brew install cocoapods');
   });
 
-  test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {
+  function offloadedRelease(cacheHit: boolean) {
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath, { recursive: true });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      ...(cacheHit && { cacheHit }),
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    return choose;
+  }
+
+  test('a non-Debug cache miss builds on a named machine and installs its app with the JS it bundled', async () => {
     reserve();
     configureMini();
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
+    offloadedRelease(false);
+    const store = vi.fn<Required<IosDeps>['storeBuild']>(async (_platform, _key, path) => path);
     const result = await run(
       { remoteBuild: 'mini', configuration: 'Release', json: true },
-      { buildIos: build, acquireBuildSlot: slot },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
     );
-    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.stderr).toContain('Release builds build here');
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    const options = store.mock.calls[0]?.[3];
+    expect(typeof options === 'object' && options.overwrite).toBe(true);
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ builtOn: 'mini', status: 'ok' });
+  });
+
+  test("a non-Debug app from a machine's artifact cache gets this workspace's JS before install", async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(true);
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.args.swapJsBundle.cachedAppPath).toBe(join(root, 'fetched.app'));
+    expect(result.calls.order.indexOf('installIosApp')).toBeGreaterThan(result.calls.order.indexOf('swapJsBundle'));
+  });
+
+  test('a client without Xcode rebuilds a cached Release app on the machine instead of swapping its JS', async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    const cached = join(root, 'cached.app');
+    mkdirSync(cached, { recursive: true });
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        resolveBuild: () => cached,
+        storeBuild: (_platform, _key, path) => path,
+        iosToolchain: async () => ({
+          stimBuild: 'fixture',
+          compat: 2,
+          arch: 'arm64',
+          xcode: null,
+          simulatorSdk: null,
+          cocoapods: null,
+        }),
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    expect(offloadClient.offloadBuild).toHaveBeenCalled();
+  });
+
+  test.each([
+    { configuration: 'Debug', asks: true },
+    { configuration: 'Release', asks: false },
+  ])('a $configuration miss asks machines for a cached app built elsewhere: $asks', async ({ configuration, asks }) => {
+    reserve();
+    configureMini();
+    const choose = offloadedRelease(false);
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(choose).toHaveBeenCalled();
+    expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
+  });
+
+  test.each([
+    { configuration: 'Release', sent: true },
+    { configuration: 'Debug', sent: false },
+  ])('an Expo $configuration offload sends the gitignored .env.production: $sent', async ({ configuration, sent }) => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API=https://api.example.com\n');
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        detectIsExpo: () => true,
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    const inputs = await vi.mocked(offloadClient.offloadBuild).mock.calls[0]?.[0].fingerprintInputs?.();
+    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
   });
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
@@ -9420,6 +9572,52 @@ describe('strict remote machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+
+  test('an app the machine built under the fingerprint after its pod install is stored only under that key', async () => {
+    reserve();
+    configureMini();
+    const after = 'b'.repeat(40);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      builtFingerprint: after,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    const store = vi.fn<(_platform: string, key: string, path: string) => string>((_platform, _key, path) => path);
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    const keys = store.mock.calls.map(([, key]) => key);
+    expect(keys).toEqual([expect.stringContaining(after)]);
+    expect(keys[0]).not.toContain(FINGERPRINT);
+    expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (as mini built it)');
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ fingerprint: after, status: 'ok' });
+  });
 
   test('an offloaded hosted iOS build carries its handoff through artifact caching into delivery', async () => {
     reserve();

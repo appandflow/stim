@@ -176,7 +176,36 @@ stim settings set android.systemImage "system-images;android-36;google_apis;arm6
 A model or runtime the machine value names that no installed toolchain offers
 refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
-clear where to fix it.
+clear where to fix it. An Android system image is the exception while
+`android.installImages` is `auto`: see below.
+
+### Installing a missing Android system image
+
+When no installed system image matches the request, `stim android` installs one
+before it creates the owned emulator: the image `--system-image` or
+`android.systemImage` names, else `system-images;android-36;google_apis;<host ABI>`.
+It runs the SDK's own `cmdline-tools/latest/bin/sdkmanager --install` and prints
+an `image` line while it downloads (about 2 GB).
+
+- A slot whose owned emulator already finished a boot keeps that emulator and
+  installs nothing.
+- It installs only images for this machine's ABI.
+- It never accepts an SDK license. With unaccepted licenses it refuses and names
+  the `sdkmanager --licenses` command to run.
+- It needs 8 GB free on the SDK volume and the SDK command-line tools.
+- One install runs per SDK root and Stim home; a second run waits for it.
+- `stim doctor` notes a missing image, and `stim doctor --fix --platform android`
+  installs it right away.
+- `stim gc` marks the images Stim installed with `stimInstalled`, next to the
+  `sdkmanager --uninstall` command that removes them.
+
+Set `android.installImages` to `never` to refuse with the install command
+instead, for example on a metered connection or a Mac short on disk. For a
+hosted run the host's machine value decides:
+
+```sh
+stim settings set android.installImages never --scope machine
+```
 
 ### SimSlim for every owned simulator
 
@@ -479,8 +508,11 @@ a person on the worker approves this machine by running the `stim-server setup`
 command doctor printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
-Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
-and unknown simulator runtime builds refuse a named worker on a cache miss.
+Device, Android release variant, `--remote`, Android CAS compiler,
+build-cache-off and unknown simulator runtime builds refuse a named worker on a
+cache miss, with a remedy to rerun with `--remote-build local` or `auto`. An iOS
+simulator Release or other non-Debug build can build on a worker, which bundles
+the JS of the synced checkout into the app.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
@@ -500,7 +532,7 @@ A build that leaves this machine goes to the first machine in `remote.machines`
 order that accepts it: a free slot (`concurrency.maxBuilds`), at least 10 GB free,
 a matching toolchain and a load per core under its own `server.maxLoadPerCore`.
 A machine that already holds the exact completed artifact goes ahead of the
-order. Where `stim ios` compiles a simulator Debug build, `stim android` an
+order. Where `stim ios` compiles a simulator build, `stim android` an
 emulator debug build and `stim macos` a SwiftPM Debug build depends on the
 selection:
 
@@ -519,9 +551,9 @@ iOS, Android and macOS placement. It is the load per core at which a machine
 counts as saturated: each machine applies its own value, a remote machine
 declines offloaded builds past it, and automatic placement skips it.
 
-Device, Release and
+Device builds, Android release variants,
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
-iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
+iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 

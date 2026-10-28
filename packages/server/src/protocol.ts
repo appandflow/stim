@@ -570,6 +570,7 @@ export function protocolJsonSchema(): JsonSchema {
         properties: {
           platform: { enum: ['ios', 'android', 'macos'] },
           choice: {},
+          installImage: { type: 'string', pattern: '^system-images;' },
           declined: { type: ['string', 'null'], minLength: 1 },
           resources: {
             type: 'object',

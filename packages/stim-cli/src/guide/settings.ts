@@ -206,9 +206,30 @@ KEYS STIM READS
                         from. Readable from the machine layer too, so one
                         machine can default every workspace to an image; a
                         project layer still wins. The \`--system-image\` flag
-                        overrides this per invocation, and an id this SDK has
-                        not installed is STIM_BAD_ARG with the installed ids
-                        printed, naming the layer the value came from.
+                        overrides this per invocation. An id this SDK has not
+                        installed is installed first (android.installImages);
+                        with installImages never, or an id for another ABI,
+                        it is STIM_BAD_ARG with the installed ids printed,
+                        naming the layer the value came from.
+  android.installImages auto (default) or never. With auto, when no installed
+                        system image matches the request, \`stim android\`
+                        installs the one android.systemImage or
+                        \`--system-image\` names, else
+                        system-images;android-36;google_apis;<host ABI>, with
+                        the SDK's own \`sdkmanager --install\` before it
+                        creates the owned AVD; a slot whose owned AVD
+                        finished a boot keeps it and installs nothing. It
+                        installs only images for
+                        this machine's ABI, never accepts an SDK license (an
+                        unaccepted one refuses and names \`sdkmanager
+                        --licenses\`), needs 8 GB free on the SDK volume and
+                        cmdline-tools/latest, and runs one install per SDK
+                        root and Stim home; a second run waits for it. never
+                        refuses with the \`sdkmanager --install\` line instead.
+                        For a hosted run the host's machine value decides,
+                        and stim-server installs into its own ANDROID_HOME.
+                        \`stim gc\` marks the images Stim installed
+                        (stimInstalled).
   android.deviceProfile e.g. "pixel_fold" -- the avdmanager hardware profile a
                         new owned AVD is created with, spelled exactly as
                         \`avdmanager list device -c\` prints it. Defaults to
@@ -984,10 +1005,17 @@ and no platform selection on a Mac, it also checks the macOS Xcode and SDK.
 A client with no Xcode and no simulator SDK, such as Linux or Windows, has no
 Xcode to match: the Mac's own Xcode, simulator SDK and CocoaPods are the
 build's toolchain, the client leaves pod install to it, and \`stim ios --remote
-<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. If
-that pod install changes Podfile.lock or the Xcode project, the build fails
-with fingerprint-mismatch; run pod install once on a Mac and commit the
-result. A client with an Xcode still needs the same one.
+<mac> --remote-build <mac>\` runs the app on that Mac's hosted simulator. When
+that pod install, or a file it generates there, changes only fingerprint
+sources in the iOS project, the Mac builds and stores the app under its own
+fingerprint after pod install, and the client stores it under that key. The
+client's own fingerprint does not compute that key, so each run offloads and
+runs pod install on the Mac again; with cache reads on, the Mac then reuses the
+app it built under that key instead of compiling. A stale Podfile.lock is worth
+regenerating on a Mac and committing.
+Any other difference, such as the app config, fails with fingerprint-mismatch.
+A client with an Xcode still needs the same one, and there a worker pod install
+that changes the fingerprint fails with fingerprint-mismatch.
 Two machines build for each other when their Stim releases share a build
 compatibility version, which changes only when what a worker builds, how it
 builds, or the build messages change; their Stim builds can differ. A
@@ -1021,12 +1049,15 @@ that has it (--scope limits it to one).
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
-machine (device, Release, an unknown simulator runtime, the build cache off), and
-when no pairing or approval exists.
+machine (device, Android release, an unknown simulator runtime, the build cache
+off), and when no pairing or approval exists.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
-Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
-the build cache off, and an unknown simulator runtime cannot build there and
-refuse on a cache miss. Invalid values, unlisted names and unpaired names refuse
+Device, Android release variant, --remote, Android CAS compiler builds, builds
+with the build cache off, and an unknown simulator runtime cannot build there
+and refuse on a cache miss, with a remedy to rerun with --remote-build local or
+auto. An iOS simulator Release or other non-Debug build can: the remote machine
+bundles the JS of the synced checkout into the app.
+Invalid values, unlisted names and unpaired names refuse
 at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
 and records buildMachine with builtOn absent. Build failures retain the selected
@@ -1101,10 +1132,10 @@ machine counts as saturated: each machine applies its own value, and a remote
 machine past it is skipped like a full one. \`stim status\` shows this machine's
 load per core against it, as \`capacity.load\` in JSON.
 
-Device, Release and
+Device builds, Android release variants,
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
-Debug builds can use a separate --remote-build, targeting the hosting Mac's
+builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
 macOS uses matching Xcode and macOS SDK (not when --remote-build and --remote name the
 same Mac; see stim guide macos), with a per-client SwiftPM dependency

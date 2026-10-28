@@ -1,7 +1,12 @@
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { forgetCreatedDevice, readCreatedDevices, recordCreatedDevice } from '../devices/created-devices.ts';
+import {
+  forgetCreatedDevice,
+  readCreatedDevices,
+  recordCreatedDevice,
+  recordInstalledSystemImageAsync,
+} from '../devices/created-devices.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { ownedSimName } from '../devices/ios.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -36,8 +41,9 @@ test('a device another Stim home created is not owned by this home, whatever its
   expect(isStimOwnedAvd('stim-1362-mobile')).toBe(false);
 });
 
-test('recording or forgetting a device of one platform keeps the other platforms, browser profiles included', () => {
+test('recording or forgetting a device of one platform keeps the other platforms, browser profiles and installed images included', async () => {
   useHome();
+  await recordInstalledSystemImageAsync('/sdk/system-images/android-36/google_apis/arm64-v8a');
   recordCreatedDevice('web', '/stim/workspaces/app/web/profile');
   recordCreatedDevice('android', 'stim-gone');
   recordCreatedDevice('ios', 'SIM');
@@ -46,6 +52,7 @@ test('recording or forgetting a device of one platform keeps the other platforms
     ios: new Set(['SIM']),
     android: new Set(),
     web: new Set(['/stim/workspaces/app/web/profile']),
+    systemImages: new Set(['/sdk/system-images/android-36/google_apis/arm64-v8a']),
   });
 });
 

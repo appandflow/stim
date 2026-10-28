@@ -468,9 +468,6 @@ importers:
       '@stim-cli/agent-driver-agent-device':
         specifier: workspace:*
         version: link:../agent-driver-agent-device
-      '@stim-cli/cache':
-        specifier: workspace:*
-        version: link:../cache
       '@stim-cli/core':
         specifier: workspace:*
         version: link:../core
