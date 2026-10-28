@@ -38,6 +38,9 @@ import Foundation
   private var loggedDecodeFailure: String?
   private static let pairedArchivePages = 500
   private static let pairedArchiveBytes = 32 * 1024 * 1024
+  private static let pairedStatusLimits = StatusViews.Limits(entities: 10_000, bytes: 32 * 1024 * 1024)
+  private var decoding: Int?
+  private var decodePending = false
   private var refreshing = false
   private var refreshPending = false
   private var delivering = false {
@@ -58,9 +61,11 @@ import Foundation
     stop()
     refreshing = false
     refreshPending = false
+    decoding = nil
+    decodePending = false
     self.client = client
     if let client, client !== viewsClient {
-      views = StatusViews()
+      views = StatusViews(limits: client.isRemote ? Self.pairedStatusLimits : nil)
       failures = [:]
       viewsClient = client
     }
@@ -124,6 +129,8 @@ import Foundation
     details = [:]
     archivesRead?.cancel()
     archivesRead = nil
+    decoding = nil
+    decodePending = false
     generation += 1
     if !keepDelivering { delivering = false }
   }
@@ -169,6 +176,8 @@ import Foundation
     refreshPending = false
     archivesRead?.cancel()
     archivesRead = nil
+    decoding = nil
+    decodePending = false
     delivering = false
   }
 
@@ -182,6 +191,12 @@ import Foundation
       stop(keepDelivering: true)
       subscribe()
     case .unchanged: return
+    case .overflow:
+      DebugLog.warning(.server, "a paired server's workspace list exceeded the size limit; dropping its status")
+      stop(keepDelivering: true)
+      failed(
+        "workspaces",
+        error: ServerError(code: "feed-too-large", message: "The paired server's workspace list is too large."))
     case .changed:
       recovered("workspaces")
       if client?.isRemote == false { LaunchMilestones.reach("first-server-status") }
@@ -268,9 +283,14 @@ import Foundation
 
   private func decode() {
     guard failures.isEmpty, let client else { return }
+    if client.isRemote, decoding != nil {
+      decodePending = true
+      return
+    }
     let connectionGeneration = client.generation
     issued += 1
     let sequence = issued
+    if client.isRemote { decoding = sequence }
     let generation = generation
     let payload = views.payload()
     let local = !client.isRemote
@@ -289,6 +309,15 @@ import Foundation
   private func show(
     _ result: Result<StatusPayload, Error>, sequence: Int, generation: Int, client: ServerClient, connectionGeneration: Int
   ) {
+    defer {
+      if decoding == sequence {
+        decoding = nil
+        if decodePending {
+          decodePending = false
+          decode()
+        }
+      }
+    }
     guard failures.isEmpty, generation == self.generation, sequence > shown, client === self.client, client.isOpen,
       connectionGeneration == client.generation
     else { return }
