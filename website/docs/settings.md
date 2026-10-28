@@ -508,8 +508,11 @@ a person on the worker approves this machine by running the `stim-server setup`
 command doctor printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
-Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
-and unknown simulator runtime builds refuse a named worker on a cache miss.
+Device, Android release variant, `--remote`, Android CAS compiler,
+build-cache-off and unknown simulator runtime builds refuse a named worker on a
+cache miss, with a remedy to rerun with `--remote-build local` or `auto`. An iOS
+simulator Release or other non-Debug build can build on a worker, which bundles
+the JS of the synced checkout into the app.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
@@ -529,7 +532,7 @@ A build that leaves this machine goes to the first machine in `remote.machines`
 order that accepts it: a free slot (`concurrency.maxBuilds`), at least 10 GB free,
 a matching toolchain and a load per core under its own `server.maxLoadPerCore`.
 A machine that already holds the exact completed artifact goes ahead of the
-order. Where `stim ios` compiles a simulator Debug build, `stim android` an
+order. Where `stim ios` compiles a simulator build, `stim android` an
 emulator debug build and `stim macos` a SwiftPM Debug build depends on the
 selection:
 

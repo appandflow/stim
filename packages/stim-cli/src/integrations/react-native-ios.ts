@@ -245,6 +245,17 @@ function reactNativeIosArtifact(
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
       if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
+      if (process.platform !== 'darwin') {
+        note(
+          chalk.yellow(
+            phaseLine(
+              'swap',
+              `a cached ${configuration} app carries its builder's JS, and only a Mac can replace it -- building fresh instead`,
+            ),
+          ),
+        );
+        return null;
+      }
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
         context: operation,
@@ -546,18 +557,16 @@ function reactNativeIosArtifact(
           },
     offload: {
       context: () => {
-        const runtime = physical || release ? null : target.offloadRuntime();
+        const runtime = physical ? null : target.offloadRuntime();
         const unsupported =
           target.offloadRefusal ??
-          (release
-            ? `${configuration} builds build here`
-            : !cachePolicy.write
-              ? 'the build cache is off'
-              : !runtime
-                ? udid
-                  ? `the runtime of simulator ${udid} is unknown`
-                  : 'no simulator runtime is available for worker selection'
-                : null);
+          (!cachePolicy.write
+            ? 'the build cache is off'
+            : !runtime
+              ? udid
+                ? `the runtime of simulator ${udid} is unknown`
+                : 'no simulator runtime is available for worker selection'
+              : null);
         return { runtime, unsupported };
       },
       target: async (runtime) => ({

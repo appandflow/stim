@@ -17,6 +17,7 @@ import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
+import * as offloadToolchain from '../offload/toolchain.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -9287,20 +9288,104 @@ describe('strict remote machine selection', () => {
     expect(failure.remedy).toContain('brew install cocoapods');
   });
 
-  test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {
+  function offloadedRelease(peerArtifact: boolean) {
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath, { recursive: true });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      ...(peerArtifact && { cacheHit: true, peerArtifact }),
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    return choose;
+  }
+
+  test('a non-Debug cache miss builds on a named machine and installs its app with the JS it bundled', async () => {
     reserve();
     configureMini();
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
+    offloadedRelease(false);
+    const store = vi.fn<Required<IosDeps>['storeBuild']>(async (_platform, _key, path) => path);
     const result = await run(
       { remoteBuild: 'mini', configuration: 'Release', json: true },
-      { buildIos: build, acquireBuildSlot: slot },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
     );
-    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.stderr).toContain('Release builds build here');
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    const options = store.mock.calls[0]?.[3];
+    expect(typeof options === 'object' && options.overwrite).toBe(true);
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ builtOn: 'mini', status: 'ok' });
   });
+
+  test("a non-Debug app from a machine's artifact cache gets this workspace's JS before install", async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(true);
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.args.swapJsBundle.cachedAppPath).toBe(join(root, 'fetched.app'));
+    expect(result.calls.order.indexOf('installIosApp')).toBeGreaterThan(result.calls.order.indexOf('swapJsBundle'));
+  });
+
+  test.each([
+    { client: 'with Xcode', xcode: '27.1', configuration: 'Release', asks: true },
+    { client: 'without Xcode', xcode: null, configuration: 'Debug', asks: true },
+    { client: 'without Xcode', xcode: null, configuration: 'Release', asks: false },
+  ])(
+    'a client $client asks machines for a cached $configuration app only when it can install it: $asks',
+    async ({ xcode, configuration, asks }) => {
+      reserve();
+      configureMini();
+      vi.spyOn(offloadToolchain, 'iosToolchainAsync').mockResolvedValue({
+        stimBuild: 'fixture',
+        compat: 2,
+        arch: 'arm64',
+        xcode,
+        simulatorSdk: xcode,
+        cocoapods: null,
+      });
+      const choose = offloadedRelease(false);
+      await run(
+        { remoteBuild: 'mini', configuration, json: true },
+        {
+          storeBuild: (_platform, _key, path) => path,
+          buildIos: () => {
+            throw new Error('unexpected local compile');
+          },
+        },
+      );
+      expect(choose).toHaveBeenCalled();
+      expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
+    },
+  );
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
     reserve();

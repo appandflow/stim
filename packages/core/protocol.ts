@@ -1244,7 +1244,8 @@ export interface BuildStartParams {
   podsOnWorker?: boolean;
   /**
    * With `podsOnWorker`, from a caller that saw `build-reuse-artifact`: the client's cache reads allow the machine to
-   * return the development app it retained under its own fingerprint after pod install instead of compiling.
+   * return the development app it retained under its own fingerprint after pod install instead of compiling. A
+   * non-Debug request never carries it, because a retained app carries its builder's JS.
    */
   reuseArtifact?: boolean;
 }

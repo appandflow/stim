@@ -3073,7 +3073,10 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   its own hermesc when Hermes is enabled) into a copy of the artifact,
   refreshes an expo-updates manifest as described above, re-signs it and
   installs that; any swap failure falls back to a full build
-  rather than ever installing stale JS. Device logs are still collected, so
+  rather than ever installing stale JS. A simulator Release build can run on
+  a remote machine (stim guide settings, remote.build), which bundles the JS
+  of the checkout it synced. A machine that is not a Mac cannot swap, so a
+  cached Release app is built again on the remote machine instead. Device logs are still collected, so
   \`logs --errors\` answers "does it repro in release/Hermes bytecode".
   A run with no \`--device\` installs on the simulator only. \`ios --device\`
   builds the \`iphoneos\` slice for a cabled iPhone and keys its cache

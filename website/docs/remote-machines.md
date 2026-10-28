@@ -379,9 +379,12 @@ Install the client CLI globally or run it with npx:
 
 <StimInstallTabs />
 
-A remote machine can compile iOS simulator Debug, Android emulator debug and
-macOS SwiftPM Debug apps. Android builds on a
-worker machine need Java and the Android SDK. Device and Release/non-Debug builds,
+A remote machine can compile iOS simulator Debug and Release apps, Android
+emulator debug and macOS SwiftPM Debug apps. An iOS Release app built there
+carries the JavaScript of the checkout this machine synced, so a machine without
+Xcode, such as Linux, can run `stim ios --configuration Release --remote-build <mac>`.
+Android builds on a
+worker machine need Java and the Android SDK. Device builds, Android release variants,
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with
 artifact caching disabled in settings do not offload.
 

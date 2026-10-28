@@ -1049,12 +1049,15 @@ that has it (--scope limits it to one).
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
-machine (device, Release, an unknown simulator runtime, the build cache off), and
-when no pairing or approval exists.
+machine (device, Android release, an unknown simulator runtime, the build cache
+off), and when no pairing or approval exists.
 Any refusal or failure is STIM_OFFLOAD_REFUSED with the remote machine and reason.
-Device, Release/non-Debug, --remote, Android CAS compiler builds, builds with
-the build cache off, and an unknown simulator runtime cannot build there and
-refuse on a cache miss. Invalid values, unlisted names and unpaired names refuse
+Device, Android release variant, --remote, Android CAS compiler builds, builds
+with the build cache off, and an unknown simulator runtime cannot build there
+and refuse on a cache miss, with a remedy to rerun with --remote-build local or
+auto. An iOS simulator Release or other non-Debug build can: the remote machine
+bundles the JS of the synced checkout into the app.
+Invalid values, unlisted names and unpaired names refuse
 at setup before consulting the cache; they create no build record or failed-run
 stats. A listed paired name with a cache hit compiles nothing, contacts no worker
 and records buildMachine with builtOn absent. Build failures retain the selected
@@ -1129,7 +1132,7 @@ machine counts as saturated: each machine applies its own value, and a remote
 machine past it is skipped like a full one. \`stim status\` shows this machine's
 load per core against it, as \`capacity.load\` in JSON.
 
-Device, Release and
+Device builds, Android release variants,
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
 Debug builds can use a separate --remote-build, targeting the hosting Mac's
