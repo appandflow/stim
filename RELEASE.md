@@ -162,9 +162,12 @@ preparation, `git status --short` may show only the draft
    grep -H '"version"' packages/*/package.json
    ```
 
-2. **Install and run the full pre-flight against those exact files.** The
-   expedited RC lane in section 3 replaces this command list with its short
-   preflight; do not combine the two lanes informally.
+2. **Install and run the pre-flight against those exact files.** Run only
+   what CI does not. The version PR and the merge queue run format, lint,
+   typecheck, knip, the RPC check and the full unit suite, and the push to
+   `main` runs the same suite on Node 22 and 24, the cross-platform e2e and
+   the published-runtime check on the exact release commit (section 4 step 4).
+   Repeating them on the release machine only adds minutes.
 
    The native compatibility stage requires the tools and connected iPhone listed
    in [docs/testing.md](./docs/testing.md), including `STIM_AGENT_DEVICE_SOURCE` for
@@ -173,19 +176,19 @@ preparation, `git status --short` may show only the draft
 
    ```bash
    pnpm install --frozen-lockfile
-   pnpm run format:check
-   pnpm run lint
+   pnpm run release:prep --check
    pnpm run build
-   pnpm run typecheck
-   pnpm run knip
-   pnpm test
-   pnpm run test:e2e
-   pnpm run test:runtime
    pnpm run test:compat
    node packages/stim-cli/dist/cli.mjs --help
    node packages/stim-cli/dist/cli.mjs guide agent
    test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
    ```
+
+   When CI or the merge queue is unavailable, run `pnpm run format:check`,
+   `pnpm run lint`, `pnpm run typecheck`, `pnpm run knip`, `pnpm test`,
+   `pnpm run test:e2e` and `pnpm run test:runtime` here as well, and record that
+   in the release report. The expedited RC lane in section 3 omits
+   `pnpm run test:compat`; do not combine the two lanes informally.
 
 3. **Verify each npm tarball** ships only what should ship, that each one
    carries its own README, and that every `@stim-cli/*` and `stim` dependency
@@ -297,81 +300,131 @@ All of these conditions are required:
   workflow. Those changes use the full lane.
 - The registry and tag checks in section 1 show no partial release to recover.
 
-Complete section 2 steps 1, 3, and 4. In place of section 2 step 2, run this
-short preflight against the bumped candidate:
-
-```bash
-pnpm install --frozen-lockfile
-pnpm run release:prep --check
-pnpm run build
-node packages/stim-cli/dist/cli.mjs --help >/dev/null
-node packages/stim-cli/dist/cli.mjs guide agent >/dev/null
-test "$(node packages/stim-cli/dist/cli.mjs --version)" = "X.Y.Z"
-```
+Complete section 2 steps 1, 3, and 4. In place of section 2 step 2, run its
+preflight without `pnpm run test:compat`.
 
 The tarball inspection remains mandatory. It is the proof that the exact files
 about to publish have the intended versions, package contents, READMEs, and no
 unsubstituted `workspace:` ranges.
 
-The expedited lane may omit the other local checks in section 2 step 2 and all
-of the pre-tag native, runtime, end-to-end, and manual rows in section 3. Record
-that choice in the release note instead of implying those checks passed:
+The expedited lane may omit `pnpm run test:compat` and all of the pre-tag
+native and manual rows in section 3. Record that choice in the release note
+instead of implying those checks passed:
 
 ```markdown
 ## QA
 
-Expedited RC authorized on YYYY-MM-DD. Omitted locally before the version
-commit: format:check, lint, typecheck, knip, unit tests, test:e2e, test:runtime,
-and the pre-tag native/manual matrix. Retained before the version commit:
-candidate build, CLI version/help/guide, and tarball inspection. Retained after
-push: exact-release-commit CI, including its format, lint, build, typecheck,
-knip, unit, cross-platform e2e, and published-runtime jobs.
+Expedited RC authorized on YYYY-MM-DD. Omitted before the version commit:
+test:compat and the pre-tag native/manual matrix. Retained before the version
+commit: release:prep --check, candidate build, CLI version/help/guide, and
+tarball inspection. Retained after the version commit lands: the release gate
+of section 4 step 4 on the exact release commit (merge gate, Node 22 and 24
+unit and cross-platform e2e jobs, published-runtime job).
 ```
 
-Section 4 is unchanged. In particular, commit and push the candidate without a
-tag, wait for every blocking CI job on that exact commit, and only then create
-the immutable tag and publish through the normal workflow. A failed short
-preflight, tarball check, or exact-commit CI ends the expedited lane; fix it and
-repeat the affected gate rather than waiving it.
+Section 4 is unchanged. In particular, land the candidate through the merge
+queue without a tag, wait for the release gate on that exact commit, and only
+then create the immutable tag and publish through the normal workflow. A failed
+short preflight, tarball check, or release gate ends the expedited lane; fix it
+and repeat the affected gate rather than waiving it.
 
 ## 4. Cut the release
 
 1. **Freeze the evidence and notes.** Compare the draft release notes against
    the completed QA report one last time. If a claim or accepted HIGH needs a
    correction, update the notes and repeat the affected gate rows now.
-2. **Commit** with a `chore: X.Y.Z — <one-line summary>` title. The body can be terse; the GitHub release notes carry the real changelog.
-3. **Push the commit without a tag**, then remember the exact candidate SHA:
+2. **Open the version commit as a pull request** with a
+   `chore: X.Y.Z — <one-line summary>` title and let the merge queue land it.
+   The body can be terse; the GitHub release notes carry the real changelog.
+   The queue's `Merge gate` run builds and tests the merge-group commit
+   (format, lint, build, typecheck, knip, the RPC check and the full unit
+   suite), and that commit is the one that lands on `main`.
+3. **Record the exact release commit** once the queue has merged the pull
+   request. It is the version commit, not the tip of `main`: a pull request
+   queued behind it may already have landed.
 
    ```bash
-   git push
-   release_commit=$(git rev-parse HEAD)
+   release_commit=$(gh pr view <version-pr> --json mergeCommit --jq .mergeCommit.oid)
    ```
 
-4. **Wait for blocking CI on that exact commit.** The Node 22 and Node 24 jobs
-   plus `published runtime (node 22.12.0)` must all be green:
+   When a pull request landed between the freeze and the version commit and
+   the notes do not name it, add it with a notes pull request. The notes commit
+   becomes the release commit, and steps 3 and 4 repeat for it.
+
+4. **Wait for the release gate on that exact commit.** The gate is the
+   `Merge gate` run of the merge queue plus three jobs of the `CI` run that the
+   push to `main` started: `test (node 22)`, `test (node 24)` and
+   `published runtime (node 22.12.0)`. Every other job of that run, and every
+   other workflow the push started, is not part of the gate (section 5
+   says what to do with them).
+
+   The commit match is checked by SHA. The merge-queue run and the push run
+   both carry `head_sha == $release_commit`, so the check below proves the
+   jobs ran on the commit about to be tagged. It exits non-zero when the merge
+   gate is missing or red, when no push run exists, or when a gate job is not
+   green:
 
    ```bash
-   run_id=$(gh run list --workflow CI --commit "$release_commit" --limit 1 --json databaseId --jq '.[0].databaseId')
-   gh run view "$run_id" --json url --jq '.url'
-   gh run watch "$run_id" --exit-status
-   test "$(git rev-parse HEAD)" = "$release_commit"
+   release_commit=<release-commit-sha> ci_event=push ci_branch=main
+   repo=appandflow/stim
+   (
+     gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=merge_group&per_page=100" |
+       jq -e -r --arg sha "$release_commit" '
+         [.workflow_runs[] | select(.name == "Merge gate" and .head_sha == $sha)]
+         | sort_by(.created_at) | last
+         | select(.conclusion == "success")
+         | "merge gate ok: run \(.id) on \(.head_branch)"' || { echo "merge gate not green"; exit 1; }
+
+     run_id=$(gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=$ci_event&per_page=100" |
+       jq -e -r --arg sha "$release_commit" --arg branch "$ci_branch" '
+         [.workflow_runs[] | select(.name == "CI" and .head_branch == $branch and .head_sha == $sha)]
+         | sort_by(.created_at) | last | .id') || { echo "no CI run for the commit"; exit 1; }
+     echo "CI run $run_id"
+
+     for _ in $(seq 120); do
+       run_status=$(gh api "repos/$repo/actions/runs/$run_id" --jq .status) || exit 1
+       gate=$(gh api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" | jq -c '
+         [.jobs[] | select(.name | IN("test (node 22)", "test (node 24)", "published runtime (node 22.12.0)"))
+          | {name, status, conclusion}]') || exit 1
+       echo "$gate"
+       [ "$run_status" = completed ] && break
+       jq -e 'length == 3 and all(.status == "completed")' <<<"$gate" >/dev/null && break
+       sleep 30
+     done
+     jq -e 'length == 3 and all(.conclusion == "success")' <<<"$gate" >/dev/null || { echo "release gate NOT green"; exit 1; }
+     echo "release gate: green"
+   )
    ```
 
-   Dispatch the CI workflow against the release branch as well. Routine PR
-   and main runs cover Windows build/typecheck and CLI/cache smoke; nightly
-   and manual CI runs cover the complete Windows unit suite. Until
-   [#3878](https://github.com/appandflow/stim/issues/3878) fixes that suite,
-   record the result of its full Windows job on the candidate SHA instead of
-   waiting for it to pass, and the Release workflow runs it alongside
-   publication without gating it.
+   Do not wait for the rest of the `CI` run, and do not watch the whole run
+   with `gh run watch`: it also contains the Windows and macOS jobs, which do
+   not gate the release. For 1.34.0 the merge gate took 7 minutes and the
+   slowest gate job finished 9 minutes after the push.
 
-   A fix creates a new commit and repeats this step. Never tag a commit that
-   has not passed this exact-commit check, apart from that full Windows job.
+   The push run is cancelled when another pull request lands on `main` before
+   it finishes (its concurrency group is the branch), and it may be missing
+   when the push did not start `CI`. Then run the same jobs on a throwaway
+   branch at the same commit, and repeat the check with the dispatched run
+   once it appears in `gh run list --workflow ci.yml --branch release-ci/X.Y.Z`.
+   That run also starts the full Windows suite; do not wait for it.
+
+   ```bash
+   git push origin <release-commit-sha>:refs/heads/release-ci/X.Y.Z
+   gh workflow run ci.yml --ref release-ci/X.Y.Z
+   ```
+
+   Run the check again with the first line changed to set `ci_event` to
+   `workflow_dispatch` and `ci_branch` to `release-ci/X.Y.Z`.
+
+   A fix creates a new commit and repeats steps 2 to 4. Never tag a commit
+   that has not passed this gate. Delete `release-ci/X.Y.Z` once the tag is
+   pushed.
 
 5. **Tag and push the proven commit:**
 
    ```bash
-   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git fetch origin
+   git tag -a vX.Y.Z -m "vX.Y.Z" <release-commit-sha>
    git push origin vX.Y.Z
    ```
 
@@ -379,7 +432,7 @@ repeat the affected gate rather than waiving it.
    a per-package tag would only repeat the same thing.
 
    The Release workflow refuses to run unless the tagged commit is an ancestor
-   of `origin/main`, so push the candidate commit to `main` (step 3) first.
+   of `origin/main`, so the release commit must already be on `main` (step 3).
 
 6. **Publish the already-reviewed release notes in
    `docs/releases/X.Y.Z.md`.** This committed file is the single source of
@@ -430,6 +483,14 @@ repeat the affected gate rather than waiving it.
    `npx stim@X.Y.Z --version`, `stim-ci --version` from `@stim-cli/ci@X.Y.Z`
    and `stim-server --version` from `@stim-cli/server@X.Y.Z` in a scratch
    directory.
+
+   The `Release` run holds only `tag-on-main`, `publish` and `smoke`, so it
+   ends when `smoke` does: in 1.29.0 to 1.33.0 `publish` took under 2 minutes
+   and `smoke` 6 to 8. The same tag starts `Post-release validation`
+   (`.github/workflows/post-release.yml`), which runs the full Windows unit
+   suite on its own. It cannot delay or fail the publish. Section 5 says what
+   to do with its result.
+
    A NEW package, a failed publish, or
    a provenance rejection: see
    [docs/release-recovery.md](./docs/release-recovery.md).
@@ -466,6 +527,28 @@ repeat the affected gate rather than waiving it.
    ([docs/release-recovery.md](./docs/release-recovery.md)).
 
 ## 5. After the release
+
+- Triage what the release did not wait for. None of it blocks the release or
+  is a reason to unpublish: a published version stays, and a real defect ships
+  in the next version.
+
+  ```bash
+  gh run list --workflow "Post-release validation" --branch vX.Y.Z --json databaseId,status,conclusion,url
+  gh api "repos/appandflow/stim/actions/runs?head_sha=<release-commit-sha>&event=push&per_page=100" \
+    --jq '.workflow_runs[] | select(.name == "CI" or .name == "Native E2E") | [.name, .status, .conclusion, .html_url] | @tsv'
+  ```
+
+  Look at the failed jobs of the full Windows suite, `test (windows)`,
+  `test (macos)` and `native process inspection (macos-15|windows-latest)` in
+  the `CI` run, and the `Native E2E` smoke. A failure that an open issue
+  already describes (the full Windows suite:
+  [#3878](https://github.com/appandflow/stim/issues/3878)) gets a comment with
+  the run link. Any other failure gets an issue from
+  `.github/ISSUE_TEMPLATE/report.md`, with the run link, the failing job and
+  whether it reproduces on the previous release. A failure that shows the
+  published packages are broken on that platform is `priority: P0`: follow
+  [docs/release-recovery.md](./docs/release-recovery.md). Do not hold the
+  release report, the Desktop release or the machine updates for these runs.
 
 - Leave every `package.json` at the just-released version. The next release
   bumps them as part of its own section 2, step 1; we don't carry a `-dev`
@@ -512,7 +595,9 @@ signed unless `HOST_SIGNING_IDENTITY` is set.
   before, and it is the only place a `workspace:` range would be caught by hand.
 - Use the expedited RC lane for a stable version, release-workflow change, or a
   candidate with an unresolved CRITICAL or HIGH finding.
-- Treat “no QA” as permission to skip exact-release-commit CI, candidate version
-  verification, or tarball inspection.
+- Treat “no QA” as permission to skip the release gate on the exact release
+  commit, candidate version verification, or tarball inspection.
+- Hold the tag or the publish for a macOS or Windows job. Those run after the
+  publish (section 5).
 - Publish one package at a new version and leave the others behind. The shared
   version is the compatibility statement; a partial release makes it a lie.

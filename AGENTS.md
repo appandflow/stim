@@ -54,7 +54,8 @@ when CI cannot validate the affected behavior. Do not repeat a passing check on
 unchanged code without a new failure or unresolved concern. Run
 `pnpm run test:e2e` when a change affects an end-to-end workflow, and keep the
 real-tool and app verification requirements below. Candidate version commits
-in the authorized expedited RC lane follow [`RELEASE.md`](./RELEASE.md).
+follow the preflight in [`RELEASE.md`](./RELEASE.md), which leaves the checks
+that CI runs on the release commit to CI.
 
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and

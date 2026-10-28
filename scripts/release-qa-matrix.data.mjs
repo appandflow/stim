@@ -342,7 +342,7 @@ export const pathRules = [
   },
   { path: 'scripts', exempt: 'repository tooling, not published behavior' },
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
-  { path: '.github', exempt: 'CI configuration, covered by the exact-commit CI in section 4' },
+  { path: '.github', exempt: 'CI configuration, covered by the release gate in section 4' },
   { path: '.gitignore', exempt: 'repository tooling, not published behavior' },
   { path: '.gitattributes', exempt: 'repository tooling, not published behavior' },
   { path: '.watchmanconfig', exempt: 'repository tooling, not published behavior' },
