@@ -388,3 +388,34 @@ it('retains an explicit cache with the automatic hosted home', async () => {
     cache: join(root, 'restored-cache'),
   });
 });
+
+it('the CLI forwards --skip-js-swap to the run and refuses it where no swap exists', async () => {
+  const stderr: string[] = [];
+  vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  });
+  vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  const exitCode = process.exitCode;
+  try {
+    const command = [
+      '--platform',
+      'ios',
+      '--project',
+      root,
+      '--artifacts',
+      join(root, 'skip-results'),
+      '--skip-js-swap',
+    ];
+    await main(['run', ...command, '--', process.execPath, '-e', '0']);
+    expect(lifecycle.run).toHaveBeenCalledWith(expect.objectContaining({ platform: 'ios', skipJsSwap: true }));
+    const calls = lifecycle.run.mock.calls.length;
+    await main(['build', ...command]);
+    expect(stderr.join('')).toContain('--skip-js-swap only applies to run.');
+    await main(['run', '--platform', 'web', '--skip-js-swap', '--', 'true']);
+    expect(stderr.join('')).toContain('--skip-js-swap only applies to iOS and Android.');
+    expect(lifecycle.run).toHaveBeenCalledTimes(calls);
+  } finally {
+    process.exitCode = exitCode;
+  }
+});

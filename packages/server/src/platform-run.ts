@@ -3,7 +3,7 @@ import { isJsonObject } from '@stim-cli/core/state';
 import type { PlatformRunOptions } from './protocol.ts';
 
 const nativeText = ['slot', 'remoteBuild', 'remote', 'easProfile'];
-const nativeBoolean = ['metroCheck', 'buildCache'];
+const nativeBoolean = ['metroCheck', 'buildCache', 'skipJsSwap'];
 const iosText = ['configuration', 'scheme', 'deviceType', 'runtime', 'simulatorApp'];
 const androidText = ['variant', 'systemImage', 'deviceProfile'];
 
@@ -76,6 +76,7 @@ export function parsePlatformRun(params: unknown): { cwd: string; options: Platf
     remoteBuild: optionalText(options.remoteBuild),
     remote: optionalText(options.remote),
     easProfile: optionalText(options.easProfile),
+    skipJsSwap: optionalBoolean(options.skipJsSwap),
     device: selector(options.device),
     wait: selector(options.wait),
   };

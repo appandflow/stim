@@ -81,6 +81,7 @@ export interface AndroidArtifactContext {
   out: (line: string) => void;
   step: (phase: BuildPhase) => void;
   estimates: () => RunEstimates;
+  skipJsSwap?: boolean;
 }
 
 export interface AndroidProject {

@@ -171,6 +171,7 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
+  skipJsSwap?: boolean;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -304,6 +305,7 @@ export function runAndroidOperation(
           buildMachine: opts.remoteBuild,
           slot: opts.slot,
           easProfile: opts.easProfile,
+          skipJsSwap: opts.skipJsSwap,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
           useBuildCache: opts.buildCache !== false,
@@ -338,6 +340,7 @@ interface RunAndroidOptions {
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
+  skipJsSwap?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
   root: string;
@@ -434,6 +437,7 @@ function resolveRunAndroidOptions(
     metroCheck = true,
     useBuildCache = true,
     easProfile,
+    skipJsSwap,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
@@ -514,6 +518,7 @@ function resolveRunAndroidOptions(
     metroCheck,
     useBuildCache,
     easProfile,
+    skipJsSwap,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -667,6 +672,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     useBuildCache: requestedBuildCache,
     easProfile,
+    skipJsSwap,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -887,6 +893,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       signal: context.signal,
       slot,
       easProfile,
+      skipJsSwap,
       variant: variantFlag,
       systemImage: systemImageFlag,
       deviceProfile: deviceProfileFlag,
@@ -1353,6 +1360,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           out,
           step: progress.step,
           estimates,
+          skipJsSwap,
         }),
         targetOffloadRefusal: physical
           ? 'device builds build here'

@@ -64,6 +64,7 @@ export interface IosCommandOptions {
   configuration?: string;
   scheme?: string;
   easProfile?: string;
+  skipJsSwap?: boolean;
   deviceType?: string;
   runtime?: string;
   simulatorApp?: string;

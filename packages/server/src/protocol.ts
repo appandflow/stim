@@ -51,6 +51,7 @@ const nativeRunProperties = {
   wait: runSelector,
   metroCheck: { type: 'boolean' },
   buildCache: { type: 'boolean' },
+  skipJsSwap: { type: 'boolean' },
 };
 const platformRunOptions: JsonSchema = {
   oneOf: [

@@ -507,6 +507,12 @@ STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last is
 run.json with the exact public API result. Use that target and check app
 readiness; launched can still be bundling or unverified.
 
+A Release test that injects its own JS bundle can pass --skip-js-swap (runCI:
+run.skipJsSwap; action input skip-js-swap) to skip the JS swap on a cache hit. Stim
+installs and launches the native artifact as built, so the app carries its
+builder's JS; run.json facts carry jsSwapSkipped and appPath (copy it before
+injecting; never edit it in place). Debug is refused with STIM_BAD_ARG.
+
 result.json preserves the test exit code even if diagnostics or cleanup fail.
 Passing tests with failed cleanup return 1; timeout returns 124; cancellation
 returns 130. Leave 70 seconds before the job's hard timeout for diagnostics and

@@ -109,7 +109,8 @@ cleanup cannot be confirmed.
 | `web`     | Existing web server  | `headed` (default `false`)                                         |
 
 The iOS and Android requests also accept `slot`, `metroCheck`, `buildCache`,
-`remoteBuild`, `remote`, `device`, `wait`, and `easProfile`. `device: true` selects a
+`remoteBuild`, `remote`, `device`, `wait`, `easProfile`, and `skipJsSwap` (Release only: install a cache-hit
+artifact without regenerating its JS; facts report `jsSwapSkipped` and `appPath`). `device: true` selects a
 physical device automatically; a string pins its UDID or serial. `wait` takes
 seconds as a string, such as `"30"`. `wait: false` refuses an owned-device slot
 wait immediately; for a physical device it bypasses another workspace's lease
