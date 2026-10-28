@@ -147,3 +147,28 @@ private func decoded(_ views: StatusViews) throws -> StatusPayload {
       == .changed)
   #expect(views.hasWorkspaces)
 }
+
+@Test func replacingOrRemovingALargeEntityFreesItsBytes() throws {
+  var views = StatusViews(limits: .init(entities: 100, bytes: 500))
+  let padded = String(repeating: "x", count: 300)
+  _ = views.applyWorkspaces(
+    fields(#"{"seq":0,"snapshot":{"workspaces":[{"path":"/w/a","pad":""# + padded + #""}],"worktrees":[],"archived":{}}}"#))
+  #expect(
+    views.applyWorkspaces(
+      fields(#"{"seq":1,"workspaces":{"upsert":[{"path":"/w/a","pad":""# + padded + #""}],"remove":[]}}"#)) == .changed)
+  #expect(
+    views.applyWorkspaces(fields(#"{"seq":2,"workspaces":{"upsert":[{"path":"/w/b","pad":""# + padded + #""}],"remove":[]}}"#))
+      == .overflow)
+  _ = views.applyWorkspaces(
+    fields(#"{"seq":0,"snapshot":{"workspaces":[{"path":"/w/a","pad":""# + padded + #""}],"worktrees":[],"archived":{}}}"#))
+  #expect(
+    views.applyWorkspaces(
+      fields(
+        #"{"seq":1,"workspaces":{"upsert":[{"path":"/w/b","pad":""# + padded + #""}],"remove":["/w/a"]}}"#)) == .changed)
+  #expect(
+    views.applyWorkspaces(
+      fields(#"{"seq":2,"workspaces":{"upsert":[{"path":"/w/b","pad":"s"}],"remove":[]}}"#)) == .changed)
+  #expect(
+    views.applyWorkspaces(
+      fields(#"{"seq":3,"workspaces":{"upsert":[{"path":"/w/c","pad":""# + padded + #""}],"remove":[]}}"#)) == .changed)
+}
