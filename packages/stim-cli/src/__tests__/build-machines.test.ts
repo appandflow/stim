@@ -110,6 +110,83 @@ test('resolveEndpoint reads tailscale status without blocking the event loop, fa
   expect(asked).toEqual(['tailscale', '/Applications/Tailscale.app/Contents/MacOS/Tailscale']);
 });
 
+describe('the tailnet a machine was approved on', () => {
+  const home1 = { name: 'janic@example.com', suffix: 'tail1.ts.net', id: 'TID1' };
+  const work = { name: 'work.example.com', suffix: 'tail9.ts.net', id: 'TID9' };
+  const on = (tailnet: typeof home1, peers = true) => ({
+    ...status(),
+    CurrentTailnet: { Name: tailnet.name, MagicDNSSuffix: tailnet.suffix, StableID: tailnet.id },
+    ...(peers ? {} : { Peer: {} }),
+  });
+  const ioOn = (tailnet: typeof home1, replies: HelloReply[], peers = true) => ({
+    ...fakeIo(replies).io,
+    status: () => on(tailnet, peers),
+  });
+
+  it('records the signed-in tailnet when asking and keeps it when the machine approves from another tailnet', async () => {
+    await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
+    expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', tailnet: home1 });
+    await inspectBuildMachines({ fix: false }, ioOn(work, [approved()]), ['mini']);
+    expect(readBuildMachines()[0]).toMatchObject({ state: 'approved', tailnet: home1 });
+  });
+
+  it('records the tailnet on a pin that predates it the next time the machine answers', async () => {
+    await approvedCredential();
+    expect(readBuildMachines()[0]?.tailnet).toBeUndefined();
+    await inspectBuildMachines({ fix: false }, ioOn(home1, [approved()]), ['mini']);
+    expect(readBuildMachines()[0]?.tailnet).toEqual(home1);
+  });
+
+  it('reports a machine missing from another tailnet by naming both, and leaves an old pin on the generic message', async () => {
+    await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
+    const { machines, findings } = await inspectBuildMachines({ fix: false }, ioOn(work, [], false), ['mini']);
+    const diagnosis = machines[0]?.diagnosis;
+    expect(machines[0]).toMatchObject({
+      state: 'not-on-tailnet',
+      tailnet: home1,
+      diagnosis: { code: 'peer-wrong-tailnet' },
+    });
+    expect(diagnosis?.message).toContain('janic@example.com (tail1.ts.net)');
+    expect(diagnosis?.message).toContain('work.example.com (tail9.ts.net)');
+    expect(diagnosis?.remedy).toContain('Switch Tailscale on this Mac to janic@example.com');
+    expect(findings[0]?.fix).toBe(diagnosis?.remedy);
+
+    const old = fakeIo([]).io;
+    rmSync(buildMachinesFile());
+    await approvedCredential();
+    const generic = await inspectBuildMachines({ fix: false }, { ...old, status: () => on(work, false) }, ['mini']);
+    expect(generic.machines[0]).toMatchObject({ diagnosis: { code: 'peer-not-found' } });
+  });
+
+  it('explains a failed connection in the same terms, and only when the machine is missing from the signed-in tailnet', async () => {
+    await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
+    const message = await resolveEndpoint({ ...readBuildMachines()[0], machine: 'mini' }, () => on(work, false));
+    expect(message).toMatch(/janic@example.com \(tail1.ts.net\).*work.example.com \(tail9.ts.net\)/);
+    expect(message).not.toMatch(/\.$/);
+    expect(await resolveEndpoint({ machine: 'mini', tailnet: home1 }, () => on(home1, false))).toBe(
+      'no peer on this tailnet is named mini',
+    );
+    expect(await resolveEndpoint({ machine: 'mini', tailnet: home1 }, () => on(work))).toMatchObject({
+      servername: 'mini.tail1.ts.net',
+    });
+    expect(await resolveEndpoint({ machine: 'mini' }, () => on(work, false))).toBe(
+      'no peer on this tailnet is named mini',
+    );
+  });
+
+  it('keeps a node shared in from another tailnet reachable, and names its owner when the Mac is on a third', async () => {
+    const shared = { machine: 'mini2', address: 'mini2.tail7.ts.net', tailnet: home1 };
+    const sharedIn = {
+      ...on(home1),
+      Peer: { k: { ID: 'nS', DNSName: 'mini2.tail7.ts.net.', TailscaleIPs: ['100.64.0.9'] } },
+    };
+    expect(await resolveEndpoint(shared, () => sharedIn)).toMatchObject({ servername: 'mini2.tail7.ts.net' });
+    expect(await resolveEndpoint(shared, () => on(work, false))).toContain(
+      'or to tail7.ts.net, the tailnet that owns mini2',
+    );
+  });
+});
+
 describe('findPeer', () => {
   it('matches a MagicDNS name or its first label, and only one peer', () => {
     const mini = { nodeId: 'nMini', dnsName: 'mini.tail1.ts.net', address: '100.64.0.7', os: 'macOS' };

@@ -7,6 +7,7 @@ import {
   buildMachinesFile,
   buildMachinesLock,
   cannotHost,
+  currentTailnet,
   isJsonObject,
   localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
@@ -14,6 +15,8 @@ import {
   readBuildMachines,
   readDeviceHostMachines,
   type BuildMachineCredential,
+  type TailnetIdentity,
+  wrongTailnet,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import type { OffloadProblem } from './toolchain.ts';
@@ -106,6 +109,8 @@ interface BuildMachineReport {
   fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
+  /** The tailnet this machine was signed in to when it first reached the machine; absent for a pairing from before it was kept. */
+  tailnet?: TailnetIdentity;
   expiresAt?: string;
   host?: NonNullable<HelloResult['host']>;
   /** For an approved machine: whether it would take this project's build now, and every reason it would not. */
@@ -301,16 +306,26 @@ async function inspectMachine(
     return { report: { machine: entry, state: 'tailscale-off', diagnosis: tailnet.off }, finding: null };
   const status = 'status' in tailnet ? tailnet.status : {};
   const peer = local ? null : findPeer(status, parsed.name);
+  const credential = readBuildMachines().find((each) => each.machine === entry);
+  const signedIn = local ? null : currentTailnet(status);
   if (peer === 'missing' || peer === 'ambiguous') {
-    const diagnosis = notOnTailnetDiagnosis(entry, peer === 'ambiguous');
+    const diagnosis = notOnTailnetDiagnosis(
+      entry,
+      peer === 'ambiguous',
+      credential ? wrongTailnet(credential, status) : null,
+    );
     return {
-      report: { machine: entry, state: 'not-on-tailnet', diagnosis },
+      report: {
+        machine: entry,
+        state: 'not-on-tailnet',
+        ...(credential?.tailnet ? { tailnet: credential.tailnet } : {}),
+        diagnosis,
+      },
       finding: diagnosisFinding('build-machine', entry, diagnosis),
     };
   }
   const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
   const address = peer?.dnsName ?? parsed.name;
-  const credential = readBuildMachines().find((each) => each.machine === entry);
   const other = () => {
     try {
       return readDeviceHostMachines().find((each) => each.machine === entry);
@@ -326,6 +341,7 @@ async function inspectMachine(
     access: 'build',
     endpoint: target,
     address,
+    ...(signedIn ? { tailnet: signedIn } : {}),
     credential,
     other,
     persist,
@@ -349,6 +365,7 @@ async function inspectMachine(
   }
   const paired = {
     ...known,
+    ...(outcome.state !== 'not-asked' && outcome.credential?.tailnet ? { tailnet: outcome.credential.tailnet } : {}),
     ...(outcome.state !== 'not-asked' && outcome.credential?.deviceId ? { deviceId: outcome.credential.deviceId } : {}),
     ...(outcome.state !== 'not-asked' && outcome.credential ? { requestedAt: outcome.credential.requestedAt } : {}),
   };

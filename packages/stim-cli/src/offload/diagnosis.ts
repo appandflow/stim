@@ -1,5 +1,5 @@
 import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
-import { isJsonObject, type TailnetPeer } from '@stim-cli/core/state';
+import { isJsonObject, type TailnetPeer, type TailnetIdentity, type WrongTailnet } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 
 export type Transport =
@@ -84,7 +84,23 @@ export function tailscaleDiagnosis(code: TailscaleCode): RemoteDiagnosis {
   }
 }
 
-export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean): RemoteDiagnosis {
+const tailnetLabel = (tailnet: TailnetIdentity) =>
+  tailnet.suffix ? `${tailnet.name} (${tailnet.suffix})` : tailnet.name;
+
+/** A machine that is not on the tailnet this Mac is signed in to now, but was on the one it was signed in to at approval. */
+export function wrongTailnetDiagnosis(entry: string, wrong: WrongTailnet): RemoteDiagnosis {
+  const owner = wrong.owner ? `, or to ${wrong.owner}, the tailnet that owns ${entry}` : '';
+  return {
+    layer: 'peer',
+    code: 'peer-wrong-tailnet',
+    title: 'Other Tailscale account',
+    message: `This Mac asked ${entry} for access while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. This Mac is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
+    remedy: `Switch Tailscale on this Mac to ${tailnetLabel(wrong.recorded)}${owner}, then run \`stim doctor\` again.`,
+  };
+}
+
+export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean, wrong?: WrongTailnet | null): RemoteDiagnosis {
+  if (wrong && !ambiguous) return wrongTailnetDiagnosis(entry, wrong);
   return {
     layer: 'peer',
     code: ambiguous ? 'peer-ambiguous' : 'peer-not-found',
