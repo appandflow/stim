@@ -147,11 +147,11 @@ if (compareVersions(target, before.version) <= 0) {
   fail(`${target} does not come after ${before.version}, which the packages already carry`);
 }
 
-const rewrites = packageDirs.map((dir) => bumped(dir, before.version, target));
-for (const { dir, after } of rewrites) writeFileSync(manifestPath(dir), after);
-
 const regenerateLicenses = !process.env.RELEASE_PREP_SKIP_LICENSES;
 const licensesBefore = regenerateLicenses ? readFileSync(licensesPath, 'utf8') : null;
+
+const rewrites = packageDirs.map((dir) => bumped(dir, before.version, target));
+for (const { dir, after } of rewrites) writeFileSync(manifestPath(dir), after);
 
 const restore = (message) => {
   for (const { dir, before: original } of rewrites) writeFileSync(manifestPath(dir), original);

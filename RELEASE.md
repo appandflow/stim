@@ -149,7 +149,9 @@ preparation, `git status --short` may show only the draft
    the manifests to confirm all packages landed on the new version and that the
    lockfile still matches them, and leaves the candidate uncommitted and
    untagged. If any of that fails it puts the manifests and the licenses file
-   back as they were, so a failed run is never half-bumped.
+   back as they were, so a failed run is never half-bumped. The licenses step
+   runs `expo export`, so a fresh checkout needs `pnpm install --frozen-lockfile`
+   and `pnpm --filter @stim-cli/core run build` first.
 
    Nothing else moves. The packages depend on each other as `workspace:*`, so
    there is no dependency range to bump: pnpm packs each internal dependency
