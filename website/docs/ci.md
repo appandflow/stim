@@ -91,7 +91,7 @@ Stim. Tests must use that exact target and implement app-specific readiness;
 
 A Release run whose test injects its own JS bundle can pass `--skip-js-swap`
 (`run: { skipJsSwap: true }`, or the action's `skip-js-swap: 'true'`) to skip
-regenerating the default-entry JS into the cached artifact. Stim installs and
+the cache-hit regeneration of the default-entry JS into the cached artifact. Stim installs and
 launches the native artifact as built, so the launched app carries its builder's
 JS. `run.json` reports `jsSwapSkipped: true` and `appPath`, the native artifact
 to copy and inject into; Debug runs are refused with `STIM_BAD_ARG`.
