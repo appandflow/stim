@@ -362,7 +362,7 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.build` places iOS simulator Debug builds and Android emulator
+  `remote.build` places iOS simulator builds and Android emulator
   debug builds and macOS SwiftPM Debug builds with the placement words every
   workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
   trying the machines of `remote.machines` in that order, each only while it

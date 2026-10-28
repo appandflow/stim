@@ -55,6 +55,7 @@ import {
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
@@ -133,6 +134,9 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
   return `; ${capacityText({ loadPerCore, builds, maxBuilds: maxBuilds ?? 0 })} there`;
 }
 
+const UNSUPPORTED_OFFLOAD_REMEDY =
+  'This build cannot leave this machine. Build it here with --remote-build local or auto where this machine can build it; stim guide settings lists what keeps a build here.';
+
 /**
  * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while
  * this machine has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
@@ -154,7 +158,12 @@ export function offloadPlacement({
 }): { offload: boolean; code: string; reason: string } {
   const word = placementWord(selected);
   if (word === null) {
-    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote machine cannot take it`);
+    if (unsupported)
+      throw new OffloadRefusal(
+        selected,
+        `${unsupported}, so a named remote machine cannot take it`,
+        UNSUPPORTED_OFFLOAD_REMEDY,
+      );
     if (machines === 0) throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
@@ -162,8 +171,8 @@ export function offloadPlacement({
   if (!localEnabled || !mayRunHere(word)) {
     const why =
       word === 'remote-only' ? 'remote-only never builds here' : 'local is disabled in remote.buildPoolDisabled';
-    const reason = unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null);
-    if (reason) throw new OffloadRefusal(selected, `${reason}; ${why}`);
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}; ${why}`, UNSUPPORTED_OFFLOAD_REMEDY);
+    if (machines === 0) throw new OffloadRefusal(selected, `no enabled remote machine is paired; ${why}`);
     return { offload: true, code: word === 'remote-only' ? 'remote-only' : 'local-disabled', reason: why };
   }
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote machine is paired' };
@@ -1097,7 +1106,9 @@ function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker
   if (request.platform !== 'ios' || !leavesPodsToWorker(choice, request)) return {};
   return {
     podsOnWorker: true,
-    ...(request.reuseArtifact === true && choice.connection.supports('build-reuse-artifact')
+    ...(request.reuseArtifact === true &&
+    choice.connection.supports('build-reuse-artifact') &&
+    !isReleaseConfiguration(request.configuration)
       ? { reuseArtifact: true }
       : {}),
   };

@@ -968,12 +968,13 @@ test.each([
 );
 
 test.each([
-  { reads: true, feature: true, sent: true },
-  { reads: false, feature: true, sent: undefined },
-  { reads: true, feature: false, sent: undefined },
+  { reads: true, features: ['build-reuse-artifact'], configuration: null, sent: true },
+  { reads: false, features: ['build-reuse-artifact'], configuration: null, sent: undefined },
+  { reads: true, features: [], configuration: null, sent: undefined },
+  { reads: true, features: ['build-reuse-artifact'], configuration: 'Release', sent: undefined },
 ])(
-  'a client without Xcode lets the worker reuse its post-pod-install app only when cache reads allow it (reads=$reads, feature=$feature)',
-  async ({ reads, feature, sent }) => {
+  'a client without Xcode lets the worker reuse its retained app only when cache reads allow it (reads=$reads, features=$features, configuration=$configuration)',
+  async ({ reads, features, configuration, sent }) => {
     mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
     writeFileSync(join(repo, 'archive-source', 'Sample.app', 'Info.plist'), 'plist');
     const archivePath = join(repo, 'artifact.tgz');
@@ -986,7 +987,7 @@ test.each([
       { result: { job: 'j1' } },
       {
         artifact: { archive, digest, fingerprint: 'b'.repeat(40), reused: true },
-        hello: () => ({ result: { capabilities: ['build'], features: feature ? ['build-reuse-artifact'] : [] } }),
+        hello: () => ({ result: { capabilities: ['build'], features } }),
       },
     );
     machines.push(machine);
@@ -1005,7 +1006,7 @@ test.each([
         platform: 'ios',
         reuseArtifact: reads,
         runtime: 'iOS-27-0',
-        configuration: null,
+        configuration,
         scheme: null,
         iosProjectPath: 'ios',
         isExpo: false,
