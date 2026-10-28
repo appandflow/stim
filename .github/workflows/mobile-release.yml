@@ -27,10 +27,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  verify:
     runs-on: ubuntu-latest
-    environment: release
-    timeout-minutes: 120
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -59,8 +58,7 @@ jobs:
           cache: false
           install: false
 
-      - name: Install before any secret is loaded
-        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+      - run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
 
       - name: Build the shared notification rules
         run: pnpm --filter @stim-cli/core run build
@@ -77,6 +75,47 @@ jobs:
             echo "::error::$GITHUB_REF_NAME does not match version $version in app.config.ts."
             exit 1
           fi
+
+  demo-server:
+    needs: verify
+    if: inputs.mode != 'rollback' && inputs.mode != 'republish'
+    uses: ./.github/workflows/demo-server-deploy.yml
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DEMO_TOKEN: ${{ secrets.DEMO_TOKEN }}
+
+  release:
+    needs: [verify, demo-server]
+    if: ${{ !cancelled() && needs.verify.result == 'success' && (needs.demo-server.result == 'success' || needs.demo-server.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: release
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          cache: false
+          install: false
+
+      - name: Install before any secret is loaded
+        run: pnpm install --frozen-lockfile --filter stim-mobile... --filter stim-monorepo
+
+      - name: Build the shared notification rules
+        run: pnpm --filter @stim-cli/core run build
 
       - uses: expo/expo-github-action@eab7a230208c952974db8c3245cfd78402c7b385 # 9.0.0
         with:

@@ -1608,10 +1608,19 @@ or prefix each command with `npx`).
 - A `mobile-v<version>` tag on `main` always builds and distributes. The version
   must equal `version` in `app.config.ts`, so raise it first.
 
-Every mode except `rollback` and `republish` runs the unit tests, the boot test
-included, before the step that loads `EXPO_TOKEN`. A failing test stops the run
-before anything is published or built. `rollback` and `republish` skip them
-because they must still work when `main` is broken.
+The workflow runs three jobs in order. `verify` checks that the commit is on
+`main`, that a tag matches `version` in `app.config.ts`, and, in every mode
+except `rollback` and `republish`, runs the unit tests, the boot test included.
+It runs in no environment and loads no secret. `demo-server` then deploys the
+App Review demo server with `.github/workflows/demo-server-deploy.yml` and
+smoke tests it, on a tag and in every mode except `rollback` and `republish`,
+so App Review never gets a build or update whose demo server is not live.
+`release` publishes, builds, rolls back or republishes. A failure in `verify`,
+the deploy or the smoke test stops the run before anything is published or
+built; a failing check in `verify` never deploys the demo server.
+On a tag, missing Cloudflare secrets or `DEMO_TOKEN` fail the deploy; a dispatched release skips the deploy with a notice instead. `rollback` and
+`republish` skip the tests and the deploy because they must still work when
+`main` is broken. See [Deploy](../demo-server/README.md#deploy).
 
 `eas build` records as the build's runtime the fingerprint computed on the
 machine that starts it, so a build from this workflow and the fingerprint
