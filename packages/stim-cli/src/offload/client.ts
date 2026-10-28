@@ -135,7 +135,7 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
 }
 
 const UNSUPPORTED_OFFLOAD_REMEDY =
-  'This build stays on this machine. Rerun with --remote-build local or auto to build it here; stim guide settings lists the builds a remote machine can take.';
+  'This build cannot leave this machine. Build it here with --remote-build local or auto where this machine can build it; stim guide settings lists what keeps a build here.';
 
 /**
  * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while

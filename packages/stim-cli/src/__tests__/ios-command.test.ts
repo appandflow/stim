@@ -17,7 +17,7 @@ import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
-import * as offloadToolchain from '../offload/toolchain.ts';
+import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
@@ -9355,37 +9355,77 @@ describe('strict remote machine selection', () => {
     expect(result.calls.order.indexOf('installIosApp')).toBeGreaterThan(result.calls.order.indexOf('swapJsBundle'));
   });
 
-  test.each([
-    { client: 'with Xcode', xcode: '27.1', configuration: 'Release', asks: true },
-    { client: 'without Xcode', xcode: null, configuration: 'Debug', asks: true },
-    { client: 'without Xcode', xcode: null, configuration: 'Release', asks: false },
-  ])(
-    'a client $client asks machines for a cached $configuration app only when it can install it: $asks',
-    async ({ xcode, configuration, asks }) => {
-      reserve();
-      configureMini();
-      vi.spyOn(offloadToolchain, 'iosToolchainAsync').mockResolvedValue({
-        stimBuild: 'fixture',
-        compat: 2,
-        arch: 'arm64',
-        xcode,
-        simulatorSdk: xcode,
-        cocoapods: null,
-      });
-      const choose = offloadedRelease(false);
-      await run(
-        { remoteBuild: 'mini', configuration, json: true },
-        {
-          storeBuild: (_platform, _key, path) => path,
-          buildIos: () => {
-            throw new Error('unexpected local compile');
-          },
+  test('a client without Xcode rebuilds a cached Release app on the machine instead of swapping its JS', async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    const cached = join(root, 'cached.app');
+    mkdirSync(cached, { recursive: true });
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        resolveBuild: () => cached,
+        storeBuild: (_platform, _key, path) => path,
+        iosToolchain: async () => ({
+          stimBuild: 'fixture',
+          compat: 2,
+          arch: 'arm64',
+          xcode: null,
+          simulatorSdk: null,
+          cocoapods: null,
+        }),
+        buildIos: () => {
+          throw new Error('unexpected local compile');
         },
-      );
-      expect(choose).toHaveBeenCalled();
-      expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
-    },
-  );
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    expect(offloadClient.offloadBuild).toHaveBeenCalled();
+  });
+
+  test.each([
+    { configuration: 'Debug', asks: true },
+    { configuration: 'Release', asks: false },
+  ])('a $configuration miss asks machines for a cached app built elsewhere: $asks', async ({ configuration, asks }) => {
+    reserve();
+    configureMini();
+    const choose = offloadedRelease(false);
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(choose).toHaveBeenCalled();
+    expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
+  });
+
+  test.each([
+    { configuration: 'Release', sent: true },
+    { configuration: 'Debug', sent: false },
+  ])('an Expo $configuration offload sends the gitignored .env.production: $sent', async ({ configuration, sent }) => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API=https://api.example.com\n');
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        detectIsExpo: () => true,
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    const inputs = await vi.mocked(offloadClient.offloadBuild).mock.calls[0]?.[0].fingerprintInputs?.();
+    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
+  });
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
     reserve();

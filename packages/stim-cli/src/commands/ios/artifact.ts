@@ -54,7 +54,6 @@ import {
   type BuildHandoff,
 } from '../../offload/client.ts';
 import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
-import { buildsOnlyOnWorker } from '../../offload/toolchain.ts';
 import {
   fingerprintMismatchRemedy,
   missingPackageManagerRemedy,
@@ -181,6 +180,7 @@ export async function acquireIosArtifact(
   const { phase, note, logWriter, stats, step, miss, hit: lateHit, place, waitingOn, waitingFor } = progress;
   const cachePolicy = cache.policy;
   const release = isReleaseConfiguration(configuration);
+  const embedsJs = (runtime: string) => release && !recipe.offload?.request(runtime).native;
   const signal = runCancellationSignal(context) ?? context.signal;
   const cacheTarget = (key: string) => ({ projectRoot: root, platform: 'ios' as const, key, signal });
   let useBuildCache = cachePolicy.read;
@@ -518,8 +518,8 @@ export async function acquireIosArtifact(
       hereReason = placement.reason;
       if (
         placement.code === 'this-mac-free' &&
-        !release &&
         runtime &&
+        !embedsJs(runtime) &&
         useBuildCache &&
         cachePolicy.remote &&
         recipe.offload !== undefined
@@ -571,11 +571,7 @@ export async function acquireIosArtifact(
       selected: buildMachine,
       onCandidates: (each) => (asked = each),
       cacheOnly: candidate.cacheOnly,
-      ...(useBuildCache &&
-      cachePolicy.remote &&
-      storeHash &&
-      !offload.request(candidate.runtime).native &&
-      !(release && target.platform === 'ios' && buildsOnlyOnWorker(target.local))
+      ...(useBuildCache && cachePolicy.remote && storeHash && !offload.request(candidate.runtime).native && !release
         ? { reactNativeArtifact: { fingerprint: storeHash, request: offload.request(candidate.runtime) } }
         : {}),
       ...(useBuildCache &&
@@ -664,7 +660,7 @@ export async function acquireIosArtifact(
             (await recipe.cache().store({
               ...cacheTarget(storeKey),
               sourcePath: outcome.artifactPath,
-              overwrite: !useBuildCache || (release && !outcome.peerArtifact),
+              overwrite: !useBuildCache || (embedsJs(runtime) && !outcome.peerArtifact),
             })) ?? null;
         } catch (e) {
           reason = `could not store the app: ${(e as Error)?.message || e}`;

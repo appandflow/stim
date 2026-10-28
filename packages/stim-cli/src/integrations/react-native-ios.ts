@@ -1,10 +1,12 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
   changedDuringBuildLine,
   configInputsChanged,
+  expoProductionEnvFiles,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   gitignoredFingerprintInputs,
@@ -245,12 +247,12 @@ function reactNativeIosArtifact(
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
       if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
-      if (process.platform !== 'darwin') {
+      if (buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
         note(
           chalk.yellow(
             phaseLine(
               'swap',
-              `a cached ${configuration} app carries its builder's JS, and only a Mac can replace it -- building fresh instead`,
+              `a cached ${configuration} app carries its builder's JS, and only a Mac with Xcode can replace it -- building fresh instead`,
             ),
           ),
         );
@@ -591,12 +593,19 @@ function reactNativeIosArtifact(
       }),
       fingerprintInputs: async () => ({
         sources: storeSources,
-        ignored: await gitignoredFingerprintInputs(
-          root,
-          storeSources,
-          { platform: PLATFORM, iosProjectPath: iosProject.relative },
-          { env: operation?.env },
-        ),
+        ignored: [
+          ...(await gitignoredFingerprintInputs(
+            root,
+            storeSources,
+            { platform: PLATFORM, iosProjectPath: iosProject.relative },
+            { env: operation?.env },
+          )),
+          ...(release && isExpo
+            ? expoProductionEnvFiles(operation?.env)
+                .map((name) => join(root, name))
+                .filter((path) => existsSync(path))
+            : []),
+        ],
         ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
         trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),

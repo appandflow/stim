@@ -782,7 +782,7 @@ refuses. The host boots headless and ignores this Mac's iosSimulatorApp setting.
 --slot, --device-type and --runtime select the hosted simulator; --scheme,
 --configuration and --eas-profile select the app as usual. The build targets
 the offered simulator architecture, not this machine's. --remote-build remains
-independent and selects a compatible build worker for a Debug cache miss.
+independent and selects a compatible build worker for a cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
 (concurrency.maxIosDevices, concurrency.maxAndroidDevices; hosted macOS apps use concurrency.maxMacosApps).
@@ -3075,7 +3075,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   installs that; any swap failure falls back to a full build
   rather than ever installing stale JS. A simulator Release build can run on
   a remote machine (stim guide settings, remote.build), which bundles the JS
-  of the checkout it synced. A machine that is not a Mac cannot swap, so a
+  of the checkout it synced, its gitignored .env.production files included,
+  in the remote machine's environment: an EXPO_PUBLIC_ variable set only in
+  this shell is not applied there. A machine without Xcode cannot swap, so a
   cached Release app is built again on the remote machine instead. Device logs are still collected, so
   \`logs --errors\` answers "does it repro in release/Hermes bytecode".
   A run with no \`--device\` installs on the simulator only. \`ios --device\`

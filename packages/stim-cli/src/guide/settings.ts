@@ -1135,7 +1135,7 @@ load per core against it, as \`capacity.load\` in JSON.
 Device builds, Android release variants,
 \`--remote eas|proxy\` builds, Android builds with the Apple Clang CAS compiler cache,
 and iOS/Android runs with the build cache off, always build here. Hosted iOS
-Debug builds can use a separate --remote-build, targeting the hosting Mac's
+builds can use a separate --remote-build, targeting the hosting Mac's
 architecture and runtime.
 macOS uses matching Xcode and macOS SDK (not when --remote-build and --remote name the
 same Mac; see stim guide macos), with a per-client SwiftPM dependency

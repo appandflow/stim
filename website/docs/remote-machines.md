@@ -139,7 +139,7 @@ reported to the client. An Android emulator's media volume is set to zero
 the same way; neither changes the host's own volume. Debug keeps Metro on this machine
 and carries it over connections this machine opens to the host, so the host
 never needs to reach this machine; no `stim start --remote` is needed. `--device-type`, `--runtime` and `--slot` select the hosted simulator.
-`--remote-build` independently selects a compatible worker for a Debug cache
+`--remote-build` independently selects a compatible worker for a cache
 miss. Named hosting has no local fallback. Stop the slot with `stim stop` before
 moving it between local and hosted devices or between hosts.
 
@@ -381,8 +381,11 @@ Install the client CLI globally or run it with npx:
 
 A remote machine can compile iOS simulator Debug and Release apps, Android
 emulator debug and macOS SwiftPM Debug apps. An iOS Release app built there
-carries the JavaScript of the checkout this machine synced, so a machine without
-Xcode, such as Linux, can run `stim ios --configuration Release --remote-build <mac>`.
+carries the JavaScript of the checkout this machine synced, including gitignored
+`.env.production` files, so a machine without Xcode, such as Linux, can run
+`stim ios --configuration Release --remote-build <mac>`. The worker bundles it
+in its own environment: an `EXPO_PUBLIC_` variable set only in this shell is not
+applied; put it in an `.env` file.
 Android builds on a
 worker machine need Java and the Android SDK. Device builds, Android release variants,
 EAS/proxy runs, Android CAS compiler-cache builds, and iOS/Android runs with

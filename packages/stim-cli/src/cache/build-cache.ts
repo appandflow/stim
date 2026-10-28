@@ -329,6 +329,12 @@ export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
   return ['.env.development.local', '.env.local', '.env.development', '.env'];
 }
 
+/** The env files only a production bundle of an Expo app reads, beside the ones `expoEnvFiles` lists. */
+export function expoProductionEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
+  return ['.env.production.local', '.env.production'];
+}
+
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');
 
 /**
