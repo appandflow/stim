@@ -616,6 +616,11 @@ WHAT WRITES WHAT
                        the run that pointed you at it. A build from the API's
                        build() writes build-artifact-<platform>.ndjson
                        instead, so it never replaces a run's transcript.
+                       A failed build also leaves a copy of its transcript next
+                       to the log, named <log>.failed (build-ios.ndjson.failed);
+                       the failure's log line points at it, and the next
+                       failed build of that log replaces it. \`logs\` does not
+                       read it.
 
   Only a dev server Stim hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a

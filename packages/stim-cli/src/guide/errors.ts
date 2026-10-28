@@ -169,7 +169,11 @@ Branch on the code, never on the message.`,
       summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',
       body: () => `STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
-  not the transcript. Read the log path on the next line for the rest.
+  not the transcript. Read the log path on the next line for the rest: it names
+  a copy of the failed transcript (<log>.failed) that the next build in the
+  workspace does not overwrite. When xcodebuild names failed script phases,
+  the first diagnostics are the phase names and the last error lines the
+  script printed, ahead of the compiler diagnostics.
   Three Android refusals share this code without gradle itself failing:
   - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
     Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
