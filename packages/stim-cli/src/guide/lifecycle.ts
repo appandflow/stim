@@ -488,23 +488,37 @@ prerequisites. \`reload\` refuses because the app has no Metro runtime. Re-run
 \`stim android\` after an edit and use \`stim stop\` for scoped cleanup.`,
     },
     ci: {
-      summary: 'Run an app and tests through @stim-cli/ci with diagnostics and scoped cleanup',
+      summary: 'Build an app once, then install it and run tests through @stim-cli/ci with scoped cleanup',
       body: () => `CONTINUOUS INTEGRATION
 
 Install app dependencies and platform tools first. Use a dedicated checkout:
 cleanup stops that workspace, including resources created before a build fails.
 
+  npx --yes --package @stim-cli/ci stim-ci build --platform ios --project ./app
   npx --yes --package @stim-cli/ci stim-ci run --platform ios --project ./app --timeout 1800 -- pnpm test:e2e
 
 Or install npm install --global @stim-cli/ci and use stim-ci directly.
 Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
---artifacts selects the result directory (a fresh temporary directory by default).
+build is the only step that compiles (or restores from the cache, or with
+--eas-profile downloads an EAS development build). It records the app for this
+checkout, platform and selectors (iOS scheme and configuration, Android variant)
+in workspace state under the Stim home; the last build for those selectors wins.
+run never builds, fingerprints or replaces JS: it installs and launches that
+recorded app as built and trusts it, then runs the test. A Debug app still gets
+Metro from run. With no recorded build for the selectors, run refuses with
+STIM_NO_RECORDED_BUILD and names the stim-ci build command. Build and run must
+share the Stim home (--home or STIM_HOME). macOS and web run unchanged: macOS
+run builds the app itself.
+build exports nothing unless --export <path> is given (an APK, or a tar.gz).
+--artifacts selects a directory for result, test and diagnostic files; without
+it none are written, no logs are copied and the action uploads nothing.
 An explicit artifacts directory must be empty; use a new directory per run.
 Stdout is one JSON result; progress and test output go to stderr.
 
 Tests receive STIM_CI_PLATFORM, STIM_CI_DEVICE_ID, STIM_CI_APP_ID,
-STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last is
-run.json with the exact public API result. Use that target and check app
+STIM_CI_METRO_PORT, STIM_CI_ARTIFACTS_DIR and STIM_CI_RUN_RESULT. The last two
+are empty without --artifacts; otherwise STIM_CI_RUN_RESULT is run.json with the
+exact public API result, whose facts carry the stable cache appPath. Use that target and check app
 readiness; launched can still be bundling or unverified.
 
 result.json preserves the test exit code even if diagnostics or cleanup fail.
@@ -524,7 +538,7 @@ CI=true alone does not change defaults, ownership or coordination. Persist only
 cache artifacts, not state, claims or device ledgers. Independent homes must
 not share a writable filesystem cache because its claims live in the home.
 
-The programmatic runner is import { runCI } from '@stim-cli/ci'. See its package
+The programmatic API is import { buildCI, runCI } from '@stim-cli/ci'. See its package
 README for result types, cancellation, cache policy, and coordination findings.`,
     },
     'hosted-android': {

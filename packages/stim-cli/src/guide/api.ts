@@ -170,7 +170,12 @@ it never starts an EAS build. iOS simulatorApp selects the simulator viewer.
 remote selects the launch host using the CLI's existing placement and approval
 rules; remoteBuild independently selects where compilation runs. macOS requires
 a named hosting Mac; auto, eas and proxy are not supported there.
-All methods accept signal. run builds, installs and launches.
+All methods accept signal. run builds, installs and launches. iOS and Android run
+also accept recordedBuild: true, which installs and launches the app the last
+build with the same scheme and configuration (or variant) recorded in this
+workspace, without fingerprinting, building or replacing its JS, and refuses with
+STIM_NO_RECORDED_BUILD when there is none. @stim-cli/ci uses it; the CLI and the
+private Desktop transport do not.
 Web requires a running server, just like stim web.
 
 build produces an artifact without acquiring a device, starting a runtime, or
@@ -185,18 +190,20 @@ including when Desktop is not installed on the build machine. Opening it only
 navigates; it does not install or launch the built app.
 
 Build options:
-  ios:     scheme, configuration, arch (arm64, x86_64, all), buildCache, remoteBuild
-  android: variant, abi (arm64-v8a, armeabi-v7a, x86, x86_64, all), buildCache, remoteBuild
+  ios:     scheme, configuration, arch (arm64, x86_64, all), buildCache, remoteBuild, easProfile
+  android: variant, abi (arm64-v8a, armeabi-v7a, x86, x86_64, all), buildCache, remoteBuild, easProfile
   macos:   remoteBuild
 An iOS build targets the simulator. A Debug build defaults to the host
 architecture (Android only while optimizations.android.targetAbiOnly is on, the
 default); Release defaults to all. macOS builds the configured Debug SwiftPM app.
 Build results retain an owned appPath (iOS), apkPath (Android) or bundle (macOS)
-inside this workspace until worktree removal. Later builds keep earlier copies.
+inside this workspace until worktree removal. Later builds keep earlier copies. An iOS or
+Android build also records its app in workspace state for recordedBuild runs; the
+last build per scheme and configuration or variant wins. easProfile downloads a
+completed EAS development build instead of compiling; it never starts an EAS build.
 A build leaves a running app's last build record and build log untouched; it
 writes its own build-artifact-<platform>.ndjson. No distribution archive or web build
-pipeline is inferred. Use @stim-cli/ci's buildCI to export a portable artifact and
-diagnostics for your CI provider.
+pipeline is inferred. Use @stim-cli/ci's buildCI to record the build and, with exportPath, export a portable artifact for your CI provider.
 
 Unresolved native Metro cleanup keeps error.details.cause.retainedClaimRoots and
 STIM_CLAIM_UNAVAILABLE even after cancellation. Web cancellation stops pending

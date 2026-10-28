@@ -10,6 +10,7 @@ import {
   deviceHostMachinesLock,
   acceptsShape,
   cannotHost,
+  currentTailnet,
   isJsonObject,
   localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
@@ -17,6 +18,7 @@ import {
   readDeviceHostMachines,
   settingDefinition,
   type DeviceHostMachineCredential,
+  wrongTailnet,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
@@ -144,6 +146,24 @@ export async function forgetDeviceHostMachine(machine: string): Promise<boolean>
   } finally {
     releaseClaim(claim.acquired);
   }
+}
+
+function notOnTailnet(
+  machine: string,
+  ambiguous: boolean,
+  stored: DeviceHostMachineCredential | undefined,
+  current: unknown,
+) {
+  const diagnosis = notOnTailnetDiagnosis(machine, ambiguous, stored ? wrongTailnet(stored, current) : null);
+  return {
+    diagnosis,
+    report: {
+      machine,
+      state: 'not-on-tailnet' as const,
+      ...(stored?.tailnet ? { tailnet: stored.tailnet } : {}),
+      diagnosis,
+    },
+  };
 }
 
 /**
@@ -277,11 +297,17 @@ export async function inspectDeviceHostMachines(
       }
       const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
-        inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
+        const { report, diagnosis } = notOnTailnet(
+          machine,
+          peer === 'ambiguous',
+          credentials.find((each) => each.machine === machine),
+          current,
+        );
+        inspected.machines.push(report);
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
+      const signedIn = local ? null : currentTailnet(current);
       const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
       const dnsName = peer ? { dnsName: peer.dnsName } : {};
       const nodeRoute = peer ? `${peer.nodeId}:${parsed.port}` : `local:${parsed.name}:${parsed.port}`;
@@ -307,6 +333,7 @@ export async function inspectDeviceHostMachines(
         access: 'device-host',
         endpoint: target,
         address: peer?.dnsName ?? parsed.name,
+        ...(signedIn ? { tailnet: signedIn } : {}),
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: async (next) => {
@@ -336,6 +363,7 @@ export async function inspectDeviceHostMachines(
         machine,
         ...dnsName,
         ...(saved?.deviceId ? { deviceId: saved.deviceId } : {}),
+        ...(saved?.tailnet ? { tailnet: saved.tailnet } : {}),
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
       if (outcome.state === 'approved') {

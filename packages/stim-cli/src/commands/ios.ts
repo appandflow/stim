@@ -7,7 +7,8 @@ import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
-import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
+import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
@@ -278,12 +279,15 @@ function iosProjectTargetRefusal(
     physical,
     easProfile,
     placement,
+    recordedRefusal,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
+    recordedRefusal: RecordedBuildRefusal | null;
   },
 ): FailArgs | null {
+  if (recordedRefusal) return recordedRefusal;
   const target = physical
     ? 'physical'
     : placement
@@ -644,7 +648,16 @@ async function runIos(
   const isExpo = integration.isExpo;
   const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
-  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  const recordedLookup = lookupRecordedBuild(opts.recordedBuild, root, {
+    platform: 'ios',
+    scheme: buildScheme,
+    configuration: builtConfiguration,
+  });
+  const capabilityRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    easProfile: opts.easProfile,
+    recordedRefusal: recordedLookup.refusal,
+  });
   if (capabilityRefusal) return fail(capabilityRefusal);
   const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
@@ -686,7 +699,11 @@ async function runIos(
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   deviceSlotWait.automatic = Boolean(remoteSelection.auto);
-  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  const targetRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    placement: remoteSelection,
+    recordedRefusal: null,
+  });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
@@ -1109,7 +1126,8 @@ async function runIos(
       });
       const acquiredArtifact = unlessCancelled(
         context,
-        await acquireIosArtifact(
+        await acquireIosArtifactOrRecorded(
+          recordedLookup.build,
           {
             context,
             root,

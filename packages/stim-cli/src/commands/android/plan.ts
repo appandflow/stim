@@ -1,4 +1,5 @@
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
+import { lookupRecordedBuild } from '../../engine/recorded-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
@@ -80,6 +81,8 @@ export interface AndroidBuildPlanInputs {
 
 export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly slot: string;
+  /** Set when the run installs a recorded build: refuses before any device work if there is none. */
+  readonly recordedBuild?: boolean;
   readonly signal?: AbortSignal;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;
@@ -319,6 +322,7 @@ export async function resolveAndroidRunPlan(
     slot,
     signal,
     easProfile,
+    recordedBuild,
     variant: variantFlag,
     systemImage: systemImageFlag,
     deviceProfile: deviceProfileFlag,
@@ -369,6 +373,11 @@ export async function resolveAndroidRunPlan(
     { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;
+  const recordedRefusal = lookupRecordedBuild(recordedBuild, root, {
+    platform: 'android',
+    configuration: plannedBuild.plan.build.variant,
+  }).refusal;
+  if (recordedRefusal) return fail(recordedRefusal.code, recordedRefusal.message, recordedRefusal.remedy);
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(

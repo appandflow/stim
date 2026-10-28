@@ -25,6 +25,8 @@ import {
   type Endpoint,
   type MachineCredential,
   type MachineTransport,
+  type TailnetIdentity,
+  wrongTailnet,
   type TailnetPeer,
 } from '@stim-cli/core/state';
 export { parseMachine, findPeer, endpoint, type Endpoint, type TailnetPeer } from '@stim-cli/core/state';
@@ -35,6 +37,7 @@ import {
   diagnoseLocalUnreachable,
   diagnoseUnreachable,
   parsePeerStartup,
+  wrongTailnetDiagnosis,
   readTailscale,
   tailscaleDiagnosis,
   type PeerStartup,
@@ -494,16 +497,24 @@ export async function diagnoseTailscale(io: TailnetMachineIo): Promise<RemoteDia
   return tailscaleDiagnosis(reading.running ? 'tailscale-unavailable' : reading.code);
 }
 
-/** Where to reach a paired machine now, or why Stim cannot; the handshake then checks its pinned key. */
+/**
+ * Where to reach a paired machine now, or why Stim cannot; the handshake then checks its pinned key. A machine
+ * missing from the tailnet this Mac is signed in to says so when the credential recorded another tailnet.
+ */
 export async function resolveEndpoint(
-  credential: { machine: string },
+  credential: Pick<MachineCredential, 'machine'> & Partial<Pick<MachineCredential, 'address' | 'tailnet'>>,
   status: () => unknown = () => tailscaleStatusAsync(signal),
   signal?: AbortSignal,
 ): Promise<Endpoint | string> {
-  return machineEndpoint(
-    credential.machine,
-    parseMachine(credential.machine)?.transport === 'tailscale' ? await status() : null,
-  );
+  const parsed = parseMachine(credential.machine);
+  const current = parsed?.transport === 'tailscale' ? await status() : null;
+  const found = machineEndpoint(credential.machine, current);
+  if (typeof found !== 'string' || parsed?.transport !== 'tailscale' || findPeer(current, parsed.name) !== 'missing')
+    return found;
+  const wrong = wrongTailnet(credential, current);
+  if (!wrong) return found;
+  const { message, remedy } = wrongTailnetDiagnosis(credential.machine, wrong);
+  return `${message} ${remedy}`.replace(/\.$/, '');
 }
 
 /** Where a remote machine stands with this machine, for one access. */
@@ -523,6 +534,8 @@ export interface AccessInput {
   access: Access;
   endpoint: Endpoint;
   address: string;
+  /** The tailnet this machine is signed in to now; recorded on a credential that has none. Absent for a `local` machine. */
+  tailnet?: TailnetIdentity;
   credential: MachineCredential | undefined;
   /**
    * Reads the same machine's credential for the other access, whose ticket a new request shares and whose pinned key
@@ -605,6 +618,7 @@ function newPending(input: AccessInput, ticket: string, expiresAt: string | unde
     requestedAt: new Date(now).toISOString(),
     ticket,
     ...(expiresAt ? { expiresAt } : {}),
+    ...(input.tailnet ? { tailnet: input.tailnet } : {}),
   };
 }
 
@@ -613,6 +627,7 @@ function approved(
   reply: Extract<HelloReply, { result: unknown }>,
   requestedAt: string,
 ): AccessOutcome {
+  const tailnet = input.credential?.tailnet ?? input.tailnet;
   return {
     state: 'approved',
     credential: {
@@ -623,6 +638,7 @@ function approved(
       requestedAt,
       serverKey: reply.serverKey,
       deviceId: reply.result.device.id,
+      ...(tailnet ? { tailnet } : {}),
     },
     result: reply.result,
   };

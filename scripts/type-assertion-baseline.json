@@ -72,7 +72,7 @@
   "packages/ci": {
     "src": {
       "as": 8,
-      "nonNull": 6
+      "nonNull": 5
     },
     "test": {
       "as": 5,

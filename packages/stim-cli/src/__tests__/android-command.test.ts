@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as androidOperation from '../commands/android.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -47,7 +48,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, parse } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
@@ -2856,7 +2857,9 @@ describe('a failed build', () => {
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
-    expect(labelled(h.stderr, 'log')[0]).toBe(phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson')));
+    expect(labelled(h.stderr, 'log')[0]).toBe(
+      phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson.failed')),
+    );
   });
 
   test('falls back to the last transcript lines when nothing could be extracted', async () => {
@@ -4779,6 +4782,37 @@ describe('release skips Metro entirely', () => {
       verifyReleaseLaunched: never('the release process check'),
     });
     expect((await h.run()).ok).toBe(true);
+  });
+});
+
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    const h = harness({ variant: 'productionRelease', recordedBuild: true, build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_RECORDED_BUILD');
+    expect(h.calls.install).toHaveLength(0);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or APK swap', async () => {
+    const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
+    mkdirSync(dirname(recorded), { recursive: true });
+    writeFileSync(recorded, 'apk');
+    recordBuild(root, recordedBuildKey({ platform: 'android', configuration: 'productionRelease' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture',
+    });
+    const h = harness({
+      variant: 'productionRelease',
+      recordedBuild: true,
+      resolveCached: never('the cache lookup'),
+      swapApk: never('the APK swap'),
+      build: never('the build'),
+      storeCached: never('storeBuild'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.apkPath).toBe(recorded);
   });
 });
 

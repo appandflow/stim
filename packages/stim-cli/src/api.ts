@@ -756,6 +756,15 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
 }
 
 async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+  if (
+    options.recordedBuild &&
+    (('device' in options && options.device !== undefined) || ('remote' in options && options.remote !== undefined))
+  )
+    throw new StimError({
+      code: 'STIM_BAD_ARG',
+      message: 'recordedBuild installs a local simulator or emulator build, not a physical device or a remote host.',
+      remedy: 'Drop device and remote, or run without recordedBuild.',
+    });
   const root = context.projectRoot;
   switch (options.platform) {
     case 'ios': {

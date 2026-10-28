@@ -16,6 +16,15 @@ const POSITIONED = /^(\S[^\t]*?):(\d+):(?:(\d+):)?\s*(?:fatal\s+)?error:\s+(.+)$
 
 const UNPOSITIONED = /^(\S[^\t]*?)?\berror:\s+(.+)$/;
 
+const SCRIPT_WRAPPER = /^error: ([\w.@/-]+) - (.*)$/;
+const XTRACE = /^\++ /;
+const FAILED_COMMANDS = /^The following build commands failed:\s*$/;
+const FAILED_COMMANDS_END = /^\(\d+ failures?\)/;
+const FAILED_PHASE = /^\s+PhaseScriptExecution\s+((?:\\.|\S)+)\s.*\(in target '([^']+)'/;
+const SCRIPT_LINES_KEPT = 40;
+const SCRIPT_DETAIL_MAX = 6;
+const SCRIPT_LINE_MAX = 300;
+
 const LD_ERROR = /^ld:\s+(?!warning:)(.+)$/;
 
 const UNDEFINED_HEADER = /^(?:ld:\s+)?Undefined symbols?(?:\s+for architecture\s+\S+)?:\s*$/;
@@ -111,15 +120,38 @@ function makeDiagnostic(
   return out;
 }
 
+function unescape(token: string): string {
+  return token.replace(/\\(.)/g, '$1');
+}
+
 function dedupeKey(d: Diagnostic): string {
   return `${d.file || ''}|${d.line || ''}|${d.column || ''}|${d.message}`;
 }
 
+function failureDiagnostics(phases: string[], scriptLines: string[]): Diagnostic[] {
+  if (phases.length === 0) return [];
+  const anchor = scriptLines.findLastIndex((text) => text.startsWith('error:'));
+  const detail = anchor >= 0 ? scriptLines.slice(anchor, anchor + SCRIPT_DETAIL_MAX) : scriptLines.slice(-3);
+  return [
+    ...phases.map((phase) => ({ message: phase })),
+    ...detail.map((text) => ({ message: text.replace(/^error:\s*/, '') })),
+  ];
+}
+
+/**
+ * Reads xcodebuild output line by line. `diagnostics` lists, first, the script phases xcodebuild's
+ * `The following build commands failed:` block names and the last error lines the script printed, then the
+ * errors found along the way. A script wrapper such as `error: sentry-cli - ` prefixes every line of its
+ * output, bash xtrace included; the prefix is removed and the trace lines are dropped.
+ */
 export function createXcodeDiagnosticCollector(
   root: string | null = null,
   sdk: string = 'iphonesimulator',
   podDirectory: string | null = root,
 ): { push(line: string): void; readonly diagnostics: Diagnostic[] } {
+  const failedPhases: string[] = [];
+  const scriptLines: string[] = [];
+  let inFailedCommands = false;
   const pods = root ? { root, directory: podDirectory ?? root } : null;
   const out: Diagnostic[] = [];
   const seen = new Set<string>();
@@ -133,9 +165,28 @@ export function createXcodeDiagnosticCollector(
     out.push(d);
   };
 
+  const pushFailedCommand = (raw: string) => {
+    if (FAILED_COMMANDS.test(raw)) {
+      inFailedCommands = true;
+      return;
+    }
+    if (!inFailedCommands) return;
+    if (FAILED_COMMANDS_END.test(raw)) {
+      inFailedCommands = false;
+      return;
+    }
+    const phase = FAILED_PHASE.exec(raw);
+    if (!phase) return;
+    const message = `Build phase failed: "${unescape(phase[1] ?? '')}" (target ${phase[2]})`;
+    if (!failedPhases.includes(message)) failedPhases.push(message);
+  };
+
   const push = (line: string) => {
-    if (finished) return;
-    const raw = line.replace(/\r$/, '');
+    if (finished) {
+      pushFailedCommand(line.replace(/\r$/, ''));
+      return;
+    }
+    let raw = line.replace(/\r$/, '');
 
     if (inUndefinedSymbols) {
       const sym = UNDEFINED_SYMBOL.exec(raw);
@@ -151,6 +202,17 @@ export function createXcodeDiagnosticCollector(
     if (raw.includes(BUILD_FAILED)) {
       finished = true;
       return;
+    }
+
+    const wrapped = SCRIPT_WRAPPER.exec(raw);
+    if (wrapped) {
+      const text = (wrapped[2] ?? '').trim();
+      if (XTRACE.test(text)) return;
+      if (text) {
+        scriptLines.push(text.length > SCRIPT_LINE_MAX ? `${text.slice(0, SCRIPT_LINE_MAX - 3)}...` : text);
+        if (scriptLines.length > SCRIPT_LINES_KEPT) scriptLines.shift();
+      }
+      raw = text;
     }
 
     if (UNDEFINED_HEADER.test(raw)) {
@@ -191,7 +253,20 @@ export function createXcodeDiagnosticCollector(
     }
   };
 
-  return { push, diagnostics: out };
+  return {
+    push,
+    get diagnostics() {
+      const merged: Diagnostic[] = [];
+      const keys = new Set<string>();
+      for (const d of [...failureDiagnostics(failedPhases, scriptLines), ...out]) {
+        const key = dedupeKey(d);
+        if (keys.has(key)) continue;
+        keys.add(key);
+        merged.push(d);
+      }
+      return merged;
+    },
+  };
 }
 
 export function capDiagnostics(

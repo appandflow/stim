@@ -28,8 +28,8 @@ it('preserves argv and streams while returning the actual command exit status', 
     onOutput: ({ message }) => chunks.push(message),
   });
   expect(result.exitCode).toBe(23);
-  expect(JSON.parse(readFileSync(result.stdout, 'utf8'))).toEqual(['a b', '$(not-a-command)']);
-  expect(readFileSync(result.stderr, 'utf8')).toBe('diagnostic\n');
+  expect(JSON.parse(readFileSync(result.stdout ?? '', 'utf8'))).toEqual(['a b', '$(not-a-command)']);
+  expect(readFileSync(result.stderr ?? '', 'utf8')).toBe('diagnostic\n');
   expect(chunks.join('')).toContain('diagnostic');
 });
 

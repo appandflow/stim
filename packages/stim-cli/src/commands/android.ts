@@ -137,7 +137,8 @@ import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
+import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
+import { lookupRecordedBuild } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
@@ -171,6 +172,7 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
+  recordedBuild?: boolean;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -304,6 +306,7 @@ export function runAndroidOperation(
           buildMachine: opts.remoteBuild,
           slot: opts.slot,
           easProfile: opts.easProfile,
+          recordedBuild: opts.recordedBuild,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
           useBuildCache: opts.buildCache !== false,
@@ -338,6 +341,7 @@ interface RunAndroidOptions {
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
+  recordedBuild?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
   root: string;
@@ -434,6 +438,7 @@ function resolveRunAndroidOptions(
     metroCheck = true,
     useBuildCache = true,
     easProfile,
+    recordedBuild,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
@@ -514,6 +519,7 @@ function resolveRunAndroidOptions(
     metroCheck,
     useBuildCache,
     easProfile,
+    recordedBuild,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -667,6 +673,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     useBuildCache: requestedBuildCache,
     easProfile,
+    recordedBuild: recordedBuildRequested,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -887,6 +894,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       signal: context.signal,
       slot,
       easProfile,
+      recordedBuild: recordedBuildRequested,
       variant: variantFlag,
       systemImage: systemImageFlag,
       deviceProfile: deviceProfileFlag,
@@ -937,6 +945,10 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
   const { variant, release } = buildPlan;
+  const recordedLookup = lookupRecordedBuild(recordedBuildRequested, root, {
+    platform: 'android',
+    configuration: variant,
+  });
   const runtimeKind = integration.runtimeKind(buildPlan);
   const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
@@ -1327,7 +1339,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         logsDir,
         root,
       });
-    const acquiredArtifact = await acquireAndroidArtifact(
+    const acquiredArtifact = await acquireAndroidArtifactOrRecorded(
+      recordedLookup.build,
       {
         context,
         root,
