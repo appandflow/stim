@@ -365,7 +365,8 @@ and repeat the affected gate rather than waiving it.
    green:
 
    ```bash
-   repo=appandflow/stim ci_event=push ci_branch=main
+   repo=appandflow/stim
+   : "${ci_event:=push}" "${ci_branch:=main}"
    (
      set -euo pipefail
      gh api "repos/$repo/actions/runs?head_sha=$release_commit&event=merge_group&per_page=100" |
@@ -382,14 +383,16 @@ and repeat the affected gate rather than waiving it.
      echo "CI run $run_id"
 
      while :; do
+       run_status=$(gh api "repos/$repo/actions/runs/$run_id" --jq .status)
        gate=$(gh api "repos/$repo/actions/runs/$run_id/jobs?per_page=100" | jq -c '
          [.jobs[] | select(.name | IN("test (node 22)", "test (node 24)", "published runtime (node 22.12.0)"))
           | {name, status, conclusion}]')
        echo "$gate"
+       [ "$run_status" = completed ] && break
        jq -e 'length == 3 and all(.status == "completed")' <<<"$gate" >/dev/null && break
        sleep 30
      done
-     jq -e 'all(.conclusion == "success")' <<<"$gate" >/dev/null && echo "release gate: green"
+     jq -e 'length == 3 and all(.conclusion == "success")' <<<"$gate" >/dev/null && echo "release gate: green"
    )
    ```
 
@@ -401,7 +404,8 @@ and repeat the affected gate rather than waiving it.
    The push run is cancelled when another pull request lands on `main` before
    it finishes (its concurrency group is the branch), and it may be missing
    when the push did not start `CI`. Then run the same jobs on a throwaway
-   branch at the same commit, and repeat the check with the dispatched run.
+   branch at the same commit, and repeat the check with the dispatched run
+   once it appears in `gh run list --workflow ci.yml --branch release-ci/X.Y.Z`.
    That run also starts the full Windows suite; do not wait for it.
 
    ```bash
@@ -409,6 +413,9 @@ and repeat the affected gate rather than waiving it.
    gh workflow run ci.yml --ref release-ci/X.Y.Z
    ci_event=workflow_dispatch ci_branch=release-ci/X.Y.Z
    ```
+
+   Run the check again in the same shell session so the two variables carry
+   over; the check keeps values that are already set.
 
    A fix creates a new commit and repeats steps 2 to 4. Never tag a commit
    that has not passed this gate. Delete `release-ci/X.Y.Z` once the tag is
