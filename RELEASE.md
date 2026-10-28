@@ -144,10 +144,12 @@ preparation, `git status --short` may show only the draft
    The script refuses a malformed version, one that does not come after the
    version the packages already carry, and a tree whose versions already
    disagree. It rewrites the `version` fields together, refreshes the
-   lockfile, then re-reads the manifests to confirm all packages landed on the new
-   version and that the lockfile still matches them, and leaves the candidate
-   uncommitted and untagged. If any of that fails it puts the manifests
-   back at the version they had, so a failed run is never half-bumped.
+   lockfile, regenerates `apps/mobile/src/generated/licenses.json` (it embeds
+   the workspace versions, and CI runs `licenses:check` on it), then re-reads
+   the manifests to confirm all packages landed on the new version and that the
+   lockfile still matches them, and leaves the candidate uncommitted and
+   untagged. If any of that fails it puts the manifests and the licenses file
+   back as they were, so a failed run is never half-bumped.
 
    Nothing else moves. The packages depend on each other as `workspace:*`, so
    there is no dependency range to bump: pnpm packs each internal dependency
