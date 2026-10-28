@@ -530,6 +530,7 @@ struct RootView: View {
   private var showsWorkspace: Bool {
     if case .environment = selection { return selectedPage != nil }
     if case .archived = selection { return true }
+    if case .pairedWorkspace(let key) = selection { return store.workspace(key) != nil }
     return false
   }
 
@@ -1071,7 +1072,9 @@ struct RootView: View {
       MachineView(
         buildMachines: buildMachines, status: store, metrics: metrics, gc: gc, storage: storage, autopilot: autopilot, tips: tips)
     case .pairedWorkspace(let key):
-      PairedWorkspaceDetail(store: store, key: key, cli: cli)
+      PairedWorkspaceDetail(
+        store: store, key: key, cli: cli, statsReader: statsReader, inspector: inspector, inspectorWidth: $inspectorWidth,
+        focusedID: $focusedDeviceID)
     case .discover:
       DiscoverView(
         replayUnavailableReason: discoverReplayUnavailableReason,
