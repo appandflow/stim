@@ -74,6 +74,7 @@ export interface AndroidBuildPlanInputs {
   readonly settingsContext: SettingsContext;
   readonly env?: NodeJS.ProcessEnv;
   readonly easProfile?: string;
+  readonly skipJsSwap?: boolean;
   readonly variant: string | null;
   readonly buildCache: boolean;
 }
@@ -246,6 +247,7 @@ export function resolveAndroidBuildPlan(
     settingsContext,
     env,
     easProfile,
+    skipJsSwap,
     variant: variantFlag,
     buildCache: requestedBuildCache,
   }: AndroidBuildPlanInputs,
@@ -286,6 +288,12 @@ export function resolveAndroidBuildPlan(
   const flavorRefusal = variantProblem(variant);
   if (flavorRefusal) return fail(flavorRefusal.code, flavorRefusal.reason, flavorRefusal.remedy);
   const release = isReleaseVariant(variant);
+  if (skipJsSwap && !release)
+    return fail(
+      'STIM_BAD_ARG',
+      'Skipping the JS swap only applies to a Release variant; a debug app loads its JS from Metro.',
+      'Pass a Release variant, or drop skipJsSwap.',
+    );
   const cachePolicy = artifactCachePolicy(
     optimizations,
     requestedBuildCache,
@@ -319,6 +327,7 @@ export async function resolveAndroidRunPlan(
     slot,
     signal,
     easProfile,
+    skipJsSwap,
     variant: variantFlag,
     systemImage: systemImageFlag,
     deviceProfile: deviceProfileFlag,
@@ -365,7 +374,7 @@ export async function resolveAndroidRunPlan(
     return fail('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY, { lines: moreShapeErrors });
   }
   const plannedBuild = resolveAndroidBuildPlan(
-    { settings, settingsContext, env, easProfile, variant: variantFlag, buildCache: requestedBuildCache },
+    { settings, settingsContext, env, easProfile, skipJsSwap, variant: variantFlag, buildCache: requestedBuildCache },
     { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;

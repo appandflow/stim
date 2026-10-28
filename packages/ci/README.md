@@ -74,8 +74,29 @@ build:
 | `--arch <name>`          | iOS      | build      | Architecture: `arm64`, `x86_64`, `all`                  |
 | `--abi <name>`           | Android  | build      | ABI: `arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all` |
 
+| `--skip-js-swap` | iOS, Android | run | Release only; see below |
+
 The library also accepts the public API's other platform-specific build and run
 options.
+
+### Tests that supply their own JS bundle
+
+A Release run that hits the native cache normally regenerates the project's
+default-entry JS into a copy of the cached artifact, which takes tens of seconds.
+A test that builds and injects its own bundle can skip that with
+`--skip-js-swap` (`run: { skipJsSwap: true }` in the library). Stim then builds
+or restores the native artifact as usual, installs it on the owned simulator or
+emulator without bundling or injecting any JS, and launches it. That launch runs
+whatever JS the artifact was built with, not necessarily the current checkout, so
+do not treat it as a test of the working tree. `launched` keeps its usual meaning.
+
+`run.json` facts carry `jsSwapSkipped: true`, the device (`udid` or `serial`) and
+`appPath`, the native artifact Stim installed: the build cache entry or the
+build output, never a temporary swap copy. Copy `appPath` before injecting a
+bundle into it; modifying it in place corrupts the cache entry. Then install
+the copy on the reported device. A Debug configuration or variant is refused
+with `STIM_BAD_ARG`, because Metro serves its JS. iOS physical devices never
+swap, so the option changes nothing there.
 
 Everything after `--` is an argument vector. No shell is inferred. To use shell
 syntax, pass a shell explicitly: `-- bash -e -o pipefail -c 'pnpm test:e2e'`.

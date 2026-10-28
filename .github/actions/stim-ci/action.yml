@@ -21,6 +21,9 @@ inputs:
     description: Optional Stim home. Use a unique runner-temporary directory on disposable workers.
   build-cache:
     description: Optional local build cache directory restored by the workflow.
+  skip-js-swap:
+    description: Release only. Install the native artifact without regenerating its JS because the test supplies the bundle; needs a @stim-cli/ci version that has --skip-js-swap.
+    default: 'false'
   timeout:
     description: Session timeout in seconds.
     default: '1800'

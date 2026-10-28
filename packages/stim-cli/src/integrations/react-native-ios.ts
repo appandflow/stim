@@ -133,6 +133,7 @@ function reactNativeIosArtifact(
     target,
     device,
     easProfile,
+    skipJsSwap,
     optimizations,
     cache: cachePolicy,
     phase,
@@ -247,6 +248,10 @@ function reactNativeIosArtifact(
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
       if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
+      if (skipJsSwap) {
+        phase('swap', `skipped (skipJsSwap): the cached ${configuration} app is installed with its builder's JS`);
+        return cachedPath;
+      }
       if (buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
         note(
           chalk.yellow(

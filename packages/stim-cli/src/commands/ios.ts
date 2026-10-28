@@ -278,12 +278,22 @@ function iosProjectTargetRefusal(
     physical,
     easProfile,
     placement,
+    skipJsSwap,
+    release,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
+    skipJsSwap?: boolean;
+    release?: boolean;
   },
 ): FailArgs | null {
+  if (skipJsSwap && release === false)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: 'Skipping the JS swap only applies to a non-Debug configuration; a Debug app loads its JS from Metro.',
+      remedy: 'Pass a Release configuration, or drop skipJsSwap.',
+    };
   const target = physical
     ? 'physical'
     : placement
@@ -644,7 +654,12 @@ async function runIos(
   const isExpo = integration.isExpo;
   const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
-  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  const capabilityRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    easProfile: opts.easProfile,
+    skipJsSwap: opts.skipJsSwap,
+    release,
+  });
   if (capabilityRefusal) return fail(capabilityRefusal);
   const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
@@ -1136,6 +1151,7 @@ async function runIos(
               }),
               optimizations: optimizations.ios,
               easProfile: opts.easProfile,
+              skipJsSwap: opts.skipJsSwap,
               cache: cachePolicy,
               phase,
               note,
