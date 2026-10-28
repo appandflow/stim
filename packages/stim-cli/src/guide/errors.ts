@@ -1319,6 +1319,16 @@ captured"  (in metro.ndjson, bare RN)
   started it before retrying. Never reconstruct ownership from a process
   name, port, or wall-clock timestamp.`,
     },
+    STIM_NO_RECORDED_BUILD: {
+      summary: 'a recordedBuild run found no recorded build for its selectors',
+      body: () => `STIM_NO_RECORDED_BUILD
+  The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the
+  app the last build with the same iOS scheme and configuration, or Android
+  variant, recorded in this workspace's state. None is recorded, or its app was
+  removed. Nothing was started. Build first with the same selectors and the same
+  Stim home (\`stim-ci build\`, or the API build), then run again. \`stim guide ci\`
+  has the flow. \`stim ios\` and \`stim android\` never use it.`,
+    },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
       aliases: ['STIM_NO_PROJECT'],
