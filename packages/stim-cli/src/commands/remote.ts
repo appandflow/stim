@@ -180,18 +180,18 @@ export default function remoteCommand(program: Command, version: string, io: Tai
           (id) => `stim-server devices revoke ${id}`,
         );
         const pending = credentials.some((each) => !each.deviceId);
-        if (!(await forgetDeviceHostMachine(machine)))
-          throw refusal(
-            'STIM_CLAIM_REFUSED',
-            `Another run holds the hosting credentials, so ${machine} was not removed.`,
-            `Run \`stim remote remove ${machine}\` again after it finishes.`,
-          );
-        await forgetBuildMachine(machine);
         const { before, after } = await updateRemoteMachinesAsync(
           (machines) => machines.filter((each) => each !== machine),
           await io.status(),
         );
         if (before === null) throw invalidSetting();
+        if (!(await forgetDeviceHostMachine(machine)))
+          throw refusal(
+            'STIM_CLAIM_REFUSED',
+            `Another run holds the hosting credentials, so this machine's credentials for ${machine} were kept.`,
+            `Run \`stim remote remove ${machine}\` again after it finishes.`,
+          );
+        await forgetBuildMachine(machine);
         const removed = before.includes(machine);
         if (opts.json) {
           console.log(

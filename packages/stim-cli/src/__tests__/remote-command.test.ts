@@ -104,3 +104,13 @@ test('remove drops the entry and its credentials, keeps the others, and prints t
   expect(readDeviceHostMachines().map((each) => each.machine)).toEqual(['studio']);
   expect(out).toContain('stim-server devices revoke dev-mini');
 });
+
+test('remove keeps the credentials when the setting refuses to drop the last enabled build pool member', async () => {
+  await approveMini();
+  writeConfigSetting({ scope: 'machine' }, 'remote.buildPoolDisabled', ['local']);
+  await remote(fakeIo([]), 'remove', 'mini');
+  expect(process.exitCode).toBe(1);
+  expect(loadConfig()?.remote?.machines).toEqual(['mini']);
+  expect(readBuildMachines().map((each) => each.machine)).toEqual(['mini']);
+  expect(readDeviceHostMachines().map((each) => each.machine)).toEqual(['mini']);
+});
