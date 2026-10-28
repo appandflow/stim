@@ -1989,6 +1989,7 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: ['ios', 'android', 'macos'] },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
+              iosProjectPath: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
               fingerprintSources: {
@@ -2006,6 +2007,7 @@ export function protocolJsonSchema(): JsonSchema {
                 },
               },
               podsOnWorker: { type: 'boolean' },
+              reuseArtifact: { type: 'boolean' },
               fingerprintIgnored: {
                 type: 'array',
                 maxItems: 20000,
@@ -2081,6 +2083,8 @@ export function protocolJsonSchema(): JsonSchema {
                   gradleBuildCache: { type: 'boolean' },
                   pch: { enum: ['auto', 'on', 'off'] },
                   compilerCache: { enum: ['ccache', 'none'] },
+                  gradleRoot: { type: ['string', 'null'] },
+                  module: { type: ['string', 'null'] },
                 },
               },
               macos: {

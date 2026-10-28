@@ -344,3 +344,56 @@ test('the build.start wire schema accepts podsOnWorker as a boolean and refuses 
   for (const podsOnWorker of ['yes', 1, null]) expect(accepts({ ...request, podsOnWorker })).toBe(false);
   expect(accepts({ ...request, unknownField: true })).toBe(false);
 });
+
+test('the build.start wire schema accepts every BuildStartParams field, including nested optional ones', () => {
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  validator.addSchema(protocolJsonSchema(), 'protocol');
+  const acceptsRequest = validator.compile({ $ref: 'protocol#/$defs/ClientRequest' });
+  const accepts = (params: unknown) => acceptsRequest({ id: 1, method: 'build.start', params });
+  const full = {
+    repo: 'example-app',
+    project: 'apps/mobile',
+    platform: 'android',
+    configuration: 'Debug',
+    scheme: 'App',
+    iosProjectPath: 'ios',
+    runtime: 'iOS-27-0',
+    fingerprint: 'abc123',
+    fingerprintSources: [{ id: 'package.json', hash: 'abc' }],
+    fingerprintIgnored: ['ios/Pods'],
+    fingerprintTracked: ['android'],
+    native: {
+      provider: 'xcode',
+      sourceDigest: 'a'.repeat(64),
+      cacheKey: 'key',
+      arch: 'arm64',
+      parameters: {},
+    },
+    packageName: 'dev.example.app',
+    isExpo: true,
+    optimizations: {},
+    android: {
+      variant: 'debug',
+      abi: null,
+      gradleBuildCache: true,
+      pch: 'auto',
+      compilerCache: 'none',
+      gradleRoot: 'android',
+      module: 'app',
+    },
+    macos: {
+      product: 'App',
+      infoPlist: 'Info.plist',
+      bundleId: 'dev.example.app',
+      resources: {},
+      assetCatalog: null,
+    },
+    stimBuild: 'build-1',
+    compat: 1,
+    jdk: '17',
+    cacheArtifact: true,
+    podsOnWorker: true,
+    reuseArtifact: true,
+  } satisfies Required<Server.BuildStartParams>;
+  expect(accepts(full)).toBe(true);
+});
