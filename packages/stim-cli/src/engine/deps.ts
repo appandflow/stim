@@ -124,6 +124,30 @@ function normalize(text: unknown) {
   return text.replace(/\r\n/g, '\n').trimEnd();
 }
 
+function nodeModulesNewerThanPods(manifestMtimeMs: number | null, installMtimesMs: number[]): boolean {
+  return manifestMtimeMs !== null && installMtimesMs.some((mtime) => mtime > manifestMtimeMs);
+}
+
+const NODE_MODULES_INSTALL_MARKERS = ['', '.package-lock.json', '.modules.yaml', '.yarn-integrity'];
+
+function mtimeOf(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+// CocoaPods reruns a local pod's prepare_command only for a pod the sandbox manifest lacks or lists changed;
+// deleting Manifest.lock makes pod install treat every pod as new.
+function resetManifestAfterReinstall(root: string, podsDir: string): void {
+  const manifest = join(podsDir, 'Manifest.lock');
+  const installed = NODE_MODULES_INSTALL_MARKERS.map((name) => mtimeOf(join(root, 'node_modules', name))).filter(
+    (mtime): mtime is number => mtime !== null,
+  );
+  if (nodeModulesNewerThanPods(mtimeOf(manifest), installed)) rmSync(manifest, { force: true });
+}
+
 export function readPodState(
   root: string,
   directory: string = join(root, 'ios'),
@@ -680,6 +704,7 @@ export async function runPodInstall(
 
   const args = bundler ? ['bundle', 'exec', 'pod', 'install'] : ['pod', 'install'];
   const command = args.join(' ');
+  resetManifestAfterReinstall(root, join(iosDir, 'Pods'));
   const markers = readBuildMarkers(join(iosDir, 'Pods'));
   const run = await runCaptured({
     ...ctx,
