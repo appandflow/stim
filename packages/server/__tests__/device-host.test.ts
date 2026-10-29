@@ -92,7 +92,7 @@ if(input.mode === 'count') {
 } else if(input.mode === 'image') {
   const image=input.systemImage ?? 'default';
   appendFileSync(join(process.env.STIM_HOME,'image-requests'),image+'\\n');
-  if(image.includes('slow')) await new Promise(()=>setInterval(()=>{},1000));
+  if(image.includes('slow')) while(!existsSync(join(process.env.STIM_HOME,'release-image'))) await new Promise(resolve=>setTimeout(resolve,20));
   process.stdout.write(JSON.stringify(image.includes('refused') ? {state:'refused',notice:'licenses not accepted. Run sdkmanager --licenses.'} : {state:'ready'}));
   process.exit(0);
 }
@@ -131,6 +131,10 @@ if(input.mode === 'inspect') {
         "import {writeFileSync} from 'node:fs'; process.on('SIGTERM',()=>{}); writeFileSync(process.env.STIM_HOME+'/descendant',String(process.pid)); setInterval(()=>{},1000);"
       ],{stdio:'ignore'});
       setInterval(()=>{},1000);
+    }
+    else if(input.deviceType === 'held-prepare') {
+      while(!existsSync(join(home,'release-prepare'))) await new Promise(resolve=>setTimeout(resolve,20));
+      out({state:'ready',device});
     }
     else if(input.deviceType === 'hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
     else if(input.deviceType === 'lost') { process.exitCode=1; }
@@ -1049,13 +1053,19 @@ describe('a hosted session whose client is gone', () => {
   });
 
   test('never touches a session that is still preparing', async () => {
-    const first = await reserve({ deviceType: 'hang' });
-    await vi.waitFor(() => expect(existsSync(join(deviceHostArea(first.id), 'home', 'entered'))).toBe(true));
-    recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
+    const first = await reserve({ deviceType: 'held-prepare' });
+    const area = join(deviceHostArea(first.id), 'home');
+    try {
+      await vi.waitFor(() => expect(existsSync(join(area, 'entered'))).toBe(true));
+      recordAbsence(first.id, 5 * IDLE_WINDOW_MS);
 
-    host.sweepIdle();
+      host.sweepIdle();
 
-    expect(readHostedSessions().find((record) => record.id === first.id)).toMatchObject({ state: 'preparing' });
+      expect(readHostedSessions().find((record) => record.id === first.id)).toMatchObject({ state: 'preparing' });
+    } finally {
+      writeFileSync(join(area, 'release-prepare'), '');
+      await state(first.id, 'ready');
+    }
   });
 
   test.each([
@@ -1804,8 +1814,13 @@ test('stopping a hosted Android session while its image installs releases the re
     systemImage: 'system-images;android-30;slow;arm64-v8a',
     deviceProfile: 'pixel_6',
   });
-  await vi.waitFor(() => expect(readFileSync(join(home, 'image-requests'), 'utf8')).toContain('slow'));
-  host.stop('client', { session: installing.id });
+  try {
+    await vi.waitFor(() => expect(readFileSync(join(home, 'image-requests'), 'utf8')).toContain('slow'));
+    expect(host.stop('client', { session: installing.id })).toHaveProperty('result.state', 'stopping');
+    expect(readClaimSet(join(deviceHostRoot(), `${installing.id}.claims`)).live).toHaveLength(1);
+  } finally {
+    writeFileSync(join(home, 'release-image'), '');
+  }
   const stopped = await state(installing.id, 'stopped');
   expect(stopped.device).toBeNull();
   expect(existsSync(join(deviceHostArea(installing.id), 'home', 'modes'))).toBe(false);

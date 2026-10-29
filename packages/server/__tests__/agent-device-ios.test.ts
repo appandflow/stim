@@ -12,7 +12,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
@@ -817,11 +817,13 @@ test('writes a recording only in a private temp directory, one at a time, and re
   const recordings = dirname(dirname(output));
   expect(relative(home, output).startsWith('..')).toBe(true);
   expect(relative(tmpdir(), output).startsWith('..')).toBe(false);
-  expect(output.endsWith('/recording.mov')).toBe(true);
+  expect(basename(output)).toBe('recording.mov');
   expect(started.flags).toEqual({ platform: 'ios', udid: UDID, fps: 30 });
   expect(started.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mov' });
-  expect(statSync(join(output, '..')).mode & 0o777).toBe(0o700);
-  expect(statSync(recordings).mode & 0o777).toBe(0o700);
+  const permissionMask = process.platform === 'win32' ? 0o600 : 0o777;
+  const expectedPermissions = process.platform === 'win32' ? 0o600 : 0o700;
+  expect(statSync(join(output, '..')).mode & permissionMask).toBe(expectedPermissions);
+  expect(statSync(recordings).mode & permissionMask).toBe(expectedPermissions);
 
   const second = await rpc(recordStart());
   expect(second.status).toBe(400);
@@ -832,7 +834,7 @@ test('writes a recording only in a private temp directory, one at a time, and re
     result: { ok: true },
   });
   expect((await rpc(recordStart())).status).toBe(200);
-  expect(forwardedRecord().params.positionals[1]).toMatch(/\/recording\.mp4$/);
+  expect(basename(forwardedRecord().params.positionals[1])).toBe('recording.mp4');
   expect(forwardedRecord().params.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mp4' });
 
   await driver.stop();
