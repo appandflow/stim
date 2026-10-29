@@ -1168,8 +1168,10 @@ as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff 
 views and device recordings all read from it. At launch the app checks
 `http://127.0.0.1:7787/health`. When a server answers, the app uses it if
 Desktop uses the default home or the server serves Desktop's resolved
-home; otherwise it names both homes and asks you to stop that server or launch
-Desktop with `-stimServerPort <port>`. A server the app did not start, such as the
+home. When a different explicit Stim home needs its own loopback-only server,
+Desktop lets the OS choose a free port instead; hosted test copies use this path.
+An explicit `-stimServerPort <port>` or serving phones keeps the selected port
+and reports a home mismatch. A server the app did not start, such as the
 `stim-server service` LaunchAgent on a Mac that hosts for others, is never stopped
 or reconfigured and keeps running after the app quits. If no server answers, the app runs
 `stim-server --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on

@@ -130,6 +130,7 @@ final class ServerController: ObservableObject {
   static let retryAfter: TimeInterval = 30
   private var serverLauncher: (executable: String?, launcher: NodeLauncher?, resolved: Date)?
   private var bootstrap: DesktopBootstrapKey?
+  private var automaticPort: Int?
 
   var desktopBootstrap: DesktopBootstrapKey? {
     guard case .running(_, owned: true) = state, process?.isRunning == true else { return nil }
@@ -150,8 +151,29 @@ final class ServerController: ObservableObject {
     })
 
   var port: Int {
+    if let automaticPort { return automaticPort }
     let port = UserDefaults.standard.integer(forKey: AppPreferences.Key.stimServerPort)
     return (1...65535).contains(port) ? port : StimServerCLI.defaultPort
+  }
+
+  static func needsAutomaticPort(probe: ServerHealthProbe, resolvedHome: String, loopbackOnly: Bool, explicitPort: Bool)
+    -> Bool
+  {
+    guard loopbackOnly, !explicitPort else { return false }
+    let serverHome: String?
+    switch probe {
+    case .ready(let health): serverHome = health.stimHome
+    case .notReady(_, let home): serverHome = home
+    }
+    return serverHome.map { !StimHome.adopts(serverHome: $0, resolved: resolvedHome) } ?? false
+  }
+
+  static func announcedLoopbackPort(_ line: OutputLine) -> Int? {
+    let prefix = "listening on ws://127.0.0.1:"
+    guard line.channel == .stdout, line.text.hasPrefix(prefix),
+      let port = Int(line.text.dropFirst(prefix.count)), (1...65535).contains(port)
+    else { return nil }
+    return port
   }
 
   var phones: [PairedDevice] { devices.filter(\.isPhone) }
@@ -249,6 +271,7 @@ final class ServerController: ObservableObject {
     state = .starting
     retriesFailure = true
     missedProbes = 0
+    automaticPort = nil
     Task {
       await waitForExiting()
       guard current == generation else { return }
@@ -261,8 +284,15 @@ final class ServerController: ObservableObject {
         }
         let resolved = StimHome.path(environment: await environment?.value ?? ProcessInfo.processInfo.environment)
         guard current == generation else { return }
-        state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
-        return
+        if Self.needsAutomaticPort(
+          probe: probe, resolvedHome: resolved, loopbackOnly: wantsLoopbackOnly,
+          explicitPort: UserDefaults.standard.object(forKey: AppPreferences.Key.stimServerPort) != nil)
+        {
+          automaticPort = 0
+        } else {
+          state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
+          return
+        }
       }
       let cli: StimServerCLI
       if let bundled = bundledCLI() {
@@ -280,7 +310,7 @@ final class ServerController: ObservableObject {
           loopbackOnly: startedLoopbackOnly,
           bootstrap: bootstrap,
           onLine: { line in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line.text, generation: current) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { self.record(line, generation: current) } }
           },
           onExit: { status in
             DispatchQueue.main.async { MainActor.assumeIsolated { self.exited(status, generation: current) } }
@@ -563,9 +593,10 @@ final class ServerController: ObservableObject {
     process.waitUntilExit()
   }
 
-  private func record(_ line: String, generation: Int) {
+  private func record(_ line: OutputLine, generation: Int) {
     guard generation == self.generation else { return }
-    output = Array((output + [line]).suffix(20))
+    if automaticPort == 0, let bound = Self.announcedLoopbackPort(line) { automaticPort = bound }
+    output = Array((output + [line.text]).suffix(20))
   }
 
   private func exited(_ status: Int32, generation: Int) {

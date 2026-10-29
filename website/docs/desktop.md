@@ -235,7 +235,11 @@ the server always matches the app; a Mac that serves without Desktop, such as a
 build worker, installs `@stim-cli/server` from npm instead. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
-stops or reconfigures it. Desktop reads workspace status from that server's status
+stops or reconfigures it. If the default port belongs to another Stim home,
+a copy using an explicit separate home starts its loopback-only server on a free
+port chosen by the OS. This lets hosted Desktop test copies coexist with the
+host's server. An explicit port override or serving phones keeps the selected
+port and reports a home mismatch. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
 moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
 sidebar footer says why; click it to retry. Serving phones over the tailnet stays
