@@ -219,9 +219,10 @@ struct MachineView: View {
           Button {
             selectedPairing = entry.id
           } label: {
-            Label(pairedName(entry), systemImage: "link")
+            machineLabel(
+              pairedName(entry), subtitle: entry.status.title, tone: entry.status.tone, selected: pairing?.id == entry.id)
           }
-          .buttonStyle(.stim(pairing?.id == entry.id ? .primary : .secondary, .regular))
+          .buttonStyle(.plain)
           .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
           .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
         }
@@ -249,7 +250,10 @@ struct MachineView: View {
   private func machineLabel(_ title: String, subtitle: String, tone: Tone?, selected: Bool) -> some View {
     HStack(spacing: Space.lg) {
       if let tone {
-        Circle().fill(Color(tone)).frame(width: 7, height: 7).accessibilityHidden(true)
+        Circle().fill(Color(tone)).frame(width: 7, height: 7)
+          .padding(2)
+          .background(Circle().fill(selected ? Palette.onBrand : Color.clear))
+          .accessibilityHidden(true)
       } else {
         Image(systemName: "laptopcomputer").accessibilityHidden(true)
       }
