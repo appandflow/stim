@@ -46,6 +46,20 @@ inputs:
     description: Artifact retention in days. Zero uses the repository default.
     default: '0'
 outputs:
+  app-id:
+    description: Bundle ID or Android package of the app built and run.
+  app-path:
+    description: Absolute path of the recorded app (.app, .apk) on this runner.
+  export-path:
+    description: Absolute path of the exported app, when export is set.
+  cache-hit:
+    description: true when the build was restored from Stim's cache, false when it compiled.
+  device-id:
+    description: Simulator UDID or emulator serial the app ran on.
+  device-name:
+    description: Name of the simulator or emulator the app ran on.
+  exit-code:
+    description: Exit code of the run step, the test command's code when it ran.
   result:
     description: Absolute path to result.json, when artifacts is set.
   artifacts:

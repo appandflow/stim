@@ -90,8 +90,12 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   };
 }
 
-async function execute(file: string, args: string[], cwd: string): Promise<number> {
-  const child = spawn(file, args, { cwd, stdio: 'inherit' });
+async function execute(file: string, args: string[], cwd: string, stdout?: string[]): Promise<number> {
+  const child = spawn(file, args, { cwd, stdio: ['inherit', stdout ? 'pipe' : 'inherit', 'inherit'] });
+  child.stdout?.on('data', (chunk: Buffer) => {
+    process.stdout.write(chunk);
+    stdout!.push(chunk.toString());
+  });
   const interrupt = (): void => {
     child.kill('SIGINT');
   };
@@ -131,6 +135,45 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   )
     throw new Error('result.json does not describe this invocation; refusing stale artifacts.');
   return result;
+}
+
+export function finalResult(stdout: string[]): Record<string, unknown> | null {
+  const lines = stdout.join('').trim().split('\n');
+  for (let index = lines.length - 1; index >= 0; index--) {
+    const line = lines[index]!.trim();
+    if (!line.startsWith('{')) continue;
+    try {
+      return JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function facts(result: Record<string, unknown> | null, stage: 'build' | 'run'): Record<string, unknown> {
+  const section = result?.[stage] as { facts?: Record<string, unknown> } | null | undefined;
+  return section?.facts ?? {};
+}
+
+export function setResultOutputs(
+  build: Record<string, unknown> | null,
+  run: Record<string, unknown> | null,
+  setOutput: (name: string, value: string) => void,
+): void {
+  const built = facts(build, 'build');
+  const ran = facts(run, 'run');
+  const outputs: Record<string, unknown> = {
+    'app-id': ran.bundleId ?? built.bundleId,
+    'app-path': built.appPath ?? ran.appPath,
+    'export-path': build?.artifactPath,
+    'cache-hit': built.cacheHit,
+    'device-id': ran.udid ?? ran.serial,
+    'device-name': ran.deviceName,
+  };
+  for (const [name, value] of Object.entries(outputs)) {
+    if (value !== undefined && value !== null && value !== '') setOutput(name, String(value));
+  }
 }
 
 async function installCli(version: string, root: string): Promise<{ cli: string; code: number }> {
@@ -183,18 +226,27 @@ export async function runAction(): Promise<number> {
   const common = ['--platform', options.platform, '--project', options.project, '--timeout', options.timeout];
   if (options.home) common.push('--home', options.home);
   if (options.cache) common.push('--build-cache', options.cache);
+  const buildOutput: string[] = [];
+  let buildResult: Record<string, unknown> | null = null;
   const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
     const buildArgs = [cli, 'build', ...common, ...options.selectors, ...options.buildOnly];
     if (options.exportPath) buildArgs.push('--export', options.exportPath);
-    const buildCode = await execute(process.execPath, buildArgs, root);
-    if (buildCode !== 0) return buildCode;
+    const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+    buildResult = finalResult(buildOutput);
+    if (buildCode !== 0) {
+      setResultOutputs(buildResult, null, core.setOutput);
+      return buildCode;
+    }
   }
   const args = [cli, 'run', ...common, ...options.selectors];
   if (options.artifacts) args.push('--artifacts', options.artifacts);
   args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
   const started = Date.now();
-  let code = await execute(process.execPath, args, root);
+  const runOutput: string[] = [];
+  let code = await execute(process.execPath, args, root, runOutput);
+  setResultOutputs(buildResult, finalResult(runOutput), core.setOutput);
+  core.setOutput('exit-code', String(code));
   let result: CIResult | null = null;
   if (options.artifacts) {
     try {

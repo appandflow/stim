@@ -58,6 +58,11 @@ to both build and run, so run installs the build that build recorded. `arch`, `a
 `eas-profile` go to build only. Empty inputs keep the project's normal build settings, and
 `stim-ci` refuses a selector that does not apply to the platform.
 
+Whether or not `artifacts` is set, the action reads the results `stim-ci` prints and sets
+`app-id`, `app-path`, `export-path`, `cache-hit`, `device-id`, `device-name` and `exit-code`
+as step outputs, leaving out any that do not apply. A later step can then use the app or the
+device without parsing the job log; the device is shut down, not deleted, when the step ends.
+
 With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
 The Action uploads `result.json`, `run.json`, test stdout/stderr,
 `diagnostics.json`, and copied diagnostic/compiler logs on success and failure.

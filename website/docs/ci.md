@@ -167,6 +167,10 @@ The `scheme`, `configuration` and `variant` inputs select the build and go to bo
 commands; `arch`, `abi` and `eas-profile` go to `build` only. For example,
 `configuration: Release` builds and runs a Release simulator app.
 
+The action also sets step outputs from the results: `app-id`, `app-path`, `export-path`,
+`cache-hit`, `device-id`, `device-name` and `exit-code`. A later step can install on
+the same device (`device-id`) or use the exported app (`export-path`).
+
 Nothing is collected or uploaded unless `artifacts` is set; `export` writes the built
 app to a path. With `artifacts`, use a new, empty directory for each invocation. Leave at least 70
 seconds for cleanup after the action timeout, plus time for artifact upload.
