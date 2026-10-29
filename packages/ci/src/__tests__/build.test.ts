@@ -74,6 +74,11 @@ test('exports APK bytes and diagnostics without stopping an existing session', a
   expect(lifecycle.stop).not.toHaveBeenCalled();
 });
 
+test('always compiles on this machine, whatever remote.build says', async () => {
+  await buildCI(options);
+  expect(lifecycle.build).toHaveBeenCalledWith(expect.objectContaining({ remoteBuild: 'local' }));
+});
+
 test('without --export or --artifacts a build writes no files and only records the build', async () => {
   const before = readdirSync(root).toSorted();
   const result = await buildCI({ projectRoot: root, build: { platform: 'android' } });
