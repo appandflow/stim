@@ -51,6 +51,60 @@ import Testing
     #expect(stream.control == .on(session: "c1"))
   }
 
+  @Test func asksAgainAtStandardWhenTheServerAnswersHighWithoutVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    #expect(server.subs.first?.cancelled == true)
+    #expect(server.subs.count == 2)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(30))
+    #expect(params["maxEdge"] == nil)
+    server.subs.last?.onSubscribed(["subscription": .string("s2")])
+    #expect(server.subs.count == 2)
+    #expect(stream.quality == .high)
+  }
+
+  @Test func keepsHighWhenTheServerOffersVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    #expect(server.subs.count == 1)
+    #expect(server.subs.first?.cancelled == false)
+  }
+
+  @Test func asksAgainAtStandardWhenAnOlderServerRefusesHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    let refusal = ServerEvent(
+      name: "error", subscription: "",
+      fields: [
+        "error": .object([
+          "code": .string("bad-request"), "message": .string("fps must be a whole number from 1 to 30."),
+        ])
+      ])
+    try #require(server.subs.first).onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+    #expect(stream.problem == nil)
+    server.subs.last?.onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(stream.problem == "fps must be a whole number from 1 to 30.")
+  }
+
+  @Test func triesHighAgainAfterTheViewerPicksItAgain() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    stream.setQuality(.standard)
+    stream.setQuality(.high)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(60))
+  }
+
   @Test func beginsControlOfThePhysicalDeviceAndSendsInputOnlyInItsSession() async throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target)

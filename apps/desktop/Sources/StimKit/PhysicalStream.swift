@@ -35,6 +35,7 @@ import Foundation
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
   private var keyframeRequest: Task<Void, Never>?
+  private var fellBack = false
 
   public init(target: ReplayTarget, physical: Bool = true, quality: StreamQuality = .standard) {
     self.target = target
@@ -46,6 +47,20 @@ import Foundation
   public func setQuality(_ quality: StreamQuality) {
     guard quality != self.quality else { return }
     self.quality = quality
+    fellBack = false
+    resubscribe()
+  }
+
+  /// Asks again at Standard when the server refuses High or answers without H.264 video: it would otherwise send
+  /// JPEG frames at the 1600 pixel edge, many times Standard's bandwidth.
+  private func fallBackToStandard() -> Bool {
+    guard quality == .high, !fellBack else { return false }
+    fellBack = true
+    resubscribe()
+    return true
+  }
+
+  private func resubscribe() {
     guard let server else { return }
     unsubscribe?()
     keyframeRequest?.cancel()
@@ -66,6 +81,7 @@ import Foundation
     case .off, .failed: break
     }
     pressed = nil
+    fellBack = false
     self.server = server
     guard let server else { return }
     unobserve = server.observeControlEnded { [weak self] ended in
@@ -84,7 +100,8 @@ import Foundation
     DebugLog.info(.stream, "frames subscribe \(target.params) \(quality.rawValue)")
     unsubscribe = server.subscribe(
       "frames.subscribe",
-      params: { [target, physical, quality] in
+      params: { [weak self, target, physical] in
+        let quality = self.map { $0.fellBack ? .standard : $0.quality } ?? .standard
         var params = target.params
         if physical { params["physical"] = .bool(true) }
         params["video"] = .array([.string("h264")])
@@ -94,6 +111,7 @@ import Foundation
       },
       onSubscribed: { [weak self] result in
         guard let self, current == self.generation else { return }
+        if result["video"]?.string != "h264", self.fallBackToStandard() { return }
         self.subscriptionID = result["subscription"]?.string
         self.problem = nil
       },
@@ -110,6 +128,7 @@ import Foundation
             event.fields["delayed"] == .bool(true)
             ? event.fields["reason"]?.string ?? "The device's screen is slow to arrive." : nil
         case "error":
+          if event.subscription.isEmpty, event.error?.code == "bad-request", self.fallBackToStandard() { return }
           self.subscriptionID = nil
           self.problem = event.error?.message
           DebugLog.error(.stream, "frames error \(target.params): \(event.error?.message ?? "unknown")")
