@@ -820,9 +820,10 @@ test('writes a recording only in a private temp directory, one at a time, and re
   expect(basename(output)).toBe('recording.mov');
   expect(started.flags).toEqual({ platform: 'ios', udid: UDID, fps: 30 });
   expect(started.meta.clientArtifactPaths).toEqual({ outPath: '/client/clip.mov' });
-  const permissionMask = process.platform === 'win32' ? 0o700 : 0o777;
-  expect(statSync(join(output, '..')).mode & permissionMask).toBe(0o700);
-  expect(statSync(recordings).mode & permissionMask).toBe(0o700);
+  const permissionMask = process.platform === 'win32' ? 0o600 : 0o777;
+  const expectedPermissions = process.platform === 'win32' ? 0o600 : 0o700;
+  expect(statSync(join(output, '..')).mode & permissionMask).toBe(expectedPermissions);
+  expect(statSync(recordings).mode & permissionMask).toBe(expectedPermissions);
 
   const second = await rpc(recordStart());
   expect(second.status).toBe(400);
