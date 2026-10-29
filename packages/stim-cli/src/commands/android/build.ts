@@ -42,7 +42,7 @@ export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform:
 };
 
 export interface AndroidBuildFacts {
-  /** Owned copy, retained with this workspace until explicitly removed. */
+  /** Owned copy, retained until a build replaces its recorded build or the worktree is removed. */
   apkPath: string;
   androidPackage: string | null;
   variant: string;

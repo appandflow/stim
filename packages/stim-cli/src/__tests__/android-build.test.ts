@@ -157,11 +157,13 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
     expect(changed.cacheKey).not.toBe(cold.cacheKey);
     release = changed;
   }
+  const releaseBytes = readFileSync(release.apkPath, 'utf8');
   writeFileSync(join(root, 'Main.kt'), 'edited source');
   const edited = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(edited.cacheHit).toBe(false);
   expect(compilations).toBe(4);
+  expect(readFileSync(release.apkPath, 'utf8')).toBe(releaseBytes);
   expect((await fs.readdir(join(workspaceDir(root), 'artifacts'))).toSorted()).toEqual(
     [basename(dirname(release.apkPath)), basename(dirname(edited.apkPath))].toSorted(),
   );

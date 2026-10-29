@@ -49,7 +49,7 @@ export type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'io
 };
 
 export interface IosBuildFacts {
-  /** Owned simulator app, retained with this workspace until explicitly removed. */
+  /** Owned simulator app, retained until a build replaces its recorded build or the worktree is removed. */
   appPath: string;
   bundleId: string | null;
   configuration: string;
