@@ -219,9 +219,10 @@ struct MachineView: View {
           Button {
             selectedPairing = entry.id
           } label: {
-            Label(pairedName(entry), systemImage: "link")
+            machineLabel(
+              pairedName(entry), subtitle: entry.status.title, tone: entry.status.tone, selected: pairing?.id == entry.id)
           }
-          .buttonStyle(.stim(pairing?.id == entry.id ? .primary : .secondary, .regular))
+          .buttonStyle(.plain)
           .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
           .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
         }
