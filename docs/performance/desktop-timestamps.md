@@ -2,9 +2,9 @@
 
 Measured for [#4603](https://github.com/appandflow/stim/issues/4603) on October 29, 2026. [Raw measurements](./desktop-timestamps-2026-10-29.json) retain every repetition.
 
-The production `Overview.idleProjects` calculation over 100 idle workspaces, each with two failed platform builds, takes a warm median of 18.72 ms per pass on baseline `c842988ac` and 1.09 ms with the timestamp fast path. A repeated before/after pair gives 19.91 ms and 1.15 ms. Both pairs produce the same checksum. Each launch runs six repetitions of 20 passes; the warm summary excludes the first repetition in both variants.
+The production `Overview.idleProjects` calculation over 100 idle workspaces, each with two failed platform builds, takes a warm median of 18.72 ms per pass on baseline `c842988ac` and 1.14 ms with the timestamp fast path, preserving millisecond epoch precision. Both produce the same checksum. Each launch runs six repetitions of 20 passes; the warm summary excludes the first repetition in both variants. Additional before runs taken during unit compilation are retained as diagnostic data and do not enter this comparison.
 
-This is model time in a Debug app on Mac16,10 with 16 GB RAM, macOS 27.0 (26A428), Apple Swift 6.4.0.34.1. Fixture construction, app build/launch and accessibility traversal are outside the interval. The second pair overlaps isolated Swift test compilation (load about 5 on 10 cores); it is retained separately. These numbers do not measure screen time-to-visible, scrolling or whole-app CPU. The hosted test home has no server; no real server or capture workload is claimed.
+This is model time in a Debug app on Mac16,10 (Apple M4, 10 cores) with 16 GB RAM, macOS 27.0 (26A428), Xcode 27.1 (27A9275), macOS SDK 27.0 and Apple Swift 6.4.0.34.1. Fixture construction, app build/launch and accessibility traversal are outside the interval. The final after sample follows completion of unit compilation; the reported host load was 3.25 on 10 cores. These numbers do not measure screen time-to-visible, scrolling or whole-app CPU. The hosted test home has no server; no real server or capture workload is claimed.
 
 ## Reproduce
 

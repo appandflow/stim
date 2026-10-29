@@ -114,7 +114,8 @@ private enum TimestampFormatters {
 
 func parseTimestamp(_ text: String) -> Date? {
   if text.utf8.count == 24, text.hasSuffix("Z"), let date = try? TimestampFormatters.milliseconds.parse(text) {
-    return date
+    // Foundation's format style can round differently from the numeric epoch milliseconds in log records.
+    return Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded() / 1000)
   }
   return TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
 }
