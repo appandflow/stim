@@ -126,7 +126,9 @@ import Foundation
             event.fields["delayed"] == .bool(true)
             ? event.fields["reason"]?.string ?? "The device's screen is slow to arrive." : nil
         case "error":
-          if event.subscription.isEmpty, ["bad-request", "frames-failed"].contains(event.error?.code), self.fallBackToStandard() { return }
+          if event.subscription.isEmpty, ["bad-request", "frames-failed"].contains(event.error?.code), self.fallBackToStandard() {
+            return
+          }
           self.subscriptionID = nil
           self.problem = event.error?.message
           DebugLog.error(.stream, "frames error \(target.params): \(event.error?.message ?? "unknown")")
