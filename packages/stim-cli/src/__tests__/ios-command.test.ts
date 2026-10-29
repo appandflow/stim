@@ -4001,6 +4001,35 @@ describe('--remote', () => {
     expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
 
+  test.each(['Release', 'Debug'])(
+    'an EAS %s process launch reports unavailable verification without local diagnostics',
+    async (configuration) => {
+      const remote = remoteStub();
+      const verifyReleaseLaunch = vi.fn<NonNullable<IosDeps['verifyReleaseLaunch']>>(async () => ({
+        verified: false,
+        reason: 'no-pid',
+        waitedMs: 0,
+      }));
+      const { calls, errs, logs, exitCode } = await run(
+        { remote: 'eas', configuration, json: true },
+        {
+          ...remote.deps,
+          verifyReleaseLaunch,
+          ...(configuration === 'Debug'
+            ? { runtimePlan: iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })) }
+            : {}),
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(parseFirst(logs)).toMatchObject({ launched: 'unverified', metroPort: null });
+      expect(remote.hits).toContain('launchIosApp');
+      expect(verifyReleaseLaunch).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('verifyIosDeviceReleaseLaunch');
+      expect(errs.join('\n')).toContain('remote adapter launch accepted; process verification is unavailable');
+      expect(errs.join('\n')).not.toMatch(/simctl launch reported|stim logs --source device/);
+    },
+  );
+
   test('auto on a full machine with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
     const remote = remoteStub();
     reserve();

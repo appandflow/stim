@@ -179,6 +179,10 @@ async function verifyIosProcessRun({
   remoteDevice,
   embeddedJavaScript,
 }: VerifyIosRunArgs & { embeddedJavaScript: boolean }): Promise<RuntimeReadiness> {
+  if (remoteDevice) {
+    phase('verify', chalk.yellow('UNVERIFIED: remote adapter launch accepted; process verification is unavailable'));
+    return { state: LAUNCH_UNVERIFIED };
+  }
   const readNativeCrashes = () =>
     remoteDevice
       ? []
