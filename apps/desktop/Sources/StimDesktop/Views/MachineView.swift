@@ -252,7 +252,7 @@ struct MachineView: View {
       if let tone {
         Circle().fill(Color(tone)).frame(width: 7, height: 7)
           .padding(2)
-          .background(Circle().fill(selected ? Color.white : Color.clear))
+          .background(Circle().fill(selected ? Palette.onBrand : Color.clear))
           .accessibilityHidden(true)
       } else {
         Image(systemName: "laptopcomputer").accessibilityHidden(true)
