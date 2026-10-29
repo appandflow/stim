@@ -118,6 +118,29 @@ import Testing
     #expect(!query.includes(try record(15_000)))
   }
 
+  @Test func includesRecordsExactlyAtMillisecondBuildBoundaries() throws {
+    for milliseconds in [1, 12, 123, 456, 999] {
+      let timestamp = String(format: "2026-10-29T13:01:00.%03dZ", milliseconds)
+      let query = try #require(
+        LogQuery.build(platform: "ios", slot: "default", startedAt: timestamp, finishedAt: timestamp))
+      let epochMilliseconds = 1_793_278_860_000 + milliseconds
+      let record = try #require(
+        LogRecord.parse("{\"ts\":\(epochMilliseconds),\"src\":\"build\",\"level\":\"debug\",\"msg\":\"boundary\"}"))
+      #expect(query.includes(record), "\(timestamp)")
+      var interrupted = try #require(
+        LogQuery.build(platform: "ios", slot: "default", startedAt: "2026-10-29T13:00:59.000Z"))
+      let next = try JSONDecoder().decode(
+        [BuildHistoryEntry].self,
+        from: Data(
+          """
+          [{"platform":"ios","status":"ok","cacheHit":false,"startedAt":"\(timestamp)",
+            "result":"succeeded","slot":"default","phases":{}}]
+          """.utf8))
+      interrupted.buildRun = interrupted.buildRun?.bounded(history: next, active: nil)
+      #expect(!interrupted.includes(record), "\(timestamp)")
+    }
+  }
+
   @Test func passesEveryFilter() {
     var query = LogQuery()
     query.sources = [.build, .metro]
