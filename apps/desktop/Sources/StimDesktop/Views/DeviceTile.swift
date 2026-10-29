@@ -442,7 +442,7 @@ struct DeviceTile: View {
 
   private var offersStreamQuality: Bool {
     guard viewer, !replaying, !showsStoppedBar, workspace != nil, hostedPreview == nil else { return false }
-    return device.hostedMachine != nil || isPhysical
+    return device.hostedMachine != nil || isPhysical || !owner.isLocal && ["ios", "android"].contains(device.platform)
   }
 
   private var qualityButton: some View {
@@ -997,7 +997,9 @@ struct DeviceTile: View {
       return height + screenPadding * 2
     }
     let availableHeight =
-      screenHeight - (viewer && (interactive && Self.hasButtons(owned) || frameOption != nil) ? controlsHeight + Space.lg : 0)
+      screenHeight
+      - (viewer && (interactive && Self.hasButtons(owned) || frameOption != nil || offersStreamQuality)
+        ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     if case .macos = device, let size = pixelSizes[1], size.width > 0, size.height > 0 {
       let padding = screenPadding * 2
@@ -1078,7 +1080,7 @@ struct DeviceTile: View {
       if let workspace, device.platform == "ios" || device.platform == "android" {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
-          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost
+          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost, quality: streamQuality
         )
         .id(owned.id)
         .frame(width: screenWidth(1))

@@ -48,6 +48,9 @@ import Foundation
     self.quality = quality
     guard let server else { return }
     unsubscribe?()
+    keyframeRequest?.cancel()
+    keyframeRequest = nil
+    subscriptionID = nil
     receiving = false
     problem = nil
     subscribeFrames(server)
