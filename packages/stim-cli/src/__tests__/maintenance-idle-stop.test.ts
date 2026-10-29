@@ -100,8 +100,8 @@ function appendLog(root: string, file: string, records: Record<string, unknown>[
   writeFileSync(join(workspaceLogsDir(root), file), records.map((record) => `${JSON.stringify(record)}\n`).join(''));
 }
 
-async function plan(devices: (withSims: boolean) => OwnedDeviceActivity[] = realDevices) {
-  return planIdleStop({ protectedRoot: PROTECTED, now: Date.now(), devices });
+async function plan(devices: (withSims: boolean) => OwnedDeviceActivity[] = realDevices, platform = process.platform) {
+  return planIdleStop({ protectedRoot: PROTECTED, now: Date.now(), devices, platform });
 }
 
 test('device, app and dev server log lines alone do not keep a workspace past maintenance.idleStopHours', async () => {
@@ -327,29 +327,47 @@ const activity = (state: DeviceActivity['state'], basis: string[], tool: string)
   lastActivityAt: new Date(Date.now() - 7 * HOUR_MS).toISOString(),
 });
 
-test('an automation driver keeps the workspace, an agent-device session left open is judged by its last command', async () => {
-  const { root, udid } = bootedWorkspace('driven', 7 * HOUR_MS);
-  const device = (state: DeviceActivity) => () => [
-    { kind: 'ios' as const, id: udid, name: 'sim', project: root, slot: 'default', activity: state },
-  ];
+test.each(['darwin', 'win32'] as const)(
+  'an automation driver keeps the workspace, an agent-device session left open is judged by its last command on %s',
+  async (platform) => {
+    const { root, udid } = bootedWorkspace('driven', 7 * HOUR_MS);
+    const device = (state: DeviceActivity) => () => [
+      { kind: 'ios' as const, id: udid, name: 'sim', project: root, slot: 'default', activity: state },
+    ];
 
-  const maestro = await plan(device(activity('driven', ['driver-process'], 'maestro')));
-  expect(maestro.skips).toEqual([expect.objectContaining({ reason: 'its simulator sim is driven by maestro' })]);
+    const maestro = await plan(device(activity('driven', ['driver-process'], 'maestro')), platform);
+    expect(maestro.skips).toEqual([expect.objectContaining({ reason: 'its simulator sim is driven by maestro' })]);
 
-  const unknown = await plan(device(activity('unknown', ['driver-process'], 'ps')));
-  expect(unknown.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/unknown activity/) })]);
+    const unknown = await plan(device(activity('unknown', ['driver-process'], 'ps')), platform);
+    const unknownReasons = platform === 'win32' ? [] : ['its simulator sim has unknown activity (driver-process)'];
+    expect(unknown.skips.map((skip) => skip.reason)).toEqual(unknownReasons);
+    expect(unknown.actions.map((action) => action.target)).toEqual(platform === 'win32' ? [root] : []);
 
-  const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
-  const unseen = await plan(device(claimed));
-  expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
+    const claimed = activity('driven', ['agent-device-claim'], 'agent-device');
+    const unseen = await plan(device(claimed), platform);
+    expect(unseen.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/agent-device claim/) })]);
 
-  const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
-  const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }));
-  expect(agent.actions.map((action) => action.target)).toEqual([root]);
+    const old = new Date(Date.now() - 7 * HOUR_MS).toISOString();
+    const agent = await plan(device({ ...claimed, recent: { 'agent-action': old } }), platform);
+    expect(agent.actions.map((action) => action.target)).toEqual([root]);
 
-  const unprobed = await plan(device({ ...claimed, recent: { 'agent-action': old }, unknown: ['driver-process'] }));
-  expect(unprobed.skips).toEqual([expect.objectContaining({ reason: expect.stringMatching(/unknown activity/) })]);
-});
+    const unprobed = await plan(
+      device({ ...claimed, recent: { 'agent-action': old }, unknown: ['driver-process'] }),
+      platform,
+    );
+    expect(unprobed.skips.map((skip) => skip.reason)).toEqual(unknownReasons);
+    expect(unprobed.actions.map((action) => action.target)).toEqual(platform === 'win32' ? [root] : []);
+
+    const unreadableAdb = await plan(
+      device({ ...claimed, recent: { 'agent-action': old }, unknown: ['instrumentation'] }),
+      platform,
+    );
+    expect(unreadableAdb.actions).toEqual([]);
+    expect(unreadableAdb.skips).toEqual([
+      expect.objectContaining({ reason: expect.stringMatching(/unknown activity.*instrumentation/) }),
+    ]);
+  },
+);
 
 test('the stop shuts the idle simulator down without deleting it and leaves device leases alone', async () => {
   const { root, udid } = bootedWorkspace('stopped', 7 * HOUR_MS);
@@ -460,8 +478,8 @@ test.each([
   setExecutor({
     ...real,
     runFile: (file, args, options) => {
-      if (file.endsWith('emulator')) return 'stim-unnamed\n';
-      if (file.endsWith('adb') && args[0] === 'devices') return `List of devices attached\n${line}\n`;
+      if (/(?:^|[/\\])emulator(?:\.exe)?$/.test(file)) return 'stim-unnamed\n';
+      if (/(?:^|[/\\])adb(?:\.exe)?$/.test(file) && args[0] === 'devices') return `List of devices attached\n${line}\n`;
       return real.runFile(file, args, options);
     },
   });
@@ -482,7 +500,7 @@ test('a running dev server whose emulators cannot be listed is kept', async () =
   setExecutor({
     ...real,
     runFile: (file, args, options) => {
-      if (file.endsWith('adb')) throw new Error('adb devices timed out');
+      if (/(?:^|[/\\])adb(?:\.exe)?$/.test(file)) throw new Error('adb devices timed out');
       return real.runFile(file, args, options);
     },
   });
@@ -618,11 +636,13 @@ test.each([
   setExecutor({
     ...real,
     runFile: (file, args, options) =>
-      file.endsWith('adb') && args[0] === 'devices'
+      /(?:^|[/\\])adb(?:\.exe)?$/.test(file) && args[0] === 'devices'
         ? 'List of devices attached\nemulator-5554\tdevice\n'
         : real.runFile(file, args, options),
     runFileQuiet: (file, args, options) =>
-      file.endsWith('adb') && args.includes('avd') ? `${name}\nOK\n` : real.runFileQuiet(file, args, options),
+      /(?:^|[/\\])adb(?:\.exe)?$/.test(file) && args.includes('avd')
+        ? `${name}\nOK\n`
+        : real.runFileQuiet(file, args, options),
   });
 
   const { actions, skips } = await plan(() => []);
