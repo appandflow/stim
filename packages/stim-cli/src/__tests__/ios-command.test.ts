@@ -1220,6 +1220,24 @@ describe('clean app state', () => {
     expect(/removed com\.example\.other, left by an earlier run/.test(errs.join('\n'))).toBe(cleanAppState);
   });
 
+  test('refuses to clean a simulator Stim does not own', async () => {
+    reserve();
+    let swept = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState: true },
+      {
+        ensureOwnedDevice: async () => ({ deviceUdid: UDID, deviceName: 'My iPhone', owned: false }),
+        clearOtherUserApps: () => {
+          swept = true;
+          return { listed: true, kept: false, removed: [], failed: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(swept).toBe(false);
+    expect(errs.join('\n')).toMatch(/cleanAppState clears only a simulator Stim owns/);
+  });
+
   test('a failed keychain reset refuses before install without mentioning adoption', async () => {
     reserve();
     let installed = false;

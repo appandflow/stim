@@ -1037,11 +1037,11 @@ export async function finishIosRun({
     phase('launch', `${bundleId!} pid ${launched.pid} ${launchTimer()}`);
   } else {
     const adopting = Boolean(device?.adoptionPending);
-    if (cleanAppState && remoteDevice) {
+    if (cleanAppState && !device.owned) {
       return fail({
         code: 'STIM_BAD_ARG',
-        message: 'cleanAppState applies to a local simulator, but this run was placed on a remote host.',
-        remedy: 'Run `stim settings set ios.remote local` in this workspace, or run without cleanAppState.',
+        message: `cleanAppState clears only a simulator Stim owns, and ${deviceLabel(device, udid)} is not one.`,
+        remedy: 'Run `stim gc --delete` to clear the assignment so Stim creates an owned simulator.',
         build: { ...buildFailure, appPath, bundleId },
       });
     }

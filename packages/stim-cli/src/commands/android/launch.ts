@@ -651,15 +651,22 @@ async function resolveInstallSerial({
 }
 
 async function cleanEmulatorAppState(
-  avdName: string | undefined,
+  { avdName, owned }: OwnedDeviceRecord,
   serial: string,
   androidPackage: string | null,
   adopting: boolean,
   phase: (label: unknown, text: string) => void,
-): Promise<{ message: string; remedy: string } | null> {
+): Promise<{ code: string; message: string; remedy: string } | null> {
+  if (!adopting && !owned)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: `cleanAppState clears only an emulator Stim owns, and ${avdName ?? serial} is not one.`,
+      remedy: 'Run `stim gc --delete` to clear the assignment so Stim creates an owned emulator.',
+    };
   const emulator = adopting ? 'adopted emulator' : 'emulator';
   if (!androidPackage || !avdName)
     return {
+      code: LAUNCH_FAILED,
       message: `Cannot clean an ${emulator} without its app package and AVD name.`,
       remedy: 'Retry once the APK applicationId can be read.',
     };
@@ -667,6 +674,7 @@ async function cleanEmulatorAppState(
     await resetAdoptedAvd(avdName, serial, androidPackage);
   } catch (error) {
     return {
+      code: LAUNCH_FAILED,
       message: `Could not clean ${emulator} ${avdName}: ${String((error as Error)?.message || error)}`,
       remedy: adopting
         ? 'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.'
@@ -814,15 +822,9 @@ export async function finishAndroidRun({
   }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
-  if (cleanAppState && remoteDevice)
-    return fail(
-      'STIM_BAD_ARG',
-      'cleanAppState applies to a local emulator, but this run was placed on a remote host.',
-      'Run `stim settings set android.remote local` in this workspace, or run without cleanAppState.',
-    );
-  if (adopting || (cleanAppState && !physical)) {
-    const cleanupFailure = await cleanEmulatorAppState(device.avdName, serial, androidPackage, adopting, phase);
-    if (cleanupFailure) return fail(LAUNCH_FAILED, cleanupFailure.message, cleanupFailure.remedy);
+  if (adopting || (cleanAppState && !physical && !remoteDevice)) {
+    const cleanupFailure = await cleanEmulatorAppState(device, serial, androidPackage, adopting, phase);
+    if (cleanupFailure) return fail(cleanupFailure.code, cleanupFailure.message, cleanupFailure.remedy);
   }
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;

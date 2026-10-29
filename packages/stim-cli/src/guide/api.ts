@@ -177,7 +177,9 @@ workspace, without fingerprinting, building or replacing its JS, and refuses wit
 STIM_NO_RECORDED_BUILD when there is none. They also accept cleanAppState: true,
 which before install uninstalls every other user app and clears the app's data
 (iOS: defaults, data container and the simulator keychain; Android: pm clear),
-whether or not the install is skipped. Both refuse device and remote.
+whether or not the install is skipped. Both refuse device and remote; cleanAppState
+also refuses a remote host the ios.remote or android.remote setting picks, and a
+simulator or emulator Stim does not own, with STIM_BAD_ARG.
 @stim-cli/ci sets both; the CLI and the private Desktop transport set neither.
 Web requires a running server, just like stim web.
 

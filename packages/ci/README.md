@@ -41,7 +41,8 @@ own simulator or emulator, including when the device already has this build.
 Before it installs, `run` uninstalls every other user app. On iOS it also clears
 the app's defaults and data container and resets the simulator keychain; on
 Android it runs `pm clear` on the app. Simulator-wide settings such as privacy
-grants are kept.
+grants are kept. A run that `ios.remote` or `android.remote` would place on a
+remote host refuses with `STIM_BAD_ARG` instead of skipping the cleanup.
 
 `--eas-profile <name>` (iOS and Android, build only) downloads a completed EAS
 development build instead of compiling, as `stim ios --eas-profile` does; `run`

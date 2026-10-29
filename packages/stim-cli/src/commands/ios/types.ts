@@ -8,6 +8,7 @@ export interface DeviceLike {
   avdName?: string | null;
   deviceType?: string | null;
   runtime?: string | null;
+  owned?: boolean;
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;

@@ -84,7 +84,8 @@ own simulator or emulator, including when the device already has this build.
 Before it installs, `run` uninstalls every other user app. On iOS it also clears
 the app's defaults and data container and resets the simulator keychain; on
 Android it runs `pm clear` on the app. Simulator-wide settings such as privacy
-grants are kept. Plain `stim ios` and `stim android` keep app data between runs
+grants are kept. A run that `ios.remote` or `android.remote` would place on a
+remote host refuses with `STIM_BAD_ARG` instead of skipping the cleanup. Plain `stim ios` and `stim android` keep app data between runs
 and clean only a simulator or emulator they adopt from the parked pool.
 
 The command after `--` is an argument vector. Use an explicit shell when you

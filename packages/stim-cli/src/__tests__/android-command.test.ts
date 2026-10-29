@@ -4825,6 +4825,23 @@ describe('a recorded build', () => {
 });
 
 describe('clean app state', () => {
+  test('cleanAppState refuses to clean an emulator Stim does not own', async () => {
+    const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+    try {
+      const h = harness({
+        cleanAppState: true,
+        ensureDevice: async () => ({ avdName: 'Pixel_9', consolePort: 5584, owned: false }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('STIM_BAD_ARG');
+      expect(reset).not.toHaveBeenCalled();
+      expect(h.calls.install).toHaveLength(0);
+    } finally {
+      reset.mockRestore();
+    }
+  });
+
   test.each([true, false])(
     'cleanAppState=%s clears the app state of an emulator it does not adopt',
     async (cleanAppState) => {
@@ -7730,6 +7747,24 @@ describe('strict remote machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+
+  test('cleanAppState refuses a hosted placement before any device work', async () => {
+    configureMini();
+    const h = harness({
+      remoteDevice: 'mini',
+      cleanAppState: true,
+      prepareHostedAndroid: async () => ({
+        host: { machine: 'mini', connection: { close: () => {} } },
+        choice: { avdName: 'stim-private', architecture: 'arm64-v8a' as const },
+        session: null,
+      }),
+      build: never('the build'),
+      placeHostedAndroid: never('the hosted placement'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+  });
 
   test('an offloaded hosted Android build carries its handoff through artifact caching into delivery', async () => {
     configureMini();
