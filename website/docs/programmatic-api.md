@@ -75,9 +75,11 @@ or stop a session. Results are inferred from `platform`, just like `run`.
 | `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild`, `easProfile` | `facts.apkPath`                          |
 | `macos`   | `remoteBuild`                                                                                                    | `facts.bundle`, the configured Debug app |
 
-A Debug build targets the host architecture by default; on Android only while
-`optimizations.android.targetAbiOnly` is on, which is the default. Release uses
-all architectures. Each result points to a separate owned copy retained until
+An iOS build targets the host simulator architecture by default in every
+configuration; `arch: 'all'` builds every architecture the project lists. An
+Android Debug build targets the host ABI while
+`optimizations.android.targetAbiOnly` is on, which is the default; Android
+Release uses all ABIs. Each result points to a separate owned copy retained until
 `stim worktree remove` removes this workspace; a later build does not overwrite
 it. A build does not replace a running app's last build record or build log; it
 writes its own `build-artifact-<platform>.ndjson`. Build-only does not export

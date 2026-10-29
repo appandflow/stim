@@ -251,8 +251,10 @@ leased until <time>" for each one.`,
                   -debug-sim-arm64). A single-architecture simulator build
                   ends in its architecture (-arm64 or -x86-64): a local build
                   compiles this machine's in every configuration, a --remote
-                  build the remote host's. A build of every architecture the
-                  project lists (stim build --arch all) has no suffix
+                  build the remote host's (a React Native Release build
+                  offloaded to a worker may also contain other
+                  architectures). A build of every architecture the project
+                  lists (stim build --arch all) has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
   profile/environment, and cacheKey identifies the EAS project and build ID
   separately from local native builds. cacheHit is "remote" for the EAS
