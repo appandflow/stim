@@ -466,7 +466,7 @@ running xcodebuild. Xcode builds you run outside Stim take no claim.
 ### Workspace build outputs
 
 Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
-`cache-provider/`, SwiftPM scratch directory `macos/build`, staged
+`cache-provider/`, the Release swap's Metro cache `js-swap-tmp/`, SwiftPM scratch directory `macos/build`, staged
 `macos/<Product>.app` and interrupted-build `macos/staging-*` directories under
 `$STIM_HOME/workspaces/<name>/`. They usually take most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
 outputs", with the size, last use and verdict of each workspace.

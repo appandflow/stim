@@ -1972,7 +1972,7 @@ is free, whether or not the worktree exists. See [remove a worktree](./worktrees
 `stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
 its dev server running or its simulator booted. It clears the build outputs
 (`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
-`macos/build`, staged `macos/<Product>.app` and interrupted-build
+`js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app` and interrupted-build
 `macos/staging-*` directories) and the project's git-ignored
 `android/app/build`, `android/build`, `android/.gradle` and `.build`, and
 prints the bytes freed per workspace. A running, building, unverified or hosted
