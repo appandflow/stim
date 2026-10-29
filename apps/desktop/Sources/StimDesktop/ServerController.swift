@@ -275,6 +275,7 @@ final class ServerController: ObservableObject {
     Task {
       await waitForExiting()
       guard current == generation else { return }
+      var automaticPortRefusal: State?
       if let probe = await StimServerCLI.health(port: port) {
         guard current == generation else { return }
         if resolvedEnvironment == nil, let health = ServerAdoption.provisional(probe, provisionalHome: provisionalHome) {
@@ -288,6 +289,7 @@ final class ServerController: ObservableObject {
           probe: probe, resolvedHome: resolved, loopbackOnly: wantsLoopbackOnly,
           explicitPort: UserDefaults.standard.object(forKey: AppPreferences.Key.stimServerPort) != nil)
         {
+          automaticPortRefusal = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
           automaticPort = 0
         } else {
           state = State(probe: probe, owned: false, resolvedHome: resolved, port: port)
@@ -304,6 +306,14 @@ final class ServerController: ObservableObject {
       guard current == generation else { return }
       output = []
       startedLoopbackOnly = wantsLoopbackOnly
+      if let automaticPortRefusal,
+        !startedLoopbackOnly || UserDefaults.standard.object(forKey: AppPreferences.Key.stimServerPort) != nil
+      {
+        automaticPort = nil
+        bootstrap = nil
+        state = automaticPortRefusal
+        return
+      }
       do {
         process = try cli.serve(
           port: port,
