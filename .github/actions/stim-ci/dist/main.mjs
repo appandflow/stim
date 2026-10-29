@@ -97609,7 +97609,7 @@ async function execute(file, args, cwd, stdout) {
 			"inherit"
 		]
 	});
-	child.stdout?.on("data", (chunk) => {
+	if (stdout) child.stdout?.on("data", (chunk) => {
 		process.stdout.write(chunk);
 		stdout.push(chunk);
 	});
@@ -97642,21 +97642,22 @@ function currentResult(path, options, started) {
 	if (result.version !== 1 || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
 	return result;
 }
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 function finalResult(stdout) {
-	const lines = Buffer.concat(stdout).toString("utf8").trim().split("\n");
-	for (let index = lines.length - 1; index >= 0; index--) {
-		const line = lines[index].trim();
-		if (!line.startsWith("{")) continue;
-		try {
-			return JSON.parse(line);
-		} catch {
-			return null;
-		}
+	const line = Buffer.concat(stdout).toString("utf8").split("\n").map((entry) => entry.trim()).findLast((entry) => entry.startsWith("{"));
+	if (!line) return null;
+	try {
+		const parsed = JSON.parse(line);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
 	}
-	return null;
 }
 function facts(result, stage) {
-	return (result?.[stage])?.facts ?? {};
+	const section = result?.[stage];
+	return isRecord(section) && isRecord(section.facts) ? section.facts : {};
 }
 function setResultOutputs(build, run, setOutput) {
 	const built = facts(build, "build");

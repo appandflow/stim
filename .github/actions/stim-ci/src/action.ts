@@ -96,10 +96,11 @@ export function readInputs(input: (name: string) => string, root: string, host: 
 
 async function execute(file: string, args: string[], cwd: string, stdout?: Buffer[]): Promise<number> {
   const child = spawn(file, args, { cwd, stdio: ['inherit', stdout ? 'pipe' : 'inherit', 'inherit'] });
-  child.stdout?.on('data', (chunk: Buffer) => {
-    process.stdout.write(chunk);
-    stdout!.push(chunk);
-  });
+  if (stdout)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      stdout.push(chunk);
+    });
   const interrupt = (): void => {
     child.kill('SIGINT');
   };
@@ -141,23 +142,28 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   return result;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function finalResult(stdout: Buffer[]): Record<string, unknown> | null {
-  const lines = Buffer.concat(stdout).toString('utf8').trim().split('\n');
-  for (let index = lines.length - 1; index >= 0; index--) {
-    const line = lines[index]!.trim();
-    if (!line.startsWith('{')) continue;
-    try {
-      return JSON.parse(line) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
+  const line = Buffer.concat(stdout)
+    .toString('utf8')
+    .split('\n')
+    .map((entry) => entry.trim())
+    .findLast((entry) => entry.startsWith('{'));
+  if (!line) return null;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function facts(result: Record<string, unknown> | null, stage: 'build' | 'run'): Record<string, unknown> {
-  const section = result?.[stage] as { facts?: Record<string, unknown> } | null | undefined;
-  return section?.facts ?? {};
+  const section = result?.[stage];
+  return isRecord(section) && isRecord(section.facts) ? section.facts : {};
 }
 
 export function setResultOutputs(
