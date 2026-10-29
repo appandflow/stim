@@ -1,6 +1,6 @@
 {
   "name": "@stim-cli/ci",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "description": "Build Stim app artifacts or run Stim apps and test commands in CI with diagnostics and scoped cleanup.",
   "license": "MIT",
   "repository": {
