@@ -12,7 +12,7 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
-import { redactArgv, redactCommandLine, trace } from '@stim-cli/core/state';
+import { redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
@@ -345,6 +345,10 @@ function redactError<T>(error: T, values: readonly string[] | undefined): T {
   return error;
 }
 
+function tailscaleEnvironment(file: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+  return basename(file).toLowerCase() === 'tailscale' ? tailscaleEnv(env ?? ambientEnv()) : env;
+}
+
 const defaultExecutor: Executor = {
   reportSignal: () => reportSignal(ambientContext()),
   run(cmd, { timeoutMs, killSignal, cwd, env }) {
@@ -391,6 +395,7 @@ const defaultExecutor: Executor = {
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
+    opts.env = tailscaleEnvironment(file, opts.env);
     refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
     const result = spawn.sync(file, args, opts);
     if (result.error) {
@@ -441,6 +446,7 @@ const defaultExecutor: Executor = {
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
+      opts.env = tailscaleEnvironment(file, opts.env);
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
       const claims = declareFor ? [...operationState(declareFor).declaring] : [];
       let clearDeclaration: (() => void) | undefined;
@@ -635,6 +641,7 @@ const defaultExecutor: Executor = {
     report?.throwIfAborted();
     const context = ambientContext();
     const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
+    childOpts.env = tailscaleEnvironment(cmd, childOpts.env);
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
     const claims = report ? [...operationState(context).declaring] : [];
