@@ -1,5 +1,8 @@
 import { existsSync } from 'node:fs';
+import { readdir, rm } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 import { isJsonObject } from '@stim-cli/core/state';
+import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceState } from '../workspace/workspace-state.ts';
 
 const RECORDED_BUILDS_KEY = 'recordedBuilds';
@@ -27,6 +30,30 @@ export function recordBuild(root: string, key: string, build: Omit<RecordedBuild
       [key]: { ...build, builtAt: new Date().toISOString() },
     },
   }));
+}
+
+/** Callers must hold the workspace native-run lock, so no other build or recorded-build install is using a copy. */
+export async function pruneArtifactCopies(
+  root: string,
+  platform: 'ios' | 'android' | 'macos',
+  keep: string,
+  warn: (line: string) => void,
+): Promise<void> {
+  const artifacts = join(workspaceDir(root), 'artifacts');
+  const recorded = readWorkspaceState(root)?.[RECORDED_BUILDS_KEY];
+  const kept = new Set([basename(keep)]);
+  for (const entry of isJsonObject(recorded) ? Object.values(recorded) : [])
+    if (isJsonObject(entry) && typeof entry.appPath === 'string') kept.add(basename(dirname(entry.appPath)));
+  try {
+    const entries = await readdir(artifacts, { withFileTypes: true });
+    await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith(`${platform}-`) && !kept.has(entry.name))
+        .map((entry) => rm(join(artifacts, entry.name), { recursive: true, force: true })),
+    );
+  } catch (error) {
+    warn(`could not remove older app copies: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function readRecordedBuild(root: string, key: string): RecordedBuild | null {

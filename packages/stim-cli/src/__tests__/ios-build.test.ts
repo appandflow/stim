@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
@@ -193,10 +193,14 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   const differentArch = await buildIosOperation(buildContext(), root, { ...options, arch: 'x86_64' });
   expect(differentArch.cacheKey).not.toBe(cold.cacheKey);
   expect(differentArch.cacheHit).toBe(false);
+  const artifactsDir = join(workspaceDir(root), 'artifacts');
+  for (const name of ['ios-orphaned', 'android-sibling', 'notes']) mkdirSync(join(artifactsDir, name));
   writeFileSync(join(root, 'Main.swift'), 'edited');
   const edited = await buildIosOperation(buildContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
-  expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
+  expect((await fs.readdir(artifactsDir)).toSorted()).toEqual(
+    ['android-sibling', basename(dirname(edited.appPath)), 'notes'].toSorted(),
+  );
   expect(readRecordedBuild(root, key)?.appPath).toBe(edited.appPath);
   expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
   expect(getProject(root)).not.toBeNull();
@@ -298,8 +302,8 @@ test.skipIf(process.platform === 'win32')(
     expect(warm.cacheHit).toBe('local');
     expect(readlinkSync(join(warm.appPath, 'Alias'))).toBe('Native');
     writeFileSync(join(root, 'Main.swift'), 'changed source');
-    await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
-    expect(readFileSync(join(cold.appPath, 'Alias'), 'utf8')).toBe(bytes);
+    await buildIosOperation(buildContext(), root, { remoteBuild: 'local', configuration: 'Release' });
+    expect(existsSync(cold.appPath)).toBe(false);
     expect(readFileSync(join(warm.appPath, 'Alias'), 'utf8')).toBe(bytes);
   },
 );

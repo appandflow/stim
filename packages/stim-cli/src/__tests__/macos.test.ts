@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import {
   macosAppState,
   parseMacosRecord,
@@ -50,7 +50,7 @@ import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
-import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
@@ -619,7 +619,7 @@ describe('macOS build placement and promotion', () => {
   }
 
   test.skipIf(process.platform !== 'darwin')(
-    'build-only retains separate bundles and leaves an existing app untouched',
+    'build-only replaces the previous bundle copy and leaves an existing app untouched',
     async () => {
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
       writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
@@ -631,9 +631,12 @@ describe('macOS build placement and promotion', () => {
       expect(readFileSync(first.executable, 'utf8')).toBe('local');
       expect(readWorkspaceState(root)?.macos).toEqual(previous);
       writeFileSync(join(bin, 'Sample'), 'edited');
+      mkdirSync(join(workspaceDir(root), 'artifacts', 'ios-sibling'));
       const second = await buildMacosOperation(testContext(), root, { remoteBuild: 'local' });
       expect(readFileSync(second.executable, 'utf8')).toBe('edited');
-      expect(readFileSync(first.executable, 'utf8')).toBe('local');
+      expect((await fs.readdir(join(workspaceDir(root), 'artifacts'))).toSorted()).toEqual(
+        [basename(dirname(second.bundle)), 'ios-sibling'].toSorted(),
+      );
       expect(readWorkspaceState(root)?.macos).toEqual(previous);
       expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
       expect(compilerCalls.every(({ file }) => file === 'swift')).toBe(true);

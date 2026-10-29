@@ -3,7 +3,7 @@ import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
@@ -27,7 +27,7 @@ import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
-import { recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
+import { pruneArtifactCopies, recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
 import { resolveVariant } from './support.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
@@ -313,6 +313,9 @@ export async function buildAndroidOperation(
                 appPath: built.apkPath,
                 bundleId: built.androidPackage,
               },
+            );
+            await pruneArtifactCopies(root, 'android', dirname(built.apkPath), (line) =>
+              phase('artifacts', chalk.yellow(line)),
             );
             stats.record({
               failed: false,

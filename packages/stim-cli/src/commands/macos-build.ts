@@ -6,6 +6,7 @@ import type { MacosBuild } from '@stim-cli/core/state';
 import { phaseLine } from '../command-output.ts';
 import { workspaceShareURL } from '../devices/stim-desktop.ts';
 import { errorRemedy } from '../engine/build-ledger.ts';
+import { pruneArtifactCopies } from '../engine/recorded-build.ts';
 import { recordFinishedBuild, startBuildProgress, tapBuildLog } from '../engine/build-progress.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { cancelledError, throwIfCancelled } from '../cancellation.ts';
@@ -23,7 +24,7 @@ export type MacosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: '
 
 export interface MacosBuildFacts {
   product: string;
-  /** Owned copy, retained with this workspace until explicitly removed. */
+  /** Owned copy, retained with this workspace until the next macOS build or worktree removal. */
   bundle: string;
   bundleId: string;
   executable: string;
@@ -156,6 +157,8 @@ export async function buildMacosOperation(
           note(phaseLine('state', `could not record the build: ${(error as Error)?.message || error}`));
         } finally {
           if (!succeeded && directory) rmSync(directory, { recursive: true, force: true });
+          if (succeeded && directory)
+            await pruneArtifactCopies(root, 'macos', directory, (line) => note(phaseLine('artifacts', line)));
           writer.close();
           progress.clear();
         }

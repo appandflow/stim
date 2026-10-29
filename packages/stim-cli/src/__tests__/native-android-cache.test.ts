@@ -3,6 +3,7 @@ import { testContext } from './_context.ts';
 import { getProject, upsertProject } from '../workspace/config.ts';
 import { resolveProjectSettings } from '../workspace/settings.ts';
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -388,13 +389,14 @@ test('a file provider restores a verified native APK into a cold local cache wit
   useProvider({ files });
   const first = await build();
   expect(first.cacheHit).toBe(false);
+  const bytes = readFileSync(first.apkPath);
   vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
   const restored = await build();
   expect(restored).toMatchObject({ cacheHit: 'remote', cacheKey: first.cacheKey, androidPackage: 'org.example.free' });
   expect(generations).toBe(1);
   const local = await build();
   expect(local).toMatchObject({ cacheHit: 'local', cacheKey: first.cacheKey, androidPackage: 'org.example.free' });
-  expect(readFileSync(local.apkPath)).toEqual(readFileSync(first.apkPath));
+  expect(readFileSync(local.apkPath)).toEqual(bytes);
   expect(generations).toBe(1);
 });
 
@@ -443,12 +445,13 @@ test('a valid shared entry for another input key cannot backfill the requested k
 test('a provider path outside its download directory is refused without deleting that file', async () => {
   const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
   useProvider({ files });
-  const first = await build();
-  vi.spyOn(files, 'resolve').mockResolvedValue(first.apkPath);
+  const outside = join(directory, 'outside.apk');
+  copyFileSync((await build()).apkPath, outside);
+  vi.spyOn(files, 'resolve').mockResolvedValue(outside);
   vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
   expect((await build()).cacheHit).toBe(false);
   expect(generations).toBe(2);
-  expect(JSON.parse(readFileSync(first.apkPath, 'utf8')).generation).toBe(1);
+  expect(JSON.parse(readFileSync(outside, 'utf8')).generation).toBe(1);
   expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
 });
 

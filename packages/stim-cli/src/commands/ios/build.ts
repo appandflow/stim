@@ -1,7 +1,8 @@
+import chalk from 'chalk';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { constants, promises as fs } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
@@ -31,7 +32,7 @@ import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
-import { recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
+import { pruneArtifactCopies, recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
 import { lastBuildRecord } from './result.ts';
 import {
   iosProjectPathError,
@@ -342,6 +343,9 @@ export async function buildIosOperation(
                 configuration: resolveConfiguration(options.configuration, settings),
               }),
               { appPath: built.appPath, bundleId: built.bundleId },
+            );
+            await pruneArtifactCopies(root, 'ios', dirname(built.appPath), (line) =>
+              phase('artifacts', chalk.yellow(line)),
             );
             stats.record({
               failed: false,
