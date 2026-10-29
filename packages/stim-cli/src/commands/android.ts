@@ -662,12 +662,15 @@ async function localRunRefusal(
   return image.installed ? recheckSelectors() : null;
 }
 
-function refuseRemoteCleanAppState(
+async function placeCleanableAndroidRun(
   cleanAppState: boolean,
-  hosting: Awaited<ReturnType<typeof selectAndroidPlacement>>,
-): Awaited<ReturnType<typeof selectAndroidPlacement>> {
-  if (!cleanAppState || 'failure' in hosting || (!hosting.hostedTarget && hosting.target.kind !== 'remote'))
-    return hosting;
+  target: Parameters<typeof selectAndroidPlacement>[0]['target'],
+  place: () => ReturnType<typeof selectAndroidPlacement>,
+): ReturnType<typeof selectAndroidPlacement> {
+  if (!cleanAppState) return place();
+  const pinned = target.kind === 'remote' || (target.kind === 'hosted' && target.machine !== 'auto');
+  const hosting = pinned ? null : await place();
+  if (hosting && ('failure' in hosting || (!hosting.hostedTarget && hosting.target.kind !== 'remote'))) return hosting;
   return {
     failure: {
       code: 'STIM_BAD_ARG',
@@ -989,9 +992,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       },
       { listSystemImages, listDeviceProfiles },
     );
-  const hosting = refuseRemoteCleanAppState(
-    cleanAppState,
-    await selectAndroidPlacement({
+  const hosting = await placeCleanableAndroidRun(cleanAppState, plan.target, () =>
+    selectAndroidPlacement({
       root,
       slot,
       target: plan.target,

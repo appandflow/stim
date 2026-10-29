@@ -1326,6 +1326,34 @@ describe('explicit remote backend behavior', () => {
     expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
   });
 
+  test('cleanAppState refuses when auto placement lands on EAS', async () => {
+    const backends: unknown[] = [];
+    const h = harness({
+      remoteDevice: 'auto',
+      cleanAppState: true,
+      resolveSettingsFor: () => ({ remote: { easFallback: true } }),
+      checkEasFallback: async () => ({ usable: true as const }),
+      automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+        automaticDevicePlacement(args, {
+          machines: () => [],
+          peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+          capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+          memory: () => 'normal',
+          budget: async () => null,
+        }),
+      resolveRemoteDeviceContext: async (args: { backend: unknown }) => {
+        backends.push(args.backend);
+        return {
+          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(backends).toEqual([]);
+    expect(h.calls.ensureDevice).toEqual([]);
+  });
+
   test('remote debug validates local and public Metro before creating a session', async () => {
     const order: string[] = [];
     const h = harness({
@@ -4843,7 +4871,7 @@ describe('clean app state', () => {
   });
 
   test.each([true, false])(
-    'cleanAppState=%s clears the app state of an emulator it does not adopt',
+    'cleanAppState=%s decides whether a run clears the app state of an emulator it does not adopt',
     async (cleanAppState) => {
       const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
       try {
@@ -7753,11 +7781,7 @@ describe('strict remote machine selection', () => {
     const h = harness({
       remoteDevice: 'mini',
       cleanAppState: true,
-      prepareHostedAndroid: async () => ({
-        host: { machine: 'mini', connection: { close: () => {} } },
-        choice: { avdName: 'stim-private', architecture: 'arm64-v8a' as const },
-        session: null,
-      }),
+      prepareHostedAndroid: never('the hosted session'),
       build: never('the build'),
       placeHostedAndroid: never('the hosted placement'),
     });
