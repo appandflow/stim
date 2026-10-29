@@ -329,7 +329,11 @@ test.skipIf(process.platform !== 'darwin')(
     const pidFile = join(root, 'login-pid');
     executable(
       shell,
-      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 100);`,
+      `const fs = require('node:fs');
+const marker = ${JSON.stringify(pidFile)};
+fs.writeFileSync(marker + '.tmp', String(process.pid));
+fs.renameSync(marker + '.tmp', marker);
+setInterval(() => {}, 100);`,
     );
     const controller = new AbortController();
     const operation = { ...context({ SHELL: shell }), signal: controller.signal };
@@ -341,6 +345,7 @@ test.skipIf(process.platform !== 'darwin')(
     const rejected = pending.catch((error: unknown) => error);
     controller.abort();
     expect(await rejected).toMatchObject({ name: 'AbortError' });
+    expect(pid).toBeGreaterThan(0);
     expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
   },
 );
@@ -434,7 +439,11 @@ test.each(
   const marker = join(root, 'sdk-pid');
   projectCli(
     stage === 'eas-build' ? 'eas-cli' : 'expo',
-    `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => {}, 4000);`,
+    `const fs = require('node:fs');
+const marker = ${JSON.stringify(marker)};
+fs.writeFileSync(marker + '.tmp', String(process.pid));
+fs.renameSync(marker + '.tmp', marker);
+setTimeout(() => {}, 4000);`,
   );
   writeFileSync(join(root, 'app.config.js'), 'module.exports = {};');
   const cachedApp = join(root, 'cache', 'Test.app');
