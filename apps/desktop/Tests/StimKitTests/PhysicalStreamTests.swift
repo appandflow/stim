@@ -95,6 +95,17 @@ import Testing
     #expect(stream.problem == "fps must be a whole number from 1 to 30.")
   }
 
+  @Test func asksAgainAtStandardWhenARelayReportsTheHostRefusedHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onEvent(
+      ServerEvent(
+        name: "error", subscription: "",
+        fields: ["error": .object(["code": .string("frames-failed"), "message": .string("Mini: refused.")])]))
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+  }
+
   @Test func triesHighAgainAfterTheViewerPicksItAgain() throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target, quality: .high)
