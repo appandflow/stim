@@ -391,12 +391,18 @@ it('retains an explicit cache with the automatic hosted home', async () => {
   });
 });
 
-it('asks Stim to install the recorded build and never to build', async () => {
+it('asks Stim to install the recorded build from clean app state and never to build', async () => {
   options.run = { platform: 'ios', scheme: 'App', configuration: 'Release' };
   const result = await runCI(options);
   expect(result.exitCode).toBe(0);
   expect(lifecycle.run).toHaveBeenCalledWith(
-    expect.objectContaining({ platform: 'ios', scheme: 'App', configuration: 'Release', recordedBuild: true }),
+    expect.objectContaining({
+      platform: 'ios',
+      scheme: 'App',
+      configuration: 'Release',
+      recordedBuild: true,
+      cleanAppState: true,
+    }),
   );
 });
 

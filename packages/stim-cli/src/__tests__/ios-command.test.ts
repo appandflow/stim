@@ -1183,6 +1183,84 @@ describe('parked simulator adoption', () => {
   });
 });
 
+describe('clean app state', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
+  test.each([
+    ['cleans and resets the keychain before a skipped install', true, ['sweep', 'data', 'keychain', 'install']],
+    ['leaves a plain run on its own simulator untouched', false, ['install']],
+  ])('cleanAppState %s', async (_label, cleanAppState, expected) => {
+    reserve();
+    const events: string[] = [];
+    let proveInstalled: unknown;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState },
+      {
+        clearOtherUserApps: () => {
+          events.push('sweep');
+          return { listed: true, kept: true, removed: ['com.example.other'], failed: [] };
+        },
+        clearIosAppData: () => {
+          events.push('data');
+        },
+        resetIosKeychain: () => {
+          events.push('keychain');
+        },
+        clearIosAdoptionPending: () => events.push('adoption'),
+        installIosApp: (args) => {
+          events.push('install');
+          proveInstalled = args.proveInstalled;
+          return { ok: true, skipped: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(events).toEqual(expected);
+    expect(proveInstalled).toBe(true);
+    expect(/removed com\.example\.other, left by an earlier run/.test(errs.join('\n'))).toBe(cleanAppState);
+  });
+
+  test('refuses to clean a simulator Stim does not own', async () => {
+    reserve();
+    let swept = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState: true },
+      {
+        ensureOwnedDevice: async () => ({ deviceUdid: UDID, deviceName: 'My iPhone', owned: false }),
+        clearOtherUserApps: () => {
+          swept = true;
+          return { listed: true, kept: false, removed: [], failed: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(swept).toBe(false);
+    expect(errs.join('\n')).toMatch(/cleanAppState clears only a simulator Stim owns/);
+  });
+
+  test('a failed keychain reset refuses before install without mentioning adoption', async () => {
+    reserve();
+    let installed = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState: true },
+      {
+        clearOtherUserApps: () => ({ listed: true, kept: false, removed: [], failed: [] }),
+        resetIosKeychain: () => {
+          throw new Error('keychain busy');
+        },
+        installIosApp: () => {
+          installed = true;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not reset the keychain .*keychain busy.* Stim did not install or launch/s);
+    expect(errs.join('\n')).not.toMatch(/adoption cleanup pending/);
+  });
+});
+
 function simctlClock(step: number) {
   const state = { now: 1_000_000 };
   setExecutor(
@@ -3902,6 +3980,15 @@ describe('--remote', () => {
       },
     };
   }
+
+  test('cleanAppState refuses a remote placement before install', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode, errs } = await run({ remote: 'eas', cleanAppState: true }, remote.deps);
+    expect(exitCode).toBe(1);
+    expect(remote.hits).not.toContain('installIosApp');
+    expect(errs.join('\n')).toMatch(/cleanAppState applies to a local simulator/);
+  });
 
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();

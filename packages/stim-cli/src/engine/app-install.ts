@@ -199,7 +199,8 @@ export async function clearOtherUserApps(
     return { listed: false, kept: false, removed, failed };
   }
   for (const bundleId of installed) {
-    if (bundleId === keep) continue;
+    // Xcode names every UI test runner app <test bundle id>.xctrunner.
+    if (bundleId === keep || bundleId.endsWith('.xctrunner')) continue;
     try {
       await uninstall(udid, bundleId);
       removed.push(bundleId);

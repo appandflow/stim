@@ -50,6 +50,13 @@ export type StimRunOptions = PlatformRunOptions & {
    * STIM_NO_RECORDED_BUILD when there is none. Not part of the private Desktop transport.
    */
   recordedBuild?: boolean;
+  /**
+   * iOS and Android: start the app from clean state on the workspace's owned simulator or emulator. Before install,
+   * uninstall every other user app and clear the kept app's data: on iOS its defaults and data container, then the
+   * simulator keychain; on Android `pm clear`. Applies whether or not the install is skipped. `stim-ci run` always sets
+   * it. Refused with a physical device or a remote host.
+   */
+  cleanAppState?: boolean;
   signal?: AbortSignal;
 };
 

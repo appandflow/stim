@@ -733,6 +733,11 @@ export async function clearIosAppData(
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
 ): Promise<void> {
   const exec = getExecutor();
+  try {
+    await exec.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
+  } catch (error) {
+    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
+  }
   if (defaultsPlist) {
     await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,

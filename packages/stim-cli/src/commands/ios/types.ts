@@ -8,6 +8,7 @@ export interface DeviceLike {
   avdName?: string | null;
   deviceType?: string | null;
   runtime?: string | null;
+  owned?: boolean;
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
@@ -65,6 +66,7 @@ export interface IosCommandOptions {
   scheme?: string;
   easProfile?: string;
   recordedBuild?: boolean;
+  cleanAppState?: boolean;
   deviceType?: string;
   runtime?: string;
   simulatorApp?: string;

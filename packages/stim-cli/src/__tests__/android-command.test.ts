@@ -1067,6 +1067,14 @@ describe('explicit remote backend behavior', () => {
     expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
   });
 
+  test('cleanAppState refuses a remote placement before install', async () => {
+    const { h, remoteCalls } = remoteHarness('eas', { cleanAppState: true });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(remoteCalls).not.toContain('install');
+  });
+
   test('an emulator refused at device admission ends as STIM_AT_CAPACITY with its remedy', async () => {
     const atCapacity = {
       code: 'STIM_AT_CAPACITY',
@@ -1316,6 +1324,34 @@ describe('explicit remote backend behavior', () => {
     expect(backends).toEqual(['eas']);
     expect(h.calls.ensureDevice).toEqual([]);
     expect(readWorkspaceState(root)?.android).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
+  });
+
+  test('cleanAppState refuses when auto placement lands on EAS', async () => {
+    const backends: unknown[] = [];
+    const h = harness({
+      remoteDevice: 'auto',
+      cleanAppState: true,
+      resolveSettingsFor: () => ({ remote: { easFallback: true } }),
+      checkEasFallback: async () => ({ usable: true as const }),
+      automaticDevicePlacement: (args: Parameters<typeof automaticDevicePlacement>[0]) =>
+        automaticDevicePlacement(args, {
+          machines: () => [],
+          peek: () => ({ count: 3, max: 3, queued: 0, localLive: false }),
+          capacity: () => ({ cpus: 4, loadPerCore: 1, maxLoadPerCore: 2, builds: 0, maxBuilds: 3 }),
+          memory: () => 'normal',
+          budget: async () => null,
+        }),
+      resolveRemoteDeviceContext: async (args: { backend: unknown }) => {
+        backends.push(args.backend);
+        return {
+          ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
+        };
+      },
+    });
+    const result = await h.run();
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(backends).toEqual([]);
+    expect(h.calls.ensureDevice).toEqual([]);
   });
 
   test('remote debug validates local and public Metro before creating a session', async () => {
@@ -4816,6 +4852,43 @@ describe('a recorded build', () => {
   });
 });
 
+describe('clean app state', () => {
+  test('cleanAppState refuses to clean an emulator Stim does not own', async () => {
+    const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+    try {
+      const h = harness({
+        cleanAppState: true,
+        ensureDevice: async () => ({ avdName: 'Pixel_9', consolePort: 5584, owned: false }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('STIM_BAD_ARG');
+      expect(reset).not.toHaveBeenCalled();
+      expect(h.calls.install).toHaveLength(0);
+    } finally {
+      reset.mockRestore();
+    }
+  });
+
+  test.each([true, false])(
+    'cleanAppState=%s decides whether a run clears the app state of an emulator it does not adopt',
+    async (cleanAppState) => {
+      const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+      try {
+        const h = harness({
+          cleanAppState,
+          ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true }),
+        });
+        expect((await h.run()).ok).toBe(true);
+        expect(reset.mock.calls).toEqual(cleanAppState ? [['stim-app-412', 'emulator-5584', 'com.example.app']] : []);
+        expect(h.calls.install).toHaveLength(1);
+      } finally {
+        reset.mockRestore();
+      }
+    },
+  );
+});
+
 describe('the release APK swap', () => {
   const cached = '/cache/android/entry/app-production-release.apk';
 
@@ -7702,6 +7775,20 @@ describe('strict remote machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+
+  test('cleanAppState refuses a hosted placement before any device work', async () => {
+    configureMini();
+    const h = harness({
+      remoteDevice: 'mini',
+      cleanAppState: true,
+      prepareHostedAndroid: never('the hosted session'),
+      build: never('the build'),
+      placeHostedAndroid: never('the hosted placement'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+  });
 
   test('an offloaded hosted Android build carries its handoff through artifact caching into delivery', async () => {
     configureMini();

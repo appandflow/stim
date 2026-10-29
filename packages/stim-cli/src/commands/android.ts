@@ -173,6 +173,7 @@ interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
   recordedBuild?: boolean;
+  cleanAppState?: boolean;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -307,6 +308,7 @@ export function runAndroidOperation(
           slot: opts.slot,
           easProfile: opts.easProfile,
           recordedBuild: opts.recordedBuild,
+          cleanAppState: opts.cleanAppState,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
           useBuildCache: opts.buildCache !== false,
@@ -342,6 +344,7 @@ interface RunAndroidOptions {
   progress?: BuildProgress;
   easProfile?: string;
   recordedBuild?: boolean;
+  cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
   root: string;
@@ -439,6 +442,7 @@ function resolveRunAndroidOptions(
     useBuildCache = true,
     easProfile,
     recordedBuild,
+    cleanAppState = false,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
@@ -520,6 +524,7 @@ function resolveRunAndroidOptions(
     useBuildCache,
     easProfile,
     recordedBuild,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -657,6 +662,24 @@ async function localRunRefusal(
   return image.installed ? recheckSelectors() : null;
 }
 
+async function placeCleanableAndroidRun(
+  cleanAppState: boolean,
+  target: Parameters<typeof selectAndroidPlacement>[0]['target'],
+  place: () => ReturnType<typeof selectAndroidPlacement>,
+): ReturnType<typeof selectAndroidPlacement> {
+  if (!cleanAppState) return place();
+  const pinned = target.kind === 'remote' || (target.kind === 'hosted' && target.machine !== 'auto');
+  const hosting = pinned ? null : await place();
+  if (hosting && ('failure' in hosting || (!hosting.hostedTarget && hosting.target.kind !== 'remote'))) return hosting;
+  return {
+    failure: {
+      code: 'STIM_BAD_ARG',
+      message: 'cleanAppState applies to a local emulator, but android.remote placed this run on a remote host.',
+      remedy: 'Run `stim settings set android.remote local` in this workspace, or run without cleanAppState.',
+    },
+  };
+}
+
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   const { context } = options;
   let {
@@ -674,6 +697,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     useBuildCache: requestedBuildCache,
     easProfile,
     recordedBuild: recordedBuildRequested,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -968,48 +992,50 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       },
       { listSystemImages, listDeviceProfiles },
     );
-  const hosting = await selectAndroidPlacement({
-    root,
-    slot,
-    target: plan.target,
-    release,
-    appMode,
-    metroCheck,
-    noWait: plan.deviceSlotWaitMs === 0,
-    waitMs: plan.deviceSlotWaitMs,
-    signal: settingsSignal,
-    buildMachine: options.buildMachine,
-    read: options.readHostedAndroid,
-    resolveSerial: resolveAvdSerial,
-    prepare: options.prepareHostedAndroid,
-    automatic: options.automaticDevicePlacement,
-    ...(integration.eas && remoteEasFallbackSetting(settings)
-      ? {
-          eas: () =>
-            (options.checkEasFallback ?? checkEasFallback)({
-              root,
-              platform: PLATFORM,
-              env: context.env,
-              operation: context,
-              slot,
-              release,
-              isExpo,
-              tunnelMode: tunnelModeSetting(settings),
-              publicUrl: publicUrlSetting(settings),
-              localOnlyFlags: [
-                ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
-                ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
-              ],
-            }),
-        }
-      : {}),
-    localSelectors,
-    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
-    note: out,
-    phase,
-    log: (entry) => writer.write(entry),
-    fromFlag: commandRemoteBackend !== null,
-  });
+  const hosting = await placeCleanableAndroidRun(cleanAppState, plan.target, () =>
+    selectAndroidPlacement({
+      root,
+      slot,
+      target: plan.target,
+      release,
+      appMode,
+      metroCheck,
+      noWait: plan.deviceSlotWaitMs === 0,
+      waitMs: plan.deviceSlotWaitMs,
+      signal: settingsSignal,
+      buildMachine: options.buildMachine,
+      read: options.readHostedAndroid,
+      resolveSerial: resolveAvdSerial,
+      prepare: options.prepareHostedAndroid,
+      automatic: options.automaticDevicePlacement,
+      ...(integration.eas && remoteEasFallbackSetting(settings)
+        ? {
+            eas: () =>
+              (options.checkEasFallback ?? checkEasFallback)({
+                root,
+                platform: PLATFORM,
+                env: context.env,
+                operation: context,
+                slot,
+                release,
+                isExpo,
+                tunnelMode: tunnelModeSetting(settings),
+                publicUrl: publicUrlSetting(settings),
+                localOnlyFlags: [
+                  ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
+                  ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
+                ],
+              }),
+          }
+        : {}),
+      localSelectors,
+      checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
+      note: out,
+      phase,
+      log: (entry) => writer.write(entry),
+      fromFlag: commandRemoteBackend !== null,
+    }),
+  );
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;
   record.devicePlacement = hosting.devicePlacement;
@@ -1552,6 +1578,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         device,
         physical,
         remoteDevice,
+        cleanAppState,
         bootPromise,
         resolveAvdSerial,
         waitForDeviceBoot,
