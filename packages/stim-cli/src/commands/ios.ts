@@ -318,6 +318,7 @@ function iosArtifactTargetInputs({
   remote,
   hosted,
   simulatorArch,
+  configuration,
   lanAddress,
   metroPort,
   settings,
@@ -327,6 +328,7 @@ function iosArtifactTargetInputs({
   remote: boolean;
   hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
   simulatorArch: IosArtifactContext['target']['arch'];
+  configuration: string | null;
   lanAddress: string | null;
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
@@ -336,7 +338,9 @@ function iosArtifactTargetInputs({
       udid,
       destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
       sdk: physical ? 'iphoneos' : 'iphonesimulator',
-      arch: remote || hosted ? simulatorArch : null,
+      // Xcode narrows a local simulator build to the booted device's arch only when the configuration sets
+      // ONLY_ACTIVE_ARCH=YES, which Debug does and Release does not by default.
+      arch: remote || hosted || isReleaseConfiguration(configuration) ? simulatorArch : null,
       keyArch: simulatorArch,
       offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
       hostedArchitecture: hosted?.choice.architecture,
@@ -1122,7 +1126,6 @@ async function runIos(
         physical,
         remoteArch,
         hostArch: d.hostSimulatorArch(),
-        configuration,
       });
       const acquiredArtifact = unlessCancelled(
         context,
@@ -1148,6 +1151,7 @@ async function runIos(
                 remote: Boolean(remoteDevice),
                 hosted: hostedTarget,
                 simulatorArch,
+                configuration,
                 lanAddress,
                 metroPort,
                 settings,

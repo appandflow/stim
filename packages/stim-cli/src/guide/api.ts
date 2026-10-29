@@ -193,9 +193,11 @@ Build options:
   ios:     scheme, configuration, arch (arm64, x86_64, all), buildCache, remoteBuild, easProfile
   android: variant, abi (arm64-v8a, armeabi-v7a, x86, x86_64, all), buildCache, remoteBuild, easProfile
   macos:   remoteBuild
-An iOS build targets the simulator. A Debug build defaults to the host
-architecture (Android only while optimizations.android.targetAbiOnly is on, the
-default); Release defaults to all. macOS builds the configured Debug SwiftPM app.
+An iOS build targets the simulator and defaults to the host architecture in
+every configuration; arch all builds every architecture the project lists. An
+Android Debug build defaults to the host ABI while
+optimizations.android.targetAbiOnly is on, the default; Release defaults to all.
+macOS builds the configured Debug SwiftPM app.
 Build results retain an owned appPath (iOS), apkPath (Android) or bundle (macOS)
 inside this workspace until worktree removal. Later builds keep earlier copies. An iOS or
 Android build also records its app in workspace state for recordedBuild runs; the

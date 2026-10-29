@@ -116,7 +116,7 @@ KEYS STIM READS
                         (simulator only). Committing
                         { "ios": { "configuration": "Release" } } makes every
                         \`stim ios\` in the app a release-shaped build:
-                        embedded JS, no Metro, cache keyed -release-sim, and
+                        embedded JS, no Metro, cache keyed -release-sim-<arch>, and
                         a JS-bundle swap on cache hits. The \`--configuration\`
                         flag overrides this per invocation. Unset means Debug.
   ios.remote            where the simulator runs, with the same meaning as

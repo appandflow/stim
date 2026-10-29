@@ -4077,6 +4077,13 @@ describe('--remote', () => {
     expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-debug-sim-x86-64`);
   });
 
+  test('a local Release simulator build passes the host arch to Xcode and keys it', async () => {
+    reserve();
+    const { calls } = await run({ configuration: 'Release' }, { hostSimulatorArch: () => 'x86_64' });
+    expect(calls.args.buildIos).toMatchObject({ destination: null, arch: 'x86_64' });
+    expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-release-sim-x86-64`);
+  });
+
   test('a remote start refused on the EAS project lock stops before install, with its notice and remedy', async () => {
     const remote = remoteStub();
     reserve();
@@ -4703,7 +4710,7 @@ describe('release skips Metro entirely', () => {
     expect(facts.configuration).toBe('Release');
     expect(facts.metroPort).toBe(null);
     expect(facts.launched).toBe(true);
-    expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim`);
+    expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim-arm64`);
   });
 
   test('a dead app process fails the readiness check with the device-log pointer', async () => {
@@ -4769,14 +4776,14 @@ describe('a recorded build', () => {
 });
 
 describe('the release cache key and the JS swap', () => {
-  test('the key differs from debug: -release-sim vs -debug-sim-arm64', async () => {
+  test('the key differs from debug: -release-sim-arm64 vs -debug-sim-arm64', async () => {
     reserve();
     const debugRun = await run({});
     expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim-arm64`);
     const releaseRun = await run({ configuration: 'Release' });
-    expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim`);
+    expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
     expect(releaseRun.calls.args.storeBuild.platform).toBe('ios');
-    expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim`);
+    expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim-arm64`);
   });
 
   test('a fresh release build passes the configuration to xcodebuild and needs no swap', async () => {
@@ -5179,7 +5186,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   test('a post-shift hit on a Release build swaps the JS in, exactly as a first-pass hit does', async () => {
     reserve();
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim-arm64`, 'Fixture.app');
     const { calls } = await run(
       { configuration: 'Release' },
       {
@@ -5196,7 +5203,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   test('a post-shift hit whose swap fails falls back to a build, as a first-pass failure does', async () => {
     reserve();
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim-arm64`, 'Fixture.app');
     const { calls } = await run(
       { configuration: 'Release' },
       {
@@ -5208,7 +5215,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       },
     );
     expect(calls.order.includes('buildIos')).toBe(true);
-    expect(String(calls.args.storeBuild.key)).toBe(`${WARM}-release-sim`);
+    expect(String(calls.args.storeBuild.key)).toBe(`${WARM}-release-sim-arm64`);
   });
 
   test('a post-shift MISS builds and stores under the new key', async () => {
@@ -6140,7 +6147,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     reserve();
     const { calls } = await run({ configuration: 'Release' });
     const store = calls.args.storeBuild as { key: string };
-    expect(store.key).toBe(`${FINGERPRINT}-release-sim`);
+    expect(store.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
     const build = calls.args.buildIos as Record<string, unknown>;
     expect(build?.sdk).toBe(undefined);
   });
@@ -8205,7 +8212,11 @@ describe('--plan', () => {
   });
 
   test('a local entry under the configuration key is a hit, and planning leaves its LRU time alone', async () => {
-    const releaseKey = buildCacheKey('ios', FINGERPRINT, { configuration: 'Release', isSimulator: true });
+    const releaseKey = buildCacheKey('ios', FINGERPRINT, {
+      configuration: 'Release',
+      isSimulator: true,
+      arch: 'arm64',
+    });
     const entry = storeEntry(releaseKey);
     const old = new Date('2026-01-01T00:00:00Z');
     utimesSync(entry, old, old);
