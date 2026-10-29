@@ -267,6 +267,7 @@ export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'gradle-build',
   'android-cas',
   'cache-provider',
+  'js-swap-tmp',
 ];
 
 /** Why a workspace whose last ios, android or macos run was at `nativeUsed` keeps its build outputs, or null. */

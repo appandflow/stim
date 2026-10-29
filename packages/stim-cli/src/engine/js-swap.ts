@@ -1,7 +1,7 @@
-import type { StimContext } from '@stim-cli/core';
+import { ensurePrivateDir, type StimContext } from '@stim-cli/core';
 import { makeTemporaryDirectory, removeTemporaryEntry } from '../temporary.ts';
 import type { ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { getExecutor, type Executor } from '../exec.ts';
@@ -15,6 +15,7 @@ import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
 import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 
 export const JS_BUNDLE_NAME = 'main.jsbundle';
 
@@ -56,6 +57,56 @@ export function detectEntryFile(root: string): string {
     return 'index.js';
   }
   return pickEntryFile(entries);
+}
+
+function bundlerInputsKey(root: string, env: NodeJS.ProcessEnv): string {
+  const hash = createHash('sha256');
+  for (const name of Object.keys(env).toSorted()) {
+    if (name.startsWith('EXPO_PUBLIC_')) hash.update(`env\0${name}\0${env[name] ?? ''}\0`);
+  }
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(root)
+      .filter((name) => name.startsWith('.env'))
+      .toSorted();
+  } catch {}
+  for (const name of entries) {
+    try {
+      hash
+        .update(`file\0${name}\0`)
+        .update(readFileSync(join(root, name)))
+        .update('\0');
+    } catch {}
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * The TMPDIR for a swap's bundler child: a workspace-private directory that holds Metro's transform cache
+ * (`$TMPDIR/metro-cache`). Metro's cache key omits the `EXPO_PUBLIC_*` values babel-preset-expo inlines,
+ * and `expo export:embed` ignores `--reset-cache` when `CI` is set (expo/expo#49630), so the directory is
+ * emptied whenever those values or the project's `.env*` files differ from the previous swap's.
+ */
+function swapBundlerTmpdir(root: string, env: NodeJS.ProcessEnv): string {
+  const dir = join(workspaceDir(root), 'js-swap-tmp');
+  const stamp = join(dir, 'inputs');
+  const key = bundlerInputsKey(root, env);
+  let previous: string | null = null;
+  try {
+    previous = readFileSync(stamp, 'utf-8');
+  } catch {}
+  if (previous !== key) {
+    rmSync(dir, { recursive: true, force: true });
+    ensurePrivateDir(dir);
+    writeFileSync(stamp, key);
+  }
+  return dir;
+}
+
+/** Node's `os.tmpdir()` reads `TMPDIR` on POSIX and `TEMP`, then `TMP`, on Windows. */
+export function swapBundlerEnv(root: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const tmp = swapBundlerTmpdir(root, env);
+  return { ...env, ...expoTelemetryEnv(env), FORCE_COLOR: '0', TMPDIR: tmp, TEMP: tmp, TMP: tmp };
 }
 
 export function bundleCommand({
@@ -371,7 +422,7 @@ export async function swapJsBundle({
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
+        env: swapBundlerEnv(root, context?.env ?? process.env),
       }),
     );
     killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);

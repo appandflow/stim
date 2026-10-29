@@ -577,7 +577,7 @@ describe('workspaceInUse', () => {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MACOS_OUTPUTS = ['macos/build', 'macos/Sample.app', 'macos/staging-x'];
-const OUTPUTS = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider', ...MACOS_OUTPUTS];
+const OUTPUTS = ['derived-data', 'gradle-build', 'android-cas', 'cache-provider', 'js-swap-tmp', ...MACOS_OUTPUTS];
 
 function builtWorkspace(
   name: string,

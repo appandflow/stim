@@ -316,6 +316,7 @@ describe('keystore resolution', () => {
 let root: string;
 let tmp: string;
 let cachedApk: string;
+let home: string;
 const keystore = { path: '/w/app/android/app/debug.keystore', pass: 'pass:android', password: null };
 const buildTools: BuildToolsEntry = {
   path: '/sdk/build-tools/36.0.0/zipalign',
@@ -326,6 +327,8 @@ const buildTools: BuildToolsEntry = {
 const apksigner = join('/sdk/build-tools/36.0.0', process.platform === 'win32' ? 'apksigner.bat' : 'apksigner');
 
 beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-apk-home-'));
+  process.env.STIM_HOME = home;
   root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-apk-root-')));
   tmp = mkdtempSync(join(tmpdir(), 'stim-apk-tmp-'));
   cachedApk = join(root, 'app-production-release.apk');
@@ -343,6 +346,8 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
 });
 
 function makeBundleChild(code = 0): ChildProcess {
