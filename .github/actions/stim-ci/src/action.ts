@@ -67,6 +67,10 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (upload !== 'true' && upload !== 'false') throw new Error('upload-artifacts must be true or false.');
   if (input('export') && platform === 'web')
     throw new Error('export does not apply to web projects, which have no native build.');
+  const builds = platform === 'ios' || platform === 'android' || Boolean(input('export'));
+  const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
+  if (!builds && ignored.length)
+    throw new Error(`${ignored.join(', ')} apply only when the action builds: iOS, Android, or macOS with export.`);
   const retention = input('retention-days') || '0';
   if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) {
     throw new Error('retention-days must be a non-negative whole number.');
