@@ -931,12 +931,13 @@ test('the registered native iOS provider builds Release without a device and reu
   const warm = await buildIosOperation(testContext(), root, options);
   expect(warm).toMatchObject({ cacheHit: 'local', cacheSkipped: false, cacheKey: cold.cacheKey });
   expect(compile).toHaveBeenCalledTimes(1);
+  expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
   write(join(root, 'Native.swift'), 'struct EditedApp {}');
   const edited = await buildIosOperation(testContext(), root, options);
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(compile).toHaveBeenCalledTimes(2);
   rmSync(join(home, 'derived'), { recursive: true });
-  expect(readFileSync(join(cold.appPath, 'Native'), 'utf8')).toBe(bytes);
+  expect(existsSync(cold.appPath)).toBe(false);
   expect(readFileSync(join(edited.appPath, 'Native'), 'utf8')).toBe('struct EditedApp {}');
   expect(readWorkspaceState(root)?.ios).toEqual(existing);
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');

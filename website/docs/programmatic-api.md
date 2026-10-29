@@ -79,9 +79,11 @@ An iOS build targets the host simulator architecture by default in every
 configuration; `arch: 'all'` builds every architecture the project lists. An
 Android Debug build targets the host ABI while
 `optimizations.android.targetAbiOnly` is on, which is the default; Android
-Release uses all ABIs. Each result points to a separate owned copy retained until
-`stim worktree remove` removes this workspace; a later build does not overwrite
-it. A build does not replace a running app's last build record or build log; it
+Release uses all ABIs. Each result points to a separate owned copy. A successful
+build removes the workspace's other copies for its platform that no recorded
+build points to, so a copy lasts until a build replaces its record (for macOS,
+until the next macOS build) or `stim worktree remove` removes this workspace.
+Copy or export a result you need to keep before the next build. A build does not replace a running app's last build record or build log; it
 writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
 distribution archives or infer a web compilation pipeline.
 An iOS or Android build also records its app in the workspace state; the last build for

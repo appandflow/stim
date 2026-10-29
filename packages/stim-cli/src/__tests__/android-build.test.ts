@@ -17,7 +17,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
@@ -150,17 +150,23 @@ test('build-only keeps artifacts after temporary cleanup, reuses compatible inpu
   expect(temporaryCopies.length).toBeGreaterThan(0);
   expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);
   expect(readWorkspaceState(root)?.android).toEqual(existing);
+  let release = cold;
   for (const options of [{ abi: 'arm64-v8a' as const }, { abi: 'x86_64' as const, variant: 'release' }]) {
     const changed = await buildAndroidOperation(buildContext(), root, { ...options, remoteBuild: 'local' });
     expect(changed.cacheHit).toBe(false);
     expect(changed.cacheKey).not.toBe(cold.cacheKey);
+    release = changed;
   }
+  const releaseBytes = readFileSync(release.apkPath, 'utf8');
   writeFileSync(join(root, 'Main.kt'), 'edited source');
   const edited = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
   expect(edited.cacheKey).not.toBe(cold.cacheKey);
   expect(edited.cacheHit).toBe(false);
   expect(compilations).toBe(4);
-  expect(readFileSync(cold.apkPath, 'utf8')).toBe(bytes);
+  expect(readFileSync(release.apkPath, 'utf8')).toBe(releaseBytes);
+  expect((await fs.readdir(join(workspaceDir(root), 'artifacts'))).toSorted()).toEqual(
+    [basename(dirname(release.apkPath)), basename(dirname(edited.apkPath))].toSorted(),
+  );
   expect(readWorkspaceState(root)).toMatchObject({ android: existing, lastBuild: running, lastAndroidBuild: running });
   expect(getProject(root)).not.toBeNull();
   expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();

@@ -205,9 +205,12 @@ Android Debug build defaults to the host ABI while
 optimizations.android.targetAbiOnly is on, the default; Release defaults to all.
 macOS builds the configured Debug SwiftPM app.
 Build results retain an owned appPath (iOS), apkPath (Android) or bundle (macOS)
-inside this workspace until worktree removal. Later builds keep earlier copies. An iOS or
-Android build also records its app in workspace state for recordedBuild runs; the
-last build per scheme and configuration or variant wins. easProfile downloads a
+inside this workspace. An iOS or Android build also records its app in workspace
+state for recordedBuild runs; the last build per scheme and configuration or
+variant wins. A successful build removes the workspace's other copies for its
+platform that no recorded build points to, so a copy lasts until a build replaces
+its record (for macOS, until the next macOS build) or the worktree is removed.
+Copy or export a result you need to keep before the next build. easProfile downloads a
 completed EAS development build instead of compiling; it never starts an EAS build.
 A build leaves a running app's last build record and build log untouched; it
 writes its own build-artifact-<platform>.ndjson. No distribution archive or web build

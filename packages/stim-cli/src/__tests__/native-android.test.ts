@@ -184,12 +184,14 @@ test('the registered native Android provider retains build-only APKs without cla
   writeWorkspaceState(root, { android: existing });
   const options = { variant: 'release', abi: 'x86_64', remoteBuild: 'local' } as const;
   const first = await buildAndroidOperation(testContext(), root, options);
+  rmSync(compiled);
+  expect(readFileSync(first.apkPath, 'utf8')).toBe('release:1');
   const second = await buildAndroidOperation(testContext(), root, options);
   for (const result of [first, second])
     expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: null });
   expect(generation).toBe(2);
   rmSync(compiled);
-  expect(readFileSync(first.apkPath, 'utf8')).toBe('release:1');
+  expect(existsSync(first.apkPath)).toBe(false);
   expect(readFileSync(second.apkPath, 'utf8')).toBe('release:2');
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
