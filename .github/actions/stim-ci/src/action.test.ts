@@ -94,6 +94,11 @@ it('validates explicit inputs and preserves command source and argument paths', 
       /required|must/,
     );
   }
+  github.inputs.arch = 'arm64';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow(
+    'apply only when the action builds',
+  );
+  delete github.inputs.arch;
   delete github.inputs['cli-path'];
   github.inputs.version = 'latest';
   expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('exact published version');

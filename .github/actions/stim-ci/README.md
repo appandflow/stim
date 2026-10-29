@@ -55,7 +55,8 @@ iOS and macOS; without it build only records the app for run. Export is never up
 
 `scheme`, `configuration` (iOS) and `variant` (Android) select the build and are passed
 to both build and run, so run installs the build that build recorded. `arch`, `abi` and
-`eas-profile` go to build only. Empty inputs keep the project's normal build settings, and
+`eas-profile` go to build only, and the action refuses them when it does not build (web, or
+macOS without `export`). Empty inputs keep the project's normal build settings, and
 `stim-ci` refuses a selector that does not apply to the platform.
 
 With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
