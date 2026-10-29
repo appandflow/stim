@@ -250,7 +250,10 @@ struct MachineView: View {
   private func machineLabel(_ title: String, subtitle: String, tone: Tone?, selected: Bool) -> some View {
     HStack(spacing: Space.lg) {
       if let tone {
-        Circle().fill(Color(tone)).frame(width: 7, height: 7).accessibilityHidden(true)
+        Circle().fill(Color(tone)).frame(width: 7, height: 7)
+          .padding(2)
+          .background(Circle().fill(selected ? Color.white : Color.clear))
+          .accessibilityHidden(true)
       } else {
         Image(systemName: "laptopcomputer").accessibilityHidden(true)
       }
