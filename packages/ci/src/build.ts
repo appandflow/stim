@@ -5,10 +5,11 @@ import { runCommand } from './command.ts';
 import { failure, prepareCI, writeJson, type CIContextOptions } from './context.ts';
 import type { CIFailure } from './index.ts';
 
-type WithoutSignal<T> = T extends unknown ? Omit<T, 'signal'> : never;
+type WithoutKeys<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
 export interface CIBuildOptions extends CIContextOptions {
-  build: WithoutSignal<StimBuildOptions>;
+  /** Always compiles on this machine; `remoteBuild` is not accepted. */
+  build: WithoutKeys<StimBuildOptions, 'signal' | 'remoteBuild'>;
   /** Also writes the app here as a portable APK (Android) or tar.gz (iOS, macOS); without it the build is only recorded for `run`. */
   exportPath?: string;
 }
@@ -73,7 +74,7 @@ export async function buildCI(input: CIBuildOptions): Promise<CIBuildResult> {
   try {
     signal?.throwIfAborted();
     attempted = true;
-    result.build = await stim.build({ ...options.build, signal });
+    result.build = await stim.build({ ...options.build, remoteBuild: 'local', signal });
     signal?.throwIfAborted();
     if (result.buildPath) writeJson(result.buildPath, result.build);
     if (input.exportPath) exporting = resolve(input.exportPath);
