@@ -3963,6 +3963,15 @@ describe('--remote', () => {
     };
   }
 
+  test('cleanAppState refuses a remote placement before install', async () => {
+    const remote = remoteStub();
+    reserve();
+    const { exitCode, errs } = await run({ remote: 'eas', cleanAppState: true }, remote.deps);
+    expect(exitCode).toBe(1);
+    expect(remote.hits).not.toContain('installIosApp');
+    expect(errs.join('\n')).toMatch(/cleanAppState applies to a local simulator/);
+  });
+
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();

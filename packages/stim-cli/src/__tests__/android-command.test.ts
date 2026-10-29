@@ -1067,6 +1067,14 @@ describe('explicit remote backend behavior', () => {
     expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
   });
 
+  test('cleanAppState refuses a remote placement before install', async () => {
+    const { h, remoteCalls } = remoteHarness('eas', { cleanAppState: true });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_BAD_ARG');
+    expect(remoteCalls).not.toContain('install');
+  });
+
   test('an emulator refused at device admission ends as STIM_AT_CAPACITY with its remedy', async () => {
     const atCapacity = {
       code: 'STIM_AT_CAPACITY',

@@ -587,7 +587,11 @@ describe('clearIosAppData', () => {
   });
   afterEach(() => rmSync(container, { recursive: true, force: true }));
 
-  function exec(deleteError: string | null, inputs: Array<string | undefined> = []) {
+  function exec(
+    deleteError: string | null,
+    inputs: Array<string | undefined> = [],
+    terminateError = 'found nothing to terminate',
+  ) {
     const calls: string[][] = [];
     setExecutor({
       run: () => {
@@ -596,6 +600,7 @@ describe('clearIosAppData', () => {
       runFile(file, args = [], options) {
         calls.push([file, ...args]);
         inputs.push(options?.input);
+        if (args[1] === 'terminate' && terminateError) throw new Error(`Command failed\n${terminateError}`);
         if (args.includes('defaults') && deleteError) throw new Error(`Command failed\n${deleteError}`);
         if (args[1] === 'get_app_container') return `${container}\n`;
         return '';
@@ -610,6 +615,7 @@ describe('clearIosAppData', () => {
     const calls = exec(null);
     await clearIosAppData('U1', 'com.example.app');
     expect(calls).toEqual([
+      ['xcrun', 'simctl', 'terminate', 'U1', 'com.example.app'],
       ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'delete', 'com.example.app'],
       ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app', 'data'],
     ]);
@@ -622,8 +628,8 @@ describe('clearIosAppData', () => {
     const inputs: Array<string | undefined> = [];
     const calls = exec(null, inputs);
     await clearIosAppData('U1', 'com.example.app', { defaultsPlist: '<plist/>' });
-    expect(calls[0]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'import', 'com.example.app', '-']);
-    expect(inputs[0]).toBe('<plist/>');
+    expect(calls[1]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'import', 'com.example.app', '-']);
+    expect(inputs[1]).toBe('<plist/>');
     expect(calls.some((call) => call.includes('delete'))).toBe(false);
     expect(readdirSync(join(container, 'Library'))).toEqual([]);
   });
@@ -647,6 +653,13 @@ describe('clearIosAppData', () => {
     exec("Error: Domain 'com.example.app' not found.\nDefaults have not been changed.");
     await clearIosAppData('U1', 'com.example.app');
     expect(readdirSync(join(container, 'Documents'))).toEqual([]);
+  });
+
+  test('stops before touching files when the running app cannot be terminated', async () => {
+    const calls = exec(null, [], 'Invalid device state');
+    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
+    expect(calls).toHaveLength(1);
+    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
   });
 
   test('stops before touching files when the defaults delete fails for another reason', async () => {

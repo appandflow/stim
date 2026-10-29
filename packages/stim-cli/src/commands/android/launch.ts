@@ -814,7 +814,13 @@ export async function finishAndroidRun({
   }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
-  if (adopting || (cleanAppState && !physical && !remoteDevice)) {
+  if (cleanAppState && remoteDevice)
+    return fail(
+      'STIM_BAD_ARG',
+      'cleanAppState applies to a local emulator, but this run was placed on a remote host.',
+      'Run `stim settings set android.remote local` in this workspace, or run without cleanAppState.',
+    );
+  if (adopting || (cleanAppState && !physical)) {
     const cleanupFailure = await cleanEmulatorAppState(device.avdName, serial, androidPackage, adopting, phase);
     if (cleanupFailure) return fail(LAUNCH_FAILED, cleanupFailure.message, cleanupFailure.remedy);
   }
