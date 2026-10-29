@@ -294,6 +294,50 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'sets build and run facts as outputs from the results stim-ci prints',
+  async () => {
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `const build = process.argv[2] === 'build';
+console.log('progress line');
+console.log(JSON.stringify(build
+  ? { stage: 'build', artifactPath: '/out/app.tar.gz', build: { facts: { appPath: '/w/App.app', bundleId: 'com.example', cacheHit: 'local' } } }
+  : { exitCode: 0, run: { facts: { udid: 'UDID-1', deviceName: 'stim-App', bundleId: 'com.example', metroPort: null } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    const outputs = Object.fromEntries(github.output.mock.calls);
+    expect(outputs).toEqual({
+      'app-id': 'com.example',
+      'app-path': '/w/App.app',
+      'export-path': '/out/app.tar.gz',
+      'cache-hit': 'true',
+      'device-id': 'UDID-1',
+      'device-name': 'stim-App',
+      'exit-code': '0',
+    });
+  },
+);
+
+test.skipIf(process.platform === 'win32')('sets the Android build facts when the run prints no result', async () => {
+  github.inputs.platform = 'android';
+  delete github.inputs.artifacts;
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: null, build: { facts: { apkPath: '/w/app.apk', androidPackage: 'com.example', cacheHit: false } } }));
+else process.exitCode = 4;`,
+  );
+  expect(await runAction()).toBe(4);
+  expect(Object.fromEntries(github.output.mock.calls)).toEqual({
+    'app-id': 'com.example',
+    'app-path': '/w/app.apk',
+    'cache-hit': 'false',
+    'exit-code': '4',
+  });
+});
+
 test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
   const seen = recorder();
   delete github.inputs.artifacts;

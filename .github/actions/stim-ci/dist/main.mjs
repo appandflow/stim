@@ -97600,10 +97600,18 @@ function readInputs(input, root, host = process.platform) {
 		buildOnly: flags(input, BUILD_ONLY_INPUTS)
 	};
 }
-async function execute(file, args, cwd) {
+async function execute(file, args, cwd, stdout) {
 	const child = spawn(file, args, {
 		cwd,
-		stdio: "inherit"
+		stdio: [
+			"inherit",
+			stdout ? "pipe" : "inherit",
+			"inherit"
+		]
+	});
+	if (stdout) child.stdout?.on("data", (chunk) => {
+		process.stdout.write(chunk);
+		stdout.push(chunk);
 	});
 	const interrupt = () => {
 		child.kill("SIGINT");
@@ -97633,6 +97641,36 @@ function currentResult(path, options, started) {
 	const result = JSON.parse(readFileSync$1(path, "utf8"));
 	if (result.version !== 1 || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
 	return result;
+}
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function finalResult(stdout) {
+	const line = Buffer.concat(stdout).toString("utf8").split("\n").map((entry) => entry.trim()).findLast((entry) => entry.startsWith("{"));
+	if (!line) return null;
+	try {
+		const parsed = JSON.parse(line);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+function facts(result, stage) {
+	const section = result?.[stage];
+	return isRecord(section) && isRecord(section.facts) ? section.facts : {};
+}
+function setResultOutputs(build, run, setOutput) {
+	const built = facts(build, "build");
+	const ran = facts(run, "run");
+	const outputs = {
+		"app-id": ran.bundleId ?? built.bundleId ?? built.androidPackage,
+		"app-path": built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
+		"export-path": build?.artifactPath,
+		"cache-hit": built.cacheHit === void 0 ? void 0 : Boolean(built.cacheHit),
+		"device-id": ran.udid ?? ran.serial,
+		"device-name": ran.deviceName
+	};
+	for (const [name, value] of Object.entries(outputs)) if (value !== void 0 && value !== null && value !== "") setOutput(name, String(value));
 }
 async function installCli(version, root) {
 	const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-action", version);
@@ -97710,6 +97748,8 @@ async function runAction() {
 	];
 	if (options.home) common.push("--home", options.home);
 	if (options.cache) common.push("--build-cache", options.cache);
+	const buildOutput = [];
+	let buildResult = null;
 	if ((options.platform === "ios" || options.platform === "android" || Boolean(options.exportPath)) && options.platform !== "web") {
 		const buildArgs = [
 			cli,
@@ -97719,8 +97759,12 @@ async function runAction() {
 			...options.buildOnly
 		];
 		if (options.exportPath) buildArgs.push("--export", options.exportPath);
-		const buildCode = await execute(process.execPath, buildArgs, root);
-		if (buildCode !== 0) return buildCode;
+		const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+		buildResult = finalResult(buildOutput);
+		if (buildCode !== 0) {
+			setResultOutputs(buildResult, null, setOutput);
+			return buildCode;
+		}
 	}
 	const args = [
 		cli,
@@ -97731,7 +97775,10 @@ async function runAction() {
 	if (options.artifacts) args.push("--artifacts", options.artifacts);
 	args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
 	const started = Date.now();
-	let code = await execute(process.execPath, args, root);
+	const runOutput = [];
+	let code = await execute(process.execPath, args, root, runOutput);
+	setResultOutputs(buildResult, finalResult(runOutput), setOutput);
+	setOutput("exit-code", String(code));
 	let result = null;
 	if (options.artifacts) try {
 		result = currentResult(resultPath, options, started);
