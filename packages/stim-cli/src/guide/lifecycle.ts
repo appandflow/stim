@@ -3021,6 +3021,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   alive on the device rather than by a bundle fetch. Device logs are still
   collected, so \`logs --errors\` answers "does it repro in release/Hermes
   bytecode".
+  EAS and proxy adapters cannot verify a release or native process launch:
+  launched stays "unverified" with a notice that process verification is
+  unavailable. These adapters collect no device logs or native crash reports.
 
   On a release CACHE HIT the cached APK carries its BUILDER's baked-in JS, so
   it is never installed as-is. Stim copies it aside, regenerates this

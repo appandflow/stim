@@ -533,6 +533,10 @@ reads the host architecture from the daemon's `/health` response (`hostArch`).
 It uses `arm64` when the daemon does not report one or does not answer within
 3 seconds, and always with `eas`, whose hosts are Apple silicon.
 
+EAS and proxy adapters cannot verify a release or native process launch, so
+`launched` stays `"unverified"` and the output says process verification is
+unavailable. These adapters collect no device logs or native crash reports.
+
 Workspaces can hold EAS sessions at the same time, but only one session starts
 at a time on a machine. A `--remote eas` run that finishes its build while
 another workspace is starting a session waits for that start. It prints a
