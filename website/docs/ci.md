@@ -91,7 +91,8 @@ simulator or emulator Stim does not own refuses with `STIM_BAD_ARG` instead of
 skipping the cleanup. A run that `ios.remote` or `android.remote` places on
 another machine or on EAS is not cleaned, and a physical device is refused.
 `build` always compiles on this machine and ignores `remote.build`. By default
-it compiles a Debug app for this machine's architecture only, so when `run` can
+it compiles an iOS app, and an Android Debug app, for this machine's
+architecture only, so when `run` can
 land on another machine or on EAS, build for that device too with `--arch all`
 (iOS) or `--abi all` (Android). Plain `stim ios` and `stim android` keep app data between
 runs and clean only a simulator or emulator they adopt from the parked pool.
