@@ -2035,7 +2035,7 @@ export type PlatformBuildOptions =
       platform: 'ios';
       configuration?: string;
       scheme?: string;
-      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      /** Defaults to the host simulator architecture in every configuration; `all` builds every architecture. */
       arch?: 'arm64' | 'x86_64' | 'all';
       buildCache?: boolean;
       remoteBuild?: string;

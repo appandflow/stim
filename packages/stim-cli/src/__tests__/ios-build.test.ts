@@ -1,4 +1,5 @@
 import * as artifacts from '../commands/ios/artifact.ts';
+import { hostSimulatorArch } from '@stim-cli/core';
 import { readBuildHistory } from '@stim-cli/core/state';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
@@ -202,6 +203,19 @@ test('native Release builds retain independent artifacts and cache without JS-sw
   expect(getProject(root)).not.toBeNull();
   expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();
   expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
+});
+
+test('a Release build defaults to the host simulator arch, and arch all builds every arch unsuffixed', async () => {
+  const host = await buildIosOperation(buildContext(), root, { configuration: 'Release', remoteBuild: 'local' });
+  expect(readFileSync(join(host.appPath, 'Native'), 'utf8')).toMatch(new RegExp(`:Release:${hostSimulatorArch()}$`));
+  expect(host.cacheKey).toMatch(new RegExp(`-release-sim-${hostSimulatorArch().replace('_', '-')}$`));
+  const all = await buildIosOperation(buildContext(), root, {
+    configuration: 'Release',
+    arch: 'all',
+    remoteBuild: 'local',
+  });
+  expect(readFileSync(join(all.appPath, 'Native'), 'utf8')).toMatch(/:Release:null$/);
+  expect(all.cacheKey).toMatch(/-release-sim$/);
 });
 
 test.each(['failure', 'cancellation'])(

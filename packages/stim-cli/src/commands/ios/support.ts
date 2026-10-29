@@ -273,16 +273,13 @@ export function simulatorBuildArch({
   physical,
   remoteArch,
   hostArch,
-  configuration,
 }: {
   physical: boolean;
   remoteArch: SimulatorArch | null;
   hostArch: SimulatorArch;
-  configuration: string | null | undefined;
 }): SimulatorArch | null {
   if (physical) return null;
-  if (remoteArch) return remoteArch;
-  return isReleaseConfiguration(configuration) ? null : hostArch;
+  return remoteArch ?? hostArch;
 }
 
 export function iosProviderRunOptions(
