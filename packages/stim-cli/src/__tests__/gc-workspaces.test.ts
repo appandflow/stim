@@ -1578,13 +1578,6 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
   recordWorkspaceUse(repo, new Date(Date.now() - 30 * DAY_MS));
   writeFileSync(join(worktrees.dirty!, 'scratch.txt'), 'wip');
 
-  const report = await captureLog(() => runGc({ worktrees: true }));
-  expect(report).toContain('Linked worktrees (2 removable, 3 kept)');
-  expect(report).toContain('idle 7d or more (the default without --older-than)');
-  expect(report).toMatch(/kept: source checkout/);
-  expect(report).toMatch(/kept: recently used 1d ago/);
-  expect(report).toMatch(/kept: dirty/);
-
   const originalError = console.error;
   const errors: string[] = [];
   console.error = (...args) => errors.push(args.join(' '));
@@ -1601,6 +1594,11 @@ test('gc --worktrees reports each linked worktree, and --delete removes only the
     console.error = originalError;
   }
   const output = lines.join('\n');
+  expect(output).toContain('Linked worktrees (2 removable, 3 kept)');
+  expect(output).toContain('idle 7d or more (the default without --older-than)');
+  expect(output).toMatch(/kept: source checkout/);
+  expect(output).toMatch(/kept: recently used 1d ago/);
+  expect(output).toMatch(/kept: dirty/);
   expect(existsSync(worktrees.idle!)).toBe(false);
   expect(getProject(worktrees.idle!)).toBe(null);
   expect(output).toContain(`Removed the worktree ${reported.idle}`);
