@@ -106,8 +106,7 @@ export async function buildIosOperation(
   const arch =
     options.arch === 'all'
       ? null
-      : (options.arch ??
-        simulatorBuildArch({ physical: false, remoteArch: null, hostArch: hostSimulatorArch(), configuration }));
+      : (options.arch ?? simulatorBuildArch({ physical: false, remoteArch: null, hostArch: hostSimulatorArch() }));
   const cache = artifactCachePolicy(
     optimizations,
     options.buildCache !== false,

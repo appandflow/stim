@@ -189,7 +189,7 @@ test('the standalone Expo build cache provider separates Android ABIs', async ()
   }
 });
 
-test('the standalone Expo build cache provider keys iOS Debug simulator builds by this machine arch', async () => {
+test('the standalone Expo build cache provider keys iOS simulator builds by this machine arch', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
   process.env.STIM_HOME = home;
@@ -218,6 +218,20 @@ test('the standalone Expo build cache provider keys iOS Debug simulator builds b
     expect(await identity({ device: 'generic' })).toBe('generic');
     expect(resolveBuild('ios', buildCacheKey('ios', 'fp', { isSimulator: true, arch: hostSimulatorArch() }))).toBe(
       await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'fp', runOptions: {} }),
+    );
+    expect(await identity({ configuration: 'Release', arch: hostSimulatorArch() })).toBe('release');
+    expect(await identity({ configuration: 'Release', arch: other })).toBeNull();
+    expect(
+      resolveBuild(
+        'ios',
+        buildCacheKey('ios', 'fp', { configuration: 'Release', isSimulator: true, arch: hostSimulatorArch() }),
+      ),
+    ).toBe(
+      await provider.resolveBuildCache({
+        platform: 'ios',
+        fingerprintHash: 'fp',
+        runOptions: { configuration: 'Release' },
+      }),
     );
   } finally {
     rmSync(home, { recursive: true, force: true });

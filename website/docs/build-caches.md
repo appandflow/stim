@@ -105,9 +105,12 @@ Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an
 Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
-Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
-or `-x86-64`). A local iOS Release simulator build compiles every architecture
-the project lists and has no suffix.
+simulator build ends in the architecture it runs on (`-arm64` or `-x86-64`):
+this Mac's for a local build in any configuration, the remote host's for a
+`--remote` build. A build of every architecture the project lists
+(`stim build --arch all`, `stim-ci build --arch all`) has no suffix. An app
+built on Apple silicon therefore no longer runs on an Intel Mac's simulator;
+build it with `--arch all` for that.
 
 Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
 project's own Expo uses:

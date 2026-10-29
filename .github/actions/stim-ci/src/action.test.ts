@@ -94,6 +94,11 @@ it('validates explicit inputs and preserves command source and argument paths', 
       /required|must/,
     );
   }
+  github.inputs.arch = 'arm64';
+  expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow(
+    'apply only when the action builds',
+  );
+  delete github.inputs.arch;
   delete github.inputs['cli-path'];
   github.inputs.version = 'latest';
   expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow('exact published version');
@@ -268,6 +273,70 @@ test.skipIf(process.platform === 'win32')(
     expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
   },
 );
+
+test.skipIf(process.platform === 'win32')(
+  'passes build selectors to build and run, and build-only flags to build alone',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    github.inputs.scheme = 'App';
+    github.inputs.configuration = 'Release';
+    github.inputs.arch = 'arm64';
+    github.inputs['eas-profile'] = 'preview';
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    const selectors = ['--scheme', 'App', '--configuration', 'Release'];
+    expect(build).toEqual(expect.arrayContaining([...selectors, '--arch', 'arm64', '--eas-profile', 'preview']));
+    expect(run).toEqual(expect.arrayContaining(selectors));
+    expect(run).not.toContain('--arch');
+    expect(run).not.toContain('--eas-profile');
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'sets build and run facts as outputs from the results stim-ci prints',
+  async () => {
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `const build = process.argv[2] === 'build';
+console.log('progress line');
+console.log(JSON.stringify(build
+  ? { stage: 'build', artifactPath: '/out/app.tar.gz', build: { facts: { appPath: '/w/App.app', bundleId: 'com.example', cacheHit: 'local' } } }
+  : { exitCode: 0, run: { facts: { udid: 'UDID-1', deviceName: 'stim-App', bundleId: 'com.example', metroPort: null } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    const outputs = Object.fromEntries(github.output.mock.calls);
+    expect(outputs).toEqual({
+      'app-id': 'com.example',
+      'app-path': '/w/App.app',
+      'export-path': '/out/app.tar.gz',
+      'cache-hit': 'true',
+      'device-id': 'UDID-1',
+      'device-name': 'stim-App',
+      'exit-code': '0',
+    });
+  },
+);
+
+test.skipIf(process.platform === 'win32')('sets the Android build facts when the run prints no result', async () => {
+  github.inputs.platform = 'android';
+  delete github.inputs.artifacts;
+  writeFileSync(
+    join(root, 'fixture.mjs'),
+    `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: null, build: { facts: { apkPath: '/w/app.apk', androidPackage: 'com.example', cacheHit: false } } }));
+else process.exitCode = 4;`,
+  );
+  expect(await runAction()).toBe(4);
+  expect(Object.fromEntries(github.output.mock.calls)).toEqual({
+    'app-id': 'com.example',
+    'app-path': '/w/app.apk',
+    'cache-hit': 'false',
+    'exit-code': '4',
+  });
+});
 
 test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
   const seen = recorder();

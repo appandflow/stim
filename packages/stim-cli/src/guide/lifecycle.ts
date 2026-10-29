@@ -3078,9 +3078,10 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --
   \`launched\` is verified by the app PROCESS staying alive, not by a bundle
-  fetch. The build cache keys on the configuration
-  (\`<fingerprint>-release-sim\`), and because a cached Release .app carries
-  its builder's baked-in JS, a cache hit regenerates THIS workspace's bundle
+  fetch. The build cache keys on the configuration and this Mac's simulator
+  architecture, the only one a local build compiles
+  (\`<fingerprint>-release-sim-arm64\`), and because a cached Release .app
+  carries its builder's baked-in JS, a cache hit regenerates THIS workspace's bundle
   (the project's own \`expo export:embed\` / \`react-native bundle\`, plus
   its own hermesc when Hermes is enabled) into a copy of the artifact,
   refreshes an expo-updates manifest as described above, re-signs it and

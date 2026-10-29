@@ -432,7 +432,6 @@ async function planNativeXcode(
       physical: false,
       remoteArch: null,
       hostArch: process.arch === 'arm64' ? 'arm64' : 'x86_64',
-      configuration,
     });
     const snapshot = await nativeXcodeInputSnapshot(
       root,

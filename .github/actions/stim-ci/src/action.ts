@@ -34,6 +34,15 @@ interface Inputs {
   upload: boolean;
   artifactName: string;
   retentionDays: number;
+  selectors: string[];
+  buildOnly: string[];
+}
+
+const SELECTOR_INPUTS = ['scheme', 'configuration', 'variant'] as const;
+const BUILD_ONLY_INPUTS = ['arch', 'abi', 'eas-profile'] as const;
+
+function flags(input: (name: string) => string, names: readonly string[]): string[] {
+  return names.flatMap((name) => (input(name) ? [`--${name}`, input(name)] : []));
 }
 
 export function readInputs(input: (name: string) => string, root: string, host: string = process.platform): Inputs {
@@ -58,6 +67,10 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (upload !== 'true' && upload !== 'false') throw new Error('upload-artifacts must be true or false.');
   if (input('export') && platform === 'web')
     throw new Error('export does not apply to web projects, which have no native build.');
+  const builds = platform === 'ios' || platform === 'android' || Boolean(input('export'));
+  const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
+  if (!builds && ignored.length)
+    throw new Error(`${ignored.join(', ')} apply only when the action builds: iOS, Android, or macOS with export.`);
   const retention = input('retention-days') || '0';
   if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) {
     throw new Error('retention-days must be a non-negative whole number.');
@@ -76,11 +89,18 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     upload: upload === 'true' && Boolean(input('artifacts')),
     artifactName: input('artifact-name') || `stim-ci-${platform}-${randomUUID()}`,
     retentionDays: Number(retention),
+    selectors: flags(input, SELECTOR_INPUTS),
+    buildOnly: flags(input, BUILD_ONLY_INPUTS),
   };
 }
 
-async function execute(file: string, args: string[], cwd: string): Promise<number> {
-  const child = spawn(file, args, { cwd, stdio: 'inherit' });
+async function execute(file: string, args: string[], cwd: string, stdout?: Buffer[]): Promise<number> {
+  const child = spawn(file, args, { cwd, stdio: ['inherit', stdout ? 'pipe' : 'inherit', 'inherit'] });
+  if (stdout)
+    child.stdout?.on('data', (chunk: Buffer) => {
+      process.stdout.write(chunk);
+      stdout.push(chunk);
+    });
   const interrupt = (): void => {
     child.kill('SIGINT');
   };
@@ -120,6 +140,50 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   )
     throw new Error('result.json does not describe this invocation; refusing stale artifacts.');
   return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finalResult(stdout: Buffer[]): Record<string, unknown> | null {
+  const line = Buffer.concat(stdout)
+    .toString('utf8')
+    .split('\n')
+    .map((entry) => entry.trim())
+    .findLast((entry) => entry.startsWith('{'));
+  if (!line) return null;
+  try {
+    const parsed: unknown = JSON.parse(line);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function facts(result: Record<string, unknown> | null, stage: 'build' | 'run'): Record<string, unknown> {
+  const section = result?.[stage];
+  return isRecord(section) && isRecord(section.facts) ? section.facts : {};
+}
+
+function setResultOutputs(
+  build: Record<string, unknown> | null,
+  run: Record<string, unknown> | null,
+  setOutput: (name: string, value: string) => void,
+): void {
+  const built = facts(build, 'build');
+  const ran = facts(run, 'run');
+  const outputs: Record<string, unknown> = {
+    'app-id': ran.bundleId ?? built.bundleId ?? built.androidPackage,
+    'app-path': built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
+    'export-path': build?.artifactPath,
+    'cache-hit': built.cacheHit === undefined ? undefined : Boolean(built.cacheHit),
+    'device-id': ran.udid ?? ran.serial,
+    'device-name': ran.deviceName,
+  };
+  for (const [name, value] of Object.entries(outputs)) {
+    if (value !== undefined && value !== null && value !== '') setOutput(name, String(value));
+  }
 }
 
 async function installCli(version: string, root: string): Promise<{ cli: string; code: number }> {
@@ -172,18 +236,27 @@ export async function runAction(): Promise<number> {
   const common = ['--platform', options.platform, '--project', options.project, '--timeout', options.timeout];
   if (options.home) common.push('--home', options.home);
   if (options.cache) common.push('--build-cache', options.cache);
+  const buildOutput: Buffer[] = [];
+  let buildResult: Record<string, unknown> | null = null;
   const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
-    const buildArgs = [cli, 'build', ...common];
+    const buildArgs = [cli, 'build', ...common, ...options.selectors, ...options.buildOnly];
     if (options.exportPath) buildArgs.push('--export', options.exportPath);
-    const buildCode = await execute(process.execPath, buildArgs, root);
-    if (buildCode !== 0) return buildCode;
+    const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+    buildResult = finalResult(buildOutput);
+    if (buildCode !== 0) {
+      setResultOutputs(buildResult, null, core.setOutput);
+      return buildCode;
+    }
   }
-  const args = [cli, 'run', ...common];
+  const args = [cli, 'run', ...common, ...options.selectors];
   if (options.artifacts) args.push('--artifacts', options.artifacts);
   args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
   const started = Date.now();
-  let code = await execute(process.execPath, args, root);
+  const runOutput: Buffer[] = [];
+  let code = await execute(process.execPath, args, root, runOutput);
+  setResultOutputs(buildResult, finalResult(runOutput), core.setOutput);
+  core.setOutput('exit-code', String(code));
   let result: CIResult | null = null;
   if (options.artifacts) {
     try {
