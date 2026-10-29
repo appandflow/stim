@@ -97611,7 +97611,7 @@ async function execute(file, args, cwd, stdout) {
 	});
 	child.stdout?.on("data", (chunk) => {
 		process.stdout.write(chunk);
-		stdout.push(chunk.toString());
+		stdout.push(chunk);
 	});
 	const interrupt = () => {
 		child.kill("SIGINT");
@@ -97643,7 +97643,7 @@ function currentResult(path, options, started) {
 	return result;
 }
 function finalResult(stdout) {
-	const lines = stdout.join("").trim().split("\n");
+	const lines = Buffer.concat(stdout).toString("utf8").trim().split("\n");
 	for (let index = lines.length - 1; index >= 0; index--) {
 		const line = lines[index].trim();
 		if (!line.startsWith("{")) continue;
@@ -97662,10 +97662,10 @@ function setResultOutputs(build, run, setOutput) {
 	const built = facts(build, "build");
 	const ran = facts(run, "run");
 	const outputs = {
-		"app-id": ran.bundleId ?? built.bundleId,
-		"app-path": built.appPath ?? ran.appPath,
+		"app-id": ran.bundleId ?? built.bundleId ?? built.androidPackage,
+		"app-path": built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
 		"export-path": build?.artifactPath,
-		"cache-hit": built.cacheHit,
+		"cache-hit": built.cacheHit === void 0 ? void 0 : Boolean(built.cacheHit),
 		"device-id": ran.udid ?? ran.serial,
 		"device-name": ran.deviceName
 	};

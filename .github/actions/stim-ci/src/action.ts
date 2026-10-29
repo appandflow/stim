@@ -94,11 +94,11 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   };
 }
 
-async function execute(file: string, args: string[], cwd: string, stdout?: string[]): Promise<number> {
+async function execute(file: string, args: string[], cwd: string, stdout?: Buffer[]): Promise<number> {
   const child = spawn(file, args, { cwd, stdio: ['inherit', stdout ? 'pipe' : 'inherit', 'inherit'] });
   child.stdout?.on('data', (chunk: Buffer) => {
     process.stdout.write(chunk);
-    stdout!.push(chunk.toString());
+    stdout!.push(chunk);
   });
   const interrupt = (): void => {
     child.kill('SIGINT');
@@ -141,8 +141,8 @@ function currentResult(path: string, options: Inputs, started: number): CIResult
   return result;
 }
 
-export function finalResult(stdout: string[]): Record<string, unknown> | null {
-  const lines = stdout.join('').trim().split('\n');
+export function finalResult(stdout: Buffer[]): Record<string, unknown> | null {
+  const lines = Buffer.concat(stdout).toString('utf8').trim().split('\n');
   for (let index = lines.length - 1; index >= 0; index--) {
     const line = lines[index]!.trim();
     if (!line.startsWith('{')) continue;
@@ -168,10 +168,10 @@ export function setResultOutputs(
   const built = facts(build, 'build');
   const ran = facts(run, 'run');
   const outputs: Record<string, unknown> = {
-    'app-id': ran.bundleId ?? built.bundleId,
-    'app-path': built.appPath ?? ran.appPath,
+    'app-id': ran.bundleId ?? built.bundleId ?? built.androidPackage,
+    'app-path': built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
     'export-path': build?.artifactPath,
-    'cache-hit': built.cacheHit,
+    'cache-hit': built.cacheHit === undefined ? undefined : Boolean(built.cacheHit),
     'device-id': ran.udid ?? ran.serial,
     'device-name': ran.deviceName,
   };
@@ -230,7 +230,7 @@ export async function runAction(): Promise<number> {
   const common = ['--platform', options.platform, '--project', options.project, '--timeout', options.timeout];
   if (options.home) common.push('--home', options.home);
   if (options.cache) common.push('--build-cache', options.cache);
-  const buildOutput: string[] = [];
+  const buildOutput: Buffer[] = [];
   let buildResult: Record<string, unknown> | null = null;
   const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
@@ -247,7 +247,7 @@ export async function runAction(): Promise<number> {
   if (options.artifacts) args.push('--artifacts', options.artifacts);
   args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
   const started = Date.now();
-  const runOutput: string[] = [];
+  const runOutput: Buffer[] = [];
   let code = await execute(process.execPath, args, root, runOutput);
   setResultOutputs(buildResult, finalResult(runOutput), core.setOutput);
   core.setOutput('exit-code', String(code));
