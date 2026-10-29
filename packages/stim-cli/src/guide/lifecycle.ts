@@ -514,7 +514,9 @@ the install is skipped: it uninstalls every other user app except XCUITest runne
 (*.xctrunner), clears the app's defaults and data
 container and resets the simulator keychain on iOS, and runs pm clear on Android.
 A run that ios.remote or android.remote places on another machine or on EAS is
-not cleaned. build always compiles on this machine and ignores remote.build.
+not cleaned. build always compiles on this machine and ignores remote.build. A
+Debug build targets this machine's architecture only; when run can land on
+another machine or on EAS, build with --arch all (iOS) or --abi all (Android).
 Plain stim ios and stim android clean only a device they adopt.
 build exports nothing unless --export <path> is given (an APK, or a tar.gz).
 --artifacts selects a directory for result, test and diagnostic files; without
