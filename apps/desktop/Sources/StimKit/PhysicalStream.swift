@@ -12,11 +12,10 @@ import Foundation
     case failed(String)
   }
 
-  static let fps = 30.0
-
   public let target: ReplayTarget
   /// False for a hosted simulator or macOS app, which stim-server relays rather than reading a leased device.
   public let physical: Bool
+  public private(set) var quality: StreamQuality
   /// Why no frames arrive: a refused or failed subscription, or the server's `frame-delayed` reason.
   @Published public private(set) var problem: String?
   @Published public private(set) var control = Control.off(ended: nil)
@@ -37,9 +36,21 @@ import Foundation
   private var pressed: (x: Double, y: Double)?
   private var keyframeRequest: Task<Void, Never>?
 
-  public init(target: ReplayTarget, physical: Bool = true) {
+  public init(target: ReplayTarget, physical: Bool = true, quality: StreamQuality = .standard) {
     self.target = target
     self.physical = physical
+    self.quality = quality
+  }
+
+  /// Resubscribes to the frames at `quality` without ending a control session.
+  public func setQuality(_ quality: StreamQuality) {
+    guard quality != self.quality else { return }
+    self.quality = quality
+    guard let server else { return }
+    unsubscribe?()
+    receiving = false
+    problem = nil
+    subscribeFrames(server)
   }
 
   /// Subscribes to the device's frames on `server`, or with nil stops. A new server ends the control session.
@@ -54,9 +65,6 @@ import Foundation
     pressed = nil
     self.server = server
     guard let server else { return }
-    generation += 1
-    let current = generation
-    DebugLog.info(.stream, "frames subscribe \(target.params)")
     unobserve = server.observeControlEnded { [weak self] ended in
       guard let self, case .on(let session) = self.control, ended.session == nil || ended.session == session else {
         return
@@ -64,13 +72,21 @@ import Foundation
       self.pressed = nil
       self.control = .off(ended: ended.message)
     }
+    subscribeFrames(server)
+  }
+
+  private func subscribeFrames(_ server: DeviceServer) {
+    generation += 1
+    let current = generation
+    DebugLog.info(.stream, "frames subscribe \(target.params) \(quality.rawValue)")
     unsubscribe = server.subscribe(
       "frames.subscribe",
-      params: { [target, physical] in
+      params: { [target, physical, quality] in
         var params = target.params
         if physical { params["physical"] = .bool(true) }
         params["video"] = .array([.string("h264")])
-        params["fps"] = .number(Self.fps)
+        params["fps"] = .number(quality.fps)
+        if let maxEdge = quality.maxEdge { params["maxEdge"] = .number(maxEdge) }
         return params
       },
       onSubscribed: { [weak self] result in

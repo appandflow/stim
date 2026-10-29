@@ -65,6 +65,8 @@ struct DeviceTile: View {
   @State private var windowState = ClipboardSync.WindowState.hidden
   @State private var clipboardSync = ClipboardSync()
   @AppStorage(AppPreferences.Key.syncsClipboard) private var syncsClipboard = true
+  @AppStorage(AppPreferences.Key.streamQuality) private var preferredQuality = StreamQuality.standard
+  @State private var viewerQuality: StreamQuality?
   @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
@@ -132,6 +134,9 @@ struct DeviceTile: View {
           buttonBar
         } else if frameOption != nil {
           controlGroup { optionsButton }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
+        } else if offersStreamQuality {
+          controlGroup { qualityButton }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
@@ -431,6 +436,27 @@ struct DeviceTile: View {
       }
     }
     return "No installed device frame matches this device."
+  }
+
+  private var streamQuality: StreamQuality { viewer ? viewerQuality ?? preferredQuality : .standard }
+
+  private var offersStreamQuality: Bool {
+    guard viewer, !replaying, !showsStoppedBar, workspace != nil, hostedPreview == nil else { return false }
+    return device.hostedMachine != nil || isPhysical
+  }
+
+  private var qualityButton: some View {
+    let high = streamQuality == .high
+    return Button(
+      "High stream quality", systemImage: high ? "speedometer" : "gauge.with.dots.needle.33percent"
+    ) { viewerQuality = high ? .standard : .high }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle())
+    .foregroundStyle(high ? Palette.accent : Palette.primary)
+    .help(
+      high ? "High quality: 60 fps. Click for Standard." : "Standard quality: 30 fps. Click for High, which uses more bandwidth."
+    )
+    .accessibilityValue(high ? "On" : "Off")
   }
 
   private var optionsButton: some View {
@@ -1039,7 +1065,8 @@ struct DeviceTile: View {
       } else if let workspace {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
-          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
+          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice,
+          quality: streamQuality
         )
         .id([device.id, owned.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
@@ -1136,7 +1163,7 @@ struct DeviceTile: View {
         PhysicalDeviceScreen(
           device: device, owner: owner, workspace: workspace, interactive: interactive,
           onPixelSizeChange: { pixelSizes[1] = $0 },
-          onControlLost: onControlLost
+          onControlLost: onControlLost, quality: streamQuality
         )
         .id(device.id)
         .frame(width: screenWidth(1))
