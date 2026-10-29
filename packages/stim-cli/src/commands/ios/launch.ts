@@ -572,6 +572,7 @@ interface FinishIosRunArgs {
   lanAddress: string | null;
   lanOriginUrl: string | null;
   remoteDevice: ReturnType<IosDeps['remoteIosDeps']> | null;
+  cleanAppState: boolean;
   bootPromise: Promise<IosBootLike | null | undefined>;
   bootDuration: () => string;
   /** Whether the run's own simulator or emulator boot is still running. */
@@ -592,11 +593,13 @@ interface FinishIosRunArgs {
   enterActivity: BuildProgress['activity'];
 }
 
-async function cleanAdoptedIosApps({
+async function cleanIosAppState({
   d,
   udid,
   bundleId,
   devClient,
+  resetKeychain,
+  previous,
   phase,
   note,
 }: {
@@ -604,12 +607,14 @@ async function cleanAdoptedIosApps({
   udid: string;
   bundleId: string | null;
   devClient: boolean;
+  resetKeychain: boolean;
+  previous: string;
   phase: (name: unknown, text: string) => void;
   note: (line: string) => void;
 }): Promise<string | null> {
   const swept = await d.clearOtherUserApps({ udid, keep: bundleId });
   if (swept.removed.length) {
-    phase('install', `removed ${swept.removed.join(', ')}, left by the previous workspace`);
+    phase('install', `removed ${swept.removed.join(', ')}, left by ${previous}`);
   }
   if (swept.listed && swept.failed.length === 0) {
     if (swept.kept && bundleId) {
@@ -618,17 +623,25 @@ async function cleanAdoptedIosApps({
           defaultsPlist: devClient ? IOS_DEV_MENU_OFF_DEFAULTS_PLIST : null,
         });
       } catch (error) {
-        return `Could not clear the data ${bundleId} kept from the previous workspace: ${String((error as Error)?.message || error)}`;
+        return `Could not clear the data ${bundleId} kept from ${previous}: ${String((error as Error)?.message || error)}`;
       }
-      phase('install', `cleared ${bundleId} data left by the previous workspace`);
+      phase('install', `cleared ${bundleId} data left by ${previous}`);
+    }
+    if (resetKeychain) {
+      try {
+        await d.resetIosKeychain(udid);
+      } catch (error) {
+        return `Could not reset the keychain on ${udid}: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      phase('install', `reset the keychain on ${udid}`);
     }
     return null;
   }
-  if (!swept.listed) return 'Could not list apps left by the previous workspace.';
+  if (!swept.listed) return `Could not list apps left by ${previous}.`;
   for (const failure of swept.failed) {
-    note(chalk.yellow(phaseLine('install', `could not remove ${failure}, left by the previous workspace`)));
+    note(chalk.yellow(phaseLine('install', `could not remove ${failure}, left by ${previous}`)));
   }
-  return `Could not remove ${swept.failed.join(', ')}, left by the previous workspace.`;
+  return `Could not remove ${swept.failed.join(', ')}, left by ${previous}.`;
 }
 
 async function evictUnbindableCacheHit({
@@ -805,6 +818,7 @@ export async function finishIosRun({
   lanAddress,
   lanOriginUrl,
   remoteDevice,
+  cleanAppState,
   bootPromise,
   bootDuration,
   bootPending,
@@ -1023,12 +1037,23 @@ export async function finishIosRun({
     phase('launch', `${bundleId!} pid ${launched.pid} ${launchTimer()}`);
   } else {
     const adopting = Boolean(device?.adoptionPending);
-    if (adopting) {
-      const cleanupFailure = await cleanAdoptedIosApps({ d, udid, bundleId, devClient: Boolean(scheme), phase, note });
+    if (adopting || (cleanAppState && !remoteDevice)) {
+      const cleanupFailure = await cleanIosAppState({
+        d,
+        udid,
+        bundleId,
+        devClient: Boolean(scheme),
+        resetKeychain: !adopting,
+        previous: adopting ? 'the previous workspace' : 'an earlier run',
+        phase,
+        note,
+      });
       if (cleanupFailure) {
         return fail({
           code: 'STIM_INSTALL_FAILED',
-          message: `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`,
+          message: adopting
+            ? `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`
+            : `${cleanupFailure} Stim did not install or launch the app.`,
           remedy: `Run \`${runCommand}\` again after simulator tooling is responsive.`,
           build: { ...buildFailure, appPath, bundleId },
         });

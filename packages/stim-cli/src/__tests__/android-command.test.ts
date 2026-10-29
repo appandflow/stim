@@ -4816,6 +4816,26 @@ describe('a recorded build', () => {
   });
 });
 
+describe('clean app state', () => {
+  test.each([true, false])(
+    'cleanAppState=%s clears the app state of an emulator it does not adopt',
+    async (cleanAppState) => {
+      const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+      try {
+        const h = harness({
+          cleanAppState,
+          ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true }),
+        });
+        expect((await h.run()).ok).toBe(true);
+        expect(reset.mock.calls).toEqual(cleanAppState ? [['stim-app-412', 'emulator-5584', 'com.example.app']] : []);
+        expect(h.calls.install).toHaveLength(1);
+      } finally {
+        reset.mockRestore();
+      }
+    },
+  );
+});
+
 describe('the release APK swap', () => {
   const cached = '/cache/android/entry/app-production-release.apk';
 

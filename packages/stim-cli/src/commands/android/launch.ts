@@ -473,6 +473,7 @@ interface FinishAndroidRunArgs {
   device: OwnedDeviceRecord;
   physical: boolean;
   remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
+  cleanAppState?: boolean;
   bootPromise: Promise<AndroidBootLike>;
   resolveAvdSerial: typeof resolveOwnedAvdSerialAsync;
   waitForDeviceBoot: typeof waitForBoot;
@@ -649,6 +650,33 @@ async function resolveInstallSerial({
   return resolved.serial;
 }
 
+async function cleanEmulatorAppState(
+  avdName: string | undefined,
+  serial: string,
+  androidPackage: string | null,
+  adopting: boolean,
+  phase: (label: unknown, text: string) => void,
+): Promise<{ message: string; remedy: string } | null> {
+  const emulator = adopting ? 'adopted emulator' : 'emulator';
+  if (!androidPackage || !avdName)
+    return {
+      message: `Cannot clean an ${emulator} without its app package and AVD name.`,
+      remedy: 'Retry once the APK applicationId can be read.',
+    };
+  try {
+    await resetAdoptedAvd(avdName, serial, androidPackage);
+  } catch (error) {
+    return {
+      message: `Could not clean ${emulator} ${avdName}: ${String((error as Error)?.message || error)}`,
+      remedy: adopting
+        ? 'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.'
+        : 'Fix the device cleanup error and retry; the app was not launched.',
+    };
+  }
+  if (!adopting) phase('install', `cleared app state on ${avdName}`);
+  return null;
+}
+
 export async function finishAndroidRun({
   operation,
   runtime,
@@ -669,6 +697,7 @@ export async function finishAndroidRun({
   device,
   physical,
   remoteDevice,
+  cleanAppState = false,
   bootPromise,
   resolveAvdSerial,
   waitForDeviceBoot,
@@ -785,22 +814,9 @@ export async function finishAndroidRun({
   }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
-  if (adopting) {
-    if (!androidPackage || !device.avdName)
-      return fail(
-        LAUNCH_FAILED,
-        'Cannot clean an adopted emulator without its app package and AVD name.',
-        'Retry once the APK applicationId can be read.',
-      );
-    try {
-      await resetAdoptedAvd(device.avdName, serial, androidPackage);
-    } catch (error) {
-      return fail(
-        LAUNCH_FAILED,
-        `Could not clean adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
-        'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.',
-      );
-    }
+  if (adopting || (cleanAppState && !physical && !remoteDevice)) {
+    const cleanupFailure = await cleanEmulatorAppState(device.avdName, serial, androidPackage, adopting, phase);
+    if (cleanupFailure) return fail(LAUNCH_FAILED, cleanupFailure.message, cleanupFailure.remedy);
   }
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;

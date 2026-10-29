@@ -1300,6 +1300,7 @@ async function runIos(
           lanAddress,
           lanOriginUrl,
           remoteDevice,
+          cleanAppState: Boolean(opts.cleanAppState),
           bootPromise,
           bootDuration: () => bootDuration,
           bootPending: () => bootPending,

@@ -174,8 +174,11 @@ All methods accept signal. run builds, installs and launches. iOS and Android ru
 also accept recordedBuild: true, which installs and launches the app the last
 build with the same scheme and configuration (or variant) recorded in this
 workspace, without fingerprinting, building or replacing its JS, and refuses with
-STIM_NO_RECORDED_BUILD when there is none. @stim-cli/ci uses it; the CLI and the
-private Desktop transport do not.
+STIM_NO_RECORDED_BUILD when there is none. They also accept cleanAppState: true,
+which before install uninstalls every other user app and clears the app's data
+(iOS: defaults, data container and the simulator keychain; Android: pm clear),
+whether or not the install is skipped. Both refuse device and remote.
+@stim-cli/ci sets both; the CLI and the private Desktop transport set neither.
 Web requires a running server, just like stim web.
 
 build produces an artifact without acquiring a device, starting a runtime, or

@@ -39,6 +39,7 @@ import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
 import {
   clearIosAppData,
+  resetIosKeychain,
   listIosRuntimesAsync,
   listIosRuntimes,
   listAllIosSims,
@@ -193,6 +194,7 @@ export interface IosDeps {
   installIosApp: typeof installIosApp;
   clearOtherUserApps: typeof clearOtherUserApps;
   clearIosAppData: typeof clearIosAppData;
+  resetIosKeychain: typeof resetIosKeychain;
   clearIosAdoptionPending: typeof clearIosAdoptionPending;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
@@ -299,6 +301,7 @@ export const DEFAULT_DEPS: IosDeps = {
   installIosApp,
   clearOtherUserApps,
   clearIosAppData,
+  resetIosKeychain,
   clearIosAdoptionPending,
   launchIosApp,
   verifyLaunch,

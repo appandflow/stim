@@ -173,6 +173,7 @@ interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
   recordedBuild?: boolean;
+  cleanAppState?: boolean;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -307,6 +308,7 @@ export function runAndroidOperation(
           slot: opts.slot,
           easProfile: opts.easProfile,
           recordedBuild: opts.recordedBuild,
+          cleanAppState: opts.cleanAppState,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
           useBuildCache: opts.buildCache !== false,
@@ -342,6 +344,7 @@ interface RunAndroidOptions {
   progress?: BuildProgress;
   easProfile?: string;
   recordedBuild?: boolean;
+  cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
   root: string;
@@ -439,6 +442,7 @@ function resolveRunAndroidOptions(
     useBuildCache = true,
     easProfile,
     recordedBuild,
+    cleanAppState = false,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
@@ -520,6 +524,7 @@ function resolveRunAndroidOptions(
     useBuildCache,
     easProfile,
     recordedBuild,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -674,6 +679,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     useBuildCache: requestedBuildCache,
     easProfile,
     recordedBuild: recordedBuildRequested,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -1552,6 +1558,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         device,
         physical,
         remoteDevice,
+        cleanAppState,
         bootPromise,
         resolveAvdSerial,
         waitForDeviceBoot,

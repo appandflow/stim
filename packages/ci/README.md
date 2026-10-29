@@ -36,6 +36,13 @@ device with `STIM_NO_RECORDED_BUILD`, and the failure's `remedy` names the comma
 to run first, such as `stim-ci build --platform ios --scheme App`. `build` and
 `run` must use the same Stim home: pass the same `--home`, or keep the default.
 
+Every iOS and Android `run` starts the app from clean state on the workspace's
+own simulator or emulator, including when the device already has this build.
+Before it installs, `run` uninstalls every other user app. On iOS it also clears
+the app's defaults and data container and resets the simulator keychain; on
+Android it runs `pm clear` on the app. Simulator-wide settings such as privacy
+grants are kept.
+
 `--eas-profile <name>` (iOS and Android, build only) downloads a completed EAS
 development build instead of compiling, as `stim ios --eas-profile` does; `run`
 then installs it. Stim never starts an EAS build.

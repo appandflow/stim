@@ -9,7 +9,7 @@ type WithoutKeys<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : ne
 
 export interface CIOptions extends CIContextOptions {
   /** Selectors of the recorded build to run. `run` never builds, so build-time options such as `easProfile` belong to `buildCI`. */
-  run: WithoutKeys<StimRunOptions, 'signal' | 'recordedBuild' | 'easProfile'>;
+  run: WithoutKeys<StimRunOptions, 'signal' | 'recordedBuild' | 'cleanAppState' | 'easProfile'>;
   command: readonly [string, ...string[]];
 }
 
@@ -100,7 +100,7 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
   try {
     signal?.throwIfAborted();
     attempted = true;
-    result.run = await stim.run({ ...options.run, recordedBuild: true, signal });
+    result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
     if (result.runPath) writeJson(result.runPath, result.run);
     result.test = await runCommand({
