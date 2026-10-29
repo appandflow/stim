@@ -8,7 +8,7 @@ inputs:
     description: App directory relative to the checked-out repository.
     default: '.'
   command:
-    description: Test command executed by Bash in the app directory. Without it the action builds, installs and launches the app from clean state, then stops it; it needs @stim-cli/ci newer than 1.37.0, which refuses a run without a command.
+    description: Test command executed by Bash in the app directory. Without it the action builds, installs and launches the app from clean state, then stops it and its Metro; it needs @stim-cli/ci newer than 1.37.0, which refuses a run without a command.
   version:
     description: Exact published @stim-cli/ci version. Required unless cli-path is supplied.
   cli-path:

@@ -111,8 +111,9 @@ syntax, pass a shell explicitly: `-- bash -e -o pipefail -c 'pnpm test:e2e'`.
 
 Without `--`, `run` installs and launches the app, writes `run.json`, then stops the
 workspace as after a passing test, with `test: null` and exit code 0. Use it when a
-later step drives the app on the device `run.json` names; boot a simulator again by
-its UDID, since cleanup shuts it down. An explicit `--` with no command after it is
+later step drives a Release app on the device `run.json` names; boot a simulator again
+by its UDID, since cleanup shuts it down. Cleanup also stops Metro, so a Debug app has
+no bundler in that later step. An explicit `--` with no command after it is
 refused. The library's `runCI` behaves the same when `command` is omitted.
 
 The test process runs in the project directory. It receives the caller's

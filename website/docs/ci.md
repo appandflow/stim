@@ -100,7 +100,8 @@ runs and clean only a simulator or emulator they adopt from the parked pool.
 The command after `--` is an argument vector. Use an explicit shell when you
 need shell syntax. Without `--`, `run` installs and launches the app, writes the
 same `run` facts, then stops the workspace with exit code 0 and `test: null`, so a
-later step can drive the app on that device after booting it again. An explicit
+later step can drive a Release app on that device after booting it again. Cleanup
+also stops Metro, so a Debug app has no bundler then. An explicit
 `--` with nothing after it is refused. Progress and test output go to stderr; stdout contains the
 structured outcome, also saved as `result.json` when `--artifacts` is set. A failed test keeps
 its exit code even if diagnostics or cleanup also fail. Timeout returns 124;

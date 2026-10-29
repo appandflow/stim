@@ -44,7 +44,7 @@ runner reuses it without another `npm install`. `cli-path` skips the install.
 
 `command` is optional. Without it the action builds, installs and launches the app
 from clean state, then stops it and succeeds, setting the same outputs, so a later step
-can drive the app. That needs a `@stim-cli/ci` version newer than 1.37.0; 1.37.0 and
+can drive a Release app. Cleanup also stops Metro, so a Debug app has no bundler then. That needs a `@stim-cli/ci` version newer than 1.37.0; 1.37.0 and
 earlier refuse with `Separate the test command with --.`
 
 `command` is Bash source, executed in the app directory with `-e` and

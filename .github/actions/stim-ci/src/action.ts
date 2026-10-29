@@ -22,7 +22,6 @@ import type { CIResult } from '@stim-cli/ci';
 interface Inputs {
   platform: 'ios' | 'android' | 'macos' | 'web';
   project: string;
-  /** Empty when the action only installs and launches the app. */
   command: string;
   version: string;
   cli: string;
