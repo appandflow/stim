@@ -272,6 +272,10 @@ describe('swapBundlerEnv', () => {
     expect(existsSync(marker)).toBe(false);
 
     seed();
+    swapBundlerEnv(root, { PATH: '/bin', EXPO_NO_DOTENV: '1' });
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
     writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API_URL=https://c.example\n');
     swapBundlerEnv(root, { PATH: '/bin' });
     expect(existsSync(marker)).toBe(false);

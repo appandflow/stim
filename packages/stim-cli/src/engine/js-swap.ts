@@ -62,7 +62,8 @@ export function detectEntryFile(root: string): string {
 function bundlerInputsKey(root: string, env: NodeJS.ProcessEnv): string {
   const hash = createHash('sha256');
   for (const name of Object.keys(env).toSorted()) {
-    if (name.startsWith('EXPO_PUBLIC_')) hash.update(`env\0${name}\0${env[name] ?? ''}\0`);
+    if (name.startsWith('EXPO_PUBLIC_') || name === 'EXPO_NO_DOTENV' || name === 'NODE_ENV')
+      hash.update(`env\0${name}\0${env[name] ?? ''}\0`);
   }
   let entries: string[] = [];
   try {
@@ -85,7 +86,8 @@ function bundlerInputsKey(root: string, env: NodeJS.ProcessEnv): string {
  * The TMPDIR for a swap's bundler child: a workspace-private directory that holds Metro's transform cache
  * (`$TMPDIR/metro-cache`). Metro's cache key omits the `EXPO_PUBLIC_*` values babel-preset-expo inlines,
  * and `expo export:embed` ignores `--reset-cache` when `CI` is set (expo/expo#49630), so the directory is
- * emptied whenever those values or the project's `.env*` files differ from the previous swap's.
+ * emptied whenever those values, the project's `.env*` files, or the `EXPO_NO_DOTENV` and `NODE_ENV` that
+ * select which of those files Expo loads differ from the previous swap's.
  */
 function swapBundlerTmpdir(root: string, env: NodeJS.ProcessEnv): string {
   const dir = join(workspaceDir(root), 'js-swap-tmp');

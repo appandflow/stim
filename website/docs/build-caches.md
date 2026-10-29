@@ -276,9 +276,11 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. In an app with `expo-updates`, the copy's
 embedded update also gets a new id and the current time, as a full build
 would, so an update the app downloaded earlier cannot launch instead of your
-JavaScript. The swap bundles with a Metro cache private to the workspace,
-emptied whenever the `EXPO_PUBLIC_` values or the project's `.env` files
-change, so it never inlines values from another build on the same machine.
+JavaScript. The swap points Metro's default cache at a directory private to
+the workspace, emptied whenever the `EXPO_PUBLIC_` values, `EXPO_NO_DOTENV`,
+`NODE_ENV` or the project's `.env` files change, so it does not inline values
+from another build on the same machine. A `metro.config.js` that sets its own
+`cacheStores` keeps that cache location.
 If that swap fails, it builds fresh. iOS physical-device Release
 runs always build fresh.
 
