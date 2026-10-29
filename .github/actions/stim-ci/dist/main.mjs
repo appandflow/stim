@@ -97550,6 +97550,19 @@ async function diagnosticArtifactFiles(artifactsDir) {
 }
 //#endregion
 //#region src/action.ts
+const SELECTOR_INPUTS = [
+	"scheme",
+	"configuration",
+	"variant"
+];
+const BUILD_ONLY_INPUTS = [
+	"arch",
+	"abi",
+	"eas-profile"
+];
+function flags(input, names) {
+	return names.flatMap((name) => input(name) ? [`--${name}`, input(name)] : []);
+}
 function readInputs(input, root, host = process.platform) {
 	if (host !== "darwin" && host !== "linux") throw new Error("Stim CI action supports macOS and Linux runners with Bash.");
 	const platform = input("platform");
@@ -97564,6 +97577,9 @@ function readInputs(input, root, host = process.platform) {
 	const upload = input("upload-artifacts") || "true";
 	if (upload !== "true" && upload !== "false") throw new Error("upload-artifacts must be true or false.");
 	if (input("export") && platform === "web") throw new Error("export does not apply to web projects, which have no native build.");
+	const builds = platform === "ios" || platform === "android" || Boolean(input("export"));
+	const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
+	if (!builds && ignored.length) throw new Error(`${ignored.join(", ")} apply only when the action builds: iOS, Android, or macOS with export.`);
 	const retention = input("retention-days") || "0";
 	if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) throw new Error("retention-days must be a non-negative whole number.");
 	return {
@@ -97579,7 +97595,9 @@ function readInputs(input, root, host = process.platform) {
 		timeout,
 		upload: upload === "true" && Boolean(input("artifacts")),
 		artifactName: input("artifact-name") || `stim-ci-${platform}-${randomUUID()}`,
-		retentionDays: Number(retention)
+		retentionDays: Number(retention),
+		selectors: flags(input, SELECTOR_INPUTS),
+		buildOnly: flags(input, BUILD_ONLY_INPUTS)
 	};
 }
 async function execute(file, args, cwd) {
@@ -97696,7 +97714,9 @@ async function runAction() {
 		const buildArgs = [
 			cli,
 			"build",
-			...common
+			...common,
+			...options.selectors,
+			...options.buildOnly
 		];
 		if (options.exportPath) buildArgs.push("--export", options.exportPath);
 		const buildCode = await execute(process.execPath, buildArgs, root);
@@ -97705,7 +97725,8 @@ async function runAction() {
 	const args = [
 		cli,
 		"run",
-		...common
+		...common,
+		...options.selectors
 	];
 	if (options.artifacts) args.push("--artifacts", options.artifacts);
 	args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);

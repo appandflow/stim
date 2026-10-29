@@ -53,6 +53,12 @@ test or diagnostic file, copies no logs and uploads nothing, and the `result` an
 `export` also writes the built app to the given path, an APK for Android or a tar.gz for
 iOS and macOS; without it build only records the app for run. Export is never uploaded.
 
+`scheme`, `configuration` (iOS) and `variant` (Android) select the build and are passed
+to both build and run, so run installs the build that build recorded. `arch`, `abi` and
+`eas-profile` go to build only, and the action refuses them when it does not build (web, or
+macOS without `export`). Empty inputs keep the project's normal build settings, and
+`stim-ci` refuses a selector that does not apply to the platform.
+
 With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
 The Action uploads `result.json`, `run.json`, test stdout/stderr,
 `diagnostics.json`, and copied diagnostic/compiler logs on success and failure.
