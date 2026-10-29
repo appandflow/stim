@@ -589,8 +589,9 @@ with no running device shows its build progress, setup state or Metro status in 
 **Stream quality.** Hosted, remote-machine and physical devices stream at Standard quality by
 default: 30 frames per second at the server's default size. Set **Stream quality** to High in
 Preferences under Device Wall, or use the quality button below a device's screen in its viewer
-to switch that viewer, to request 60 frames per second at a 1600 pixel edge. High uses more
-bandwidth (about 7 Mbps measured on a Mac mini) and needs a server that offers H.264 video. Device
+to switch that viewer, to request 60 frames per second at a 1600 pixel edge. High uses roughly
+double Standard's bandwidth (around 4 Mbps against 2 Mbps in our tests on mostly flat content, more for busy
+screens) and needs a server that offers H.264 video; against one that does not, the viewer streams at Standard. Device
 Wall tiles always stay Standard. **Live frame rate** is a separate display cap for local
 simulators, emulators and web pages.
 
