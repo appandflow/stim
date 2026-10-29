@@ -22,8 +22,10 @@ import {
   hermescPath,
   pickEntryFile,
   readHermesEnabled,
+  swapBundlerEnv,
   swapJsBundle,
 } from '../engine/js-swap.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { type ExecOptions, getExecutor } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
@@ -152,9 +154,12 @@ describe('hermesc', () => {
 
 let root: string;
 let tmp: string;
+let home: string;
 const cachedApp = '/cache/ios/k-release-sim/Fixture.app';
 
 beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-swap-home-'));
+  process.env.STIM_HOME = home;
   root = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-swap-root-')));
   tmp = mkdtempSync(join(tmpdir(), 'stim-swap-tmp-'));
   for (const name of ['expo', 'react-native']) {
@@ -170,6 +175,8 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
   rmSync(tmp, { recursive: true, force: true });
+  rmSync(home, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
 });
 
 function makeBundleChild(code = 0): ChildProcess {
@@ -185,6 +192,7 @@ interface Call {
   op: string;
   file?: string;
   args?: string[];
+  opts?: Record<string, unknown>;
 }
 
 function harness({
@@ -213,8 +221,8 @@ function harness({
       return '';
     },
   });
-  const spawnFn = (cmd: string, args: string[], _opts: Record<string, unknown>) => {
-    calls.push({ op: 'spawn', file: cmd, args });
+  const spawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => {
+    calls.push({ op: 'spawn', file: cmd, args, opts });
     onBundle();
     return makeBundleChild(bundleExit);
   };
@@ -241,7 +249,50 @@ function harness({
   return { calls, run, appCopy, bundleOutput, writer };
 }
 
+describe('swapBundlerEnv', () => {
+  test('keeps the Metro cache while the EXPO_PUBLIC_ values and .env files match, and empties it when they change', () => {
+    const env = { PATH: '/bin', EXPO_PUBLIC_API_URL: 'https://a.example' };
+    const dir = String(swapBundlerEnv(root, env).TMPDIR);
+    expect(dir.startsWith(workspaceDir(root))).toBe(true);
+    const marker = join(dir, 'metro-cache', 'entry');
+    const seed = () => {
+      mkdirSync(join(dir, 'metro-cache'), { recursive: true });
+      writeFileSync(marker, 'transform');
+    };
+
+    seed();
+    expect(swapBundlerEnv(root, { ...env, PATH: '/usr/bin' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(true);
+
+    expect(swapBundlerEnv(root, { ...env, EXPO_PUBLIC_API_URL: 'https://b.example' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    expect(swapBundlerEnv(root, { PATH: '/bin' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    swapBundlerEnv(root, { PATH: '/bin', EXPO_NO_DOTENV: '1' });
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API_URL=https://c.example\n');
+    swapBundlerEnv(root, { PATH: '/bin' });
+    expect(existsSync(marker)).toBe(false);
+  });
+});
+
 describe('swapJsBundle', () => {
+  test("the bundler's temporary directory, which holds Metro's cache, is the workspace's own", async () => {
+    const { calls, run } = harness();
+    const env = { PATH: process.env.PATH, EXPO_PUBLIC_API_URL: 'https://a.example' };
+    await run({ context: { env } });
+    expect(calls.find((c) => c.op === 'spawn')?.opts?.env).toMatchObject({
+      EXPO_PUBLIC_API_URL: 'https://a.example',
+      TMPDIR: swapBundlerEnv(root, env).TMPDIR,
+    });
+  });
+
   test('the order IS the product: copy aside, bundle, hermesc, replace, re-sign -- and the cache entry is never written', async () => {
     const { calls, run, appCopy, bundleOutput } = harness();
     const result = await run();

@@ -276,7 +276,12 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. In an app with `expo-updates`, the copy's
 embedded update also gets a new id and the current time, as a full build
 would, so an update the app downloaded earlier cannot launch instead of your
-JavaScript. If that swap fails, it builds fresh. iOS physical-device Release
+JavaScript. The swap points Metro's default cache at a directory private to
+the workspace, emptied whenever the `EXPO_PUBLIC_` values, `EXPO_NO_DOTENV`,
+`NODE_ENV` or the project's `.env` files change, so it does not inline values
+from another build on the same machine. A `metro.config.js` that sets its own
+`cacheStores` keeps that cache location.
+If that swap fails, it builds fresh. iOS physical-device Release
 runs always build fresh.
 
 ### Generated dependency output and cache misses
@@ -463,7 +468,7 @@ running xcodebuild. Xcode builds you run outside Stim take no claim.
 ### Workspace build outputs
 
 Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
-`cache-provider/`, SwiftPM scratch directory `macos/build`, staged
+`cache-provider/`, the Release swap's Metro cache `js-swap-tmp/`, SwiftPM scratch directory `macos/build`, staged
 `macos/<Product>.app` and interrupted-build `macos/staging-*` directories under
 `$STIM_HOME/workspaces/<name>/`. They usually take most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
 outputs", with the size, last use and verdict of each workspace.

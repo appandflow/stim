@@ -3036,7 +3036,11 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   mmaps it), then zipaligns and re-signs with apksigner. The keystore defaults
   to android/app/debug.keystore with the standard password; android.keystore /
   android.keystorePassword override it (see \`guide settings\`). The cache
-  entry itself is never modified.
+  entry itself is never modified. The bundler runs with TMPDIR set to the
+  workspace's js-swap-tmp/, which holds Metro's default cache; Stim empties it
+  when an EXPO_PUBLIC_ value, EXPO_NO_DOTENV, NODE_ENV or a .env* file in the
+  project root differs from the previous swap's. A metro.config.js that sets
+  its own cacheStores keeps its own cache location.
 
   AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
   update with the newest commitTime for the binary's runtime version, and the
@@ -3095,7 +3099,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   (the project's own \`expo export:embed\` / \`react-native bundle\`, plus
   its own hermesc when Hermes is enabled) into a copy of the artifact,
   refreshes an expo-updates manifest as described above, re-signs it and
-  installs that; any swap failure falls back to a full build
+  installs that. Like the Android swap, it bundles with a workspace-private
+  default Metro cache that is emptied when the EXPO_PUBLIC_ values,
+  EXPO_NO_DOTENV, NODE_ENV or .env* files change. Any swap failure falls back to a full build
   rather than ever installing stale JS. A simulator Release build can run on
   a remote machine (stim guide settings, remote.build), which bundles the JS
   of the checkout it synced, its gitignored .env.production files included,

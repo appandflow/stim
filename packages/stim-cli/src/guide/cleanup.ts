@@ -1188,7 +1188,7 @@ a changed value.
 
 WORKSPACE BUILD OUTPUTS
   Each workspace directory holds derived-data/, gradle-build/, android-cas/,
-  cache-provider/, macos/build, the staged macos/<Product>.app and macos/staging-*
+  cache-provider/, js-swap-tmp/, macos/build, the staged macos/<Product>.app and macos/staging-*
   leftovers. The project's own android/app/build, android/build,
   android/.gradle and .build count with them when git ignores every file in
   the directory and tracks none; one that fails that check, or is not in a

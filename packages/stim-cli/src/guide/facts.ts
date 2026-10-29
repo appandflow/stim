@@ -1050,7 +1050,7 @@ RULES
     workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
                               willClear, reason, detail }  derived-data,
                               gradle-build, android-cas, cache-provider,
-                              macos/build, macos/<Product>.app and
+                              js-swap-tmp, macos/build, macos/<Product>.app and
                               macos/staging-* of each workspace; inTreeDirs
                               lists the project's android/app/build,
                               android/build,
