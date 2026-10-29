@@ -280,13 +280,11 @@ function iosProjectTargetRefusal(
     easProfile,
     placement,
     recordedRefusal,
-    cleanAppState,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
     recordedRefusal: RecordedBuildRefusal | null;
-    cleanAppState?: boolean;
   },
 ): FailArgs | null {
   if (recordedRefusal) return recordedRefusal;
@@ -304,12 +302,6 @@ function iosProjectTargetRefusal(
       code: 'STIM_BAD_ARG',
       message: `This project integration does not support the ${target} iOS target.`,
       remedy: 'Use a local iOS simulator for this integration.',
-    };
-  if (cleanAppState && (target === 'hosted' || target === 'remote'))
-    return {
-      code: 'STIM_BAD_ARG',
-      message: `cleanAppState applies to a local simulator, but ios.remote placed this run on ${placement?.machine ?? placement?.backend}.`,
-      remedy: 'Run `stim settings set ios.remote local` in this workspace, or run without cleanAppState.',
     };
   if (easProfile !== undefined && !project.eas)
     return {
@@ -715,7 +707,6 @@ async function runIos(
     physical,
     placement: remoteSelection,
     recordedRefusal: null,
-    cleanAppState: opts.cleanAppState,
   });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;

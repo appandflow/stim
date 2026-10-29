@@ -662,24 +662,6 @@ async function localRunRefusal(
   return image.installed ? recheckSelectors() : null;
 }
 
-async function placeCleanableAndroidRun(
-  cleanAppState: boolean,
-  target: Parameters<typeof selectAndroidPlacement>[0]['target'],
-  place: () => ReturnType<typeof selectAndroidPlacement>,
-): ReturnType<typeof selectAndroidPlacement> {
-  if (!cleanAppState) return place();
-  const pinned = target.kind === 'remote' || (target.kind === 'hosted' && target.machine !== 'auto');
-  const hosting = pinned ? null : await place();
-  if (hosting && ('failure' in hosting || (!hosting.hostedTarget && hosting.target.kind !== 'remote'))) return hosting;
-  return {
-    failure: {
-      code: 'STIM_BAD_ARG',
-      message: 'cleanAppState applies to a local emulator, but android.remote placed this run on a remote host.',
-      remedy: 'Run `stim settings set android.remote local` in this workspace, or run without cleanAppState.',
-    },
-  };
-}
-
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   const { context } = options;
   let {
@@ -992,50 +974,48 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       },
       { listSystemImages, listDeviceProfiles },
     );
-  const hosting = await placeCleanableAndroidRun(cleanAppState, plan.target, () =>
-    selectAndroidPlacement({
-      root,
-      slot,
-      target: plan.target,
-      release,
-      appMode,
-      metroCheck,
-      noWait: plan.deviceSlotWaitMs === 0,
-      waitMs: plan.deviceSlotWaitMs,
-      signal: settingsSignal,
-      buildMachine: options.buildMachine,
-      read: options.readHostedAndroid,
-      resolveSerial: resolveAvdSerial,
-      prepare: options.prepareHostedAndroid,
-      automatic: options.automaticDevicePlacement,
-      ...(integration.eas && remoteEasFallbackSetting(settings)
-        ? {
-            eas: () =>
-              (options.checkEasFallback ?? checkEasFallback)({
-                root,
-                platform: PLATFORM,
-                env: context.env,
-                operation: context,
-                slot,
-                release,
-                isExpo,
-                tunnelMode: tunnelModeSetting(settings),
-                publicUrl: publicUrlSetting(settings),
-                localOnlyFlags: [
-                  ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
-                  ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
-                ],
-              }),
-          }
-        : {}),
-      localSelectors,
-      checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
-      note: out,
-      phase,
-      log: (entry) => writer.write(entry),
-      fromFlag: commandRemoteBackend !== null,
-    }),
-  );
+  const hosting = await selectAndroidPlacement({
+    root,
+    slot,
+    target: plan.target,
+    release,
+    appMode,
+    metroCheck,
+    noWait: plan.deviceSlotWaitMs === 0,
+    waitMs: plan.deviceSlotWaitMs,
+    signal: settingsSignal,
+    buildMachine: options.buildMachine,
+    read: options.readHostedAndroid,
+    resolveSerial: resolveAvdSerial,
+    prepare: options.prepareHostedAndroid,
+    automatic: options.automaticDevicePlacement,
+    ...(integration.eas && remoteEasFallbackSetting(settings)
+      ? {
+          eas: () =>
+            (options.checkEasFallback ?? checkEasFallback)({
+              root,
+              platform: PLATFORM,
+              env: context.env,
+              operation: context,
+              slot,
+              release,
+              isExpo,
+              tunnelMode: tunnelModeSetting(settings),
+              publicUrl: publicUrlSetting(settings),
+              localOnlyFlags: [
+                ...(typeof systemImageFlag === 'string' ? ['--system-image'] : []),
+                ...(typeof deviceProfileFlag === 'string' ? ['--device-profile'] : []),
+              ],
+            }),
+        }
+      : {}),
+    localSelectors,
+    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
+    note: out,
+    phase,
+    log: (entry) => writer.write(entry),
+    fromFlag: commandRemoteBackend !== null,
+  });
   if ('failure' in hosting) return fail(hosting.failure.code, hosting.failure.message, hosting.failure.remedy);
   const { target, hostedTarget, budget, selectors } = hosting;
   record.devicePlacement = hosting.devicePlacement;
