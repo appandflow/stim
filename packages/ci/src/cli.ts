@@ -4,12 +4,13 @@ import { buildCI, runCI, type CIBuildOptions, type CIOptions } from './index.ts'
 declare const STIM_CI_VERSION: string;
 
 const HELP = `Usage: stim-ci build --platform <ios|android|macos> [options]
-       stim-ci run --platform <ios|android|macos|web> [options] -- <command> [args...]
+       stim-ci run --platform <ios|android|macos|web> [options] [-- <command> [args...]]
 
 Build is the only step that compiles. It records the app for this checkout, platform and
 selectors, and exports it only with --export.
-Run installs and launches the app the last matching build recorded, runs a test command, and
-stops the app. It never builds; with no recorded build it refuses and names the build to run.
+Run installs and launches the app the last matching build recorded, runs the test command
+given after --, if any, and stops the app. It never builds; with no recorded build it refuses
+and names the build to run.
 The final result is JSON on stdout; progress and test output go to stderr. No result, test or
 diagnostic file is written unless --artifacts is given.
 
@@ -112,15 +113,17 @@ function parse(argv: string[]): Invocation {
           : { platform };
     return { stage, options: { ...common, build, exportPath: values.export } };
   }
-  if (separator < 0) throw new Error('Separate the test command with --.');
-  if (!command[0]) throw new Error('A test command is required after --.');
+  if (separator >= 0 && !command[0]) throw new Error('A test command is required after --.');
   const run: CIOptions['run'] =
     platform === 'ios'
       ? { platform, scheme: values.scheme, configuration: values.configuration }
       : platform === 'android'
         ? { platform, variant: values.variant }
         : { platform };
-  return { stage, options: { ...common, run, command: command as [string, ...string[]] } };
+  return {
+    stage,
+    options: { ...common, run, ...(separator >= 0 ? { command: command as [string, ...string[]] } : {}) },
+  };
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {

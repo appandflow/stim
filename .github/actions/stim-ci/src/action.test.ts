@@ -83,9 +83,9 @@ it('validates explicit inputs and preserves command source and argument paths', 
     upload: false,
   });
   expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'win32')).toThrow('macOS and Linux');
+  expect(readInputs((key) => (key === 'command' ? ' \n' : (github.inputs[key] ?? '')), root, 'linux').command).toBe('');
   for (const [name, value] of [
     ['platform', 'windows'],
-    ['command', ' '],
     ['timeout', '0'],
     ['retention-days', '-1'],
     ['upload-artifacts', 'perhaps'],
@@ -271,6 +271,22 @@ test.skipIf(process.platform === 'win32')(
     expect(run).not.toContain('--artifacts');
     expect(github.upload).not.toHaveBeenCalled();
     expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'builds, then runs without a test command when command is empty',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    delete github.inputs.command;
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    expect(build?.[0]).toBe('build');
+    expect(run?.[0]).toBe('run');
+    expect(run).not.toContain('--');
+    expect(github.output).toHaveBeenCalledWith('exit-code', '0');
   },
 );
 
