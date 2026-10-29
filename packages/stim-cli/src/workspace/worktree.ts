@@ -16,6 +16,7 @@ const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj
 export function isCarrySkipped(rel: string): boolean {
   return (
     /(^|\/)android\/build\/generated\/autolinking(\/|$)/.test(rel) ||
+    /(^|\/)\.expo\/types(\/|$)/.test(rel) ||
     String(rel)
       .split('/')
       .some((seg) => CARRY_SKIP_BASENAMES.has(seg))
@@ -312,6 +313,7 @@ function knownCopiedPaths(rel: string): string[] {
   const segments = rel.split('/');
   const paths: string[] = [];
   if (segments.at(-1) === 'node_modules') paths.push('.pnpm-store', 'expo-modules-jsi/apple/.DerivedData');
+  if (segments.at(-1) === '.expo') paths.push('types');
   for (let covered = 1; covered < AUTOLINKING_PATH.length; covered++) {
     if (AUTOLINKING_PATH.slice(0, covered).every((segment, i) => segments.at(i - covered) === segment)) {
       paths.push(AUTOLINKING_PATH.slice(covered).join('/'));
