@@ -12,6 +12,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
+  @AppStorage(AppPreferences.Key.streamQuality) private var streamQuality = StreamQuality.standard
   @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
@@ -89,6 +90,13 @@ struct AppPreferencesView: View {
         Picker("Live frame rate", selection: $framesPerSecond) {
           ForEach(AppPreferences.frameRates, id: \.self) { Text("\(Int($0)) fps").tag($0) }
         }
+        Picker("Stream quality", selection: $streamQuality) {
+          ForEach(StreamQuality.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text(
+          "High streams hosted, remote and physical devices in a device's viewer at 60 fps and a larger size. It uses more bandwidth. Tiles stay Standard."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Toggle("Pause frames while the window is hidden", isOn: $pausesHidden)
       }
 

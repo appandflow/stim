@@ -27,6 +27,30 @@ import Testing
     #expect(params["video"] == .array([.string("h264")]))
   }
 
+  @Test func asksForThirtyFramesAtTheServersDefaultSizeUnlessHighQualityIsChosen() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    let standard = try #require(server.subs.first).params()
+    #expect(standard["fps"] == .number(30))
+    #expect(standard["maxEdge"] == nil)
+    let high = PhysicalStream(target: target, quality: .high)
+    high.connect(server)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(60))
+    #expect(params["maxEdge"] == .number(1600))
+  }
+
+  @Test func resubscribesAtTheNewQualityAndKeepsTheControlSession() async throws {
+    let (stream, server, _) = try await started()
+    stream.setQuality(.high)
+    #expect(server.subs.first?.cancelled == true)
+    let params = try #require(server.subs.last).params()
+    #expect(server.subs.count == 2)
+    #expect(params["fps"] == .number(60))
+    #expect(stream.control == .on(session: "c1"))
+  }
+
   @Test func beginsControlOfThePhysicalDeviceAndSendsInputOnlyInItsSession() async throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target)

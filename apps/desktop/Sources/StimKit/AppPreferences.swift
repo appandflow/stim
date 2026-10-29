@@ -20,6 +20,7 @@ public enum AppPreferences {
     public static let dismissedStimUpdate = "dismissedStimUpdate"
     public static let tileSize = "tileSize"
     public static let maxFramesPerSecond = "maxFramesPerSecond"
+    public static let streamQuality = "streamQuality"
     public static let pausesHiddenFrames = "pausesHiddenFrames"
     public static let editorBundleID = "editorBundleID"
     public static let terminalBundleID = "terminalBundleID"
@@ -181,6 +182,18 @@ public enum DefaultView: String, CaseIterable, Sendable {
     case .lastProject: return "Last Project"
     }
   }
+}
+
+/// How much a device viewer asks stim-server for on a hosted, remote or physical device's stream. Standard keeps
+/// bandwidth low; High asks for 60 fps, which the server serves only over H.264 video.
+public enum StreamQuality: String, CaseIterable, Sendable {
+  case standard, high
+
+  public var title: String { rawValue.capitalized }
+
+  public var fps: Double { self == .high ? 60 : 30 }
+
+  public var maxEdge: Double? { self == .high ? 1600 : nil }
 }
 
 public enum TileSize: String, CaseIterable, Sendable {

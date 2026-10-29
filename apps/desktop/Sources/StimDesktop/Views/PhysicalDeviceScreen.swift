@@ -19,6 +19,7 @@ struct PhysicalDeviceScreen: View {
   var onControlLost: () -> Void
   /// Receives the windows of a hosted macOS app, for the tile's menu.
   var windowChoice: MacosWindowChoice?
+  var quality: StreamQuality
   @ObservedObject private var localSession = ServerSession.shared
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @StateObject private var stream: PhysicalStream
@@ -26,8 +27,9 @@ struct PhysicalDeviceScreen: View {
   init(
     device: DeviceRef, owner: ServerOwner = .local, workspace: String, interactive: Bool, covered: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
-    windowChoice: MacosWindowChoice? = nil
+    windowChoice: MacosWindowChoice? = nil, quality: StreamQuality = .standard
   ) {
+    self.quality = quality
     self.windowChoice = windowChoice
     self.device = device
     self.owner = owner
@@ -38,7 +40,8 @@ struct PhysicalDeviceScreen: View {
     self.onControlLost = onControlLost
     _stream = StateObject(
       wrappedValue: PhysicalStream(
-        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical))
+        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical,
+        quality: quality))
   }
 
   var body: some View {
@@ -65,6 +68,7 @@ struct PhysicalDeviceScreen: View {
       case .starting, .on: break
       }
     }
+    .onChange(of: quality) { _, quality in stream.setQuality(quality) }
     .onChange(of: stream.windows, initial: true) { _, windows in publishWindows(windows) }
     .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
     .onDisappear {
