@@ -499,6 +499,7 @@ cleanup stops that workspace, including resources created before a build fails.
 
 Or install npm install --global @stim-cli/ci and use stim-ci directly.
 Platforms: ios, android, macos, web. Everything after -- is argv, not a shell.
+Without --, run installs and launches the app, then stops it with exit code 0.
 build is the only step that compiles (or restores from the cache, or with
 --eas-profile downloads an EAS development build). It records the app for this
 checkout, platform and selectors (iOS scheme and configuration, Android variant)

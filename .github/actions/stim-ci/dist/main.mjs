@@ -97567,8 +97567,7 @@ function readInputs(input, root, host = process.platform) {
 	if (host !== "darwin" && host !== "linux") throw new Error("Stim CI action supports macOS and Linux runners with Bash.");
 	const platform = input("platform");
 	if (platform !== "ios" && platform !== "android" && platform !== "macos" && platform !== "web") throw new Error("platform must be ios, android, macos, or web.");
-	const command = input("command");
-	if (!command.trim()) throw new Error("command is required.");
+	const command = input("command").trim() ? input("command") : "";
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
@@ -97773,7 +97772,7 @@ async function runAction() {
 		...options.selectors
 	];
 	if (options.artifacts) args.push("--artifacts", options.artifacts);
-	args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
+	if (options.command) args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
 	const started = Date.now();
 	const runOutput = [];
 	let code = await execute(process.execPath, args, root, runOutput);

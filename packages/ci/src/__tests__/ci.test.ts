@@ -152,6 +152,17 @@ it('stops partial setup without running the test command', async () => {
   expect(readFileSync(result.diagnostics.files![0]!, 'utf8')).toBe('compiler failed before launch');
 });
 
+it('installs, launches and stops the app without a test command', async () => {
+  delete options.command;
+  const result = await runCI(options);
+  expect(result.exitCode).toBe(0);
+  expect(result.failure).toBeUndefined();
+  expect(result.test).toBe(null);
+  expect(JSON.parse(readFileSync(result.runPath ?? '', 'utf8')).facts.udid).toBe('owned-device');
+  expect(result.cleanup.result?.ok).toBe(true);
+  expect(existsSync(active)).toBe(false);
+});
+
 it('turns an incomplete cleanup into a failure after a passing test', async () => {
   lifecycle.stop.mockResolvedValue({ ok: false, outcomes: {}, summary: 'Device still running' });
   const result = await runCI(options);
@@ -293,6 +304,34 @@ it('the CLI reports SIGTERM during cleanup as exit 130 and saves the same result
     expect(existsSync(active)).toBe(false);
   } finally {
     output.mockRestore();
+    process.exitCode = exitCode;
+  }
+});
+
+it('the CLI runs without a test command when -- is absent and refuses an empty one after --', async () => {
+  const exitCode = process.exitCode;
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const output = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+    stdout.push(String(chunk));
+    return true;
+  });
+  const errors = vi.spyOn(process.stderr, 'write').mockImplementation((chunk) => {
+    stderr.push(String(chunk));
+    return true;
+  });
+  try {
+    await main(['run', '--platform', 'ios', '--project', root]);
+    expect(process.exitCode).toBe(0);
+    expect(JSON.parse(stdout.join(''))).toMatchObject({ exitCode: 0, test: null });
+    expect(lifecycle.stop).toHaveBeenCalledTimes(1);
+    await main(['run', '--platform', 'ios', '--project', root, '--']);
+    expect(process.exitCode).toBe(1);
+    expect(stderr.join('')).toContain('A test command is required after --.');
+    expect(lifecycle.run).toHaveBeenCalledTimes(1);
+  } finally {
+    output.mockRestore();
+    errors.mockRestore();
     process.exitCode = exitCode;
   }
 });

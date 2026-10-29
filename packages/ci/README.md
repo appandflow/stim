@@ -109,6 +109,12 @@ run options other than those that build.
 Everything after `--` is an argument vector. No shell is inferred. To use shell
 syntax, pass a shell explicitly: `-- bash -e -o pipefail -c 'pnpm test:e2e'`.
 
+Without `--`, `run` installs and launches the app, writes `run.json`, then stops the
+workspace as after a passing test, with `test: null` and exit code 0. Use it when a
+later step drives the app on the device `run.json` names; boot a simulator again by
+its UDID, since cleanup shuts it down. An explicit `--` with no command after it is
+refused. The library's `runCI` behaves the same when `command` is omitted.
+
 The test process runs in the project directory. It receives the caller's
 environment plus these values:
 
@@ -142,7 +148,7 @@ the `test` result, optional `failure`, `diagnostics`, and `cleanup`.
 If a progress callback or writing `result.json` fails, the result includes
 `reportingError`. Reporter failures cannot interrupt cleanup or replace an earlier
 test failure; after a passing test, they return 1.
-Setup failure leaves `run` and `test` null. Diagnostics include the last 1000
+Setup failure leaves `run` and `test` null; a run without a command leaves `test` null. Diagnostics include the last 1000
 structured records and their original directory. After cleanup, regular `.log`
 and `.ndjson` files (including `.1` rotated copies) directly inside that directory
 are copied into `logs/` and listed in `diagnostics.files`. This retains raw

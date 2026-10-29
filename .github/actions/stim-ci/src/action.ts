@@ -22,6 +22,7 @@ import type { CIResult } from '@stim-cli/ci';
 interface Inputs {
   platform: 'ios' | 'android' | 'macos' | 'web';
   project: string;
+  /** Empty when the action only installs and launches the app. */
   command: string;
   version: string;
   cli: string;
@@ -52,8 +53,7 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (platform !== 'ios' && platform !== 'android' && platform !== 'macos' && platform !== 'web') {
     throw new Error('platform must be ios, android, macos, or web.');
   }
-  const command = input('command');
-  if (!command.trim()) throw new Error('command is required.');
+  const command = input('command').trim() ? input('command') : '';
   const cli = input('cli-path');
   const version = input('version');
   if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) {
@@ -251,7 +251,7 @@ export async function runAction(): Promise<number> {
   }
   const args = [cli, 'run', ...common, ...options.selectors];
   if (options.artifacts) args.push('--artifacts', options.artifacts);
-  args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
+  if (options.command) args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
   const started = Date.now();
   const runOutput: Buffer[] = [];
   let code = await execute(process.execPath, args, root, runOutput);

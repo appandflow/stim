@@ -6,7 +6,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
 `@stim-cli/ci` builds an app once, then installs and launches it through Stim,
-runs your test command, and stops the workspace. It supports iOS, Android, macOS,
+runs your test command if you give one, and stops the workspace. It supports iOS, Android, macOS,
 and web through the same public API that can be imported from `stim`.
 
 Install the app's dependencies and native tools first. Give each concurrent
@@ -98,7 +98,10 @@ land on another machine or on EAS, build for that device too with `--arch all`
 runs and clean only a simulator or emulator they adopt from the parked pool.
 
 The command after `--` is an argument vector. Use an explicit shell when you
-need shell syntax. Progress and test output go to stderr; stdout contains the
+need shell syntax. Without `--`, `run` installs and launches the app, writes the
+same `run` facts, then stops the workspace with exit code 0 and `test: null`, so a
+later step can drive the app on that device after booting it again. An explicit
+`--` with nothing after it is refused. Progress and test output go to stderr; stdout contains the
 structured outcome, also saved as `result.json` when `--artifacts` is set. A failed test keeps
 its exit code even if diagnostics or cleanup also fail. Timeout returns 124;
 cancellation returns 130, including cancellation during cleanup when the test
@@ -180,6 +183,9 @@ Once released, consumers can pin the action to a commit and supply `version`
 with an exact published `@stim-cli/ci` version instead of `cli-path`. The
 command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
+Leave `command` out to only build, install and launch the app from clean state,
+then stop it; a later step can drive it with the outputs below. That needs a
+`@stim-cli/ci` version newer than 1.37.0, which refuses a run without a command.
 
 The `scheme`, `configuration` and `variant` inputs select the build and go to both
 commands; `arch`, `abi` and `eas-profile` go to `build` only. For example,

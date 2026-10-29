@@ -10,7 +10,8 @@ type WithoutKeys<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : ne
 export interface CIOptions extends CIContextOptions {
   /** Selectors of the recorded build to run. `run` never builds, so build-time options such as `easProfile` belong to `buildCI`. */
   run: WithoutKeys<StimRunOptions, 'signal' | 'recordedBuild' | 'cleanAppState' | 'easProfile'>;
-  command: readonly [string, ...string[]];
+  /** Test command argv. Without it, `runCI` installs and launches the app, then stops it as after a passing test. */
+  command?: readonly [string, ...string[]];
 }
 
 export interface CIFailure {
@@ -52,10 +53,10 @@ function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.Proces
   };
 }
 
-/** Runs an app and argv-based test command, stops its workspace or explicit slot, and retains diagnostics. */
+/** Runs an app and an optional argv-based test command, stops its workspace or explicit slot, and retains diagnostics. */
 export async function runCI(options: CIOptions): Promise<CIResult> {
-  if (!options.command[0]) throw new Error('A non-empty test command is required.');
-  for (const argument of options.command) {
+  if (options.command && !options.command[0]) throw new Error('A non-empty test command is required.');
+  for (const argument of options.command ?? []) {
     if (typeof argument !== 'string' || argument.includes('\0')) {
       throw new Error('Test command arguments must be strings without null bytes.');
     }
@@ -103,26 +104,30 @@ export async function runCI(options: CIOptions): Promise<CIResult> {
     result.run = await stim.run({ ...options.run, recordedBuild: true, cleanAppState: true, signal });
     signal?.throwIfAborted();
     if (result.runPath) writeJson(result.runPath, result.run);
-    result.test = await runCommand({
-      command: options.command,
-      cwd: projectRoot,
-      env: commandEnvironment(result, options),
-      artifactsDir,
-      signal,
-      onOutput: onProgress,
-    });
-    result.exitCode = result.test.exitCode ?? 1;
-    if (result.exitCode < 0 || (result.exitCode === 0 && result.test.error)) result.exitCode = 1;
-    if (result.exitCode !== 0) {
-      result.failure = {
-        code: 'STIM_CI_TEST_FAILED',
-        message:
-          result.test.error ??
-          `Test command ${result.test.signal ? `was terminated by ${result.test.signal}` : `exited with ${result.exitCode}`}.`,
-      };
+    if (!options.command) {
+      result.exitCode = 0;
+    } else {
+      result.test = await runCommand({
+        command: options.command,
+        cwd: projectRoot,
+        env: commandEnvironment(result, options),
+        artifactsDir,
+        signal,
+        onOutput: onProgress,
+      });
+      result.exitCode = result.test.exitCode ?? 1;
+      if (result.exitCode < 0 || (result.exitCode === 0 && result.test.error)) result.exitCode = 1;
+      if (result.exitCode !== 0) {
+        result.failure = {
+          code: 'STIM_CI_TEST_FAILED',
+          message:
+            result.test.error ??
+            `Test command ${result.test.signal ? `was terminated by ${result.test.signal}` : `exited with ${result.exitCode}`}.`,
+        };
+      }
     }
   } catch (error) {
-    result.failure = failure(error, result.run ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_SETUP_FAILED');
+    result.failure = failure(error, result.run && options.command ? 'STIM_CI_TEST_FAILED' : 'STIM_CI_SETUP_FAILED');
     if (result.failure.code === 'STIM_NO_RECORDED_BUILD')
       result.failure.remedy = `Run ${buildCommand(options, projectRoot)} first.`;
   } finally {

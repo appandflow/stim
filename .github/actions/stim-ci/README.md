@@ -3,7 +3,7 @@
 This bundled TypeScript action installs and invokes `@stim-cli/ci`. It runs
 `stim-ci build` and then `stim-ci run` in one step: build is the only step that
 compiles, and run installs and launches the app that build recorded, then runs the
-test. The package owns the build, the test process, cancellation and cleanup. The
+test when `command` is set. The package owns the build, the test process, cancellation and cleanup. The
 action maps inputs, outputs and the GitHub job summary, and uploads diagnostic
 evidence with the official GitHub artifact toolkit when `artifacts` is set. iOS and
 Android always build first. macOS builds first only with `export`, and web never
@@ -41,6 +41,11 @@ The action installs that exact npm version once per runner, with lifecycle scrip
 into a version-keyed directory under the runner tool cache (or the runner temp directory),
 and invokes the installed script for both build and run. A later step or job on the same
 runner reuses it without another `npm install`. `cli-path` skips the install.
+
+`command` is optional. Without it the action builds, installs and launches the app
+from clean state, then stops it and succeeds, setting the same outputs, so a later step
+can drive the app. That needs a `@stim-cli/ci` version newer than 1.37.0; 1.37.0 and
+earlier refuse with `Separate the test command with --.`
 
 `command` is Bash source, executed in the app directory with `-e` and
 `pipefail`. Treat it like a workflow `run:` step: keep untrusted PR titles,
@@ -101,7 +106,7 @@ Leave at least 70 seconds for cleanup after the Action timeout, plus time for
 artifact upload before the job timeout.
 The action forwards cancellation to `stim-ci`; the provider can still kill
 the job before cleanup or upload completes. There is no post-job cleanup hook
-or retained session. Test commands remain required.
+or retained session.
 
 ## Repository dogfood
 
