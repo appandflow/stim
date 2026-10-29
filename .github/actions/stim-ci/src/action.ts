@@ -146,7 +146,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function finalResult(stdout: Buffer[]): Record<string, unknown> | null {
+function finalResult(stdout: Buffer[]): Record<string, unknown> | null {
   const line = Buffer.concat(stdout)
     .toString('utf8')
     .split('\n')
@@ -166,7 +166,7 @@ function facts(result: Record<string, unknown> | null, stage: 'build' | 'run'): 
   return isRecord(section) && isRecord(section.facts) ? section.facts : {};
 }
 
-export function setResultOutputs(
+function setResultOutputs(
   build: Record<string, unknown> | null,
   run: Record<string, unknown> | null,
   setOutput: (name: string, value: string) => void,
