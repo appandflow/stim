@@ -644,6 +644,8 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally',
   for (const rel of [
     'android/build/generated/autolinking',
     'apps/mobile/android/build/generated/autolinking/autolinking.json',
+    '.expo/types',
+    'apps/mobile/.expo/types/router.d.ts',
     '.DerivedData',
     'ios/build/.DerivedData',
     'node_modules/expo-modules-jsi/apple/.DerivedData',
@@ -662,6 +664,10 @@ test('isCarrySkipped skips .DerivedData at any depth and treats .stim normally',
     '.DerivedDataThing',
     'apple/DerivedDataFoo',
     'apple/.DerivedDataX',
+    'apps/mobile/.expo',
+    'apps/mobile/.expo/devices.json',
+    'apps/mobile/.expo/typesx',
+    'src/types',
   ]) {
     expect(isCarrySkipped(rel)).toBe(false);
   }

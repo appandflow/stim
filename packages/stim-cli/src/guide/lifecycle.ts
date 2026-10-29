@@ -2516,16 +2516,18 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
   Warm copies installed dependencies, Pods, native output, and other ignored
   paths eligible under the source checkout's Git ignore rules, including .env
-  and local configuration. The source's nonempty
-  .worktreeexclude replaces its resolved worktree.exclude setting. Nested
-  registered worktrees and ignored entries named .DS_Store, .DerivedData,
-  .idea, .jj or .pnpm-store are not copied, and neither is
-  android/build/generated/autolinking. Warm never walks a copied directory, so
-  a .DS_Store or .idea inside a copied directory stays. Warm deletes only
-  these paths from the copy: .pnpm-store in a copied node_modules (pnpm
-  refills it from the network or its global store), the autolinking directory
-  under a copied android, android/build or android/build/generated (Gradle
-  regenerates it for the destination checkout on its next build), and the
+  and local configuration. The source's nonempty .worktreeexclude replaces its
+  resolved worktree.exclude setting. Nested registered worktrees and ignored
+  entries named .DS_Store, .DerivedData, .idea, .jj or .pnpm-store are not
+  copied, and neither are android/build/generated/autolinking and .expo/types.
+  Warm never walks a copied directory, so a .DS_Store or .idea inside a copied
+  directory stays. Warm deletes only these paths from the copy: .pnpm-store in
+  a copied node_modules (pnpm refills it from the network or its global
+  store), the autolinking directory under a copied android, android/build or
+  android/build/generated (Gradle regenerates it for the destination checkout
+  on its next build), types in a copied .expo (Expo Router's typed routes,
+  possibly generated from the source's older routes; Expo regenerates them on
+  the destination's first expo start), and the
   expo-modules-jsi/apple/.DerivedData Xcode build state, directly under
   node_modules or in the pnpm virtual store. An ignored directory that Git
   reports above those names (for example an app directory with no tracked
@@ -2533,9 +2535,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   $STIM_HOME/trash and a detached, low-priority rm deletes them after warm
   returns (through the programmatic API, before the call resolves); when the
   rename is not possible (Windows, $STIM_HOME on another volume), warm deletes
-  them before it returns. Warm also skips paths
-  overlapping a nested destination worktree or below a symlink ancestor.
-  Tracked .idea settings come from Git and stay untouched by warm.
+  them before it returns. Warm also skips paths overlapping a nested
+  destination worktree or below a symlink ancestor. Tracked .idea settings
+  come from Git and stay untouched by warm.
 
   A carried ios/Pods still names the source checkout's path in its generated
   files and in the checksum of a podspec that embeds that path (the

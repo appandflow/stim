@@ -634,6 +634,26 @@ test.each(['android/build/', 'android/', 'apps/mobile/android/build/generated/',
   },
 );
 
+test.each(['.expo/', 'apps/mobile/.expo/', 'apps/mobile/.expo/types/'])(
+  'warm excludes Expo Router typed routes from ignored %s',
+  async (ignored) => {
+    const expo = ignored.startsWith('apps/') ? 'apps/mobile/.expo' : '.expo';
+    const tracked = ignored.endsWith('types/') ? `${expo}/settings.json` : 'apps/mobile/package.json';
+    write(root, '.gitignore', `${ignored}\n`);
+    write(root, tracked, '{}');
+    git(root, 'add', tracked, '.gitignore');
+    git(root, 'commit', '-qm', 'workspace package');
+    write(root, `${expo}/types/router.d.ts`, 'source checkout routes');
+    write(root, `${expo}/devices.json`, '{}');
+    const result = await warm();
+    expect(result.failed).toEqual([]);
+    expect(result.copied).toEqual(ignored.endsWith('types/') ? [] : [expo]);
+    expect(existsSync(join(target, expo, 'types'))).toBe(false);
+    expect(readFileSync(join(root, expo, 'types/router.d.ts'), 'utf8')).toBe('source checkout routes');
+    expect(existsSync(join(target, expo, 'devices.json'))).toBe(!ignored.endsWith('types/'));
+  },
+);
+
 test.skipIf(process.platform === 'win32')(
   'missing-only copy preserves executable file modes (POSIX file modes; skipped on win32)',
   async () => {
