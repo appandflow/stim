@@ -81,12 +81,15 @@ first. macOS and web are unchanged: macOS `run` builds its app itself.
 
 Every iOS and Android `run` starts the app from clean state on the workspace's
 own simulator or emulator, including when the device already has this build.
-Before it installs, `run` uninstalls every other user app. On iOS it also clears
-the app's defaults and data container and resets the simulator keychain; on
-Android it runs `pm clear` on the app. Simulator-wide settings such as privacy
-grants are kept. A run that `ios.remote` or `android.remote` would place on a
-remote host refuses with `STIM_BAD_ARG` instead of skipping the cleanup. Plain `stim ios` and `stim android` keep app data between runs
-and clean only a simulator or emulator they adopt from the parked pool.
+Before it installs, `run` uninstalls every other user app except XCUITest
+runner apps, such as the ones agent-device installs, so test tools do not
+reinstall them on each run. On iOS it also clears the app's defaults and data
+container and resets the simulator keychain; on Android it runs `pm clear` on
+the app. Simulator-wide settings such as privacy grants are kept. A run that
+`ios.remote` or `android.remote` would place on a remote host, or on a
+simulator or emulator Stim does not own, refuses with `STIM_BAD_ARG` instead of
+skipping the cleanup. Plain `stim ios` and `stim android` keep app data between
+runs and clean only a simulator or emulator they adopt from the parked pool.
 
 The command after `--` is an argument vector. Use an explicit shell when you
 need shell syntax. Progress and test output go to stderr; stdout contains the

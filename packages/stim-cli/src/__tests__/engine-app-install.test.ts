@@ -206,13 +206,18 @@ describe('the two pure port-wiring shapes', () => {
 });
 
 describe('ios', () => {
-  test('clearOtherUserApps removes every user app except the adopting workspace app', async () => {
+  test('clearOtherUserApps removes every user app except the workspace app and XCUITest runners', async () => {
     const removed: string[] = [];
     expect(
       await clearOtherUserApps(
         { udid: 'U1', keep: 'com.example.keep' },
         {
-          list: async () => ['com.example.old', 'com.example.keep', 'com.example.other'],
+          list: async () => [
+            'com.example.old',
+            'com.example.keep',
+            'com.callstack.agentdevice.runner.uitests.xctrunner',
+            'com.example.other',
+          ],
           uninstall: async (_udid, bundleId) => {
             removed.push(bundleId);
           },

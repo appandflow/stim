@@ -175,7 +175,8 @@ also accept recordedBuild: true, which installs and launches the app the last
 build with the same scheme and configuration (or variant) recorded in this
 workspace, without fingerprinting, building or replacing its JS, and refuses with
 STIM_NO_RECORDED_BUILD when there is none. They also accept cleanAppState: true,
-which before install uninstalls every other user app and clears the app's data
+which before install uninstalls every other user app except XCUITest runners
+(*.xctrunner) and clears the app's data
 (iOS: defaults, data container and the simulator keychain; Android: pm clear),
 whether or not the install is skipped. Both refuse device and remote; cleanAppState
 also refuses a remote host the ios.remote or android.remote setting picks, and a

@@ -749,7 +749,8 @@ instead, and `stim worktree remove` prints `could not park <name>: ... --
 deleted it instead`.
 
 Adoption gives the new workspace a clean app state without reinstalling. It
-resets privacy grants and the keychain, uninstalls every other user app, and
+resets privacy grants and the keychain, uninstalls every other user app except
+XCUITest runner apps, and
 clears the workspace app's data: on iOS it empties the app's data container
 and resets its preferences, and on Android it runs `pm clear`. It does this on
 every adoption, whichever workspace parked the device. The reset preferences
