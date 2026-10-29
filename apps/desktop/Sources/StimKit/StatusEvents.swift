@@ -101,6 +101,7 @@ public enum StatusEvents {
 }
 
 private enum TimestampFormatters {
+  static let milliseconds = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
   // Foundation (Date Formatters, Thread Safety) documents date formatting as thread-safe; ISO8601DateFormatter is
   // not marked Sendable, and these are configured once and never mutated again.
   nonisolated(unsafe) static let fractional: ISO8601DateFormatter = {
@@ -112,5 +113,8 @@ private enum TimestampFormatters {
 }
 
 func parseTimestamp(_ text: String) -> Date? {
-  TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
+  if text.utf8.count == 24, text.hasSuffix("Z"), let date = try? TimestampFormatters.milliseconds.parse(text) {
+    return date
+  }
+  return TimestampFormatters.fractional.date(from: text) ?? TimestampFormatters.plain.date(from: text)
 }

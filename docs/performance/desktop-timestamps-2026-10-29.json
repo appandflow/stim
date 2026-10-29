@@ -1,0 +1,64 @@
+{
+  "baselineCommit": "c842988ac7ff7aa6b8dbf270eb196bb71330c824",
+  "hardware": "Mac16,10",
+  "memoryBytes": 17179869184,
+  "os": "macOS 27.0 (26A428)",
+  "swift": "Apple Swift 6.4.0.34.1",
+  "buildMode": "Debug",
+  "workload": "Overview.idleProjects, 100 idle projects/workspaces, two failed platform builds per workspace, UTC millisecond timestamps",
+  "repetitions": 6,
+  "passesPerRepetition": 20,
+  "warmSummary": "Exclude repetition 0 from both variants; retain it as cold data.",
+  "limitations": [
+    "Model calculation only; excludes fixture construction, SwiftUI layout and accessibility.",
+    "Second pair overlaps isolated Swift test compilation; machine load about 5 on 10 cores.",
+    "No real server or live capture workload. No whole-app CPU or screen time-to-visible claim."
+  ],
+  "runs": [
+    {
+      "name": "baseline-model",
+      "runId": "f6a9c8d1b562",
+      "wallMsPer20Passes": [
+        376.1275833239779, 378.53225000435486, 376.7435000045225, 374.41416666842997, 373.0727499932982,
+        369.8806666652672
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 18.7207083334215
+    },
+    {
+      "name": "after-model",
+      "runId": "50a8c62ca227",
+      "wallMsPer20Passes": [
+        30.933291651308537, 22.771833348087966, 22.221125022042543, 21.796916669700295, 21.629416674841195,
+        21.67225000448525
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 1.0898458334850147
+    },
+    {
+      "name": "baseline-repeat",
+      "runId": "5155face01b3",
+      "wallMsPer20Passes": [
+        409.83737498754635, 416.79954167921096, 396.36112499283627, 398.1193749932572, 408.1243750406429,
+        386.91925001330674
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 19.90596874966286
+    },
+    {
+      "name": "after-repeat",
+      "runId": "2cf193098eee",
+      "wallMsPer20Passes": [
+        25.447916646953672, 23.46591668901965, 23.00866664154455, 23.16895837429911, 22.774291690438986,
+        22.920041636098176
+      ],
+      "checksum": 3586557720023.9937,
+      "warmMedianMsPerPass": 1.1504333320772275
+    }
+  ],
+  "cpu": "Apple M4 (10 cores)",
+  "xcode": "Xcode 27.1 (27A9275)",
+  "sdk": "macOS 27.0",
+  "changedSourceSha256": "48a4cdc9b29f344c9c1610cfd3e3bf7f113f4d4a7e8e894792a0ab865ecf34b1",
+  "probeSourceSha256": "fe506a2765bbdca8ca8baf8c4df2cb8df2f2c85b91d0d49f07cdea1725f1f97d"
+}
