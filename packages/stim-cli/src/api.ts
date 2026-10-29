@@ -756,15 +756,12 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
 }
 
 async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
-  const localOnly = options.recordedBuild ? 'recordedBuild' : options.cleanAppState ? 'cleanAppState' : null;
-  if (
-    localOnly &&
-    (('device' in options && options.device !== undefined) || ('remote' in options && options.remote !== undefined))
-  )
+  const simulatorOnly = options.recordedBuild ? 'recordedBuild' : options.cleanAppState ? 'cleanAppState' : null;
+  if (simulatorOnly && 'device' in options && options.device !== undefined)
     throw new StimError({
       code: 'STIM_BAD_ARG',
-      message: `${localOnly} applies to a local simulator or emulator, not a physical device or a remote host.`,
-      remedy: `Drop device and remote, or run without ${localOnly}.`,
+      message: `${simulatorOnly} applies to a simulator or emulator, not a physical device.`,
+      remedy: `Drop device, or run without ${simulatorOnly}.`,
     });
   const root = context.projectRoot;
   switch (options.platform) {

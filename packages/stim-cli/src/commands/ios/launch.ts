@@ -595,6 +595,58 @@ interface FinishIosRunArgs {
 
 async function cleanIosAppState({
   d,
+  device,
+  udid,
+  bundleId,
+  devClient,
+  adopting,
+  cleanAppState,
+  remote,
+  runCommand,
+  phase,
+  note,
+}: {
+  d: IosDeps;
+  device: DeviceLike;
+  udid: string;
+  bundleId: string | null;
+  devClient: boolean;
+  adopting: boolean;
+  cleanAppState: boolean;
+  remote: boolean;
+  runCommand: string;
+  phase: (name: unknown, text: string) => void;
+  note: (line: string) => void;
+}): Promise<Pick<FailArgs, 'code' | 'message' | 'remedy'> | null> {
+  if (!adopting && (!cleanAppState || remote)) return null;
+  if (!adopting && !device.owned)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: `cleanAppState clears only a simulator Stim owns, and ${deviceLabel(device, udid)} is not one.`,
+      remedy: 'Run `stim gc --delete` to clear the assignment so Stim creates an owned simulator.',
+    };
+  const failure = await sweepIosAppState({
+    d,
+    udid,
+    bundleId,
+    devClient,
+    resetKeychain: !adopting,
+    previous: adopting ? 'the previous workspace' : 'an earlier run',
+    phase,
+    note,
+  });
+  if (!failure) return null;
+  return {
+    code: 'STIM_INSTALL_FAILED',
+    message: adopting
+      ? `${failure} Stim kept the adoption cleanup pending and did not install or launch the app.`
+      : `${failure} Stim did not install or launch the app.`,
+    remedy: `Run \`${runCommand}\` again after simulator tooling is responsive.`,
+  };
+}
+
+async function sweepIosAppState({
+  d,
   udid,
   bundleId,
   devClient,
@@ -1037,36 +1089,20 @@ export async function finishIosRun({
     phase('launch', `${bundleId!} pid ${launched.pid} ${launchTimer()}`);
   } else {
     const adopting = Boolean(device?.adoptionPending);
-    if (cleanAppState && !device.owned) {
-      return fail({
-        code: 'STIM_BAD_ARG',
-        message: `cleanAppState clears only a simulator Stim owns, and ${deviceLabel(device, udid)} is not one.`,
-        remedy: 'Run `stim gc --delete` to clear the assignment so Stim creates an owned simulator.',
-        build: { ...buildFailure, appPath, bundleId },
-      });
-    }
-    if (adopting || cleanAppState) {
-      const cleanupFailure = await cleanIosAppState({
-        d,
-        udid,
-        bundleId,
-        devClient: Boolean(scheme),
-        resetKeychain: !adopting,
-        previous: adopting ? 'the previous workspace' : 'an earlier run',
-        phase,
-        note,
-      });
-      if (cleanupFailure) {
-        return fail({
-          code: 'STIM_INSTALL_FAILED',
-          message: adopting
-            ? `${cleanupFailure} Stim kept the adoption cleanup pending and did not install or launch the app.`
-            : `${cleanupFailure} Stim did not install or launch the app.`,
-          remedy: `Run \`${runCommand}\` again after simulator tooling is responsive.`,
-          build: { ...buildFailure, appPath, bundleId },
-        });
-      }
-    }
+    const cleanupFailure = await cleanIosAppState({
+      d,
+      device,
+      udid,
+      bundleId,
+      devClient: Boolean(scheme),
+      adopting,
+      cleanAppState,
+      remote: Boolean(remoteDevice),
+      runCommand,
+      phase,
+      note,
+    });
+    if (cleanupFailure) return fail({ ...cleanupFailure, build: { ...buildFailure, appPath, bundleId } });
     enterPhase('install');
     const installTimer = stepTimer(d.now);
     const installed = await d.installIosApp(
