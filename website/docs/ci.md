@@ -163,6 +163,10 @@ with an exact published `@stim-cli/ci` version instead of `cli-path`. The
 command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
 
+The `scheme`, `configuration` and `variant` inputs select the build and go to both
+commands; `arch`, `abi` and `eas-profile` go to `build` only. For example,
+`configuration: Release` builds and runs a Release simulator app.
+
 Nothing is collected or uploaded unless `artifacts` is set; `export` writes the built
 app to a path. With `artifacts`, use a new, empty directory for each invocation. Leave at least 70
 seconds for cleanup after the action timeout, plus time for artifact upload.

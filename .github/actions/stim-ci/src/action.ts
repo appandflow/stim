@@ -34,6 +34,15 @@ interface Inputs {
   upload: boolean;
   artifactName: string;
   retentionDays: number;
+  selectors: string[];
+  buildOnly: string[];
+}
+
+const SELECTOR_INPUTS = ['scheme', 'configuration', 'variant'] as const;
+const BUILD_ONLY_INPUTS = ['arch', 'abi', 'eas-profile'] as const;
+
+function flags(input: (name: string) => string, names: readonly string[]): string[] {
+  return names.flatMap((name) => (input(name) ? [`--${name}`, input(name)] : []));
 }
 
 export function readInputs(input: (name: string) => string, root: string, host: string = process.platform): Inputs {
@@ -76,6 +85,8 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     upload: upload === 'true' && Boolean(input('artifacts')),
     artifactName: input('artifact-name') || `stim-ci-${platform}-${randomUUID()}`,
     retentionDays: Number(retention),
+    selectors: flags(input, SELECTOR_INPUTS),
+    buildOnly: flags(input, BUILD_ONLY_INPUTS),
   };
 }
 
@@ -174,12 +185,12 @@ export async function runAction(): Promise<number> {
   if (options.cache) common.push('--build-cache', options.cache);
   const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
-    const buildArgs = [cli, 'build', ...common];
+    const buildArgs = [cli, 'build', ...common, ...options.selectors, ...options.buildOnly];
     if (options.exportPath) buildArgs.push('--export', options.exportPath);
     const buildCode = await execute(process.execPath, buildArgs, root);
     if (buildCode !== 0) return buildCode;
   }
-  const args = [cli, 'run', ...common];
+  const args = [cli, 'run', ...common, ...options.selectors];
   if (options.artifacts) args.push('--artifacts', options.artifacts);
   args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
   const started = Date.now();

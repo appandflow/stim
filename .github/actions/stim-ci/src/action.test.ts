@@ -269,6 +269,26 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
+test.skipIf(process.platform === 'win32')(
+  'passes build selectors to build and run, and build-only flags to build alone',
+  async () => {
+    const seen = recorder();
+    github.inputs.platform = 'ios';
+    delete github.inputs.artifacts;
+    github.inputs.scheme = 'App';
+    github.inputs.configuration = 'Release';
+    github.inputs.arch = 'arm64';
+    github.inputs['eas-profile'] = 'preview';
+    expect(await runAction()).toBe(0);
+    const [build, run] = seen.calls();
+    const selectors = ['--scheme', 'App', '--configuration', 'Release'];
+    expect(build).toEqual(expect.arrayContaining([...selectors, '--arch', 'arm64', '--eas-profile', 'preview']));
+    expect(run).toEqual(expect.arrayContaining(selectors));
+    expect(run).not.toContain('--arch');
+    expect(run).not.toContain('--eas-profile');
+  },
+);
+
 test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
   const seen = recorder();
   delete github.inputs.artifacts;

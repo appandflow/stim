@@ -16,6 +16,18 @@ inputs:
     description: Built stim-ci executable from the checkout, relative to the repository root.
   artifacts:
     description: Empty directory relative to the repository root for result, test and diagnostic files. Without it no such file is written and nothing is uploaded. Use a different path for each run.
+  scheme:
+    description: iOS scheme to build and run. Defaults to the project's normal build settings.
+  configuration:
+    description: iOS configuration to build and run, such as Release. Defaults to the project's normal build settings.
+  variant:
+    description: Android variant to build and run. Defaults to the project's normal build settings.
+  arch:
+    description: iOS simulator architecture to build (arm64, x86_64 or all).
+  abi:
+    description: Android ABI to build (arm64-v8a, armeabi-v7a, x86, x86_64 or all).
+  eas-profile:
+    description: Download this EAS profile's completed development build instead of compiling (iOS and Android).
   export:
     description: Also write the built app to this path relative to the repository root, as an APK for Android or a tar.gz for iOS and macOS. Not for web.
   home:
