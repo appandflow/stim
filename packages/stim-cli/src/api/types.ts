@@ -51,10 +51,10 @@ export type StimRunOptions = PlatformRunOptions & {
    */
   recordedBuild?: boolean;
   /**
-   * iOS and Android: start the app from clean state on the workspace's owned simulator or emulator. Before install,
+   * iOS and Android: start the app from clean state on the workspace's owned local simulator or emulator. Before install,
    * uninstall every other user app and clear the kept app's data: on iOS its defaults and data container, then the
    * simulator keychain; on Android `pm clear`. Applies whether or not the install is skipped. `stim-ci run` always sets
-   * it. Refused with a physical device or a remote host.
+   * it. A run placed on another machine or on EAS is not cleaned. Refused with a physical device.
    */
   cleanAppState?: boolean;
   signal?: AbortSignal;

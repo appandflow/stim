@@ -637,12 +637,12 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
   }
 });
 
-test('the API refuses recordedBuild together with a physical device or a remote host', async () => {
+test('the API refuses recordedBuild and cleanAppState together with a physical device', async () => {
   const stim = createStim({ projectRoot: root, home: tmpHome });
   await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
     code: 'STIM_BAD_ARG',
   });
-  await expect(stim.run({ platform: 'android', recordedBuild: true, remote: 'mini' })).rejects.toMatchObject({
+  await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
     code: 'STIM_BAD_ARG',
   });
 });
@@ -3981,13 +3981,26 @@ describe('--remote', () => {
     };
   }
 
-  test('cleanAppState refuses a remote placement before install', async () => {
+  test('cleanAppState installs on a remote simulator without cleaning it', async () => {
     const remote = remoteStub();
     reserve();
-    const { exitCode, errs } = await run({ remote: 'eas', cleanAppState: true }, remote.deps);
-    expect(exitCode).toBe(1);
-    expect(remote.hits).not.toContain('installIosApp');
-    expect(errs.join('\n')).toMatch(/cleanAppState applies to a local simulator/);
+    const cleaned: string[] = [];
+    const { exitCode } = await run(
+      { remote: 'eas', cleanAppState: true },
+      {
+        ...remote.deps,
+        clearOtherUserApps: () => {
+          cleaned.push('sweep');
+          return { listed: true, kept: true, removed: [], failed: [] };
+        },
+        resetIosKeychain: () => {
+          cleaned.push('keychain');
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
+    expect(cleaned).toEqual([]);
   });
 
   test('the device phases run against the remote implementation', async () => {

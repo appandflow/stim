@@ -509,10 +509,15 @@ Metro from run. With no recorded build for the selectors, run refuses with
 STIM_NO_RECORDED_BUILD and names the stim-ci build command. Build and run must
 share the Stim home (--home or STIM_HOME). macOS and web run unchanged: macOS
 run builds the app itself.
-Every iOS and Android run starts from clean app state, even when the install is
-skipped: it uninstalls every other user app except XCUITest runners
+Every iOS and Android run on this machine starts from clean app state, even when
+the install is skipped: it uninstalls every other user app except XCUITest runners
 (*.xctrunner), clears the app's defaults and data
 container and resets the simulator keychain on iOS, and runs pm clear on Android.
+A run that ios.remote or android.remote places on another machine or on EAS is
+not cleaned. build always compiles on this machine and ignores remote.build. An
+iOS build, and an Android Debug build, target this machine's architecture only;
+when run can land on
+another machine or on EAS, build with --arch all (iOS) or --abi all (Android).
 Plain stim ios and stim android clean only a device they adopt.
 build exports nothing unless --export <path> is given (an APK, or a tar.gz).
 --artifacts selects a directory for result, test and diagnostic files; without
