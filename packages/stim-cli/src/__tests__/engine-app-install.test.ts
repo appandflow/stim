@@ -2268,6 +2268,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
 
   test('the evidence leads, then the commands in the order they have to run', async () => {
     const lines = devClientLines();
+    expect(lines.join('\n')).not.toMatch(/socketfilterfw|same Wi-Fi SSID|DEVELOPMENT SERVERS/);
     expect(lines[1]).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
     expect(lines[1]).toContain('unsatisfied (Local network prohibited)');
     expect(lines[1]).toMatch(/unanswered OR was answered Don't Allow earlier/);

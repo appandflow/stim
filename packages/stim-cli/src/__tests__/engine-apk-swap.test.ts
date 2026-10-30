@@ -13,6 +13,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import {
+  ANDROID_BUNDLE_NAME,
   androidBundleCommand,
   androidHermescArgs,
   androidHermescPath,
@@ -388,7 +389,7 @@ function harness({
   const work = join(tmp, `unaligned-${base}`);
   const final = join(tmp, base);
   const stage = join(tmp, 'stage');
-  const bundleOutput = join(stage, 'assets', 'index.android.bundle');
+  const bundleOutput = join(stage, 'assets', ANDROID_BUNDLE_NAME);
   const hermesc = androidHermescPath(root, { exists: () => false });
   const exec = makeExecutor({
     runFile: (file: string, args: string[], opts: ExecOptions) => {
@@ -462,7 +463,7 @@ describe('swapApkBundle', () => {
       '--platform',
       'android',
     ]);
-    expect(bundle?.args).toContain(bundleOutput);
+    expect(bundle?.args).toContain(join(stage, 'assets', 'index.android.bundle'));
     expect(bundle?.args).toContain(join(stage, 'res'));
 
     expect(readFileSync(bundleOutput, 'utf-8')).toBe('hermes bytecode');
