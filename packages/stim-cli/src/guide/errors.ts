@@ -417,7 +417,9 @@ too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. For stim ios, a toolchain difference on the named machine, such as Xcode,
+refusal. For stim android, a known toolchain refusal on the named machine stops
+before prebuild; busy, low disk and unreachable are checked again afterward.
+For stim ios, a toolchain difference on the named machine, such as Xcode,
 the simulator runtime or the CPU, refuses before this machine runs prebuild or pod
 install, even when prebuild would have produced an app the local cache already holds, or the
 machine already holds the exact artifact. A
