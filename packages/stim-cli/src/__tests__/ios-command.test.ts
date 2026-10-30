@@ -20,6 +20,7 @@ import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
 import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
+import * as sharedState from '@stim-cli/core/state';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
@@ -9651,9 +9652,16 @@ describe('strict remote machine selection', () => {
     },
   );
 
-  test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
+  test('auto builds a Release cache miss here while idle without contacting a paired worker', async () => {
     reserve();
     configureMini();
+    vi.spyOn(sharedState, 'machineCapacity').mockReturnValue({
+      cpus: 10,
+      loadPerCore: 0.1,
+      builds: 0,
+      maxBuilds: 3,
+      maxLoadPerCore: 2,
+    });
     writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const result = await run({ remoteBuild: 'auto', configuration: 'Release' });

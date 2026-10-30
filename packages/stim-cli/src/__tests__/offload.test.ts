@@ -1122,12 +1122,14 @@ describe('explicit build placement', () => {
   });
 
   it('remote-only never lets a build fall back to this machine, remote does', () => {
-    expect(() => requireLocalBuild('remote-only', 'mini: busy')).toThrow(
-      expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('mini: busy') }),
-    );
-    expect(() => requireLocalBuild('remote')).not.toThrow();
-    expect(() => requireLocalBuild('auto')).not.toThrow();
-    expect(() => requireLocalBuild('local')).not.toThrow();
+    withAmbientContext(testContext(), () => {
+      expect(() => requireLocalBuild('remote-only', 'mini: busy')).toThrow(
+        expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('mini: busy') }),
+      );
+      expect(() => requireLocalBuild('remote')).not.toThrow();
+      expect(() => requireLocalBuild('auto')).not.toThrow();
+      expect(() => requireLocalBuild('local')).not.toThrow();
+    });
   });
 
   it.each(['mini', 'Mini', 'MINI:7443'])(
