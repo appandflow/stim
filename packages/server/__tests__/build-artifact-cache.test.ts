@@ -244,7 +244,7 @@ if (mode === 'offer-native-gradle') {
   }
   const receipt = mode === 'build' ? { source: input.native.sourceDigest } : input.receipt;
   const android = input.android;
-  const hash = createHash('sha256').update(JSON.stringify([receipt.source, readFileSync(privateFile, 'utf8'), android.variant, android.abi, android.compilerCache, android.pch, android.gradleBuildCache])).digest('hex');
+  const hash = createHash('sha256').update(JSON.stringify([receipt.source, input.jdk ?? '21', readFileSync(privateFile, 'utf8'), android.variant, android.abi, android.compilerCache, android.pch, android.gradleBuildCache])).digest('hex');
   const identity = { hash, key: hash + '-android' };
   if (mode === 'native-gradle-artifact') {
     if (existsSync(join(area, 'hold-query'))) {
@@ -348,6 +348,16 @@ test('a paused worker serves only an exact native APK and revalidates private in
         gradleArtifact: { ...query, android: { ...query.android, variant: null } },
       }),
     ).toHaveProperty('error.code', 'bad-request');
+    for (const jdk of ['', '17.0', '../17', 17])
+      expect(
+        await host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: { ...query, jdk } }),
+      ).toHaveProperty('error.code', 'bad-request');
+    expect(
+      await host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: { ...query, jdk: '21' } }),
+    ).toHaveProperty('result.artifact', response.result.artifact);
+    expect(
+      await host.offer('builder', { repo: 'app-1', native: 'gradle', gradleArtifact: { ...query, jdk: '17' } }),
+    ).toHaveProperty('result.artifact', null);
     const artifact = response.result.artifact;
     expect(artifact).toMatchObject({ name: 'Sample.apk', androidPackage: 'dev.example.sample' });
     expect(response.result.capacity.declined).toBe('maintenance');

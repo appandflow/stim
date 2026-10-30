@@ -1265,6 +1265,7 @@ describe('pairing', () => {
           'native-gradle-build',
           'native-gradle-artifact-cache',
           'native-gradle-peer-cache',
+          'native-gradle-peer-jdk',
           'react-native-peer-cache',
           'fingerprint-sources',
           'fingerprint-ignored',

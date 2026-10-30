@@ -1170,7 +1170,9 @@ do not query peer caches. Older workers continue normal placement. This peer
 lookup also covers declared native Gradle worker APKs when the worker supports
 native-gradle-peer-cache. It rechecks current private inputs against the saved
 receipt at offer and fetch for the requested source, resolved variant, ABI and
-build options. Caller fingerprints stay null; worker keys stay worker-scoped.
+build options. With a known local JDK, lookup also requires native-gradle-peer-jdk
+and rechecks on that exact JDK major; older workers use normal build placement.
+Caller fingerprints stay null; worker keys stay worker-scoped.
 React Native and Expo development builds also query enabled paired workers
 with react-native-peer-cache after local and configured-provider misses. Their
 post-mutation fingerprint, native build choices and compatible toolchain must

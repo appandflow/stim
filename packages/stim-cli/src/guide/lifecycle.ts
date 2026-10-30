@@ -470,7 +470,9 @@ not the caller's. The returned fingerprint remains null; transfer digests never
 become reusable APK cache keys. Workers with native-gradle-peer-cache can offer a
 completed APK for declared source and resolved variant, ABI and build options,
 rechecking current private inputs against the saved receipt at offer and fetch.
-A hit skips source upload and compilation even while that worker is busy or
+When this machine has a JDK, native-gradle-peer-jdk also selects that exact
+JDK major for the private-input check. Older workers skip this lookup and use
+normal build placement. A hit skips source upload and compilation even while that worker is busy or
 this machine has room. A miss follows normal placement; older Gradle workers
 still build normally. Off mode, explicit local builds and disabled remote cache
 reads skip peer lookup. Hosts without native-gradle-build refuse before upload.

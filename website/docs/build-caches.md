@@ -92,7 +92,9 @@ resolved variant, ABI and build options. Each worker rechecks its current privat
 inputs against the saved build receipt, again before download. A hit skips source
 upload and compilation even while that worker is busy. A miss uses normal build
 placement. This requires `native-gradle-peer-cache`; older workers still build
-normally. Off mode, an explicit local build and disabled remote artifact reads
+normally. When the client has a JDK, lookup also requires `native-gradle-peer-jdk`
+and rechecks inputs on that exact installed JDK major; older workers use normal
+build placement. Off mode, an explicit local build and disabled remote artifact reads
 skip peer lookup. The returned offload fingerprint remains `null`; a worker key
 is never published under the caller's identity.
 

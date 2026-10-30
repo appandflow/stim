@@ -1350,9 +1350,11 @@ async function main(): Promise<void> {
       sourceDigest: string;
       inputs: GradleOffloadInputs;
       android: BuildAndroidOptions;
+      jdk?: string;
     } = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     if (!/^[a-f0-9]{64}$/.test(input.sourceDigest)) throw new Error('The completed transfer identity is invalid.');
     gradleOffloadInputs(input.inputs);
+    if (input.jdk && useJdkMajor(input.jdk)) return emit({ identity: null });
     if (input.android) {
       const { android, receipt } = input;
       if (

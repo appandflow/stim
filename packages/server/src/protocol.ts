@@ -163,6 +163,7 @@ const gradleArtifactQuery: JsonSchema = {
   additionalProperties: false,
   properties: {
     project: { type: 'string' },
+    jdk: { type: 'string', pattern: '^[0-9]{1,3}$' },
     sourceDigest: sha256,
     inputs: {
       type: 'object',

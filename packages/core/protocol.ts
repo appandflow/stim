@@ -77,6 +77,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
  * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `native-gradle-peer-jdk` accepts an exact JDK major on native Gradle artifact queries.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
@@ -126,6 +127,7 @@ export const FEATURES = [
   'native-gradle-build',
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
+  'native-gradle-peer-jdk',
   'react-native-peer-cache',
   'fingerprint-sources',
   'fingerprint-ignored',
@@ -1037,6 +1039,8 @@ export type BuildReactNativeArtifactQuery = {
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
 export interface BuildGradleArtifactQuery {
   project: string;
+  /** The exact JDK major to revalidate, sent only with native-gradle-peer-jdk. */
+  jdk?: string;
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };

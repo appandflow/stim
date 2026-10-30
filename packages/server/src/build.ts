@@ -278,7 +278,8 @@ function macosBuildOptions(
 function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
   if (
     !isJsonObject(value) ||
-    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android'].includes(key))
+    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android', 'jdk'].includes(key)) ||
+    (value.jdk !== undefined && (typeof value.jdk !== 'string' || !/^[0-9]{1,3}$/.test(value.jdk)))
   )
     return null;
   const { project, sourceDigest, inputs } = value;
@@ -301,6 +302,7 @@ function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
   return android && android.variant !== null
     ? {
         project,
+        ...(typeof value.jdk === 'string' ? { jdk: value.jdk } : {}),
         sourceDigest,
         inputs: { complete: true, ignored: inputs.ignored, outputs: inputs.outputs },
         android: { ...android, variant: android.variant },

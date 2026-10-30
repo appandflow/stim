@@ -1850,6 +1850,10 @@ connected since stim-server started keeps its directory when revoked.
   worker archives survive job-output cleanup in their client's repository cache;
   removing that client's worker area removes the cache too. Other clients and
   repositories cannot look up those entries.
+  Native Gradle queries may carry `jdk` after `native-gradle-peer-jdk` is advertised.
+  The worker selects that exact installed JDK major before rechecking private
+  inputs; an unavailable major is a cache miss. Clients with a known JDK skip
+  native Gradle peer lookup on older workers and use normal build placement.
   React Native archives also require the same `reactNativeArtifact` query on
   download, checked against the completed receipt again. An identity alone
   cannot fetch them. Archives use the existing complete-file cache and digest verification;

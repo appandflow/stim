@@ -100,7 +100,9 @@ and artifact inputs are declared complete. The worker checks its current private
 inputs against its saved receipt for the requested source, resolved variant, ABI
 and build options, then rechecks before download. Its opaque identity stays
 worker-scoped; the returned caller fingerprint remains `null`. This requires
-`native-gradle-peer-cache`.
+`native-gradle-peer-cache`. With a known local JDK, lookup also requires
+`native-gradle-peer-jdk` and uses that exact installed JDK major; older workers
+use normal build placement.
 React Native and Expo development builds also check enabled paired workers after
 local and configured-provider misses. Exact post-mutation fingerprints, native
 build options and compatible toolchains must match. A worker keeps its completed
