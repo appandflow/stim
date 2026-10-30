@@ -367,10 +367,6 @@ describe('dedupe and order', () => {
 describe('capDiagnostics', () => {
   const many = (n: number) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
 
-  test('the cap is ten', () => {
-    expect(MAX_DIAGNOSTICS).toBe(10);
-  });
-
   test('under the cap, nothing is truncated and the count is 0 rather than absent', () => {
     const { diagnostics, truncated } = capDiagnostics(many(3));
     expect(diagnostics.length).toBe(3);

@@ -577,6 +577,9 @@ test('storeBuild writes assets-manifest.json beside the artifact, and storedAsse
   };
   await storeBuild('android', 'ak1', build, { root, assetManifest });
 
+  expect(JSON.parse(readFileSync(join(entryDir('android', 'ak1', root), 'assets-manifest.json'), 'utf8'))).toEqual(
+    assetManifest,
+  );
   expect(storedAssetManifest('android', 'ak1', root)).toEqual(assetManifest);
   expect(artifactIn(entryDir('android', 'ak1', root))).toBe(join(entryDir('android', 'ak1', root), 'App.apk'));
 });

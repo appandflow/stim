@@ -192,10 +192,6 @@ describe('androidBundleCommand', () => {
       ],
     });
   });
-
-  test('the bundle entry is the one the runtime loads', () => {
-    expect(ANDROID_BUNDLE_NAME).toBe('index.android.bundle');
-  });
 });
 
 describe('archive update, alignment and signing', () => {
@@ -467,7 +463,7 @@ describe('swapApkBundle', () => {
       '--platform',
       'android',
     ]);
-    expect(bundle?.args).toContain(bundleOutput);
+    expect(bundle?.args).toContain(join(stage, 'assets', 'index.android.bundle'));
     expect(bundle?.args).toContain(join(stage, 'res'));
 
     expect(readFileSync(bundleOutput, 'utf-8')).toBe('hermes bytecode');

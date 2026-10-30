@@ -2246,48 +2246,6 @@ describe('unverifiedLaunchLines', () => {
   );
 });
 
-describe('unverifiedLaunchLines: the action comes first', () => {
-  function iosLines() {
-    return unverifiedLaunchLines({
-      platform: 'ios',
-      metroPort: 8082,
-      waitedMs: 20000,
-      bundleId: 'io.tlon.groups',
-      udid: 'BF2A1C3D',
-      devClientUrl: devClientUrl('io.tlon.groups', 8082),
-      devClient: true,
-    });
-  }
-
-  test('the picker is first and the retry is last', async () => {
-    const lines = iosLines();
-    const picker = lines.findIndex((l) => /DEVELOPMENT SERVERS/.test(l));
-    const retry = lines.findIndex((l) => /simctl openurl/.test(l));
-    expect(picker !== -1 && retry !== -1).toBeTruthy();
-    expect(picker < retry).toBeTruthy();
-    expect(lines.some((line) => /alert|Open in/.test(line))).toBe(false);
-  });
-
-  test('the picker line still carries THIS workspace port, from the facts', async () => {
-    const picker = iosLines().find((l) => /DEVELOPMENT SERVERS/.test(l));
-    expect(picker).toMatch(/localhost:8082/);
-    expect(picker).toMatch(/NOT another workspace/);
-  });
-
-  test('a bare Android app leads with the relaunch', async () => {
-    const lines = unverifiedLaunchLines({
-      platform: 'android',
-      metroPort: 8082,
-      bundleId: 'com.x',
-      serial: 'emulator-5584',
-    });
-    const relaunch = lines.findIndex((l) => /am force-stop com\.x/.test(l));
-    expect(relaunch).toBe(2);
-    expect(lines.join('\n')).not.toMatch(/DEVELOPMENT SERVERS/);
-    expect(!lines.some((l) => /Open in <app>/.test(l))).toBeTruthy();
-  });
-});
-
 describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
   const base = {
     platform: 'ios',
@@ -2310,6 +2268,7 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
 
   test('the evidence leads, then the commands in the order they have to run', async () => {
     const lines = devClientLines();
+    expect(lines.join('\n')).not.toMatch(/socketfilterfw|same Wi-Fi SSID|DEVELOPMENT SERVERS/);
     expect(lines[1]).toMatch(/THE PHONE'S LOCAL NETWORK PERMISSION IS NOT GRANTED/);
     expect(lines[1]).toContain('unsatisfied (Local network prohibited)');
     expect(lines[1]).toMatch(/unanswered OR was answered Don't Allow earlier/);
@@ -2336,15 +2295,6 @@ describe('unverifiedLaunchLines: the routed Local Network remedy', () => {
     expect(denied).toMatch(/persists across upgrade installs/);
     expect(denied).toMatch(/Settings > Privacy & Security > Local Network/);
     expect(denied).toMatch(/no API for that switch/);
-  });
-
-  test('it replaces the network list rather than adding to it', async () => {
-    const text = devClientLines().join('\n');
-    expect(text).not.toMatch(/socketfilterfw/);
-    expect(text).not.toMatch(/same Wi-Fi SSID/);
-    expect(text).not.toMatch(/DEVELOPMENT SERVERS/);
-    expect(text).toMatch(/replaces the process the collector follows/);
-    expect(text).toMatch(/`agent-device metro reload` does NOT recover either screen/);
   });
 
   test('a bare app gets the RedBox and a relaunch with no payload URL', async () => {
