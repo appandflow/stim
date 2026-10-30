@@ -1207,6 +1207,51 @@ describe('macOS resource staging', () => {
     resetExecutor();
   });
 
+  it.each([false, true])('only rewrites the executable rpath when bundling frameworks: %s', async (framework) => {
+    const target = join(bundle, 'Contents', 'Frameworks', 'Library.framework');
+    if (framework) {
+      mkdirSync(join(bin, 'Library.framework'));
+      writeFileSync(join(bin, 'Library.framework', 'Library'), 'framework bytes');
+    }
+    setExecutor({
+      runFile: (file, args) => {
+        calls.push([file, args]);
+        if (!framework && (file === 'otool' || file === 'install_name_tool'))
+          throw new Error('This executable has no room for additional load commands.');
+        return file === 'plutil'
+          ? JSON.stringify({ CFBundleIdentifier: 'dev.sample', CFBundleExecutable: 'Sample' })
+          : '';
+      },
+    });
+    await stageBundle(
+      testContext({ projectRoot: root, cwd: root }),
+      root,
+      'Sample',
+      'Info.plist',
+      bin,
+      bundle,
+      'dev.sample',
+    );
+    expect(readFileSync(join(bundle, 'Contents', 'Resources', 'Sample_Resources.bundle', 'swiftpm'), 'utf8')).toBe(
+      'swiftpm resource',
+    );
+    expect(calls.filter(([file]) => file === 'install_name_tool')).toEqual(
+      framework
+        ? [
+            [
+              'install_name_tool',
+              ['-add_rpath', '@executable_path/../Frameworks', join(bundle, 'Contents', 'MacOS', 'Sample')],
+            ],
+          ]
+        : [],
+    );
+    expect(existsSync(join(target, 'Library'))).toBe(framework);
+    expect(calls.filter(([file]) => file === 'codesign')).toEqual([
+      ...(framework ? [['codesign', ['--force', '--sign', '-', target]]] : []),
+      ['codesign', ['--force', '--sign', '-', bundle]],
+    ]);
+  });
+
   it('seals renamed files, directory contents and the compiled catalog in the final signature', async () => {
     const extras = resolveBundleExtras(
       root,
