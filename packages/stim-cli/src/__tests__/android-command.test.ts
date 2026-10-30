@@ -7561,16 +7561,22 @@ describe('strict remote machine selection', () => {
 
   test('a named Android worker whose toolchain differs refuses before prebuild changes the checkout', async () => {
     configureMini();
-    vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({
-      capacity: null,
-      problems: [
-        { code: 'jdk', reason: 'JDK 17 there, JDK 21 here' },
-        { code: 'android-sdk', reason: 'Android SDK missing there' },
-        { code: 'ndk', reason: 'NDK 27.1 missing there' },
-        { code: 'stim-build', reason: 'incompatible Stim build there' },
-        { code: 'busy', reason: 'busy (load)' },
-      ],
-    }));
+    rmSync(join(root, 'android'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: 'com.example.app' } } }));
+    vi.spyOn(offloadClient, 'offloadCheck').mockImplementation((_root, targets) => async () => {
+      expect(await targets()).toMatchObject([{ platform: 'android' }]);
+      return {
+        capacity: null,
+        problems: [
+          { code: 'jdk', reason: 'JDK 17 there, JDK 21 here' },
+          { code: 'android-sdk', reason: 'Android SDK missing there' },
+          { code: 'ndk', reason: 'NDK 27.1 missing there' },
+          { code: 'stim-build', reason: 'incompatible Stim build there' },
+          { code: 'busy', reason: 'busy (load)' },
+        ],
+      };
+    });
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: late refusal');
     const marker = join(root, 'prebuild-marker');
     const prebuild = vi.fn<() => Promise<{ ok: true; durationMs: number }>>(async () => {
@@ -7589,6 +7595,13 @@ describe('strict remote machine selection', () => {
     expect(prebuild).not.toHaveBeenCalled();
     expect(existsSync(marker)).toBe(false);
     expect(choose).not.toHaveBeenCalled();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: 'placement_fallback',
+        fallback: expect.objectContaining({ machine: 'mini', msg: expect.stringContaining('JDK 17') }),
+      }),
+    );
   });
 
   test.each(['busy', 'disk', 'unreachable'] as const)(

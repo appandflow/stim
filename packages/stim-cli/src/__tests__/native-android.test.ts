@@ -230,6 +230,30 @@ function uncachedOffloadProject(selected: string) {
   vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
 }
 
+test.each([false, true])('a named native target refusal preserves cancellation=%s', async (cancelled) => {
+  uncachedOffloadProject('worker');
+  write(join(root, 'buildSrc', 'build.gradle.kts'), 'source');
+  const controller = new AbortController();
+  vi.spyOn(offload, 'offloadCheck').mockImplementation((_root, targets) => async () => {
+    if (cancelled) controller.abort('SIGINT');
+    await targets();
+    return { capacity: null, problems: [] };
+  });
+  const local = vi.spyOn(gradleEngine, 'buildGradle');
+  await expect(
+    buildAndroidOperation(testContext({ signal: controller.signal }), root, {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'worker',
+    }),
+  ).rejects.toMatchObject({
+    code: cancelled ? 'STIM_CANCELLED' : 'STIM_OFFLOAD_REFUSED',
+    message: expect.stringContaining(cancelled ? 'cancelled' : 'buildSrc'),
+  });
+  expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+  expect(local).not.toHaveBeenCalled();
+});
+
 test.each([
   { cancelled: false, eligible: false, cached: false },
   { cancelled: true, eligible: false, cached: false },

@@ -539,9 +539,18 @@ export async function acquireAndroidArtifact(
     const named = machines.find((each) => each.machine === buildMachine);
     const offload = recipe.offload;
     if (placement.code === 'named' && named && offload) {
-      const { problems } = await offloadCheck(root, async () => [await offload.target()])(named);
-      const predicted = predictedRefusal(buildMachine, problems);
-      if (predicted) throw new OffloadRefusal(buildMachine, predicted.reason, predicted.remedy);
+      const check = await offloadCheck(root, async () => [await offload.target()])(named).catch((error: unknown) => {
+        throwIfCancelled(signal, 'Android build');
+        fallBack(error instanceof Error ? error.message : String(error));
+        return null;
+      });
+      if (!check) return null;
+      const predicted = predictedRefusal(buildMachine, check.problems);
+      if (predicted)
+        fallBack(predicted.reason, predicted.reason, {
+          machine: buildMachine,
+          remedy: predicted.remedy,
+        });
     }
     return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }
