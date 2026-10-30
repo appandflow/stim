@@ -1076,7 +1076,7 @@ stats. A listed paired name with a cache hit compiles nothing, contacts no worke
 and records buildMachine with builtOn absent. Build failures retain the selected
 value; builtOn is here or the configured machine entry when compilation ran.
 Prebuild and pod install still run on this machine before a named offload; stim ios
-checks the machine's toolchain first. A refusal
+and stim android check the machine's toolchain first. A refusal
 starts no local xcodebuild, Gradle or SwiftPM compile.
 A React Native offload sends the tracked and untracked files, and the gitignored
 files the native fingerprint hashes or the Expo config reads, such as .env.local

@@ -44,13 +44,14 @@ import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
-import type { pairedMachines } from '../../offload/build-machines.ts';
+import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
 import {
   closeOffload,
   chooseBuildMachine,
   offloadBuild,
   buildPlacementCandidates,
   offloadPlacement,
+  offloadCheck,
   placementLoad,
   remotePhaseText,
   type OffloadChoice,
@@ -496,8 +497,7 @@ export async function acquireAndroidArtifact(
     machines: ReturnType<typeof pairedMachines>;
   }
 
-  /** Whether this build should leave this machine, before any machine is asked; null builds here. */
-  function placeBuild(): Candidate | null {
+  async function placeBuild(): Promise<Candidate | null> {
     if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
@@ -535,6 +535,22 @@ export async function acquireAndroidArtifact(
       );
       if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
+    }
+    const named = machines.find((each) => each.machine === buildMachine);
+    const offload = recipe.offload;
+    if (placement.code === 'named' && named && offload) {
+      const check = await offloadCheck(root, async () => [await offload.target()])(named).catch((error: unknown) => {
+        throwIfCancelled(signal, 'Android build');
+        fallBack(error instanceof Error ? error.message : String(error));
+        return null;
+      });
+      if (!check) return null;
+      const predicted = predictedRefusal(buildMachine, check.problems);
+      if (predicted)
+        fallBack(predicted.reason, predicted.reason, {
+          machine: buildMachine,
+          remedy: predicted.remedy,
+        });
     }
     return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }

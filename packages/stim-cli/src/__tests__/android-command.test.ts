@@ -7504,6 +7504,7 @@ describe('strict remote machine selection', () => {
     setExecutor(makeExecutor());
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
     vi.spyOn(offloadClient, 'closeOffload').mockImplementation(() => {});
+    vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -7555,6 +7556,78 @@ describe('strict remote machine selection', () => {
       expect(slot).not.toHaveBeenCalled();
       expect(recordStats).not.toHaveBeenCalled();
       expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
+    },
+  );
+
+  test('a named Android worker whose toolchain differs refuses before prebuild changes the checkout', async () => {
+    configureMini();
+    rmSync(join(root, 'android'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: 'com.example.app' } } }));
+    vi.spyOn(offloadClient, 'offloadCheck').mockImplementation((_root, targets) => async () => {
+      expect(await targets()).toMatchObject([{ platform: 'android' }]);
+      return {
+        capacity: null,
+        problems: [
+          { code: 'jdk', reason: 'JDK 17 there, JDK 21 here' },
+          { code: 'android-sdk', reason: 'Android SDK missing there' },
+          { code: 'ndk', reason: 'NDK 27.1 missing there' },
+          { code: 'stim-build', reason: 'incompatible Stim build there' },
+          { code: 'busy', reason: 'busy (load)' },
+        ],
+      };
+    });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: late refusal');
+    const marker = join(root, 'prebuild-marker');
+    const prebuild = vi.fn<() => Promise<{ ok: true; durationMs: number }>>(async () => {
+      writeFileSync(marker, 'mutated');
+      return { ok: true, durationMs: 0 };
+    });
+    const result = await harness({ buildMachine: 'mini', planPrebuildFor: () => 'generate', prebuild }).run();
+    expect(result.error).toMatchObject({
+      code: 'STIM_OFFLOAD_REFUSED',
+      message:
+        'mini: JDK 17 there, JDK 21 here; Android SDK missing there; NDK 27.1 missing there; incompatible Stim build there',
+    });
+    expect(result.error?.remedy).toContain('JAVA_HOME');
+    expect(result.error?.remedy).toContain('sdkmanager');
+    expect(result.error?.remedy).toContain('stim-server service update');
+    expect(prebuild).not.toHaveBeenCalled();
+    expect(existsSync(marker)).toBe(false);
+    expect(choose).not.toHaveBeenCalled();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: 'placement_fallback',
+        fallback: expect.objectContaining({ machine: 'mini', msg: expect.stringContaining('JDK 17') }),
+      }),
+    );
+  });
+
+  test.each(['busy', 'disk', 'unreachable'] as const)(
+    'a named Android worker that reports %s is checked again after prebuild',
+    async (code) => {
+      configureMini();
+      vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({
+        capacity: null,
+        problems: [{ code, reason: `early ${code}` }],
+      }));
+      const order: string[] = [];
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockImplementation(async () => {
+        order.push('choose');
+        return 'mini: late refusal';
+      });
+      const result = await harness({
+        buildMachine: 'mini',
+        planPrebuildFor: () => 'generate',
+        prebuild: async () => {
+          order.push('prebuild');
+          return { ok: true, durationMs: 0 };
+        },
+        build: never('local Gradle'),
+      }).run();
+      expect(order).toEqual(['prebuild', 'choose']);
+      expect(result.error).toMatchObject({ code: 'STIM_OFFLOAD_REFUSED', message: 'mini: late refusal' });
     },
   );
 
@@ -7616,6 +7689,7 @@ describe('strict remote machine selection', () => {
     const build = vi.fn<() => never>();
     expect((await harness({ buildMachine: 'Mini', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
     expect(choose).not.toHaveBeenCalled();
+    expect(offloadClient.offloadCheck).not.toHaveBeenCalled();
     expect(build).not.toHaveBeenCalled();
     const report = readLastBuilds(readWorkspaceState(root)).android;
     expect(report).toMatchObject({ buildMachine: 'mini:7443', cacheHit: 'local' });
