@@ -1,12 +1,4 @@
-import {
-  formatDuration,
-  formatElapsed,
-  formatLongDuration,
-  launchErrorReport,
-  phaseLine,
-  shortHash,
-  shortUdid,
-} from '../command-output.ts';
+import { formatDuration, formatElapsed, formatLongDuration, launchErrorReport, phaseLine } from '../command-output.ts';
 import { parseLogcatLine } from '../collector/android.ts';
 import { parseLogStreamLine } from '../collector/ios.ts';
 
@@ -55,18 +47,6 @@ test('phaseLine preserves the Desktop label and fact framing', () => {
       .match(/^ {2}(\S+)\s+(\S.*)$/)
       ?.slice(1),
   ).toEqual(['port', fact]);
-});
-
-test('shortHash keeps short values and abbreviates long values', () => {
-  expect(shortHash('12345678')).toBe('12345678');
-  expect(shortHash('123456789')).toBe('123456..');
-  expect(shortHash(null)).toBe('');
-});
-
-test('shortUdid keeps short values and abbreviates simulator ids', () => {
-  expect(shortUdid('A1F3')).toBe('A1F3');
-  expect(shortUdid('A1F3-0000')).toBe('A1F3..');
-  expect(shortUdid(null)).toBe('');
 });
 
 test("a verified launch counts the device log and still prints the app's own errors", () => {

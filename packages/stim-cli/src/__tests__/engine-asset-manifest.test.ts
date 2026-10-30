@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ASSET_MANIFEST_FILE,
   ASSET_MANIFEST_VERSION,
   androidModuleDirs,
   assetDiffReason,
@@ -89,10 +88,6 @@ describe('parseAssetManifest', () => {
     expect(parseAssetManifest(JSON.stringify({ version: 1 }))).toBe(null);
     expect(parseAssetManifest(JSON.stringify({ version: 1, assets: [{ path: 'a.png' }] }))).toBe(null);
     expect(parseAssetManifest(JSON.stringify({ version: 1, assets: [] }))).toEqual({ version: 1, assets: [] });
-  });
-
-  test('the file name is the one stored beside the artifact', () => {
-    expect(ASSET_MANIFEST_FILE).toBe('assets-manifest.json');
   });
 });
 

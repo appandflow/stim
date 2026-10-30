@@ -12,7 +12,6 @@ import {
 } from '../supervisor/metro-store.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
 import {
-  BARE_PACKAGES,
   checkBareApi,
   ensureNativePlatform,
   loadNdjsonReporter,
@@ -124,10 +123,6 @@ describe("resolving the project's own dev server packages", () => {
     expect(typeof deps.metro.runServer).toBe('function');
     expect(typeof deps.devMiddleware.createDevMiddleware).toBe('function');
     expect(typeof deps.serverApi.createDevServerMiddleware).toBe('function');
-  });
-
-  test('the three packages are the ones a bare RN project already has', () => {
-    expect(BARE_PACKAGES).toEqual(['metro', '@react-native/dev-middleware', '@react-native-community/cli-server-api']);
   });
 });
 

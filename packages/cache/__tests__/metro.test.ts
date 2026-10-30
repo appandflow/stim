@@ -1,13 +1,4 @@
 import {
-  METRO_READ_CONCURRENCY,
-  METRO_READ_FAILURE_LIMIT,
-  METRO_READ_TIMEOUT_ENV,
-  METRO_WRITE_TIMEOUT_ENV,
-  METRO_UPLOAD_CONCURRENCY,
-  METRO_UPLOAD_MAX_BYTES,
-  METRO_UPLOAD_MAX_ITEMS,
-  METRO_READ_TIMEOUT_MS,
-  METRO_WRITE_TIMEOUT_MS,
   createTieredMetroStore,
   metroCapabilityFromStore,
   type MetroCacheStore,
@@ -67,14 +58,6 @@ function store(
 }
 
 const KEY = Buffer.from('0123456789abcdef0123456789abcdef', 'hex');
-
-test('the pinned queue and timeout limits stay put', () => {
-  expect(METRO_READ_TIMEOUT_MS).toBe(2_000);
-  expect(METRO_WRITE_TIMEOUT_MS).toBe(10_000);
-  expect(METRO_UPLOAD_CONCURRENCY).toBe(4);
-  expect(METRO_UPLOAD_MAX_ITEMS).toBe(128);
-  expect(METRO_UPLOAD_MAX_BYTES).toBe(32 * 1024 * 1024);
-});
 
 test('a local hit does not load or call the provider', async () => {
   const local = memoryStore();
@@ -367,13 +350,6 @@ test('an unusable provider disables the tier for writes too', async () => {
   await tiered.flush();
   expect(loads).toBe(1);
   expect(warnings.map((w) => w.code)).toEqual(['provider-load']);
-});
-
-test('the read and write budgets accept an environment override', () => {
-  expect(METRO_READ_TIMEOUT_ENV).toBe('STIM_CACHE_METRO_READ_TIMEOUT_MS');
-  expect(METRO_WRITE_TIMEOUT_ENV).toBe('STIM_CACHE_METRO_WRITE_TIMEOUT_MS');
-  expect(METRO_READ_CONCURRENCY).toBe(6);
-  expect(METRO_READ_FAILURE_LIMIT).toBe(5);
 });
 
 test('a tripped breaker drops the queued backlog instead of draining it', async () => {

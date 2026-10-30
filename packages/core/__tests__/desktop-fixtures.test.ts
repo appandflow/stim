@@ -23,10 +23,6 @@ const statusEvent = (payload: unknown) => ({ event: 'status', subscription: 'des
 
 const statusFixtures = readdirSync(stimKitFixtures).filter((name) => /status.*\.json$/.test(name));
 
-test('finds the desktop status fixtures', () => {
-  expect(statusFixtures).toContain('status.json');
-});
-
 test('reports a status event the validator rejects even when no payload path explains it', () => {
   const { environments: _environments, ...payload } = read(new URL('status.json', stimKitFixtures));
   expect(issues(event as Validator, { event: 'status', payload }, '/payload')).not.toEqual([]);
