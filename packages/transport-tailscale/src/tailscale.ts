@@ -7,6 +7,8 @@ import { planServe } from './serve-plan.ts';
 
 const MAC_APP_BINARY = '/Applications/Tailscale.app/Contents/MacOS/Tailscale';
 const TIMEOUT_MS = 3000;
+// `tailscale status --json` lists every peer, which passes execFile's default 1 MiB on a large tailnet.
+const STATUS_MAX_BUFFER = 16 * 1024 * 1024;
 
 export interface TailnetIdentity {
   kind: 'tailnet';
@@ -75,7 +77,13 @@ export function readRawTailscaleStatus(binary: string | null, env: NodeJS.Proces
     execFile(
       binary,
       ['status', '--json'],
-      { env: tailscaleEnv(env), timeout: TIMEOUT_MS, killSignal: 'SIGKILL', encoding: 'utf8' },
+      {
+        env: tailscaleEnv(env),
+        timeout: TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        encoding: 'utf8',
+        maxBuffer: STATUS_MAX_BUFFER,
+      },
       (error, stdout) => {
         if (error) return resolve(null);
         try {
@@ -99,7 +107,13 @@ export function readTailscaleStatus(
     execFile(
       binary,
       ['status', '--json'],
-      { env: tailscaleEnv(env), timeout: timeoutMs, killSignal: 'SIGKILL', encoding: 'utf8' },
+      {
+        env: tailscaleEnv(env),
+        timeout: timeoutMs,
+        killSignal: 'SIGKILL',
+        encoding: 'utf8',
+        maxBuffer: STATUS_MAX_BUFFER,
+      },
       (error, stdout) => {
         if (error) {
           const reason = error.killed ? 'it timed out' : error.message.split('\n')[0]!;
