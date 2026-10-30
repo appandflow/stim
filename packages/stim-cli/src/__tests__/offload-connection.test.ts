@@ -1550,7 +1550,17 @@ describe('exact peer artifacts', () => {
   } as const;
   const policy = { read: true, write: true, remote: true };
 
-  test.each(['hit', 'miss', 'corrupt', 'escaping-link', 'extra-file', 'changed-request', 'old-worker'] as const)(
+  const gradleCacheScenarios = [
+    'hit',
+    'miss',
+    'corrupt',
+    'escaping-link',
+    'extra-file',
+    'changed-request',
+    'old-worker',
+    'old-jdk-worker',
+  ] as const;
+  test.each(gradleCacheScenarios)(
     'Gradle peer APK %s never syncs or compiles during a cache-only lookup',
     async (scenario) => {
       writeFileSync(join(repo, '.gitignore'), 'archive-source/\narchive.tgz\nstaging/\n');
@@ -1598,7 +1608,11 @@ describe('exact peer artifacts', () => {
           hello: () => ({
             result: {
               capabilities: ['build'],
-              features: ['native-gradle-build', ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache'])],
+              features: [
+                'native-gradle-build',
+                ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache']),
+                ...(scenario === 'old-jdk-worker' ? [] : ['native-gradle-peer-jdk']),
+              ],
             },
           }),
           artifact: { archive, digest },
@@ -1606,7 +1620,7 @@ describe('exact peer artifacts', () => {
         },
       );
       machines.push(machine);
-      const query = { sourceDigest: transfer.digest, inputs: transfer.declaration, android };
+      const query = { sourceDigest: transfer.digest, inputs: transfer.declaration, android, jdk: '17' };
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: gradleTarget,
@@ -1617,12 +1631,11 @@ describe('exact peer artifacts', () => {
         note: () => {},
       });
       const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
-      expect(typeof choice).toBe(scenario === 'old-worker' ? 'string' : 'object');
-      expect(offerRequest.params.gradleArtifact).toEqual(
-        scenario === 'old-worker' ? undefined : { ...query, project: '' },
-      );
+      const unsupported = scenario === 'old-worker' || scenario === 'old-jdk-worker';
+      expect(typeof choice).toBe(unsupported ? 'string' : 'object');
+      expect(offerRequest.params.gradleArtifact).toEqual(unsupported ? undefined : { ...query, project: '' });
       expect(machine.methods).toEqual(['hello', 'build.offer']);
-      if (scenario === 'old-worker') return;
+      if (unsupported) return;
       if (typeof choice === 'string') throw new Error(choice);
       const stagingDir = join(repo, 'staging');
       const result = await offloadBuild({
@@ -1680,9 +1693,10 @@ describe('exact peer artifacts', () => {
     },
   );
 
-  test.each(['auto', 'remote', 'named'] as const)(
-    'a vanished Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
+  test.each(['auto', 'remote', 'named', 'legacy'] as const)(
+    'a missed Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
     async (selection) => {
+      const named = selection === 'named' || selection === 'legacy';
       writeFileSync(join(repo, '.gitignore'), 'staging/\n');
       const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: [], outputs: [] });
       const machine = await fakeMachine(
@@ -1702,7 +1716,14 @@ describe('exact peer artifacts', () => {
         { result: { job: 'new-build' } },
         {
           hello: () => ({
-            result: { capabilities: ['build'], features: ['native-gradle-build', 'native-gradle-peer-cache'] },
+            result: {
+              capabilities: ['build'],
+              features: [
+                'native-gradle-build',
+                'native-gradle-peer-cache',
+                ...(selection === 'legacy' ? [] : ['native-gradle-peer-jdk']),
+              ],
+            },
           }),
           cachedFetch: 'miss',
         },
@@ -1711,7 +1732,7 @@ describe('exact peer artifacts', () => {
       const choice = await chooseBuildMachine({
         projectRoot: repo,
         target: gradleTarget,
-        selected: selection === 'named' ? 'gradle' : selection,
+        selected: named ? 'gradle' : selection,
         here: { ...HERE, builds: 0, loadPerCore: 3 },
         machines: [credential('gradle')],
         gradleArtifact: { sourceDigest: transfer.digest, inputs: transfer.declaration, android },
@@ -1734,12 +1755,12 @@ describe('exact peer artifacts', () => {
         note: () => {},
       });
       expect(result.ok).toBe(false);
-      expect(machine.methods.includes('build.start')).toBe(selection === 'named');
+      expect(machine.methods.includes('build.start')).toBe(named);
       expect(
         machine.requests
           .filter((entry) => entry.method === 'build.offer')
           .map((entry) => Boolean(entry.params.gradleArtifact)),
-      ).toEqual([true, false]);
+      ).toEqual(selection === 'legacy' ? [false] : [true, false]);
     },
   );
 

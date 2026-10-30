@@ -872,7 +872,7 @@ async function probeMachine(
       ...(identity.reactNativeArtifact && queriesPeerCache(connection, 'react-native-peer-cache')
         ? { reactNativeArtifact: identity.reactNativeArtifact }
         : {}),
-      ...(native === 'gradle' && identity.gradleArtifact && connection.supports('native-gradle-peer-cache')
+      ...(native === 'gradle' && identity.gradleArtifact && queriesGradlePeerCache(connection, identity.gradleArtifact)
         ? { gradleArtifact: identity.gradleArtifact }
         : {}),
     },
@@ -900,7 +900,8 @@ async function probeMachine(
     offer:
       (identity.swiftpmArtifact && !queriesPeerCache(connection, 'swiftpm-peer-cache')) ||
       (identity.reactNativeArtifact && !queriesPeerCache(connection, 'react-native-peer-cache')) ||
-      (native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache')))
+      (native === 'gradle' &&
+        (!identity.gradleArtifact || !queriesGradlePeerCache(connection, identity.gradleArtifact)))
         ? { ...offer, artifact: null }
         : offer,
   };
@@ -947,7 +948,13 @@ export async function chooseBuildMachine({
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
-  const gradleQuery = gradleArtifact ? { ...gradleArtifact, project: identity.project } : undefined;
+  const gradleQuery = gradleArtifact
+    ? {
+        ...gradleArtifact,
+        project: identity.project,
+        ...(target.platform === 'android' && target.local.jdk ? { jdk: target.local.jdk } : {}),
+      }
+    : undefined;
   const reactNativeQuery = reactNativeArtifact
     ? reactNativeBuildQuery(
         reactNativeArtifact.request,
@@ -1138,6 +1145,12 @@ function queriesPeerCache(
   return connection.supports(feature) && connection.supports('build-compat');
 }
 
+function queriesGradlePeerCache(connection: BuildConnection, query: BuildGradleArtifactQuery): boolean {
+  return (
+    connection.supports('native-gradle-peer-cache') && (!query.jdk || connection.supports('native-gradle-peer-jdk'))
+  );
+}
+
 function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>, peerCache: boolean) {
   return {
     ...(request.cacheArtifact === true && peerCache ? { cacheArtifact: true } : {}),
@@ -1225,9 +1238,7 @@ async function peerArtifact(
       !isDeepStrictEqual(query.android, request.android)
     )
       throw new Error('The Gradle artifact query does not match the build request.');
-    return choice.connection.supports('native-gradle-peer-cache')
-      ? matchingArtifact(choice.offer, 'native-gradle')
-      : null;
+    return queriesGradlePeerCache(choice.connection, query) ? matchingArtifact(choice.offer, 'native-gradle') : null;
   }
   if (
     request.platform === 'ios' &&
