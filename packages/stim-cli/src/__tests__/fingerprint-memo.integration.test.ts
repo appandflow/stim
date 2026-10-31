@@ -106,7 +106,8 @@ function fixture(layout: 'npm' | 'pnpm'): string {
   return realpathSync(root);
 }
 
-const operation = (env: NodeJS.ProcessEnv = { PATH: process.env.PATH }) => testContext({ env });
+const operation = (env: NodeJS.ProcessEnv = { PATH: process.env.PATH, npm_config_offline: 'true' }) =>
+  testContext({ env });
 const computed = async (): Promise<ProjectFingerprint> => {
   full++;
   return { hash: next, sources: [] };
