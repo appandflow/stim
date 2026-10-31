@@ -3377,59 +3377,39 @@ describe('offloaded builds', () => {
     });
 
     test.skipIf(!fakeTailscale)(
-      'tells the worker how long to keep the daemon, and stops an idle one once its client is revoked',
+      'keeps an idle daemon while memory is fine, after its build is cancelled and its client is revoked',
       async () => {
-        configure({ server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
-        const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
-        const { client, id } = await buildClient(port);
-        await launch(client);
-        await progress(client);
-        const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
-        expect(ran.job.gradleDaemonIdleMs).toBe(45 * 60_000);
-
-        const other = await buildClient(port, '100.64.0.3');
-        const kept = daemonOf(other.id);
-        const revoked = daemonOf(id);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        expect(running(kept) && running(revoked)).toBe(true);
-        expect(revokeDevice(id)).toBe(true);
-        await eventually(() => !running(revoked));
-        expect(running(kept)).toBe(true);
-      },
-    );
-
-    test.skipIf(!fakeTailscale)(
-      'stops idle daemons under low memory, but not one whose client is building',
-      async () => {
-        const gate = join(root, 'gate');
         const port = await start({
-          env: { FAKE_WORKER_GATE: gate },
-          buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
+          env: { FAKE_WORKER_HANG: '1' },
+          buildLimits: { killGraceMs: 100, daemonSweepMs: 50, minFreeMemoryBytes: 0 },
         });
         const { client, id } = await buildClient(port);
-        const other = await buildClient(port, '100.64.0.3');
-        await launch(client);
-        const building = daemonOf(id);
-        const idle = daemonOf(other.id);
-        await eventually(() => !running(idle));
-        expect(running(building)).toBe(true);
-        writeFileSync(gate, '');
-        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
-        await eventually(() => !running(building));
+        const job = await launch(client);
+        const daemon = daemonOf(id);
+        expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
+        expect(revokeDevice(id)).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        expect(running(daemon)).toBe(true);
       },
     );
 
-    test.skipIf(!fakeTailscale)("stops the client's daemon when its build is cancelled", async () => {
+    test.skipIf(!fakeTailscale)('stops idle daemons under low memory only once no offloaded build runs', async () => {
+      const gate = join(root, 'gate');
       const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+        env: { FAKE_WORKER_GATE: gate },
+        buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
       });
       const { client, id } = await buildClient(port);
-      const job = await launch(client);
-      const daemon = daemonOf(id);
-      expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
-      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
-      await eventually(() => !running(daemon));
+      const other = await buildClient(port, '100.64.0.3');
+      await launch(client);
+      const building = daemonOf(id);
+      const idle = daemonOf(other.id);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(running(building) && running(idle)).toBe(true);
+      writeFileSync(gate, '');
+      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+      await eventually(() => !running(building) && !running(idle));
     });
   });
 });

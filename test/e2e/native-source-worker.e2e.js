@@ -353,7 +353,6 @@ console.log('BUILD SUCCESSFUL');
       true,
     );
     write(join(area, 'jdk/release'), 'JAVA_VERSION="17"\n');
-    write(join(area, 'gradle/gradle.properties'), 'org.gradle.daemon.idletimeout=60000\n');
     write(join(area, 'sdk/build-tools/35.0.0/source.properties'), 'Pkg.Revision=35.0.0\n');
     write(
       join(area, 'sdk/build-tools/35.0.0/apksigner'),

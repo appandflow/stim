@@ -4,6 +4,7 @@ import { runOperationFile, runOperationFileQuiet } from '../../engine/operation-
 import { childEnvironment } from '../../workspace/git-read.ts';
 import type { StimContext } from '@stim-cli/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
+import { freemem, totalmem } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import chalk from 'chalk';
 import { buildWorkerRoot, loadConfig } from '@stim-cli/core/state';
@@ -16,6 +17,8 @@ import { readFootprints } from '../../footprint.ts';
 import { formatBytes, isOnMountedVolume } from '../../fs-util.ts';
 import { STIM_SERVER_COMMAND } from '../../machine-usage.ts';
 import { readPidFile } from '../../supervisor/state.ts';
+import { readHostMemoryPressureAsync } from '../../host-memory.ts';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import {
   parseSubscriberNames,
   parseTriggerCount,
@@ -35,6 +38,8 @@ export type MemoryCacheKind = typeof WATCHMAN_KIND | typeof GRADLE_DAEMONS_KIND;
 export interface MemoryScope {
   watchman: boolean;
   gradle: boolean;
+  /** Plans Gradle and Kotlin daemon stops whatever the memory, for the disk pressure step that deletes Gradle versions. */
+  anyMemory?: boolean;
 }
 
 /** The memory kind `--cache` names, or null for any other name. */
@@ -50,7 +55,7 @@ export function memoryScope(cache: string | null | undefined): MemoryScope | nul
   return kind ? { watchman: kind === WATCHMAN_KIND, gradle: kind === GRADLE_DAEMONS_KIND } : null;
 }
 
-type MemoryKeptCode = 'in-use' | 'busy' | 'unknown' | 'build-running' | 'stim-server';
+type MemoryKeptCode = 'in-use' | 'busy' | 'unknown' | 'build-running' | 'stim-server' | 'memory-ok';
 
 export interface MemoryProcess {
   kind: 'watchman' | 'gradleDaemon' | 'kotlinDaemon';
@@ -349,20 +354,22 @@ export interface KotlinDaemonFacts extends ProcessMeasure {
 }
 
 /**
- * Decides which Gradle and Kotlin daemons gc may stop. A running Stim build (`buildRunning`) keeps every one. An
- * offload worker's daemon is left to stim-server while it runs. A Gradle daemon goes only when its own `gradle
- * --status` says IDLE. A Kotlin daemon goes only when every Gradle daemon is idle and each of its connections comes from
- * a Gradle daemon gc stops in the same run.
+ * Decides which Gradle and Kotlin daemons gc may stop. A running Stim build (`buildRunning`) keeps every one, and so
+ * does memory that is not low (`memoryOk`, why). An offload worker's daemon is left to stim-server while it runs. A
+ * Gradle daemon goes only when its own `gradle --status` says IDLE. A Kotlin daemon goes only when every Gradle daemon
+ * is idle and each of its connections comes from a Gradle daemon gc stops in the same run.
  */
 export function planDaemons({
   gradle,
   kotlin,
   buildRunning,
+  memoryOk,
   stimServerRunning,
 }: {
   gradle: readonly GradleDaemonFacts[];
   kotlin: readonly KotlinDaemonFacts[];
   buildRunning: string | null;
+  memoryOk: string | null;
   stimServerRunning: boolean;
 }): MemoryProcess[] {
   const plans: MemoryProcess[] = [];
@@ -374,10 +381,13 @@ export function planDaemons({
     let detail: string | null = null;
     if (daemon.offloadClient !== null && stimServerRunning) {
       reason = 'stim-server';
-      detail = `stim-server stops the daemons of offload client ${daemon.offloadClient} when that client loses build or memory runs low`;
+      detail = `stim-server stops the daemons of offload client ${daemon.offloadClient} when memory runs low and no offloaded build runs`;
     } else if (buildRunning) {
       reason = 'build-running';
       detail = buildRunning;
+    } else if (memoryOk) {
+      reason = 'memory-ok';
+      detail = memoryOk;
     } else if (state === 'busy') {
       reason = 'busy';
       detail = 'a build is using it';
@@ -409,6 +419,9 @@ export function planDaemons({
     if (buildRunning) {
       reason = 'build-running';
       detail = buildRunning;
+    } else if (memoryOk) {
+      reason = 'memory-ok';
+      detail = memoryOk;
     } else if (daemon.peers === null) {
       reason = 'unknown';
       detail = 'lsof could not list its connections';
@@ -774,6 +787,29 @@ export function scopedMemoryReport(): MemoryReport {
   };
 }
 
+/**
+ * Why memory is not low enough for gc to stop a daemon, or null when it is: macOS memory pressure at
+ * `maintenance.memoryPressureLevel` or above, or elsewhere available memory under `maintenance.minAvailableMemoryGb`
+ * (10% of RAM when unset). `memoryPressureLevel` off never counts as low.
+ */
+async function memoryNotLow(operation?: StimContext): Promise<string | null> {
+  const settings = resolveMaintenanceSettings();
+  if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
+  if (process.platform === 'darwin') {
+    const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
+    if (level === 'critical' || (level === 'warning' && settings.memoryPressureLevel === 'warning')) return null;
+    return level === null
+      ? 'macOS memory pressure could not be read'
+      : `macOS memory pressure is ${level}, under maintenance.memoryPressureLevel ${settings.memoryPressureLevel}`;
+  }
+  const floor =
+    settings.minAvailableMemoryGb === undefined ? totalmem() * 0.1 : settings.minAvailableMemoryGb * 1024 ** 3;
+  const available = freemem();
+  return available < floor
+    ? null
+    : `${formatBytes(available)} of memory is available, at or above ${formatBytes(floor)}`;
+}
+
 export async function collectMemoryReport(
   scope: MemoryScope,
   progress = false,
@@ -802,11 +838,12 @@ export async function collectMemoryReport(
   if (scope.gradle) {
     const stimServerRunning = rows.some((row) => STIM_SERVER_COMMAND.test(row.command));
     const facts = await collectGradleFacts(rows, byPid, footprints, stimServerRunning, progress, operation);
+    const found = facts.gradle.length > 0 || facts.kotlin.length > 0;
     report.processes.push(
       ...planDaemons({
         ...facts,
-        buildRunning:
-          facts.gradle.length || facts.kotlin.length ? runningBuild(listBuildLocks(), listBuildSlots()) : null,
+        buildRunning: found ? runningBuild(listBuildLocks(), listBuildSlots()) : null,
+        memoryOk: found && !scope.anyMemory ? await memoryNotLow(operation) : null,
         stimServerRunning,
       }),
     );
@@ -1126,8 +1163,13 @@ async function waitForExit(pids: readonly number[], operation?: StimContext): Pr
 }
 
 /** Stops the Gradle daemons first, then re-checks the Kotlin daemons, whose clients those Gradle daemons were. */
-async function reclaimDaemons(before: MemoryReport, output: GcOutput, operation?: StimContext): Promise<number> {
-  const scope = { watchman: false, gradle: true };
+async function reclaimDaemons(
+  before: MemoryReport,
+  output: GcOutput,
+  operation?: StimContext,
+  anyMemory = false,
+): Promise<number> {
+  const scope = { watchman: false, gradle: true, anyMemory };
   const gradle = stillPlanned(await collectMemoryReport(scope, true, operation), before, 'gradleDaemon');
   for (const entry of gradle.filter((e) => !e.reclaimable))
     keep(output, entry, 'gradleDaemon', entry.detail ?? 'it could not be proven idle');
@@ -1155,14 +1197,14 @@ async function reclaimDaemons(before: MemoryReport, output: GcOutput, operation?
 }
 
 /**
- * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop, under the same idle rules: never during a
- * Stim build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
+ * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop, whatever the memory: never during a Stim
+ * build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
  * Gradle daemon is in `pids` too, since one left running may still be its client. Nothing stops while STIM_HOME scopes
  * the config.
  */
 export async function stopIdleGradleDaemons(pids: readonly number[], output: GcOutput = GC_OUTPUT): Promise<number> {
   if (memorySweepIsScoped()) return 0;
-  const report = await collectMemoryReport({ watchman: false, gradle: true });
+  const report = await collectMemoryReport({ watchman: false, gradle: true, anyMemory: true });
   const wanted = new Set(pids);
   const othersStay = report.processes.some(
     (entry) => entry.kind === 'gradleDaemon' && entry.reclaimable && !wanted.has(entry.pid),
@@ -1170,7 +1212,7 @@ export async function stopIdleGradleDaemons(pids: readonly number[], output: GcO
   const processes = report.processes.filter(
     (entry) => wanted.has(entry.pid) && !(entry.kind === 'kotlinDaemon' && othersStay),
   );
-  return processes.length ? reclaimDaemons({ ...report, processes }, output) : 0;
+  return processes.length ? reclaimDaemons({ ...report, processes }, output, undefined, true) : 0;
 }
 
 /** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */

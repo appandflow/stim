@@ -124,7 +124,7 @@ async function planGradleDaemonStop(
 ): Promise<{ pids?: number[]; kept?: string }> {
   if (memorySweepIsScoped(operation?.env ?? process.env))
     return { kept: 'STIM_HOME scopes this config, so the machine-global Gradle daemons that keep it are not stopped' };
-  const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
+  const report = await collectMemoryReport({ watchman: false, gradle: true, anyMemory: true }, false, operation);
   const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
   if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
   const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));

@@ -37,8 +37,6 @@ import {
   loadConfig,
   machineCapacity,
   saturation,
-  settingDefinition,
-  settingValueError,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
   windowsShortDirKey,
@@ -327,13 +325,6 @@ function workerFreeBytes(root: string): number | null {
   return free.length ? Math.min(...free) : null;
 }
 
-function gradleDaemonIdleMs(): number {
-  const definition = settingDefinition('server.gradleDaemonIdleMinutes')!;
-  const value = loadConfig()?.server?.gradleDaemonIdleMinutes;
-  const valid = typeof value === 'number' && settingValueError(definition, value) === null;
-  return (valid ? value : (definition.default as number)) * 60_000;
-}
-
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
 /** A client's Gradle user home: under its area, or on Windows a `windowsShortDir` that keeps cache paths short. */
@@ -463,10 +454,10 @@ export class BuildHost {
   }
 
   /**
-   * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
-   * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
-   * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
-   * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
+   * Stops the Gradle daemons that offloaded Android builds left warm: every one while available memory is under
+   * `minFreeMemoryBytes` and no offloaded build runs, and those of `client` unless one of its builds runs. Calls made
+   * while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A
+   * daemon whose Gradle home is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
   sweepDaemons(client: string | null = null): Promise<void> {
     if (client !== null) this.forced.add(client);
@@ -485,9 +476,8 @@ export class BuildHost {
   }
 
   private async sweep(forced: ReadonlySet<string>): Promise<void> {
-    if (this.closed) return;
+    if (this.closed || (forced.size === 0 && this.jobs.size > 0)) return;
     const available = await readAvailableMemory();
-    const low = available !== null && available < this.limits.minFreeMemoryBytes;
     let clients: string[] = [];
     if (process.platform === 'win32') {
       try {
@@ -501,9 +491,10 @@ export class BuildHost {
       clients,
     );
     const busy = new Set([...this.jobs].map((job) => job.client));
+    const low = available !== null && available < this.limits.minFreeMemoryBytes && busy.size === 0;
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
-      if (!low && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true)) continue;
+      if (!low && !forced.has(daemon.client)) continue;
       try {
         process.kill(daemon.pid, 'SIGTERM');
       } catch {}
@@ -1116,7 +1107,6 @@ export class BuildHost {
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         artifactCache: this.artifactCacheDir(client, repo),
-        gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
     const timeout = setTimeout(cancel, this.limits.timeoutMs);
@@ -1171,7 +1161,6 @@ export class BuildHost {
             ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         entry.outcome = outcome;
-        const cancelled = killTimer !== null;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
@@ -1251,7 +1240,6 @@ export class BuildHost {
           }
           entry.settled = true;
           this.jobs.delete(entry);
-          if (cancelled) void this.sweepDaemons(client);
           entry.send({ event: 'build.progress', job: id, outcome: entry.outcome! });
           this.options.finished?.({
             client,
