@@ -68,7 +68,7 @@ import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
-import { diskUsageCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
+import { diskUsageCacheFile, gitMergeCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -3014,12 +3014,19 @@ describe('status cache entries of gone workspaces', () => {
     expect(readFileSync(later, 'utf8')).toBe(original);
   });
 
+  const seedMerge = (path: string) => {
+    const file = gitMergeCacheFile(path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ path, head: 'h', target: 't', mergedInto: null }));
+    return file;
+  };
+
   test('gc reports and --delete removes entries whose path is gone, and keeps the rest', async () => {
     const live = join(projects, 'live');
     mkdirSync(join(live, 'node_modules'), { recursive: true });
     const gone = join(projects, 'gone');
-    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone)];
-    const kept = [seedDisk(live), seedPullRequest(live), seedDisk(join(live, 'node_modules'))];
+    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone), seedMerge(gone)];
+    const kept = [seedDisk(live), seedPullRequest(live), seedMerge(live), seedDisk(join(live, 'node_modules'))];
     const unreadable = join(dirname(diskUsageCacheFile(live)), `${'0'.repeat(32)}.json`);
     writeFileSync(unreadable, 'not json');
     const foreign = diskUsageCacheFile(join(projects, 'elsewhere'));
@@ -3061,8 +3068,14 @@ describe('status cache entries of gone workspaces', () => {
       seedDisk(join(going, 'node_modules')),
       seedDisk(workspaceDir(going)),
       seedPullRequest(going),
+      seedMerge(going),
     ];
-    const stayingFiles = [seedDisk(staying), seedDisk(workspaceDir(staying)), seedPullRequest(staying)];
+    const stayingFiles = [
+      seedDisk(staying),
+      seedDisk(workspaceDir(staying)),
+      seedPullRequest(staying),
+      seedMerge(staying),
+    ];
 
     await captureLog(() => removeWorktreeTarget(going));
 

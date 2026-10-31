@@ -6,6 +6,7 @@ import { basename, dirname, join, sep } from 'node:path';
 import {
   agentSessionsCacheFile,
   diskUsageCacheFile,
+  gitMergeCacheFile,
   diskUsageFailureFile,
   diskUsageWalkClaims,
   pullRequestCacheFile,
@@ -72,6 +73,7 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
   const roots = [...new Set([worktree, ...workspaces])];
   const files = [
     pullRequestCacheFile(worktree),
+    gitMergeCacheFile(worktree),
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),

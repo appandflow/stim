@@ -1009,9 +1009,10 @@ RULES
                               whose absolute workspace root is missing on a
                               mounted volume; --delete forgets the entry
                               only and contacts no EAS session
-    staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
-                              file, bytes }  entries of $STIM_HOME/disk-usage
-                              and pull-requests whose path is gone from a
+    staleStatusCaches       { kind: "disk-usage" | "pull-request" | "git-merge",
+                              path, file, bytes }  entries of
+                              $STIM_HOME/disk-usage, pull-requests and
+                              git-merge whose path is gone from a
                               mounted volume; --delete removes the file
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
