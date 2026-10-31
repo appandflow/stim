@@ -23,6 +23,7 @@ import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
+import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
 import {
   ClaimRefusedError,
@@ -1228,6 +1229,9 @@ async function runGcCore(
       ),
     );
   }
+
+  const emptyLockDirs = pruneEmptyProcessLockDirs();
+  if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock directories`));
 
   for (const slot of buildSlots.stale) {
     throwIfCancelled(signal, 'GC');

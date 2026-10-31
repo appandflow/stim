@@ -1,7 +1,17 @@
 import type { StimContext } from '@stim-cli/core';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  unlinkSync,
+  watch,
+  type FSWatcher,
+} from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
@@ -109,10 +119,15 @@ export async function withManagedTunnelLock<T>(
   fn: (claim: ClaimHandle) => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
-    ...options,
-    rejectOwnerPurposes: ['workspace removal'],
-  });
+  const lockRoot = managedTunnelLockRoot(root);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'metro-tunnel', fn, {
+      ...options,
+      rejectOwnerPurposes: ['workspace removal'],
+    });
+  } finally {
+    removeEmptyDirs([join(lockRoot, '.stim'), lockRoot]);
+  }
 }
 
 export async function withManagedTunnelRemovalLock<T>(
@@ -120,10 +135,15 @@ export async function withManagedTunnelRemovalLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
-    ...options,
-    ownerPurpose: 'workspace removal',
-  });
+  const lockRoot = managedTunnelLockRoot(root);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'metro-tunnel', fn, {
+      ...options,
+      ownerPurpose: 'workspace removal',
+    });
+  } finally {
+    removeEmptyDirs([join(lockRoot, '.stim'), lockRoot]);
+  }
 }
 
 export async function withManagedRemoteWorktreeLock<T>(
@@ -131,11 +151,16 @@ export async function withManagedRemoteWorktreeLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
-    ...options,
-    external: true,
-    rejectOwnerPurposes: ['worktree removal'],
-  });
+  const lockRoot = managedRemoteWorktreeLockRoot(worktreeRoot);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'managed-remote', fn, {
+      ...options,
+      external: true,
+      rejectOwnerPurposes: ['worktree removal'],
+    });
+  } finally {
+    removeEmptyDirs([lockRoot]);
+  }
 }
 
 export async function withManagedRemoteWorktreeRemovalLock<T>(
@@ -143,11 +168,16 @@ export async function withManagedRemoteWorktreeRemovalLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
-    ...options,
-    external: true,
-    ownerPurpose: 'worktree removal',
-  });
+  const lockRoot = managedRemoteWorktreeLockRoot(worktreeRoot);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'managed-remote', fn, {
+      ...options,
+      external: true,
+      ownerPurpose: 'worktree removal',
+    });
+  } finally {
+    removeEmptyDirs([lockRoot]);
+  }
 }
 
 export function managedLockHolders(root: string): string[] {
@@ -170,6 +200,44 @@ export function managedLockHolders(root: string): string[] {
     }
   }
   return reasons;
+}
+
+/**
+ * Removes directories that are empty, deepest first. rmdir refuses a directory holding a claim file,
+ * and a concurrent acquirer that loses its freshly created parent retries, so a live lock is never
+ * removed. Any other failure leaves the directory in place.
+ */
+function removeEmptyDirs(dirs: string[]): number {
+  let removed = 0;
+  for (const dir of dirs) {
+    try {
+      rmdirSync(dir);
+      removed++;
+    } catch {}
+  }
+  return removed;
+}
+
+function childDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+/** Removes the empty lock directories that removed worktrees and projects left under `process-locks/`. */
+export function pruneEmptyProcessLockDirs(): number {
+  const base = join(getConfigDir(), 'process-locks');
+  let removed = 0;
+  for (const top of childDirs(base)) {
+    const isWorktrees = basename(top) === 'worktrees';
+    const dirs = isWorktrees ? childDirs(top) : [join(top, '.stim'), top];
+    removed += removeEmptyDirs(dirs);
+  }
+  return removed;
 }
 
 function managedTunnelLockRoot(root: string): string {
