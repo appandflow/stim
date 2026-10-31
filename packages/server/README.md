@@ -1794,14 +1794,14 @@ connected since stim-server started keeps its directory when revoked.
   marker, including the package-manager arguments. Without that query it is
   false. Clients ignore older workers' unverified warmth and do not rank
   checkout or build-directory presence as cache state. `capacity` holds
-  `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
+  `running` and `max` offloaded builds (`max` is its `server.maxOffloadedBuilds`, 0 when unlimited), `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this machine's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
   `server.maxLoadPerCore`, default 2), `memoryUsedBytes` (Activity Monitor's
   Memory Used) and `memoryTotalBytes`, and `declined`: why it would refuse a
-  build now, or null. It declines while it runs its limit of offloaded builds,
+  build now, or null. It declines while it runs a non-zero `max` of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
   `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
@@ -1902,7 +1902,8 @@ connected since stim-server started keeps its directory when revoked.
   reads allow it; a job whose fingerprint after `pod install` differs from
   `fingerprint` then returns the development archive this machine retained
   under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
-  `build-busy` while the offer would be declined, naming the reason, or while
+  `build-busy` while the offer would be declined, naming the reason with the load
+  per core, offloaded builds running and free disk it was decided on, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `compat` differs from this machine's, or, when either

@@ -632,9 +632,12 @@ DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
 home per client and repository and one Gradle home per client. On a Windows
 machine, the checkouts and Gradle homes themselves live in short directories
 under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)). Put it on a
-large volume. It runs one offloaded build at a time and boots or installs
-nothing. It declines a build while that volume has less than 10 GB free,
-while its own Stim builds and the offloaded one fill its
+large volume. It boots or installs nothing. It declines a build while that
+volume has less than 10 GB free, while `server.maxOffloadedBuilds` offloaded
+builds already run (default 0, no limit; with it and `concurrency.maxBuilds`
+both unset, only the load average limits a burst of builds, and it lags by
+minutes),
+while its own Stim builds and the offloaded ones fill its
 `concurrency.maxBuilds`, or while its load per core is at or above its
 `server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
 remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or

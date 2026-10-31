@@ -1053,6 +1053,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Where iOS simulator Debug, Android emulator debug and macOS SwiftPM Debug builds run: local here; auto here while it has a free concurrency.maxBuilds slot and load under server.maxLoadPerCore, otherwise on a remote.machines entry; remote on a remote.machines entry in order, here only when none takes the build; remote-only the same but never here; a machine name exactly that machine without fallback. The ios, android and macos --remote-build flag overrides this setting and its environment override',
   },
   {
+    key: 'server.maxOffloadedBuilds',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    description:
+      'Builds from other machines this machine runs at once, across every client; 0 means no limit. server.maxLoadPerCore, concurrency.maxBuilds and the free disk floor still apply',
+  },
+  {
     key: 'server.maxLoadPerCore',
     type: { kind: 'number', minimum: 0.1 },
     scopes: MACHINE,

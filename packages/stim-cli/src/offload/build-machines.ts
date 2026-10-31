@@ -231,7 +231,7 @@ function problemFix(problem: OffloadProblem, entry: string): string {
     case 'platform':
       return `iOS and macOS builds need a Mac; ${entry} can take Android builds only.`;
     case 'busy':
-      return `Builds stay on this machine until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs; it takes one offloaded build at a time.`;
+      return `Builds stay on this machine until ${entry} has capacity. On ${entry}, server.maxLoadPerCore sets the load it accepts and concurrency.maxBuilds how many of its own builds it runs, and server.maxOffloadedBuilds how many builds from other machines it runs at once.`;
   }
 }
 

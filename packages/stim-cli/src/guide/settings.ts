@@ -1253,8 +1253,10 @@ On a remote machine that builds for others, stim-server keeps each client's chec
 DerivedData, compilation cache, ccache and Gradle home under
 \`server.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
 and Stim home per client and repository, and one Gradle home per client. It
-runs one offloaded build at a time. It declines a build while that volume has
-less than 10 GB free, while its own native builds and the offloaded one fill
+runs as many offloaded builds at once as \`server.maxOffloadedBuilds\` allows
+(default 0, no limit; with it and \`concurrency.maxBuilds\` both unset, only
+the load average limits a burst of builds, and it lags by minutes). It declines a build while that volume has
+less than 10 GB free, while that many offloaded builds run, while its own native builds and the offloaded ones fill
 its \`concurrency.maxBuilds\`, or while its load per core is at or above its
 \`server.maxLoadPerCore\`, and reports the reason in its offer. It boots and
 installs nothing. While an offloaded build runs there, it holds one of that

@@ -350,9 +350,11 @@ code } (could not connect or say hello, e.g. "no reply in time" when the machine
 did not answer hello) and remote_request_failed { method, ms, code, msg }.
 Timings of requests that succeed are debug records (below).
 stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
-no tokens or tickets: "request failed method=<m> client=<device id> run=<runId>
-ms=<n> error=<code>" for an error reply (once a minute per client, method and
-code) and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
+no tokens or tickets, each of these lines starting with an ISO time:
+"request failed method=<m> client=<device id> run=<runId>
+ms=<n> error=<code>" for an error reply (once a minute per client, method,
+code and reason), ending in reason="<message>" for a build-busy or build-refused
+refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
 machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
 slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;

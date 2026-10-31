@@ -2577,7 +2577,7 @@ describe('offloaded builds', () => {
       });
       const { client } = await buildClient(port, '100.64.0.3', machine);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { max: 1 } },
+        result: { capacity: { max: 0 } },
       });
     },
   );
@@ -2590,7 +2590,7 @@ describe('offloaded builds', () => {
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
           toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'], macosSdk: '27.0' },
-          capacity: { running: 0, max: 1 },
+          capacity: { running: 0, max: 0 },
           warm: { checkout: false, dependencies: false, build: false },
         },
       });
@@ -2913,12 +2913,13 @@ describe('offloaded builds', () => {
     peer: string,
     platform: 'android' | 'macos' = 'macos',
     machine = setupClient(['build'], 'Laptop'),
+    repo = 'app-1',
   ) {
     const { client, id } = await buildClient(port, peer, machine);
-    await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
-    client.socket.send(blob('x'));
+    const synced = await client.request('build.sync', { repo, files: [file('Package.swift', 'x')], done: true });
+    if (JSON.stringify(synced).includes(sha('x'))) client.socket.send(blob('x'));
     const started = await client.request('build.start', {
-      repo: 'app-1',
+      repo,
       project: '',
       platform,
       fingerprint: 'f00d',
@@ -2939,9 +2940,24 @@ describe('offloaded builds', () => {
     await progress(client);
     const fetched = await client.request('build.artifact', { job });
     const { handoff, sha256 } = (fetched as { result: { handoff?: string; sha256: string } }).result;
-    const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'out', job);
+    const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', repo, 'out', job);
     return { id, out, build: { handoff: handoff!, sha256 } };
   }
+
+  test.skipIf(!fakeTailscale)(
+    "keeps a client's retained build per repository until that repository fetches another",
+    async () => {
+      const port = await start();
+      const machine = setupClient(['build'], 'Laptop');
+      const first = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-1');
+      const other = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-2');
+      expect(existsSync(join(first.out, 'App.app'))).toBe(true);
+      expect(existsSync(join(other.out, 'App.app'))).toBe(true);
+      await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-1');
+      expect(existsSync(first.out)).toBe(false);
+      expect(existsSync(join(other.out, 'App.app'))).toBe(true);
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'hands a fetched macOS build once, and only to a hosted session of the same machine key',
@@ -3150,7 +3166,12 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
+        error: {
+          code: 'build-busy',
+          message: expect.stringMatching(
+            /^This machine declines the build: all 1 build slots busy \(load [\d.]+\/core, \d offloaded build\(s\) running, [\d.]+ GB free\)\.$/,
+          ),
+        },
       });
 
       releaseClaim(claim);
@@ -3170,7 +3191,12 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
+        error: {
+          code: 'build-busy',
+          message: expect.stringMatching(
+            /^This machine declines the build: all 1 build slots busy \(load [\d.]+\/core, \d offloaded build\(s\) running, [\d.]+ GB free\)\.$/,
+          ),
+        },
       });
 
       releaseClaim(local.claim);
@@ -3320,6 +3346,26 @@ describe('offloaded builds', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)('declines an offloaded build past server.maxOffloadedBuilds', async () => {
+    configure({ server: { maxLoadPerCore: 100_000, maxOffloadedBuilds: 1 } });
+    const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+    const { client } = await buildClient(port);
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+    client.socket.send(blob('x'));
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+
+    const other = await buildClient(port, '100.64.0.3');
+    expect(await other.client.request('build.offer', { repo: 'app-2' })).toMatchObject({
+      result: {
+        capacity: {
+          running: 1,
+          max: 1,
+          declined: 'already running 1 offloaded build(s), its server.maxOffloadedBuilds limit',
+        },
+      },
+    });
+  });
+
   test.each([false, true])(
     'stops a revoked build, frees its claim and deletes its area with watch events dropped: %s',
     { skip: !fakeTailscale },
@@ -3337,7 +3383,7 @@ describe('offloaded builds', () => {
 
       const other = await buildClient(port, '100.64.0.3');
       expect(await other.client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { running: 1, max: 1 } },
+        result: { capacity: { running: 1, max: 0, declined: null } },
       });
 
       expect(revokeDevice(id)).toBe(true);
@@ -10780,7 +10826,7 @@ describe('request log', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
       new RegExp(
-        `^stim-server: request failed method=no.such.method client=${id} run=desktop-run.7 ms=\\d+ error=unknown-method$`,
+        `^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z stim-server: request failed method=no.such.method client=${id} run=desktop-run.7 ms=\\d+ error=unknown-method$`,
       ),
     );
     expect(lines.join('\n')).not.toContain(token);
