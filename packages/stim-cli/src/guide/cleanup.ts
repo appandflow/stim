@@ -826,9 +826,11 @@ TMPDIR LEFTOVERS
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
   each worktree's pull request under $STIM_HOME/pull-requests, which the
-  maintenance worktree check and \`gc --delete\` also write. \`worktree
+  maintenance worktree check and \`gc --delete\` also write. The merge check
+  caches each worktree's verdict under $STIM_HOME/git-merge. \`worktree
   remove\` drops the entries of the worktree it removed (its checkout,
-  node_modules and workspace folder, and its pull request), not the size
+  node_modules and workspace folder, its pull request and its merge
+  verdict), not the size
   entries of its owned devices' data folders. \`gc\` reports the
   entries of a folder or worktree that was removed some other way under "Stale
   status cache entries", and \`gc --delete\` removes them. An entry counts as

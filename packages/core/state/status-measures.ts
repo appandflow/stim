@@ -5,6 +5,7 @@ import { isJsonObject, readJsonObject } from './json-file.ts';
 import {
   agentSessionsCacheFile,
   diskUsageCacheDir,
+  gitMergeCacheDir,
   pullRequestCacheDir,
   workspaceBuildDetailFile,
   workspaceEndedAgentsFile,
@@ -38,21 +39,27 @@ export function pullRequestCacheFile(path: string): string {
   return join(pullRequestCacheDir(), cacheName(path));
 }
 
-/** One file of the disk-usage or pull-request cache. */
+/** The file that caches the merge verdict of the worktree at `path`. */
+export function gitMergeCacheFile(path: string): string {
+  return join(gitMergeCacheDir(), cacheName(path));
+}
+
+/** One file of the disk-usage, pull-request or git-merge cache. */
 export interface StatusCacheEntry {
-  kind: 'disk-usage' | 'pull-request';
+  kind: 'disk-usage' | 'pull-request' | 'git-merge';
   file: string;
   /** The folder or worktree the file caches, or null when the file does not record one under its own name. */
   path: string | null;
   bytes: number;
 }
 
-/** Every finished file in the disk-usage and pull-request caches; a file being written is not listed. */
+/** Every finished file in the disk-usage, pull-request and git-merge caches; a file being written is not listed. */
 export function listStatusCacheEntries(): StatusCacheEntry[] {
   const entries: StatusCacheEntry[] = [];
   for (const [kind, dir] of [
     ['disk-usage', diskUsageCacheDir()],
     ['pull-request', pullRequestCacheDir()],
+    ['git-merge', gitMergeCacheDir()],
   ] as const) {
     let names: string[];
     try {

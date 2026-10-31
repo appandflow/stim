@@ -740,7 +740,7 @@ export interface GcJsonSections {
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
   staleEasLedgerEntries: { id: string; workspaceRoot: string }[];
-  staleStatusCaches: { kind: 'disk-usage' | 'pull-request'; path: string; file: string; bytes: number }[];
+  staleStatusCaches: { kind: 'disk-usage' | 'pull-request' | 'git-merge'; path: string; file: string; bytes: number }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;

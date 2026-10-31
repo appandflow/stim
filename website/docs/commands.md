@@ -1931,8 +1931,9 @@ Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other 
 devices shut down, never deleted. The dry run lists those stops in its
 maintenance plan.
 
-`stim status` caches each folder's size and each worktree's pull request under
-`$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
+`stim status` caches each folder's size, each worktree's pull request and each
+worktree's merge verdict under `$STIM_HOME/disk-usage`,
+`$STIM_HOME/pull-requests` and `$STIM_HOME/git-merge`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
 devices' data folders. `gc` lists the entries of a folder or
 worktree that is gone from a mounted volume under "Stale status cache entries",
