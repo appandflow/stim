@@ -851,22 +851,27 @@ export class BuildHost {
   }
 
   capacity(): BuildCapacity {
+    return this.assess().capacity;
+  }
+
+  private assess(): { capacity: BuildCapacity; numbers: string | null } {
     const machine = machineCapacity();
     const running = this.jobs.size;
     const max = maxOffloadedBuilds();
     const diskFreeBytes = workerFreeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
-    const numbers = (reason: string | null) =>
-      reason && `${reason} (${capacityLine(machine.loadPerCore, running, diskFreeBytes)})`;
-    const declined =
+    const limit =
+      max > 0 && running >= max
+        ? `already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`
+        : null;
+    const stopped =
       this.draining ??
       (loadConfig()?.server?.buildsPaused === true
         ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
         : null) ??
-      (max > 0 && running >= max
-        ? numbers(`already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`)
-        : (this.lowDisk() ?? numbers(saturation({ ...machine, builds }))));
-    return {
+      (limit ? null : this.lowDisk());
+    const busy = stopped ? null : (limit ?? saturation({ ...machine, builds }));
+    const capacity: BuildCapacity = {
       running,
       max,
       diskFreeBytes,
@@ -876,8 +881,9 @@ export class BuildHost {
       builds,
       maxBuilds: machine.maxBuilds,
       maxLoadPerCore: machine.maxLoadPerCore,
-      declined,
+      declined: stopped ?? busy,
     };
+    return { capacity, numbers: busy && capacityLine(machine.loadPerCore, running, diskFreeBytes) };
   }
 
   session(client: string, socket: BuildSocket, send: (event: BuildProgressEvent) => void): BuildSession {
@@ -1013,8 +1019,12 @@ export class BuildHost {
   }): Job | Refusal {
     if (this.closed || this.removals.has(client))
       return refusal('build-refused', 'This machine is shutting down or removing this build client.');
-    const capacity = this.capacity();
-    if (capacity.declined) return refusal('build-busy', `This machine declines the build: ${capacity.declined}.`);
+    const { capacity, numbers } = this.assess();
+    if (capacity.declined)
+      return refusal(
+        'build-busy',
+        `This machine declines the build: ${capacity.declined}${numbers ? ` (${numbers})` : ''}.`,
+      );
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });

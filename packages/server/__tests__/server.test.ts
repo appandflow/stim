@@ -3161,16 +3161,7 @@ describe('offloaded builds', () => {
 
       writeActive('compile');
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: {
-          capacity: {
-            running: 0,
-            builds: 1,
-            maxBuilds: 1,
-            declined: expect.stringMatching(
-              /^all 1 build slots busy \(load [\d.]+\/core, 0 offloaded build\(s\) running, /,
-            ),
-          },
-        },
+        result: { capacity: { running: 0, builds: 1, maxBuilds: 1, declined: 'all 1 build slots busy' } },
       });
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
@@ -3369,9 +3360,7 @@ describe('offloaded builds', () => {
         capacity: {
           running: 1,
           max: 1,
-          declined: expect.stringMatching(
-            /^already running 1 offloaded build\(s\), its server.maxOffloadedBuilds limit \(load [\d.]+\/core, 1 offloaded/,
-          ),
+          declined: 'already running 1 offloaded build(s), its server.maxOffloadedBuilds limit',
         },
       },
     });
