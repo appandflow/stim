@@ -106,8 +106,7 @@ function fixture(layout: 'npm' | 'pnpm'): string {
   return realpathSync(root);
 }
 
-const operation = (env: NodeJS.ProcessEnv = { PATH: process.env.PATH, npm_config_offline: 'true' }) =>
-  testContext({ env });
+const operation = (env: NodeJS.ProcessEnv = { PATH: process.env.PATH }) => testContext({ env });
 const computed = async (): Promise<ProjectFingerprint> => {
   full++;
   return { hash: next, sources: [] };
@@ -126,6 +125,7 @@ async function lookup(root: string, env?: NodeJS.ProcessEnv, background = confir
 }
 
 beforeEach(() => {
+  vi.stubEnv('npm_config_yes', 'false');
   resetExecutor();
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fpmemo-')));
   home = mkdtempSync(join(tmpdir(), 'stim-fpmemo-home-'));
@@ -135,6 +135,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
