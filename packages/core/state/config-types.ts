@@ -112,7 +112,6 @@ export interface StimConfig {
     lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
     workerRoot?: unknown;
-    gradleDaemonIdleMinutes?: unknown;
   };
   remote?: {
     machines?: unknown;

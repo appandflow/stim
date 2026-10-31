@@ -241,6 +241,7 @@ test('only a Gradle daemon its own status calls idle is stopped, and a Kotlin da
         gradle: [gradle(1, { state: 'idle' }), gradle(2, { state: 'busy' }), gradle(3, { unknown: 'no home' })],
         kotlin: [kotlin(10, [])],
         buildRunning: null,
+        memoryOk: null,
         stimServerRunning: false,
       }),
     ),
@@ -256,6 +257,7 @@ test('only a Gradle daemon its own status calls idle is stopped, and a Kotlin da
         gradle: [gradle(1, { state: 'idle' }), gradle(2, { state: 'idle' }, 'client-a')],
         kotlin: [kotlin(10, [1, 1]), kotlin(11, [1, null]), kotlin(12, null), kotlin(13, [2])],
         buildRunning: null,
+        memoryOk: null,
         stimServerRunning: true,
       }),
     ),
@@ -269,11 +271,12 @@ test('only a Gradle daemon its own status calls idle is stopped, and a Kotlin da
   ]);
 });
 
-test('a running Stim build keeps every daemon, and stim-server keeps its offload clients daemons', () => {
+test('a running Stim build or memory that is not low keeps every daemon, and stim-server keeps its offload clients daemons', () => {
   const plans = planDaemons({
     gradle: [gradle(1, { state: 'idle' })],
     kotlin: [kotlin(10, [])],
     buildRunning: 'a running Android build holds /lock',
+    memoryOk: null,
     stimServerRunning: false,
   });
   expect(decisions(plans)).toEqual([
@@ -284,11 +287,23 @@ test('a running Stim build keeps every daemon, and stim-server keeps its offload
     gradle: [gradle(1, { state: 'idle' }, 'client-a'), gradle(2, { state: 'idle' })],
     kotlin: [],
     buildRunning: null,
+    memoryOk: null,
     stimServerRunning: true,
   });
   expect(decisions(offload)).toEqual([
     [1, false, 'stim-server'],
     [2, true, null],
+  ]);  const roomy = planDaemons({
+    gradle: [gradle(1, { state: 'idle' }, 'client-a'), gradle(2, { state: 'idle' })],
+    kotlin: [kotlin(10, [])],
+    buildRunning: null,
+    memoryOk: 'macOS memory pressure is normal',
+    stimServerRunning: true,
+  });
+  expect(decisions(roomy)).toEqual([
+    [1, false, 'stim-server'],
+    [2, false, 'memory-ok'],
+    [10, false, 'memory-ok'],
   ]);
 });
 

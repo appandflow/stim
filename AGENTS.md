@@ -393,10 +393,10 @@ outside it moves to its own issue and pull request.
   client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
   that group, so it never holds a claim or build slot. The client's daemon
-  stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
-  and stim-server stops it when the build is cancelled, the client loses
-  `build`, or the machine's available memory runs low. Gradle stops a daemon
-  whose Gradle home is deleted. `stim-server service` installs,
+  stays warm for Gradle's own idle timeout. stim-server stops the workers'
+  idle daemons only while the machine's available memory runs low and no
+  offloaded build runs, and on Windows before it deletes a removed client's
+  area. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is
   Stim's supervisor because Task Scheduler does not restart an exited process,

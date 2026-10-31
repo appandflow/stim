@@ -1916,19 +1916,15 @@ connected since stim-server started keeps its directory when revoked.
   simulators on `runtime`, which it never boots, or Gradle's
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group, so no claim or slot tracks
-  it. An Android build keeps the client's daemon warm, with Gradle's idle
-  timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM (on Windows,
-  where a cancel ends the build's process tree with `taskkill /T /F`, the
-  daemon sweep below stops it). Gradle
-  fixes a daemon's idle timeout when the daemon starts, so a new value
-  applies to the next daemon. Once no build of that client runs, stim-server
-  sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home (on Windows, every process running from it, the Kotlin daemon
-  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
-  loses `build`, and, for every client, while this machine has less than 2 GB of
-  available memory (total memory minus Activity Monitor's Memory Used). It
-  checks every minute and on each change under its server directory. A daemon
+  it. An Android build leaves the client's daemon warm for Gradle's own idle
+  timeout, and a cancelled build does not stop it. While no offloaded build
+  runs and this machine has less than 2 GB of available memory (total memory
+  minus Activity Monitor's Memory Used), stim-server sends SIGTERM to each
+  daemon whose command line runs from a client's Gradle home (on Windows,
+  every process running from it, the Kotlin daemon included, since Windows
+  cannot delete a jar a running process opened). It checks every minute. On
+  Windows it also stops a removed client's processes before deleting its
+  area. A daemon
   whose Gradle home is deleted stops itself within seconds, because Gradle
   expires a daemon whose registry file is gone.
   A macOS request supplies `macos: { product, infoPlist, bundleId }` and

@@ -1632,7 +1632,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       (client) => paired.get(client)?.capabilities.includes('build') ?? false,
       buildClientsReadable(),
     );
-    void builds.sweepDaemons();
     for (const [socket, controller] of controllers) {
       if (controller.device.id === LOCAL_DEVICE_ID) continue;
       const capabilities = paired.get(controller.device.id)?.capabilities;

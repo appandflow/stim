@@ -2001,9 +2001,12 @@ stop them; each kind has its own `--cache` value:
   restart does, and the next client that needs watchman starts it again.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
   own `gradle --status` reports idle, then each Kotlin compile daemon with no
-  client connection once no Gradle daemon is busy. Nothing stops while a Stim
-  Android build runs. While stim-server runs, it manages the daemons of builds
-  offloaded to this machine, and gc leaves them alone.
+  client connection once no Gradle daemon is busy, only while memory is low:
+  macOS memory pressure at `maintenance.memoryPressureLevel` or above
+  (`warning` by default), or elsewhere available memory under
+  `maintenance.minAvailableMemoryGb` (10% of RAM when unset). Nothing stops
+  while a Stim Android build runs. While stim-server runs, it manages the
+  daemons of builds offloaded to this machine, and gc leaves them alone.
 - `stim gc --delete --cache gradle-versions` deletes the version caches
   (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
   under `GRADLE_USER_HOME` for each Gradle version no registered project pins
@@ -2028,7 +2031,8 @@ stop them; each kind has its own `--cache` value:
   and `--cache all` never includes these versions. With `STIM_HOME` set, gc
   deletes nothing in a Gradle home outside that directory. At disk pressure
   level 3, automatic maintenance first stops the idle Gradle and Kotlin
-  daemons `stim gc --delete --cache gradle-daemons` would stop, only when
+  daemons `stim gc --delete --cache gradle-daemons` would stop under low
+  memory, whatever the memory now, only when
   every Gradle process that keeps a version is such a daemon, and waits up to
   3 seconds for them to exit, then does the
   same for versions unmodified for `maintenance.gradleVersionIdleDays` days
@@ -2370,7 +2374,7 @@ how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
 Run `stim gc` and show me how much memory watchman and the Gradle and Kotlin
 daemons use and what is reclaimable. If watchman has no clients, run
 `stim gc --delete --cache watchman`; then run
-`stim gc --delete --cache gradle-daemons` to stop the idle daemons.
+`stim gc --delete --cache gradle-daemons` to stop the idle daemons if memory is low.
 ```
 
 ## `guide`

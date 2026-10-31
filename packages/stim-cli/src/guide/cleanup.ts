@@ -481,7 +481,7 @@ automatic maintenance never touch them. modules-2, build-cache-1, jdks and
 other shared Gradle caches are never deleted, and --cache all never includes these versions.
 With STIM_HOME set, gc deletes nothing in a Gradle home outside it. At disk
 pressure level 3 automatic maintenance first stops the idle Gradle and Kotlin
-daemons gc --delete --cache gradle-daemons would stop, only when every Gradle
+daemons gc --delete --cache gradle-daemons would stop under low memory, whatever the memory now, only when every Gradle
 process that keeps a version is such a daemon, then does the same for
 versions unmodified for maintenance.gradleVersionIdleDays days (7; 0 turns
 both off). A manual gc --delete --cache gradle-versions never stops daemons.
@@ -1101,10 +1101,14 @@ THE ONE CASE GC WILL NOT REAP
   otherwise it sends SIGTERM to each idle daemon, after checking the pid still
   has the same start time. A build that picks a daemon between gc's last
   check and the stop fails and must be run again, so gc re-checks the build
-  locks and the daemon's status right before each stop. Nothing is stopped while an Android build lock, or a build slot no
+  locks and the daemon's status right before each stop. gc stops a Gradle or
+  Kotlin daemon only while memory is low: macOS memory pressure at
+  maintenance.memoryPressureLevel or above (warning by default; off never
+  counts), or elsewhere available memory under maintenance.minAvailableMemoryGb
+  (10% of RAM when unset). Otherwise each stays, kept as memory-ok. Nothing is stopped while an Android build lock, or a build slot no
   iOS build holds, is live or unresolved. stim-server stops the daemons of
-  offloaded builds (server.gradleDaemonIdleMinutes, \`guide settings\`), so
-  while it runs gc keeps those. A daemon whose home, distribution or status cannot be read is
+  offloaded builds when memory is low and none of them runs, so while it
+  runs gc keeps those. A daemon whose home, distribution or status cannot be read is
   kept. Gradle stops an idle daemon itself after 3 hours and Kotlin after 2
   hours by default.
 
