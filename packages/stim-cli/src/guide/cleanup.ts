@@ -908,6 +908,9 @@ BUILD LOCKS
   \`gc --delete\` clears them. A lock whose builder IS running is a build in
   progress -- it is named in the report and touched by nothing, because
   removing it would put a second workspace on the same compile.
+  \`gc --delete\` also removes the empty directories under ~/.stim/process-locks
+  that removed projects and worktrees leave behind; it never touches a lock
+  that holds a claim.
 
 DEVICE LEASES
   A workspace can hold a timed lease on a physical device. The lease is one
