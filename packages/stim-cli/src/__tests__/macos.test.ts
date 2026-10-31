@@ -802,6 +802,23 @@ describe('macOS build placement and promotion', () => {
     expect(localBuilds).toBe(0);
   });
 
+  it.each([
+    { '../icon': 'icon' },
+    { nested: 'icon', 'nested/icon': 'icon' },
+    { icon: '../outside' },
+    { icon: 'escape' },
+    { icon: 'linked' },
+  ])('refuses invalid resources before selecting a worker or compiling: %j', async (resources) => {
+    writeFileSync(join(root, 'icon'), 'icon');
+    writeFileSync(join(dir, 'outside'), 'outside');
+    symlinkSync(join(dir, 'outside'), join(root, 'escape'));
+    mkdirSync(join(root, 'linked'));
+    symlinkSync(join(dir, 'outside'), join(root, 'linked', 'inner'));
+    await expect(build({ resources })).rejects.toThrow(/macos.resources.*entry.*stim guide macos/);
+    expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+    expect(localBuilds).toBe(0);
+  });
+
   it('drains a cancelled resource copy before cleanup and preserves the previous bundle', async () => {
     mkdirSync(join(root, 'branding'));
     writeFileSync(join(root, 'branding', 'wordmark.svg'), 'wordmark bytes');

@@ -76,7 +76,6 @@ describe('Gradle output', () => {
 });
 
 describe('SwiftPM output', () => {
-  fixtureLines('swiftpm-cold.txt');
   const incremental = fixtureLines('swiftpm-incremental.txt');
 
   test('an incremental build reports its small total', () => {

@@ -22,7 +22,6 @@ import {
   productFlavorRefusal,
 } from '../integrations/react-native-build.ts';
 import { BUILD_ERROR, buildGradle, locateApk as locateProjectApk, parseProductFlavors } from '../engine/gradle.ts';
-
 import { makeChildProcess, makeWriter } from './_factories.ts';
 import { defaultAndroidLayout } from '../workspace/settings.ts';
 
@@ -95,6 +94,24 @@ describe('locateApk', () => {
     expect(result.note).toContain(join('apk', 'production', 'debug'));
     expect(result.note).toMatch(/android\.variant/);
     expect(result.note).toMatch(/"productionDebug"/);
+  });
+
+  test('the recursive fallback never picks an intermediate or an androidTest APK', () => {
+    writeFlavoredApk('production', 'debug', 'app-production-debug-unsigned.apk');
+    mkdirSync(join(apkOutputsDir(defaultAndroidLayout(root)), 'androidTest', 'production', 'debug'), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(
+        apkOutputsDir(defaultAndroidLayout(root)),
+        'androidTest',
+        'production',
+        'debug',
+        'app-production-debug-androidTest.apk',
+      ),
+      'apk',
+    );
+    expect(locateApk(root, '')).toEqual({ apkPath: null });
   });
 });
 
@@ -169,6 +186,34 @@ describe('buildAndroid', () => {
     expect(spawned).toBe(false);
   });
 
+  test('forwards the target ABI to Gradle and records it in the full argv', async () => {
+    makeAndroidProject();
+    const writer = recordingWriter();
+    const calls: string[][] = [];
+    await buildAndroid(
+      { root, logWriter: writer, abi: 'arm64-v8a' },
+      {
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
+        },
+      },
+    );
+    expect(calls).toEqual([
+      ['assembleDebug', '--build-cache', '-PreactNativeArchitectures=arm64-v8a', '--init-script', nativeScript],
+    ]);
+    const starts = writer.records.filter((r) => r.event === 'build_start');
+    expect(starts.length).toBe(1);
+    const start = starts[0];
+    assert(start);
+    expect(start.src).toBe('build');
+    expect(start.level).toBe('info');
+    expect(start.raw).toBe(undefined);
+    expect(start.msg).toBe(
+      `${gradlewPath(defaultAndroidLayout(root))} assembleDebug --build-cache -PreactNativeArchitectures=arm64-v8a --init-script ${nativeScript}`,
+    );
+  });
+
   test('the build_start record shows --no-build-cache when the cache is off', async () => {
     makeAndroidProject();
     const writer = recordingWriter();
@@ -213,6 +258,41 @@ describe('buildAndroid', () => {
     expect(result.truncated).toBe(0);
     expect(result.lastLines.length > 0).toBeTruthy();
     expect(result.lastLines.every((l) => typeof l === 'string')).toBeTruthy();
+  });
+
+  test('exit 0 with no APK is a failure, not a success with nothing to install', async () => {
+    makeAndroidProject();
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter() },
+      {
+        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'] }),
+      },
+    );
+    assert(!result.ok);
+    expect(result.reason).toMatch(/produced no APK/);
+    expect(result.remedy).toMatch(/assembleDebug/);
+  });
+
+  test('a variant drives assemble<Variant> and the APK is read from the flavor directory', async () => {
+    makeAndroidProject();
+    const calls: string[][] = [];
+    const result = await buildAndroid(
+      { root, logWriter: recordingWriter(), variant: 'productionDebug' },
+      {
+        spawnFn: (_cmd, args) => {
+          calls.push(args);
+          return fakeChild({
+            lines: ['BUILD SUCCESSFUL in 8m14s'],
+            onExit: () => writeFlavoredApk('production', 'debug', 'app-production-debug.apk'),
+          });
+        },
+      },
+    );
+    expect(calls).toEqual([['assembleProductionDebug', '--build-cache', '--init-script', nativeScript]]);
+    assert(result.ok);
+    expect(result.apkPath).toBe(
+      join(apkOutputsDir(defaultAndroidLayout(root)), 'production', 'debug', 'app-production-debug.apk'),
+    );
   });
 
   test('two flavored debug APKs and no variant is a refusal listing them, never a guess', async () => {

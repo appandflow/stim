@@ -120,6 +120,22 @@ test('development launch remains unverified despite a live native process', asyn
   );
 });
 
+test.each(['package', 'SDK', 'ABI'])('incompatible %s metadata refuses before installation', async (kind) => {
+  receipt();
+  if (kind === 'package') badging = badging.replace(packageName, 'dev.foreign');
+  if (kind === 'SDK') badging = badging.replace("sdkVersion:'21'", "sdkVersion:'31'");
+  if (kind === 'ABI') badging = badging.replace("'arm64-v8a'", "'x86_64'");
+  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/incompatible|native library/);
+  expect(effects()).toEqual([]);
+});
+
+test('corrupt upload bytes refuse before SDK or native effects', async () => {
+  const digest = receipt();
+  writeFileSync(join(home, '..', 'blobs', digest), 'corrupt');
+  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/differs/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
+
 test('the reverse worker restores Metro repeatedly without reinstalling or relaunching the app', async () => {
   receipt('development');
   const receiptFile = join(area, 'receipt.json');

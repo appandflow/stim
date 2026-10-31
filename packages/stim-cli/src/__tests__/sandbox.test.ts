@@ -83,6 +83,26 @@ test('applyClaudeAllowance writes the local settings file and leaves it valid JS
   }
 });
 
+test('applyClaudeAllowance preserves settings it did not come for', () => {
+  const root = scratch();
+  try {
+    const path = claudeLocalSettingsPath(root);
+    mkdirSync(join(root, '.claude'));
+    writeFileSync(path, JSON.stringify({ permissions: { allow: ['Bash(git *)'] }, sandbox: { enabled: true } }));
+
+    expect(applyClaudeAllowance(path, sandboxAllowance()).status).toBe('updated');
+    const after = JSON.parse(readFileSync(path, 'utf-8')) as {
+      permissions: { allow: string[] };
+      sandbox: { enabled: boolean };
+    };
+    expect(after.permissions.allow).toEqual(['Bash(git *)']);
+    expect(after.sandbox.enabled).toBe(true);
+    expect(missingAllowance([path])).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('sandboxFinding asks for a restart once the allowance is written but not yet read', () => {
   const dir = scratch();
   try {

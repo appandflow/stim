@@ -41,43 +41,6 @@ afterEach(() => {
   resetExecutor();
 });
 
-JSON.stringify({
-  devices: {
-    'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-      {
-        udid: 'UDID-A',
-        name: 'iPhone 15',
-        state: 'Booted',
-        isAvailable: true,
-        deviceTypeIdentifier: 'iphone-15',
-      },
-      {
-        udid: 'UDID-B',
-        name: 'iPhone 15 Pro',
-        state: 'Shutdown',
-        isAvailable: true,
-        deviceTypeIdentifier: 'iphone-15-pro',
-      },
-      {
-        udid: 'UDID-C',
-        name: 'iPhone 14',
-        state: 'Booted',
-        isAvailable: true,
-        deviceTypeIdentifier: 'iphone-14',
-      },
-    ],
-    'com.apple.CoreSimulator.SimRuntime.iOS-16-0': [
-      {
-        udid: 'UDID-OLD',
-        name: 'iPhone 13',
-        state: 'Shutdown',
-        isAvailable: false,
-        deviceTypeIdentifier: 'iphone-13',
-      },
-    ],
-  },
-});
-
 test('parseSimctlList rejects structurally invalid successful output', () => {
   for (const output of ['[]', '{}', '"ok"', '{"devices":[]}']) {
     expect(() => parseSimctlList(output)).toThrow(/devices object/);
@@ -162,22 +125,6 @@ test('deleteIosSim refuses to delete a sim not owned by Stim', async () => {
   await expect(deleteIosSim('UDID-A')).rejects.toThrow(/Stim/);
 });
 
-const OWNED_SIM_LIST = JSON.stringify({
-  devices: {
-    'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-      {
-        udid: 'UDID-B',
-        name: 'stim-my-project',
-        state: 'Shutdown',
-        isAvailable: true,
-        deviceTypeIdentifier: 'iphone-15',
-      },
-    ],
-  },
-});
-
-OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
-
 test('parseUserApps keeps only user applications', async () => {
   expect(
     parseUserApps(
@@ -248,6 +195,19 @@ describe('clearIosAppData', () => {
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }
+  });
+
+  test('stops before touching files when the running app cannot be terminated', async () => {
+    const calls = exec(null, [], 'Invalid device state');
+    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
+    expect(calls).toHaveLength(1);
+    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
+  });
+
+  test('stops before touching files when the defaults delete fails for another reason', async () => {
+    exec('Invalid device state');
+    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
+    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
   });
 });
 

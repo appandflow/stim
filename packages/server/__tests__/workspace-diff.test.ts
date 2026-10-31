@@ -161,3 +161,38 @@ test.each(['core.attributesFile', 'info/attributes', 'nested .gitattributes'])(
     expect(existsSync(marker)).toBe(false);
   },
 );
+
+test('ignores inherited Git routing and resolves a nested canonical workspace', async () => {
+  mkdirSync(join(repo, 'app'));
+  writeFileSync(join(repo, 'source.txt'), 'updated\n');
+  const result = (await readWorkspaceDiff(
+    join(repo, 'app'),
+    undefined,
+    { ...process.env, GIT_DIR: join(root, 'not-the-repo'), GIT_WORK_TREE: root },
+    new AbortController().signal,
+    'changed',
+  )) as WorkspaceFiles;
+  expect(result.files[0]!.path).toBe('source.txt');
+  await expect(read('../outside.txt')).rejects.toThrow('no longer a changed file');
+  await expect(read(join(repo, 'source.txt'))).rejects.toThrow('no longer a changed file');
+});
+
+test('does not invoke diff or merge drivers, text conversion, fsmonitor or index hooks', async () => {
+  const marker = join(root, 'driver-ran');
+  const driver = join(root, 'driver.js');
+  writeFileSync(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
+  const command = `"${process.execPath}" "${driver}"`;
+  git('config', 'diff.external', command);
+  git('config', 'diff.unsafe.command', command);
+  git('config', 'diff.unsafe.textconv', command);
+  git('config', 'merge.unsafe.driver', command);
+  git('config', 'core.fsmonitor', command);
+  const hooks = join(root, 'hooks');
+  mkdirSync(hooks);
+  writeFileSync(join(hooks, 'post-index-change'), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
+  git('config', 'core.hooksPath', hooks);
+  writeFileSync(join(repo, '.gitattributes'), 'source.txt diff=unsafe merge=unsafe\n');
+  writeFileSync(join(repo, 'source.txt'), 'updated\n');
+  expect(((await read('source.txt')) as WorkspaceDiff).patches[0]!.text).toContain('+updated');
+  expect(existsSync(marker)).toBe(false);
+});

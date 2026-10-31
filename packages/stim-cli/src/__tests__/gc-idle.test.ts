@@ -13,7 +13,8 @@ const teardown = vi.hoisted(() => ({
 }));
 vi.mock('../devices/teardown.ts', () => teardown);
 
-const { findIdleDevices, parseIdleDuration, shutDownIdleDevices } = await import('../commands/gc/idle.ts');
+const { findIdleDevices, idleShutdownCandidates, parseIdleDuration, shutDownIdleDevices } =
+  await import('../commands/gc/idle.ts');
 
 const NOW = Date.parse('2026-09-24T12:00:00Z');
 const HOUR = 3_600_000;
@@ -52,6 +53,26 @@ function collect(activity: Record<string, DeviceActivity>, building = false) {
     buildInProgress: () => building,
   });
 }
+
+test('lists only owned, booted devices whose activity is idle, with idle time per slot', () => {
+  const devices = collect({
+    A: idle(3),
+    B: { state: 'driven', driver: { tool: 'agent-device', pid: 1, since: null }, basis: ['agent-device-lease'] },
+    'emulator-5554': idle(1),
+    U: idle(9),
+  });
+  expect(devices.map((d) => [d.kind, d.id, d.slot, d.idleForMs])).toEqual([
+    ['ios', 'A', 'default', 3 * HOUR],
+    ['android', 'stim-a', 'default', HOUR],
+  ]);
+});
+
+test('shutdown candidates need the full idle duration, a known idle time, and no build in progress', () => {
+  const devices = collect({ A: idle(3), 'emulator-5554': idle(1) });
+  expect(idleShutdownCandidates(devices, 2 * HOUR).map((d) => d.id)).toEqual(['A']);
+  expect(idleShutdownCandidates(collect({ A: idle(3) }, true), HOUR)).toEqual([]);
+  expect(idleShutdownCandidates(collect({ A: { state: 'idle', basis: [] } }), HOUR)).toEqual([]);
+});
 
 test('parses minute, hour, and day durations and rejects the rest', () => {
   expect(parseIdleDuration('30m')).toBe(30 * 60_000);

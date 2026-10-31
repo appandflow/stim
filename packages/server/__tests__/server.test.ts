@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -7960,7 +7961,8 @@ describe('frames.subscribe', () => {
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
     expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
-    writeFileSync(statusFile, JSON.stringify(statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } })));
+    writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } })));
+    renameSync(`${statusFile}.next`, statusFile);
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',

@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { delimiter, join, sep } from 'node:path';
 import { DEPS_ERROR, extractPodDiagnostics, runPodInstall, parseLoginRubyEnv, podEnvForRuby } from '../engine/deps.ts';
-
 import { makeChildProcess, makeError, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string };
@@ -156,17 +155,6 @@ describe('runPodInstall through bundler (#137)', () => {
     '',
   ].join('\n');
 
-  [
-    'GEM',
-    '  remote: https://rubygems.org/',
-    '  specs:',
-    '    fastlane (2.219.0)',
-    '',
-    'DEPENDENCIES',
-    '  fastlane',
-    '',
-  ].join('\n');
-
   function pinnedProject({ lock = COCOAPODS_LOCK, at = '.' }: { lock?: string | null; at?: string } = {}) {
     mkdirSync(join(root, 'ios'), { recursive: true });
     writeFileSync(join(root, at, 'Gemfile'), "source 'https://rubygems.org'\ngem 'cocoapods'\n");
@@ -187,6 +175,30 @@ describe('runPodInstall through bundler (#137)', () => {
   }
 
   const ok = () => fakePodChild({ lines: ['Pod installation complete!'] });
+
+  test('bundler never gets to write the lockfile: --dry-run on check, BUNDLE_FROZEN on every spawn', async () => {
+    pinnedProject();
+    const calls: SpawnCall[] = [];
+    await runPodInstall(root, collectingWriter(), {
+      spawnFn: router(calls, {
+        'bundle check --dry-run': () => fakePodChild({ code: 1, lines: ['The following gems are missing'] }),
+        'bundle install': ok,
+        'bundle exec pod install': ok,
+      }),
+    });
+    expect(calls.map((c) => [c.cmd, ...c.args].join(' '))).toEqual([
+      'bundle check --dry-run',
+      'bundle install',
+      'bundle exec pod install',
+    ]);
+    for (const call of calls) {
+      const env = call.opts.env as NodeJS.ProcessEnv;
+      expect(env.BUNDLE_FROZEN).toBe('true');
+      expect(env.BUNDLE_GEMFILE).toBe(join(root, 'Gemfile'));
+      expect(env.FORCE_COLOR).toBe('0');
+      expect(env.CLICOLOR).toBe('0');
+    }
+  });
 
   test('no `bundle` on PATH falls back to plain `pod install` with a note, not a failure', async () => {
     pinnedProject();

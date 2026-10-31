@@ -1,11 +1,15 @@
 import { setExecutor, resetExecutor } from '../exec.ts';
-
-import { isInsideProject, resolveProjectMetro, killMetroTree, killMetroTreeAsync } from '../metro.ts';
+import {
+  isInsideProject,
+  resolveProjectMetro,
+  killMetroTree,
+  killMetroTreeAsync,
+  signalProcessTree,
+  signalProcessTreeAsync,
+} from '../metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
-
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-
 import { join, resolve as absolute } from 'node:path';
 
 let home: string;
@@ -43,6 +47,30 @@ test('resolveProjectMetro identifies a workspace Metro without claiming ownershi
   expect(r.metro!.leader).toBe(59914);
   expect(r.metro!.processToken).toBeUndefined();
   resetExecutor();
+});
+
+test.each([0, 1, -5])('signalProcessTree refuses pid %s on every platform without signalling', async (pid) => {
+  const runFile = vi.fn<() => string>(() => '');
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: runFile, spawn: () => {} });
+  const signal = vi.spyOn(process, 'kill').mockReturnValue(true);
+  for (const signalTree of [signalProcessTree, signalProcessTreeAsync]) {
+    await expect(
+      Promise.resolve().then(() => signalTree(pid, 'SIGTERM', { group: true, platform: 'darwin' })),
+    ).rejects.toThrow(/Refusing to signal/);
+    await expect(Promise.resolve().then(() => signalTree(pid, 'SIGTERM', { platform: 'win32' }))).rejects.toThrow(
+      /Refusing to signal/,
+    );
+  }
+  expect(signal).not.toHaveBeenCalled();
+  expect(runFile).not.toHaveBeenCalled();
+  signal.mockRestore();
+});
+
+test.each(['malformed'])('killMetroTree refuses an unverified identity (%s)', async (token) => {
+  const signal = vi.spyOn(process, 'kill');
+  for (const killTree of [killMetroTree, killMetroTreeAsync]) expect(await killTree(59806, token)).toBe(false);
+  expect(signal).not.toHaveBeenCalled();
+  signal.mockRestore();
 });
 
 test('killMetroTree refuses to signal its own group even with a matching token', async () => {

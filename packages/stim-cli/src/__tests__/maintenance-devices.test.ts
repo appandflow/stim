@@ -17,7 +17,6 @@ import * as measurements from '../maintenance/measure.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { planDeviceDeletion } from '../maintenance/devices.ts';
-
 import { maintenanceLine } from '../maintenance/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -120,6 +119,11 @@ test('owned devices of a workspace idle past the window are planned for deletion
     expect.objectContaining({ target: recent, reason: 'used within the last 10 minutes' }),
     expect.objectContaining({ target: pinned, reason: 'pinned by maintenance.keep' }),
   ]);
+});
+
+test('a scoped Stim home plans no device deletion, because devices are machine-wide', () => {
+  const idle = workspaceWithSim('idle', 30);
+  expect(plan([idle])).toEqual({ actions: [], blocked: [], skips: [] });
 });
 
 function sweepOf(worktrees: Partial<WorktreeSweep['worktrees'][number]>[]): WorktreeSweep {

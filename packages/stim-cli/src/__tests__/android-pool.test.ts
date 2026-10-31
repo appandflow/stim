@@ -468,6 +468,23 @@ describe('adoption transport recovery', () => {
     await Promise.all([expect(cleanup).rejects.toThrow('no longer running'), vi.runAllTimersAsync()]);
     expect(calls.some((cmd) => cmd.includes('pm clear') || cmd.includes('uninstall'))).toBe(false);
   });
+
+  test.each(['adb: device offline'])('bounds repeated %s failures and retains child diagnostics', async (stderr) => {
+    const exec = getExecutor();
+    let attempts = 0;
+    setExecutor({
+      ...exec,
+      runFile(file, args = [], options) {
+        if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
+        attempts++;
+        throw Object.assign(new Error('adb command failed'), { stderr });
+      },
+    });
+    const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+    await Promise.all([expect(cleanup).rejects.toThrow(stderr), vi.runAllTimersAsync()]);
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(31);
+  });
 });
 
 describe('an explicit --system-image against the slot existing AVD', () => {
@@ -493,4 +510,20 @@ describe('an explicit --system-image against the slot existing AVD', () => {
     expect(getProject('/adopter')?.platforms?.android).toMatchObject({ avdName: result.avdName });
     expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
   });
+});
+
+test('adoption clears the retained app and uninstalls other third-party apps, with a failed clear refusing reuse', async () => {
+  makeAvd('stim-source');
+  running = 'stim-source';
+  await resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+  expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
+  expect(calls).toContain('adb -s emulator-5554 uninstall com.example.other');
+  expect(calls).not.toContain('adb -s emulator-5554 uninstall com.example.app');
+  expect(calls.some((cmd) => cmd.includes('getprop '))).toBe(false);
+  cleanupResult = 'Failed';
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow('Could not clean');
+  packageOutput = 'Error: package manager unavailable';
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
+    'Could not read installed apps',
+  );
 });

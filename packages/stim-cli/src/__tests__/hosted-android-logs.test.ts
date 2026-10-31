@@ -89,6 +89,62 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('collects native errors for the exact serial and app pid, overlaps without replay, and drains the stopped pid', async () => {
+  expect(await collectHostedAndroidLogs(home, session, 'app', start)).toBe(false);
+  expect(records()).toMatchObject([
+    { src: 'device', platform: 'android', level: 'error', msg: 'FATAL EXCEPTION: main' },
+    { level: 'error', msg: 'java.lang.IllegalStateException: fixture crash' },
+    { level: 'info', msg: 'before restart' },
+  ]);
+  expect(checkpoint()).toMatchObject({ until: start, appAttempt: 'app', pid: 321 });
+  expect(native.runFile.mock.calls.find(([, args]) => args?.includes('logcat'))).toEqual([
+    expect.any(String),
+    ['-s', serial, 'logcat', '-d', '-v', 'epoch', '-T', '1700000000.000', '--pid', '321'],
+    { timeoutMs: 4000, killSignal: 'SIGKILL' },
+  ]);
+  vi.setSystemTime(start + 2000);
+  pid = '456';
+  await collectHostedAndroidLogs(home, session, 'app', start);
+  expect(records().map((record) => record.msg)).toEqual([
+    'FATAL EXCEPTION: main',
+    'java.lang.IllegalStateException: fixture crash',
+    'before restart',
+    'restarted app failure',
+  ]);
+  expect(checkpoint()).toMatchObject({ until: start + 2000, pid: 456 });
+  pid = '';
+  output += '\n1700000002.100   456   456 F libc: Fatal signal 11';
+  vi.setSystemTime(start + 3000);
+  await collectHostedAndroidLogs(home, session, 'app', start, true);
+  expect(records().at(-1)).toMatchObject({ src: 'device', level: 'fatal', msg: 'Fatal signal 11' });
+  output += '\n1700000003.100   456   456 E OtherApp: reused pid failure';
+  vi.setSystemTime(start + 4000);
+  await collectHostedAndroidLogs(home, session, 'app', start, true);
+  expect(records()).toHaveLength(5);
+  expect(checkpoint()?.pid).toBeUndefined();
+  expect(checkpoint()?.until).toBe(start + 3000);
+});
+
+test.each(['foreign-ledger', 'wrong-avd'])('refuses %s before reading a pid or logcat', async (scenario) => {
+  if (scenario === 'foreign-ledger')
+    writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+  else native.runFileQuiet.mockReturnValue('user-created\nOK');
+  if (scenario === 'wrong-recorded-serial') {
+    const path = join(home, 'hosted-device.json');
+    const device = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...device, serial: 'emulator-5556', consolePort: 5556 }));
+  }
+  await expect(collectHostedAndroidLogs(home, session, 'app', start)).rejects.toThrow(/ledger|owned|identity/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
+
+test('an absent pid creates no checkpoint and never falls back to device-wide logs', async () => {
+  pid = '';
+  expect(await collectHostedAndroidLogs(home, session, 'app', start, true)).toBe(false);
+  expect(checkpoint()).toBeNull();
+  expect(native.runFile.mock.calls.some(([, args]) => args?.includes('logcat'))).toBe(false);
+});
+
 test('a failed query exhausts ten seconds without advancing its checkpoint', async () => {
   await collectHostedAndroidLogs(home, session, 'app', start);
   vi.setSystemTime(start + 240_000);

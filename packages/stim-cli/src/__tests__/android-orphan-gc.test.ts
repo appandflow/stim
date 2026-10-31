@@ -10,6 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { writeAvdProcessLock } from './_factories.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectGcReport, runGc } from '../commands/gc.ts';
@@ -259,4 +260,56 @@ test('a relative alias registration in a symlinked root protects its data when t
   expect(report.orphanedDevices).toEqual([]);
   expect((await teardownOwnedAvd('stim-retained', { del: true, orphanedDirectory: candidate })).status).toBe('failed');
   expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
+});
+
+test('detachment holds the config lock and deletion cannot remove a new AVD at the original name', async () => {
+  const directory = orphan();
+  race.afterRename = (from) => {
+    if (from !== directory) return;
+    expect(existsSync(join(process.env.STIM_HOME!, 'config.lock'))).toBe(true);
+    const replacement = orphan();
+    register('stim-orphan', replacement);
+    upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
+  };
+  expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('torn-down');
+  expect(existsSync(join(directory, 'userdata.img'))).toBe(true);
+  expect(existsSync(join(avdRoot, 'stim-orphan.ini'))).toBe(true);
+  expect(getProject(home)?.platforms?.android?.avdName).toBe('stim-orphan');
+  expect(readdirSync(avdRoot).some((entry) => entry.startsWith('stim-gc-'))).toBe(false);
+});
+
+test.each(['registration', 'workspace', 'pool'])(
+  'GC refuses an orphan that gained a %s after survey',
+  async (reference) => {
+    const directory = orphan();
+    const candidate = listOrphanedAvdDirectories()[0]!;
+    if (reference === 'registration') register('stim-orphan', directory);
+    else {
+      upsertProject(home, { platforms: { android: { avdName: 'stim-orphan', owned: true } } });
+      if (reference === 'pool')
+        parkSim({
+          platform: 'android',
+          projectPath: home,
+          max: 1,
+          record: {
+            udid: 'stim-orphan',
+            name: 'stim-orphan',
+            systemImage: 'image',
+            configuration: 'config',
+            parkedAt: new Date().toISOString(),
+          },
+        });
+    }
+    expect((await teardownOwnedAvd('stim-orphan', { del: true, orphanedDirectory: candidate })).status).toMatch(
+      /failed|skipped/,
+    );
+    expect(existsSync(directory)).toBe(true);
+  },
+);
+
+test.each(['live', 'unverifiable'])('orphan deletion refuses a %s emulator process lock', async (state) => {
+  const directory = orphan();
+  writeAvdProcessLock(directory, state === 'live' ? String(process.pid) : 'not-a-pid');
+  expect((await teardownOwnedAvd('stim-orphan', { del: true })).status).toBe('failed');
+  expect(existsSync(directory)).toBe(true);
 });

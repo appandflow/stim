@@ -101,6 +101,29 @@ async function kept(path: string) {
   return (await leftovers()).find((entry) => entry.path === path)?.kept;
 }
 
+test('only recognized Stim temp directories and xctrace recordings idle for a day are deleted', async () => {
+  const idle = oldDir('stim-claim-AbC123', { 'note.txt': 'x' });
+  const recent = oldDir('stim-ws-recent');
+  writeFileSync(join(recent, 'package.json'), '{}');
+  const trace = join(fakeTmp, 'instruments5D1A.ktrace');
+  writeFileSync(trace, 'trace');
+  age(trace, 2 * DAY_MS);
+  const unrelated = oldDir('stim-s3-test-abc123');
+  const other = oldDir('metro-cache');
+
+  expect((await collectTempLeftovers())?.root).toBe(realpathSync.native(fakeTmp));
+  expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([
+    [trace, true],
+    [idle, true],
+    [recent, false],
+  ]);
+  expect(await kept(recent)).toMatch(/24h/);
+
+  expect(await deleteTempLeftovers()).toEqual({ count: 2, bytes: expect.any(Number), failures: 0 });
+  expect([existsSync(idle), existsSync(trace)]).toEqual([false, false]);
+  expect([existsSync(recent), existsSync(unrelated), existsSync(other)]).toEqual([true, true, true]);
+});
+
 test('SwiftPM TemporaryDirectory.* directories are listed and deleted once idle and no swift process runs', async () => {
   const idle = oldDir('TemporaryDirectory.0Hkz40', { '.keep-directory': '', 'inputs-1.LinkFileList': 'x' });
   const recent = oldDir('TemporaryDirectory.2kjCOS');
@@ -232,6 +255,15 @@ test('xctrace recordings stay while xctrace or Instruments runs, or when process
   expect(await kept(trace)).toBe('the running processes could not be listed');
   expect((await deleteTempLeftovers()).count).toBe(0);
   expect(existsSync(trace)).toBe(true);
+});
+
+test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', async () => {
+  vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
+  const idle = oldDir('stim-host-871a9a');
+
+  expect(await collectTempLeftovers()).toBeNull();
+  expect((await deleteTempLeftovers()).count).toBe(0);
+  expect(existsSync(idle)).toBe(true);
 });
 
 test('maintenance at disk pressure level 2 plans and deletes the idle leftovers', async () => {

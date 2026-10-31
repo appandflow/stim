@@ -4,7 +4,10 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEVICE_IDLE_SHUTDOWN_KEY, readDeviceIdleShutdowns, type DeviceActivity } from '@stim-cli/core/state';
-import { clearDeviceIdleShutdown, idleShutdownDueMs } from '../devices/idle-shutdown.ts';
+import { clearDeviceIdleShutdown, idleShutdownDueMs, shutDownIdleDevices } from '../devices/idle-shutdown.ts';
+import { teardownOwnedIosSim } from '../devices/teardown.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
+import { upsertProject } from '../workspace/config.ts';
 
 vi.mock('../devices/teardown.ts', () => ({
   teardownOwnedIosSim: vi.fn<typeof import('../devices/teardown.ts').teardownOwnedIosSim>(),
@@ -27,8 +30,47 @@ import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-
 const NOW = Date.parse('2026-09-27T12:00:00.000Z');
 const MINUTE = 60_000;
 const at = (msAgo: number) => new Date(NOW - msAgo).toISOString();
+const due = (activity: DeviceActivity, buildInProgress = false) =>
+  idleShutdownDueMs(activity, {
+    idleMs: 2 * MINUTE,
+    now: NOW,
+    buildInProgress,
+  });
 
 describe('idleShutdownDueMs', () => {
+  test('a driver, a Stim or agent-device lock, or unreadable evidence keeps an old device up', () => {
+    const old = at(5 * 3_600_000);
+    const driven = (tool: string, basis: string): DeviceActivity => ({
+      state: 'driven',
+      driver: { tool, pid: null, since: old },
+      lastActivityAt: old,
+      basis: [basis],
+    });
+    expect(due(driven('agent-device', 'agent-device-lease'))).toBe(null);
+    expect(due(driven('stim device lock', 'device-lock'))).toBe(null);
+    expect(due(driven('maestro', 'driver-process'))).toBe(null);
+    expect(
+      due({
+        state: 'unknown',
+        lastActivityAt: old,
+        basis: ['agent-device-claim'],
+      }),
+    ).toBe(null);
+  });
+
+  test('a build in the workspace keeps an old device up', () => {
+    expect(
+      due(
+        {
+          state: 'idle',
+          lastActivityAt: at(5 * 3_600_000),
+          basis: ['device-log'],
+        },
+        true,
+      ),
+    ).toBe(null);
+  });
+
   test('on Windows, the missing ps probe alone does not keep a device up', () => {
     const activity: DeviceActivity = {
       state: 'unknown',
@@ -93,6 +135,48 @@ describe('clearDeviceIdleShutdown', () => {
       holder.kill('SIGKILL');
       await exited;
     }
+  });
+});
+
+describe('shutDownIdleDevices', () => {
+  let stimHome: string;
+  let home: string | undefined;
+
+  beforeEach(() => {
+    stimHome = mkdtempSync(join(tmpdir(), 'stim-idle-sweep-'));
+    process.env.STIM_HOME = stimHome;
+    home = process.env.HOME;
+    process.env.HOME = stimHome;
+    setExecutor({ runFileQuiet: () => '' } as never);
+    vi.mocked(teardownOwnedIosSim).mockReset();
+  });
+
+  afterEach(() => {
+    resetExecutor();
+    process.env.HOME = home;
+    rmSync(stimHome, { recursive: true, force: true });
+    delete process.env.STIM_HOME;
+  });
+
+  function setup() {
+    const mine = join(stimHome, 'mine');
+    const other = join(stimHome, 'other');
+    upsertProject(mine, { platforms: { ios: { deviceUdid: 'MINE', owned: true } } });
+    upsertProject(other, { platforms: { ios: { deviceUdid: 'OTHER', owned: true } } });
+    for (const root of [mine, other]) writeWorkspaceState(root, { lastUsedAt: at(10 * MINUTE) });
+    return mine;
+  }
+
+  test("shuts down only its own workspace's idle device, without deleting it, and records why", async () => {
+    const mine = setup();
+    vi.mocked(teardownOwnedIosSim).mockResolvedValue({ status: 'torn-down', label: 'stim-MINE' });
+    const log: { event: string; msg: string }[] = [];
+    expect(await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(1);
+    expect(vi.mocked(teardownOwnedIosSim).mock.calls).toEqual([['MINE', { label: 'stim-MINE', workspace: mine }]]);
+    expect(readDeviceIdleShutdowns(readWorkspaceState(mine))).toEqual({ ios: { at: at(0), idleMinutes: 10 } });
+    expect(log).toEqual([
+      { level: 'info', event: 'device_idle_shutdown', msg: 'shut down simulator stim-MINE, idle 10m' },
+    ]);
   });
 });
 

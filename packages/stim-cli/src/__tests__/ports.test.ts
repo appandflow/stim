@@ -4,10 +4,17 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'node:url';
-
+import { createServer as createHttpServer } from 'node:http';
 import { getExecutor, resetExecutor } from '../exec.ts';
-import { upsertProject, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
-import { computeNextPort, createPortProbe, findReclaimablePort, allocatePort, reserveMetroPort } from '../ports.ts';
+import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
+import {
+  computeNextPort,
+  createPortProbe,
+  findReclaimablePort,
+  allocatePort,
+  reserveMetroPort,
+  isMetroRunning,
+} from '../ports.ts';
 import * as listeners from '../listening-ports.ts';
 
 const allFree = async () => true;
@@ -82,6 +89,30 @@ test('findReclaimablePort returns first dead port and its owner', async () => {
   const probe = async (port: number) => port === 8082;
   const r = await findReclaimablePort(join(tmpHome, 'gone-c'), probe);
   expect(r).toEqual({ port: 8083, ownerPath: b });
+});
+
+test('allocatePort reuses a dead project port but keeps its devices and pending branch cleanup', async () => {
+  const dead = join(tmpHome, 'dead-project');
+  upsertProject(dead, {
+    bundleId: 'a',
+    androidPackage: 'a',
+    isExpo: false,
+    worktreeBranch: 'feature',
+    worktreeBranchOwned: true,
+    worktreeMainRoot: join(tmpHome, 'main'),
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
+  setDevice(dead, 'ios', { deviceUdid: 'U1', owned: true });
+  claimMetroPort(dead, 8082);
+  const port = await allocatePort('/new', async () => false, allFree);
+  expect(port).toBe(8082);
+  expect(getProject(dead)).toMatchObject({
+    metroPort: null,
+    platforms: { ios: { deviceUdid: 'U1', owned: true } },
+    worktreeRemovalComplete: true,
+    worktreePendingBranchSha: 'abc123',
+  });
 });
 
 test('findReclaimablePort does not reclaim live-path projects even with dead Metro', async () => {
@@ -185,3 +216,38 @@ test('allocatePort does not reuse a reclaimable port that is now occupied', asyn
   expect(port).not.toBe(8082);
   expect(port).toBe(8083);
 });
+
+test.each(['streaming', 'oversized'] as const)(
+  'Metro status refuses a %s response and closes its request',
+  async (mode) => {
+    const controller = new AbortController();
+    let onClosed = () => {};
+    const closed = new Promise<void>((resolve) => {
+      onClosed = resolve;
+    });
+    const server = createHttpServer((_request, response) => {
+      response.once('close', onClosed);
+      response.write('packager-status:running');
+      if (mode === 'oversized') {
+        response.end('x'.repeat(65_537));
+        return;
+      }
+      const chunks = setInterval(() => response.write('.'), 20);
+      const escape = setTimeout(() => response.end(), 3000);
+      response.once('close', () => {
+        clearInterval(chunks);
+        clearTimeout(escape);
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, 'localhost', resolve));
+    try {
+      const address = server.address();
+      assert(address && typeof address === 'object');
+      expect(await isMetroRunning(address.port, controller.signal)).toBe(false);
+      await closed;
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  },
+);

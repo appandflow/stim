@@ -90,3 +90,40 @@ test('blocks a peer after repeated misses, even for a journal that exists, witho
   expect(await blocked.text()).not.toContain('Xcode');
   expect((await fetch(`${base}/setup/${hash}`, { headers: { 'x-forwarded-for': '100.64.0.3' } })).status).toBe(200);
 });
+
+test('rejects unsafe methods, browser headers and malformed paths without reading a journal', async () => {
+  const base = await start();
+  writeSetupJournal(hash, journal());
+  const read = vi.spyOn(await import('@stim-cli/core/state'), 'readSetupJournal');
+  for (const options of [
+    { headers: { ...headers, origin: 'https://example.com' } },
+    { headers: { ...headers, 'sec-fetch-site': 'same-origin' } },
+    { method: 'POST', headers },
+    { method: 'PUT', headers },
+  ])
+    expect(await refusal(await fetch(`${base}/setup/${hash}`, options))).toEqual(notFound);
+  for (const path of [
+    '/setup/',
+    `/setup/${hash.toUpperCase()}`,
+    `/setup/${hash}0`,
+    `/setup/${hash}/`,
+    `/setup/${hash}?x=1`,
+    '/setup/not-a-hash',
+  ]) {
+    expect(await refusal(await fetch(`${base}${path}`, { headers }))).toEqual(notFound);
+  }
+  expect(read).not.toHaveBeenCalled();
+});
+
+test('serves a named journal to any peer with toolchain steps hidden', async () => {
+  const base = await start();
+  const pending = journal();
+  writeSetupJournal(hash, pending);
+  for (const peerHeaders of [headers, {}]) {
+    const response = await fetch(`${base}/setup/${hash}`, { headers: peerHeaders });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toBe('application/json');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toEqual({ ...pending, steps: [pending.steps[0]] });
+  }
+});

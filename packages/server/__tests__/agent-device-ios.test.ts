@@ -535,3 +535,89 @@ test('a request too deep to serialize fails without rejecting the relay', async 
   vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
   expect((await rpcBody(body)).status).toBe(500);
 });
+
+test.each([
+  { command: 'screenshot', positionals: ['/host/file.png'] },
+  { command: 'record', positionals: ['start'], meta: {} },
+  { command: 'record', positionals: ['stop', '/tmp/agent-device-recording-1-ab.mp4'] },
+  { command: 'record', positionals: ['list'] },
+  { command: 'batch', flags: { batchSteps: [{ command: 'record', positionals: ['stop'] }] } },
+  { command: 'push', positionals: ['dev.app', '/Users/me/payload.json'] },
+  { command: 'push', positionals: ['dev.app', '{"a":"/../../tmp/x}"}'] },
+  { command: 'push', positionals: ['/host/App.app', '{"aps":{}}'] },
+  { command: 'perf', positionals: ['memory', 'snapshot'] },
+  { command: 'artifacts', positionals: ['provider-session'] },
+  { command: 'settings', positionals: ['permission', 'grant', 'accessibility'] },
+  { command: 'settings', positionals: [' Permission', 'grant', 'Screen-Recording'] },
+  { command: 'settings', positionals: ['clear-app-state', 'clear', '/host/App.app'] },
+  { command: 'settings', positionals: ['permission', 'grant', 'camera'], input: { app: '/host/App.app' } },
+])('refuses host access and out-of-scope recording requests before forwarding: %j', async (params) => {
+  await start();
+  fixture.calls = [];
+  expect((await rpc(params)).status).toBe(400);
+  expect(fixture.calls).toEqual([]);
+});
+
+test.each(['Xcode 27.app'])('stops only exact-UDID runners under %s, after the daemon clean path', async (app) => {
+  await start();
+  fixture.ps = [
+    [
+      runner(888880, UDID.toUpperCase()),
+      runner(888881, SESSION),
+      runner(888882, `${UDID}0`),
+      runner(888883).replace('-destination ', '--destination '),
+      runner(888884).replace('AgentDeviceRunnerUITests', 'OtherUITests'),
+      runner(888885, UDID, 900000),
+      runner(888886, `0${UDID}`),
+      runner(888887).replace('/usr/bin/xcodebuild', '/usr/bin/not-xcodebuild'),
+      runner(888888).replace('/usr/bin/xcodebuild', '/usr/bin/echo xcodebuild'),
+    ]
+      .join('\n')
+      .replaceAll('Xcode.app', app),
+  ];
+  fixture.identities = Object.fromEntries(
+    [888880, 888881, 888882, 888883, 888884, 888885, 888886, 888887, 888888].map((pid) => [pid, 'same']),
+  );
+  await driver.stop();
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:888885:SIGTERM']);
+  expect(fixture.identities[888881]).toBe('same');
+  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
+});
+
+test('never signals a runner whose captured identity changed or whose destination changed before signalling', async () => {
+  await start();
+  fixture.ps = [runner(888880) + '\n' + runner(888881), runner(888880) + '\n' + runner(888881, SESSION)];
+  fixture.identities = { 888880: 'different', 888881: 'same' };
+  await driver.stop();
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
+});
+
+test('never signals a runner whose identity cannot be captured', async () => {
+  await start();
+  fixture.ps = [runner(888880)];
+  fixture.identities = { 888880: 'same' };
+  fixture.uncaptured.add(888880);
+  await expect(driver.stop()).rejects.toThrow('iOS runners did not stop (888880)');
+  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
+  fixture.uncaptured.clear();
+  await driver.stop();
+});
+
+test('overlapping starts run only one recording', async () => {
+  await start();
+  const answers = await Promise.all([rpc(recordStart()), rpc(recordStart())]);
+  expect(answers.map((answer) => answer.status).toSorted()).toEqual([200, 400]);
+  expect(fixture.calls.filter((call) => call.body.includes('"record"'))).toHaveLength(1);
+});
+
+test('a stop from another agent-device session keeps the running recording', async () => {
+  await start();
+  await rpc(recordStart());
+  const calls = fixture.calls.length;
+  const other = await rpc({ command: 'record', session: 'other', positionals: ['stop'] });
+  expect(other.status).toBe(400);
+  expect(JSON.parse(other.text).error.data.details.rule).toBe('recording');
+  expect(fixture.calls).toHaveLength(calls);
+  expect((await rpc(recordStart())).status).toBe(400);
+  expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
+});

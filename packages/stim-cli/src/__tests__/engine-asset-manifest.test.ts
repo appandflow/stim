@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -10,6 +10,7 @@ import {
   findGeneratedResDir,
   parseAssetManifest,
   pickGeneratedResDir,
+  readAssetManifest,
   type AssetManifest,
 } from '../engine/asset-manifest.ts';
 
@@ -30,6 +31,14 @@ function write(file: string, contents: string) {
   writeFileSync(file, contents);
 }
 
+describe('readAssetManifest', () => {
+  test('a file that cannot be read makes the WHOLE manifest null -- a partial one would let a change through', () => {
+    write(join(root, 'raw', 'sound.mp3'), 'mp3');
+    symlinkSync(join(root, 'gone'), join(root, 'raw', 'dangling.png'));
+    expect(readAssetManifest(root)).toBe(null);
+  });
+});
+
 describe('parseAssetManifest', () => {
   test('anything unrecognised is NO manifest, never an empty one', () => {
     expect(parseAssetManifest('not json')).toBe(null);
@@ -44,6 +53,10 @@ describe('parseAssetManifest', () => {
 
 describe('pickGeneratedResDir', () => {
   const modern = ['createBundleDebugJsAndAssets', 'createBundleProductionReleaseJsAndAssets'];
+
+  test('a tree that has built BOTH does not hand a release run the debug leftovers', () => {
+    expect(pickGeneratedResDir(modern, 'release')).toBe(null);
+  });
 
   test('older layout: react/<variant>', () => {
     expect(pickGeneratedResDir(['react'], 'productionRelease', ['debug', 'productionRelease'])).toBe(

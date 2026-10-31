@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, removeProject, setDevice, upsertProject } from '../workspace/config.ts';
+import { clearDevice, getProject, removeProject, setDevice, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
@@ -270,6 +270,17 @@ describe('teardown of a record on a machine without the Android emulator tool', 
     expect(outcome.status).toBe('failed');
     expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
   });
+
+  test.each(['ANDROID_AVD_HOME'])(
+    'keeps the record when %s names a location that may be on an unmounted volume',
+    async (name) => {
+      unconfigure();
+      process.env[name] = join(home, 'unmounted');
+      const outcome = await teardownOwnedAvd(avdName, { owner: { projectPath: project } });
+      expect(outcome).toMatchObject({ status: 'failed', reason: expect.stringContaining('ENOENT') });
+      expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
+    },
+  );
 });
 
 test('another workspace creating the same label while the first is reserved receives a distinct AVD', async () => {
@@ -428,5 +439,45 @@ describe.skipIf(process.platform === 'win32')('POSIX process groups; skipped on 
         if (child?.pid !== undefined) await until(() => !processGroupAlive(child!.pid!));
       }
     },
+  );
+});
+
+test.each([true, false])(
+  'rollback preserves a newer record with the same name (artifacts exist: %s)',
+  async (artifactsExist) => {
+    await expect(
+      prepareOwnedAvd({
+        projectPath: project,
+        label: 'setup',
+        configuration: 'fixture',
+        configure: () => {
+          throw new Error('disk full');
+        },
+        teardown: async (name, options) => {
+          setDevice(project, 'android', { avdName, owned: true, deviceName: 'replacement' });
+          if (!artifactsExist) {
+            rmSync(join(avdRoot, `${avdName}.ini`));
+            rmSync(join(avdRoot, `${avdName}.avd`), { recursive: true });
+          }
+          return await teardownOwnedAvd(name, options);
+        },
+      }),
+    ).rejects.toThrow(/remains tracked for cleanup/);
+    expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(artifactsExist);
+    expect(getProject(project)?.platforms?.android?.deviceName).toBe('replacement');
+  },
+);
+
+test('cleanup revalidates the slot that owns an AVD', async () => {
+  await prepare();
+  clearDevice(project, 'android');
+  setDevice(project, 'android', { avdName, owned: true }, 'qa');
+  expect(await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).toMatchObject({
+    status: 'failed',
+    reason: expect.stringContaining('(qa)'),
+  });
+  expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
+  expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project, slot: 'qa' } })).status).toBe(
+    'torn-down',
   );
 });

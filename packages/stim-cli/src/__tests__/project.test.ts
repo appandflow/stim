@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { resolve, join } from 'path';
 import { detectPlatforms } from '../integrations/projects.ts';
 import { detectIsExpo, ownedDeviceLabel } from '../workspace/project.ts';
-import { detectAndroidPackage, detectBundleId } from '../workspace/app-id.ts';
+import { detectAndroidPackage, detectAppIds, detectBundleId } from '../workspace/app-id.ts';
 import { getExecutor } from '../exec.ts';
 
 const FIXTURES = resolve(import.meta.dirname, 'fixtures');
@@ -166,6 +166,33 @@ test('detectBundleId reads ios.bundleIdentifier from app.json', async () => {
 
 test('detectAndroidPackage falls back to android/app/build.gradle (namespace)', async () => {
   expect(await detectAndroidPackage(BARE_PROJ)).toBe('me.sample');
+});
+
+test('an Android id that is not a dotted package name is not detected, and the problem is reported', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bad-package-')));
+  try {
+    mkdirSync(join(root, 'android', 'app'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'app', dependencies: { 'react-native': '*' } }));
+    const gradle = join(root, 'android', 'app', 'build.gradle');
+    writeFileSync(gradle, 'android {\n  defaultConfig {\n    applicationId "com.x;reboot"\n  }\n}\n');
+    const bad = await detectAppIds(root);
+    expect(bad.androidPackage).toBeNull();
+    expect(bad.androidPackageProblem).toMatch(/Invalid Android package "com\.x;reboot" in .*build\.gradle/);
+    writeFileSync(
+      gradle,
+      'android {\n  namespace "${ns}"\n  defaultConfig {\n    applicationId "com.example_1.app"\n  }\n}\n',
+    );
+    expect((await detectAppIds(root)).androidPackage).toBe('com.example_1.app');
+    writeFileSync(gradle, 'android {\n  namespace "com.example_1.app"\n}\n');
+    expect(await detectAppIds(root)).toMatchObject({
+      androidPackage: 'com.example_1.app',
+      androidPackageProblem: null,
+    });
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: "com.x'; reboot; '" } } }));
+    expect((await detectAppIds(root)).androidPackageProblem).toMatch(/in the Expo config android\.package/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 let tmpHome: string;

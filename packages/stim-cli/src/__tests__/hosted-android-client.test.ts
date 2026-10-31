@@ -2,7 +2,6 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
-
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
@@ -12,12 +11,11 @@ import { join } from 'node:path';
 import { deviceHostMachinesFile, type HostedAndroidPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { getConfigPath, upsertProject } from '../workspace/config.ts';
+import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedAndroid, writeHostedNative } from '../device-host/ios-state.ts';
-
 import { runReload } from '../commands/reload.ts';
 
 const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
@@ -188,6 +186,41 @@ afterEach(() => {
   vi.restoreAllMocks();
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
+});
+
+test('offers before reserving, records the owner, and sends one APK and the client Metro port', async () => {
+  const target = await prepareHostedAndroid('mini', { deviceProfile: 'pixel_7' });
+  const run = await placeHostedAndroid(target, {
+    root,
+    slot: 'tablet',
+    bundle: join(root, 'App.apk'),
+    bundleId: 'dev.fixture',
+    selectors: {},
+    release: false,
+    metroPort: 8082,
+    reserved: (value) => writeHostedAndroid(root, 'tablet', value),
+    note: () => {},
+    metro: async () => {},
+  });
+  expect(run.launched).toBe('unverified');
+  expect(methods.find((entry) => entry.method === 'device-host.reserve')?.params).toMatchObject({
+    platform: 'android',
+    systemImage: device.systemImage,
+    deviceProfile: 'pixel_7',
+    slot: 'tablet',
+  });
+  expect(methods.findIndex((entry) => entry.method === 'device-host.offer')).toBeLessThan(
+    methods.findIndex((entry) => entry.method === 'device-host.reserve'),
+  );
+  expect(JSON.parse(manifest.toString())).toEqual([
+    { path: 'App.apk', kind: 'file', size: 11, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+  ]);
+  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toEqual({
+    session,
+    clientMetroPort: 8082,
+  });
+  expect(readHostedAndroid(root, 'tablet').tablet?.session).toBe(session);
+  expect(getProject(root)?.platforms?.android).toBeUndefined();
 });
 
 test('hosted Android reload restores the host bridge before Metro without local adb', async () => {

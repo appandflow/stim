@@ -11,7 +11,9 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { withAmbientContext } from '@stim-cli/core';
 import { filesystemDevice, makeTemporaryDirectory, removeTemporaryEntryAsync, temporaryRoot } from '../temporary.ts';
+import { testContext } from './_context.ts';
 
 const volume = vi.hoisted(() => ({ path: '' }));
 vi.mock('node:fs', async (importOriginal) => {
@@ -75,6 +77,21 @@ test('app staging cannot modify or recursively copy the source bundle', () => {
   expect(relative(app, staging).startsWith('..')).toBe(true);
   vi.stubEnv('STIM_TMPDIR', join(app, 'temp'));
   expect(() => temporaryRoot(app)).toThrow(/must not be inside/);
+});
+
+test('swap staging for a cached artifact stays outside the build cache', () => {
+  const cache = join(volume.path, 'build-cache');
+  vi.stubEnv('STIM_BUILD_CACHE', cache);
+  const app = join(cache, 'ios', 'key', 'Fixture.app');
+  mkdirSync(app, { recursive: true });
+  expect(temporaryRoot(app)).toBe(volume.path);
+  expect(temporaryRoot(join(cache, 'android', 'key', 'app.apk'))).toBe(volume.path);
+});
+
+test("an operation's STIM_TMPDIR wins over the host process's", () => {
+  vi.stubEnv('STIM_TMPDIR', join(volume.path, 'host'));
+  const context = testContext({ env: { ...process.env, STIM_TMPDIR: tmpdir() } });
+  expect(withAmbientContext(context, () => temporaryRoot(near))).toBe(tmpdir());
 });
 
 test('artifact cleanup yields to other work, removes read-only directories and leaves symlink targets intact', async () => {

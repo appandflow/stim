@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseNdjsonText, createNdjsonWriter } from '../ndjson.ts';
@@ -12,6 +12,18 @@ afterEach(() => {
 });
 
 describe('createNdjsonWriter', () => {
+  test.skipIf(process.platform === 'win32')('a new log and a wider logs directory end up owner-only', () => {
+    const logs = join(dir, 'logs');
+    mkdirSync(logs, { mode: 0o755 });
+    chmodSync(logs, 0o755);
+    const file = join(logs, 'metro.ndjson');
+    const w = createNdjsonWriter(file);
+    expect(w.write({ src: 'metro', level: 'info', msg: 'hello' })).toBe(true);
+    w.close();
+    expect(statSync(logs).mode & 0o777).toBe(0o700);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   test('exposes the running drop count without closing', () => {
     const blocker = join(dir, 'logs');
     writeFileSync(blocker, 'file');

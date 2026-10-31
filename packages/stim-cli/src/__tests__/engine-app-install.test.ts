@@ -174,6 +174,43 @@ describe('ios', () => {
     });
   });
 
+  test('a running Expo dev client restarts with its project URL instead of an openurl into the old process', async () => {
+    const exec = recordingExec({
+      outputs: {
+        'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n',
+        'simctl launch': 'com.example.app: 5151',
+      },
+    });
+    const result = await launchIosApp(
+      {
+        udid: 'U1',
+        bundleId: 'com.example.app',
+        metroPort: 8082,
+        devClientScheme: 'myapp',
+        consolePaths: { stdout: '/container/trace.out', stderr: '/container/trace.err' },
+      },
+      { exec },
+    );
+    expect(result).toMatchObject({ ok: true, mode: 'launch', pid: 5151, restartedPid: 4242 });
+    expect(exec.calls.map((call) => call[2])).toEqual(['spawn', 'spawn', 'launch']);
+    expect(exec.calls.at(-1)).toContain('--terminate-running-process');
+    expect(exec.calls.at(-1)).toContain('--initialUrl');
+  });
+
+  test('a failed terminate refuses an openurl into the old process', async () => {
+    const exec = recordingExec({
+      fail: 'simctl terminate',
+      outputs: { 'launchctl list': '4242\t0\tUIKitApplication:com.example.app[abcd][rb-legacy]\n' },
+    });
+    const result = await launchIosApp(
+      { udid: 'U1', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/simctl terminate com\.example\.app failed.*pid 4242/);
+    expect(exec.calls.some((call) => call.includes('openurl'))).toBe(false);
+  });
+
   test('an unreadable process list launches with simctl terminating any running copy, not a separate terminate', async () => {
     const exec = recordingExec({ fail: ['launchctl list', 'simctl terminate'], failCode: 'ETIMEDOUT' });
     const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
@@ -188,6 +225,15 @@ describe('ios', () => {
       'U1',
       'com.example.app',
     ]);
+  });
+
+  test('a failed defaults write stops the launch rather than launching unwired', async () => {
+    const exec = recordingExec({ fail: 'defaults write' });
+    const result = await launchIosApp({ udid: 'U1', bundleId: 'com.example.app', metroPort: 8082 }, { exec });
+    expect(result.code).toBe(LAUNCH_ERROR);
+    expect(result.reason).toMatch(/RCT_jsLocation/);
+    expect(exec.calls.length).toBe(2);
+    expect(result.reason).not.toContain('Activity Monitor');
   });
 
   test.each(['defaults write', 'simctl openurl', 'simctl launch'])(
@@ -297,6 +343,38 @@ describe('verifyReleaseLaunch', () => {
 });
 
 describe('android: install and launch', () => {
+  test('every adb call on the launch path runs under a hard deadline', async () => {
+    const exec = recordingExec({
+      fail: 'android.intent.action.VIEW',
+      outputs: { 'resolve-activity': ['com.example.app/.MainActivity\n', 'No activity found\n'] },
+    });
+    await launchAndroidApp(
+      { serial: 'emulator-5554', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' },
+      { exec },
+    );
+    await launchAndroidReleaseApp({ serial: 'emulator-5554', packageName: 'com.example.app' }, { exec });
+    await androidAppProcess('emulator-5554', 'com.example.app', { exec });
+    expect(exec.calls.map((call) => call.slice(3, 5).join(' '))).toEqual([
+      'shell pidof',
+      'shell ps',
+      'reverse tcp:8082',
+      'shell run-as',
+      'shell am',
+      'shell cmd',
+      'shell am',
+      'shell pidof',
+      'shell ps',
+      'shell cmd',
+      'shell monkey',
+      'shell pidof',
+      'shell ps',
+    ]);
+    for (const options of exec.options) {
+      expect(options?.timeoutMs).toBeGreaterThan(0);
+      expect(options?.killSignal).toBe('SIGKILL');
+    }
+  });
+
   test('ensureMetroReverse leaves a present reverse alone and re-applies a missing one', async () => {
     const present = recordingExec({ outputs: { '--list': 'host-19 tcp:8082 tcp:8082\n' } });
     expect(await ensureMetroReverse({ serial: 'emulator-5554', metroPort: 8082 }, { exec: present })).toEqual({
@@ -441,7 +519,6 @@ describe('verifyLaunch', () => {
       platform,
       requestId,
     });
-
     const run = async (records: NdjsonRecord[], platform: 'ios' | 'android' = 'android') => {
       const clock = fakeClock();
       const result = await verifyLaunch({
@@ -498,6 +575,18 @@ describe('verifyLaunch', () => {
     expect(result.timedOut).toBeUndefined();
     expect(probes.every((at) => at >= since + VERIFY_TIMEOUT_MS)).toBe(true);
   });
+
+  test('the alert stall: a bundle that arrives after the deadline does not retroactively verify', async () => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      since: clock.at(),
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => (clock.at() > 1000 + 30000 ? [{ ts: clock.at(), event: 'bundle_build_started' }] : []),
+    });
+    expect(result.verified).toBe(false);
+    expect(result.timedOut).toBe(true);
+  });
 });
 
 describe('verifyLaunch: the stability window ends on evidence that the app JavaScript is running', () => {
@@ -549,6 +638,41 @@ describe('verifyLaunch: the stability window ends on evidence that the app JavaS
 });
 
 describe('optional app readiness', () => {
+  test.each(['stalled'])('a %s bundle response cannot become verified from a build marker', async (outcome) => {
+    const clock = fakeClock();
+    const records: NdjsonRecord[] = [
+      { ts: 1000, platform: 'android', event: 'bundle_response_started', requestId: 'a' },
+      { ts: 2000, platform: 'android', event: 'bundle_build_done' },
+      ...(outcome === 'failed'
+        ? [
+            {
+              ts: 2500,
+              platform: 'android',
+              event: 'bundle_response_failed',
+              requestId: 'a',
+              level: 'error',
+              msg: 'delivery failed',
+            },
+          ]
+        : []),
+    ];
+    const result = await verifyLaunch({
+      since: 1000,
+      platform: 'android',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => records.filter((r) => Number(r.ts) <= clock.at()),
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+    });
+    expect(result.verified).toBe(false);
+    expect(result).toMatchObject(
+      outcome === 'stalled'
+        ? { requested: true, timedOut: true, waitedMs: VERIFY_TIMEOUT_MS }
+        : { fatal: true, waitedMs: 1500, errors: [{ msg: 'delivery failed' }] },
+    );
+  });
+
   function signal(ts: number, state: string, extra: Partial<NdjsonRecord> = {}): NdjsonRecord {
     return { ts, src: 'device', platform: 'ios', level: 'info', msg: `[stim:readiness] ${state}`, ...extra };
   }
@@ -572,6 +696,33 @@ describe('optional app readiness', () => {
     });
     return { result, pendingNotices };
   }
+
+  test('missing ready is bounded and repeated pending cannot extend the deadline', async () => {
+    const { result, pendingNotices } = await run([
+      signal(1000, 'pending'),
+      signal(3000, 'pending'),
+      signal(30000, 'pending'),
+      signal(31500, 'ready'),
+    ]);
+    expect(result).toMatchObject({ verified: true, readiness: 'timed-out', waitedMs: 30000 });
+    expect(pendingNotices).toBe(1);
+  });
+
+  test.each([
+    signal(500, 'pending'),
+    signal(1500, 'pending', { platform: 'android' }),
+    signal(1500, 'pending', { platform: undefined }),
+    signal(1500, 'pending', { src: 'metro' }),
+    signal(1500, 'pending', { src: 'build' }),
+    signal(1500, 'pending', { level: 'error' }),
+    signal(1500, 'pending', { msg: 'example: [stim:readiness] pending' }),
+    signal(1500, 'pending', { msg: '[stim:readiness] pending\nother log' }),
+  ])('does not opt in from stale, ambiguous, or embedded evidence: %j', async (record) => {
+    const { result, pendingNotices } = await run([record, signal(5000, 'ready')]);
+    expect(result).toMatchObject({ verified: true, waitedMs: 3000 });
+    expect(result.readiness).toBeUndefined();
+    expect(pendingNotices).toBe(0);
+  });
 
   test('an app error interrupts the wait even when ready is present', async () => {
     const { result } = await run([signal(1000, 'pending'), signal(1500, 'ready')], {
@@ -852,6 +1003,40 @@ describe('isBundleRequestProof', () => {
 });
 
 describe('verifyLaunch: still bundling', () => {
+  test("another platform's bundle failure does not fail this launch", async () => {
+    const clock = fakeClock();
+    const since = clock.at();
+    const result = await verifyLaunch({
+      since,
+      platform: 'ios',
+      now: clock.now,
+      sleep: clock.sleep,
+      readRecords: () => [
+        {
+          ts: since + 10,
+          event: 'bundle_build_failed',
+          buildID: 'android_1',
+          platform: 'android',
+          level: 'error',
+          msg: 'Android failed',
+        },
+        {
+          ts: since + 11,
+          event: 'bundling_error',
+          buildID: 'android_1',
+          platform: 'android',
+          level: 'error',
+          msg: 'Unable to resolve AndroidOnly',
+        },
+        { ts: since + 20, event: 'bundle_build_done', buildID: 'ios_1', platform: 'ios' },
+      ],
+      readDeviceRecords: () => [],
+      processAlive: () => true,
+    });
+    expect(result).toMatchObject({ verified: true, processAlive: true });
+    expect(result.errors).toEqual([]);
+  });
+
   test('a process exit during the readiness window is fatal', async () => {
     const clock = fakeClock();
     const since = clock.at();
@@ -882,6 +1067,19 @@ describe('the 8081 adb reverse is a fallback, not a default', () => {
       }),
     };
   }
+  const reverses = (calls: string[][]) => calls.filter((c) => c.includes('reverse')).map((c) => c.slice(-2).join(' '));
+
+  test('a failed prefs write adds the 8081 fallback so the app still finds Metro', async () => {
+    const { calls, exec } = execRecording(false);
+    const result: LaunchResult = await launchAndroidApp(
+      { serial: 'RFCR7081Q9L', packageName: 'com.example.app', metroPort: 8082, physical: true },
+      { exec },
+    );
+    expect(result.ok).toBe(true);
+    expect(reverses(calls)).toEqual(['tcp:8082 tcp:8082', 'tcp:8081 tcp:8082']);
+    expect(result.debugHttpHost).toBeNull();
+    expect(result.debugHttpHostNote).toMatch(/relying on adb reverse/);
+  });
 
   test('the same-port mapping is registered before the prefs write, so the app can never race ahead of it', async () => {
     const { calls, exec } = execRecording(true);
@@ -929,6 +1127,33 @@ describe('skipping an install the device already holds', () => {
     expect(result.skipped).toBe(true);
     expect(exec.calls.some((c) => c.includes('write'))).toBe(false);
     expect(result.devClientPreparationDurationMs).toBeUndefined();
+  });
+});
+
+describe('launch verification after Metro prefetch', () => {
+  test.each(['bare'])('a late %s prefetch completion is not app activity', async (mode) => {
+    const clock = fakeClock();
+    const result = await verifyLaunch({
+      requireBundleResponse: true,
+      platform: 'ios',
+      since: 1000,
+      readRecords: () => [
+        {
+          ts: 1500,
+          src: 'metro',
+          platform: 'ios',
+          event: mode === 'bare' ? 'bundle_build_done' : 'expo_stdout',
+          msg: 'iOS Bundled 500ms index.js',
+        },
+      ],
+      readDeviceRecords: () => [],
+      readClientRecords: () => [],
+      now: clock.now,
+      sleep: clock.sleep,
+      timeoutMs: 2000,
+    });
+    expect(result.verified).toBe(false);
+    expect(result.requested).not.toBe(true);
   });
 });
 

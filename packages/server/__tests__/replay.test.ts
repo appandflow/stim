@@ -1,19 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { timelineMarkers } from '../src/replay.ts';
-
-let dir: string;
-
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'stim-replay-'));
-});
-
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
-/** A segment of units every 100 ms from `start`, a keyframe every `every` units. */
 
 test('markers are the agent actions on this device and errors of the workspace, oldest first', () => {
   const records = [

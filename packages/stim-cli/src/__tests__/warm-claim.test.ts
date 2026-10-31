@@ -71,6 +71,32 @@ test('two refreshes never hold the claim at once', async () => {
   second.release();
 });
 
+test('a refresh drains the copies in flight before it starts, and blocks new ones while it waits', async () => {
+  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
+  let polls = 0;
+  let blocked = 0;
+  const refresh = await acquireWarmClaim({
+    repositoryRoot: REPO,
+    phase: 'refresh',
+    sleep: async () => {
+      if (++polls === 1) {
+        await acquireWarmClaim({
+          repositoryRoot: REPO,
+          phase: 'copy',
+          sleep: async () => {
+            blocked++;
+            throw new Error('stop');
+          },
+        }).catch(() => {});
+      }
+      if (polls === 2) copy.release();
+    },
+  });
+  expect(blocked).toBe(1);
+  expect(refresh.wait.holder).toEqual({ pid: process.pid, phase: 'copy' });
+  refresh.release();
+});
+
 test('a dead refresh holder and a dead copy holder are both reclaimed without waiting', async () => {
   const root = warmClaimPath(REPO);
   plantClaim(root, 'exclusive', goneClaimOwner(), { claimId: 'dead-refresh' });

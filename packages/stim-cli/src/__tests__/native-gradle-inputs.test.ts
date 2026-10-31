@@ -43,6 +43,24 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('ignored directories cannot broaden a declaration to upload every private file', async () => {
+  await expect(nativeGradleTransfer(root, { ...declaration, ignored: ['app/src/main/assets'] })).rejects.toThrow(
+    'exact file or link',
+  );
+});
+
+test.skipIf(process.platform === 'win32')(
+  'external links and links into untransferred ignored files are refused',
+  async () => {
+    symlinkSync('../private-unlisted.txt', join(root, 'app/link'));
+    visible.push('app/link');
+    await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('outside the declared source inventory');
+    rmSync(join(root, 'app/link'));
+    symlinkSync('/etc/hosts', join(root, 'app/link'));
+    await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('outside the declared source inventory');
+  },
+);
+
 test('only declared real output directories reported by AGP become reusable worker state', async () => {
   expect(await nativeGradleOutputs(root, declaration, [join(root, 'app/build'), join(root, 'build')])).toEqual([
     'app/build',

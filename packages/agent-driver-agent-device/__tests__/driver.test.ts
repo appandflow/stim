@@ -9,7 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver } from '../driver.ts';
+import { AgentDriverUnavailable } from '@stim-cli/agent-driver';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
 const FAKE_AGENT_DEVICE = `#!/usr/bin/env node
@@ -579,5 +580,71 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
     await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
     expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('agent-device confinement', () => {
+  test('refuses to start an agent-device that cannot lease one macOS app, and leaves nothing running', async () => {
+    install(root);
+    const driver = driverIn(root, {}, { FAKE_LEASE_BACKENDS: 'ios-instance,android-instance' });
+    await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
+    await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  });
+
+  test('starts agent-device confined to host-allocated macos-app leases on the native backend', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      const seen = JSON.parse(readFileSync(join(root, 'state', 'proxy-env.json'), 'utf8')) as {
+        policy: string;
+        backend: string;
+      };
+      expect(seen.backend).toBe('native');
+      const policy = JSON.parse(seen.policy) as { leases: unknown; commands: { allow: string[] } };
+      expect(policy.leases).toEqual({ require: 'macos-app' });
+      expect(policy.commands.allow).toContain('snapshot');
+      expect(policy.commands.allow).not.toContain('install');
+      expect(statSync(join(root, 'state', 'policy.json')).mode & 0o777).toBe(0o600);
+    } finally {
+      await driver.stop();
+    }
+  });
+
+  test('never signals a pid it read from a stale daemon record', async () => {
+    install(root);
+    mkdirSync(join(root, 'state'), { recursive: true });
+    const bystander = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      writeFileSync(join(root, 'state', 'daemon.json'), JSON.stringify({ pid: bystander.pid }));
+      const driver = driverIn(root, { startTimeoutMs: 500 }, { FAKE_PROXY: 'silent' });
+      await expect(driver.start()).rejects.toThrow(/did not report a listening address/);
+      await driver.stop();
+      expect(bystander.exitCode).toBeNull();
+      expect(bystander.signalCode).toBeNull();
+    } finally {
+      bystander.kill('SIGKILL');
+    }
+  });
+
+  test('forwards only the proxy routes and keeps a bare session route to the root', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      await driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 });
+      expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(200);
+      expect((await through(driver, SESSION, 'GET', '/admin/human-control/holds')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/admin/leases')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/rpc/../admin')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', '/rpc')).status).toBe(404);
+      expect((await through(driver, SESSION, 'POST', '/upload', 'x')).status).toBe(404);
+      expect((await through(driver, SESSION, 'GET', `/sessions/${SESSION}/requests/r1/diagnostics`)).status).toBe(404);
+    } finally {
+      await driver.stop();
+    }
   });
 });

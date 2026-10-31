@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -13,6 +14,7 @@ import assert from 'node:assert';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { fingerprintMemoDir } from '@stim-cli/core/state';
 import { fingerprintProject, type ProjectFingerprint } from '../cache/build-cache.ts';
 import { memoizedFingerprint, settleFingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { staticFingerprint } from '../cache/static-fingerprint.ts';
@@ -298,6 +300,53 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     const canonical = await staticFingerprint(root, { platform: 'ios' }, options);
     expect(canonical.uncertain).toBeNull();
     expect(await staticFingerprint(respelled, { platform: 'ios' }, options)).toEqual(canonical);
+  });
+
+  test.each([
+    [
+      'a local plugin that reads a file while the config is evaluated',
+      "const fs = require('fs');\nmodule.exports = (config) => ({ ...config, extra: { key: fs.readFileSync('key.txt', 'utf8') } });\n",
+    ],
+    [
+      'a named local plugin function that reads a file and applies no mods',
+      "const fs = require('fs');\nfunction withKey(config) {\n  return { ...config, extra: { key: fs.readFileSync('key.txt', 'utf8') } };\n}\nmodule.exports = withKey;\n",
+    ],
+    [
+      'a local plugin that builds an environment variable name',
+      "module.exports = (config) => ({ ...config, extra: { a: process.env['EXPO_PUBLIC_' + 'A'] } });\n",
+    ],
+    [
+      'a local plugin that takes the environment from process',
+      'const { env } = process;\nmodule.exports = (config) => ({ ...config, extra: { a: env.FOO } });\n',
+    ],
+    [
+      'a local plugin that imports process',
+      "const p = require('node:process');\nmodule.exports = (config) => ({ ...config, extra: { a: p.env.FOO } });\n",
+    ],
+    [
+      'a local plugin that runs a process',
+      "const { execSync } = require('child_process');\nmodule.exports = (config) => ({ ...config, extra: { sha: String(execSync('git rev-parse HEAD')) } });\n",
+    ],
+    [
+      'a local plugin that passes the environment on',
+      'module.exports = (config) => ({ ...config, extra: Object.fromEntries(Object.entries(process.env)) });\n',
+    ],
+  ])('%s always takes the full fingerprint', async (_case, plugin) => {
+    app = fixture('npm');
+    write(join(app, 'plugins/native.js'), plugin);
+    write(join(app, 'key.txt'), 'k');
+    expect((await lookup(app)).hit).toBe(false);
+    expect((await lookup(app)).hit).toBe(false);
+    expect(full).toBe(2);
+  });
+
+  test('a config the static check cannot follow always takes the full fingerprint', async () => {
+    app = fixture('npm');
+    write(join(app, 'app.config.js'), "const fs = require('fs');\nmodule.exports = ({ config }) => config;\n");
+    expect((await lookup(app)).hit).toBe(false);
+    expect((await lookup(app)).hit).toBe(false);
+    expect(full).toBe(2);
+    expect(existsSync(fingerprintMemoDir('ios')) ? readdirSync(fingerprintMemoDir('ios')) : []).toEqual([]);
   });
 });
 

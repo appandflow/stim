@@ -7,7 +7,14 @@ import {
   type HostedIosDevice,
   type HostedAndroidDevice,
 } from '@stim-cli/core/state';
-import { connectHost, settle, POLL_MS, PREPARE_TIMEOUT_MS, type HostConnection } from '../device-host/hosted-client.ts';
+import {
+  connectHost,
+  settle,
+  POLL_MS,
+  PREPARE_TIMEOUT_MS,
+  IMAGE_INSTALL_TIMEOUT_MS,
+  type HostConnection,
+} from '../device-host/hosted-client.ts';
 import { placeHostedMacos } from '../device-host/hosted-macos.ts';
 import { placeHostedNative, prepareHostedNative } from '../device-host/hosted-native.ts';
 import { BuildConnection } from '../offload/client.ts';
@@ -140,6 +147,19 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     rmSync(home, { recursive: true, force: true });
   });
 
+  function resume() {
+    const common = {
+      machine: 'mini',
+      session,
+      appAttempt: 'previous',
+      agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    } as const;
+    recorded =
+      platform === 'macos'
+        ? { ...common, appSlot: 1, bundleId: 'dev.fixture.hosted1' }
+        : { ...common, selected: 'mini', device: null };
+  }
+
   async function place() {
     if (platform === 'macos')
       return placeHostedMacos(host, {
@@ -173,6 +193,25 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       note: () => {},
     });
   }
+
+  test.each([false])('bounds unresolved preparation and retains its owner (resumed: %s)', async (resumed) => {
+    if (resumed) resume();
+    readyAt = Infinity;
+    let settled = false;
+    const result = place().catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    const waitsForImage = resumed && platform === 'android';
+    await vi.advanceTimersByTimeAsync(356_000);
+    expect(settled).toBe(!waitsForImage);
+    await vi.advanceTimersByTimeAsync(waitsForImage ? IMAGE_INSTALL_TIMEOUT_MS : 0);
+    expect(await result).toBeInstanceOf(Error);
+    expect(String(await result)).toContain('stayed preparing');
+    expect(recorded?.session).toBe(session);
+    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
+    expect(methods.filter(({ method }) => method === 'device-host.reserve')).toHaveLength(resumed ? 0 : 1);
+  });
 
   test('stops waiting for the app installation when the run is cancelled', async () => {
     readyAt = 0;
@@ -225,6 +264,16 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
       expect(outcome).toContain('closed by this client');
     },
   );
+
+  test('still refuses a ready reply without the reserved device identity', async () => {
+    readyDevice = null;
+    const result = place().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(241_000);
+    expect(await result).toBeInstanceOf(Error);
+    expect(String(await result)).toMatch(/reserved architecture|offered architecture|reserved macOS app slot/);
+    expect(recorded?.session).toBe(session);
+    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
+  });
 });
 
 describe('hosted session settle cancellation', () => {

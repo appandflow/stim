@@ -2,14 +2,14 @@ import assert from 'node:assert';
 import { makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { claimForEmptying } from '../cache/cache-claim.ts';
+import { cacheUser, claimForEmptying } from '../cache/cache-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import {
   buildIos,
@@ -29,6 +29,7 @@ import {
   readBundleExecutable,
   readBundleId,
   resolveScheme,
+  xcodebuildArgs,
 } from '../engine/xcode.ts';
 
 let tmp: string;
@@ -138,6 +139,32 @@ describe('pickScheme', () => {
 describe('listSchemes and resolveScheme', () => {
   const project = { flag: '-project', path: '/p/ios/App.xcodeproj', name: 'App', dir: '/p/ios' };
 
+  test.each([
+    ['matching app name', '{"name":"safe-area-example"}', 'safe-area-example'],
+    ['unlisted app name', '{"name":"absent"}', undefined],
+  ])('resolveScheme handles a renamed workspace with %s', async (_label, appJson, expected) => {
+    const ios = join(tmp, 'ios');
+    mkdirSync(ios);
+    if (appJson !== null) writeFileSync(join(tmp, 'app.json'), appJson);
+    setExecutor({
+      run: () => '',
+      runQuiet: () => null,
+      spawn: () => {},
+      runFile: () =>
+        JSON.stringify({
+          workspace: { name: 'RNSACExample', schemes: ['Pods-ReactTestApp', 'ReactTestApp', 'safe-area-example'] },
+        }),
+    });
+    const result = await resolveScheme({
+      flag: '-workspace',
+      path: join(ios, 'RNSACExample.xcworkspace'),
+      name: 'RNSACExample',
+      dir: ios,
+    });
+    expect(result.scheme).toBe(expected);
+    expect(result.error?.code).toBe(expected ? undefined : 'STIM_NO_SCHEME');
+  });
+
   test('an empty scheme listing keeps the share-scheme remedy', async () => {
     setExecutor({
       run: () => '',
@@ -146,6 +173,45 @@ describe('listSchemes and resolveScheme', () => {
       runFile: () => '{"workspace":{"name":"App","schemes":[]}}',
     });
     expect((await resolveScheme(project)).error?.remedy).toMatch(/tick Shared/);
+  });
+});
+
+describe('xcodebuildArgs', () => {
+  const project = { flag: '-workspace', path: '/p/ios/App.xcworkspace' };
+
+  test('the device slice is -sdk iphoneos plus the phone id, and carries no signing flag', () => {
+    const args = xcodebuildArgs({
+      project,
+      scheme: 'App',
+      udid: '00008030-001A2B3C4D5E802E',
+      sdk: 'iphoneos',
+      configuration: 'Release',
+      derivedDataPath: '/dd',
+    });
+    expect(args).toEqual([
+      '-workspace',
+      '/p/ios/App.xcworkspace',
+      '-scheme',
+      'App',
+      '-configuration',
+      'Release',
+      '-sdk',
+      'iphoneos',
+      '-destination',
+      'id=00008030-001A2B3C4D5E802E',
+      '-derivedDataPath',
+      '/dd',
+      'build',
+    ]);
+    for (const flag of [
+      'CODE_SIGN_IDENTITY',
+      'DEVELOPMENT_TEAM',
+      'PROVISIONING_PROFILE_SPECIFIER',
+      '-allowProvisioningUpdates',
+      'RCT_METRO_PORT',
+    ]) {
+      expect(args.some((a) => a.includes(flag))).toBe(false);
+    }
   });
 });
 
@@ -489,6 +555,32 @@ describe('buildIos with a mocked executor', () => {
       expect.objectContaining({ event: 'compilation_cache', swiftTargetsWithoutExplicitModules: 2 }),
     );
   });
+
+  test.each([['its own path', false]])(
+    'a build that compiles with the shared compilation cache through %s keeps it from being emptied until xcodebuild exits',
+    async (_name, linked) => {
+      const cas = join(tmp, 'cas');
+      mkdirSync(cas);
+      const buildPath = linked ? join(tmp, 'cas-link') : cas;
+      if (linked) symlinkSync(cas, buildPath);
+      const child = fakeChild();
+      harness(tmp, { child });
+      const promise = buildIos({
+        root: tmp,
+        iosDir: join(tmp, 'ios'),
+        udid: 'u',
+        logWriter: recordingWriter(),
+        compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${buildPath}`],
+      });
+      await child.started;
+      const user = `the ios build (pid ${process.pid} in ${tmp}) may be using it`;
+      expect(cacheUser(cas)).toBe(user);
+      expect(claimForEmptying(cas)).toBe(user);
+      child.emit('close', 65, null);
+      await promise;
+      expect(cacheUser(cas)).toBeUndefined();
+    },
+  );
 
   test('a build waits for an emptier that holds the compilation cache, then compiles', async () => {
     const cas = join(tmp, 'cas');

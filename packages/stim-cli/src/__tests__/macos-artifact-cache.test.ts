@@ -200,3 +200,60 @@ test.each(['timeout', 'cancellation'])('a provider that ignores %s refuses withi
     vi.useRealTimers();
   }
 });
+
+test.skipIf(process.platform === 'win32')(
+  'source changes during cache packing prevent local and shared publication',
+  async () => {
+    const upload = vi.fn<providers.FileCacheCapability['store']>().mockResolvedValue(undefined);
+    vi.spyOn(providers, 'loadCacheProvider').mockResolvedValue({
+      provider: {
+        files: {
+          resolve: async () => null,
+          store: upload,
+        },
+      },
+    });
+    const cache = swiftpmArtifactCache(
+      testContext(),
+      root,
+      settings,
+      {
+        ...recipe,
+        validateFetched: async () => {
+          writeFileSync(join(root, 'Info.plist'), 'changed during packing');
+        },
+      },
+      build,
+    );
+    assert(cache);
+    const identity = await cache.identity();
+    const bundle = join(root, 'Built.app');
+    mkdirSync(join(bundle, 'Contents/MacOS'), { recursive: true });
+    writeFileSync(join(bundle, 'Contents/Info.plist'), 'built plist');
+    writeFileSync(join(bundle, 'Contents/MacOS/App'), 'compiled bytes');
+    chmodSync(join(bundle, 'Contents/MacOS/App'), 0o755);
+    const staging = join(root, 'cache-store');
+    mkdirSync(staging);
+    await expect(cache.store(identity.key, bundle, staging)).rejects.toThrow('inputs changed');
+    expect(upload).not.toHaveBeenCalled();
+    expect(await cache.restore(identity.key, join(root, 'cache-read'))).toBeNull();
+  },
+);
+
+test('a provider cannot return a file outside its download directory', async () => {
+  const outside = join(root, 'outside');
+  writeFileSync(outside, 'untrusted');
+  vi.spyOn(providers, 'loadCacheProvider').mockResolvedValue({
+    provider: {
+      files: {
+        resolve: async () => outside,
+        store: async () => {},
+      },
+    },
+  });
+  const cache = swiftpmArtifactCache(testContext(), root, settings, recipe, build);
+  assert(cache);
+  const destination = join(root, 'download');
+  mkdirSync(destination);
+  await expect(cache.restore('key', destination)).rejects.toThrow('outside its download directory');
+});

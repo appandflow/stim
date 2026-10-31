@@ -571,6 +571,27 @@ test('shutdownAndroidEmulator warns and still kills the emulator when sync fails
   expect(errors).toEqual(['warning: could not flush emulator-5554 before shutdown; shutting it down anyway\n']);
 });
 
+test('waitForBoot keeps waiting after the boot properties until the package manager answers', async () => {
+  const calls: string[] = [];
+  let pmAnswers = 0;
+  setExecutor({
+    run: () => '',
+    runFileQuiet: (file: string, args: string[] = []) => {
+      const cmd = [file, ...args].join(' ');
+      calls.push(cmd);
+      if (/getprop sys\.boot_completed/.test(cmd)) return '1';
+      if (/shell pm path android/.test(cmd))
+        return ++pmAnswers >= 3 ? 'package:/system/framework/framework-res.apk' : null;
+      return null;
+    },
+    spawn: () => null,
+  });
+  const result = await waitForBoot('emulator-5554', 5000, { pollMs: 1 });
+  expect(result).toEqual({ ok: true });
+  expect(calls.filter((cmd) => /shell pm path android/.test(cmd))).toHaveLength(3);
+  expect(calls.filter((cmd) => /getprop/.test(cmd)).length).toBeGreaterThanOrEqual(3);
+});
+
 test.each([25, 2000])('boot timeout retains diagnostics within a separate budget (query cost %sms)', async (costMs) => {
   vi.useFakeTimers();
   vi.setSystemTime(0);

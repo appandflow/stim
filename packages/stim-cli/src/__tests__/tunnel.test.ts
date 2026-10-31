@@ -381,6 +381,20 @@ describe('stopTunnel: idempotent, never throws', () => {
     expect(result).toEqual({ status: 'failed', reason: expect.stringMatching(/process identity token.*retry/i) });
   });
 
+  test.each(['different'] as const)('a %s identity is stale and never signalled', async (identity) => {
+    const kill = vi.fn<(pid: number) => void>();
+    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => identity, kill });
+    expect(result.status).toBe('missing');
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  test('an unreadable native identity retains the record without signalling', async () => {
+    const kill = vi.fn<(pid: number) => void>();
+    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => 'unknown', kill });
+    expect(result.status).toBe('failed');
+    expect(kill).not.toHaveBeenCalled();
+  });
+
   test('on win32 the default kill reaches the tree, because a shim on PATH runs the real tunnel as a child', async () => {
     const taskkill: string[][] = [];
     let alive = true;

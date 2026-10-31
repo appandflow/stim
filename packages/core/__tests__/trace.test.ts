@@ -145,3 +145,68 @@ test('redactCommandLine hides secret flags and assignments in a shell command', 
     'TOKEN=[redacted] eas build --token [redacted] --platform ios --api-key=[redacted]',
   );
 });
+
+const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl';
+
+test.each<[string, string, string[], string[]]>([
+  [
+    'a header attached to a short flag is scrubbed in place and the next argument is kept',
+    'curl',
+    ['-HAuthorization:Bearer abcdefghijkl12345', 'https://example.com/x'],
+    ['-HAuthorization:[redacted]', 'https://example.com/x'],
+  ],
+  [
+    'an api key header attached to a short flag',
+    'curl',
+    ['-HX-Api-Key:k123', 'https://example.com/x'],
+    ['-HX-Api-Key:[redacted]', 'https://example.com/x'],
+  ],
+  [
+    'curl -u takes user:password',
+    'curl',
+    ['-u', 'user:hunter2', 'https://example.com'],
+    ['-u', '[redacted]', 'https://example.com'],
+  ],
+  [
+    'curl -u with the credential attached',
+    'curl',
+    ['-uuser:hunter2', 'https://example.com'],
+    ['-u[redacted]', 'https://example.com'],
+  ],
+  ['curl --user with =', 'curl', ['--user=user:hunter2'], ['--user=[redacted]']],
+  ['curl --proxy-user', 'curl', ['--proxy-user', 'u:p'], ['--proxy-user', '[redacted]']],
+  [
+    'security import -P takes the p12 passphrase',
+    'security',
+    ['import', 'x.p12', '-P', 'hunter2', '-k', 'build.keychain'],
+    ['import', 'x.p12', '-P', '[redacted]', '-k', 'build.keychain'],
+  ],
+  [
+    'security unlock-keychain -p takes the keychain password',
+    'security',
+    ['unlock-keychain', '-p', 'hunter2', 'build.keychain'],
+    ['unlock-keychain', '-p', '[redacted]', 'build.keychain'],
+  ],
+  ['a JWT', 'tool', [jwt], ['[redacted]']],
+  ['a Stripe live key', 'tool', ['sk_live_abcdefghijklmnop1234'], ['[redacted]']],
+  ['a Stripe test key', 'tool', ['sk_test_abcdefghijklmnop1234'], ['[redacted]']],
+  ['a Google API key', 'tool', ['AIzaSyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q'], ['[redacted]']],
+  ['a GitLab token', 'tool', ['glpat-abcdefghij1234567890'], ['[redacted]']],
+  ['an npm token', 'tool', [`npm_${'a1B2'.repeat(9)}`], ['[redacted]']],
+  [
+    'a password that contains @ in a URL',
+    'git',
+    ['clone', 'https://user:pa@ss@host/x.git'],
+    ['clone', 'https://[redacted]@host/x.git'],
+  ],
+  ['a token shape inside a longer argument', 'tool', [`--header=X: ${jwt}`], [`--header=X: [redacted]`]],
+])('redactArgv hides %s', (_name, program, args, expected) => {
+  expect(redactArgv(args, [], program)).toEqual(expected);
+});
+
+test('redactArgv finishes quickly on a huge argument made of flag-like text', () => {
+  const started = performance.now();
+  redactArgv([`--${'ab-'.repeat(60_000)}`, `-${'-'.repeat(20_000)}`]);
+  redactCommandLine(`--${'ab-'.repeat(60_000)}`);
+  expect(performance.now() - started).toBeLessThan(2000);
+});

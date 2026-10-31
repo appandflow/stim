@@ -5,8 +5,6 @@ import { join } from 'node:path';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readWorktreeGit } from '../workspace/git-summary.ts';
 
-'a'.repeat(40);
-
 describe('readWorktreeGit', () => {
   const realExecutor = getExecutor();
   let base: string;

@@ -74,3 +74,28 @@ test('relaunchWithLogFile starts the entry again without the flag, detached, wit
   writeSync(Array.isArray(stdio) ? (stdio[1] as number) : -1, 'supervisor output\n');
   expect(readFileSync(logFile, 'utf-8')).toBe('supervisor output\n');
 });
+
+test('the Windows launcher escapes a trailing backslash so the closing quote survives the CRT parser', () => {
+  const launcher = windowsLauncherArgs({ entry: 'run.mjs', args: ['--root', 'D:\\'], cwd: 'D:\\', logFile: 'x.log' });
+  expect(launcher.env.STIM_WINDOWS_LAUNCH_ARGS).toContain('"--root" "D:\\\\"');
+});
+
+test('the Windows launcher passes paths through the environment without parsing them as PowerShell source', () => {
+  const launcher = windowsLauncherArgs({
+    entry: 'C:\\Program Files\\stim\\supervisor-run.mjs',
+    args: ['--root', "D:\\it's here\\app", '--port', '8082'],
+    cwd: "D:\\it's here\\app",
+    logFile: 'D:\\home\\logs\\supervisor.log',
+    execPath: 'C:\\Program Files\\nodejs\\node.exe',
+  });
+  expect(launcher.file).toBe('powershell.exe');
+  expect(launcher.args.slice(0, 3)).toEqual(['-NoProfile', '-NonInteractive', '-Command']);
+  expect(launcher.args[3]).toContain('[System.Diagnostics.Process]::Start($start)');
+  expect(launcher.args[3]).not.toContain("it's here");
+  expect(launcher.env).toEqual({
+    STIM_WINDOWS_LAUNCH_FILE: 'C:\\Program Files\\nodejs\\node.exe',
+    STIM_WINDOWS_LAUNCH_ARGS:
+      '"C:\\Program Files\\stim\\supervisor-run.mjs" "--root" "D:\\it\'s here\\app" "--port" "8082" "--log-file" "D:\\home\\logs\\supervisor.log"',
+    STIM_WINDOWS_LAUNCH_CWD: "D:\\it's here\\app",
+  });
+});

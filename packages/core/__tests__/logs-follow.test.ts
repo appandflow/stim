@@ -3,7 +3,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
+import { openLogDir } from '../state/log-reader.ts';
 import { followLogs } from '../state/logs-query.ts';
 import type { NdjsonRecord } from '../state/ndjson.ts';
 
@@ -48,6 +48,35 @@ test('following starts before the directory exists and reattaches after director
   });
   appendFileSync(join(dir, 'new.ndjson'), line('appended'));
   await vi.waitFor(() => expect(records.map((record) => record.msg)).toEqual(['first', 'replacement', 'appended']));
+});
+
+test('following from a log view recognizes a larger replacement made after the view was opened', async () => {
+  writeFileSync(join(root, 'client.ndjson'), line('backfilled'));
+  const view = await openLogDir(root);
+  const records: NdjsonRecord[] = [];
+  appendFileSync(join(root, 'client.ndjson'), line('before rotation'));
+  renameSync(join(root, 'client.ndjson'), join(root, 'client.ndjson.1'));
+  writeFileSync(
+    join(root, 'client.ndjson'),
+    line('a replacement record much longer than the old file') + line('after'),
+  );
+  stops.push(
+    followLogs({
+      dir: root,
+      offsets: view.sizes,
+      identities: view.identities,
+      criteria: { minLevel: 'info' },
+      onRecord: (record) => records.push(record),
+    }),
+  );
+  await view.close();
+  await vi.waitFor(() =>
+    expect(records.map((record) => record.msg)).toEqual([
+      'before rotation',
+      'a replacement record much longer than the old file',
+      'after',
+    ]),
+  );
 });
 
 test('Expo settling reads stack appends whose filesystem notification was missed', () => {

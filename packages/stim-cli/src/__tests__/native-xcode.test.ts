@@ -3,7 +3,17 @@ import assert from 'node:assert';
 import { createStim } from '../api.ts';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { testContext } from './_context.ts';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as xcode from '../engine/xcode.ts';
@@ -62,6 +72,15 @@ function fingerprint() {
     process.env,
   );
 }
+
+test.skipIf(process.platform === 'win32')('links cannot masquerade as ignored Xcode directory markers', async () => {
+  const project = writeNativeXcodeProject(root);
+  const workspace = join(project, 'project.xcworkspace');
+  mkdirSync(workspace);
+  const before = await fingerprint();
+  symlinkSync('../xcshareddata', join(workspace, 'xcshareddata'));
+  expect(await fingerprint()).not.toEqual(before);
+});
 
 function configuredProject(projectBase: string, projectInline = '', targetBase = '', targetInline = '') {
   const project = writeNativeXcodeProject(root);
@@ -146,6 +165,36 @@ test.each([
     });
   },
 );
+
+test.each(['SWIFT_INCLUDE_PATHS', 'CC', 'SWIFT_EXEC', 'ORDER_FILE'])(
+  'literal xcconfig %s cannot reuse artifacts without a verified external input closure',
+  async (setting) => {
+    const external = join(home, 'external', setting === 'SWIFT_INCLUDE_PATHS' ? 'modules' : 'input');
+    const input = setting === 'SWIFT_INCLUDE_PATHS' ? join(external, 'External.swiftmodule') : external;
+    write(input, 'first external compiler/module bytes');
+    configuredProject(`SDKROOT = iphoneos\n${setting} = ${external}\n`, '', '', 'SDKROOT = iphoneos;');
+    expect(await fingerprint()).toHaveProperty('cacheIneligible');
+    write(input, 'changed external compiler/module bytes');
+    expect(await fingerprint()).toHaveProperty('cacheIneligible');
+  },
+);
+
+test('quoted conditional compiler keys and parser comment metadata cannot bypass tool identity', async () => {
+  const project = writeNativeXcodeProject(root);
+  const file = join(project, 'project.pbxproj');
+  const compiler = join(home, 'external', 'swiftc');
+  write(compiler, 'first compiler bytes');
+  writeFileSync(
+    file,
+    readFileSync(file, 'utf8').replace(
+      'SDKROOT = iphoneos;',
+      `SDKROOT = iphoneos; "SWIFT_EXEC[sdk=iphonesimulator*]" /* compiler override */ = ${JSON.stringify(compiler)};`,
+    ),
+  );
+  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
+  write(compiler, 'changed compiler bytes');
+  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
+});
 
 test('quoted conditional platform keys retain uncertainty instead of claiming an iOS cache identity', async () => {
   const project = writeNativeXcodeProject(root);
@@ -246,6 +295,19 @@ test.each(['m', 'metal'])(
   },
 );
 
+test('scheme execution actions cannot be skipped by an artifact cache hit', async () => {
+  const project = writeNativeXcodeProject(root);
+  const scheme = join(project, 'xcshareddata', 'xcschemes', 'Native.xcscheme');
+  writeFileSync(
+    scheme,
+    readFileSync(scheme, 'utf8').replace(
+      '</Scheme>',
+      '<BuildAction><PreActions><ExecutionAction ActionType="Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction"><ActionContent scriptText="date > generated.swift" /></ExecutionAction></PreActions></BuildAction></Scheme>',
+    ),
+  );
+  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('scheme execution actions') });
+});
+
 test('relocation, shell location and task metadata preserve warm identities while compiler environment changes do not', async () => {
   writeNativeXcodeProject(root);
   const before = await fingerprint();
@@ -291,6 +353,37 @@ test('local Swift packages do not get a partial key that omits their transitive 
   expect(await fingerprint()).toMatchObject({
     cacheIneligible: expect.stringContaining('transitive local dependencies'),
   });
+});
+
+test('native planning refuses unresolved source closure without dependency preparation or builds', async () => {
+  const project = writeNativeXcodeProject(root);
+  const pbx = join(project, 'project.pbxproj');
+  writeFileSync(
+    pbx,
+    readFileSync(pbx, 'utf8').replace(
+      'objects = {',
+      'objects = {\nSCRIPT = { isa = PBXShellScriptBuildPhase; shellScript = "date"; };',
+    ),
+  );
+  const commands: string[][] = [];
+  setExecutor(
+    makeExecutor({
+      runFile(file, args = []) {
+        commands.push([file, ...args]);
+        return 'Tool identity';
+      },
+      spawn() {
+        throw new Error('Planning must not spawn dependency preparation or compilation');
+      },
+    }),
+  );
+  const plan = await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root));
+  expect(plan).toMatchObject({
+    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('undeclared inputs') },
+  });
+  expect(commands.some((command) => command.includes('-resolvePackageDependencies') || command.includes('build'))).toBe(
+    false,
+  );
 });
 
 test('stim ios, build and plan APIs and --plan share one native artifact key for the same project', async () => {

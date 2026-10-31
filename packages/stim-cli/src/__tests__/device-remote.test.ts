@@ -459,6 +459,15 @@ describe('session creation', () => {
       return args[args.indexOf('--max-duration-minutes') + 1];
     };
 
+    test('every session Stim creates is capped at 30 minutes unless the machine setting says otherwise', async () => {
+      expect(await create()).toBe('30');
+    });
+
+    test('remote.easMaxDurationMinutes in the machine config sets the cap', async () => {
+      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 45 } });
+      expect(await create()).toBe('45');
+    });
+
     test('an invalid machine value refuses instead of creating an uncapped session', async () => {
       saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 0 } });
       expect(await create()).toMatchObject({
@@ -483,6 +492,34 @@ describe('session creation', () => {
       remedy:
         'Link it with `eas init --id <project-id> --non-interactive` (existing project) or `eas init --account <account-name> --non-interactive` (new project), then run `stim ios --remote eas` again.',
     });
+  });
+
+  test('every eas and agent-device call runs under a deadline', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED } });
+    const deps = remoteIosDeps(ctx());
+    await deps.ensureBooted({});
+    await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
+    const local = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
+    await local.ensureBooted({});
+    await local.launchIosApp({
+      udid: 'drs_42',
+      bundleId: 'com.example.app',
+      metroPort: 8082,
+      devClientScheme: 'myapp',
+    });
+    await teardownRemote(ctx(), { sessionId: null });
+    expect(exec.calls.map((c) => c.args[0])).toEqual([
+      'sim',
+      'close',
+      'connect',
+      'install',
+      'close',
+      'connect',
+      'open',
+      'alert',
+      'disconnect',
+    ]);
+    for (const call of exec.calls) expect(call.timeoutMs).toBeGreaterThan(0);
   });
 
   test('an eas sim that outlives its deadline names the session it may have left running', async () => {
@@ -695,6 +732,28 @@ describe('install and launch match their local counterparts', () => {
 });
 
 describe('teardown', () => {
+  test('a failed stop is reported, so the caller says leaked rather than torn down', async () => {
+    mockExec({
+      fail: 'simulator:stop',
+      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }) },
+    });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(result.reason).toContain('drs_42');
+  });
+
+  test('fails closed when stop output does not verify completion', async () => {
+    const exec = mockExec({
+      outputs: {
+        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
+        'simulator:stop': 'not json',
+      },
+    });
+    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
+    expect(result.status).toBe('failed');
+    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(true);
+  });
+
   test('isolates proxy credentials from both lookup and stop', async () => {
     const exec = mockExec({
       outputs: {
@@ -802,6 +861,13 @@ describe('a session Stim created is never abandoned', () => {
     expect(booted.reason).toContain('eas simulator:stop --id drs_9');
     expect(booted.reason).toContain('bills until its cap');
   });
+
+  test('a connect failure after a create also ends the session', async () => {
+    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'connect' });
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
+  });
 });
 
 describe('a re-run does not orphan the session it already has', () => {
@@ -906,6 +972,20 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
     expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_other');
+  });
+
+  test('a failed recorded-session lookup does not create a replacement', async () => {
+    recordSession('drs_old');
+    const stderr = 'request failed: getaddrinfo ENOTFOUND api.expo.dev';
+    const error = Object.assign(new Error(stderr), { stderr });
+    const exec = mockExec({ errors: { 'simulator:get': error }, outputs: { sim: CREATED } });
+
+    const booted = await remoteIosDeps(ctx()).ensureBooted({});
+
+    expect(booted.failed).toBe(true);
+    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
+    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_old');
   });
 });
 

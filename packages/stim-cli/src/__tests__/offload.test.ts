@@ -4,8 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import * as buildMachines from '../offload/build-machines.ts';
-import { missingPackageManagerRemedy, workerFailureReason } from '../offload/selection.ts';
-
+import {
+  buildPlacementSettings,
+  missingPackageManagerRemedy,
+  workerFailureReason,
+  requireLocalBuild,
+  resolveBuildMachine,
+  resolveBuildPlacement,
+} from '../offload/selection.ts';
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import type { MachineCapacity, BuildMachineCredential } from '@stim-cli/core/state';
 import {
   BuildConnection,
@@ -137,6 +145,16 @@ describe('pickOffer', () => {
     ).toEqual([]);
     expect(codes(offer({ toolchain: { cocoapods: '1.17.0' } }), IOS, true)).toEqual([]);
     expect(codes(offer({ toolchain: { cocoapods: null } }), IOS, true)).toEqual([]);
+  });
+
+  it('keeps the remote.machines order, whatever each machine holds warm or how loaded it is', () => {
+    const cold = offer();
+    const warm = offer({ warm: { checkout: true, dependencies: true, build: true } });
+    const ranked = pick([cold, null, warm]);
+    expect({ order: ranked.order, reasons: ranked.reasons }).toEqual({ order: [0, 2], reasons: ['mac1: unreachable'] });
+    const loaded = offer({ capacity: capacity({ loadPerCore: 1.4 }) });
+    const older = offer({ capacity: { running: 0, max: 1, diskFreeBytes: null, minDiskFreeBytes: 0 } });
+    expect(pick([older, loaded, cold]).order).toEqual([0, 1, 2]);
   });
 });
 
@@ -352,7 +370,6 @@ describe('macOS build compatibility', () => {
     platform: 'macos',
     local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: LOCAL.xcode, macosSdk: '27.0' },
   };
-
   describe('for an app that runs on the worker that builds it', () => {
     const onWorker: BuildTarget = { ...target, runsOnWorker: true };
     const other = { arch: 'x64', xcode: 'Xcode 27.1 / Build version 27A9275', macosSdk: '27.1' };
@@ -426,6 +443,37 @@ describe('a worker that is not a Mac', () => {
     expect(
       machineProblems(offerFrom({}, { declined: 'all slots busy' }), [IOS, ANDROID]).filter((p) => p.code === 'busy'),
     ).toHaveLength(1);
+  });
+});
+
+describe('explicit build placement', () => {
+  it.each([
+    [undefined, undefined, undefined, 'auto'],
+    [undefined, undefined, 'mini', 'mini'],
+    [undefined, 'local', 'mini', 'local'],
+    ['auto', 'local', 'mini', 'auto'],
+    ['mini:8443', 'local', 'auto', 'mini:8443'],
+    [undefined, '', 'mini', 'mini'],
+    [undefined, '  ', 'local', 'local'],
+    [undefined, '  ', undefined, 'auto'],
+    [' AUTO ', 'mini', 'local', 'auto'],
+    ['Local', 'mini', 'auto', 'local'],
+    [undefined, undefined, 'remote', 'remote'],
+    [' Remote-Only ', 'mini', 'local', 'remote-only'],
+    [undefined, 'REMOTE', 'mini', 'remote'],
+  ])('resolves flag %s, env %s and setting %s without losing precedence', (flag, env, setting, expected) => {
+    expect(resolveBuildMachine(flag, env, setting)).toBe(expected);
+  });
+
+  it('remote-only never lets a build fall back to this machine, remote does', () => {
+    withAmbientContext(testContext(), () => {
+      expect(() => requireLocalBuild('remote-only', 'mini: busy')).toThrow(
+        expect.objectContaining({ code: 'STIM_OFFLOAD_REFUSED', message: expect.stringContaining('mini: busy') }),
+      );
+      expect(() => requireLocalBuild('remote')).not.toThrow();
+      expect(() => requireLocalBuild('auto')).not.toThrow();
+      expect(() => requireLocalBuild('local')).not.toThrow();
+    });
   });
 });
 
@@ -537,6 +585,32 @@ test('excluded local builds require a remote regardless of relative load and ref
       offers: [{ machine: 'mini', offer: offer({ capacity: capacity({ loadPerCore: 1.9 }) }) }],
     }).order,
   ).toEqual([0]);
+});
+
+test("two operations resolve STIM_REMOTE_BUILD from their own environments, not the host's", async () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-placement-'));
+  vi.stubEnv('STIM_REMOTE_BUILD', 'auto');
+  const operations = ['local', undefined].map((value) =>
+    testContext({ home, env: { ...process.env, STIM_REMOTE_BUILD: value } }),
+  );
+  try {
+    const selected = await Promise.all(
+      operations.map((context) =>
+        withAmbientContext(context, async () => {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          const placement = resolveBuildPlacement();
+          return [placement.selected, buildPlacementSettings(placement.selected)[0]?.from];
+        }),
+      ),
+    );
+    expect(selected).toEqual([
+      ['local', 'env'],
+      ['auto', 'default'],
+    ]);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 describe('missingPackageManagerRemedy', () => {

@@ -99,3 +99,20 @@ test('prunes blobs no mirror or open manifest references, and none while a mirro
   host.pruneBlobs('client');
   expect(existsSync(blob('synced'))).toBe(false);
 });
+
+test('caps the declared bytes of one manifest across its pages', () => {
+  const session = start({ maxManifestBytes: 10 }).session('client', socket, () => {});
+  expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: true })).toHaveProperty('result');
+  expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: false })).toHaveProperty('result');
+  expect(session.sync({ repo: 'app-1', files: [file('b', 'bbbbbb')], done: true })).toHaveProperty(
+    'error.code',
+    'limit-exceeded',
+  );
+});
+
+test('refuses a blob that streams more bytes than its manifest entry declares', () => {
+  const session = start().session('client', socket, () => {});
+  session.sync({ repo: 'app-1', files: [file('a', 'x')], done: true });
+  expect(session.blob(frame(sha('x'), 'xx'))).toMatch(/larger than its manifest entry/);
+  expect(existsSync(join(root, 'client', 'blobs', sha('x').slice(0, 2), sha('x')))).toBe(false);
+});

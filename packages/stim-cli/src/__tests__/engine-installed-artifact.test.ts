@@ -122,4 +122,12 @@ describe('deviceHoldsApk with a recorded signed tail', () => {
       '/data/app/a/base.apk',
     ]);
   });
+
+  test('a package name the device shell could misread is never put in the tail script', async () => {
+    const apkPath = join(dir, 'app-debug.apk');
+    writeSignedApk(apkPath);
+    const exec = recordingExec();
+    await deviceHoldsApk({ serial: 'emulator-5584', packageName: 'com.example; reboot', apkPath }, { exec });
+    expect(exec.calls.flat().some((part) => part.includes('tail -c'))).toBe(false);
+  });
 });

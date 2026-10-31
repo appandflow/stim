@@ -1,8 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { entryDir } from '../cache/build-cache.ts';
-import { signedTailFor, signingBlockOffset, type RunApkTool } from '../engine/apk-signed-tail.ts';
+import { recordedSignedTail, signedTailFor, signingBlockOffset, type RunApkTool } from '../engine/apk-signed-tail.ts';
 import { signedApkBytes, writeSignedApk } from './_signed-apk.ts';
 
 const VERIFIED_V2 =
@@ -28,6 +28,13 @@ function reader(file: Buffer) {
 }
 
 describe('signingBlockOffset', () => {
+  test('a ZIP comment that looks like an end record does not move the answer', () => {
+    const apk = signedApkBytes({
+      comment: 'PK\x05\x06 not the end record at all',
+    });
+    expect(signingBlockOffset(apk.size, reader(apk.file))).toBe(apk.tailOffset);
+  });
+
   test('a block whose two stored sizes disagree, or a ZIP64 end record, is not trusted', () => {
     const apk = signedApkBytes();
     const disagree = Buffer.from(apk.file);
@@ -57,5 +64,14 @@ describe('signedTailFor', () => {
     const path = entryApk();
     writeSignedApk(path, {}, false);
     expect(await signedTailFor(path, recordingRun().run, () => null)).toBe(null);
+  });
+
+  test('a recorded tail is ignored once the APK it describes is replaced by another of the same size', () => {
+    const path = entryApk();
+    const apk = writeSignedApk(path);
+    const replacement = signedApkBytes({ entries: 'other entry '.repeat(200), signature: 'other signature' });
+    expect(replacement.size).toBe(apk.size);
+    writeFileSync(path, replacement.file);
+    expect(recordedSignedTail(path)).toBe(null);
   });
 });

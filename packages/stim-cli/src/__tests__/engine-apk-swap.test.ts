@@ -61,11 +61,6 @@ describe('hermesEnabledFromGradleProperties', () => {
 });
 
 describe('the hermesc probe order', () => {
-  join('/w/monorepo/node_modules/hermes-compiler/hermesc/osx-bin/hermesc');
-  join('/proj/node_modules/hermes-compiler/hermesc/osx-bin/hermesc');
-  join('/proj/node_modules/react-native/sdks/hermesc/osx-bin/hermesc');
-  join('/proj/node_modules/react-native/sdks/hermes/build/bin/hermesc');
-
   test('the host directory and the executable name are the only platform-dependent pieces', () => {
     expect(hermescBinDir('darwin')).toBe('osx-bin');
     expect(hermescBinDir('linux')).toBe('linux64-bin');
@@ -79,8 +74,6 @@ describe('the hermesc probe order', () => {
 });
 
 describe('keystore resolution', () => {
-  join('/w/app', 'android', 'app', 'debug.keystore');
-
   describe('a keystore from the committed .stim.json', () => {
     let repo: string;
     let outside: string;
@@ -250,6 +243,58 @@ function harness({
 }
 
 describe('swapApkBundle', () => {
+  test('the order IS the product: copy aside, bundle, hermesc, asset gate, jar update, zipalign, apksigner -- and the cache entry is never written', async () => {
+    const { calls, run, work, final, stage, bundleOutput, hermesc } = harness();
+    const result = await run();
+    expect(result.ok).toBe(true);
+    expect(result.apkPath).toBe(final);
+    expect(result.tmpDir).toBe(tmp);
+    expect(result.hermes).toBe(true);
+
+    expect(calls.map((c) => c.file)).toEqual([
+      process.platform === 'win32' ? process.execPath : join(root, 'node_modules', 'expo', 'cli.js'),
+      hermesc,
+      expect.stringMatching(/(?:^|[\\/])jar(?:\.exe)?$/),
+      expect.stringMatching(/(?:^|[\\/])jar(?:\.exe)?$/),
+      buildTools.path,
+      apksigner,
+    ]);
+
+    expect(readFileSync(work, 'utf-8')).toBe('cached apk bytes');
+    expect(readFileSync(cachedApk, 'utf-8')).toBe('cached apk bytes');
+    for (const call of calls) expect(call.args ?? []).not.toContain(cachedApk);
+
+    const bundle = calls[0];
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 4 : 3)).toEqual([
+      'export:embed',
+      '--platform',
+      'android',
+    ]);
+    expect(bundle?.args).toContain(join(stage, 'assets', 'index.android.bundle'));
+    expect(bundle?.args).toContain(join(stage, 'res'));
+
+    expect(readFileSync(bundleOutput, 'utf-8')).toBe('hermes bytecode');
+    expect(existsSync(`${bundleOutput}.hbc`)).toBe(false);
+
+    expect(calls[2]?.args).toEqual(['--extract', '--file', work, 'assets/app.manifest']);
+    expect(calls[2]?.opts?.cwd).toBe(stage);
+    expect(existsSync(join(stage, 'assets', 'app.manifest'))).toBe(false);
+    expect(calls[3]?.args).toEqual(['--update', '--file', work, '--no-compress', '-C', stage, 'assets']);
+
+    expect(calls[4]?.args).toEqual(['-P', '16', '-f', '-v', '4', work, final]);
+    expect(calls[5]?.args).toEqual(['sign', '--ks', keystore.path, '--ks-pass', 'pass:android', final]);
+  });
+
+  test('the expo-updates embedded manifest is repacked with a fresh id and this swap as its commitTime', async () => {
+    const embeddedManifest = JSON.stringify({ id: 'build-id', commitTime: 1000, assets: [] });
+    const { run, stage } = harness({ embeddedManifest });
+    const result = await run({ now: () => 5000 });
+    expect(result.ok).toBe(true);
+    const refreshed = JSON.parse(readFileSync(join(stage, 'assets', 'app.manifest'), 'utf-8'));
+    expect(refreshed).toMatchObject({ commitTime: 5000, assets: [] });
+    expect(refreshed.id).not.toBe('build-id');
+  });
+
   test('an unreadable embedded manifest fails the swap before the APK is repacked', async () => {
     const { run, calls } = harness({ embeddedManifest: 'not json' });
     const result = await run();
@@ -296,6 +341,28 @@ describe('swapApkBundle', () => {
     expect(result.reason).toMatch(/predates asset tracking/);
     expect(calls.some((c) => c.file === 'zip')).toBe(false);
     expect(calls.some((c) => c.file === apksigner)).toBe(false);
+  });
+
+  test('a literal keystore password is handed to apksigner in its environment, never on its command line', async () => {
+    const { calls, run } = harness();
+    const result = await run({ keystore: resolveKeystore(root, { android: { keystorePassword: 'hunter2' } }) });
+    expect(result.ok).toBe(true);
+    const sign = calls.find((c) => c.file === apksigner);
+    expect(sign?.args).toContain(`env:${KEYSTORE_PASSWORD_ENV}`);
+    expect(sign?.args?.join(' ')).not.toContain('hunter2');
+    expect(sign?.opts).toMatchObject({
+      timeoutMs: 'unbounded',
+      env: { [KEYSTORE_PASSWORD_ENV]: 'hunter2' },
+      redact: ['hunter2'],
+    });
+  });
+
+  test('an apksigner failure fails at the apksigner step -- an unsigned APK is never handed back', async () => {
+    const { run } = harness({ failOn: apksigner });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('apksigner');
+    expect(result.apkPath).toBeUndefined();
   });
 
   test('darwin clones the cached APK with cp -c and falls back to a plain copy when cp refuses', async () => {

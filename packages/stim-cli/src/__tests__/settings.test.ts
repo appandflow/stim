@@ -22,7 +22,6 @@ import {
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-
 import { saveConfig, writeConfigSetting, type Config } from '../workspace/config.ts';
 import { SETTINGS } from '@stim-cli/core/state';
 
@@ -128,6 +127,22 @@ describe('Android AVD config settings', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
+});
+
+test('a committed android.deviceProfile must be an avdmanager id, so cmd.exe metacharacters never reach avdmanager.bat', () => {
+  for (const deviceProfile of [
+    '',
+    'pixel_6',
+    'Nexus 5X',
+    'tv_1080p',
+    '3.2in HVGA slider (ADP1)',
+    '10.1in WXGA (Tablet)',
+  ])
+    expect(settingShapeErrors({ android: { deviceProfile } })).toEqual([]);
+  for (const deviceProfile of ['pixel_6"&calc&"', 'pixel_6&calc', '%PATH%', 'pixel_6\ncalc'])
+    expect(settingShapeErrors({ android: { deviceProfile } })).toEqual([
+      `Invalid android.deviceProfile setting ${JSON.stringify(deviceProfile)}. Expected an avdmanager device id such as pixel_6 or Nexus 5X (\`avdmanager list device -c\`).`,
+    ]);
 });
 
 function nestedSetting(path: string, value: unknown): Record<string, unknown> {

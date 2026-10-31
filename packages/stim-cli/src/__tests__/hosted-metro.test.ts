@@ -107,6 +107,31 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
+test('closing links completes while host evidence is pending, and orphan requests cannot stay active', async () => {
+  let release: ((result: { state: 'ready' }) => void) | undefined;
+  links.probe.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const close = watchHostedMetro(root, 8082, 'watcher');
+  try {
+    await vi.waitFor(() => {
+      expect(readWorkspaceState(root)?.hostedMetroLinks).toMatchObject({ [session]: { ready: true } });
+      expect(readWorkspaceState(root)?.hostedMetroRequests).not.toHaveProperty(orphan);
+      expect(links.probe).toHaveBeenCalled();
+    });
+    expect(hostedAgentPort(root, session)).toBeNull();
+    await closeHostedMetro(root, session);
+    expect(readWorkspaceState(root)?.hostedMetroLinks).toEqual({});
+    expect(links.close).toHaveBeenCalledOnce();
+  } finally {
+    await close();
+    release?.({ state: 'ready' });
+  }
+});
+
 test('a session on a local network machine publishes its agent relay port with readiness and closes the relay with its links', async () => {
   links.probe.mockResolvedValue({ state: 'ready' });
   writeWorkspaceState(root, {

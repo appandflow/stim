@@ -1,4 +1,14 @@
-import { mkdtempSync, realpathSync, mkdirSync, readdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import {
+  readFileSync,
+  mkdtempSync,
+  realpathSync,
+  mkdirSync,
+  readdirSync,
+  writeFileSync,
+  rmSync,
+  existsSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
@@ -339,4 +349,72 @@ test('the built-in filesystem build cache satisfies the provider contract', asyn
     expect(results.length).toBeGreaterThan(0);
     expect(results.filter((result) => !result.passed)).toEqual([]);
   }
+});
+
+test('SIGINT during a cache copy drains its declared child and staging before the CLI exits', async () => {
+  const source = join(root, 'source.apk');
+  writeFileSync(source, 'new app');
+  const previous = seedEntry('android', 'interrupt', 'App.apk');
+  const script = `
+    const { filesystemBuildCapability } = await import(${JSON.stringify(new URL('../cache/build-cache.ts', import.meta.url).href)});
+    const { getExecutor, setExecutor } = await import(${JSON.stringify(new URL('../exec.ts', import.meta.url).href)});
+    const { withNativeBuildRun, runCancellationSignal } = await import(${JSON.stringify(new URL('../engine/native-run.ts', import.meta.url).href)});
+    const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});
+    const { readClaimSet } = await import(${JSON.stringify(new URL('../ownership-claim.ts', import.meta.url).href)});
+    const { workspaceDir } = await import(${JSON.stringify(new URL('../workspace/paths.ts', import.meta.url).href)});
+    const { join } = await import('node:path');
+    const [root, source] = process.argv.slice(1);
+    const real = getExecutor();
+    let closed = false;
+    let declared = false;
+    let attempts = 0;
+    setExecutor({ runFileAsync: (file, args, options) => {
+      attempts++;
+      return real.runFileAsync(process.execPath, ['-e', "process.stdout.write('ready'); setInterval(() => {}, 1000)"], {
+        ...options,
+        onSpawn(child) {
+          options.onSpawn?.(child);
+          declared = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.some((claim) => claim.child?.pid === child.pid);
+          child.once('close', () => { closed = true; });
+          child.stdout.once('data', () => process.emit('SIGINT'));
+        },
+      });
+    } });
+    const { value, interrupted } = await runProcessOperation(root, (context) => withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, async () => {
+      try {
+        await filesystemBuildCapability({ root, context }).store({ projectRoot: root, platform: 'android', key: 'interrupt', sourcePath: source, overwrite: true, signal: runCancellationSignal(context) });
+        return { code: 'unexpected-success' };
+      } catch (error) { return { code: error.code, closed, declared, attempts }; }
+    }, { write: () => {} }));
+    process.stdout.write(JSON.stringify(value));
+    process.exitCode = interrupted ?? 0;
+  `;
+  const result = await new Promise<{ code: string | number; stdout: string }>((resolve) => {
+    execFile(
+      process.execPath,
+      ['--experimental-strip-types', '--input-type=module', '-e', script, root, source],
+      {
+        env: { ...process.env, STIM_HOME: tmpHome },
+        timeout: 15_000,
+      },
+      (error, stdout) => resolve({ code: error?.code ?? 0, stdout }),
+    );
+  });
+  expect(result.code).toBe(130);
+  expect(result.stdout ? JSON.parse(result.stdout) : null).toEqual({
+    code: 'STIM_CANCELLED',
+    closed: true,
+    declared: true,
+    attempts: 1,
+  });
+  expect(readFileSync(previous, 'utf8')).toBe('binary');
+  expect(readdirSync(join(root, 'android'))).toEqual(['interrupt']);
+}, 20_000);
+
+test.each([
+  ['ios', { isSimulator: true }, { isSimulator: false }],
+  ['ios', { isSimulator: true, arch: 'arm64' }, { isSimulator: true, arch: 'x86_64' }],
+  ['android', { abi: 'arm64-v8a' }, { abi: 'x86_64' }],
+] as const)('the %s cache separates incompatible device architectures: %j and %j', (platform, first, second) => {
+  expect(buildCacheKey(platform, 'fingerprint', first)).not.toBe(buildCacheKey(platform, 'fingerprint', second));
 });

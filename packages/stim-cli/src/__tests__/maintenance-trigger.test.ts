@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { maintenanceChildLogFile, maintenanceRunClaims } from '@stim-cli/core/state';
+import { maintenanceChildLogFile, maintenanceRunClaims, readMaintenanceAttempt } from '@stim-cli/core/state';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
@@ -24,6 +24,34 @@ afterEach(() => {
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_MAINTENANCE_CHILD', 'CI']) delete process.env[key];
+});
+
+test('child, scoped home, CI, off and invalid config cannot launch maintenance accidentally', () => {
+  process.env.STIM_MAINTENANCE_CHILD = '1';
+  triggerMaintenance('status', { argv: ['status'] });
+  delete process.env.STIM_MAINTENANCE_CHILD;
+  delete process.env.STIM_MAINTENANCE;
+  triggerMaintenance('status', { argv: ['status'] });
+  process.env.CI = '1';
+  delete process.env.STIM_HOME;
+  triggerMaintenance('status', { argv: ['status'] });
+  process.env.STIM_HOME = home;
+  process.env.STIM_MAINTENANCE = 'off';
+  triggerMaintenance('status', { argv: ['status'] });
+  process.env.STIM_MAINTENANCE = 'report';
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ maintenance: { pressureCheckMinutes: 'bad' } }));
+  triggerMaintenance('status', { argv: ['status'] });
+  writeFileSync(join(home, 'config.json'), '{');
+  expect(() => triggerMaintenance('status', { argv: ['status'] })).not.toThrow();
+  expect(spawned).not.toHaveBeenCalled();
+});
+
+test('the trigger stamps the attempt before spawning, so a child that dies at once is not respawned by the next command', () => {
+  triggerMaintenance('status', { argv: ['status'], platform: 'linux' });
+  expect(spawned).toHaveBeenCalledTimes(1);
+  expect(readMaintenanceAttempt()).toBeLessThanOrEqual(Date.now());
+  triggerMaintenance('status', { argv: ['status'], platform: 'linux' });
+  expect(spawned).toHaveBeenCalledTimes(1);
 });
 
 test('Windows maintenance uses the handle-free launcher and asks the entry to relaunch into child.log', () => {

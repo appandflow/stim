@@ -1,26 +1,13 @@
 import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createCacheProvider, createS3FileCache, type S3FileCacheOptions } from '../index.ts';
 import { runCacheProviderContract, loadCacheProvider } from '@stim-cli/cache';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { scopedClientContext } from '../credentials.ts';
-
-const cleanupFault = vi.hoisted(() => ({ directory: '' }));
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const fs = await importOriginal<typeof import('node:fs/promises')>();
-  return {
-    ...fs,
-    rm: (...args: Parameters<typeof fs.rm>) => {
-      if (cleanupFault.directory && String(args[0]).startsWith(cleanupFault.directory))
-        return Promise.reject(Object.assign(new Error('Fixture scratch permissions changed.'), { code: 'EACCES' }));
-      return fs.rm(...args);
-    },
-  };
-});
 
 interface ObjectEntry {
   body: Buffer;
@@ -122,7 +109,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  cleanupFault.directory = '';
   server.closeAllConnections();
   await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
   vi.unstubAllEnvs();
@@ -394,5 +380,116 @@ test('presence checks report size without downloading and missing objects remain
   expect(await files.stat({ key: 'missing', signal: signal() })).toBeNull();
   await expect(files.stat({ key: 'present', signal: AbortSignal.abort(new Error('cancelled')) })).rejects.toThrow(
     'cancelled',
+  );
+});
+
+test.each(['environment', 'profile'] as const)(
+  'scoped %s endpoints cannot fall back to the host destination',
+  async (mode) => {
+    acceptedKeys = ['scoped-client'];
+    let trapRequests = 0;
+    const trap = createServer((request, response) => {
+      trapRequests++;
+      request.resume();
+      response.writeHead(200).end();
+    });
+    await new Promise<void>((resolve) => trap.listen(0, '127.0.0.1', resolve));
+    const address = trap.address();
+    assert(address && typeof address !== 'string');
+    const home = join(directory, 'client-home');
+    await mkdir(join(home, '.aws'), { recursive: true });
+    await writeFile(
+      join(home, '.aws', 'credentials'),
+      '[captured]\naws_access_key_id=scoped-client\naws_secret_access_key=scoped-secret\naws_session_token=scoped-token\n',
+    );
+    await writeFile(join(home, '.aws', 'config'), `[profile captured]\nendpoint_url=${options.endpoint}\n`);
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      AWS_PROFILE: '',
+      AWS_ACCESS_KEY_ID: 'scoped-client',
+      AWS_SECRET_ACCESS_KEY: 'scoped-secret',
+      AWS_SESSION_TOKEN: 'scoped-token',
+      AWS_ENDPOINT_URL: '',
+      AWS_ENDPOINT_URL_S3: mode === 'environment' ? options.endpoint : '',
+      AWS_USE_FIPS_ENDPOINT: 'false',
+      AWS_USE_DUALSTACK_ENDPOINT: 'false',
+    };
+    delete env.AWS_CONFIG_FILE;
+    delete env.AWS_SHARED_CREDENTIALS_FILE;
+    vi.stubEnv('AWS_ENDPOINT_URL_S3', `http://127.0.0.1:${address.port}`);
+    vi.stubEnv('AWS_USE_FIPS_ENDPOINT', 'true');
+    vi.stubEnv('AWS_USE_DUALSTACK_ENDPOINT', 'true');
+    const { endpoint: _endpoint, ...withoutEndpoint } = options;
+    const provider = createS3FileCache({
+      ...withoutEndpoint,
+      env,
+      projectRoot: directory,
+      ...(mode === 'profile' ? { profile: 'captured' } : {}),
+    });
+    try {
+      await provider.store({
+        key: 'scoped-endpoint',
+        sourcePath: await source('private fixture'),
+        overwrite: false,
+        signal: signal(),
+      });
+      expect(signedRequests).toEqual(['scoped-client']);
+      expect(trapRequests).toBe(0);
+    } finally {
+      trap.closeAllConnections();
+      await new Promise<void>((resolve, reject) => trap.close((error) => (error ? reject(error) : resolve())));
+    }
+  },
+);
+
+test.each([{ committed: true, overwrite: false }])(
+  'a reset after consuming a file recovers with committed=$committed and overwrite=$overwrite',
+  async ({ committed, overwrite }) => {
+    resetUploads = 1;
+    resetAfterCommit = committed;
+    const contents = 'complete-cache-file\n'.repeat(65_536);
+    const path = await source(contents);
+    const cache = createS3FileCache(options);
+    await cache.store({ key: 'reset', sourcePath: path, overwrite, signal: signal() });
+    const found = await cache.resolve({ key: 'reset', destinationDir: await destination(), signal: signal() });
+    assert(found);
+    expect(await readFile(found, 'utf8')).toBe(contents);
+    expect(uploadCount).toBe(2);
+  },
+);
+
+test('misses and corrupt downloads leave no partially reusable file', async () => {
+  const cache = createS3FileCache(options);
+  const dir = await destination();
+  expect(await cache.resolve({ key: 'missing', destinationDir: dir, signal: signal() })).toBeNull();
+  objects.set('/cache/team/v1/corrupt', { body: Buffer.from('broken'), digest: '0'.repeat(64) });
+  await expect(cache.resolve({ key: 'corrupt', destinationDir: dir, signal: signal() })).rejects.toThrow('SHA-256');
+  expect(await readdir(dir)).toEqual([]);
+});
+
+describe.skipIf(process.platform === 'win32')('iOS framework link containment', () => {
+  test.each(['../../escape'])(
+    'iOS framework links survive transfer but outside link %s is rejected',
+    async (outside) => {
+      const app = join(directory, 'Test.app');
+      await mkdir(join(app, 'Frameworks', 'Example.framework', 'Versions', 'A'), { recursive: true });
+      await writeFile(join(app, 'Frameworks', 'Example.framework', 'Versions', 'A', 'Example'), 'framework');
+      await symlink('A', join(app, 'Frameworks', 'Example.framework', 'Versions', 'Current'));
+      await symlink('Versions/Current/Example', join(app, 'Frameworks', 'Example.framework', 'Example'));
+      const context = { projectRoot: directory, platform: 'ios' as const, signal: signal() };
+      const builds = createCacheProvider({ projectRoot: directory, options: { ...options } }).builds;
+      assert(builds);
+      await builds.store({ ...context, key: 'linked', sourcePath: app, overwrite: false });
+      const restored = await builds.resolve({ ...context, key: 'linked', destinationDir: await destination() });
+      assert(restored);
+      expect(await readFile(join(restored, 'Frameworks', 'Example.framework', 'Example'), 'utf8')).toBe('framework');
+      await symlink(outside, join(app, 'outside'));
+      await builds.store({ ...context, key: 'outside', sourcePath: app, overwrite: false });
+      const dir = await destination('rejected');
+      await expect(builds.resolve({ ...context, key: 'outside', destinationDir: dir })).rejects.toThrow('outside');
+      expect(await readdir(dir)).toEqual([]);
+    },
   );
 });

@@ -1,13 +1,16 @@
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
 } from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
-import { detectIsExpo } from '../workspace/project.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { detectIsExpo, findServerWorkspace } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
 import { expoBinPath } from '../supervisor/server-expo.ts';
 
@@ -82,6 +85,24 @@ describe("finding the project's expo binary", () => {
       expect(expoBinPath(app)).toBe(join(ws, 'node_modules', '.bin', 'expo'));
     },
   );
+
+  test("expo on NODE_PATH, as pnpm's bin shims set it, does not make a bare project resolve it", () => {
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
+    try {
+      write(join(bare, 'package.json'), JSON.stringify({ name: 'bare' }));
+      const project = pathToFileURL(join(import.meta.dirname, '..', 'workspace', 'project.ts')).href;
+      const script = `const { resolvePackageJson } = await import(${JSON.stringify(project)});
+        process.stdout.write(JSON.stringify(resolvePackageJson(${JSON.stringify(bare)}, 'expo')));`;
+      const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...process.env, NODE_PATH: join(ws, 'node_modules') },
+        encoding: 'utf8',
+      });
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(result.stdout)).toBe(null);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('detectIsExpo on a hoisted workspace', () => {
@@ -94,6 +115,18 @@ describe('detectIsExpo on a hoisted workspace', () => {
     } finally {
       rmSync(native, { recursive: true, force: true });
     }
+  });
+
+  test('an explicit react-native run-ios script still wins: a bare project stays bare', () => {
+    write(
+      join(app, 'package.json'),
+      JSON.stringify({
+        name: '@ws/app',
+        dependencies: { expo: '^57.0.8' },
+        scripts: { ios: 'react-native run-ios' },
+      }),
+    );
+    expect(detectIsExpo(app)).toBe(false);
   });
 });
 
@@ -163,3 +196,26 @@ describe('detectIsExpo is the single source', () => {
 function readState() {
   return readFileSync(workspaceStateFile(app), 'utf-8');
 }
+
+describe('the workspace a monorepo web server belongs to', () => {
+  const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { stdio: 'ignore' });
+  let web: string;
+
+  beforeEach(() => {
+    web = join(ws, 'packages', 'web');
+    write(join(web, 'package.json'), JSON.stringify({ name: '@ws/web', devDependencies: { vite: '^5.0.0' } }));
+    git(ws, 'init', '-q', '-b', 'main');
+    git(ws, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  });
+
+  test('ignores an app registered in another worktree nested under this one', () => {
+    const nested = join(ws, '.worktrees', 'feature');
+    git(ws, 'worktree', 'add', '-q', '--detach', nested);
+    const nestedApp = join(nested, 'packages', 'app');
+    write(join(nestedApp, 'package.json'), JSON.stringify({ name: '@ws/app', dependencies: { expo: '^57.0.8' } }));
+    upsertProject(nestedApp, {});
+    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
+    upsertProject(app, {});
+    expect(findServerWorkspace(web)).toEqual({ root: app, from: web });
+  });
+});

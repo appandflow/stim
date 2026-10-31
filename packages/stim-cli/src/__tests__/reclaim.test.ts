@@ -16,6 +16,7 @@ import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { testContext } from './_context.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 let tmpHome: string;
 
@@ -248,6 +249,20 @@ test('reclaim ends the remote session recorded for the workspace', async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
+test('the session is ended even without deleteOwnedDevices', async () => {
+  const root = workspaceWithSession('drs_7');
+  let called = false;
+  await reclaimProject(root, {
+    deleteOwnedDevices: false,
+    stopSession: () => {
+      called = true;
+      return { status: 'torn-down' };
+    },
+  });
+  expect(called).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
 test('a stopped session with an unreconciled claim keeps the workspace retry handle', async () => {
   const root = workspaceWithSession('drs_43');
   const result = await reclaimProject(root, {
@@ -288,6 +303,31 @@ test('cancelling a session stop preserves its workspace and prevents later clean
     expect(released).toBe(false);
     expect(getProject(root)).not.toBeNull();
     expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).remoteDevice.sessionId).toBe('drs_cancelled');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unresolved session child preserves its typed cleanup refusal and stops later cleanup', async () => {
+  const root = workspaceWithSession('drs_unresolved');
+  const refusal = new WorkspaceProcessCleanupError([], 'Session child cannot be verified.', 'Inspect the child.');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ projectRoot: root, cwd: root }),
+        stopSession: () => {
+          throw refusal;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(refusal);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -410,6 +450,20 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
   expect(result.keptEntry).toBe(true);
   expect(result.stoppedTunnel).toBeNull();
   expect(result.failedDevices[0]?.reason).toMatch(/replacement.*retained/i);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('the tunnel is stopped even without deleteOwnedDevices', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  let called = false;
+  await reclaimProject(root, {
+    deleteOwnedDevices: false,
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(true);
   rmSync(root, { recursive: true, force: true });
 });
 

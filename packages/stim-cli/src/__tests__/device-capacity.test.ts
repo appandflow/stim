@@ -1,7 +1,8 @@
 import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
+import { readStatsReport } from '@stim-cli/core/state';
+import { workspaceId } from '@stim-cli/core';
 import {
   peekDeviceSlots,
   withDeviceBootAdmission,
@@ -142,6 +143,16 @@ describe('per-platform device caps', () => {
       ...policy,
     });
 
+  test('a waiter held back only by its own platform cap does not block a waiter of another platform', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    try {
+      const sources = { ...empty, sims: [sim('a')] };
+      await expect(admit('android', { max: 0, platformMax: { ios: 1, android: 1 }, sources })).resolves.toBe('booted');
+    } finally {
+      releaseClaim(head);
+    }
+  });
+
   test('queue reclaim for a full platform cap only reclaims devices of that platform', async () => {
     let clock = Date.now();
     await expect(
@@ -191,6 +202,39 @@ describe('queue reclaim behind a platform-walled head', () => {
       releaseClaim(head);
     }
   });
+});
+
+test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
+  let now = Date.now();
+  const lines: string[] = [];
+  const state = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>();
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      max: 1,
+      waitMs: 12_000,
+      sources: { ...empty, sims: occupied },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+      waitingFor: state,
+    }),
+  ).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    message: expect.stringContaining('Waited 12s'),
+    remedy: expect.stringMatching(/stim stop.*--wait <seconds>.*concurrency.maxDevices/),
+  });
+  expect(lines).toHaveLength(2);
+  expect(lines[0]).toContain('1/1 in use: stim-holder');
+  expect(lines[1]).toContain('10s elapsed');
+  expect(state.mock.calls[0]?.[0]).toMatchObject({ kind: 'device-slot', inUse: 1, max: 1 });
+  expect(state).toHaveBeenLastCalledWith(null);
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  const report = readStatsReport(null, now).report;
+  expect(report.capacityRefusals).toEqual([expect.objectContaining({ workspace: workspaceId(root), max: 1 })]);
+  expect(report.capacityWaits).toEqual([expect.objectContaining({ kind: 'device-wait', ms: 12_000 })]);
 });
 
 test('admission records device slot duration in the compiling placement independently of placement timing', async () => {
@@ -543,4 +587,28 @@ test('the placement peek reports the tightest limit and does not queue a run beh
     delete process.env.STIM_MAX_IOS_DEVICES;
     releaseClaim(ticket);
   }
+});
+
+test('automatic device admission rechecks exclusion after waiting and clears its own wait ticket', async () => {
+  const boot = vi.fn<() => Promise<string>>(async () => 'booted');
+  const sleeping = vi.fn<() => Promise<void>>(async () => {
+    writeFileSync(join(root, 'config.json'), JSON.stringify({ remote: { devicePoolDisabled: ['local'] } }));
+  });
+  const device = { platform: 'ios', key: 'new' };
+  await expect(
+    withDeviceBootAdmission(device, boot, {
+      root,
+      max: 1,
+      automatic: true,
+      sources: { ...empty, sims: occupied },
+      sleep: sleeping,
+    }),
+  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
+  expect(sleeping).toHaveBeenCalledOnce();
+  expect(boot).not.toHaveBeenCalled();
+  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  await expect(withDeviceBootAdmission(device, boot, { root, max: 0, automatic: true })).rejects.toMatchObject({
+    code: 'STIM_HOSTING_REFUSED',
+  });
+  await expect(withDeviceBootAdmission(device, boot, { root, max: 0 })).resolves.toBe('booted');
 });

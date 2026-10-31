@@ -790,3 +790,13 @@ test.skipIf(process.platform !== 'darwin')('iOS crash reports come from the oper
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test('a stalled symbolication server cannot hide or indefinitely delay the original error', async () => {
+  server = createServer(() => {});
+  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as { port: number }).port;
+  const raw = { msg: 'Error: failed\n at render (http://localhost:8083/index.bundle:1:1)' };
+  const [record] = await symbolicateErrors([raw], { port, timeoutMs: 30 });
+  expect(record?.msg).toBe(raw.msg);
+  expect(record?.symbolicationNote).toContain('timed out');
+});

@@ -258,6 +258,24 @@ test('a peer with no usable metadata is counted but never matched', async () => 
 
 // `unreachable` carries its own remedy -- retry the dev server, do not touch the
 // device -- so the engine has to actually produce it, not just the command fakes.
+test('a Metro that accepts the socket and never answers reports itself unreachable', async () => {
+  const server = new WebSocketServer({ host: '127.0.0.1', port: 0, path: '/message' });
+  await once(server, 'listening');
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('expected a TCP address');
+
+  try {
+    await expect(
+      reloadThroughMetro(address.port, { role: 'ios', appId: 'com.example.ios', timeoutMs: 50 }),
+    ).resolves.toEqual({
+      failed: true,
+      unreachable: true,
+      reason: `Metro did not answer on port ${address.port}.`,
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
 
 test('a refused connection reports itself unreachable rather than a missing peer', async () => {
   const probe = createServer();

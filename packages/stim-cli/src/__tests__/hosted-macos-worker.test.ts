@@ -2,7 +2,16 @@ import type { ChildProcess } from 'node:child_process';
 import type { Executor } from '../exec.ts';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -15,6 +24,7 @@ import {
 } from '@stim-cli/core/state';
 import { runHostedMacosApp } from '../device-host/macos.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -131,6 +141,102 @@ function receipt(args?: string[]) {
   );
 }
 
+test.each(['identity', 'architecture', 'platform', 'executable'])(
+  'refuses incompatible macOS %s before signing or launching',
+  async (failure) => {
+    receipt();
+    if (failure === 'identity') plist.CFBundleIdentifier = 'different.app';
+    if (failure === 'architecture') arch = 'x86_64';
+    if (failure === 'minos') build = 'platform MACOS\n minos 27.0.1';
+    if (failure === 'platform') build = 'platform IOSSIMULATOR\n minos 26.0';
+    if (failure === 'plist minimum') plist.LSMinimumSystemVersion = '28';
+    if (failure === 'URL schemes') plist.CFBundleURLTypes = [];
+    if (failure === 'update feed') plist.SUFeedURL = 'https://example.test';
+    if (failure === 'executable') plist.CFBundleExecutable = '../Fixture';
+    expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
+      state: 'unknown',
+      device,
+      notice: expect.any(String),
+    });
+    expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === '/usr/libexec/PlistBuddy')).toBe(
+      false,
+    );
+    expect(native.spawn).not.toHaveBeenCalled();
+  },
+);
+
+test('stamps and signs verified bytes, launches with an isolated home, and deletes only its recorded preference domain after stop', async () => {
+  const offeredArguments = ['-autopilot.enabled', 'true', '', 'ENV=value'];
+  receipt(offeredArguments);
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toEqual({
+    state: 'installed',
+    device,
+    launched: true,
+    pid: 102,
+  });
+  const bundle = join(area, 'App.app');
+  expect(native.runFile).toHaveBeenCalledWith(
+    '/usr/libexec/PlistBuddy',
+    ['-c', `Set :CFBundleIdentifier ${bundleId}.hosted3`, join(bundle, 'Contents', 'Info.plist')],
+    expect.anything(),
+  );
+  expect(native.runFile.mock.calls.filter(([file]) => file === 'codesign').map(([, args]) => args)).toEqual([
+    ['--force', '--sign', '-', join(bundle, 'Contents', 'Frameworks', 'Dependency.framework')],
+    ['--force', '--sign', '-', bundle],
+  ]);
+  expect(native.spawn).toHaveBeenCalledWith(
+    process.execPath,
+    [expect.stringMatching(/macos[/\\-]run\.(ts|mjs)$/), realpathSync(join(home, 'macos-app')), expect.any(String)],
+    expect.objectContaining({
+      detached: true,
+      env: expect.objectContaining({
+        STIM_HOME: home,
+        HOME: join(home, 'app-home'),
+        CFFIXED_USER_HOME: join(home, 'app-home'),
+        TMPDIR: join(home, 'app-home', 'tmp'),
+      }),
+    }),
+  );
+  expect(readMacosRecord(realpathSync(join(home, 'macos-app')))).toMatchObject({
+    bundleId: `${bundleId}.hosted3`,
+    arguments: offeredArguments,
+    build: { state: 'ok' },
+  });
+  const preferences = join(process.env.HOME!, 'Library', 'Preferences');
+  writeFileSync(join(preferences, `${bundleId}.hosted3.plist`), '{}');
+  writeFileSync(join(preferences, `${bundleId}.plist`), 'original preferences');
+  writeFileSync(join(preferences, `${bundleId}.hosted4.plist`), 'another slot');
+  symlinkSync(preferences, join(bundle, 'shared-preferences'));
+  const previous = join(root, 'apps', 'previous');
+  mkdirSync(join(previous, 'App.app'), { recursive: true });
+  mkdirSync(join(previous, 'blobs'));
+  writeFileSync(join(previous, 'receipt.json'), '{}');
+  writeFileSync(join(previous, 'manifest.json'), '[]');
+  const logs = workspaceLogsDir(realpathSync(join(home, 'macos-app')));
+  mkdirSync(logs, { recursive: true });
+  const log = join(logs, 'macos.ndjson');
+  writeFileSync(log, 'app output');
+  expect(await runHostedMacosApp('stop', request)).toEqual({ state: 'stopped', device });
+  expect(native.stop).toHaveBeenCalledExactlyOnceWith(realpathSync(join(home, 'macos-app')));
+  expect(native.quiet).toHaveBeenCalledExactlyOnceWith(
+    'defaults',
+    ['delete', `${bundleId}.hosted3`],
+    expect.anything(),
+  );
+  expect(existsSync(join(preferences, `${bundleId}.hosted3.plist`))).toBe(false);
+  expect(readFileSync(join(preferences, `${bundleId}.plist`), 'utf8')).toBe('original preferences');
+  expect(readFileSync(join(preferences, `${bundleId}.hosted4.plist`), 'utf8')).toBe('another slot');
+  expect(existsSync(join(home, 'app-home'))).toBe(false);
+  for (const attempt of [area, previous]) {
+    expect(existsSync(join(attempt, 'App.app'))).toBe(false);
+    expect(existsSync(join(attempt, 'blobs'))).toBe(false);
+    expect(existsSync(join(attempt, 'receipt.json'))).toBe(true);
+  }
+  expect(existsSync(join(previous, 'manifest.json'))).toBe(true);
+  expect(existsSync(join(home, 'macos-supervisor.log'))).toBe(true);
+  expect(readFileSync(log, 'utf8')).toBe('app output');
+});
+
 test('replacing an app identity removes the stopped identity preferences before recording the new launch', async () => {
   receipt();
   await runHostedMacosApp('install', request, { attempt: 'app' });
@@ -155,6 +261,94 @@ test('replacing an app identity removes the stopped identity preferences before 
   expect(JSON.parse(readFileSync(join(home, 'hosted-macos-app.json'), 'utf8'))).toEqual({
     bundleId: `${bundleId}.hosted3`,
   });
+});
+
+test('launch passes only allowed environment variables and isolated paths to client code', async () => {
+  receipt();
+  vi.stubEnv('PATH', '/usr/bin');
+  vi.stubEnv('LANG', 'en_US.UTF-8');
+  vi.stubEnv('LC_ALL', 'en_US.UTF-8');
+  vi.stubEnv('LC_CTYPE', 'UTF-8');
+  vi.stubEnv('USER', 'fixture');
+  vi.stubEnv('LOGNAME', 'fixture');
+  vi.stubEnv('SHELL', '/bin/zsh');
+  vi.stubEnv('TERM', undefined);
+  vi.stubEnv('SERVER_TOKEN', 'secret');
+  vi.stubEnv('NODE_OPTIONS', '--inspect');
+  vi.stubEnv('STIM_SECRET', 'secret');
+  vi.stubEnv('CFFIXED_USER_HOME', '/host/home');
+  vi.stubEnv('TMPDIR', '/host/tmp');
+  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
+  expect(native.spawn.mock.calls[0]![2]!.env).toEqual({
+    PATH: '/usr/bin',
+    LANG: 'en_US.UTF-8',
+    LC_ALL: 'en_US.UTF-8',
+    LC_CTYPE: 'UTF-8',
+    USER: 'fixture',
+    LOGNAME: 'fixture',
+    SHELL: '/bin/zsh',
+    STIM_HOME: home,
+    HOME: join(home, 'app-home'),
+    CFFIXED_USER_HOME: join(home, 'app-home'),
+    TMPDIR: join(home, 'app-home', 'tmp'),
+  });
+});
+
+test.each(['app-home', 'attempt', 'bundle', 'blobs', 'apps'])(
+  'stop refuses %s links outside the private area without deleting their targets',
+  async (target) => {
+    const outside = mkdtempSync(join(tmpdir(), 'stim-hosted-outside-'));
+    try {
+      writeFileSync(join(outside, 'keep'), 'private bytes');
+      const path =
+        target === 'app-home'
+          ? join(home, 'app-home')
+          : target === 'attempt'
+            ? area
+            : target === 'apps'
+              ? join(root, 'apps')
+              : target === 'bundle'
+                ? join(area, 'App.app')
+                : join(home, '..', 'blobs');
+      rmSync(path, { recursive: true, force: true });
+      symlinkSync(outside, path);
+      expect(await runHostedMacosApp('stop', request)).toMatchObject({
+        state: 'unknown',
+        notice: expect.stringContaining('outside'),
+      });
+      expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('private bytes');
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  },
+);
+
+test('stop retains app data and preferences when process shutdown cannot be verified', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  native.stop.mockRejectedValue(new Error('Owner unresolved'));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown', notice: 'Owner unresolved' });
+  expect(native.quiet).not.toHaveBeenCalled();
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  expect(existsSync(join(area, 'App.app'))).toBe(true);
+  expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
+});
+
+test('stop ends copies of the session bundles before deleting them, and keeps them when one will not stop', async () => {
+  receipt();
+  await runHostedMacosApp('install', request, { attempt: 'app' });
+  native.stopApps.mockClear();
+  native.stopApps.mockRejectedValueOnce(new Error('Copy did not exit'));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown', notice: 'Copy did not exit' });
+  expect(existsSync(join(area, 'App.app'))).toBe(true);
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  native.stopApps.mockImplementationOnce(() => {
+    expect(existsSync(join(area, 'App.app'))).toBe(true);
+    return Promise.resolve();
+  });
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'stopped' });
+  expect(native.stopApps).toHaveBeenLastCalledWith(realpathSync(root));
+  expect(existsSync(join(area, 'App.app'))).toBe(false);
 });
 
 test.each([

@@ -51,6 +51,38 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+test.each(['launch', 'app', 'supervisor', 'app identity', 'supervisor identity'])(
+  'a hint cannot accept a mismatched %s',
+  async (invalid) => {
+    const bad = { ...record };
+    if (invalid === 'launch') bad.launchId = 'previous-launch';
+    if (invalid === 'app') delete bad.app;
+    if (invalid === 'supervisor') delete bad.supervisor;
+    if (invalid === 'app identity') bad.app = { pid: process.pid, processToken: 'invalid', startedAtMicros: 1 };
+    if (invalid === 'supervisor identity')
+      bad.supervisor = { pid: process.pid, processToken: 'invalid', startedAtMicros: 1 };
+    let registered: MacosAppRecord | null | undefined;
+    const pending = waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000).then((value) => {
+      registered = value;
+      return value;
+    });
+    try {
+      writeWorkspaceState(root, { macos: bad });
+      child.emit('message', 'macos-registered');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(registered).toBeUndefined();
+      writeWorkspaceState(root, { macos: record });
+      child.emit('message', 'macos-registered');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(registered).toEqual(record);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      await vi.advanceTimersByTimeAsync(20_000);
+      await pending;
+    }
+  },
+);
+
 test.each(['missing message', 'disconnected channel'])(
   'registration repairs a %s without changing its deadline',
   async (failure) => {

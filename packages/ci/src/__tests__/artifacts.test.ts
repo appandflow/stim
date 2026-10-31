@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { copyDiagnosticLogs, diagnosticArtifactFiles } from '../artifacts.ts';
@@ -34,4 +34,27 @@ it('selects reports and logs consistently through an explicit symlink root while
     'test.stdout.log',
     join('logs', 'native.log'),
   ]);
+});
+
+it('refuses destination links and existing files without overwriting their contents', async () => {
+  const source = join(root, 'source');
+  const artifacts = join(root, 'artifacts');
+  const outside = join(root, 'outside');
+  mkdirSync(source);
+  mkdirSync(artifacts);
+  mkdirSync(outside);
+  writeFileSync(join(source, 'compiler.log'), 'new compiler evidence');
+  writeFileSync(join(outside, 'compiler.log'), 'outside evidence');
+  symlinkSync(outside, join(artifacts, 'logs'), 'junction');
+  await expect(copyDiagnosticLogs(source, artifacts)).rejects.toThrow('regular directory');
+  expect(readFileSync(join(outside, 'compiler.log'), 'utf8')).toBe('outside evidence');
+  rmSync(join(artifacts, 'logs'));
+  mkdirSync(join(artifacts, 'logs'));
+  symlinkSync(join(outside, 'compiler.log'), join(artifacts, 'logs', 'compiler.log'));
+  await expect(copyDiagnosticLogs(source, artifacts)).rejects.toThrow(/EEXIST/);
+  expect(readFileSync(join(outside, 'compiler.log'), 'utf8')).toBe('outside evidence');
+  rmSync(join(artifacts, 'logs', 'compiler.log'));
+  writeFileSync(join(artifacts, 'logs', 'compiler.log'), 'earlier test evidence');
+  await expect(copyDiagnosticLogs(source, artifacts)).rejects.toThrow(/EEXIST/);
+  expect(readFileSync(join(artifacts, 'logs', 'compiler.log'), 'utf8')).toBe('earlier test evidence');
 });

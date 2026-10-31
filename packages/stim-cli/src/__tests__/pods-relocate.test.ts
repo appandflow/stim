@@ -103,6 +103,25 @@ describe('relocatePods', () => {
     },
   );
 
+  test('changes nothing when the locks differ for another reason', () => {
+    const pods = 'ios/Pods';
+    write('ios/Podfile.lock', lock({ version: '58.0.4' }));
+    write(`${pods}/Manifest.lock`, lock({ core: SEED_CHECKSUM }));
+    write(`${pods}/Local Podspecs/ExpoModulesCore.podspec.json`, PODSPEC);
+    write(`${pods}/Target Support Files/A/A.xcconfig`, `${SOURCE}/x\n`);
+
+    expect(
+      relocatePods({
+        podsDir: join(base, pods),
+        podfileLockPath: join(base, 'ios/Podfile.lock'),
+        sourceRoot: SOURCE,
+        targetRoot: '/wt/trailhead',
+      }),
+    ).toEqual({ ok: false });
+    expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(`${SOURCE}/x\n`);
+    expect(readFileSync(join(base, pods, 'Manifest.lock'), 'utf-8')).toBe(lock({ core: SEED_CHECKSUM }));
+  });
+
   describe('identical locks', () => {
     const pods = 'ios/Pods';
     const run = (extra: { canRelocate?: boolean; sourceRoot?: string; targetRoot?: string } = {}) =>
@@ -186,6 +205,21 @@ describe('relocatePods', () => {
       },
     );
 
+    test('finds a non-ASCII source path in file contents', () => {
+      const source = '/Users/j\u00e9r\u00f4me/trailhead';
+      write('ios/Podfile.lock', lock());
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Target Support Files/A/A.xcconfig`, `X = ${source}/a\n`);
+      expect(run({ sourceRoot: source })).toEqual({ ok: true, pods: [] });
+      expect(readFileSync(join(base, pods, 'Target Support Files/A/A.xcconfig'), 'utf-8')).toBe(
+        'X = /wt/trailhead/a\n',
+      );
+
+      write(`${pods}/Manifest.lock`, lock());
+      write(`${pods}/Other/script.sh`, `${source}/x\n`);
+      expect(() => run({ sourceRoot: source })).toThrow(/still names/);
+    });
+
     test('a binary file naming the source path is a leftover', () => {
       write('ios/Podfile.lock', lock());
       write(`${pods}/Manifest.lock`, lock());
@@ -195,6 +229,13 @@ describe('relocatePods', () => {
         Buffer.concat([Buffer.from([0, 1, 255, 0]), Buffer.from(`${SOURCE}/o.o`)]),
       );
       expect(() => run()).toThrow(/still names/);
+      expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
+    });
+
+    test('a sibling of the nested worktree path is a leftover', () => {
+      seed();
+      write(`${pods}/Other/script.sh`, `${SOURCE}/.worktrees/wt2/x\n`);
+      expect(() => run({ targetRoot: `${SOURCE}/.worktrees/wt` })).toThrow(/still names/);
       expect(existsSync(join(base, pods, 'Manifest.lock'))).toBe(false);
     });
   });

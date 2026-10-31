@@ -708,3 +708,26 @@ test('a registry hint completes only this ticket grant before the next approval 
     vi.useRealTimers();
   }
 });
+
+test('setup refuses a ticket on the command line and names the environment variable instead', () => {
+  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
+    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
+  );
+});
+
+test.each([
+  ['', true],
+  ['y', true],
+  ['YES', true],
+  ['n', false],
+  ['N', false],
+  ['no', false],
+  ['maybe', false],
+])('a terminal answer %j to the approval question is %s', async (answer, approved) => {
+  const stream = new PassThrough();
+  const input = createInterface({ input: stream, output: new PassThrough() });
+  const result = confirmSetup(input, 'Approve? [Y/n] ', 1000);
+  stream.write(`${answer}\n`);
+  await expect(result).resolves.toBe(approved);
+  stream.destroy();
+});

@@ -1,6 +1,6 @@
 import { gateMetroOrigin, REMOTE_METRO_WRONG } from '../engine/metro-gate.ts';
+import type { NdjsonRecord } from '../ndjson.ts';
 import { resolve4 } from 'node:dns/promises';
-
 import { request as httpsRequest } from 'node:https';
 import { vi } from 'vitest';
 
@@ -36,6 +36,12 @@ function gate(over: Partial<Parameters<typeof gateMetroOrigin>[0]> = {}) {
 }
 
 describe('the proof is a request arriving in THIS workspace log', () => {
+  test('a bundle event after the probe started passes the gate', async () => {
+    const records: NdjsonRecord[] = [{ ts: 5_000, src: 'metro', level: 'info', msg: 'bundle' }];
+    const result = await gate({ readRecords: () => records, isProof: (r) => (r.ts ?? 0) === 5_000 });
+    expect(result.ok).toBe(true);
+  });
+
   test('a HEALTHY foreign server is refused -- liveness is not identity', async () => {
     const result = await gate({ probe: async () => 200, isProof: () => false });
     expect(result.failed).toBe(true);
@@ -65,5 +71,14 @@ describe('failing closed', () => {
     expect(result.failed).toBe(true);
     expect(result.reason).toContain('did not answer');
     expect(resolve4).toHaveBeenCalledOnce();
+  });
+
+  test('a probe that throws is still a refusal, never a pass', async () => {
+    const result = await gate({
+      probe: async () => {
+        throw new Error('network down');
+      },
+    });
+    expect(result.failed).toBe(true);
   });
 });

@@ -217,6 +217,26 @@ test('an EAS fingerprint failure falls back to the local fingerprint and release
   );
 });
 
+test('one deadline covers fingerprint and download, and timeout waits for its child to exit', async () => {
+  const { ctx } = context('slow', { CACHE_TEST_DELAY: '1000' });
+  const loaded = await loadProjectProvider(root);
+  const children = captureChildren();
+  const result = await withAmbientContext(ctx, () =>
+    resolveRemote({
+      context: ctx,
+      provider: loaded.provider,
+      projectRoot: root,
+      platform: 'ios',
+      fingerprintHash: 'local',
+      timeoutMs: 1700,
+    }),
+  );
+  expect(result).toMatchObject({ failed: 'EAS cache resolve timed out after 1700ms' });
+  expect(calls().map((c) => c.args[0])).toEqual(['fingerprint:generate', 'build:download']);
+  expect(children).toHaveLength(2);
+  expect(children[1]?.signalCode).toBe('SIGKILL');
+});
+
 test('cancellation kills only the owning cache child while another operation completes', async () => {
   const a = context('blocked', { CACHE_TEST_BLOCK: '1' });
   const b = context('other');

@@ -127,3 +127,8 @@ test('CLI build needs no command and refuses platform-incompatible selectors bef
     process.exitCode = prior;
   }
 });
+
+test('always compiles on this machine, whatever remote.build says', async () => {
+  await buildCI(options);
+  expect(lifecycle.build).toHaveBeenCalledWith(expect.objectContaining({ remoteBuild: 'local' }));
+});

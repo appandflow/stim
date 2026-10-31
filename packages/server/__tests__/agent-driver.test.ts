@@ -242,3 +242,41 @@ test('retains a partially started iOS daemon until its shutdown is verified', as
   await agents.close();
   expect(driver.running).toBe(false);
 });
+
+test('shows a client only a generic message for an unexpected driver failure', async () => {
+  const driver = new FakeDriver();
+  driver.failStart = new Error('spawn failed with token abc');
+  const write = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+  try {
+    const access = await host(driver).appRunning(app(A, 10, 'client-1'));
+    expect(JSON.stringify(access)).not.toContain('abc');
+  } finally {
+    write.mockRestore();
+  }
+});
+
+test('restarts a crashed daemon, issues new grants and invalidates the old ones', async () => {
+  const driver = new FakeDriver();
+  const agents = host(driver);
+  const before = await agents.appRunning(app(A, 10, 'client-1'));
+  driver.crash();
+  await vi.waitFor(() => expect(driver.starts).toBe(2));
+  await vi.waitFor(() => expect(driver.running).toBe(true));
+  const after = agents.access(A)!;
+  expect(after.grant.driver).toBe('agent-device');
+  expect(tokenOf(after.grant)).not.toBe(tokenOf(before.grant));
+  expect(agents.authorize(A, tokenOf(before.grant))).toBe('forbidden');
+  expect(agents.authorize(A, tokenOf(after.grant))).toBe('ok');
+  await agents.close();
+});
+
+test('asks the approval about where an agent request came from, for the session client', async () => {
+  const driver = new FakeDriver();
+  const agents = host(driver, (client, from) => client === 'client-1' && 'node' in from && from.node === 'nLaptop');
+  const token = tokenOf((await agents.appRunning(app(A, 10, 'client-1'))).grant);
+  expect(agents.authorize(A, token, { node: 'nLaptop' })).toBe('ok');
+  expect(agents.authorize(A, token, { node: 'nTakeover' })).toBe('forbidden');
+  expect(agents.authorize(A, token, { node: null })).toBe('forbidden');
+  expect(agents.holder(A)).toBe('client-1');
+  await agents.close();
+});

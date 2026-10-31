@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
+  gcLogFile,
   maintenanceDir,
   maintenanceNdjsonFile,
   maintenanceStateFile,
@@ -207,6 +208,24 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   const outputs = cleared.find((record) => record.kind === 'workspaceOutputs');
   expect(outputs).toMatchObject({ label: spaces.old.root, id: spaces.old.root, path: spaces.old.root });
   expect(outputs?.bytes).toBeGreaterThan(0);
+});
+
+test('report mode plans the same actions and deletes nothing', async () => {
+  process.env.STIM_MAINTENANCE = 'report';
+  const { entries, spaces } = capFixture();
+
+  await runMaintenance('test');
+
+  for (const dir of Object.values(entries)) expect(existsSync(dir)).toBe(true);
+  for (const space of Object.values(spaces)) expect(hasOutputs(space.dir)).toBe(true);
+  const state = readMaintenanceState()!;
+  expect(state.lastPass).toMatchObject({ mode: 'report', freedBytes: 0 });
+  expect(state.plan.map((action) => action.kind)).toEqual(
+    expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']),
+  );
+  expect(actionKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
+  expect(records().every((record) => record.mode === 'report')).toBe(true);
+  expect(existsSync(gcLogFile())).toBe(false);
 });
 
 test('the age sweep removes only what is provably stale', async () => {
@@ -443,6 +462,44 @@ test('finished worktrees are removed, except a pinned one and the one the pass s
   ).toEqual(
     expect.arrayContaining(['pinned by maintenance.keep', 'the command that started this pass runs inside it']),
   );
+}, 60_000);
+
+function ageWorktrees(worktrees: Record<string, string>, days: Record<string, number>) {
+  for (const [name, path] of Object.entries(worktrees)) {
+    ensureWorkspaceStorage(path);
+    recordWorkspaceUse(path, ago(days[name] ?? 0));
+  }
+}
+
+test('the age sweep keeps an idle unmerged worktree unless maintenance.removeIdleWorktrees is on', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(actionKinds()).not.toContain('remove-worktree');
+}, 60_000);
+
+test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'dirty', 'unpushed', 'recent']);
+  const at = (name: string) => worktrees[name] ?? '';
+  const [idle, dirty, unpushed, recent] = [at('idle'), at('dirty'), at('unpushed'), at('recent')] as const;
+  writeFileSync(join(dirty, 'notes.txt'), 'uncommitted');
+  writeFileSync(join(unpushed, 'local.txt'), 'local');
+  execSync('git add -A && git commit -q -m local', { cwd: unpushed, timeout: 15_000 });
+  ageWorktrees(worktrees, { idle: 10, dirty: 10, unpushed: 10, recent: 2 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(idle)).toBe(false);
+  expect(existsSync(dirty)).toBe(true);
+  expect(existsSync(unpushed)).toBe(true);
+  expect(existsSync(recent)).toBe(true);
+  expect(actionKinds()).toEqual(['remove-worktree']);
 }, 60_000);
 
 test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {

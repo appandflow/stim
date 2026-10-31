@@ -237,6 +237,93 @@ describe('ensureBooted: ios', () => {
     });
   });
 
+  const springBoardStarting = 'com.apple.springboard.finishedstartup 0';
+  const springBoardStarted = 'com.apple.springboard.finishedstartup 4242';
+  test.each([['U1', 0, [springBoardStarting, springBoardStarting, springBoardStarted], false]] as const)(
+    'boots a shut-down owned sim, waits for the Booted state and SpringBoard, and mutes it (%s at %s, case %#)',
+    async (reportedUdid, reportedVolume, springBoard: readonly (string | Error)[], warns) => {
+      let listCalls = 0;
+      let springBoardCalls = 0;
+      const commands: string[] = [];
+      const notes: string[] = [];
+      setExecutor({
+        run: (cmd) => {
+          commands.push(cmd);
+          if (cmd.includes('list devices')) {
+            listCalls += 1;
+            const state = listCalls >= 3 ? 'Booted' : 'Shutdown';
+            return simList([{ udid: 'U1', name: 'stim-app', state, isAvailable: true }]);
+          }
+          return '';
+        },
+        runQuiet: () => '',
+        runFileQuiet: (file, args = []) => {
+          commands.push([file, ...args].join(' '));
+          return '';
+        },
+        runFile(file, args = []) {
+          if (file === 'xcrun' && args[0] === 'devicectl') {
+            commands.push([file, ...args].join(' '));
+            return JSON.stringify({
+              info: { outcome: 'success' },
+              result: { deviceIdentifier: reportedUdid, volume: reportedVolume },
+            });
+          }
+          if (file === 'xcrun' && args[1] === 'spawn' && args[3] === 'notifyutil') {
+            commands.push([file, ...args].join(' '));
+            const reply = springBoard[Math.min(springBoardCalls++, springBoard.length - 1)];
+            if (reply instanceof Error) throw reply;
+            return reply;
+          }
+          return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+            ? this.run!([file, ...args].join(' '))
+            : simctlSpawnStub(file, args);
+        },
+        spawn: (cmd: string, args: readonly string[] = []) => {
+          commands.push([cmd, ...args].join(' '));
+          return makeExitingChild();
+        },
+      });
+      const result = await ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp: 'siniulator',
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: (line) => notes.push(line),
+      });
+      expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
+      expect(result).toEqual({ ok: true, udid: 'U1' });
+      expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
+      expect(commands.indexOf('xcrun simctl boot U1')).toBeLessThan(commands.indexOf('xcrun simctl bootstatus U1 -b'));
+      const mute = 'xcrun devicectl device settings audio --device U1 --volume 0 --json-output -';
+      const springBoardQuery = 'xcrun simctl spawn U1 notifyutil -g com.apple.springboard.finishedstartup';
+      const started = springBoard.at(-1) === springBoardStarted;
+      expect(commands.filter((c) => c === springBoardQuery).length).toBe(springBoard.length + 1);
+      expect(commands.indexOf('xcrun simctl bootstatus U1 -b')).toBeLessThan(commands.indexOf(springBoardQuery));
+      expect(commands.filter((c) => c === mute).length).toBe(started ? 1 : 0);
+      expect(commands.indexOf(mute) > commands.lastIndexOf(springBoardQuery)).toBe(started);
+      expect(notes.some((line) => line.includes('Could not mute this simulator'))).toBe(warns);
+      expect(notes.some((line) => line.includes('simulator muted'))).toBe(!warns);
+      const phases = deviceLog();
+      expect(phases.map((record) => record.phase)).toEqual([
+        'boot_requested',
+        'bootstatus_done',
+        ...(started ? ['springboard_started'] : []),
+        'viewer_opened',
+      ]);
+      expect(phases.find((record) => record.phase === 'springboard_started')?.pid).toBe(started ? 4242 : undefined);
+      expect(phases[0]).toMatchObject({
+        src: 'device',
+        platform: 'ios',
+        event: 'ios_boot',
+        deviceId: 'U1',
+        boot: 'existing',
+      });
+    },
+  );
+
   test('reports boot setup failures instead of treating the Booted state as ready', async () => {
     setExecutor({
       run: (cmd) => {
@@ -264,6 +351,25 @@ describe('ensureBooted: ios', () => {
     expect(result.ok).toBeUndefined();
     expect(result.reason).toMatch(/Could not boot simulator U1/);
     expect(result.reason).toMatch(/CoreLocationMigrator failed/);
+  });
+
+  test("refuses to boot a sim that is no longer this Stim home's", async () => {
+    setExecutor({
+      run: () => simList([{ udid: 'U1', name: 'My iPhone', state: 'Shutdown', isAvailable: true }]),
+      runQuiet: () => '',
+      runFileQuiet: () => '',
+      runFile(file, args = []) {
+        return file === 'xcrun' && (args[1] === 'list' || args[1] === 'boot')
+          ? this.run!([file, ...args].join(' '))
+          : simctlSpawnStub(file, args);
+      },
+      spawn: () => {
+        throw new Error('must not boot a foreign sim');
+      },
+    });
+    const result = await ensureBooted({ projectPath: tmpHome, platform: 'ios', device: { deviceUdid: 'U1' } });
+    expect(result.ok).toBe(undefined);
+    expect(result.reason).toMatch(/not Stim-owned/);
   });
 
   test('joins the boot this run started instead of listing simulators again', async () => {
@@ -1149,6 +1255,66 @@ describe('ensureOwnedDevice: ios', () => {
 
       expect(calls).toMatchObject([{ udid: 'U1', profile, previouslyManaged: false }]);
       expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('records SimSlim management before profile application can fail', async () => {
+    const root = projectDir();
+    try {
+      const profilePath = join(root, 'simslim.json');
+      writeFileSync(profilePath, '{}\n');
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app' });
+      const { exec } = iosExecutor([{ udid: 'U1', name: 'stim-app', state: 'Booted', isAvailable: true }]);
+      setExecutor(exec);
+      let managedBeforeRun = false;
+
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: { ios: { simslimProfile: 'simslim.json' } },
+          reconcileIosSimulator: async () => {
+            managedBeforeRun = getProject(root)?.platforms?.ios?.simslimManaged === true;
+            throw new Error('partial SimSlim failure');
+          },
+        }),
+      ).rejects.toThrow('partial SimSlim failure');
+
+      expect(managedBeforeRun).toBe(true);
+      expect(getProject(root)?.platforms?.ios?.simslimManaged).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test('an owned record renamed away from stim- ownership is never booted; a fresh owned sim is created', async () => {
+    const root = projectDir();
+    try {
+      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-old' });
+      const { run, exec } = iosExecutor([
+        { udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true },
+      ]);
+      setExecutor(exec);
+      const notes: string[] = [];
+      const result = await ensureOwnedDevice({
+        platform: 'ios',
+        project: getProject(root),
+        projectPath: root,
+        label: 'app',
+        settings: {},
+        note: (l) => notes.push(String(l)),
+      });
+      expect(run.some((c) => c === 'xcrun simctl boot U1')).toBe(false);
+      expect(run.some((c) => /simctl create/.test(c))).toBeTruthy();
+      expect(result.deviceUdid).toBe('NEW-UDID');
+      expect(result.owned).toBe(true);
+      expect(result.created).toBe(true);
+      expect(notes.some((n) => /not Stim-owned/i.test(n))).toBeTruthy();
+      await result.booting?.done;
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

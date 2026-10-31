@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { connectAndroidHosting } from '../commands/android/remote.ts';
@@ -59,5 +59,17 @@ describe('hosting from a workspace whose recorded Android emulator cannot be ins
   test('proceeds when the emulator tool does not exist and no SDK is configured', async () => {
     const result = await connect(enoent('emulator'));
     expect(result).toMatchObject({ failure: { message: 'reached hosted preparation' } });
+  });
+
+  test('refuses when the missing tool is adb, since the emulator may still be running', async () => {
+    const result = await connect(enoent('adb'));
+    expect(result).toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
+  });
+
+  test('refuses when the recorded emulator still has AVD data on disk', async () => {
+    mkdirSync(join(home, '.android', 'avd'), { recursive: true });
+    writeFileSync(join(home, '.android', 'avd', 'stim-project.ini'), 'path=unused\n');
+    const result = await connect(enoent('emulator'));
+    expect(result).toMatchObject({ failure: { code: 'STIM_BAD_ARG' } });
   });
 });

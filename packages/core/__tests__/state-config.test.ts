@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getConcurrencyLimits, getParkedMax } from '../state/config.ts';
+import { getConcurrencyLimits, getParkedMax, loadConfig } from '../state/config.ts';
 
 let tmpHome: string;
 
@@ -43,3 +43,27 @@ test.each(['ios', 'android'] as const)(
     expect(getParkedMax(platform, { env: {} })).toEqual({ max: 3, error: null });
   },
 );
+
+test.each([
+  ['a projects container that is an array', '{ "version": 2, "projects": [] }', /projects that is not an object/],
+  [
+    'a project entry that is null',
+    '{ "version": 2, "projects": { "/a": null } }',
+    /projects entry "\/a" that is not an object/,
+  ],
+  [
+    'a repos entry that is a string',
+    '{ "version": 2, "repos": { "/r": "x" } }',
+    /repos entry "\/r" that is not an object/,
+  ],
+])('loadConfig refuses %s instead of reading it as holding no records', (_label, content, reason) => {
+  writeFileSync(join(tmpHome, 'config.json'), content);
+  let err: unknown;
+  try {
+    loadConfig();
+  } catch (e) {
+    err = e;
+  }
+  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
+  expect((err as Error).message).toMatch(reason);
+});

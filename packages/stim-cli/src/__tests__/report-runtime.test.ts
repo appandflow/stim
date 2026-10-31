@@ -173,6 +173,43 @@ test('cancellation does not signal a child whose captured identity no longer mat
   }
 });
 
+test.each([true])('failed initial birth capture never signals the unverifiable child (report=%s)', async (report) => {
+  const controller = new AbortController();
+  let started: () => void = () => {};
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let owned: { pid: number; processToken: string } | undefined;
+  let nativeClosed: Promise<void> = Promise.resolve();
+  const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
+    const identity = captureProcessIdentity(pid);
+    if (!identity.ok) throw new Error(identity.reason);
+    owned = { pid, processToken: identity.token };
+    started();
+    return { ok: false, reason: 'ACCESS_DENIED' };
+  });
+  try {
+    const work = () =>
+      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+        timeoutMs: 'unbounded',
+        signal: controller.signal,
+        onSpawn: (child) => {
+          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
+        },
+      });
+    const reading = (report ? runReport(context(controller.signal), work) : work()).catch((error: unknown) => error);
+    await ready;
+    controller.abort(new Error('cancel fixture'));
+    const failure = await Promise.race([reading, new Promise((resolve) => setTimeout(() => resolve('pending'), 1800))]);
+    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
+    expect(inspectProcessIdentity(owned)).toBe('same');
+  } finally {
+    capture.mockRestore();
+    reapFixtureChild(owned);
+    await nativeClosed;
+  }
+});
+
 test('report cancellation refuses a verified child that does not close after termination', async () => {
   const controller = new AbortController();
   let owned: { pid: number; processToken: string } | undefined;

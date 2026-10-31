@@ -10,7 +10,6 @@ import { ClaimUnavailableError } from '../ownership-claim.ts';
 const fingerprint = 'a'.repeat(40);
 const projectId = 'project-1';
 const profile = 'development';
-
 const listedBuild = {
   id: 'build-1',
   status: 'FINISHED',
@@ -103,6 +102,69 @@ function fixture({
     });
   return { calls, resolve };
 }
+
+test.each([
+  { status: 'ERRORED' },
+  { platform: 'ANDROID' },
+  { buildProfile: 'production' },
+  { fingerprint: { hash: 'b'.repeat(40) } },
+  { app: { id: 'another-project' } },
+  { app: undefined },
+  { app: {} },
+  { app: undefined, project: { id: 'another-project' } },
+  { app: undefined, project: {} },
+  { app: { id: 'another-project' }, project: { id: projectId } },
+  { app: { id: '' }, project: { id: projectId } },
+  { isForIosSimulator: false },
+  { artifacts: {} },
+])('does not select an incompatible EAS artifact: %j', async (change) => {
+  const { plan } = planFixture([{ ...build, ...change }]);
+  expect(await plan).toMatchObject({ buildId: null, missing: { code: 'STIM_EAS_BUILD_MISSING' } });
+});
+
+test.each([['eas-cli/18.8.0 darwin-arm64 node-v22.22.2', 'eas-cli 18.8.0 (/eas) cannot download a build by ID']])(
+  'an eas-cli without build:download --build-id refuses before any EAS command (%s)',
+  async (easCliVersion, message) => {
+    const { resolve, calls } = fixture({ easCliVersion });
+    const result = await resolve();
+    expect(result).toMatchObject({ ok: false, code: 'STIM_EAS_UNAVAILABLE' });
+    if (result?.ok !== false) throw new Error('Expected a refusal');
+    expect(result.message).toContain(message);
+    expect(result.message).toContain('needs eas-cli 18.9.0 or later');
+    expect(result.remedy).toContain('npm install --global eas-cli@latest');
+    expect(calls).toEqual([]);
+  },
+);
+
+test('the first eas-cli release with build:download --build-id downloads the build', async () => {
+  const { resolve } = fixture({ easCliVersion: 'eas-cli/18.9.0 linux-x64 node-v22.18.0' });
+  expect(await resolve()).toMatchObject({ ok: true, cacheHit: 'remote' });
+});
+
+test.each(['config'])('a failed %s is not a cache miss and does not expose command output', async (failCommand) => {
+  const result = await fixture({ failCommand }).resolve();
+  expect(result).toMatchObject({ ok: false, code: 'STIM_EAS_UNAVAILABLE' });
+  expect(JSON.stringify(result)).not.toContain('private environment value');
+});
+
+test.each([{ developmentClient: false }, { distribution: 'store' }, { simulator: false }])(
+  'rejects a profile that cannot produce simulator development builds: %j',
+  async (config) => {
+    const { resolve, calls } = fixture({ config });
+    expect(await resolve()).toMatchObject({ ok: false, code: 'STIM_BAD_ARG' });
+    expect(calls.map((call) => call[0])).toEqual(['config']);
+  },
+);
+
+test.each([
+  { platform: 'ios' as const, config: { buildConfiguration: 'Release' } },
+  { platform: 'android' as const, config: { gradleCommand: ':app:assembleRelease' } },
+  { platform: 'android' as const, config: { gradleCommand: ':app:bundleDebug' } },
+])('refuses incompatible development profile overrides: %j', async ({ platform, config }) => {
+  const { resolve, calls } = fixture({ platform, config });
+  expect(await resolve()).toMatchObject({ ok: false, code: 'STIM_BAD_ARG' });
+  expect(calls.map((call) => call[0])).toEqual(['config']);
+});
 
 test.each([
   { platform: 'ios' as const, config: { buildConfiguration: 'Debug' } },

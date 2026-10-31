@@ -167,6 +167,23 @@ test('a running dev server whose only recent records are its own output is stopp
   ]);
 });
 
+test('activity after the plan keeps the workspace when the stop runs', async () => {
+  const { root } = bootedWorkspace('resumed', 7 * HOUR_MS);
+  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim');
+  const { actions } = await plan();
+  expect(actions).toHaveLength(1);
+  recordWorkspaceUse(root);
+
+  const outcomes = await Promise.all(
+    actions.map((action) => stopIdleWorkspace(action, { protectedRoot: PROTECTED, devices: () => realDevices })),
+  );
+
+  expect(outcomes).toEqual([
+    expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/stim command/) }),
+  ]);
+  expect(shutdown).not.toHaveBeenCalled();
+});
+
 const recent = Date.now() - HOUR_MS;
 test.each<[string, (root: string) => void]>([
   ['a Stim command', (root) => recordWorkspaceUse(root, new Date(recent))],
@@ -334,6 +351,21 @@ test('the stop shuts the idle simulator down without deleting it and leaves devi
   expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
   expect(existsSync(deviceLeasePath('ios', 'PHONE-1'))).toBe(true);
   expect((await plan()).actions).toEqual([]);
+});
+
+test('a STIM_HOME-scoped home plans and runs no idle stop, since its devices are machine-wide', async () => {
+  const { root } = bootedWorkspace('scoped', 7 * HOUR_MS);
+  vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
+  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim');
+
+  expect(await plan()).toEqual({ actions: [], blocked: [], skips: [] });
+  expect(
+    await stopIdleWorkspace(
+      { target: root, workspace: root, reason: 'idle' },
+      { protectedRoot: PROTECTED, devices: () => realDevices },
+    ),
+  ).toMatchObject({ status: 'kept', detail: expect.stringMatching(/STIM_HOME/) });
+  expect(shutdown).not.toHaveBeenCalled();
 });
 
 test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async () => {

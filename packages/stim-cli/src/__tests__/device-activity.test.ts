@@ -125,8 +125,6 @@ function runnerLease(over: Record<string, unknown> = {}): string {
 }
 
 describe('agent-device lease liveness', () => {
-  parseAgentDeviceRecord('runner-lease', `/leases/${UDID}.json`, runnerLease());
-
   test('a device claim needs only its owner process', () => {
     const claim = parseAgentDeviceRecord(
       'claim',

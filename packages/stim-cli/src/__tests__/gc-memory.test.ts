@@ -15,6 +15,7 @@ import * as identities from '../process-identity.ts';
 import * as memory from '../commands/gc/memory.ts';
 import {
   gradleHomeFromFiles,
+  isKotlinDaemonCommand,
   parseGradleDaemonCommand,
   parseGradleStatus,
   offloadClientOf,
@@ -72,6 +73,16 @@ test('a GradleDaemon command line gives its version, Java home and own distribut
     javaHome: '/Applications/Android Studio.app/Contents/jbr/Contents/Home',
     distribution: '/Users/me/.gradle/wrapper/dists/gradle-8.10.2-all/x/gradle-8.10.2',
   });
+});
+
+test('a process that only names a daemon class, such as pgrep, is not a daemon', () => {
+  expect(parseGradleDaemonCommand('pgrep -f org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1')).toBeNull();
+  expect(isKotlinDaemonCommand('pgrep -fl KotlinCompileDaemon')).toBe(false);
+  expect(
+    isKotlinDaemonCommand(
+      '/opt/jdk/bin/java -cp /Users/me/.gradle/caches/kotlin-compiler-embeddable-2.1.20.jar -Xmx2g org.jetbrains.kotlin.daemon.KotlinCompileDaemon --daemon-runFilesPath /Users/me/Library/kotlin/daemon',
+    ),
+  ).toBe(true);
 });
 
 test('gradle --status rows are read past its banner and footer', () => {
@@ -255,6 +266,29 @@ test('only a Gradle daemon its own status calls idle is stopped, and a Kotlin da
     [11, false, 'busy'],
     [12, false, 'unknown'],
     [13, false, 'busy'],
+  ]);
+});
+
+test('a running Stim build keeps every daemon, and stim-server keeps its offload clients daemons', () => {
+  const plans = planDaemons({
+    gradle: [gradle(1, { state: 'idle' })],
+    kotlin: [kotlin(10, [])],
+    buildRunning: 'a running Android build holds /lock',
+    stimServerRunning: false,
+  });
+  expect(decisions(plans)).toEqual([
+    [1, false, 'build-running'],
+    [10, false, 'build-running'],
+  ]);
+  const offload = planDaemons({
+    gradle: [gradle(1, { state: 'idle' }, 'client-a'), gradle(2, { state: 'idle' })],
+    kotlin: [],
+    buildRunning: null,
+    stimServerRunning: true,
+  });
+  expect(decisions(offload)).toEqual([
+    [1, false, 'stim-server'],
+    [2, true, null],
   ]);
 });
 

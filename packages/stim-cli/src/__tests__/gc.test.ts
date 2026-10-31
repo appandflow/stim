@@ -399,6 +399,30 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
 });
 
+test('a simulator in the parked pool is referenced rather than orphaned', () => {
+  const result = findOrphanedDevices({
+    sims: [makeIosSim({ udid: 'P1', name: 'stim-parked (iPhone 17 26.5) p1' })],
+    config: makeConfig({
+      parked: {
+        ios: [
+          {
+            udid: 'P1',
+            name: 'stim-parked (iPhone 17 26.5) p1',
+            deviceTypeIdentifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
+            runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+            parkedAt: '2026-09-03T00:00:00.000Z',
+            simslimManaged: false,
+          },
+        ],
+        android: [],
+      },
+    }),
+  });
+
+  expect(result.orphaned).toEqual([]);
+  expect(result.kept[0]?.reason).toBe('referenced by the simulator pool');
+});
+
 test('gc reports ledger UDIDs a complete simctl listing lacks, and --delete forgets only those', async () => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   process.env.ANDROID_AVD_HOME = join(tmpHome, 'avd');
@@ -704,6 +728,21 @@ function staleConfig(extra = {}) {
   });
 }
 
+test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
+  const config = makeConfig({
+    projects: {
+      '/a': { platforms: { ios: { deviceUdid: 'GONE' }, android: { avdName: 'stim-gone' } } },
+    },
+  });
+  expect(findStaleDeviceRecords({ config, sims: [], avds: [], simsChecked: false }).map((r) => r.kind)).toEqual([
+    'android',
+  ]);
+  expect(findStaleDeviceRecords({ config, sims: [], avds: [], avdsChecked: false }).map((r) => r.kind)).toEqual([
+    'ios',
+  ]);
+  expect(findStaleDeviceRecords({ config, simsChecked: false, avdsChecked: false })).toEqual([]);
+});
+
 test('findStaleDeviceRecords skips a project the dead-entry sweep already claimed', () => {
   const stale = findStaleDeviceRecords({
     config: makeConfig({ projects: { '/dead': { platforms: { ios: { deviceUdid: 'GONE' } } } } }),
@@ -711,6 +750,19 @@ test('findStaleDeviceRecords skips a project the dead-entry sweep already claime
     deadProjects: ['/dead'],
   });
   expect(stale).toEqual([]);
+});
+
+test('findStaleProjectDevices fails closed when a project timestamp cannot be read', () => {
+  const now = Date.now();
+  const stale = findStaleProjectDevices({
+    config: staleConfig(),
+    sims: staleSims,
+    avds: [],
+    olderThanDays: 30,
+    now,
+    lastTouched: () => NaN,
+  });
+  expect(stale.length).toBe(0);
 });
 
 test('findStaleProjectDevices ignores devices Stim does not own', () => {
@@ -4408,6 +4460,17 @@ describe('parked hosted device GC', () => {
     }
   });
 
+  test('a ledger changed after collection keeps the device', async () => {
+    journal([session()]);
+    const collected = collectParkedHostedDevices().devices;
+    writeFileSync(
+      join(deviceHostArea(sessionId), 'home', 'created-devices.json'),
+      JSON.stringify({ version: 1, ios: [], android: [], web: [] }),
+    );
+    expect(await deleteParkedHostedDevices(collected)).toBe(0);
+    expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('ledger') }]);
+  });
+
   test('adoption after collection keeps the device', async () => {
     journal([session()]);
     const collected = collectParkedHostedDevices().devices;
@@ -4415,6 +4478,29 @@ describe('parked hosted device GC', () => {
     expect(await deleteParkedHostedDevices(collected)).toBe(0);
     expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('no longer') }]);
   });
+
+  test.each([{ state: 'stopped', device: { ...session().device, udid: 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB' } }])(
+    'an unverified worker result fails that device and continues with the next session (%j)',
+    async (badResult) => {
+      const second = session({
+        id: '22222222-2222-2222-2222-222222222222',
+        device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      });
+      journal([session(), second]);
+      let runs = 0;
+      const firstRequests = worker(badResult, () => {
+        runs += 1;
+        if (runs === 1) worker({ state: 'stopped', device: second.device });
+      });
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+      expect(firstRequests).toHaveLength(1);
+      expect(runs).toBe(1);
+      expect(takeGcResults()).toMatchObject([
+        { status: 'failed', id: udid },
+        { status: 'done', id: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      ]);
+    },
+  );
 
   test('JSON dry run includes the hosted section and leaves the journal and ledger intact', async () => {
     journal([session()]);

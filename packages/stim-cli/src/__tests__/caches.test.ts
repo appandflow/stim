@@ -211,3 +211,46 @@ test.each(['read', 'remove'] as const)(
     }
   },
 );
+
+test('pruneCache skips a cache whose directory is the home directory, however old its entries are', () => {
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), 'stim-prune-home-')));
+  for (const key of ['HOME', 'USERPROFILE']) vi.stubEnv(key, fakeHome);
+  const documents = join(fakeHome, 'Documents');
+  mkdirSync(documents);
+  age(documents);
+  try {
+    const r = pruneCache(makeCacheDescriptor({ dir: fakeHome, prune: 'entries' }), { olderThanDays: 30 });
+    expect(r.skipped).toMatch(/not a directory this cache owns/);
+    expect(r.removed).toBe(0);
+    expect(existsSync(documents)).toBe(true);
+  } finally {
+    vi.unstubAllEnvs();
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
+});
+
+test('a registered ancestor cannot delete its protected Gradle build-cache child', () => {
+  const gradleHome = mkdtempSync(join(tmpdir(), 'stim-gradle-parent-'));
+  const previous = process.env.GRADLE_USER_HOME;
+  const cachesRoot = join(gradleHome, 'caches');
+  const buildCache = join(cachesRoot, 'build-cache-1');
+  const entry = join(buildCache, 'entry');
+  mkdirSync(buildCache, { recursive: true });
+  writeFileSync(entry, 'x');
+  age(entry);
+  try {
+    process.env.GRADLE_USER_HOME = gradleHome;
+    register({ dir: cachesRoot, name: 'Gradle caches root', prune: 'entries' });
+    const caches = discoverCaches();
+    const found = caches.find((c) => realpathSync(c.dir) === realpathSync(cachesRoot));
+    assert(found);
+    expect(found.prune).toBe('report-only');
+    expect(pruneCache(found, { olderThanDays: 30 }).skipped).toMatch(/report-only/);
+    expect(existsSync(entry)).toBe(true);
+    expect(caches.some((c) => realpathSync(c.dir) === realpathSync(buildCache))).toBe(false);
+  } finally {
+    if (previous === undefined) delete process.env.GRADLE_USER_HOME;
+    else process.env.GRADLE_USER_HOME = previous;
+    rmSync(gradleHome, { recursive: true, force: true });
+  }
+});

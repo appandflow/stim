@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createProjectRegistry, type ProjectIntegration } from '../integrations/project-registry.ts';
 import { projectIntegrations, projectRegistry } from '../integrations/projects.ts';
+import { findServerWorkspace } from '../workspace/project.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { getExecutor } from '../exec.ts';
 
 const testIos: ProjectIntegration = {
   id: 'test-ios',
@@ -101,4 +104,19 @@ test('symlinks resolve native ownership and workspace identity by canonical path
   expect(registry.findProjectRoot(join(alias, 'ios'))).toBe(app);
   expect(registry.projectProblem(join(alias, 'ios'), 'ios')?.remedy).toContain(app);
   expect(registry.projectProblem(alias, 'ios')).toBeNull();
+});
+
+test('unreadable relevant manifests refuse instead of falling back to another integration or registered app', () => {
+  packageAt(dir);
+  getExecutor().runFile('git', ['-C', dir, 'init', '-q'], { timeoutMs: 60_000 });
+  upsertProject(dir, {});
+  const nested = join(dir, 'nested');
+  write(join(nested, 'package.json'), '{');
+  write(join(nested, 'App.xcodeproj'));
+  expect(registry.findProjectRoot(nested)).toBe(nested);
+  const problem = registry.projectProblem(nested, 'ios');
+  expect(problem?.kind).toBe('unreadable');
+  expect(problem?.message).toContain(join(nested, 'package.json'));
+  expect(problem?.remedy).toMatch(/Fix the JSON/);
+  expect(findServerWorkspace(nested, registry)).toEqual({ root: nested, from: null });
 });

@@ -116,7 +116,7 @@ export function parseGradleDaemonCommand(command: string): GradleDaemonCommand |
   return { version, javaHome: java, distribution: jar ? dirname(dirname(jar)) : null };
 }
 
-function isKotlinDaemonCommand(command: string): boolean {
+export function isKotlinDaemonCommand(command: string): boolean {
   return KOTLIN_DAEMON_CLASS.test(command) && !GRADLE_DAEMON_CLASS.test(command);
 }
 

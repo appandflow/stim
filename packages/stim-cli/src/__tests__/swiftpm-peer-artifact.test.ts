@@ -94,6 +94,42 @@ test('a nested project retains repository-scoped resources and project-scoped pr
   expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, environment)).toBeNull();
 });
 
+test('worker-private files, declared environment, compiler and SDK changes invalidate a completed receipt', async () => {
+  const snapshot = await swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment);
+  for (const key of ['swift', 'sdk', 'arch', 'xcode'] as const)
+    expect(
+      await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, { ...toolchain, [key]: 'other' }, environment),
+    ).toBeNull();
+  for (const key of ['command', 'compiler', 'sdk', 'xcrun', 'xcodebuild'] as const)
+    expect(
+      await swiftpmArtifactFromReceipt(
+        root,
+        query,
+        snapshot.receipt,
+        {
+          ...toolchain,
+          selection: { ...toolchain.selection, [key]: '/another/tool' },
+        },
+        environment,
+      ),
+    ).toBeNull();
+  expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, { FLAVOR: 'other' })).toBeNull();
+  write('private.txt', 'changed private input');
+  expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, environment)).toBeNull();
+});
+
+test('build choices and different source queries cannot borrow an existing receipt', async () => {
+  const snapshot = await swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment);
+  for (const changed of [
+    { ...query, sourceDigest: 'a'.repeat(64) },
+    { ...query, compat: 2 },
+    { ...query, project: 'another-project' },
+    { ...query, build: { ...query.build, product: 'Other' } },
+    { ...query, inputs: { ...query.inputs, environment: [] } },
+  ])
+    expect(await swiftpmArtifactFromReceipt(root, changed, snapshot.receipt, toolchain, environment)).toBeNull();
+});
+
 test('undeclared ignored bundle files cannot become reusable worker artifacts', async () => {
   write('assets/private-image', 'private asset');
   await expect(swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment)).rejects.toThrow('declar');

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { getExecutor } from '../exec.ts';
 import doctorCommand from '../commands/doctor.ts';
@@ -68,6 +68,40 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
+  'repair refuses tracked or non-ignored output and leaves neighboring source intact (ccache PATH lookup is POSIX-only; skipped on win32)',
+  () => {
+    const tracked = cache('android/app', null);
+    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root, timeoutMs: 60_000 });
+    writeFileSync(join(root, '.gitignore'), '');
+    const source = join(root, 'android/app/CMakeLists.txt');
+    writeFileSync(source, 'project(Example)\n');
+    const result = repairCxxLauncherState(root, projectSettings());
+    expect(result.removed).toEqual([]);
+    expect(result.refused[0]?.reason).toMatch(/tracked/);
+    expect(existsSync(tracked)).toBe(true);
+    expect(existsSync(source)).toBe(true);
+    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], {
+      cwd: root,
+      timeoutMs: 60_000,
+    });
+    expect(repairCxxLauncherState(root, projectSettings()).refused).toHaveLength(1);
+    expect(existsSync(tracked)).toBe(true);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'repair preserves explicit project launchers and healthy custom launchers (ccache PATH lookup is POSIX-only; skipped on win32)',
+  () => {
+    const stale = cache('android/app', null);
+    const custom = cache('node_modules/native/android', 'sccache');
+    writeFileSync(join(root, 'android/app/build.gradle.kts'), 'arguments.add("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache")');
+    expect(repairCxxLauncherState(root, projectSettings()).refused[0]?.reason).toMatch(/own compiler launcher/);
+    expect(existsSync(stale)).toBe(true);
+    expect(existsSync(custom)).toBe(true);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
   'repair refuses an external linked dependency and an active Stim Android build (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const external = join(home, 'native/android/.cxx/Debug/abc123/arm64-v8a');
@@ -90,7 +124,16 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-join(import.meta.dirname, '../../dist/cli.mjs');
+test.skipIf(process.platform === 'win32')(
+  'repair refuses a redirected .cxx directory even when its target is within the checkout (ccache PATH lookup is POSIX-only; skipped on win32)',
+  () => {
+    const app = cache('android/generated', null);
+    mkdirSync(join(root, 'android/app'), { recursive: true });
+    symlinkSync(dirname(dirname(dirname(app))), join(root, 'android/app/.cxx'), 'dir');
+    expect(repairCxxLauncherState(root, projectSettings()).refused[0]?.reason).toMatch(/symbolic link/);
+    expect(existsSync(app)).toBe(true);
+  },
+);
 
 test.skipIf(process.platform === 'win32')(
   'doctor --fix repairs nothing when the config cannot be read (ccache PATH lookup is POSIX-only; skipped on win32)',

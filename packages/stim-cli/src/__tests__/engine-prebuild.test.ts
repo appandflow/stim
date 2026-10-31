@@ -4,7 +4,6 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PREBUILD_ERROR, planPrebuild, planPrebuildAsync, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
-
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string; event?: string };
@@ -39,13 +38,14 @@ describe('the decision', () => {
       try {
         mkdirSync(join(root, 'ios'), { recursive: true });
         writeFileSync(join(root, 'ios', 'Podfile'), '');
-        const plan = (fingerprint: string) =>
+        const plan = (fingerprint: string, hash: string | null = null) =>
           planner(root, 'ios', {
             isExpo: true,
             fingerprint,
-            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
+            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash }],
           });
         expect(await plan('abc')).toBe('regenerate');
+        expect(await plan('abc', 'native-directory-hash')).toBe('none');
         recordPrebuild(root, 'ios', 'abc');
         recordPrebuild(root, 'android', 'def');
         expect(await plan('abc')).toBe('none');
@@ -124,6 +124,16 @@ describe('runPrebuild', () => {
     expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', ...extra]);
     expect(result.failed).toBe(true);
     expect(result.remedy ?? '').toMatch(clean ? /^$/ : /delete ios\/ and run again/);
+  });
+
+  test('an exit-0 prebuild that produced no native directory is still a failure', async () => {
+    installFakeExpoBin();
+    const result = await runPrebuild(root, 'ios', collectingWriter(), {
+      isExpo: true,
+      spawnFn: () => fakeExpoChild({ lines: ['nothing to do'] }),
+    });
+    expect(result.failed).toBe(true);
+    expect(result.reason).toMatch(/did not create ios\//);
   });
 
   test('refuses a bare project with no native directory, with a remedy', async () => {

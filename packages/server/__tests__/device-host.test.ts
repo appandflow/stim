@@ -2830,3 +2830,16 @@ test('native Android process offers require a ready session owned by the approve
   await state(first.id, 'stopped');
   expect(host.appOffer('client', { ...offer, attempt: 'after-stop' })).toHaveProperty('error');
 });
+
+test('a different client cannot adopt an identically selected parked device', async () => {
+  parkingLimits();
+  const parked = seedHosted({ parked: { at: '2026-10-01T00:00:00.000Z' } });
+  const answer = await host.reserve('other', { ...request, attempt: 'new' });
+  expect(answer).toHaveProperty('result.state', 'preparing');
+  if ('error' in answer) throw new Error(answer.error.message);
+  expect(answer.result.id).not.toBe(parked.id);
+  await state(answer.result.id, 'ready');
+  expect(hostedModes(parked.id)).toEqual([]);
+  expect(readHostedSessions().find((record) => record.id === parked.id)?.parked).toBeDefined();
+  expect(hostedModes(answer.result.id)).toEqual(['prepare']);
+});

@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import {
   existsSync,
   symlinkSync,
@@ -27,6 +27,7 @@ import * as measurements from '../maintenance/measure.ts';
 import { executeAction } from '../maintenance/act.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { runMaintenance } from '../maintenance/run.ts';
+import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
@@ -135,6 +136,25 @@ function outputsWorkspace(name: string, usedMinutesAgo: number) {
   return { root, outputs: join(dir, 'derived-data') };
 }
 
+test('level 2 keeps the outputs of a workspace that is building', async () => {
+  const building = outputsWorkspace('building', 120);
+  plantClaim(join(workspaceDir(building.root), 'native-run.lock'), 'exclusive', liveClaimOwner());
+  freeDisk(15);
+
+  await pass();
+
+  expect(existsSync(building.outputs)).toBe(true);
+});
+
+test('level 2 actions stop once free disk is back above the floor', async () => {
+  const halfHour = outputsWorkspace('half-hour', 30);
+  freeDisk(15, 25);
+
+  await pass();
+
+  expect(existsSync(halfHour.outputs)).toBe(true);
+});
+
 function repoWithFeatureWorktree({
   linkAndroid = false,
   nested = false,
@@ -192,6 +212,23 @@ function repoWithFeatureWorktree({
   }
   return roots;
 }
+
+test.skipIf(process.platform === 'win32')(
+  'level 3 keeps the dependencies of a linked worktree a live process works in',
+  async () => {
+    const { feature } = repoWithFeatureWorktree();
+    const child = spawn('sleep', ['60'], { cwd: feature, stdio: 'ignore' });
+    try {
+      freeDisk(4);
+      await pass();
+      expect(existsSync(join(feature, 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain(`process ${child.pid} works in it`);
+    } finally {
+      child.kill('SIGKILL');
+    }
+  },
+  60_000,
+);
 
 test.skipIf(process.platform === 'win32')(
   'levels 2 and 3 never lighten a git-locked worktree, and the log says it is locked',
@@ -413,4 +450,13 @@ test.each([
   expect(stop).not.toHaveBeenCalled();
   expect(existsSync(join(version, 'keep'))).toBe(true);
   expect(actionKinds()).not.toContain('delete-gradle-version');
+});
+
+test('a scoped STIM_HOME plans no daemon stop and says why', async () => {
+  const version = idleUnpinnedVersion(() => DAEMON_ROW);
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).not.toHaveBeenCalled();
+  expect(existsSync(join(version, 'keep'))).toBe(true);
+  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('STIM_HOME scopes this config');
 });

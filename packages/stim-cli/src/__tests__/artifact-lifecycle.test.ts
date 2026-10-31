@@ -86,3 +86,27 @@ describe('artifact lifecycle', () => {
     },
   );
 });
+
+test('changed inputs prevent storage while the compiled artifact can still be prepared for installation', async () => {
+  const { phases, state } = recipe();
+  phases.build.validate = async () => 'uncacheable';
+  phases.build.store = async () => unexpected('storage under invalidated inputs');
+  phases.build.finish = async (artifact) => `${artifact}-install-copy`;
+
+  expect(await runArtifactLifecycle(phases)).toBe('source-compiled-install-copy');
+  expect(state).toEqual({ claimed: false, stored: null });
+});
+
+test('a ready artifact found after preparation bypasses worker acquisition and compilation', async () => {
+  const { phases, state } = recipe();
+  phases.build.placement = {
+    select: () => 'worker',
+    acquire: async () => unexpected('worker request after a late cache hit'),
+  };
+  phases.build.revalidate = async () => ({ ready: 'installable' });
+  phases.reuse = async () => unexpected('late artifact materialized twice');
+  phases.build.admit = async () => unexpected('capacity admission on a hit');
+  phases.build.compile = async () => unexpected('compilation on a hit');
+  expect(await runArtifactLifecycle(phases)).toBe('installable');
+  expect(state).toEqual({ claimed: false, stored: null });
+});

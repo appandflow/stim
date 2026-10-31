@@ -1,3 +1,5 @@
+import { withAmbientContext } from '@stim-cli/core';
+import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import {
@@ -21,6 +23,7 @@ import { manifestDigest } from '../offload/manifest.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
 import type { BuildTarget } from '../offload/toolchain.ts';
+import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import { getExecutor } from '../exec.ts';
 
 const ports = new Map<string, number>();
@@ -272,6 +275,80 @@ async function run(names: string[], note: (line: string) => void) {
 }
 
 describe('offloadBuild', () => {
+  it.each(['build.sync', 'build.start', 'build.progress', 'build.attach', 'build.artifact'])(
+    'cancels a stopped workspace while waiting for %s without fallback or further requests',
+    async (pause) => {
+      const archive = Buffer.from('partial artifact');
+      const machine = await fakeMachine(
+        'mini',
+        offer(0.1),
+        { result: { job: 'j1' } },
+        {
+          pause,
+          drop: pause === 'build.attach',
+          artifact:
+            pause === 'build.artifact'
+              ? { archive, digest: createHash('sha256').update(archive).digest('hex'), fingerprint: 'f00d' }
+              : null,
+        },
+      );
+      const backup = await fakeMachine('backup', offer(0.5), { result: { job: 'j2' } });
+      machines.push(machine, backup);
+      const controller = new AbortController();
+      const context = testContext({ signal: controller.signal });
+      await withAmbientContext(context, () =>
+        withNativeBuildRun(
+          context,
+          repo,
+          { command: 'ios', platform: 'ios' },
+          async (claim) => {
+            let finished: unknown;
+            const operation = run(['mini', 'backup'], () => {}).then(
+              (value) => {
+                finished = { value };
+                return finished;
+              },
+              (error: unknown) => {
+                finished = { error };
+                return finished;
+              },
+            );
+            try {
+              await vi.waitFor(
+                () => expect(machine.methods).toContain(pause === 'build.progress' ? 'build.start' : pause),
+                { timeout: 30_000 },
+              );
+              const before = [...machine.methods];
+              requestNativeRunCancel(repo, claim.claimId);
+              controller.abort('SIGINT');
+              await vi.waitFor(() => expect(finished).toMatchObject({ error: { code: 'STIM_CANCELLED' } }));
+              await vi.waitFor(() => expect(machine.closeCodes).toContain(1000));
+              await backup.closed;
+              expect(machine.methods).toEqual(before);
+              expect(backup.methods).toEqual(['hello', 'build.offer']);
+            } finally {
+              machine.release();
+              await operation;
+            }
+          },
+          { write: () => {} },
+        ),
+      );
+      await withNativeBuildRun(
+        testContext(),
+        repo,
+        { command: 'ios', platform: 'ios' },
+        async () =>
+          expect(await run(['mini'], () => {})).toEqual({
+            ok: false,
+            machine: 'mini',
+            reason: 'worker-failed: xcodebuild failed',
+          }),
+        { write: () => {} },
+      );
+    },
+  );
+
   it('moves past a machine whose connection dies during the sync', async () => {
     const busy = await fakeMachine('busy', offer(0.1), { error: { code: 'build-busy', message: 'busy' } });
     const dead = await fakeMachine('dead', offer(0.3), { result: { job: 'j0' } }, { dropOnSync: true });
@@ -350,6 +427,30 @@ describe('offloadBuild', () => {
     });
     expect(lines.at(-1)).toBe('offload: reattached to the build on mini');
     expect(hellos).toBe(3);
+  });
+
+  it('stops reconnecting when the machine turns this machine away', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        drop: true,
+        hello: () =>
+          ++hellos === 1
+            ? { result: { capabilities: ['build'] } }
+            : { error: { code: 'unauthorized', message: 'This machine does not recognize this device token.' } },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason:
+        'closed: the connection closed (1006); it turned this machine away (This machine does not recognize this device token.)',
+    });
+    expect(hellos).toBe(2);
   });
 });
 
@@ -478,6 +579,52 @@ describe('native Xcode worker selection', () => {
     expect(typeof result).toBe('string');
     expect(String(result)).toContain('does not support native Xcode builds');
     expect(machine.methods).toEqual(['hello']);
+  });
+
+  test('ignored native bytes refuse before the supported worker receives any source', async () => {
+    const machine = await fakeMachine(
+      'native',
+      offer(0.1),
+      { result: { job: 'unused' } },
+      {
+        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
+      },
+    );
+    machines.push(machine);
+    writeFileSync(join(repo, '.gitignore'), 'private.key\n');
+    writeFileSync(join(repo, 'private.key'), 'not authorized for transport');
+    const snapshot = await fingerprintNativeInputs([{ name: 'repository', path: repo }], {
+      excluded: [join(repo, '.git')],
+      parameters: null,
+    });
+    const choice = await chooseBuildMachine({
+      projectRoot: repo,
+      target: { ...TARGET, native: 'xcode' },
+      here: HERE,
+      note: () => {},
+      machines: [credential('native')],
+    });
+    if (typeof choice === 'string') throw new Error(choice);
+    const result = await offloadBuild({
+      choice,
+      expectedFingerprint: snapshot.hash,
+      request: {
+        platform: 'ios',
+        runtime: 'iOS-27-0',
+        configuration: 'Debug',
+        scheme: 'App',
+        isExpo: false,
+        optimizations: null,
+        native: { provider: 'xcode', snapshot, cacheKey: 'a'.repeat(64), arch: 'arm64' },
+      },
+      stagingDir: join(repo, 'staging'),
+      onPhase: () => {},
+      onEnter: () => {},
+      onRecord: () => {},
+      note: () => {},
+    });
+    expect(result).toMatchObject({ ok: false, reason: expect.stringContaining('private.key is ignored or absent') });
+    expect(machine.methods).toEqual(['hello', 'build.offer']);
   });
 });
 
@@ -860,6 +1007,138 @@ describe('exact peer artifacts', () => {
     compilerCache: 'none',
   } as const;
   const policy = { read: true, write: true, remote: true };
+  test.each(['escaping-link', 'extra-file'])(
+    'Gradle peer APK %s never syncs or compiles during a cache-only lookup',
+    async (scenario) => {
+      writeFileSync(join(repo, '.gitignore'), 'archive-source/\narchive.tgz\nstaging/\n');
+      const source = join(repo, 'archive-source');
+      mkdirSync(source);
+      writeFileSync(join(source, 'Sample.apk'), 'verified APK bytes');
+      if (scenario === 'escaping-link') {
+        rmSync(join(source, 'Sample.apk'));
+        symlinkSync(repo, join(source, 'Sample.apk'));
+      }
+      if (scenario === 'extra-file') writeFileSync(join(source, 'Other'), 'unexpected');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', [
+        '-czf',
+        archivePath,
+        '-C',
+        source,
+        'Sample.apk',
+        ...(scenario === 'extra-file' ? ['Other'] : []),
+      ]);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const transfer = await nativeGradleTransfer(repo, {
+        complete: true,
+        ignored: [],
+        outputs: ['archive-source', 'staging'],
+      });
+      const artifact = {
+        fingerprint: 'a'.repeat(64),
+        cacheKey: 'worker-private-key',
+        name: 'Sample.apk',
+        size: archive.length,
+        sha256: digest,
+        androidPackage: 'dev.example.sample',
+      };
+      const machine = await fakeMachine(
+        'gradle',
+        {
+          ...offer(3),
+          capacity: { ...offer(3).capacity, declined: 'all slots busy' },
+          artifact,
+        },
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: {
+              capabilities: ['build'],
+              features: [
+                'native-gradle-build',
+                ...(scenario === 'old-worker' ? [] : ['native-gradle-peer-cache']),
+                ...(scenario === 'old-jdk-worker' ? [] : ['native-gradle-peer-jdk']),
+              ],
+            },
+          }),
+          artifact: { archive, digest },
+          cachedFetch: scenario === 'miss' || scenario === 'corrupt' ? scenario : 'hit',
+        },
+      );
+      machines.push(machine);
+      const query = { sourceDigest: transfer.digest, inputs: transfer.declaration, android, jdk: '17' };
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: gradleTarget,
+        here: { ...HERE, builds: 0 },
+        machines: [credential('gradle')],
+        gradleArtifact: query,
+        cacheOnly: true,
+        note: () => {},
+      });
+      const offerRequest = machine.requests.find((entry) => entry.method === 'build.offer')!;
+      const unsupported = scenario === 'old-worker' || scenario === 'old-jdk-worker';
+      expect(typeof choice).toBe(unsupported ? 'string' : 'object');
+      expect(offerRequest.params.gradleArtifact).toEqual(unsupported ? undefined : { ...query, project: '' });
+      expect(machine.methods).toEqual(['hello', 'build.offer']);
+      if (unsupported) return;
+      if (typeof choice === 'string') throw new Error(choice);
+      const stagingDir = join(repo, 'staging');
+      const result = await offloadBuild({
+        choice,
+        expectedFingerprint: null,
+        request: {
+          platform: 'android',
+          isExpo: false,
+          native: { provider: 'gradle', transfer, cache: policy },
+          android: scenario === 'changed-request' ? { ...android, abi: 'x86_64' } : android,
+        },
+        stagingDir,
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(result.ok).toBe(scenario === 'hit');
+      const observed = result.ok
+        ? {
+            cacheHit: result.cacheHit,
+            androidPackage: result.androidPackage,
+            syncMs: result.timings.syncMs,
+            uploadedBytes: result.timings.uploadedBytes,
+            workerMs: result.timings.workerMs,
+            bytes: readFileSync(result.artifactPath, 'utf8'),
+          }
+        : { stagingRemains: existsSync(stagingDir) };
+      expect(observed).toEqual(
+        scenario === 'hit'
+          ? {
+              cacheHit: true,
+              androidPackage: 'dev.example.sample',
+              syncMs: 0,
+              uploadedBytes: 0,
+              workerMs: 0,
+              bytes: 'verified APK bytes',
+            }
+          : { stagingRemains: false },
+      );
+      expect(machine.methods).toEqual([
+        'hello',
+        'build.offer',
+        ...(scenario === 'changed-request' ? [] : ['build.cached-artifact']),
+      ]);
+      expect(machine.requests.at(-1)?.params).toEqual(
+        scenario === 'changed-request'
+          ? offerRequest.params
+          : {
+              repo: choice.identity.repo,
+              artifact: { fingerprint: artifact.fingerprint, cacheKey: artifact.cacheKey },
+              gradleArtifact: { ...query, project: '' },
+            },
+      );
+    },
+  );
 
   test.each(['auto', 'remote', 'named', 'legacy'] as const)(
     'a missed Gradle APK reapplies %s placement before compiling, so only a named machine compiles while saturated',
@@ -929,6 +1208,105 @@ describe('exact peer artifacts', () => {
           .filter((entry) => entry.method === 'build.offer')
           .map((entry) => Boolean(entry.params.gradleArtifact)),
       ).toEqual(selection === 'legacy' ? [false] : [true, false]);
+    },
+  );
+
+  it.each(['escaping-link'] as const)(
+    'reuses verified bytes without syncing or compiling; %s',
+    async (cachedFetch: 'hit' | 'miss' | 'corrupt' | 'escaping-link' | 'extra-file') => {
+      const app = join(repo, 'archive-source', 'Sample.app');
+      mkdirSync(app, { recursive: true });
+      writeFileSync(join(app, 'Info.plist'), 'verified plist');
+      if (cachedFetch === 'escaping-link') symlinkSync(repo, join(app, 'Outside'));
+      if (cachedFetch === 'extra-file') writeFileSync(join(repo, 'archive-source', 'Other'), 'outside');
+      const archivePath = join(repo, 'archive.tgz');
+      execFileSync('tar', [
+        '-czf',
+        archivePath,
+        '-C',
+        join(repo, 'archive-source'),
+        'Sample.app',
+        ...(cachedFetch === 'extra-file' ? ['Other'] : []),
+      ]);
+      const archive = readFileSync(archivePath);
+      const digest = createHash('sha256').update(archive).digest('hex');
+      const identity = { fingerprint: 'native-source', cacheKey: 'native-source-sdk27-arm64-target' };
+      const cachedOffer = {
+        ...offer(3),
+        toolchain: { ...TOOLCHAIN, simulatorSdk: '28.0' },
+        capacity: { ...offer(3).capacity, declined: 'all slots busy' },
+        artifact: { ...identity, name: 'Sample.app', size: archive.length, sha256: digest },
+      };
+      const machine = await fakeMachine(
+        'cached',
+        cachedOffer,
+        { result: { job: 'unused' } },
+        {
+          hello: () => ({
+            result: {
+              capabilities: ['build'],
+              features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
+            },
+          }),
+          artifact: { archive, digest },
+          cachedFetch: cachedFetch === 'escaping-link' || cachedFetch === 'extra-file' ? 'hit' : cachedFetch,
+        },
+      );
+      machines.push(machine);
+      const choice = await chooseBuildMachine({
+        projectRoot: repo,
+        target: { ...TARGET, native: 'xcode' },
+        here: { ...HERE, builds: 0 },
+        machines: [credential('cached')],
+        artifact: identity,
+        cacheOnly: true,
+        note: () => {},
+      });
+      if (typeof choice === 'string') throw new Error(choice);
+      const stagingDir = join(repo, 'staging');
+      const outcome = await offloadBuild({
+        choice,
+        expectedFingerprint: identity.fingerprint,
+        request: {
+          platform: 'ios',
+          native: {
+            provider: 'xcode',
+            snapshot: { hash: identity.fingerprint, entries: [], parameters: {} },
+            cacheKey: identity.cacheKey,
+            arch: 'arm64',
+          },
+          runtime: 'iOS-27-0',
+          configuration: 'Debug',
+          scheme: 'Sample',
+          isExpo: false,
+          optimizations: null,
+        },
+        stagingDir,
+        onPhase: () => {},
+        onEnter: () => {},
+        onRecord: () => {},
+        note: () => {},
+      });
+      expect(outcome.ok).toBe(cachedFetch === 'hit');
+      const observed = outcome.ok
+        ? {
+            cacheHit: outcome.cacheHit,
+            timings: {
+              syncMs: outcome.timings.syncMs,
+              uploadedBytes: outcome.timings.uploadedBytes,
+              workerMs: outcome.timings.workerMs,
+            },
+            plist: readFileSync(join(outcome.artifactPath, 'Info.plist'), 'utf8'),
+          }
+        : { stagingRemoved: !existsSync(stagingDir) };
+      expect(observed).toEqual(
+        cachedFetch === 'hit'
+          ? { cacheHit: true, timings: { syncMs: 0, uploadedBytes: 0, workerMs: 0 }, plist: 'verified plist' }
+          : { stagingRemoved: true },
+      );
+      expect(machine.methods).toEqual(['hello', 'build.offer', 'build.cached-artifact']);
+      const lookup = machine.requests.find((entry) => entry.method === 'build.offer');
+      expect(lookup?.params.artifact).toEqual(identity);
     },
   );
 });

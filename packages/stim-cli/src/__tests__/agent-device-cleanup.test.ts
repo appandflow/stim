@@ -138,3 +138,30 @@ test('closes claimed workspace sessions with --state-dir even when the default i
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { current: [] },
+  { current: [{ ...ios, id: 'U2', device_udid: 'U2' }] },
+  { current: [{ ...ios, createdAt: ios.createdAt + 1 }] },
+])('does not close a disappeared, rebound or recreated session: %j', async ({ current }) => {
+  const calls = executor([payload([ios]), payload(current)]);
+  await closeOwnedDeviceSessions({ platform: 'ios', id: 'U1' }, () => true);
+  expect(calls.some((args) => args[0] === 'close')).toBe(false);
+});
+
+function executor(lists: string[], close?: (args: string[]) => string) {
+  const calls: string[][] = [];
+  setExecutor({
+    runQuiet: () => '/bin/agent-device',
+    findExecutable: () => '/bin/agent-device',
+    runFile: (_file, args, options) => {
+      calls.push(args);
+      expect(options.timeoutMs).toBeGreaterThan(0);
+      expect(options.timeoutMs).toBeLessThanOrEqual(5000);
+      expect(options.killSignal).toBe('SIGKILL');
+      if (args[0] === 'session') return lists.length > 1 ? lists.shift() : lists[0];
+      return close?.(args) ?? '{"success":true}';
+    },
+  });
+  return calls;
+}

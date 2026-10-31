@@ -80,6 +80,16 @@ function gate(overrides: Partial<Parameters<typeof signingGate>[0]> = {}) {
   });
 }
 
+test('the gate admits a development profile that names the phone and an identity in the keychain', () => {
+  expect(gate()).toEqual({ ok: true, identity: { sha1: JANE_SHA1, name: JANE } });
+});
+
+test('a profile that is still in date but expires before now is refused on the boundary', () => {
+  const expiry = Date.parse('2027-06-01T12:00:00Z');
+  expect(gate({ now: expiry - 1 })).toMatchObject({ ok: true });
+  expect(gate({ now: expiry })).toMatchObject({ ok: false, code: 'STIM_PROFILE_MISMATCH' });
+});
+
 test('an artifact signed by someone else is detected before any codesign runs', () => {
   const refused = gate({
     identities: [{ sha1: 'C'.repeat(40), name: 'Apple Development: Someone Else (OTHERTEAM)' }],
@@ -95,10 +105,29 @@ test('two certificates sharing a common name are refused rather than picked betw
   expect('remedy' in refused && refused.remedy).toContain('ios.signingIdentitySha1');
 });
 
+test('ios.signingIdentitySha1 disambiguates and wins over the name', () => {
+  expect(
+    gate({
+      identities: parseSigningIdentities(fixture('find-identity-duplicate.txt')),
+      pinnedSha1: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    }),
+  ).toEqual({ ok: true, identity: { sha1: 'B'.repeat(40), name: JANE } });
+});
+
 test('a pinned sha1 that is not in the keychain refuses and lists what is', () => {
   const refused = gate({ pinnedSha1: 'D'.repeat(40) });
   expect(refused).toMatchObject({ ok: false, code: 'STIM_NO_SIGNING_IDENTITY' });
   expect('reason' in refused && refused.reason).toContain(JANE_SHA1);
+});
+
+test('ios.signingIdentity overrides the identity derived from the profile', () => {
+  expect(gate({ pinnedName: 'Apple Distribution: Fixture Inc (TEAMID5678)' })).toEqual({
+    ok: true,
+    identity: {
+      sha1: 'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',
+      name: 'Apple Distribution: Fixture Inc (TEAMID5678)',
+    },
+  });
 });
 
 test('a profile whose certificate has no readable subject refuses with the settings escape hatch', () => {

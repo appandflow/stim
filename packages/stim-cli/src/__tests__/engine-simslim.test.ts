@@ -34,6 +34,21 @@ function exitingChild({ stdout = [], stderr = [], code = 0 }: { stdout?: string[
   return child;
 }
 
+test('does nothing when no profile is configured and Stim did not manage the simulator', async () => {
+  let spawned = false;
+  await expect(
+    reconcileSimSlim({
+      context: undefined,
+      udid: 'U1',
+      spawn: () => {
+        spawned = true;
+        return makeChildProcess();
+      },
+    }),
+  ).resolves.toEqual({ managed: false, profile: null });
+  expect(spawned).toBe(false);
+});
+
 test('restores stock services after the configured profile is removed', async () => {
   const calls: string[][] = [];
   const result = await reconcileSimSlim({

@@ -39,7 +39,7 @@ const SAFE_AREA_CONTEXT_OBJECT: AndroidLongestObject = { target: 'react_codegen_
  * `\android\app\.cxx\<4 hex>\Debug\<8 chars>\<abi>\rngesturehandler_codegen_autolinked_build/CMakeFiles/react_codegen_rngesturehandler_codegen.dir/<md5>/RNGestureHandlerDetectorShadowNode.cpp.o`,
  * measured on trailhead. https://github.com/appandflow/stim/issues/3641
  */
-const GESTURE_HANDLER_OBJECT: AndroidLongestObject = {
+export const GESTURE_HANDLER_OBJECT: AndroidLongestObject = {
   target: 'react_codegen_rngesturehandler_codegen',
   tail: 208,
 };

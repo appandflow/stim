@@ -98,6 +98,28 @@ describe('trackMetroWatchRoots', () => {
     expect((await runLifecycle(fake)).deleted).toEqual([worktree]);
   });
 
+  test('keeps the root while another client still subscribes to it', async () => {
+    const fake = fakeWatchman({
+      after: [worktree],
+      running: { [worktree]: [subscription(METRO_PID), subscription(9999)] },
+      stopped: { [worktree]: [subscription(9999)] },
+    });
+    const { deleted, records } = await runLifecycle(fake);
+    expect(deleted).toEqual([]);
+    expect(records.map((r) => r.event)).toEqual(['watchman_root_kept']);
+  });
+
+  test('keeps the root when another client registered a trigger on it, which watch-del would delete', async () => {
+    const fake = fakeWatchman({
+      after: [worktree],
+      running: { [worktree]: [subscription(METRO_PID)] },
+      triggers: { [worktree]: [{ name: 'build', command: ['make'] }] },
+    });
+    const { deleted, records } = await runLifecycle(fake);
+    expect(deleted).toEqual([]);
+    expect(records.map((r) => r.msg)).toEqual([`kept the watchman root ${worktree}: it has 1 trigger(s)`]);
+  });
+
   test('stops calling watchman once shutdown has spent its time budget, and keeps the root', async () => {
     vi.useFakeTimers();
     try {

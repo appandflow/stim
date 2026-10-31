@@ -14,7 +14,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import gcCommand from '../commands/gc.ts';
-import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
+import { collectGradleVersions, deleteGradleVersions } from '../commands/gc/gradle-versions.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 
@@ -112,6 +113,36 @@ test('--delete removes the cache and wrapper dists of a version no project pins 
   expect(existsSync(join(gradle, 'caches', '9.4.1', 'keep'))).toBe(true);
   expect(existsSync(join(gradle, 'wrapper', 'dists', 'gradle-9.4.1-all'))).toBe(true);
   for (const dir of shared()) expect(existsSync(join(dir, 'keep'))).toBe(true);
+});
+
+test('deletion revalidates the captured Gradle home and leaves the process-default home intact', async () => {
+  const operation: StimContext = {
+    home: join(home, 'stim'),
+    projectRoot: home,
+    cwd: home,
+    buildCache: null,
+    runId: 'gradle-home',
+    env: { ...process.env },
+    signal: new AbortController().signal,
+    output: () => {},
+  };
+  const otherGradle = join(home, 'stim', 'other-gradle');
+  file(join(otherGradle, 'caches', '9.3.1', 'keep'));
+  vi.stubEnv('GRADLE_USER_HOME', otherGradle);
+  await withAmbientContext(operation, async () => {
+    const sweep = await collectGradleVersions({ operation, measure: false });
+    expect(sweep.home).toBe(gradle);
+    expect(sweep.versions.some((entry) => entry.version === '9.3.1' && entry.willDelete)).toBe(true);
+    expect(
+      await deleteGradleVersions(
+        sweep,
+        { log: () => {}, error: () => {}, record: () => {}, fail: () => {} },
+        operation,
+      ),
+    ).toBe(0);
+  });
+  expect(existsSync(join(otherGradle, 'caches', '9.3.1', 'keep'))).toBe(true);
+  expect(existsSync(join(gradle, 'caches', '9.3.1'))).toBe(false);
 });
 
 test('a dry run reports the version as actionable and deletes nothing', async () => {

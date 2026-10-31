@@ -1,5 +1,14 @@
 import type { ChildProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -7,8 +16,10 @@ import {
   assetCatalogTarget,
   hermesEnabledFromProperties,
   hermescPath,
+  swapBundlerEnv,
   swapJsBundle,
 } from '../engine/js-swap.ts';
+import { workspaceDir } from '../workspace/paths.ts';
 import { getExecutor } from '../exec.ts';
 import { makeChildProcess, makeExecutor, makeWriter } from './_factories.ts';
 
@@ -118,7 +129,74 @@ function harness({
   return { calls, run, appCopy, bundleOutput, writer };
 }
 
+describe('swapBundlerEnv', () => {
+  test('keeps the Metro cache while the EXPO_PUBLIC_ values and .env files match, and empties it when they change', () => {
+    const env = { PATH: '/bin', EXPO_PUBLIC_API_URL: 'https://a.example' };
+    const dir = String(swapBundlerEnv(root, env).TMPDIR);
+    expect(dir.startsWith(workspaceDir(root))).toBe(true);
+    const marker = join(dir, 'metro-cache', 'entry');
+    const seed = () => {
+      mkdirSync(join(dir, 'metro-cache'), { recursive: true });
+      writeFileSync(marker, 'transform');
+    };
+
+    seed();
+    expect(swapBundlerEnv(root, { ...env, PATH: '/usr/bin' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(true);
+
+    expect(swapBundlerEnv(root, { ...env, EXPO_PUBLIC_API_URL: 'https://b.example' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    expect(swapBundlerEnv(root, { PATH: '/bin' }).TMPDIR).toBe(dir);
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    swapBundlerEnv(root, { PATH: '/bin', EXPO_NO_DOTENV: '1' });
+    expect(existsSync(marker)).toBe(false);
+
+    seed();
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API_URL=https://c.example\n');
+    swapBundlerEnv(root, { PATH: '/bin' });
+    expect(existsSync(marker)).toBe(false);
+  });
+});
+
 describe('swapJsBundle', () => {
+  test('the order IS the product: copy aside, bundle, hermesc, replace, re-sign -- and the cache entry is never written', async () => {
+    const { calls, run, appCopy, bundleOutput } = harness();
+    const result = await run();
+    expect(result.ok).toBe(true);
+    expect(result.appPath).toBe(appCopy);
+    expect(result.tmpDir).toBe(tmp);
+    expect(result.hermes).toBe(true);
+
+    const shape = calls.map((c) => c.file);
+    expect(shape).toEqual([
+      'cp',
+      'plutil',
+      process.platform === 'win32' ? process.execPath : join(root, 'node_modules', 'expo', 'cli.js'),
+      hermescPath(root, join(root, 'ios')),
+      'mv',
+      'cp',
+      'cp',
+      'codesign',
+    ]);
+
+    const copyAside = calls[0];
+    expect(copyAside?.args).toEqual(['-c', '-R', cachedApp, appCopy]);
+    const bundle = calls[2];
+    expect(bundle?.args?.slice(process.platform === 'win32' ? 1 : 0, process.platform === 'win32' ? 2 : 1)).toEqual([
+      'export:embed',
+    ]);
+    expect(bundle?.args).toContain(bundleOutput);
+    const codesign = calls.at(-1);
+    expect(codesign?.args).toEqual(['--force', '--sign', '-', appCopy]);
+    for (const call of calls.slice(1)) {
+      expect(call.args ?? []).not.toContain(cachedApp);
+    }
+  });
+
   test('bare project: the bundle step is `react-native bundle` with the detected entry file', async () => {
     const { calls, run } = harness();
     const result = await run({ isExpo: false });
@@ -161,6 +239,45 @@ describe('swapJsBundle', () => {
       }
     },
   );
+
+  test('a codesign failure fails at the codesign step -- an unsigned swap is never handed back', async () => {
+    const { run } = harness({ failOn: 'codesign' });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('codesign');
+    expect(result.appPath).toBeUndefined();
+  });
+});
+
+describe('the expo-updates embedded manifest in a swapped copy', () => {
+  const EMBEDDED = JSON.stringify({ id: 'build-id', commitTime: 1000, assets: [{ name: 'logo', type: 'png' }] });
+  const writeManifest = (dir: string, text = EMBEDDED) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'app.manifest'), text);
+  };
+
+  test('gets a fresh id and a commitTime from this swap, so an update downloaded after the cached build cannot outrank it', async () => {
+    const { run, appCopy, calls } = harness({
+      onBundle: () => writeManifest(join(tmp, 'Fixture.app', 'EXUpdates.bundle')),
+    });
+    const result = await run({ now: () => 5000 });
+    expect(result.ok).toBe(true);
+    const refreshed = JSON.parse(readFileSync(join(appCopy, 'EXUpdates.bundle', 'app.manifest'), 'utf-8'));
+    expect(refreshed.commitTime).toBe(5000);
+    expect(refreshed.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(refreshed.id).not.toBe('build-id');
+    expect(calls.at(-1)?.file).toBe('codesign');
+  });
+
+  test('a manifest inside a nested dynamic framework fails the swap, since re-signing only the app would break that seal', async () => {
+    const { run, calls } = harness({
+      onBundle: () => writeManifest(join(tmp, 'Fixture.app', 'Frameworks', 'EXUpdates.framework', 'EXUpdates.bundle')),
+    });
+    const result = await run();
+    expect(result.failed).toBe(true);
+    expect(result.step).toBe('updates');
+    expect(calls.map((c) => c.file)).not.toContain('codesign');
+  });
 });
 
 describe('assetCatalogTarget', () => {

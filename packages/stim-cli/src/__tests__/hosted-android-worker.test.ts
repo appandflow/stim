@@ -101,12 +101,42 @@ afterEach(() => {
   rmSync(area, { recursive: true, force: true });
 });
 
+test('persists exact ownership before a viewer-free boot and stops only that AVD', async () => {
+  native.boot.mockImplementation(() => {
+    expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8'))).toMatchObject({
+      avdName: avd,
+      serial: 'emulator-5554',
+    });
+    expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
+  });
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({
+    state: 'ready',
+    device: { avdName: avd, architecture: 'arm64-v8a' },
+  });
+  expect(native.boot).toHaveBeenCalledWith(avd, 5554, expect.objectContaining({ openViewer: false }));
+  expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'unknown' });
+  expect(native.create).toHaveBeenCalledTimes(1);
+  expect(await runHostedAndroidDevice('stop', request)).toMatchObject({ state: 'stopped', device: { avdName: avd } });
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, { del: true });
+});
+
 test('an occupied console port refuses before any native creation', async () => {
   native.adb.mockReturnValue({ emulators: [{ consolePort: 5554, serial: 'emulator-5554' }], unhealthy: [] });
   expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({ state: 'stopped', device: null });
   expect(native.create).not.toHaveBeenCalled();
   expect(native.boot).not.toHaveBeenCalled();
 });
+
+test.each(['name', 'abi'] as const)(
+  'a successful boot with the wrong %s retains its device and refuses ready',
+  async (property) => {
+    native[property].mockReturnValue('foreign');
+    expect(await runHostedAndroidDevice('prepare', request)).toMatchObject({
+      state: 'unknown',
+      device: { avdName: avd },
+    });
+  },
+);
 
 test('foreign ledger ownership refuses teardown and retains the exact record', async () => {
   await runHostedAndroidDevice('prepare', request);
@@ -148,6 +178,16 @@ async function parkedEmulator() {
   });
   return runHostedAndroidDevice('park', request);
 }
+
+test('park shuts down without deletion or a local pool entry and keeps the private ledger', async () => {
+  mkdirSync(join(area, 'blobs'));
+  expect(await parkedEmulator()).toMatchObject({ state: 'parked', device: { avdName: avd } });
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(avd, {});
+  expect(native.avds()).toEqual([avd]);
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).android).toEqual([avd]);
+  expect(existsSync(join(home, 'config.json'))).toBe(false);
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
+});
 
 test('adoption refuses an occupied new port before boot and keeps partial reset failures unknown', async () => {
   await parkedEmulator();

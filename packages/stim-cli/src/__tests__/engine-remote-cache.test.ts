@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -24,6 +24,10 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
+
+function writeAppJson(config: unknown) {
+  writeFileSync(join(root, 'app.json'), JSON.stringify(config, null, 2));
+}
 
 function writeProviderModule(file: string, body: string) {
   writeFileSync(join(root, file), body);
@@ -95,6 +99,21 @@ function expoConfigSource(config: Record<string, unknown>): FingerprintSource[] 
   return [{ type: 'contents', id: 'expoConfig', contents: JSON.stringify(config), reasons: ['expoConfig'], hash: 'h' }];
 }
 
+describe('loadProjectProvider', () => {
+  test('custom Expo cache modules are refused without evaluating project code', async () => {
+    const evaluated = join(root, 'evaluated');
+    writeProviderModule(
+      'fake-provider.cjs',
+      `require('node:fs').writeFileSync(${JSON.stringify(evaluated)}, 'loaded'); module.exports = { resolveBuildCache() {}, uploadBuildCache() {} };`,
+    );
+    writeAppJson({ expo: { buildCacheProvider: { plugin: './fake-provider.cjs' } } });
+    const result = await loadProjectProvider(root);
+    expect(result.unavailable).toMatch(/Custom Expo buildCacheProvider plugins are not supported/);
+    expect(result.provider).toBeUndefined();
+    expect(existsSync(evaluated)).toBe(false);
+  });
+});
+
 describe('loadProjectProvider with the fingerprint config', () => {
   const countingRun = () => {
     const calls: string[][] = [];
@@ -161,5 +180,17 @@ describe('checkEasAuth', () => {
     const status = await checkEasAuth({ projectRoot: root, resolveBin: () => null, run: whoami('') });
     expect(status.code).toBe('no-cli');
     expect(status.remedy).toMatch(/eas-cli/);
+  });
+
+  test('a timeout is unknown, not an auth failure -- offline must not read as logged out', async () => {
+    const status = await checkEasAuth({
+      projectRoot: root,
+      resolveBin: () => ({ file: 'eas', source: 'path' }),
+      run: () => {
+        throw makeError('Command failed', { code: 'ETIMEDOUT', killed: true });
+      },
+    });
+    expect(status.failed).toBe(undefined);
+    expect(status.unknown).toMatch(/timed out|ETIMEDOUT/);
   });
 });

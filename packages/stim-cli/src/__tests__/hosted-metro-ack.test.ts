@@ -130,3 +130,39 @@ test('abort cancels the wait without waiting for a state hint or repair', async 
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test('close refuses after its original five-second budget with the links still recorded', async () => {
+  const state = await closing();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await state.pending).toBe(false);
+  expect(readWorkspaceState(root)?.hostedMetroLinks).toHaveProperty(session);
+  expect(watches.closed).toBe(watches.opened);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each(['timeout'])('open preserves the %s refusal and releases observation', async (outcome) => {
+  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroLinks: {} });
+  const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
+  await vi.waitFor(() => expect(readWorkspaceState(root)?.hostedMetroRequests).toHaveProperty(session), {
+    interval: 1,
+  });
+  await vi.advanceTimersByTimeAsync(1);
+  if (outcome === 'error') {
+    const state = readWorkspaceState(root);
+    assert(state?.supervisor?.processToken);
+    const request = hostedMetroRequests(state)[session];
+    assert(request);
+    writeWorkspaceState(root, {
+      hostedMetroLinks: {
+        [session]: { id: request.id, processToken: state.supervisor.processToken, error: 'link refused' },
+      },
+    });
+    watches.callbacks.get(workspaceStateFile(root))?.();
+  }
+  await vi.advanceTimersByTimeAsync(outcome === 'error' ? 1 : 15_000);
+  expect(await pending).toMatchObject({
+    message: expect.stringContaining(outcome === 'error' ? 'link refused' : 'did not link Metro'),
+  });
+  expect(watches.closed).toBe(watches.opened);
+  expect(vi.getTimerCount()).toBe(0);
+});

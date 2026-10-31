@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -140,4 +140,28 @@ test('repo settings round-trip by git common dir', () => {
   });
   expect(writeConfigSetting(target, 'worktree.exclude', undefined)).toBe(true);
   expect(getRepoSettings('/repo/.git')).toEqual({ ios: { deviceType: 'iPhone 17' } });
+});
+
+test('slot registry rejects unsafe names without mutating assignments', () => {
+  const root = liveProjectDir('invalid-slots');
+  upsertProject(root, {});
+  const before = loadConfig();
+  for (const slot of ['', '../phone', '__proto__', 'constructor', 'prototype', 'a'.repeat(65)]) {
+    expect(() => setDevice(root, 'ios', { deviceUdid: 'test' }, slot)).toThrow(/device slot/);
+  }
+  expect(loadConfig()).toEqual(before);
+});
+
+test.each(['[]'])('refuses a config.json holding %s instead of dropping writes', (content) => {
+  const p = join(tmpHome, 'config.json');
+  writeFileSync(p, content);
+  let err: unknown;
+  try {
+    upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  } catch (e) {
+    err = e;
+  }
+  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
+  expect((err as Error).message).toContain(`${p} is not a JSON object`);
+  expect(readFileSync(p, 'utf-8')).toBe(content);
 });

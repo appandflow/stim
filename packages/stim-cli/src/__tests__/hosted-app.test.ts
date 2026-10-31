@@ -154,3 +154,16 @@ test('routes an Expo development client to the worker loopback origin without cl
   expect(url.protocol).toBe('stim-dev:');
   expect(new URL(url.searchParams.get('url')!).origin).toBe('http://localhost:14321');
 });
+
+test.each(['../outside'])('refuses app link %s before native installation', async (target) => {
+  receipt([{ path: 'link', kind: 'link', content: target }]);
+  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/escapes|ENOENT/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
+
+test('rejects a device Mach-O disguised by simulator plist metadata without installing it', async () => {
+  receipt();
+  platform = 'IOS';
+  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('incompatible');
+  expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
+});

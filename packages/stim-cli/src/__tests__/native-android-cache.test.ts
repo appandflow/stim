@@ -14,6 +14,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
@@ -204,6 +205,24 @@ test('signed native Release reuse returns the package on a cold process and plan
   expect(generations).toBe(1);
 });
 
+test.each(['source', 'signing', 'environment', 'debug-keystore', 'jdk', 'sdk', 'gradle-init'] as const)(
+  '%s changes invalidate native APK reuse',
+  async (input) => {
+    const first = await build();
+    if (input === 'source') write(join(root, 'app/src/Main.kt'), 'edited');
+    if (input === 'signing') write(join(directory, 'signing/key'), 'private-key-two');
+    if (input === 'environment') vi.stubEnv('STIM_FIXTURE_SIGNING', 'changed-password');
+    if (input === 'debug-keystore') write(join(directory, 'home/.android/debug.keystore'), 'new-default-key');
+    if (input === 'gradle-init') write(join(directory, 'gradle/init.d/custom.gradle'), 'changed initialization');
+    if (input === 'jdk') write(join(directory, 'jdk/release'), 'JAVA_VERSION="17.0.16"');
+    if (input === 'sdk') write(join(sdk, 'build-tools/36.0.0/source.properties'), 'Pkg.Revision=36.0.1');
+    const second = await build();
+    expect(second.cacheKey).not.toBe(first.cacheKey);
+    expect(second.cacheHit).toBe(false);
+    expect(generations).toBe(2);
+  },
+);
+
 test('selected native projects cache their own package and retain reuse across repository relocation', async () => {
   const files = [...visible];
   const inputs = { complete: true, ignored: [], outputs: ['one/app/build', 'two/app/build'] };
@@ -237,6 +256,17 @@ test('selected native projects cache their own package and retain reuse across r
   expect(generations).toBe(2);
 });
 
+test('generated outputs do not change the key, and private inputs never authorize source transfers', async () => {
+  const before = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
+  write(join(root, 'app/build/new.bin'), 'generated');
+  expect(await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).toEqual(before);
+  const transfer = await nativeGradleTransfer(root, { complete: true, ignored: [], outputs: ['app/build'] });
+  expect(transfer.files.some((file) => file.path.includes('signing'))).toBe(false);
+  expect(JSON.stringify({ before, transfer })).not.toContain('private-password');
+  expect(JSON.stringify({ before, transfer })).not.toContain('private-key-one');
+  await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('android.offloadInputs');
+});
+
 test.each([
   { before: Buffer.from([0xe9]), after: Buffer.from([0xf1]) },
   { before: Buffer.from('one\n'), after: Buffer.from('one\r\n') },
@@ -261,6 +291,20 @@ test.each([
   },
 );
 
+test('inputs changed during compilation never publish a cache entry', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const upload = vi.spyOn(files, 'store');
+  useProvider({ files });
+  duringBuild = () => write(join(directory, 'signing/key'), `changed-${generations}`);
+  const first = await build();
+  const second = await build();
+  expect(first).toMatchObject({ cacheHit: false, cacheKey: null });
+  expect(second).toMatchObject({ cacheHit: false, cacheKey: null });
+  expect(existsSync(join(directory, 'cache'))).toBe(false);
+  expect(upload).not.toHaveBeenCalled();
+  expect(generations).toBe(2);
+});
+
 test('a file provider restores a verified native APK into a cold local cache without Gradle', async () => {
   const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
   useProvider({ files });
@@ -275,6 +319,25 @@ test('a file provider restores a verified native APK into a cold local cache wit
   expect(local).toMatchObject({ cacheHit: 'local', cacheKey: first.cacheKey, androidPackage: 'org.example.free' });
   expect(readFileSync(local.apkPath)).toEqual(bytes);
   expect(generations).toBe(1);
+});
+
+test('a valid shared entry for another input key cannot backfill the requested key', async () => {
+  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
+  const upload = vi.spyOn(files, 'store');
+  useProvider({ files });
+  const first = await build();
+  write(join(root, 'app/src/Main.kt'), 'other-source');
+  await build();
+  const alternate = upload.mock.calls.at(-1)?.[0].key;
+  assert(alternate);
+  write(join(root, 'app/src/Main.kt'), 'source');
+  const resolve = files.resolve.bind(files);
+  vi.spyOn(files, 'resolve').mockImplementation((input) => resolve({ ...input, key: alternate }));
+  vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
+  const result = await build();
+  expect(result).toMatchObject({ cacheHit: false, cacheKey: first.cacheKey });
+  expect(JSON.parse(readFileSync(result.apkPath, 'utf8')).generation).toBe(3);
+  expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
 });
 
 test('a provider path outside its download directory is refused without deleting that file', async () => {
@@ -336,6 +399,33 @@ test('cancelling a shared upload removes its complete-file staging and preserves
   expect((await build()).cacheHit).toBe('local');
   expect(generations).toBe(1);
 });
+
+test.each(['bytes', 'package', 'abi', 'signature'] as const)(
+  'a cached APK with invalid %s is rebuilt',
+  async (invalid) => {
+    const first = await build();
+    assert(first.cacheKey);
+    const stored = cache.artifactIn(cache.entryDir('android', first.cacheKey));
+    assert(stored);
+    const receiptPath = join(dirname(stored), 'native-android.json');
+    if (invalid === 'bytes') write(stored, 'corrupt');
+    else if (invalid === 'package') {
+      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+      write(receiptPath, JSON.stringify({ ...receipt, androidPackage: 'org.other' }));
+    } else {
+      const apk = JSON.parse(readFileSync(stored, 'utf8'));
+      write(stored, JSON.stringify({ ...apk, ...(invalid === 'abi' ? { abi: 'arm64-v8a' } : { signed: false }) }));
+      const receipt = JSON.parse(readFileSync(receiptPath, 'utf8'));
+      write(
+        receiptPath,
+        JSON.stringify({ ...receipt, sha256: createHash('sha256').update(readFileSync(stored)).digest('hex') }),
+      );
+    }
+    const second = await build();
+    expect(second.cacheHit).toBe(false);
+    expect(generations).toBe(2);
+  },
+);
 
 test('cancelled input reads are not accepted as an uncached build identity', async () => {
   const controller = new AbortController();

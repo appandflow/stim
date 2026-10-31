@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveDir, readArchives } from '@stim-cli/core/state';
 import { collectGcReport, runGc } from '../commands/gc.ts';
-
+import { selectCaches } from '../commands/gc/caches.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
@@ -194,6 +194,21 @@ test('archive gc reaps dead staging but reports live and unresolved claims with 
   expect(existsSync(join(home, 'archive', '.removing-old'))).toBe(false);
   expect(existsSync(join(home, 'archive', '.incoming-live'))).toBe(true);
   expect(existsSync(join(home, 'archive', '.incoming-unknown'))).toBe(true);
+});
+
+test('archive selectors cannot accidentally select a shared cache with an archive name', () => {
+  for (const name of [
+    'archived',
+    'archived:one',
+    'archived-logs',
+    'archived-recordings',
+    'archived-agent',
+    'archived-logs:one',
+  ]) {
+    expect(
+      selectCaches([{ name, dir: join(home, name), source: 'registered', prune: 'entries', note: '' }], name),
+    ).toEqual([]);
+  }
 });
 
 test('dead registered project pruning archives history with gc attribution', async () => {

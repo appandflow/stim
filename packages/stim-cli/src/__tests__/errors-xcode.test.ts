@@ -12,30 +12,6 @@ function extractXcodeDiagnostics(
   return collector.diagnostics;
 }
 
-[
-  "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    ',
-  '    Using response file: /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/e6072d4f65d7061329687fe24e3d63a7-common-args.resp',
-  '    ',
-  '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x  [argv elided] cratch.build/Objects-normal/arm64/main.o',
-  "/tmp/stim-xc/Scratch/main.m:5:18: error: use of undeclared identifier 'undefinedThing'",
-  '    5 |     NSLog(@"%@", undefinedThing);',
-  '      |                  ^~~~~~~~~~~~~~',
-  "/tmp/stim-xc/Scratch/main.m:6:19: error: implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
-  '    6 |     NSString *s = 42;',
-  '      |                   ^~',
-  '2 errors generated.',
-  '',
-  '** BUILD FAILED **',
-  '',
-  '',
-  'The following build commands failed:',
-  "\tCompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
-  '\tBuilding project Scratch with scheme Scratch and configuration Debug',
-  '(2 failures)',
-].join('\n');
-
 const REAL_LINK_FAILURE = [
   "Ld /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
   '    cd /tmp/stim-xc',
@@ -78,14 +54,6 @@ const REAL_PODS_FAILURE = [
   '',
 ].join('\n');
 
-[
-  'Build description signature: 5aff88b39ca8e2b9798e399e4ba14334',
-  'Build description path: /tmp/stim-xc/dd-dev/Build/Intermediates.noindex/XCBuildData/5aff88b39ca8e2b9798e399e4ba14334.xcbuilddata',
-  "/tmp/stim-xc/Scratch.xcodeproj: error: No profiles for 'com.stimcli.scratch' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'com.stimcli.scratch'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target 'Scratch' from project 'Scratch')",
-  '** BUILD FAILED **',
-  '',
-].join('\n');
-
 const REAL_SCHEME_FAILURE = [
   'Command line invocation:',
   '    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Scratch.xcodeproj -scheme NoSuchScheme -configuration Debug -sdk iphonesimulator build',
@@ -95,23 +63,6 @@ const REAL_SCHEME_FAILURE = [
   '',
   '2026-08-25 13:18:28.966 xcodebuild[94932:16893065] Writing error result bundle to /var/folders/4g/960y2hbs4z73qw_nddslgmgh0000gn/T/ResultBundle_2026-25-08_13-18-0028.xcresult',
   'xcodebuild: error: The project named "Scratch" does not contain a scheme named "NoSuchScheme". The "-list" option can be used to find the names of the schemes in the project.',
-  '',
-].join('\n');
-
-[
-  "RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    builtin-RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
-  '',
-  "Validate /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    builtin-validationUtility /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app -shallow-bundle -infoplist-subpath Info.plist',
-  '',
-  "Touch /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    /usr/bin/touch -c /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
-  '',
-  '** BUILD SUCCEEDED **',
   '',
 ].join('\n');
 

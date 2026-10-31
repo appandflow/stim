@@ -101,6 +101,16 @@ test('skips occupied ports and honors Metro reservations in the band', async () 
   expect(claimMetroPort(root, 8902)).toBeNull();
 });
 
+test.each(['../api', '__proto__'])('rejects label %j without a registry mutation', async (label) => {
+  await expect(getNamedPort(root, label, free)).rejects.toThrow(/label|managed/);
+  expect(getProject(root)).toBeNull();
+});
+
+test('object property names can be labels without inherited allocations', async () => {
+  expect(await getNamedPort(root, 'constructor', free)).toBe(8900);
+  expect(await getNamedPort(root, 'toString', free)).toBe(8901);
+});
+
 const NETSTAT = [
   '',
   'Active Connections',

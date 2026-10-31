@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../collector/ios.ts';
-import { androidClockOffset, waitForAppPid, watchAppPid } from '../collector/android.ts';
+import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../collector/android.ts';
 import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../collector/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import { makeChildProcess, makeExecutor } from './_factories.ts';
@@ -40,10 +40,7 @@ describe('ios: log stream ndjson', () => {
 });
 
 describe('ios: the physical-device console', () => {
-  const capture = fixture('ios-device-console.txt');
-  const lines = capture.split(/\r?\n/).filter((l) => l !== '');
   const at = () => 1788271500000;
-  lines.map((l) => parseDeviceConsoleLine(l, { now: at })).filter(isNotNull);
 
   test('blank lines and non-strings are not records', () => {
     expect(parseDeviceConsoleLine('')).toBe(null);
@@ -111,8 +108,6 @@ describe('ios: demoting device noise', () => {
 });
 
 describe('android: logcat -v time', () => {
-  fixture('android-logcat-time.txt').split(/\r?\n/).filter(Boolean);
-
   test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
     const asyncCalls: string[][] = [];
     const exec = makeExecutor({
@@ -163,6 +158,27 @@ describe('android: logcat -v time', () => {
     stopping.abort();
     expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
   });
+
+  test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {
+    const launch = 1788902585000;
+    const line = '         1788902582.542 I/ReactNativeJS( 1247): [stim:readiness] pending';
+    const current = parseLogcatLine(line, { clockOffsetMs: 2739, now: () => launch });
+    expect(current).toMatchObject({
+      ts: 1788902585281,
+      deviceTs: 1788902582542,
+      clockOffsetMs: 2739,
+      proc: 'ReactNativeJS(1247)',
+      msg: '[stim:readiness] pending',
+      level: 'info',
+    });
+    expect(current!.ts! > launch).toBe(true);
+    const old = parseLogcatLine(line.replace('2582.542', '2570.542'), { clockOffsetMs: 2739, now: () => launch });
+    expect(old!.ts! < launch).toBe(true);
+    expect(parseLogcatLine(line, { clockOffsetMs: -2739 })!.ts).toBe(1788902579803);
+    expect(parseLogcatLine(line)).toMatchObject({ ts: 1788902582542, deviceTs: 1788902582542 });
+    expect(parseLogcatLine(line)).not.toHaveProperty('clockOffsetMs');
+    expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
+  });
 });
 
 describe('watchAppPid', () => {
@@ -210,5 +226,34 @@ describe('watchAppPid', () => {
     await d.tick();
     expect(seen).toEqual([4200]);
     w.stop();
+  });
+
+  test('an adb that throws is a missed poll, not a dead watcher', async () => {
+    const d = driver();
+    const seen: number[] = [];
+    let throwing = true;
+    const w = watchAppPid({
+      serial: 'emulator-5554',
+      packageName: 'com.x',
+      pid: 3132,
+      intervalMs: 1,
+      resolve: () => {
+        if (throwing) throw new Error('device offline');
+        return 4200;
+      },
+      onChange: (pid) => {
+        seen.push(pid);
+      },
+      setTimer: d.setTimer,
+      clearTimer: d.clearTimer,
+    });
+    await d.tick();
+    expect(seen).toEqual([]);
+    expect(d.pending).toBe(1);
+    throwing = false;
+    await d.tick();
+    expect(seen).toEqual([4200]);
+    w.stop();
+    expect(d.pending).toBe(0);
   });
 });

@@ -1,7 +1,14 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { listRecordedDevicesAsync, recordingEnabled } from '../state/recordings.ts';
+import {
+  capDrops,
+  footageDrops,
+  listRecordedDevicesAsync,
+  recordingEnabled,
+  type RecordedDevice,
+  type RecordedSegment,
+} from '../state/recordings.ts';
 
 const recordingIo = vi.hoisted((): { afterStat?: () => void } => ({}));
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -48,3 +55,27 @@ test('STIM_RECORDING wins over the workspace, repo and machine layers, which win
   expect(recordingEnabled({ STIM_RECORDING: 'true' }, [off])).toBe(true);
   expect(recordingEnabled({ STIM_RECORDING: 'nope' }, [off])).toBe(false);
 });
+
+test('keeps the last footage however long the device sat unrecorded between segments', () => {
+  const old = segment(0, 60_000);
+  const afterStop = segment(7_200_000, 7_260_000);
+  const open = segment(7_260_000, 7_300_000, 10, true);
+
+  expect(footageDrops([old, afterStop, open], 100_000)).toEqual([old]);
+  expect(footageDrops([old, afterStop, open], 160_000)).toEqual([]);
+  expect(footageDrops([open], 1)).toEqual([]);
+});
+
+test('the disk cap drops the oldest closed footage across devices first', () => {
+  const device = (segments: RecordedSegment[]): RecordedDevice => ({ platform: 'ios', slot: 'x', dir, segments });
+  const a1 = segment(0, 10, 40);
+  const b1 = segment(5, 20, 40);
+  const a2 = segment(30, 40, 40, true);
+
+  expect(capDrops([device([a1, a2]), device([b1])], 50)).toEqual([a1, b1]);
+  expect(capDrops([device([a1, a2]), device([b1])], 90)).toEqual([a1]);
+});
+
+function segment(start: number, end: number, bytes = 10, open = false): RecordedSegment {
+  return { file: `${start}`, start, end, bytes, open };
+}

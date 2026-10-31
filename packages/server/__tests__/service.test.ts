@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import {
   answersAs,
+  planServe,
+  unusedInstalls,
   applyServeEnvironment,
   parseEnvAssignment,
   parseInstalledPlist,
@@ -31,8 +33,6 @@ const SPEC: ServiceSpec = {
   workingDirectory: '/Users/me',
   serve: { port: 7443, created: true },
 };
-
-join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 
 describe('service plist', () => {
   it('reads --env KEY=VALUE from the arguments of a plist written before values moved to EnvironmentVariables', () => {
@@ -314,4 +314,37 @@ describe('host app', () => {
       await expect(unpack(sha256)).rejects.toThrow(/not signed by App & Flow's Developer ID/);
     });
   });
+});
+
+it('keeps --env values out of the server arguments and escapes them in EnvironmentVariables', () => {
+  const plist = renderPlist(SPEC);
+  const [, afterArguments = ''] = plist.split('<key>ProgramArguments</key>');
+  const [programArguments = '', afterArray = ''] = afterArguments.split('</array>');
+  expect(programArguments).toContain('<string>EXPO_TOKEN</string>');
+  expect(programArguments).not.toContain('s3cr');
+  expect(programArguments).not.toContain('GEM_HOME=');
+  expect(afterArray).toContain('<key>EXPO_TOKEN</key>\n\t\t<string>s3cr&amp;t&lt;x&gt;==y</string>');
+  expect(afterArray).toContain('<key>GEM_HOME</key>\n\t\t<string>/gems</string>');
+});
+
+it('refuses a Funnel route and an unreadable config, and never plans to create over them', () => {
+  expect(planServe({ state: 'funneled', ports: [443], port: 7444 }, 7787, null)).toMatchObject({
+    refusal: expect.stringContaining('Funnel'),
+  });
+  expect(planServe({ state: 'unknown', reason: 'it timed out', port: 7443 }, 7787, null)).toMatchObject({
+    refusal: expect.stringContaining('not changing the route'),
+  });
+});
+
+it('prunes only installs that hold neither the current nor the previous server', () => {
+  const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
+  const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
+  expect(
+    unusedInstalls(
+      versions,
+      ['1.14.0-a-1', '1.14.0-a-10', '1.15.0-b-2', '.install-123'],
+      [script('1.14.0-a-1'), '/Users/me/stim/packages/server/dist/stim-server.mjs'],
+    ),
+  ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
+  expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
 });

@@ -146,6 +146,18 @@ async function parkedSimulator() {
   return runHostedDevice('park', {});
 }
 
+test('park shuts down without deleting, renaming or moving ledger ownership and keeps the session blob store but removes app copies', async () => {
+  mkdirSync(join(area, 'blobs'));
+  mkdirSync(join(area, 'apps', 'first', 'App.app'), { recursive: true });
+  expect(await parkedSimulator()).toMatchObject({ state: 'parked', device: { udid, name: 'stim-hosted' } });
+  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid);
+  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).ios).toEqual([udid]);
+  expect(simulatorState).toBe('Shutdown');
+  expect(existsSync(join(area, 'blobs'))).toBe(true);
+  expect(existsSync(join(area, 'apps', 'first', 'App.app'))).toBe(false);
+  expect(existsSync(join(home, 'config.json'))).toBe(false);
+});
+
 test('inspect keeps compatible and incompatible simulators shut down without resetting them', async () => {
   await parkedSimulator();
   native.boot.mockClear();
@@ -155,6 +167,18 @@ test('inspect keeps compatible and incompatible simulators shut down without res
   expect(simulatorState).toBe('Shutdown');
   expect(native.boot).not.toHaveBeenCalled();
   expect(native.privacy).not.toHaveBeenCalled();
+});
+
+test.each(['renamed'])('inspect refuses an unusable simulator: %s', async (failure) => {
+  await parkedSimulator();
+  if (failure === 'ledger') forgetCreatedDevice('ios', udid);
+  if (failure === 'missing') simulatorState = null;
+  if (failure === 'running') simulatorState = 'Booted';
+  if (failure === 'unavailable')
+    native.inventory.mockReturnValue([{ udid, name: 'stim-hosted', state: 'Shutdown', available: false }]);
+  if (failure === 'renamed')
+    native.inventory.mockReturnValue([{ udid, name: 'foreign', state: 'Shutdown', available: true }]);
+  expect(await runHostedDevice('inspect', {})).toMatchObject({ state: 'unusable', notice: expect.any(String) });
 });
 
 test('adoption removes every third-party app before ready and clears hosted delivery data', async () => {

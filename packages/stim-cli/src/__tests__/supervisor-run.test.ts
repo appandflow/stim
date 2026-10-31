@@ -20,7 +20,8 @@ import { supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { readIdleStop } from '@stim-cli/core/state';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
-
+import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -547,6 +548,34 @@ describe('idle stop', () => {
     await vi.advanceTimersByTimeAsync(2 * MINUTE);
     expect(seen.closed).toBe(1);
     expect(readIdleStop(readWorkspaceState(root))?.idleMinutes).toBe(60);
+  });
+
+  test('metro.idleStopMinutes 0 never stops the dev server', async () => {
+    const seen = await startIdleSupervisor({ probe: quiet, minutes: 0 });
+    await vi.advanceTimersByTimeAsync(24 * 60 * MINUTE);
+    expect(seen.closed).toBe(0);
+  });
+
+  test('the workspace probe blocks during a build and while a workspace device is driven', () => {
+    useProbeHost({ ps: '' });
+    const probe = workspaceIdleProbe(root);
+    expect(probe.blocker()).toBe(null);
+
+    const attempt = tryAcquireClaim({
+      root: join(tmpHome, 'native-run.lock'),
+      mode: 'exclusive',
+      label: 'native-run lock',
+    });
+    assert(attempt.acquired);
+    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: attempt.acquired });
+    expect(probe.blocker()).toBe('a build is in progress');
+    releaseClaim(attempt.acquired);
+    expect(probe.blocker()).toBe(null);
+
+    upsertProject(root, { platforms: { ios: { deviceUdid: 'STIM-IDLE-TEST-UDID', owned: true } } });
+    expect(probe.blocker()).toBe(null);
+    takeLease({ root, platform: 'ios', id: 'STIM-IDLE-TEST-UDID', kind: 'declared' });
+    expect(probe.blocker()).toMatch(/^ios device STIM-IDLE-TEST-UDID is leased by stim device lock until /);
   });
 
   test('a physical device this workspace locks blocks the stop until the lease expires', async () => {

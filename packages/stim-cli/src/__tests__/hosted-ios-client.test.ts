@@ -1,7 +1,6 @@
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { withAmbientContext } from '@stim-cli/core';
 import { testContext } from './_context.ts';
-import { createServer } from 'node:net';
 import { FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import { createHash } from 'node:crypto';
 import {
@@ -33,7 +32,6 @@ import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { runStop } from '../commands/stop.ts';
-
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { runReload } from '../commands/reload.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
@@ -41,12 +39,6 @@ import { agentRemoteConfig } from '../device-host/hosted-macos.ts';
 
 const writeHostedIos = (root: string, slot: string, host: HostedIosPlacement | null): void =>
   writeHostedNative(root, slot, host, 'ios');
-
-await new Promise<boolean>((resolve) => {
-  const probe = createServer();
-  probe.once('error', () => resolve(false));
-  probe.listen(0, '127.0.0.1', () => probe.close(() => resolve(true)));
-});
 
 const tailnet = vi.hoisted(() => ({ port: 0, changed: false }));
 const watcher = vi.hoisted(() => ({ dropEvents: false }));
@@ -76,7 +68,6 @@ vi.mock('../offload/tailnet.ts', async (importOriginal) => ({
       : { url: `ws://127.0.0.1:${tailnet.port}`, host: 'mini', servername: 'mini' },
 }));
 const sessionId = '12345678-1234-1234-1234-123456789abc';
-
 const device = {
   udid: 'abcdef12-1234-1234-1234-123456789abc',
   name: 'iPhone 17 Pro',
@@ -509,6 +500,34 @@ test.each(['missing', 'unreachable'])('stop uses the %s remedy and reports sibli
   expect(result.outcomes.device['ios:host:default']?.reason?.includes('when that machine answers')).toBe(
     reason === 'unreachable',
   );
+});
+
+test('delivery reconnects after the build instead of using the offer connection', async () => {
+  const target = await prepareHostedIos('mini', {});
+  const previous = target.host.connection;
+  const connection = Object.create(BuildConnection.prototype) as BuildConnection;
+  connection.close = () => {};
+  connection.supports = () => false;
+  connection.request = previous.request.bind(previous);
+  const stale = vi.spyOn(previous, 'request').mockRejectedValue(new Error('connection dropped during build'));
+  open.mockResolvedValue(connection);
+  try {
+    await placeHostedIos(target, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      reserved: (value) => writeHostedIos(root, 'default', value),
+      note: () => {},
+    });
+    expect(stale).not.toHaveBeenCalled();
+    expect(readHostedIos(root).default?.session).toBe(sessionId);
+  } finally {
+    stale.mockRestore();
+    target.host.connection.close();
+  }
 });
 
 test('hosted stop failures cannot overwrite the local default-slot outcome', async () => {
@@ -950,4 +969,27 @@ test('automatic process placement skips an older host but never replaces its rec
   const resumed = await autoPlacement(false, 'process');
   expect(resumed).toMatchObject({ sticky: true, target: { session: { id: sessionId } } });
   expect(methods.some(({ method }) => method === 'device-host.offer' || method === 'device-host.reserve')).toBe(false);
+});
+
+test('automatic device exclusion skips offers, preserves a live session, and blocks a newly selected reservation', async () => {
+  const selected = await autoPlacement();
+  writeConfigSetting({ scope: 'machine' }, 'remote.devicePoolDisabled', ['mini']);
+  methods = [];
+  expect((await autoPlacement()).placement.decision).toBe('local');
+  expect(methods).toEqual([]);
+  await expect(
+    placeHostedIos(selected.target! as Awaited<ReturnType<typeof prepareHostedIos>>, {
+      root,
+      slot: 'default',
+      bundle: join(root, 'Fixture.app'),
+      bundleId: 'dev.fixture',
+      release: true,
+      selectors: {},
+      note: () => {},
+      reserved: () => {},
+    }),
+  ).rejects.toThrow('disabled');
+  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
+  writeHostedIos(root, 'default', placement());
+  expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
 });

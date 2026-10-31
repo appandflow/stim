@@ -77,6 +77,22 @@ describe('resolveBudget', () => {
       resolveBudget({ config: { ...config, budget: { maxLiveWorkspaces: 1.5 } }, env: {}, totalMemoryMb: GB }).error,
     ).toMatch(/budget\.maxLiveWorkspaces/);
   });
+
+  test('a STIM_HOME turns the budget off unless its environment variable is set', () => {
+    const scoped = resolveBudget({ config: null, env: { STIM_HOME: home }, totalMemoryMb: 32 * GB });
+    expect(scoped.budget).toEqual({
+      minFreeDiskMb: 0,
+      hardFloorDiskMb: 0,
+      maxCommittedMemoryMb: 0,
+      maxLiveWorkspaces: 0,
+    });
+    const opted = resolveBudget({
+      config: null,
+      env: { STIM_HOME: home, STIM_BUDGET_MIN_FREE_DISK_GB: '30', STIM_BUDGET_MAX_LIVE_WORKSPACES: '2' },
+      totalMemoryMb: 32 * GB,
+    });
+    expect(opted.budget).toMatchObject({ minFreeDiskMb: 30 * GB, hardFloorDiskMb: 0, maxLiveWorkspaces: 2 });
+  });
 });
 
 function limits(overrides: Partial<Budget> = {}): Budget {

@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { deviceHostMachinesFile, readDeviceHostMachines } from '@stim-cli/core/state';
+import { deviceHostMachinesFile, readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
 import { hostingMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectBuildMachines } from '../offload/build-machines.ts';
 import { realIo, type Endpoint, type HelloReply, type MachineAuth, type TailnetMachineIo } from '../offload/tailnet.ts';
@@ -55,6 +55,26 @@ async function approvedHosting() {
   await inspectDeviceHostMachines({ fix: false }, fakeIo([hosting()]).io, ['mini']);
 }
 
+test('plain doctor does not ask for hosting; fix makes a ticket for the separate capability in a private file', async () => {
+  const { io, calls } = fakeIo([notYet]);
+  expect((await inspectDeviceHostMachines({ fix: false }, io, ['mini'])).machines).toEqual([
+    { machine: 'mini', dnsName: 'mini.tail1.ts.net', state: 'not-asked' },
+  ]);
+  expect(calls).toEqual([]);
+  const result = await inspectDeviceHostMachines({ fix: true }, io, ['mini']);
+  const [credential] = readDeviceHostMachines();
+  expect(calls).toEqual([
+    {
+      endpoint: { url: 'wss://100.64.0.7:7443', servername: 'mini.tail1.ts.net', host: 'mini.tail1.ts.net:7443' },
+      auth: { access: 'device-host', ticket: credential!.ticket, name: 'laptop' },
+    },
+  ]);
+  expect(result.machines).toEqual([expect.objectContaining({ state: 'pending' })]);
+  expect(result.findings[0]?.fix).toContain(`STIM_SETUP_TICKET=${credential!.ticket}`);
+  expect(readBuildMachines()).toEqual([]);
+  expect(statSync(deviceHostMachinesFile()).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
+});
+
 test('a protocol 1 worker reports outdated for build and hosting under one finding title, so doctor prints it once', async () => {
   const old = await startProtocol1Server();
   try {
@@ -74,6 +94,15 @@ test('a protocol 1 worker reports outdated for build and hosting under one findi
   } finally {
     await old.close();
   }
+});
+
+test('a worker that proves another key keeps the pin and gets no new ticket', async () => {
+  await approvedHosting();
+  vi.stubEnv('STIM_ACCESS_TICKET', 'n'.repeat(42) + 'A');
+  const { io, calls } = fakeIo([{ error: { code: 'server-key-mismatch', message: 'another key' } }]);
+  expect((await inspectDeviceHostMachines({ fix: true }, io, ['mini'])).machines[0]?.state).toBe('key-changed');
+  expect(calls.map((call) => call.auth)).toEqual([{ access: 'device-host', serverKey: SERVER_KEY }]);
+  expect(readDeviceHostMachines()[0]).toMatchObject({ state: 'approved', serverKey: SERVER_KEY });
 });
 
 test.each([{ machines: 'mini' }, { machines: ['mini', 42] }, { machines: null }, 'mini'])(

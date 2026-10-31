@@ -46,6 +46,20 @@ test('invalid launch entries are ignored instead of becoming reload targets', ()
   expect(readWorkspaceLaunches(root)).toEqual({ android: launch('com.example.android', 'emulator-5554') });
 });
 
+test('a sibling whose device state cannot be read counts as running, so it can never lend its bundle', async () => {
+  upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
+  setExecutor({
+    runFileAsync: async () => {
+      throw new Error('simctl timed out');
+    },
+  });
+  try {
+    expect(await siblingPlatformSlots(root, 'ios')).toEqual(['tablet']);
+  } finally {
+    resetExecutor();
+  }
+});
+
 test('sibling discovery leaves the event loop available while waiting for the device listing', async () => {
   upsertProject(root, { deviceSlots: { tablet: { ios: { deviceUdid: 'TABLET', owned: true } } } });
   let resolveListing!: (value: string) => void;

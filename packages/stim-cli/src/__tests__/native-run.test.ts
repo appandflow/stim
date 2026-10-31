@@ -4,13 +4,45 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { runStop, stopWorkspaceNow } from '../commands/stop.ts';
-import { nativeRunWaitNotice, runCancellation, withNativeBuildRun } from '../engine/native-run.ts';
+import {
+  decideStopAction,
+  nativeRunWaitNotice,
+  runCancellation,
+  withNativeBuildRun,
+  type NativeRunHolder,
+} from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { testContext } from './_context.ts';
 import { getExecutor } from '../exec.ts';
 import { type ClaimHolder } from '../ownership-claim.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
+
+const ios = (slot = 'default'): Omit<NativeRunHolder, 'takesSignals'> => ({ command: 'ios', platform: 'ios', slot });
+
+describe('decideStopAction', () => {
+  test.each([
+    [
+      'a build whose owner is gone while its tool holds the claim is refused, not signalled',
+      undefined,
+      ios(),
+      'gone',
+      ['default'],
+      'refuse',
+    ],
+    ['a build whose owner pid was reused is refused', 'default', ios(), 'different', ['default'], 'refuse'],
+    [
+      'another stop is waited on',
+      undefined,
+      { command: 'stop', platform: null, slot: 'default' },
+      'same',
+      ['default'],
+      'wait',
+    ],
+  ] as const)('%s', (_name, stopSlot, holder, ownerIdentity, deviceSlots, action) => {
+    expect(decideStopAction({ stopSlot, holder, ownerIdentity, deviceSlots }).action).toBe(action);
+  });
+});
 
 test('a wait on the native-run lock is announced at once, per holder, and every 30 seconds', () => {
   let at = Date.parse('2026-09-25T12:12:00Z');

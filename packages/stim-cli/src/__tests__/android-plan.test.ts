@@ -259,3 +259,15 @@ describe('a profile the emulator gates on foldable image support', () => {
     expect((await plan({}, { owned: { ...owned, systemImage: image(34).pkg } })).ok).toBe(true);
   });
 });
+
+test('a local release build asks its path preflight about every ABI', async () => {
+  const asked: unknown[] = [];
+  await resolveAndroidRunPlan(inputs({ variant: 'productionRelease' }), {
+    ...inspection([]),
+    preflight: (target) => {
+      asked.push(target);
+      return { code: 'STIM_PATH_TOO_LONG', reason: 'too long', remedy: 'move it' };
+    },
+  });
+  expect(asked).toEqual([{ abi: null, variant: 'productionRelease' }]);
+});

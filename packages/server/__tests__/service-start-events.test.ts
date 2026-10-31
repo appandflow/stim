@@ -13,7 +13,7 @@ const fixture = vi.hoisted(() => {
     emit(event: string, error: Error): boolean;
     closed: boolean;
   }[] = [];
-  return { enginePid: 73, checks: 0, unavailable: false, observers };
+  return { enginePid: 73, checks: 0, observers };
 });
 
 vi.mock('node:child_process', async (original) => ({
@@ -42,7 +42,6 @@ vi.mock('node:fs', async (original) => {
       else fs.copyFileSync(source, destination);
     },
     watch: (_file: string, _options: unknown, changed: (event: string, filename: string | null) => void) => {
-      if (fixture.unavailable) throw new Error('fixture watcher unavailable');
       const watcher = Object.assign(new EventEmitter(), {
         changed,
         closed: false,
@@ -68,7 +67,6 @@ beforeEach(() => {
   vi.stubEnv('LOCALAPPDATA', scratch);
   fixture.enginePid = 73;
   fixture.checks = 0;
-  fixture.unavailable = false;
   fixture.observers = [];
   mkdirSync(dirname(manager.file(label)), { recursive: true });
   writeFileSync(

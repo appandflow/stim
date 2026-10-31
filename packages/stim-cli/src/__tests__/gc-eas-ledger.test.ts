@@ -8,8 +8,7 @@ import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { listMountedVolumes } from '../fs-util.ts';
 import type { EasSessionClaim } from '../engine/eas-session-ledger.ts';
 
-listMountedVolumes();
-join(tmpdir(), 'stim-gone');
+const VALID_ID = '3f2b8c1e-5a4d-4e9b-9c7a-1d2e3f4a5b6c';
 const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
@@ -64,6 +63,24 @@ describe('the machine EAS ledger sweep', () => {
     );
     return Object.keys(parsed.claims).toSorted();
   }
+
+  test('reports and forgets only invalid ids whose root is gone', async () => {
+    const live = join(dir, 'live-app');
+    mkdirSync(live);
+    writeLedger([
+      claim('drs_1', join(dir, 'deleted-fixture')),
+      claim('drs_unmanaged', live),
+      claim(VALID_ID, join(dir, 'deleted-app')),
+    ]);
+    const deps = { easLedgerRoot: ledgerRoot };
+
+    const found = findStaleEasLedgerEntries(mounted, deps);
+    expect(found).toEqual([{ id: 'drs_1', workspaceRoot: join(dir, 'deleted-fixture') }]);
+    expect(ledgerIds()).toEqual(['drs_1', 'drs_unmanaged', VALID_ID].toSorted());
+
+    expect(await forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
+    expect(ledgerIds()).toEqual(['drs_unmanaged', VALID_ID].toSorted());
+  });
 
   test('keeps an entry whose root reappeared after the report', async () => {
     const root = join(dir, 'comes-back');
