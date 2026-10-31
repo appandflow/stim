@@ -7,7 +7,8 @@ sleep imports and blocking `Atomics.wait` calls in unit tests.
 
 `pnpm run test:integration` runs the explicit `*.integration.test.ts` and
 `*.integration.test.mjs` fixtures. Use this stage when the contract needs real
-processes, socket deadlines, filesystem watchers or cross-process ownership.
+processes, socket deadlines, filesystem watchers, cross-process ownership or CPU
+performance budgets.
 Keep each exception tied to the real interaction it verifies. These tests may
 use fake clocks for policy inside the fixture, such as a child process clock.
 

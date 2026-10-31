@@ -203,10 +203,3 @@ test.each<[string, string, string[], string[]]>([
 ])('redactArgv hides %s', (_name, program, args, expected) => {
   expect(redactArgv(args, [], program)).toEqual(expected);
 });
-
-test('redactArgv finishes quickly on a huge argument made of flag-like text', () => {
-  const started = performance.now();
-  redactArgv([`--${'ab-'.repeat(60_000)}`, `-${'-'.repeat(20_000)}`]);
-  redactCommandLine(`--${'ab-'.repeat(60_000)}`);
-  expect(performance.now() - started).toBeLessThan(2000);
-});

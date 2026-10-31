@@ -142,7 +142,8 @@ implementation is short.
 Unit tests use fake clocks by default. Test timeout and retry policy with
 immediate external failures, explicit clock advancement or controlled events.
 Real-clock contracts, such as OS process termination, socket deadlines and
-filesystem watchers, belong in `*.integration.test.ts` or
+filesystem watchers and CPU performance budgets, belong in
+`*.integration.test.ts` or
 `*.integration.test.mjs`; name the real interaction the test protects. Do not
 disable fake clocks in a unit test or repeat executor deadline waits in every
 caller. Synchronize fixture readiness with events or handshakes instead of
