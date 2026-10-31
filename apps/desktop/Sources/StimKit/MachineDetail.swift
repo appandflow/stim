@@ -255,7 +255,7 @@ public struct MachineDetail: Equatable, Sendable {
     if let cpus = capacity.cpus { rows.append(MachineDetailRow(label: "Cores", value: "\(cpus)")) }
     if let builds = capacity.buildsText { rows.append(MachineDetailRow(label: "Builds running", value: builds)) }
     if let running = capacity.running, let max = capacity.max {
-      rows.append(MachineDetailRow(label: "Offloaded builds", value: "\(running) of \(max)"))
+      rows.append(MachineDetailRow(label: "Offloaded builds", value: max > 0 ? "\(running) of \(max)" : "\(running)"))
     }
     return rows
   }

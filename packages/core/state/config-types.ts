@@ -111,6 +111,7 @@ export interface StimConfig {
     acceptClientBuilds?: unknown;
     lanAddresses?: unknown;
     maxLoadPerCore?: unknown;
+    maxOffloadedBuilds?: unknown;
     workerRoot?: unknown;
   };
   remote?: {

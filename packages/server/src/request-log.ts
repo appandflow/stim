@@ -4,6 +4,9 @@ const SLOW_MS = 1000;
 const METHOD = /^[a-z][a-z0-9.-]{0,47}$/;
 const ERROR_REPEAT_MS = 60_000;
 const MAX_REMEMBERED = 256;
+const MAX_REASON = 300;
+/** Error codes whose message is Stim's own refusal text, safe and useful to log: why a build was turned away. */
+const LOGGED_REASONS = new Set(['build-busy', 'build-refused']);
 
 type Id = string | number | null;
 
@@ -36,15 +39,17 @@ const text = (fields: Record<string, unknown>): string =>
 
 /**
  * Request timing for stim-server. An error reply always goes to the service log (stderr), once a minute per
- * client, method and code. With debug logging on, every request goes to the service log and to
- * `logs/debug/server.ndjson` with its duration and the slow steps. Lines carry the method, the client's device id,
- * the CLI run id, durations and the error code: never params, messages, tokens or tickets.
+ * client, method, code and refusal reason. With debug logging on, every request goes to the service log and to
+ * `logs/debug/server.ndjson` with its duration and the slow steps. Service lines start with the time and carry the
+ * method, the client's device id, the CLI run id, durations and the error code, plus the refusal message of a
+ * `build-busy` or `build-refused` reply: never params, other messages, tokens or tickets.
  */
 export function createRequestLog({
   service = (line: string) => console.error(line),
   debug = createDebugLog('server'),
   now = Date.now,
 }: { service?: (line: string) => void; debug?: DebugLog; now?: () => number } = {}): RequestLog {
+  const write = (line: string) => service(`${new Date(now()).toISOString()} ${line}`);
   const lastError = new Map<string, number>();
   const errorDue = (key: string): boolean => {
     const at = now();
@@ -74,7 +79,7 @@ export function createRequestLog({
         },
         reply(message) {
           if (!message || typeof message !== 'object' || !('id' in message)) return;
-          const { id, error } = message as { id: Id; error?: { code?: unknown } };
+          const { id, error } = message as { id: Id; error?: { code?: unknown; message?: unknown } };
           const entry = inflight.get(id);
           if (entry) inflight.delete(id);
           if (!entry && !error) return;
@@ -90,22 +95,31 @@ export function createRequestLog({
             ...entry?.steps,
             error: code,
           };
+          const reason =
+            code !== undefined && LOGGED_REASONS.has(code) && typeof error?.message === 'string' && error.message
+              ? error.message.slice(0, MAX_REASON)
+              : undefined;
+          // JSON quoting escapes quotes and control characters, so the reason cannot end its token or the line.
+          const line = reason === undefined ? text(fields) : `${text(fields)} reason=${JSON.stringify(reason)}`;
           if (debug.enabled()) {
-            service(`stim-server: debug request ${text(fields)}`);
+            write(`stim-server: debug request ${line}`);
             const { run, ...rest } = fields;
-            debug.log('request', { ...rest, runId: run });
-          } else if (code !== undefined && errorDue(`${client.id}|${method}|${code}`)) {
-            service(`stim-server: request failed ${text(fields)}`);
+            debug.log('request', { ...rest, runId: run, ...(reason === undefined ? {} : { reason }) });
+          } else if (
+            code !== undefined &&
+            errorDue(`${client.id}|${method}|${code}|${reason?.replace(/[\d.]+/g, '#') ?? ''}`)
+          ) {
+            write(`stim-server: request failed ${line}`);
           }
         },
       };
     },
     host(event, fields, failed = false) {
       if (debug.enabled()) {
-        service(`stim-server: debug ${event} ${text(fields)}`);
+        write(`stim-server: debug ${event} ${text(fields)}`);
         debug.log(event, fields);
       } else if (failed && errorDue(`host|${event}|${String(fields.host)}`)) {
-        service(`stim-server: ${event} ${text(fields)}`);
+        write(`stim-server: ${event} ${text(fields)}`);
       }
     },
   };

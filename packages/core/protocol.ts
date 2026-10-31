@@ -1115,7 +1115,8 @@ export interface BuildToolchain {
 }
 
 /**
- * How busy the remote machine is. `running` counts offloaded builds and `max` is how many it runs at once.
+ * How busy the remote machine is. `running` counts offloaded builds and `max` is how many it runs at once, 0 when
+ * unlimited (`server.maxOffloadedBuilds`).
  * `cpus`, `loadPerCore` (5-minute load average per CPU), `builds` (its own Stim native builds plus the offloaded
  * ones), `maxBuilds` (its `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore`, `memoryUsedBytes`
  * (Activity Monitor's Memory Used) and `memoryTotalBytes` are absent from a stim-server older than them. `declined` is why it would refuse a build now, null when it would take one.

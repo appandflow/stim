@@ -100,6 +100,13 @@ export function maxLoadPerCore(): number {
   return settingDefinition('server.maxLoadPerCore')!.default as number;
 }
 
+/** `server.maxOffloadedBuilds`: how many builds from other machines run here at once, 0 when unlimited. */
+export function maxOffloadedBuilds(): number {
+  const value = loadConfig()?.server?.maxOffloadedBuilds;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return value;
+  return Number(settingDefinition('server.maxOffloadedBuilds')?.default ?? 0);
+}
+
 function liveNativeBuilds(): number {
   const dir = join(configDir(), 'workspaces');
   let names: string[];

@@ -36,6 +36,7 @@ import {
   isJsonObject,
   loadConfig,
   machineCapacity,
+  maxOffloadedBuilds,
   saturation,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
@@ -73,8 +74,6 @@ import {
 } from './protocol.ts';
 
 export interface BuildLimits {
-  /** Offloaded builds this machine runs at once, across every client. */
-  maxJobs: number;
   /** Free bytes the worker root's volume must keep for a build to start there. */
   minFreeBytes: number;
   /** Sum of the declared file sizes one manifest may hold. */
@@ -94,7 +93,6 @@ export interface BuildLimits {
 }
 
 const DEFAULT_BUILD_LIMITS: BuildLimits = {
-  maxJobs: 1,
   minFreeBytes: 10 * 1024 ** 3,
   maxManifestBytes: 20 * 1024 ** 3,
   timeoutMs: 60 * 60_000,
@@ -146,6 +144,12 @@ const validRepo = (repo: unknown): repo is string =>
   typeof repo === 'string' && new RegExp(BUILD_REPO_PATTERN).test(repo);
 
 const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
+
+/** The numbers a build decline was decided on, for the refusal message. */
+function capacityLine(capacity: BuildCapacity): string {
+  const disk = capacity.diskFreeBytes === null ? 'free disk unknown' : `${gb(capacity.diskFreeBytes)} GB free`;
+  return `load ${capacity.loadPerCore}/core, ${capacity.running} offloaded build(s) running, ${disk}`;
+}
 
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
@@ -379,6 +383,7 @@ function killTree(pid: number): Promise<void> {
 interface Job {
   id: string;
   client: string;
+  repo: string;
   platform: unknown;
   child: ChildProcess;
   archive: string;
@@ -433,7 +438,7 @@ export class BuildHost {
   }>();
   private readonly retained = new Map<
     string,
-    { client: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
+    { client: string; repo: string; dir: string; bundle: string; sha256: string; timer: NodeJS.Timeout }
   >();
   private closed = false;
   private draining: string | null = null;
@@ -849,6 +854,7 @@ export class BuildHost {
   capacity(): BuildCapacity {
     const machine = machineCapacity();
     const running = this.jobs.size;
+    const max = maxOffloadedBuilds();
     const diskFreeBytes = workerFreeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const declined =
@@ -856,12 +862,12 @@ export class BuildHost {
       (loadConfig()?.server?.buildsPaused === true
         ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
         : null) ??
-      (running >= this.limits.maxJobs
-        ? `already running ${running} offloaded build(s), its limit`
+      (max > 0 && running >= max
+        ? `already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`
         : (this.lowDisk() ?? saturation({ ...machine, builds })));
     return {
       running,
-      max: this.limits.maxJobs,
+      max,
       diskFreeBytes,
       minDiskFreeBytes: this.limits.minFreeBytes,
       cpus: machine.cpus,
@@ -1006,8 +1012,12 @@ export class BuildHost {
   }): Job | Refusal {
     if (this.closed || this.removals.has(client))
       return refusal('build-refused', 'This machine is shutting down or removing this build client.');
-    const { declined } = this.capacity();
-    if (declined) return refusal('build-busy', `This machine declines the build: ${declined}.`);
+    const capacity = this.capacity();
+    if (capacity.declined)
+      return refusal(
+        'build-busy',
+        `This machine declines the build: ${capacity.declined} (${capacityLine(capacity)}).`,
+      );
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
@@ -1041,7 +1051,10 @@ export class BuildHost {
           : null;
       if (maxBuilds > 0 && !taken) {
         releaseClaim(claim);
-        return refusal('build-busy', `This machine declines the build: all ${maxBuilds} build slots busy.`);
+        return refusal(
+          'build-busy',
+          `This machine declines the build: all ${maxBuilds} build slots busy (${capacityLine(this.capacity())}).`,
+        );
       }
       slot = taken?.claim ?? null;
     } catch (error) {
@@ -1113,6 +1126,7 @@ export class BuildHost {
     const entry: Job = {
       id,
       client,
+      repo,
       platform: job.platform,
       child,
       archive: join(area, 'out', id, 'app.tgz'),
@@ -1296,7 +1310,7 @@ export class BuildHost {
 
   /**
    * Deletes a fetched job's output. A native job keeps its staged app for `handoffMs` under a new single-use token,
-   * which this returns, in place of any bundle its client still had retained.
+   * which this returns, in place of any bundle its client still had retained for the same repository.
    */
   retain(job: Job, artifact: BuildArtifactResult): string | null {
     const dir = dirname(job.archive);
@@ -1305,12 +1319,14 @@ export class BuildHost {
       return null;
     }
     rmSync(job.archive, { force: true });
-    for (const [token, entry] of this.retained) if (entry.client === job.client) this.drop(token);
+    for (const [token, entry] of this.retained)
+      if (entry.client === job.client && entry.repo === job.repo) this.drop(token);
     const token = randomBytes(32).toString('hex');
     const timer = setTimeout(() => this.drop(token), this.limits.handoffMs);
     timer.unref();
     this.retained.set(token, {
       client: job.client,
+      repo: job.repo,
       dir,
       bundle: join(dir, artifact.name),
       sha256: artifact.sha256,
