@@ -870,6 +870,7 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     }
     const result = await reclaimProject(path, {
       archive: { removedBy: 'gc' },
+      deleteOwnedDevices: deviceSweepIsScoped(operation?.env ?? process.env),
       stopRequester: { by: 'stim gc --delete' },
       operation,
     }).catch((error: unknown) => {
