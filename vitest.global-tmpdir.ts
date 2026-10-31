@@ -1,6 +1,7 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { killRunProcesses } from './vitest.kill-run-processes.ts';
 
 // Directories Stim's own tests, and the tools they run, create in TMPDIR.
 const TRACKED_PREFIXES = [
@@ -25,6 +26,7 @@ export default function setup(): () => void {
   for (const key of TMP_KEYS) process.env[key] = root;
 
   return () => {
+    killRunProcesses(root);
     for (const [key, value] of previous) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
