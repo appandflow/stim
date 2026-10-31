@@ -325,10 +325,13 @@ export function findDeadProjectOwnedDevices({
   for (const project of deadProjects) {
     for (const { platforms } of projectDeviceSlots(config?.projects[project])) {
       const ios = platforms.ios;
-      const sim = ios?.owned && ios.deviceUdid ? sims.find((s) => s.udid === ios.deviceUdid) : undefined;
+      const sim =
+        ios?.owned && ios.deviceUdid
+          ? sims.find((s) => s.udid === ios.deviceUdid && s.name.startsWith('stim-'))
+          : undefined;
       if (sim) found.push({ kind: 'ios', id: sim.udid, name: sim.name, project });
       const android = platforms.android;
-      if (android?.owned && android.avdName && avds.includes(android.avdName)) {
+      if (android?.owned && android.avdName?.startsWith('stim-') && avds.includes(android.avdName)) {
         found.push({ kind: 'android', id: android.avdName, name: android.avdName, project });
       }
     }
@@ -339,7 +342,7 @@ export function findDeadProjectOwnedDevices({
 export function describeDeadProjectDevices(devices: DeadProjectOwnedDevice[]): string[] {
   return devices.map(
     (device) =>
-      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete deletes it with the entry`,
+      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete tries to delete it with the entry`,
   );
 }
 

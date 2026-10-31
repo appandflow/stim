@@ -2770,7 +2770,7 @@ test("under a scoped STIM_HOME, the dry run lists a dead project's owned device 
 
   const output = await captureLog(() => cli([]));
 
-  expect(output).toMatch(/stim-dead-owner is owned by the dead project .*--delete deletes it/);
+  expect(output).toMatch(/stim-dead-owner is owned by the dead project .*--delete tries to delete it/);
   expect(output).toMatch(/cannot be verified as orphaned: stim-real-env-1\b/);
   expect(output).not.toMatch(/cannot be verified as orphaned:.*stim-dead-owner/);
   expect(execCalls.some((c) => c.includes('simctl delete'))).toBe(false);
