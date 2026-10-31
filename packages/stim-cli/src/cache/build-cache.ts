@@ -49,6 +49,8 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/.idea/**',
   // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
   '**/*.xcodeproj/xcuserdata/**/*',
+  // A linked worktree's .git file holds that worktree's absolute git directory.
+  '**/.git',
 ];
 
 /**
