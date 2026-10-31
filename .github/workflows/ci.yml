@@ -192,6 +192,7 @@ jobs:
           packages/stim-cli/src/__tests__/doctor-fingerprint.test.ts
           packages/stim-cli/src/__tests__/stim-installations.test.ts
           packages/stim-cli/src/__tests__/detached-entry.test.ts
+          packages/stim-cli/src/__tests__/detached-entry.integration.test.ts
           packages/stim-cli/src/__tests__/logs-command.integration.test.ts
           packages/stim-cli/src/__tests__/cache-packages.test.ts
           packages/stim-cli/src/__tests__/engine-build-lock.integration.test.ts
