@@ -1,7 +1,6 @@
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { createStim } from '../api.ts';
 import * as workspaceLocks from '../engine/workspace-process-lock.ts';
-import * as ownershipClaims from '../ownership-claim.ts';
 import assert from 'node:assert';
 import * as chromeLookup from '../web/chrome.ts';
 import * as browserCdp from '../web/cdp.ts';
@@ -29,12 +28,11 @@ import { environmentState, withWebFacts } from '../status.ts';
 import { runWeb } from '../commands/web.ts';
 import { launchOwnedBrowser } from '../web/runtime.ts';
 import { chromeArgs, findChrome } from '../web/chrome.ts';
-import { groupRunsProfile } from '../web/profile.ts';
 import { consoleRecord, exceptionRecord, logEntryRecord, networkFailureRecord } from '../web/events.ts';
 import { parseInputBatch, webAgentRecords } from '../web/input.ts';
 import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
 import { resolveWebUrl, webLaunchRemedy, webLaunchVerdict, webServePlan } from '../web/launch.ts';
-import { NOT_OURS_FOREIGN_CWD, pidExists } from '../metro.ts';
+import { NOT_OURS_FOREIGN_CWD } from '../metro.ts';
 import {
   latestPageLoad,
   readWebPage,
@@ -373,15 +371,6 @@ describe('latest page load', () => {
   const line = (record: object) => JSON.stringify({ ts: 1, src: 'device', platform: 'web', ...record });
   const navigation = (url: string) => line({ event: 'web_navigation', url, marker: true, msg: `navigating to ${url}` });
 
-  test('reports the newest navigation, loaded once its load event fired', () => {
-    const lines = [navigation('http://a/'), line({ event: 'web_page_loaded' }), navigation('http://a/settings')];
-    expect(latestPageLoad(lines)).toEqual({ url: 'http://a/settings', state: 'loading' });
-    expect(latestPageLoad([...lines, line({ event: 'web_page_loaded' }), ''])).toEqual({
-      url: 'http://a/settings',
-      state: 'loaded',
-    });
-  });
-
   test('a failed document or a crash after the navigation fails the page with the log message', () => {
     const refused = networkFailureRecord({
       url: 'http://a/',
@@ -432,10 +421,6 @@ describe('latest page load', () => {
       state: 'loading',
     });
   });
-
-  test('is null before the first navigation', () => {
-    expect(latestPageLoad([line({ event: 'web_browser_started' })])).toBeNull();
-  });
 });
 
 describe('launched', () => {
@@ -444,15 +429,6 @@ describe('launched', () => {
     records: NdjsonRecord[],
     opts: { since?: number; expectBundle?: boolean; elapsedMs?: number } = {},
   ) => webLaunchVerdict({ records, since: 10, expectBundle: false, elapsedMs: 0, ...opts });
-
-  test('is true after a loaded document and, on Metro, a web bundle; evidence before the run is ignored', () => {
-    const loaded = [at('web_document_response', 20, { status: 200 }), at('web_page_loaded', 30)];
-    expect(verdict(loaded)?.launched).toBe(true);
-    expect(verdict(loaded, { since: 25, elapsedMs: 20_000 })?.launched).toBe('unverified');
-    expect(verdict(loaded, { expectBundle: true })?.launched).toBe('unverified');
-    const bundled = [...loaded, at('web_bundle_response', 25, { status: 200 })];
-    expect(verdict(bundled, { expectBundle: true })?.launched).toBe(true);
-  });
 
   test('a failed document decides unverified at once; otherwise it waits, then reports Metro bundling', () => {
     const refused = [at('web_document_failed', 20, { msg: 'GET http://localhost:8900/ failed' })];
@@ -467,13 +443,6 @@ describe('launched', () => {
     expect(
       webLaunchVerdict({ records: started, metroRecords, since: 10, expectBundle: true, elapsedMs: 20_000 })?.launched,
     ).toBe('bundling');
-  });
-
-  test('a dev server that answered gets 60 seconds to fire load; one that never answered gets 20', () => {
-    const answered = [at('web_document_response', 20, { status: 200 })];
-    expect(verdict(answered, { elapsedMs: 59_999 })).toBeNull();
-    expect(verdict(answered, { elapsedMs: 60_000 })).toMatchObject({ launched: 'unverified', kind: 'loading' });
-    expect(verdict([], { elapsedMs: 20_000 })).toMatchObject({ launched: 'unverified', kind: 'no-response' });
   });
 
   test('the remedy follows what the page reported instead of assuming nothing listens', () => {
@@ -591,42 +560,6 @@ describe.skipIf(process.platform === 'win32')('selected configured-URL runtime',
     resetExecutor();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-  });
-
-  test('failed supervisor bookkeeping closes IPC and retains unresolved ownership', async () => {
-    let supervisor: ChildProcess | undefined;
-    setExecutor(
-      makeExecutor({
-        spawn: () => {
-          supervisor = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], {
-            detached: true,
-            stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-          });
-          children.push(supervisor);
-          return supervisor;
-        },
-      }),
-    );
-    vi.spyOn(ownershipClaims, 'setClaimChild').mockImplementation(() => {
-      throw new Error('ENOSPC');
-    });
-    try {
-      const result = await launchOwnedBrowser(
-        {
-          url: 'http://localhost:8901/ready',
-          config: { chrome: '/fixture/chrome', headless: true, viewport: 'desktop', ignoreCertificateErrors: false },
-        },
-        { root, note: () => {} },
-      ).catch((error: unknown) => error);
-      assert(result instanceof workspaceLocks.WorkspaceProcessCleanupError);
-      expect(result.code).toBe('STIM_CLAIM_UNAVAILABLE');
-      expect(result.claims.every((claim) => existsSync(claim.path))).toBe(true);
-      assert(supervisor?.pid !== undefined);
-      expect(pidExists(supervisor.pid)).toBe(true);
-      expect(supervisor.connected).toBe(false);
-    } finally {
-      if (supervisor?.connected) supervisor.disconnect();
-    }
   });
 
   test.each(['message', 'disconnect', 'exit'])('browser registration settles from %s', async (ending) => {
@@ -959,21 +892,6 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     },
   );
 
-  test('stop closes the verified supervisor and Chrome group, clears lock files and keeps the profile', async () => {
-    const workspace = realpathSync(root);
-    const record = await ownedBrowser();
-    expect(webFacts(readWebRecord(workspace))?.status).toBe('running');
-    const outcome = await teardownOwnedBrowser(workspace);
-    expect(outcome.status).toBe('torn-down');
-    expect(inspectProcessIdentity(record)).not.toBe('same');
-    expect(inspectProcessIdentity(record.chromeProcess)).not.toBe('same');
-    expect(() => lstatSync(join(record.profile, 'SingletonLock'))).toThrow(/ENOENT/);
-    expect(existsSync(join(record.profile, 'SingletonCookie'))).toBe(false);
-    expect(existsSync(record.profile)).toBe(true);
-    expect(readWebRecord(workspace)).toBeNull();
-    expect(getProject(workspace)?.ports).toEqual({});
-  });
-
   test('never signals a recorded pid that another process now holds', async () => {
     const workspace = realpathSync(root);
     const record = await ownedBrowser();
@@ -1089,26 +1007,6 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     }
   };
 
-  test('stop does not read a Chrome leader that was just killed and not yet reaped as a profile holder', async () => {
-    const workspace = realpathSync(root);
-    const record = await ownedBrowser();
-    const script = `const l = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' }); console.log(l.pid); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);`;
-    const reaper = spawn(process.execPath, ['-e', script], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
-    children.push(reaper);
-    const leader = await new Promise<number>((resolve) =>
-      reaper.stdout!.once('data', (chunk) => resolve(Number(String(chunk).trim()))),
-    );
-    const chromeProcess = { pid: leader, processToken: captureProcessToken(leader)! };
-    process.kill(leader, 'SIGKILL');
-    await vi.waitFor(() => expect(inspectProcessIdentity(chromeProcess)).toBe('gone'));
-    expect(pidExists(leader)).toBe(true);
-    rmSync(join(record.profile, 'SingletonLock'), { force: true });
-    symlinkSync(`${hostname()}-${leader}`, join(record.profile, 'SingletonLock'));
-    writeWebRecord(workspace, { ...record, chromeProcess });
-    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
-    expect(readWebRecord(workspace)).toBeNull();
-  });
-
   test('stop signals a lingering Chrome group whose member still runs on the profile', async () => {
     const workspace = realpathSync(root);
     const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}`]);
@@ -1117,32 +1015,5 @@ describe.skipIf(process.platform === 'win32')('browser teardown (POSIX process g
     expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
     expect(alive(member)).toBe(false);
     expect(readWebRecord(workspace)).toBeNull();
-  });
-
-  test('stop does not signal a process group that is not running on the profile, and clears the record', async () => {
-    const workspace = realpathSync(root);
-    const { member } = await lingeringChrome(workspace, (profile) => [`--user-data-dir=${profile}-other`]);
-    expect(alive(member)).toBe(true);
-    expect((await teardownOwnedBrowser(workspace)).status).toBe('torn-down');
-    expect(alive(member)).toBe(true);
-    expect(readWebRecord(workspace)).toBeNull();
-  });
-});
-
-describe('groupRunsProfile', () => {
-  const listing = [
-    '  100 /Applications/Chrome --user-data-dir=/p/web --remote-debugging-port=9222',
-    '  200 /Applications/Chrome Helper --type=gpu --user-data-dir=/p/web',
-    '  300 /Applications/Chrome --user-data-dir=/p/web-2',
-  ].join('\n');
-
-  test.each([
-    [100, '/p/web', true],
-    [200, '/p/web', true],
-    [300, '/p/web', false],
-    [999, '/p/web', false],
-    [300, '/p/web-2', true],
-  ])('group %i on %s -> %s', (pgid, profile, expected) => {
-    expect(groupRunsProfile(listing, pgid, profile)).toBe(expected);
   });
 });

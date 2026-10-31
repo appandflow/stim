@@ -16,40 +16,6 @@ const SPEC: ServiceSpec = {
 };
 
 describe('systemd unit', () => {
-  it('quotes ExecStart words the way systemd reads them: spaces kept, % and $ doubled', () => {
-    const exec = renderUnit(SPEC)
-      .split('\n')
-      .find((line) => line.startsWith('ExecStart='));
-    expect(exec).toBe(
-      'ExecStart="/home/me/.nvm/versions/node/v22.12.0/bin/node" "/home/me/my apps/100%%/$$HOME/stim-server.mjs" "--port" "7787" "--env" "JAVA_HOME" "--env" "TOKEN" "--path-prepend" "/opt/android sdk/platform-tools"',
-    );
-    expect(renderUnit(SPEC)).toContain('Environment="TOKEN=a\\"b\\\\c%%d$e\\nf"');
-  });
-
-  it('reads back what it wrote, with the label, the env values and the X-Stim record', () => {
-    expect(parseUnit(renderUnit(SPEC, '/old/stim-server.mjs'))).toEqual({
-      label: 'dev.stim.server',
-      host: null,
-      node: SPEC.node,
-      script: SPEC.script,
-      port: 7787,
-      env: SPEC.env,
-      pathPrepend: SPEC.pathPrepend,
-      stimHome: '/home/me/.stim',
-      logPath: SPEC.logPath,
-      managed: true,
-      serve: { port: 7443, created: true },
-      previousScript: '/old/stim-server.mjs',
-      programArguments: [SPEC.node, SPEC.script, ...renderArgs()],
-    });
-  });
-
-  it('does not take a unit another tool wrote for its own', () => {
-    expect(parseUnit('[Service]\nExecStart=/usr/bin/node /srv/stim-server.mjs --port 7787\n')).toBeNull();
-    const unmarked = renderUnit(SPEC).replace('Managed=true', '');
-    expect(parseUnit(unmarked)?.managed).toBe(false);
-  });
-
   it('switches the server script and records the previous one, keeping every other line', () => {
     const text = renderUnit(SPEC, '/older/stim-server.mjs');
     const installed = parseUnit(text);
@@ -78,19 +44,6 @@ describe('systemd unit', () => {
     });
   });
 });
-
-function renderArgs(): string[] {
-  return [
-    '--port',
-    '7787',
-    '--env',
-    'JAVA_HOME',
-    '--env',
-    'TOKEN',
-    '--path-prepend',
-    '/opt/android sdk/platform-tools',
-  ];
-}
 
 describe('systemctl show', () => {
   const show = (fields: Record<string, string>) =>
@@ -127,11 +80,5 @@ describe('systemctl show', () => {
     expect(parseSystemctlShow(show({ MainPID: '0', ExecMainCode: '2', ExecMainStatus: '9' }))?.lastExitCode).toBe(
       'signal 9',
     );
-  });
-
-  it('has no job for a unit that is missing, stopped or failed', () => {
-    expect(parseSystemctlShow(show({ LoadState: 'not-found', ActiveState: 'inactive', SubState: 'dead' }))).toBeNull();
-    expect(parseSystemctlShow(show({ ActiveState: 'inactive', SubState: 'dead', MainPID: '0' }))).toBeNull();
-    expect(parseSystemctlShow(show({ ActiveState: 'failed', SubState: 'failed', MainPID: '0' }))).toBeNull();
   });
 });

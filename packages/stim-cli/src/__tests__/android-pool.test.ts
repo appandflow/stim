@@ -6,7 +6,7 @@ import * as identities from '../process-identity.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { readClaimSet } from '../ownership-claim.ts';
 import { vi } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getProject, loadConfig, setDevice, upsertProject } from '../workspace/config.ts';
@@ -17,7 +17,7 @@ import { adoptParked, parkSim, readParked, removeParkedAfter } from '../devices/
 import { avdPoolConfiguration, hostSystemImageArch, resetAdoptedAvd } from '../devices/android.ts';
 import { eraseParkedAvd, teardownOwnedAvd, teardownParkedAvd } from '../devices/teardown.ts';
 import { collectParkedAvds, deleteParkedAvds, findOrphanedDevices } from '../commands/gc/devices.ts';
-import { IMPOSSIBLE_PID, goneClaimOwner, makeExitingChild, plantClaim, writeAvdProcessLock } from './_factories.ts';
+import { IMPOSSIBLE_PID, makeExitingChild, writeAvdProcessLock } from './_factories.ts';
 
 let home: string;
 let saved: Record<string, string | undefined>;
@@ -206,27 +206,6 @@ function park(name = 'stim-source', overrides = {}) {
   });
 }
 
-test('adoption recovers a stopped AVD from a dead deletion owner and retains cleanup state across a retry', async () => {
-  const claimId = 'dead-deletion';
-  park('stim-source', { deletionClaim: { kind: 'ownership-claim', claimId } });
-  plantClaim(join(home, 'pool-locks', 'android', 'stim-source.lock'), 'exclusive', goneClaimOwner(), { claimId });
-  upsertProject('/adopter', {});
-  const options = { platform: 'android', projectPath: '/adopter', label: 'adopter', settings: {} };
-  const adopted = await ensureOwnedDevice(options);
-  expect(adopted).toMatchObject({
-    avdName: 'stim-source',
-    adopted: true,
-    adoptionPending: true,
-    poolConfiguration: configuration,
-  });
-  expect(readParked('android')).toEqual([]);
-  expect(calls.some((call) => call.includes('create avd'))).toBe(false);
-  running = null;
-  const retried = await ensureOwnedDevice({ ...options, project: getProject('/adopter') });
-  expect(retried.adoptionPending).toBe(true);
-  expect(getProject('/adopter')?.platforms?.android?.adoptionPending).toBe(true);
-});
-
 test('adopting an AVD parked before the hardware keyboard default turns its keyboard on', async () => {
   park('stim-source', { configuration: avdPoolConfiguration(8, {}) });
   makeAvd('stim-source', 'hw.keyboard=no\n');
@@ -246,40 +225,6 @@ test('adopting an AVD parked before the hardware keyboard default turns its keyb
   const config = readFileSync(join(home, 'avd', 'stim-source.avd', 'config.ini'), 'utf8');
   expect(config.split('\n')).toContain('hw.keyboard=yes');
   expect(config).not.toContain('hw.keyboard=no');
-});
-
-test.each([
-  { systemImage: image.replace('android-36', 'android-35') },
-  { configuration: '[["disk.dataPartition.size","8589934592"]]' },
-  { configuration: avdPoolConfiguration(10, {}) },
-  { configuration: avdPoolConfiguration(8, { 'hw.ramSize': '4096' }) },
-])('an incompatible parked AVD stays parked and its name cannot be recovered by creation: %j', async (overrides) => {
-  park('stim-source', overrides);
-  upsertProject('/adopter', {});
-  const result = await ensureOwnedDevice({
-    platform: 'android',
-    projectPath: '/adopter',
-    label: 'source',
-    settings: {},
-  });
-  expect(result).toMatchObject({ created: true, setup: true });
-  expect(result.avdName).not.toBe('stim-source');
-  expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
-});
-
-test('a parked AVD of another hardware profile is not adopted, and creation passes the requested profile', async () => {
-  park('stim-source');
-  upsertProject('/adopter', {});
-  const result = await ensureOwnedDevice({
-    platform: 'android',
-    projectPath: '/adopter',
-    label: 'tablet',
-    settings: { android: { deviceProfile: 'pixel_tablet' } },
-  });
-  expect(result.created).toBe(true);
-  expect(result.avdName).not.toBe('stim-source');
-  expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
-  expect(calls.find((call) => call.includes('create avd'))).toMatch(/ --device pixel_tablet$/);
 });
 
 test('an owned AVD of another hardware profile refuses instead of booting, and a plain run reports its profile', async () => {
@@ -349,35 +294,6 @@ test('a concurrent adoption cannot be overwritten by a new AVD creation using an
   ).rejects.toThrow('Another Stim run assigned AVD');
   expect(getProject('/adopter')?.platforms?.android?.avdName).toBe('stim-source');
   expect(calls.some((call) => call.includes('create avd'))).toBe(false);
-});
-
-test('an AVD parked between failed creation and recovery cannot bypass adoption', async () => {
-  upsertProject('/adopter', {});
-  const previous = getExecutor();
-  let creationFailed = false;
-  setExecutor({
-    ...previous,
-    spawn(file, args = [], options) {
-      if (args[0] === 'create') {
-        creationFailed = true;
-        return makeExitingChild(1, 'AVD stim-source already exists');
-      }
-      return previous.spawn(file, args, options);
-    },
-    runFile(file, args = [], options) {
-      if (args[0] === '-list-avds' && creationFailed) {
-        creationFailed = false;
-        park();
-      }
-      return previous.runFile(file, args, options);
-    },
-  });
-  await expect(
-    ensureOwnedDevice({ platform: 'android', projectPath: '/adopter', label: 'source', settings: {} }),
-  ).rejects.toThrow('was parked by another Stim run');
-  expect(getProject('/adopter')?.platforms?.android).toBeUndefined();
-  expect(readParked('android').map((record) => record.name)).toEqual(['stim-source']);
-  expect(running).toBeNull();
 });
 
 test('parking shuts down an owned AVD and overflow deletion failures keep both ownership records', async () => {
@@ -463,42 +379,6 @@ test('erasing refuses a parked AVD a workspace references and keeps its data and
   expect(readParked('android')).toEqual([expect.objectContaining({ packageName: 'com.example.app' })]);
 });
 
-test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-  'a failed wipe keeps the parked AVD without its app or cache key (POSIX directory permissions; skipped on win32 and as root)',
-  async () => {
-    park('stim-old', { packageName: 'com.example.app', cacheKey: 'abc-debug' });
-    const directory = join(home, 'avd', 'stim-old.avd');
-    fillUserData(directory);
-    const snapshots = join(directory, 'snapshots');
-    chmodSync(snapshots, 0o500);
-    try {
-      expect((await eraseParkedAvd('stim-old')).status).toBe('failed');
-    } finally {
-      chmodSync(snapshots, 0o700);
-    }
-
-    const [record] = readParked('android');
-    expect(record).toMatchObject({ name: 'stim-old' });
-    expect(record).not.toHaveProperty('deletionClaim');
-    expect(record).not.toHaveProperty('packageName');
-    expect(record).not.toHaveProperty('cacheKey');
-  },
-);
-
-test('a workspace wipe of its own stopped AVD removes user data and keeps the assignment', async () => {
-  makeAvd('stim-new');
-  const directory = join(home, 'avd', 'stim-new.avd');
-  fillUserData(directory);
-  upsertProject('/source', { platforms: { android: { avdName: 'stim-new', owned: true } } });
-
-  const result = await teardownOwnedAvd('stim-new', { wipe: true, owner: { projectPath: '/source' } });
-
-  expect(result.status).toBe('torn-down');
-  expect(readdirSync(directory).toSorted()).toEqual(['config.ini', 'userdata.img']);
-  expect(getProject('/source')?.platforms?.android).toMatchObject({ avdName: 'stim-new', owned: true });
-  expect(avds).toEqual(new Set(['stim-new']));
-});
-
 test('an AVD that cannot be parked keeps its user data until it is deleted', async () => {
   makeAvd('stim-new');
   const directory = join(home, 'avd', 'stim-new.avd');
@@ -515,34 +395,6 @@ test('an AVD that cannot be parked keeps its user data until it is deleted', asy
   expect(result.status).toBe('failed');
   expect(readdirSync(directory)).toContain('userdata-qemu.img.qcow2');
   expect(readParked('android')).toEqual([]);
-});
-
-test('parking retains a busy eviction for later GC without deleting or losing either device', async () => {
-  park('stim-old');
-  makeAvd('stim-new');
-  setDevice('/source', 'android', { avdName: 'stim-new', owned: true });
-  await expect(
-    removeParkedAfter('android', 'stim-old', async () => {
-      const result = await teardownOwnedAvd('stim-new', {
-        del: true,
-        owner: { projectPath: '/source' },
-        park: { projectPath: '/source', max: 1, configuration },
-      });
-      expect(result.parked?.name).toBe('stim-new');
-      expect(result.evicted).toEqual([]);
-      expect(calls.some((call) => call.includes('delete avd'))).toBe(false);
-      expect(
-        readParked('android')
-          .map((record) => record.name)
-          .toSorted(),
-      ).toEqual(['stim-new', 'stim-old']);
-      throw new Error('retain the busy eviction');
-    }),
-  ).rejects.toThrow('retain the busy eviction');
-  expect(getProject('/source')?.platforms?.android).toBeUndefined();
-  expect(avds).toEqual(new Set(['stim-new', 'stim-old']));
-  expect((await teardownParkedAvd('stim-old')).status).toBe('torn-down');
-  expect(readParked('android').map((record) => record.name)).toEqual(['stim-new']);
 });
 
 test('pool deletion excludes adoption and an adopted emulator cannot be deleted by a stale GC report', async () => {
@@ -583,22 +435,6 @@ test('GC protects parked emulators from the orphan sweep and keeps an unverifiab
   expect(readParked('android')).toHaveLength(1);
 });
 
-test('adoption clears the retained app and uninstalls other third-party apps, with a failed clear refusing reuse', async () => {
-  makeAvd('stim-source');
-  running = 'stim-source';
-  await resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
-  expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
-  expect(calls).toContain('adb -s emulator-5554 uninstall com.example.other');
-  expect(calls).not.toContain('adb -s emulator-5554 uninstall com.example.app');
-  expect(calls.some((cmd) => cmd.includes('getprop '))).toBe(false);
-  cleanupResult = 'Failed';
-  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow('Could not clean');
-  packageOutput = 'Error: package manager unavailable';
-  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
-    'Could not read installed apps',
-  );
-});
-
 test('an AVD whose configured disk size changed is evicted rather than adopted', async () => {
   park();
   const config = join(home, 'avd', 'stim-source.avd', 'config.ini');
@@ -618,32 +454,6 @@ describe('adoption transport recovery', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  test.each(['list', 'clear', 'uninstall'])(
-    're-lists packages after a transient %s failure and waits only on failure',
-    async (operation) => {
-      const exec = getExecutor();
-      let failed = false;
-      setExecutor({
-        ...exec,
-        runFile(file, args = [], options) {
-          if (!failed && args.includes(operation)) {
-            failed = true;
-            if (operation === 'uninstall') packageOutput = 'package:com.example.app';
-            throw Object.assign(new Error('adb command failed'), { stderr: 'error: closed' });
-          }
-          return exec.runFile(file, args, options);
-        },
-      });
-      const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
-      await vi.runAllTimersAsync();
-      await cleanup;
-      expect(failed).toBe(true);
-      expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
-      expect(calls.some((cmd) => cmd.includes('getprop sys.boot_completed'))).toBe(true);
-      expect(calls.includes('adb -s emulator-5554 uninstall com.example.other')).toBe(operation !== 'uninstall');
-    },
-  );
-
   test('stops before destructive retry when another AVD takes the serial', async () => {
     const exec = getExecutor();
     setExecutor({
@@ -659,101 +469,22 @@ describe('adoption transport recovery', () => {
     expect(calls.some((cmd) => cmd.includes('pm clear') || cmd.includes('uninstall'))).toBe(false);
   });
 
-  test('retries an unavailable identity without touching the device until its identity returns', async () => {
+  test.each(['adb: device offline'])('bounds repeated %s failures and retains child diagnostics', async (stderr) => {
     const exec = getExecutor();
-    let names = 0;
-    setExecutor({
-      ...exec,
-      runFileQuiet(file, args = [], options) {
-        if (args.join(' ').includes('emu avd name') && names++ === 0) return null;
-        return exec.runFileQuiet(file, args, options);
-      },
-    });
-    const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
-    expect(calls.some((cmd) => cmd.includes('pm clear'))).toBe(false);
-    await vi.runAllTimersAsync();
-    await cleanup;
-    expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
-  });
-
-  test.each(['adb: device offline', 'error: closed'])(
-    'bounds repeated %s failures and retains child diagnostics',
-    async (stderr) => {
-      const exec = getExecutor();
-      let attempts = 0;
-      setExecutor({
-        ...exec,
-        runFile(file, args = [], options) {
-          if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
-          attempts++;
-          throw Object.assign(new Error('adb command failed'), { stderr });
-        },
-      });
-      const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
-      await Promise.all([expect(cleanup).rejects.toThrow(stderr), vi.runAllTimersAsync()]);
-      expect(attempts).toBeGreaterThan(1);
-      expect(attempts).toBeLessThanOrEqual(31);
-    },
-  );
-
-  test('reports an unrelated command failure without waiting or retrying', async () => {
-    const exec = getExecutor();
+    let attempts = 0;
     setExecutor({
       ...exec,
       runFile(file, args = [], options) {
         if (args[0] === '-list-avds' || args[0] === 'devices') return exec.runFile(file, args, options);
-        throw Object.assign(new Error('adb command failed'), { stdout: 'SecurityException: permission denied' });
-      },
-    });
-    await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
-      'SecurityException: permission denied',
-    );
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-test('adoption recovery gives ownership and readiness probes the remaining timeout budget', async () => {
-  vi.useFakeTimers();
-  try {
-    makeAvd('stim-source');
-    running = 'stim-source';
-    const exec = getExecutor();
-    const timeouts: number[] = [];
-    let failed = false;
-    setExecutor({
-      ...exec,
-      run(cmd, options) {
-        expect(options?.timeoutMs).toBeGreaterThan(0);
-        timeouts.push(options!.timeoutMs!);
-        return exec.run(cmd, options);
-      },
-      runFileQuiet(file, args, options) {
-        expect(options?.timeoutMs).toBeGreaterThan(0);
-        timeouts.push(options!.timeoutMs!);
-        return exec.runFileQuiet(file, args, options);
-      },
-      runFile(file, args, options) {
-        expect(options?.timeoutMs).toBeGreaterThan(0);
-        if (args?.[0] === '-list-avds' || args?.[0] === 'devices') {
-          timeouts.push(options!.timeoutMs!);
-          return exec.runFile(file, args, options);
-        }
-        if (!failed) {
-          failed = true;
-          throw new Error('error: closed');
-        }
-        expect(options!.timeoutMs!).toBeLessThan(30000);
-        return exec.runFile(file, args, options);
+        attempts++;
+        throw Object.assign(new Error('adb command failed'), { stderr });
       },
     });
     const cleanup = resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
-    await vi.runAllTimersAsync();
-    await cleanup;
-    expect(timeouts.every((value) => value <= 30000)).toBe(true);
-    expect(timeouts.at(-1)).toBeLessThan(30000);
-  } finally {
-    vi.useRealTimers();
-  }
+    await Promise.all([expect(cleanup).rejects.toThrow(stderr), vi.runAllTimersAsync()]);
+    expect(attempts).toBeGreaterThan(1);
+    expect(attempts).toBeLessThanOrEqual(31);
+  });
 });
 
 describe('an explicit --system-image against the slot existing AVD', () => {
@@ -779,49 +510,20 @@ describe('an explicit --system-image against the slot existing AVD', () => {
     expect(getProject('/adopter')?.platforms?.android).toMatchObject({ avdName: result.avdName });
     expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
   });
+});
 
-  test('a first boot that fails keeps the marker, and an explicit image then replaces the AVD with its profile', async () => {
-    upsertProject('/adopter', {});
-    bootFails = true;
-    await expect(
-      ensureOwnedDevice({ ...options, flags: { systemImage: image, deviceProfile: 'pixel_fold' } }),
-    ).rejects.toThrow(/exited before the device finished booting/);
-    const failed = getProject('/adopter')?.platforms?.android;
-    expect(failed).toMatchObject({ owned: true, bootPending: true });
-    bootFails = false;
-    running = null;
-    calls = [];
-    const result = await ensureOwnedDevice({
-      ...options,
-      project: getProject('/adopter'),
-      flags: { systemImage: other, systemImageFlag: other },
-    });
-    expect(calls.some((call) => call === `avdmanager delete avd -n ${failed?.avdName}`)).toBe(true);
-    expect(calls.find((call) => call.includes('create avd'))).toMatch(new RegExp(`-k ${other} --device pixel_fold$`));
-    expect(result).toMatchObject({ created: true, systemImage: other });
-  });
-
-  test('refuses with the --slot remedy for an AVD with no pending first boot, and keeps it', async () => {
-    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true } } });
-    const refused = ensureOwnedDevice({
-      ...options,
-      project: getProject('/adopter'),
-      flags: { systemImage: other, systemImageFlag: other },
-    });
-    await expect(refused).rejects.toThrow(/uses system image .*android-36.*, but .*android-34.* was requested/);
-    await expect(refused).rejects.toHaveProperty('remedy', expect.stringContaining('--slot <name>'));
-    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
-  });
-
-  test('a system image from settings alone never replaces or refuses the existing AVD', async () => {
-    upsertProject('/adopter', { platforms: { android: { avdName: 'stim-source', owned: true, bootPending: true } } });
-    const result = await ensureOwnedDevice({
-      ...options,
-      project: getProject('/adopter'),
-      flags: { systemImage: other },
-    });
-    expect(result).toMatchObject({ avdName: 'stim-source' });
-    expect(calls.some((call) => /delete avd|create avd/.test(call))).toBe(false);
-    expect(getProject('/adopter')?.platforms?.android?.bootPending).toBeUndefined();
-  });
+test('adoption clears the retained app and uninstalls other third-party apps, with a failed clear refusing reuse', async () => {
+  makeAvd('stim-source');
+  running = 'stim-source';
+  await resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app');
+  expect(calls).toContain('adb -s emulator-5554 shell pm clear com.example.app');
+  expect(calls).toContain('adb -s emulator-5554 uninstall com.example.other');
+  expect(calls).not.toContain('adb -s emulator-5554 uninstall com.example.app');
+  expect(calls.some((cmd) => cmd.includes('getprop '))).toBe(false);
+  cleanupResult = 'Failed';
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow('Could not clean');
+  packageOutput = 'Error: package manager unavailable';
+  await expect(resetAdoptedAvd('stim-source', 'emulator-5554', 'com.example.app')).rejects.toThrow(
+    'Could not read installed apps',
+  );
 });

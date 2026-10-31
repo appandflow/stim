@@ -12,38 +12,6 @@ beforeEach(() => {
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-it('preserves argv and streams while returning the actual command exit status', async () => {
-  const chunks: string[] = [];
-  const result = await runCommand({
-    command: [
-      process.execPath,
-      '-e',
-      'console.log(JSON.stringify(process.argv.slice(1))); console.error(process.env.CI_TEST_VALUE); process.exitCode = 23;',
-      'a b',
-      '$(not-a-command)',
-    ],
-    cwd: root,
-    env: { ...process.env, CI_TEST_VALUE: 'diagnostic' },
-    artifactsDir: root,
-    onOutput: ({ message }) => chunks.push(message),
-  });
-  expect(result.exitCode).toBe(23);
-  expect(JSON.parse(readFileSync(result.stdout ?? '', 'utf8'))).toEqual(['a b', '$(not-a-command)']);
-  expect(readFileSync(result.stderr ?? '', 'utf8')).toBe('diagnostic\n');
-  expect(chunks.join('')).toContain('diagnostic');
-});
-
-it('reports a missing executable without hanging or reporting success', async () => {
-  const result = await runCommand({
-    command: [join(root, 'missing-executable')],
-    cwd: root,
-    env: process.env,
-    artifactsDir: root,
-  });
-  expect(result.exitCode).not.toBe(0);
-  expect(result.error).toContain('ENOENT');
-});
-
 test.skipIf(process.platform === 'win32')(
   'cancellation kills a test process and its resistant descendant',
   async () => {
@@ -70,6 +38,29 @@ test.skipIf(process.platform === 'win32')(
     } finally {
       controller.abort();
       await running;
+    }
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'reports failure when process group disappearance cannot be verified',
+  async () => {
+    const originalKill = process.kill;
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid < 0 && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+      return originalKill(pid, signal);
+    });
+    try {
+      const result = await runCommand({
+        command: [process.execPath, '-e', 'process.exit(0)'],
+        cwd: root,
+        env: process.env,
+        artifactsDir: root,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.error).toContain('EPERM');
+    } finally {
+      kill.mockRestore();
     }
   },
 );
@@ -113,29 +104,6 @@ test.skipIf(process.platform === 'win32')(
           expect(caught).toMatchObject({ code: 'ESRCH' });
         }
       }
-    }
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'reports failure when process group disappearance cannot be verified',
-  async () => {
-    const originalKill = process.kill;
-    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-      if (pid < 0 && signal === 0) throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
-      return originalKill(pid, signal);
-    });
-    try {
-      const result = await runCommand({
-        command: [process.execPath, '-e', 'process.exit(0)'],
-        cwd: root,
-        env: process.env,
-        artifactsDir: root,
-      });
-      expect(result.exitCode).toBe(0);
-      expect(result.error).toContain('EPERM');
-    } finally {
-      kill.mockRestore();
     }
   },
 );

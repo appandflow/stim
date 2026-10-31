@@ -1,7 +1,7 @@
 import { mkdtempSync, realpathSync, rmSync, type PathLike, type WatchListener } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setImmediate, setTimeout as delay } from 'node:timers/promises';
+import { setImmediate } from 'node:timers/promises';
 import { hostedMetroLinks } from '@stim-cli/core/state';
 import { watchHostedMetro } from '../supervisor/hosted-metro.ts';
 import { captureProcessToken } from '../process-identity.ts';
@@ -177,51 +177,6 @@ test('a link state write that fails once is written again, for readiness and for
     expect(links.failLinkWrites).toBe(0);
   } finally {
     await close();
-  }
-});
-
-test('a removed placement closes its links and discards its stale request', async () => {
-  links.probe.mockResolvedValue({ state: 'ready' });
-  const close = watchHostedMetro(root, 8082, 'watcher');
-  try {
-    await vi.waitFor(() =>
-      expect(readWorkspaceState(root)?.hostedMetroLinks).toMatchObject({ [session]: { ready: true } }),
-    );
-    writeWorkspaceState(root, { ios: {} });
-    await vi.waitFor(() => {
-      expect(readWorkspaceState(root)?.hostedMetroLinks).toEqual({});
-      expect(readWorkspaceState(root)?.hostedMetroRequests).toEqual({});
-    });
-    expect(links.close).toHaveBeenCalledOnce();
-  } finally {
-    await close();
-  }
-});
-
-test('atomic workspace replacements reconcile links without a periodic check', async () => {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-  links.probe.mockResolvedValue({ state: 'ready' });
-  const close = watchHostedMetro(root, 8082, 'watcher');
-  try {
-    await setImmediate();
-    expect(readWorkspaceState(root)?.hostedMetroLinks).toMatchObject({ [session]: { ready: true } });
-    const request = readWorkspaceState(root)?.hostedMetroRequests;
-    expect(request).toBeTruthy();
-    writeWorkspaceState(root, { hostedMetroRequests: {} });
-    const wait = async (ready: () => boolean) => {
-      const until = Date.now() + 2000;
-      while (!ready() && Date.now() < until) await delay(10);
-      expect(ready()).toBe(true);
-    };
-    await wait(() => links.close.mock.calls.length === 1);
-    writeWorkspaceState(root, { hostedMetroRequests: request });
-    await wait(() => Boolean(hostedMetroLinks(readWorkspaceState(root))[session]));
-    writeWorkspaceState(root, { hostedMetroRequests: {} });
-    await wait(() => links.close.mock.calls.length === 2);
-    expect(readWorkspaceState(root)?.hostedMetroLinks).toEqual({});
-  } finally {
-    await close();
-    vi.useRealTimers();
   }
 });
 

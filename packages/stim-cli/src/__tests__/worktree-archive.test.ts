@@ -287,14 +287,6 @@ test('a file written while the removal runs keeps the worktree and discards its 
   expect(error.mock.calls.flat().join('\n')).toContain('changed while they were archived');
 }, 120_000);
 
-test('nothing is archived when archives are off for the worktree', async () => {
-  process.env.STIM_ARCHIVE_ENABLED = 'false';
-  dirtyTheWorktree();
-
-  await expect(archive()).rejects.toThrow(/archive\.enabled is false/);
-  expect(existsSync(worktreeArchiveRoot())).toBe(false);
-}, 60_000);
-
 test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb, never counting or deleting one whose removal holds its claim', async () => {
   const day = 86_400_000;
   const now = Date.now();

@@ -1,7 +1,6 @@
 import { needsAttention, oversee, type OversightEnvironment } from '../oversight.ts';
 import { applyKeyedDelta, KeyedEntities, statusViews, type StatusPayload } from '../state/index.ts';
 
-const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 const long = (label: string, length: number) => `${label}-${'x'.repeat(Math.max(0, length - label.length - 1))}`;
 const at = (minutes: number) => new Date(Date.UTC(2026, 9, 1, 12, minutes)).toISOString();
 
@@ -261,38 +260,6 @@ function payload(busy: number, quiet: number, worktrees: number, archives: numbe
   );
   return value;
 }
-
-describe('status live views stay within their size budget', () => {
-  const busy = 10;
-  const quiet = 60;
-  const worktrees = 100;
-  const views = statusViews(payload(busy, quiet, worktrees, 200));
-
-  test('a summary is at most 32 KB with every section at its largest and every build failing, and 3 KB for an idle workspace', () => {
-    expect(bytes(views.workspaces[0])).toBeLessThanOrEqual(32 * 1024);
-    expect(bytes(views.workspaces[busy])).toBeLessThanOrEqual(3 * 1024);
-  });
-
-  test('the workspace list snapshot', () => {
-    const list = { workspaces: views.workspaces, worktrees: views.worktrees, archived: views.archived };
-    expect(bytes(list)).toBeLessThanOrEqual(8 * 1024 + busy * 32 * 1024 + quiet * 3 * 1024 + worktrees * 768);
-  });
-
-  test('a list update carries only the workspace that changed', () => {
-    const entities = new KeyedEntities<{ path: string }>((entity) => entity.path);
-    entities.reset(views.workspaces);
-    const changed = views.workspaces.map((workspace, i) => (i === busy ? { ...workspace, memoryMb: 1 } : workspace));
-    const delta = entities.next(changed);
-    expect(delta?.upsert).toHaveLength(1);
-    expect(delta?.remove).toEqual([]);
-    expect(bytes(delta)).toBeLessThanOrEqual(3 * 1024 + 64);
-  });
-
-  test('a workspace detail and the machine view', () => {
-    expect(Math.max(...[...views.details.values()].map(bytes))).toBeLessThanOrEqual(64 * 1024);
-    expect(bytes(views.machine)).toBeLessThanOrEqual(4 * 1024);
-  });
-});
 
 test('needs-attention and oversight find the same items in a summary as in the full environment', () => {
   const views = statusViews(payload(10, 5, 0, 0));

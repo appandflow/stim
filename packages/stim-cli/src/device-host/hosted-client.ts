@@ -26,8 +26,8 @@ import { configuredMachines } from './machines.ts';
 
 const CONNECT_TIMEOUT_MS = 10_000;
 export const POLL_MS: number = 500;
-export const HOSTED_POLL_MARGIN_MS: number = 45_000;
-export const HOSTED_REQUEST_MARGIN_MS: number = 5_000;
+const HOSTED_POLL_MARGIN_MS: number = 45_000;
+const HOSTED_REQUEST_MARGIN_MS: number = 5_000;
 const workerBoundMs = (deadlineMs: number): number => deadlineMs + hostedWorkerSettleMs();
 export const SESSION_TIMEOUT_MS: number =
   hostedWorkerSettleMs() +

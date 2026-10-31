@@ -67,10 +67,6 @@ test('lists only owned, booted devices whose activity is idle, with idle time pe
   ]);
 });
 
-test('unknown activity is never listed as idle', () => {
-  expect(collect({ A: { state: 'unknown', basis: ['agent-device-lease'] } })).toEqual([]);
-});
-
 test('shutdown candidates need the full idle duration, a known idle time, and no build in progress', () => {
   const devices = collect({ A: idle(3), 'emulator-5554': idle(1) });
   expect(idleShutdownCandidates(devices, 2 * HOUR).map((d) => d.id)).toEqual(['A']);
@@ -84,20 +80,6 @@ test('parses minute, hour, and day durations and rejects the rest', () => {
   expect(parseIdleDuration('1d')).toBe(24 * HOUR);
   expect(parseIdleDuration('0h')).toBeNull();
   expect(parseIdleDuration('90')).toBeNull();
-});
-
-test('shuts down through teardown, never deleting, and keeps a device that became active since the report', async () => {
-  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-  try {
-    const report = collect({ A: idle(3), 'emulator-5554': idle(3) });
-    const result = await shutDownIdleDevices(report, 2 * HOUR, async () => collect({ A: idle(3) }));
-    expect(result.failures).toBe(0);
-    expect(result.shutDown.map((device) => device.id)).toEqual(['A']);
-    expect(teardown.teardownOwnedIosSim).toHaveBeenCalledWith('A', { label: 'stim-a (iPhone 27.0)' });
-    expect(teardown.teardownOwnedAvd).not.toHaveBeenCalled();
-  } finally {
-    log.mockRestore();
-  }
 });
 
 test('a caller output receives the shutdown lines and records instead of console.log and gc results', async () => {

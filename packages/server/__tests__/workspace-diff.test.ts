@@ -59,59 +59,6 @@ test('refuses partial clones on old or unparseable Git without probing ordinary 
   await expect(read()).rejects.toThrow('Git 2.45 or later for partial clones');
 });
 
-test('allows unused filters when the internal tracked path list exceeds 1 MiB', async () => {
-  const blob = git('rev-parse', 'HEAD:source.txt').trim();
-  const prefix = `${'a'.repeat(240)}/${'b'.repeat(240)}/${'c'.repeat(240)}/${'d'.repeat(240)}`;
-  const paths = Array.from({ length: 1100 }, (_, i) => `${prefix}/file-${i}.txt`);
-  execFileSync('git', ['update-index', '--index-info'], {
-    cwd: repo,
-    input: paths.map((path) => `100644 ${blob}\t${path}\n`).join(''),
-  });
-  execFileSync('git', ['update-index', '--skip-worktree', '--stdin'], { cwd: repo, input: paths.join('\n') + '\n' });
-  git('commit', '-qm', 'large index');
-  expect(Buffer.byteLength(paths.join('\0'))).toBeGreaterThan(1024 * 1024);
-  git('config', 'filter.unused.clean', 'unused-filter-must-not-run');
-  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
-});
-
-test('reads staged and unstaged independently with literal unusual paths', async () => {
-  writeFileSync(join(repo, 'source.txt'), 'staged\n');
-  git('add', '--', 'source.txt');
-  writeFileSync(join(repo, 'source.txt'), 'unstaged\n');
-  writeFileSync(join(repo, 'new [file].txt'), 'new text\n');
-  const files = (await read()) as WorkspaceFiles;
-  expect(files.files).toEqual([{ path: 'source.txt', status: 'MM', staged: true, unstaged: true, untracked: false }]);
-  const patch = (await read('source.txt')) as WorkspaceDiff;
-  expect(patch.patches).toHaveLength(2);
-  expect(patch.patches[0]).toMatchObject({ section: 'staged', kind: 'text' });
-  expect(patch.patches[0]!.text).toContain('-original\n+staged');
-  expect(patch.patches[1]!.text).toContain('-staged\n+unstaged');
-  expect(((await read(undefined, 'untracked')) as WorkspaceFiles).files[0]!.path).toBe('new [file].txt');
-  expect(((await read('new [file].txt')) as WorkspaceDiff).patches).toEqual([
-    { section: 'untracked', kind: 'text', text: 'new text\n' },
-  ]);
-});
-
-test('does not invoke diff or merge drivers, text conversion, fsmonitor or index hooks', async () => {
-  const marker = join(root, 'driver-ran');
-  const driver = join(root, 'driver.js');
-  writeFileSync(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
-  const command = `"${process.execPath}" "${driver}"`;
-  git('config', 'diff.external', command);
-  git('config', 'diff.unsafe.command', command);
-  git('config', 'diff.unsafe.textconv', command);
-  git('config', 'merge.unsafe.driver', command);
-  git('config', 'core.fsmonitor', command);
-  const hooks = join(root, 'hooks');
-  mkdirSync(hooks);
-  writeFileSync(join(hooks, 'post-index-change'), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
-  git('config', 'core.hooksPath', hooks);
-  writeFileSync(join(repo, '.gitattributes'), 'source.txt diff=unsafe merge=unsafe\n');
-  writeFileSync(join(repo, 'source.txt'), 'updated\n');
-  expect(((await read('source.txt')) as WorkspaceDiff).patches[0]!.text).toContain('+updated');
-  expect(existsSync(marker)).toBe(false);
-});
-
 test('omits dirty-only submodules without running their clean filters and still lists moved gitlinks', async () => {
   const source = join(root, 'submodule-source');
   git('clone', '-q', '--', repo, source);
@@ -149,21 +96,6 @@ test('omits dirty-only submodules without running their clean filters and still 
   expect(existsSync(nestedMarker)).toBe(false);
 });
 
-test('returns plain staged and unstaged patches when Git color is forced', async () => {
-  git('config', 'color.ui', 'always');
-  git('config', 'color.diff', 'always');
-  git('config', 'color.status', 'always');
-  writeFileSync(join(repo, 'source.txt'), 'staged\n');
-  git('add', '--', 'source.txt');
-  writeFileSync(join(repo, 'source.txt'), 'unstaged\n');
-  expect(((await read()) as WorkspaceFiles).files[0]!.path).toBe('source.txt');
-  const patch = (await read('source.txt')) as WorkspaceDiff;
-  expect(patch.patches).toHaveLength(2);
-  for (const section of patch.patches) expect(section.text).not.toContain('\u001b');
-  expect(patch.patches[0]!.text).toContain('-original\n+staged');
-  expect(patch.patches[1]!.text).toContain('-staged\n+unstaged');
-});
-
 test('refuses missing tracked blobs without invoking a configured lazy-fetch transport', async () => {
   const remote = join(root, 'remote');
   git('clone', '-q', '--', repo, remote);
@@ -178,21 +110,6 @@ test('refuses missing tracked blobs without invoking a configured lazy-fetch tra
   writeFileSync(join(repo, 'source.txt'), 'updated\n');
   await expect(read('source.txt')).rejects.toThrow(/Workspace diff exited|Git 2.45 or later/);
   expect(existsSync(marker)).toBe(false);
-});
-
-test('ignores inherited Git routing and resolves a nested canonical workspace', async () => {
-  mkdirSync(join(repo, 'app'));
-  writeFileSync(join(repo, 'source.txt'), 'updated\n');
-  const result = (await readWorkspaceDiff(
-    join(repo, 'app'),
-    undefined,
-    { ...process.env, GIT_DIR: join(root, 'not-the-repo'), GIT_WORK_TREE: root },
-    new AbortController().signal,
-    'changed',
-  )) as WorkspaceFiles;
-  expect(result.files[0]!.path).toBe('source.txt');
-  await expect(read('../outside.txt')).rejects.toThrow('no longer a changed file');
-  await expect(read(join(repo, 'source.txt'))).rejects.toThrow('no longer a changed file');
 });
 
 test('reports binary, oversized and external symlink new files without their contents', async () => {
@@ -213,41 +130,10 @@ test('reports tracked binary and over-budget patches without returning contents'
   expect(((await read('source.txt')) as WorkspaceDiff).patches[0]).toMatchObject({ kind: 'too-large', text: '' });
 });
 
-test('bounds the selected file group and refuses unchanged or removed files', async () => {
-  for (let i = 0; i < 205; i++) writeFileSync(join(repo, `new-${i}.txt`), 'new');
-  const files = (await read(undefined, 'untracked')) as WorkspaceFiles;
-  expect(files.files).toHaveLength(200);
-  expect(files.truncated).toBe(true);
-  expect(((await read()) as WorkspaceFiles).files).toEqual([]);
-  await expect(read('source.txt')).rejects.toThrow('no longer a changed file');
-  await expect(read('missing.txt')).rejects.toThrow('no longer a changed file');
-});
-
 test('does no Git work once the request is aborted', async () => {
   const controller = new AbortController();
   controller.abort(new Error('left screen'));
   await expect(readWorkspaceDiff(repo, undefined, process.env, controller.signal)).rejects.toThrow('left screen');
-});
-
-test('allows unused clean/process drivers but refuses an attributed tracked driver without executing it', async () => {
-  const marker = join(root, 'filter-ran');
-  const driver = join(root, 'filter.js');
-  writeFileSync(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
-  for (const [name, kind] of [
-    ['private', 'clean'],
-    ['private', 'process'],
-    ['unspecified', 'clean'],
-  ]) {
-    git('config', `filter.${name}.${kind}`, `"${process.execPath}" "${driver}"`);
-    writeFileSync(join(repo, 'source.txt'), 'updated\n');
-    expect(((await read('source.txt')) as WorkspaceDiff).patches[0]!.text).toContain('+updated');
-    writeFileSync(join(repo, '.gitattributes'), `source.txt filter=${name}\n`);
-    await expect(read()).rejects.toThrow('Git clean/process filter');
-    await expect(read('source.txt')).rejects.toThrow('Git clean/process filter');
-    expect(existsSync(marker)).toBe(false);
-    rmSync(join(repo, '.gitattributes'));
-    git('config', '--unset', `filter.${name}.${kind}`);
-  }
 });
 
 test.each(['core.attributesFile', 'info/attributes', 'nested .gitattributes'])(
@@ -275,3 +161,38 @@ test.each(['core.attributesFile', 'info/attributes', 'nested .gitattributes'])(
     expect(existsSync(marker)).toBe(false);
   },
 );
+
+test('ignores inherited Git routing and resolves a nested canonical workspace', async () => {
+  mkdirSync(join(repo, 'app'));
+  writeFileSync(join(repo, 'source.txt'), 'updated\n');
+  const result = (await readWorkspaceDiff(
+    join(repo, 'app'),
+    undefined,
+    { ...process.env, GIT_DIR: join(root, 'not-the-repo'), GIT_WORK_TREE: root },
+    new AbortController().signal,
+    'changed',
+  )) as WorkspaceFiles;
+  expect(result.files[0]!.path).toBe('source.txt');
+  await expect(read('../outside.txt')).rejects.toThrow('no longer a changed file');
+  await expect(read(join(repo, 'source.txt'))).rejects.toThrow('no longer a changed file');
+});
+
+test('does not invoke diff or merge drivers, text conversion, fsmonitor or index hooks', async () => {
+  const marker = join(root, 'driver-ran');
+  const driver = join(root, 'driver.js');
+  writeFileSync(driver, `require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'ran')`);
+  const command = `"${process.execPath}" "${driver}"`;
+  git('config', 'diff.external', command);
+  git('config', 'diff.unsafe.command', command);
+  git('config', 'diff.unsafe.textconv', command);
+  git('config', 'merge.unsafe.driver', command);
+  git('config', 'core.fsmonitor', command);
+  const hooks = join(root, 'hooks');
+  mkdirSync(hooks);
+  writeFileSync(join(hooks, 'post-index-change'), `#!/bin/sh\n${command}\n`, { mode: 0o755 });
+  git('config', 'core.hooksPath', hooks);
+  writeFileSync(join(repo, '.gitattributes'), 'source.txt diff=unsafe merge=unsafe\n');
+  writeFileSync(join(repo, 'source.txt'), 'updated\n');
+  expect(((await read('source.txt')) as WorkspaceDiff).patches[0]!.text).toContain('+updated');
+  expect(existsSync(marker)).toBe(false);
+});

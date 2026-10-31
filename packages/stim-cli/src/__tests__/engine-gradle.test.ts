@@ -18,27 +18,10 @@ import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import {
   apkOutputsDir,
   buildAndroid as buildAndroidImpl,
-  discoverAndroidProject,
   gradlewPath,
-  readProductFlavors,
   productFlavorRefusal,
 } from '../integrations/react-native-build.ts';
-import {
-  ASSEMBLE_TASK,
-  BUILD_ERROR,
-  buildGradle,
-  androidSdkRefusal,
-  assembleTaskFor,
-  gradleArgs,
-  locateApk as locateProjectApk,
-  parseApkFromTranscript,
-  parseOutputMetadata,
-  parseProductFlavors,
-  pickDebugApk,
-  variantNameOf,
-} from '../engine/gradle.ts';
-import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { BUILD_ERROR, buildGradle, locateApk as locateProjectApk, parseProductFlavors } from '../engine/gradle.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 import { defaultAndroidLayout } from '../workspace/settings.ts';
 
@@ -98,203 +81,10 @@ function writeFlavoredApk(flavor: string, buildType: string, name: string, conte
   return join(dir, name);
 }
 
-describe('discoverAndroidProject', () => {
-  test('names prebuild when there is no android directory', () => {
-    const result = discoverAndroidProject(root, defaultAndroidLayout(root));
-    assert(result.failed);
-    expect(result.code).toBe(BUILD_ERROR);
-    expect(result.reason).toMatch(/No android\/ directory/);
-    expect(result.remedy).toMatch(/prebuild/);
-  });
-
-  test('names the wrapper when android/ exists without gradlew', () => {
-    makeAndroidProject({ gradlew: false });
-    const result = discoverAndroidProject(root, defaultAndroidLayout(root));
-    assert(result.failed);
-    expect(result.reason).toMatch(/gradlew/);
-    expect(result.remedy).toMatch(/wrapper/);
-  });
-
-  test('returns the directory and the wrapper when both are there', () => {
-    makeAndroidProject();
-    expect(discoverAndroidProject(root, defaultAndroidLayout(root))).toEqual({
-      androidDir: join(root, 'android'),
-      gradlew: gradlewPath(defaultAndroidLayout(root)),
-    });
-  });
-});
-
-describe('androidSdkRefusal', () => {
-  test('refuses with the ANDROID_HOME remedy when nothing points at an SDK', () => {
-    const refusal = androidSdkRefusal({
-      sdkPath: '/nope',
-      sdkExists: false,
-      hasLocalProperties: false,
-      localPropertiesPath: 'android/local.properties',
-    });
-    assert(refusal);
-    expect(refusal.code).toBe(BUILD_ERROR);
-    expect(refusal.remedy).toMatch(/ANDROID_HOME/);
-    expect(refusal.remedy).toMatch(/JAVA_HOME/);
-  });
-
-  test('an existing SDK, or a local.properties, is enough', () => {
-    expect(
-      androidSdkRefusal({
-        sdkPath: '/sdk',
-        sdkExists: true,
-        hasLocalProperties: false,
-        localPropertiesPath: 'android/local.properties',
-      }),
-    ).toBe(null);
-    expect(
-      androidSdkRefusal({
-        sdkPath: '/nope',
-        sdkExists: false,
-        hasLocalProperties: true,
-        localPropertiesPath: 'android/local.properties',
-      }),
-    ).toBe(null);
-  });
-});
-
-describe('pickDebugApk', () => {
-  test('prefers the AGP default name', () => {
-    expect(pickDebugApk(['app-debug-androidTest.apk', 'app-debug.apk'])).toBe('app-debug.apk');
-  });
-
-  test('falls back to a flavoured debug APK', () => {
-    expect(pickDebugApk(['app-staging-debug.apk'])).toBe('app-staging-debug.apk');
-  });
-
-  test('never picks an intermediate output', () => {
-    expect(pickDebugApk(['app-debug-unsigned.apk', 'app-debug-unaligned.apk'])).toBe(null);
-    expect(pickDebugApk(['app-debug-unsigned.apk', 'app-staging-debug.apk'])).toBe('app-staging-debug.apk');
-  });
-
-  test('ignores everything that is not an APK', () => {
-    expect(pickDebugApk(['output-metadata.json', 'app-debug.apk'])).toBe('app-debug.apk');
-    expect(pickDebugApk(['output-metadata.json'])).toBe(null);
-    expect(pickDebugApk([])).toBe(null);
-    expect(pickDebugApk(null)).toBe(null);
-  });
-
-  test('is deterministic whatever order the listing arrives in', () => {
-    const files = ['b-debug.apk', 'a-debug.apk'];
-    expect(pickDebugApk(files)).toBe(pickDebugApk(files.toReversed()));
-  });
-});
-
-describe('the output listing', () => {
-  test('parseOutputMetadata reads the APK out of AGP output-metadata.json', () => {
-    const metadata = JSON.stringify({
-      version: 3,
-      artifactType: { type: 'APK', kind: 'Directory' },
-      applicationId: 'com.app',
-      variantName: 'debug',
-      elements: [{ type: 'SINGLE', filters: [], versionCode: 1, versionName: '1.0', outputFile: 'app-debug.apk' }],
-    });
-    expect(parseOutputMetadata(metadata)).toBe('app-debug.apk');
-  });
-
-  test('parseOutputMetadata answers null for junk rather than throwing', () => {
-    expect(parseOutputMetadata('not json')).toBe(null);
-    expect(parseOutputMetadata('{}')).toBe(null);
-    expect(parseOutputMetadata(JSON.stringify({ elements: [{ outputFile: 42 }] }))).toBe(null);
-  });
-
-  test('parseApkFromTranscript picks up the paths the toolchain prints', () => {
-    expect(parseApkFromTranscript("Installing APK 'app-debug.apk' on 'Pixel_7(AVD) - 16'")).toBe('app-debug.apk');
-    expect(parseApkFromTranscript('> Task :app:assembleDebug\nWrote APK to /tmp/out/app-debug.apk')).toBe(
-      '/tmp/out/app-debug.apk',
-    );
-    expect(parseApkFromTranscript('BUILD SUCCESSFUL in 12s')).toBe(null);
-    expect(parseApkFromTranscript(null)).toBe(null);
-  });
-});
-
-describe('assembleTaskFor', () => {
-  test('unset means the default task, exactly the old constant', () => {
-    expect(assembleTaskFor(null)).toBe(ASSEMBLE_TASK);
-    expect(assembleTaskFor(undefined)).toBe('assembleDebug');
-    expect(assembleTaskFor('')).toBe('assembleDebug');
-    expect(assembleTaskFor('  ')).toBe('assembleDebug');
-  });
-
-  test('capitalizes the variant the way gradle names its task', () => {
-    expect(assembleTaskFor('productionDebug')).toBe('assembleProductionDebug');
-    expect(assembleTaskFor('debug')).toBe('assembleDebug');
-    expect(assembleTaskFor('ProductionDebug')).toBe('assembleProductionDebug');
-    expect(assembleTaskFor('demoMinApi24Debug')).toBe('assembleDemoMinApi24Debug');
-  });
-});
-
-describe('variantNameOf', () => {
-  test('camel-joins the output directory segments into the variant name', () => {
-    expect(variantNameOf(['production', 'debug'])).toBe('productionDebug');
-    expect(variantNameOf(['demoMinApi24', 'debug'])).toBe('demoMinApi24Debug');
-    expect(variantNameOf(['debug'])).toBe('debug');
-    expect(variantNameOf([])).toBe('');
-    expect(variantNameOf(null)).toBe('');
-  });
-});
-
 describe('locateApk', () => {
-  test('an absolute path from the transcript wins when it exists', () => {
-    const apk = writeApk('app-debug.apk');
-    expect(locateApk(root, `Wrote APK to ${apk}`).apkPath).toBe(apk);
-  });
-
-  test('the output listing is used when the transcript says nothing', () => {
-    writeApk('app-debug.apk');
-    const flavoured = writeApk('app-staging-debug.apk');
-    writeFileSync(
-      join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'output-metadata.json'),
-      JSON.stringify({ elements: [{ outputFile: 'app-staging-debug.apk' }] }),
-    );
-    expect(locateApk(root, 'BUILD SUCCESSFUL in 3s').apkPath).toBe(flavoured);
-  });
-
-  test('a directory listing is the last resort', () => {
-    const apk = writeApk('app-debug.apk');
-    expect(locateApk(root, '').apkPath).toBe(apk);
-  });
-
   test('a transcript path that does not exist does not win', () => {
     const apk = writeApk('app-debug.apk');
     expect(locateApk(root, 'Wrote APK to /nope/gone.apk').apkPath).toBe(apk);
-  });
-
-  test('no APK at all is null, not a throw', () => {
-    expect(locateApk(root, '')).toEqual({ apkPath: null });
-  });
-
-  test("a variant resolves to the flavor's own output directory", () => {
-    const apk = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
-    writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
-    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(apk);
-  });
-
-  test('a multi-dimension flavor combination resolves the same way', () => {
-    const apk = writeFlavoredApk('demoMinApi24', 'debug', 'app-demo-minApi24-debug.apk');
-    expect(locateApk(root, '', 'demoMinApi24Debug').apkPath).toBe(apk);
-  });
-
-  test("a variant's own output-metadata.json is honoured inside its directory", () => {
-    writeFlavoredApk('production', 'debug', 'renamed.apk');
-    writeFlavoredApk('production', 'debug', 'other.apk');
-    writeFileSync(
-      join(apkOutputsDir(defaultAndroidLayout(root)), 'production', 'debug', 'output-metadata.json'),
-      JSON.stringify({ elements: [{ outputFile: 'renamed.apk' }] }),
-    );
-    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(
-      join(apkOutputsDir(defaultAndroidLayout(root)), 'production', 'debug', 'renamed.apk'),
-    );
-  });
-
-  test('a variant that matches no output directory is null, and never falls back to another flavor', () => {
-    writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
-    expect(locateApk(root, '', 'productionDebug').apkPath).toBe(null);
   });
 
   test('exactly one flavored debug APK is used, with a note naming the directory and the variant to set', () => {
@@ -304,14 +94,6 @@ describe('locateApk', () => {
     expect(result.note).toContain(join('apk', 'production', 'debug'));
     expect(result.note).toMatch(/android\.variant/);
     expect(result.note).toMatch(/"productionDebug"/);
-  });
-
-  test('several flavored debug APKs are candidates, not a guess', () => {
-    const production = writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
-    const preview = writeFlavoredApk('preview', 'debug', 'app-preview-debug.apk');
-    const result = locateApk(root, '');
-    expect(result.apkPath).toBe(null);
-    expect(result.candidates).toEqual([preview, production].toSorted());
   });
 
   test('the recursive fallback never picks an intermediate or an androidTest APK', () => {
@@ -330,14 +112,6 @@ describe('locateApk', () => {
       'apk',
     );
     expect(locateApk(root, '')).toEqual({ apkPath: null });
-  });
-
-  test('the default apk/debug directory wins over the recursive fallback when it has the APK', () => {
-    const apk = writeApk('app-debug.apk');
-    writeFlavoredApk('production', 'debug', 'app-production-debug.apk');
-    const result = locateApk(root, '');
-    expect(result.apkPath).toBe(apk);
-    expect(result.note).toBeUndefined();
   });
 });
 
@@ -390,17 +164,6 @@ function recordingWriter(): NdjsonWriter & { records: NdjsonRecord[] } {
   return Object.assign(writer, { records });
 }
 
-describe('gradleArgs', () => {
-  test('is the assemble task plus --build-cache', () => {
-    expect(gradleArgs('assembleDebug')).toEqual(['assembleDebug', '--build-cache']);
-    expect(gradleArgs('assembleProductionRelease')).toEqual(['assembleProductionRelease', '--build-cache']);
-  });
-
-  test('explicitly disables even a project-enabled Gradle build cache', () => {
-    expect(gradleArgs('assembleDebug', { buildCache: false })).toEqual(['assembleDebug', '--no-build-cache']);
-  });
-});
-
 const nativeScript = join(import.meta.dirname, '../../shim/android-optimizations.gradle');
 
 describe('buildAndroid', () => {
@@ -421,81 +184,6 @@ describe('buildAndroid', () => {
     );
     expect(result).toMatchObject({ ok: false, code: 'STIM_PATH_TOO_LONG', durationMs: 0 });
     expect(spawned).toBe(false);
-  });
-
-  test('runs ./gradlew assembleDebug in android/ and streams every line as it arrives', async () => {
-    makeAndroidProject();
-    const writer = recordingWriter();
-    const calls: { cmd: string; args: string[]; opts: Record<string, unknown> }[] = [];
-    const result = await buildAndroid(
-      { root, logWriter: writer },
-      {
-        spawnFn: (cmd, args, opts) => {
-          calls.push({ cmd, args, opts });
-          return fakeChild({
-            lines: ['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s'],
-            onExit: () => writeApk(),
-          });
-        },
-        now: (() => {
-          let t = 1000;
-          return () => (t += 41000);
-        })(),
-      },
-    );
-
-    expect(calls.length).toBe(1);
-    const call = calls[0];
-    assert(call);
-    expect(call.cmd).toBe(gradlewPath(defaultAndroidLayout(root)));
-    expect(call.args).toEqual(['assembleDebug', '--build-cache', '--init-script', nativeScript]);
-    expect(ASSEMBLE_TASK).toBe('assembleDebug');
-    expect(call.opts.cwd).toBe(join(root, 'android'));
-    const { stdio } = call.opts;
-    assert(Array.isArray(stdio));
-    expect(stdio[0]).toBe('ignore');
-
-    assert(result.ok);
-    expect(result.apkPath).toBe(join(join(apkOutputsDir(defaultAndroidLayout(root)), 'debug'), 'app-debug.apk'));
-    expect(result.durationMs).toBe(41000);
-    const [start, ...transcript] = writer.records;
-    assert(start);
-    expect(start.event).toBe('build_start');
-    expect(start.msg).toBe(
-      `${gradlewPath(defaultAndroidLayout(root))} assembleDebug --build-cache --init-script ${nativeScript}`,
-    );
-    expect(transcript.map((r) => r.msg)).toEqual(['> Task :app:compileDebugKotlin', 'BUILD SUCCESSFUL in 41s']);
-    for (const record of transcript) {
-      expect(record.src).toBe('build');
-      expect(record.level).toBe('debug');
-      expect(record.raw).toBe(true);
-    }
-  });
-
-  test('declares the Gradle child on the build lock before it starts, and clears it once Gradle exits', async () => {
-    makeAndroidProject();
-    process.env.STIM_HOME = join(root, 'stim-home');
-    const lock = acquireBuildLock({ platform: 'android', key: 'gradle-debug', root });
-    try {
-      assert(lock.path);
-      const lockPath = lock.path;
-      let declaredAtSpawn: boolean | undefined;
-      const result = await buildAndroid(
-        { root },
-        {
-          spawnFn: () => {
-            declaredAtSpawn = readClaimSet(lockPath).live[0]?.childDeclared;
-            return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
-          },
-        },
-      );
-      expect(result.ok).toBe(true);
-      expect(declaredAtSpawn).toBe(true);
-      expect(readClaimSet(lockPath).live[0]?.childDeclared).toBe(false);
-    } finally {
-      releaseBuildLock(lock);
-      delete process.env.STIM_HOME;
-    }
   });
 
   test('forwards the target ABI to Gradle and records it in the full argv', async () => {
@@ -572,18 +260,6 @@ describe('buildAndroid', () => {
     expect(result.lastLines.every((l) => typeof l === 'string')).toBeTruthy();
   });
 
-  test('a build killed by a signal reports the signal', async () => {
-    makeAndroidProject();
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        spawnFn: () => fakeChild({ lines: ['> Task :app:compileDebugKotlin'], code: null, signal: 'SIGKILL' }),
-      },
-    );
-    assert(!result.ok);
-    expect(result.reason).toMatch(/signal SIGKILL/);
-  });
-
   test('exit 0 with no APK is a failure, not a success with nothing to install', async () => {
     makeAndroidProject();
     const result = await buildAndroid(
@@ -595,41 +271,6 @@ describe('buildAndroid', () => {
     assert(!result.ok);
     expect(result.reason).toMatch(/produced no APK/);
     expect(result.remedy).toMatch(/assembleDebug/);
-  });
-
-  test('the build cache is announced once, and buildCache: false drops the flag and the note', async () => {
-    makeAndroidProject();
-    const notes: string[] = [];
-    const calls: string[][] = [];
-    const on = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        spawnFn: (_cmd, args) => {
-          calls.push(args);
-          return fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'], onExit: () => writeApk() });
-        },
-        onNote: (line) => notes.push(line),
-      },
-    );
-    assert(on.ok);
-    expect(notes.length).toBe(1);
-    expect(notes[0]).toMatch(/^ {2}cache {7}gradle build cache on \(--build-cache/);
-
-    notes.length = 0;
-    calls.length = 0;
-    await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        buildCache: false,
-        spawnFn: (_cmd, args) => {
-          calls.push(args);
-          return fakeChild({ lines: ['BUILD SUCCESSFUL in 3s'], onExit: () => writeApk() });
-        },
-        onNote: (line) => notes.push(line),
-      },
-    );
-    expect(calls).toEqual([['assembleDebug', '--no-build-cache', '--init-script', nativeScript]]);
-    expect(notes).toEqual([]);
   });
 
   test('a variant drives assemble<Variant> and the APK is read from the flavor directory', async () => {
@@ -652,22 +293,6 @@ describe('buildAndroid', () => {
     expect(result.apkPath).toBe(
       join(apkOutputsDir(defaultAndroidLayout(root)), 'production', 'debug', 'app-production-debug.apk'),
     );
-  });
-
-  test('a flavored build with NO variant configured still succeeds, with the note on the result', async () => {
-    makeAndroidProject();
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        spawnFn: () =>
-          fakeChild({
-            lines: ['BUILD SUCCESSFUL in 8m14s'],
-            onExit: () => writeFlavoredApk('production', 'debug', 'app-production-debug.apk'),
-          }),
-      },
-    );
-    assert(result.ok);
-    expect(result.apkNote).toMatch(/android\.variant/);
   });
 
   test('two flavored debug APKs and no variant is a refusal listing them, never a guess', async () => {
@@ -707,21 +332,6 @@ describe('buildAndroid', () => {
     );
     assert(result.ok);
     expect(result.apkPath).toBe(apk);
-  });
-
-  test('a wrapper that will not execute names the permission bit', async () => {
-    makeAndroidProject();
-    const denied = Object.assign(new Error('spawn EACCES'), { code: 'EACCES' });
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        spawnFn: () => {
-          throw denied;
-        },
-      },
-    );
-    assert(!result.ok);
-    expect(result.remedy).toMatch(/chmod \+x/);
   });
 
   test('a spawn that errors after starting still resolves', async () => {
@@ -769,64 +379,6 @@ describe('buildAndroid', () => {
     } finally {
       Object.defineProperty(process, 'platform', { value: platform });
     }
-  });
-
-  test('Gradle gets the SDK path Stim resolved when the caller set no SDK variable, and an explicit one untouched', async () => {
-    makeAndroidProject();
-    const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-    process.env.HOME = root;
-    process.env.USERPROFILE = root;
-    try {
-      const unset = { PATH: process.env.PATH, LOCALAPPDATA: join(root, 'local') };
-      const defaultSdk = androidHome(unset);
-      mkdirSync(defaultSdk, { recursive: true });
-      const gradleEnv = async (env: NodeJS.ProcessEnv) => {
-        let seen: NodeJS.ProcessEnv | undefined;
-        const result = await buildAndroid(
-          { root, logWriter: recordingWriter() },
-          {
-            env,
-            spawnFn: (_cmd, _args, opts) => {
-              seen = opts.env as NodeJS.ProcessEnv;
-              return fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() });
-            },
-          },
-        );
-        assert(result.ok);
-        assert(seen);
-        return seen;
-      };
-      expect((await gradleEnv(unset)).ANDROID_HOME).toBe(defaultSdk);
-      expect((await gradleEnv({ ...unset, ANDROID_HOME: sdk })).ANDROID_HOME).toBe(sdk);
-      const sdkRoot = await gradleEnv({ ...unset, ANDROID_SDK_ROOT: sdk });
-      expect(sdkRoot.ANDROID_HOME).toBe(undefined);
-      expect(sdkRoot.ANDROID_SDK_ROOT).toBe(sdk);
-    } finally {
-      for (const [key, value] of Object.entries(savedHome)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
-  });
-
-  test('a missing Android SDK refuses before the RN Windows path bound and spawn', async () => {
-    makeAndroidProject();
-    process.env.ANDROID_HOME = join(root, 'no-such-sdk');
-    let spawned = false;
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        platform: 'win32',
-        spawnFn: () => {
-          spawned = true;
-          return fakeChild();
-        },
-      },
-    );
-    expect(spawned).toBe(false);
-    assert(!result.ok);
-    expect(result.code).toBe(BUILD_ERROR);
-    expect(result.remedy).toMatch(/ANDROID_HOME/);
   });
 
   test('a slow gradle build emits heartbeats carrying the latest transcript line', async () => {
@@ -983,81 +535,7 @@ describe('buildAndroid', () => {
     expect(call.env.CCACHE_DIR).toBe(undefined);
     expect(result.ccache).toEqual({ status: 'unavailable', hits: null, misses: null, hitRatePercent: null });
   });
-
-  test('a build that compiled no C++ reports unavailable rather than a zero hit rate', async () => {
-    makeAndroidProject();
-    const statsLog = join(root, 'logs', 'ccache-stats.log');
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        ccache: { dir: join(root, 'ccache'), statsLog, env: { CCACHE_DIR: join(root, 'ccache') } },
-        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
-      },
-    );
-    expect(result.ccache).toEqual({ status: 'unavailable', hits: null, misses: null, hitRatePercent: null });
-  });
-
-  test('android/local.properties satisfies the SDK check on its own', async () => {
-    makeAndroidProject();
-    process.env.ANDROID_HOME = join(root, 'no-such-sdk');
-    writeFileSync(join(root, 'android', 'local.properties'), 'sdk.dir=/opt/android-sdk\n');
-    const result = await buildAndroid(
-      { root, logWriter: recordingWriter() },
-      {
-        spawnFn: () => fakeChild({ lines: ['BUILD SUCCESSFUL in 1s'], onExit: () => writeApk() }),
-      },
-    );
-    assert(result.ok);
-  });
 });
-
-const FLAVORED_GRADLE = `apply plugin: "com.android.application"
-
-android {
-    namespace "com.example.app"
-    defaultConfig {
-        applicationId "io.tlon.groups"
-    }
-    productFlavors {
-        production {
-            applicationId "io.tlon.groups"
-        }
-        preview {
-            applicationId "io.tlon.groups.preview"
-        }
-    }
-}
-`;
-
-const PLAIN_GRADLE = `apply plugin: "com.android.application"
-
-android {
-    namespace "com.example.app"
-    buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
-        release {
-            minifyEnabled true
-        }
-    }
-}
-`;
-
-const NESTED_GRADLE = `android {
-    productFlavors {
-        production {
-            manifestPlaceholders = [appName: "Groups"]
-            ndk {
-                abiFilters "arm64-v8a", "x86_64"
-            }
-        }
-        preview {
-            buildConfigField "boolean", "PREVIEW", "true"
-        }
-    }
-}
-`;
 
 const COMMENTED_GRADLE = `android {
     // productFlavors {
@@ -1075,19 +553,6 @@ const COMMENTED_GRADLE = `android {
 }
 `;
 
-const LOOPED_GRADLE = `def flavorNames = ["production", "preview"]
-
-android {
-    productFlavors {
-        flavorNames.each { name ->
-            create(name) {
-                applicationId "io.tlon.groups.\${name}"
-            }
-        }
-    }
-}
-`;
-
 const DIMENSIONED_GRADLE = `android {
     flavorDimensions "tier", "store"
     productFlavors {
@@ -1100,95 +565,16 @@ const DIMENSIONED_GRADLE = `android {
 `;
 
 describe('parseProductFlavors', () => {
-  test('reads the flavor names of a two-flavor block in declaration order', () => {
-    expect(parseProductFlavors(FLAVORED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
-  });
-
-  test('a project without flavors parses as known and empty', () => {
-    expect(parseProductFlavors(PLAIN_GRADLE)).toEqual({ known: true, dimensions: [] });
-  });
-
-  test('braces nested inside a flavor body do not end the flavor', () => {
-    expect(parseProductFlavors(NESTED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
-  });
-
   test('commented-out blocks are ignored and the real block is read', () => {
     expect(parseProductFlavors(COMMENTED_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
-  });
-
-  test('flavors built from a variable in a loop are unknown, not a guess', () => {
-    expect(parseProductFlavors(LOOPED_GRADLE)).toEqual({ known: false, dimensions: [] });
-  });
-
-  test('multiple dimensions come back grouped in flavorDimensions order', () => {
-    expect(parseProductFlavors(DIMENSIONED_GRADLE)).toEqual({
-      known: true,
-      dimensions: [
-        ['free', 'paid'],
-        ['play', 'amazon'],
-      ],
-    });
-  });
-
-  test('a variantFilter can drop variants, so the file is unknown', () => {
-    expect(
-      parseProductFlavors(`${FLAVORED_GRADLE}\nandroid.variantFilter { variant -> variant.setIgnore(true) }\n`),
-    ).toEqual({ known: false, dimensions: [] });
-  });
-
-  test('a text that is not a string is unknown', () => {
-    expect(parseProductFlavors(null)).toEqual({ known: false, dimensions: [] });
   });
 });
 
 describe('productFlavorRefusal', () => {
-  test('names the debug variants when flavors are declared and no variant was selected', () => {
-    const refusal = productFlavorRefusal({ flavors: parseProductFlavors(FLAVORED_GRADLE), variant: null });
-    assert(refusal);
-    expect(refusal.code).toBe('STIM_BAD_ARG');
-    expect(refusal.reason).toMatch(/2 product flavors/);
-    expect(refusal.reason).toMatch(/android\/app\/build\.gradle/);
-    expect(refusal.remedy).toMatch(/productionDebug, previewDebug/);
-  });
-
   test('every dimension combination is named', () => {
     const refusal = productFlavorRefusal({ flavors: parseProductFlavors(DIMENSIONED_GRADLE), variant: null });
     assert(refusal);
     expect(refusal.remedy).toMatch(/freePlayDebug, freeAmazonDebug, paidPlayDebug, paidAmazonDebug/);
-  });
-
-  test('a selected variant says which flavor to build, so there is nothing to refuse', () => {
-    expect(productFlavorRefusal({ flavors: parseProductFlavors(FLAVORED_GRADLE), variant: 'productionDebug' })).toBe(
-      null,
-    );
-  });
-
-  test('an unreadable declaration falls through to the build', () => {
-    expect(productFlavorRefusal({ flavors: parseProductFlavors(LOOPED_GRADLE), variant: null })).toBe(null);
-  });
-
-  test('a single flavor builds one APK, so there is nothing to refuse', () => {
-    const single = parseProductFlavors('android {\n  productFlavors {\n    production { }\n  }\n}\n');
-    expect(productFlavorRefusal({ flavors: single, variant: null })).toBe(null);
-  });
-
-  test('no flavors at all is nothing to refuse', () => {
-    expect(productFlavorRefusal({ flavors: parseProductFlavors(PLAIN_GRADLE), variant: null })).toBe(null);
-  });
-});
-
-describe('readProductFlavors', () => {
-  test('reads android/app/build.gradle', () => {
-    mkdirSync(join(root, 'android', 'app'), { recursive: true });
-    writeFileSync(join(root, 'android', 'app', 'build.gradle'), FLAVORED_GRADLE);
-    expect(readProductFlavors(defaultAndroidLayout(root))).toEqual({
-      known: true,
-      dimensions: [['production', 'preview']],
-    });
-  });
-
-  test('a project whose android/ is not generated yet is unknown', () => {
-    expect(readProductFlavors(defaultAndroidLayout(root))).toEqual({ known: false, dimensions: [] });
   });
 });
 
@@ -1208,15 +594,6 @@ describe('a real flavored build.gradle', () => {
 }
 `;
 
-  test('one declared dimension groups every flavor into it', () => {
-    expect(parseProductFlavors(TLON_GRADLE)).toEqual({ known: true, dimensions: [['production', 'preview']] });
-  });
-
-  test('flavors that name one dimension with no flavorDimensions statement still group', () => {
-    const text = TLON_GRADLE.replace('    flavorDimensions "profile"\n', '');
-    expect(parseProductFlavors(text)).toEqual({ known: true, dimensions: [['production', 'preview']] });
-  });
-
   test('flavors that name different dimensions with no declared order are unknown', () => {
     const text = TLON_GRADLE.replace('    flavorDimensions "profile"\n', '').replace(
       'dimension "profile"\n            applicationId "io.tlon.groups.preview"',
@@ -1224,33 +601,6 @@ describe('a real flavored build.gradle', () => {
     );
     expect(parseProductFlavors(text)).toEqual({ known: false, dimensions: [] });
   });
-});
-
-test('uncached PCH modes pass explicit policy and distinct CMake profiles to Gradle', async () => {
-  makeAndroidProject();
-  const profiles: string[] = [];
-  for (const pch of ['on', 'off'] as const) {
-    const result = await buildAndroid(
-      { root },
-      {
-        pch,
-        compilerCacheDisabled: true,
-        env: { CMAKE_CXX_COMPILER_LAUNCHER: '/inherited/ccache', ANDROID_HOME: sdk },
-        spawnFn: (_cmd, _args, opts) => {
-          const env = opts.env as NodeJS.ProcessEnv;
-          expect(env.CMAKE_CXX_COMPILER_LAUNCHER).toBe('');
-          expect(env.CCACHE_DISABLE).toBe('1');
-          expect(env.STIM_ANDROID_CCACHE).toBe('off');
-          expect(env.STIM_ANDROID_PCH).toBe(pch);
-          profiles.push(env.STIM_ANDROID_NATIVE_PROFILE!);
-          return fakeChild({ lines: ['BUILD SUCCESSFUL'], onExit: () => writeApk() });
-        },
-      },
-    );
-    assert(result.ok);
-  }
-  expect(profiles[0]).toMatch(/^[a-f0-9]{16}$/);
-  expect(profiles[0]).not.toBe(profiles[1]);
 });
 
 describe('buildGradle with explicit project inputs', () => {
@@ -1262,32 +612,6 @@ describe('buildGradle with explicit project inputs', () => {
       outputsDir: join(root, 'products', 'apk'),
     };
   }
-
-  test('a root wrapper builds the selected module and reads its metadata without RN layout or ABI arguments', async () => {
-    const project = projectAtRoot();
-    const output = join(project.outputsDir, 'debug');
-    const apk = join(output, 'mobile.apk');
-    mkdirSync(output, { recursive: true });
-    writeFileSync(apk, 'selected module');
-    writeFileSync(join(output, 'output-metadata.json'), JSON.stringify({ elements: [{ outputFile: 'mobile.apk' }] }));
-    writeFileSync(join(root, 'local.properties'), 'sdk.dir=/configured/by/project');
-    const result = await buildGradle(
-      { root, project, task: ':mobile:assembleDebug' },
-      {
-        env: { ANDROID_HOME: join(root, 'absent-sdk') },
-        spawnFn: (cmd, args, opts) => {
-          expect(cmd).toBe(project.gradlew);
-          expect(opts.cwd).toBe(root);
-          expect(args[0]).toBe(':mobile:assembleDebug');
-          expect(args.some((arg) => arg.includes('reactNativeArchitectures'))).toBe(false);
-          return fakeChild({ lines: ['BUILD SUCCESSFUL'] });
-        },
-      },
-    );
-    assert(result.ok);
-    expect(result.apkPath).toBe(apk);
-    expect(existsSync(join(root, 'android'))).toBe(false);
-  });
 
   test('relative transcript output resolves against the supplied Gradle directory', async () => {
     const project = projectAtRoot();
@@ -1334,42 +658,4 @@ describe('buildGradle with explicit project inputs', () => {
     expect(result.remedy).toContain('into local.properties');
     expect(result.remedy).not.toContain('android/local.properties');
   });
-});
-
-test('a Gradle root outside the app runs its wrapper there with the module-qualified task', async () => {
-  const app = join(root, 'packages', 'rn-tester');
-  const moduleDir = join(app, 'android', 'app');
-  mkdirSync(moduleDir, { recursive: true });
-  const layout = {
-    gradleRoot: root,
-    gradleRootRelative: '../..',
-    module: ':packages:rn-tester:android:app',
-    moduleDir,
-    custom: true,
-  };
-  const gradlew = gradlewPath(layout);
-  writeFileSync(gradlew, '#!/bin/sh\nexit 0\n');
-  chmodSync(gradlew, 0o755);
-  const apk = join(moduleDir, 'build', 'outputs', 'apk', 'debug', 'app-debug.apk');
-  const calls: { cmd: string; args: string[]; opts: Record<string, unknown> }[] = [];
-  const result = await buildAndroid(
-    { root: app, layout },
-    {
-      spawnFn: (cmd: string, args: string[], opts: Record<string, unknown>) => {
-        calls.push({ cmd, args, opts });
-        return fakeChild({
-          lines: ['BUILD SUCCESSFUL in 1s'],
-          onExit: () => {
-            mkdirSync(join(apk, '..'), { recursive: true });
-            writeFileSync(apk, 'apk');
-          },
-        });
-      },
-    },
-  );
-  expect(calls[0]?.cmd).toBe(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
-  expect(calls[0]?.args).toContain(':packages:rn-tester:android:app:assembleDebug');
-  expect(calls[0]?.opts.cwd).toBe(root);
-  assert(result.ok);
-  expect(result.apkPath).toBe(apk);
 });

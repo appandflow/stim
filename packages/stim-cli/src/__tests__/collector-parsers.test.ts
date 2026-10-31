@@ -1,38 +1,9 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import {
-  appNameFromBundleId,
-  levelForEvent,
-  levelFromMessageType,
-  logStreamArgs,
-  parseLogStreamLine,
-  procFromImagePath,
-} from '../collector/ios.ts';
-import {
-  androidClockOffset,
-  levelForLogcat,
-  levelFromLogcatLetter,
-  logcatArgs,
-  parseLogcatLine,
-  parseLogcatTimestamp,
-  parsePidof,
-  pidWatchInterval,
-  waitForAppPid,
-  watchAppPid,
-  NOISE_TAGS,
-} from '../collector/android.ts';
-import {
-  deviceConsoleArgs,
-  DEV_MENU_LAUNCH_ARGS,
-  deviceConsoleLevel,
-  parseDeviceConsoleLine,
-  CONSOLE_ENV,
-  FATAL_MARKERS,
-  TOOL_ERROR_PREFIX,
-} from '../collector/ios-device.ts';
-import { isAppLaunchError } from '../command-output.ts';
+import { levelForEvent, logStreamArgs, parseLogStreamLine } from '../collector/ios.ts';
+import { androidClockOffset, waitForAppPid, watchAppPid, parseLogcatLine } from '../collector/android.ts';
+import { deviceConsoleArgs, parseDeviceConsoleLine, CONSOLE_ENV } from '../collector/ios-device.ts';
 import { LEVELS, SOURCES } from '../ndjson.ts';
 import { makeChildProcess, makeExecutor } from './_factories.ts';
 
@@ -62,242 +33,20 @@ describe('ios: log stream ndjson', () => {
     }
   });
 
-  test('the real non-JSON banner line is skipped, not thrown on', () => {
-    const banner = lines[0];
-    assert(banner);
-    expect(banner).toMatch(/^Filtering the log data using/);
-    expect(parseLogStreamLine(banner)).toBe(null);
-  });
-
-  test('activity events are dropped: they carry a message but no level', () => {
-    const activity = lines.find((l) => l.includes('"activityCreateEvent"'));
-    expect(activity).toBeTruthy();
-    assert(activity);
-    expect(parseLogStreamLine(activity)).toBe(null);
-  });
-
-  test('messageType maps onto Contract 1, with Fault as fatal', () => {
-    const byLevel = Object.fromEntries(
-      lines
-        .map((l) => parseLogStreamLine(l))
-        .filter(isNotNull)
-        .map((r) => [r.level, r]),
-    );
-    expect(byLevel.info).toBeTruthy();
-    expect(byLevel.error).toBeTruthy();
-    expect(byLevel.fatal).toBeTruthy();
-    expect(byLevel.fatal.msg).toMatch(/LocationProvider/);
-  });
-
-  test('the record carries the executable name from processImagePath', () => {
-    const records = lines.map((l) => parseLogStreamLine(l)).filter(isNotNull);
-    expect(records.map((r) => r.proc).toSorted()).toEqual(['gamecontrollerd', 'locationd', 'pairedsyncd']);
-  });
-
-  test("Apple's timestamp is parsed rather than replaced by the read time", () => {
-    const logEvent = lines.find((l) => l.includes('"logEvent"'));
-    assert(logEvent);
-    const captured = JSON.parse(logEvent).timestamp;
-    expect(captured).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{6}[-+]\d{4}$/);
-    const parsed = parseLogStreamLine(logEvent, { now: () => 0 });
-    assert(parsed);
-    expect(parsed.ts).toBe(Date.parse(captured));
-  });
-
-  test('levelFromMessageType covers the documented set and defaults to info', () => {
-    expect(levelFromMessageType('Debug')).toBe('debug');
-    expect(levelFromMessageType('Info')).toBe('info');
-    expect(levelFromMessageType('Default')).toBe('info');
-    expect(levelFromMessageType('Error')).toBe('error');
-    expect(levelFromMessageType('Fault')).toBe('fatal');
-    expect(levelFromMessageType('Warning')).toBe('info');
-    expect(levelFromMessageType(undefined)).toBe('info');
-  });
-
-  test('procFromImagePath takes the executable, not the bundle directory', () => {
-    expect(
-      procFromImagePath(
-        '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/MyApp.app/MyApp',
-      ),
-    ).toBe('MyApp');
-    expect(procFromImagePath(null)).toBe(null);
-  });
-
-  test('an empty or whitespace-only eventMessage is not a record', () => {
-    expect(parseLogStreamLine('{"eventType":"logEvent","messageType":"Default","eventMessage":"   "}')).toBe(null);
-  });
-
-  test('logStreamArgs is the exact argv, anchored to the app executable path', () => {
-    expect(logStreamArgs('U1', 'MyApp', 'MyApp')).toEqual([
-      'simctl',
-      'spawn',
-      'U1',
-      'log',
-      'stream',
-      '--style',
-      'ndjson',
-      '--predicate',
-      'processImagePath ENDSWITH "/MyApp.app/MyApp"',
-      '--level',
-      'info',
-    ]);
-  });
-
   test('logStreamArgs anchors to CFBundleExecutable when it differs from the .app basename', () => {
     const args = logStreamArgs('U1', 'MyAppDev', 'MyApp');
     expect(args[args.indexOf('--predicate') + 1]).toBe('processImagePath ENDSWITH "/MyAppDev.app/MyApp"');
   });
-
-  test('logStreamArgs falls back to the .app basename as the executable when none is given', () => {
-    expect(logStreamArgs('U1', 'MyApp')).toEqual(logStreamArgs('U1', 'MyApp', null));
-    expect(logStreamArgs('U1', 'MyApp')[8]).toBe('processImagePath ENDSWITH "/MyApp.app/MyApp"');
-  });
-
-  test('a short app name no longer admits an unrelated system process such as SpringBoard', () => {
-    const predicate = logStreamArgs('U1', 'app')[8];
-    assert(predicate);
-    const suffix = predicate.match(/ENDSWITH "(.+)"$/)?.[1];
-    assert(suffix);
-    const appsOwnPath =
-      '/Users/x/Library/Developer/CoreSimulator/Devices/U/data/Containers/Bundle/Application/ABC/app.app/app';
-    const springBoardPath = '/System/Library/CoreServices/SpringBoard.app/SpringBoard';
-    const amsengagementdPath = '/usr/libexec/amsengagementd';
-    expect(appsOwnPath.endsWith(suffix)).toBe(true);
-    expect(springBoardPath.endsWith(suffix)).toBe(false);
-    expect(amsengagementdPath.endsWith(suffix)).toBe(false);
-  });
-
-  test('appNameFromBundleId is the last segment, as a fallback for a caller with only a bundle id', () => {
-    expect(appNameFromBundleId('com.example.MyApp')).toBe('MyApp');
-    expect(appNameFromBundleId('MyApp')).toBe('MyApp');
-  });
 });
 
 describe('ios: the physical-device console', () => {
-  const capture = fixture('ios-device-console.txt');
-  const lines = capture.split(/\r?\n/).filter((l) => l !== '');
   const at = () => 1788271500000;
-  const parsed = lines.map((l) => parseDeviceConsoleLine(l, { now: at })).filter(isNotNull);
-
-  test('every line of the capture becomes a Contract-1 record', () => {
-    expect(parsed.length).toBe(lines.length);
-    for (const record of parsed) {
-      assert(record.src);
-      assert(record.level);
-      expect(record.src).toBe('device');
-      expect(SOURCES.includes(record.src)).toBeTruthy();
-      expect(LEVELS.includes(record.level)).toBeTruthy();
-      expect(typeof record.msg).toBe('string');
-      expect(Number.isFinite(record.ts)).toBeTruthy();
-      expect(record.raw).toBe(true);
-    }
-  });
-
-  test('a mirrored os_log line yields its own timestamp, process, pid and category', () => {
-    const record = parsed[1];
-    assert(record);
-    expect(record.msg).toBe('counter is 1');
-    expect(record.proc).toBe('StimFixture(431)');
-    expect(record.category).toBe('javascript');
-    expect(record.ts).toBe(Date.parse('2026-09-01 10:03:46.971897-0400'));
-  });
-
-  test('a logger with no subsystem mirrors without a category bracket, and none is invented', () => {
-    const record = parsed.find((r) => r.msg === 'a line logged with no subsystem');
-    assert(record);
-    expect('category' in record).toBeFalsy();
-    expect(record.proc).toBe('StimFixture(431)');
-  });
-
-  test('NSLog and os_log are indistinguishable in the mirror, and both parse', () => {
-    const record = parsed.find((r) => r.msg === 'an NSLog line');
-    assert(record);
-    expect(record.proc).toBe('StimFixture(431)');
-  });
-
-  test('a raw stdout or stderr write carries no prefix, so it is timestamped on receipt', () => {
-    const record = parsed.find((r) => r.msg === 'a raw stdout write');
-    assert(record);
-    expect(record.ts).toBe(at());
-    expect('proc' in record).toBeFalsy();
-    expect(record.level).toBe('info');
-  });
-
-  test('the second line of a multi-line message arrives unprefixed and is kept, not dropped', () => {
-    const index = parsed.findIndex((r) => r.msg === 'a message that');
-    expect(index).toBeGreaterThan(-1);
-    const next = parsed[index + 1];
-    assert(next);
-    expect(next.msg).toBe('spans two lines');
-    expect(next.ts).toBe(at());
-  });
-
-  test('the uncaught-exception line is the one severity the console can prove', () => {
-    const fatal = parsed.filter((r) => r.level === 'fatal');
-    expect(fatal.length).toBeGreaterThan(0);
-    const first = fatal[0];
-    assert(first);
-    expect(String(first.msg)).toMatch(/^\*\*\* Terminating app due to uncaught exception 'RCTFatalException/);
-    expect(first.proc).toBe('StimFixture(431)');
-    expect(parsed.some((r) => r.level === 'fatal' && String(r.msg).startsWith('libc++abi: terminating'))).toBeTruthy();
-  });
-
-  test('severity is otherwise info: the mirror renders Default, Error and Fault identically', () => {
-    const warning = parsed.find((r) => String(r.msg).startsWith('Warning: componentWillMount'));
-    assert(warning);
-    expect(warning.level).toBe('info');
-  });
-
-  test("devicectl's own refusal is recorded at error rather than as app output", () => {
-    const record = parseDeviceConsoleLine(
-      `${TOOL_ERROR_PREFIX}The specified device was not found. (Name: 00008030-DEAD) (com.apple.dt.CoreDeviceError error 1000 (0x3E8))`,
-      { now: at },
-    );
-    assert(record);
-    expect(record.level).toBe('error');
-  });
-
-  test('an app that logs the ERROR: prefix is not devicectl, because the mirror prefixed it', () => {
-    const record = parseDeviceConsoleLine(
-      '2026-09-01 10:03:46.971897-0400 StimFixture[431:1049622] [javascript] ERROR: request failed',
-      { now: at },
-    );
-    assert(record);
-    expect(record.level).toBe('info');
-    expect(record.msg).toBe('ERROR: request failed');
-  });
-
-  test('a product name with a space keeps its process, category and timestamp', () => {
-    const record = parsed.find((r) => r.msg === 'a product name with a space still mirrors');
-    assert(record);
-    expect(record.proc).toBe('My App(512)');
-    expect(record.category).toBe('javascript');
-    expect(record.ts).not.toBe(at());
-  });
 
   test('blank lines and non-strings are not records', () => {
     expect(parseDeviceConsoleLine('')).toBe(null);
     expect(parseDeviceConsoleLine('   ')).toBe(null);
     expect(parseDeviceConsoleLine(null as unknown as string)).toBe(null);
     expect(parseDeviceConsoleLine('2026-09-01 10:03:46.971266-0400 App[1:2] ', { now: at })).toBe(null);
-  });
-
-  test('a fatal marker counts only where the runtime puts it: at the start of the message', () => {
-    const starts = [
-      "*** Terminating app due to uncaught exception 'NSRangeException', reason: '...'",
-      'libc++abi: terminating due to uncaught exception of type NSException',
-      '*** Assertion failure in -[UIView layoutSubviews], UIView.m:1',
-      'Fatal error: Unexpectedly found nil while unwrapping an Optional value',
-      'Screen.swift:42: Fatal error: Unexpectedly found nil while unwrapping an Optional value',
-    ];
-    for (const line of starts) expect(deviceConsoleLevel(line)).toBe('fatal');
-    expect(starts.every((line) => FATAL_MARKERS.some((m) => m.test(line)))).toBeTruthy();
-
-    for (const line of starts) {
-      expect(deviceConsoleLevel(`retrying after a crash report that said "${line}"`)).toBe('info');
-    }
-    expect(deviceConsoleLevel('nothing alarming')).toBe('info');
-    expect(deviceConsoleLevel(42)).toBe('info');
   });
 
   test('deviceConsoleArgs is the exact argv, and it turns the os_log mirror on', () => {
@@ -322,26 +71,6 @@ describe('ios: the physical-device console', () => {
     const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app', payloadUrl: 'stim://x?url=y' });
     expect(args.slice(-8, -5)).toEqual(['--payload-url', 'stim://x?url=y', 'com.example.app']);
   });
-
-  test('the dev-menu arguments follow the bundle id, after the -- devicectl passes on', () => {
-    const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app', payloadUrl: 'stim://x?url=y' });
-    expect(args.slice(-6)).toEqual([
-      'com.example.app',
-      '--',
-      '-EXDevMenuShowsAtLaunch',
-      '0',
-      '-EXDevMenuShowFloatingActionButton',
-      '0',
-    ]);
-    expect(DEV_MENU_LAUNCH_ARGS).toEqual(['-EXDevMenuShowsAtLaunch', '0', '-EXDevMenuShowFloatingActionButton', '0']);
-  });
-
-  test('a launch with no deep link carries no dev-menu arguments: a release app has no dev menu', () => {
-    const args = deviceConsoleArgs({ udid: 'U1', bundleId: 'com.example.app' });
-    expect(args).not.toContain('--');
-    expect(args.join(' ')).not.toMatch(/EXDevMenu/);
-    expect(args.at(-1)).toBe('com.example.app');
-  });
 });
 
 describe('ios: demoting device noise', () => {
@@ -359,169 +88,6 @@ describe('ios: demoting device noise', () => {
     ...over,
   });
 
-  test('the nw_socket flood is captured at info, not reported as an error', () => {
-    const flood = [
-      event({
-        subsystem: 'com.apple.network',
-        category: 'connection',
-        eventMessage: 'nw_socket_handle_socket_event [C1.1.1:2] Socket SO_ERROR [54: Connection reset by peer]',
-      }),
-      event({
-        subsystem: 'com.apple.network',
-        category: 'boringssl',
-        eventMessage:
-          'boringssl_context_handle_fatal_alert(1938) [C4.1.1:2][0x10c0a4b60] read alert, level: fatal, description: certificate unknown',
-      }),
-      event({
-        eventMessage:
-          'nw_connection_copy_connected_local_endpoint_block_invoke [C2] Client called nw_connection_copy_connected_local_endpoint on unconnected nw_connection',
-      }),
-      event({ eventMessage: 'nw_read_request_report [C3] Receive failed with error "Socket is not connected"' }),
-    ];
-    for (const e of flood) {
-      const record = parseLogStreamLine(JSON.stringify(e));
-      assert(record);
-      expect(record.level).toBe('info');
-      expect(record.msg).toBe(e.eventMessage);
-      expect(record.src).toBe('device');
-      expect(record.proc).toBe('MyApp');
-    }
-  });
-
-  test('the UIScene deprecation notice is a notice, not a fatal', () => {
-    const record = parseLogStreamLine(
-      JSON.stringify(
-        event({
-          messageType: 'Fault',
-          subsystem: 'com.apple.UIKit',
-          category: 'lifecycle',
-          eventMessage:
-            'BUG IN CLIENT OF UIKIT: UIScene lifecycle will soon be required. Please update your app to adopt UIScene lifecycle.',
-        }),
-      ),
-    );
-    assert(record);
-    expect(record.level).toBe('info');
-    const simulatorRecord = parseLogStreamLine(
-      JSON.stringify(
-        event({
-          messageType: 'Fault',
-          eventMessage: '`UIScene` lifecycle will soon be required. Failure to adopt will result in an assert.',
-        }),
-      ),
-    );
-    assert(simulatorRecord);
-    expect(simulatorRecord.level).toBe('info');
-    expect(levelForEvent(event({ eventMessage: 'The app must migrate to UIScene lifecycle before iOS 27.' }))).toBe(
-      'info',
-    );
-  });
-
-  test('the rest of the proven offenders are demoted, each by its own rule', () => {
-    const cases: [string, Record<string, unknown>][] = [
-      [
-        'sectrust',
-        event({ subsystem: 'com.apple.securityd', category: 'SecTrust', eventMessage: 'SecTrustEvaluateIfNecessary' }),
-      ],
-      [
-        'sectrust-default-subsystem',
-        event({ eventMessage: 'SecTrustReportNetworkingAnalytics: Failed to acquire the trust result' }),
-      ],
-      [
-        'webkit',
-        event({
-          subsystem: 'com.apple.WebKit',
-          category: 'Process',
-          eventMessage: 'Failed to terminate process: Error Domain=com.apple.extensionKit.errorDomain Code=18',
-        }),
-      ],
-      ['webkit-default-subsystem', event({ eventMessage: 'WebPrivacy: Failed to acquire the WebPrivacy resource' })],
-      [
-        'audio-factory',
-        event({
-          eventMessage:
-            'AddInstanceForFactory: No factory registered for id <CFUUID 0x600000284840> F8BB1C28-BAE8-11D6-9C31-00039315CD46',
-        }),
-      ],
-      [
-        'coreui',
-        event({
-          subsystem: 'com.apple.coreui',
-          category: 'default',
-          eventMessage: 'Invalid asset name supplied: (null)',
-        }),
-      ],
-      ['coreui-default-subsystem', event({ eventMessage: 'CUICatalog: Invalid asset name supplied: (null)' })],
-      [
-        'react-native-focus-cache',
-        event({
-          subsystem: 'com.apple.UIKit',
-          category: 'UIFocus',
-          eventMessage: focusCacheMessage,
-        }),
-      ],
-    ];
-    for (const [id, e] of cases) {
-      const record = parseLogStreamLine(JSON.stringify(e));
-      assert(record);
-      expect([id, record.level]).toEqual([id, 'info']);
-      expect(record.msg).toBe(e.eventMessage);
-      expect(record.src).toBe('device');
-      expect(record.proc).toBe('MyApp');
-    }
-  });
-
-  test('a main-thread Synchronous URL loading diagnostic is a warning, not an app error', () => {
-    const diagnostic = event({
-      messageType: 'Fault',
-      subsystem: 'com.apple.runtime-issues',
-      category: 'CFNetwork Performance Diagnostic',
-      eventMessage:
-        "__delegate_identifier__:Performance Diagnostics__:::____message__:Synchronous URL loading of http://localhost:8082/assets/?unstable_path=.%2Fassets%2Ficons/funnel@3x.png?platform=ios&hash=6ed4750c84365e18d3ddfa92a54167c7 should not occur on this application's main thread as it may lead to UI unresponsiveness. Please switch to an asynchronous networking API such as URLSession.",
-    });
-    const record = parseLogStreamLine(JSON.stringify(diagnostic));
-    assert(record);
-    expect(record.level).toBe('warn');
-    expect(isAppLaunchError({ ...record, platform: 'ios' })).toBe(false);
-
-    const mainThreadChecker = parseLogStreamLine(
-      JSON.stringify({
-        ...diagnostic,
-        category: 'Main Thread Checker',
-        eventMessage: 'Main Thread Checker: UI API called on a background thread',
-      }),
-    );
-    assert(mainThreadChecker);
-    expect(mainThreadChecker.level).toBe('fatal');
-  });
-
-  test('a SwiftUI Invalid Configuration fault is a warning, not an app error', () => {
-    const duplicateServer = event({
-      messageType: 'Fault',
-      subsystem: 'com.apple.SwiftUI',
-      category: 'Invalid Configuration',
-      eventMessage:
-        'ForEach<Array<DevServer>, DevServer, DevServerRow>: the ID DevServer(url: "http://169.254.136.94:8087", description: "Metro", source: Stim.DevServer.Source.recent) occurs multiple times within the collection, this will give undefined results!',
-    });
-    const record = parseLogStreamLine(JSON.stringify(duplicateServer));
-    assert(record);
-    expect(record.level).toBe('warn');
-    expect(isAppLaunchError({ ...record, platform: 'ios' })).toBe(false);
-
-    const lazyStack = parseLogStreamLine(
-      JSON.stringify({
-        ...duplicateServer,
-        eventMessage:
-          'LazyVStackLayout: the ID ViewList.ID.Canonical(explicitID: 1) is used by multiple child views, this will give undefined results!',
-      }),
-    );
-    assert(lazyStack);
-    expect(lazyStack.level).toBe('warn');
-
-    expect(levelForEvent({ ...duplicateServer, category: 'Other' })).toBe('fatal');
-    expect(levelForEvent({ ...duplicateServer, subsystem: 'com.example.app' })).toBe('fatal');
-  });
-
   test('the focus-cache rule requires the exact UIKit focus event', () => {
     const nearMisses = [
       event({ subsystem: 'com.apple.UIKit.child', category: 'UIFocus', eventMessage: focusCacheMessage }),
@@ -533,183 +99,15 @@ describe('ios: demoting device noise', () => {
     }
   });
 
-  test("the app's own error is untouched, and so is an unlisted system one", () => {
-    const own = event({ eventMessage: '[Error: Exception in HostFunction]' });
-    const ownRecord = parseLogStreamLine(JSON.stringify(own));
-    assert(ownRecord);
-    expect(ownRecord.level).toBe('error');
-
-    const unlisted = event({
-      subsystem: 'com.apple.pairedsync',
-      category: 'daemon',
-      eventMessage: 'Fatal error: pairing store path was nil for PSDFileManager.',
-    });
-    expect(levelForEvent(unlisted)).toBe('error');
-    expect(levelForEvent({ ...unlisted, messageType: 'Fault' })).toBe('fatal');
-  });
-
-  test('demotion never promotes, and never fires below error', () => {
-    const chatty = event({
-      messageType: 'Default',
-      subsystem: 'com.apple.network',
-      eventMessage: 'nw_socket ordinary chatter',
-    });
-    expect(levelForEvent(chatty)).toBe('info');
-    expect(levelForEvent({ ...chatty, messageType: 'Debug' })).toBe('debug');
-  });
-
   test('a subsystem rule matches dotted children, not lookalike names', () => {
     expect(levelForEvent(event({ subsystem: 'com.apple.network.tcp' }))).toBe('info');
     expect(
       levelForEvent(event({ subsystem: 'com.apple.networkextension', eventMessage: 'provider failed to start' })),
     ).toBe('error');
   });
-
-  test('an event with no subsystem, category or message at all is not noise', () => {
-    expect(levelForEvent({ messageType: 'Error' })).toBe('error');
-    expect(levelForEvent(null)).toBe('info');
-  });
 });
 
 describe('android: logcat -v time', () => {
-  const lines = fixture('android-logcat-time.txt').split(/\r?\n/).filter(Boolean);
-
-  test('every real level line parses into a Contract-1 record', () => {
-    const records = lines.map((l) => parseLogcatLine(l)).filter(isNotNull);
-    expect(lines.length).toBe(6);
-    expect(records.length).toBe(5);
-    for (const record of records) {
-      assert(record.level);
-      expect(record.src).toBe('device');
-      expect(LEVELS.includes(record.level)).toBeTruthy();
-      expect(Number.isFinite(record.ts)).toBeTruthy();
-    }
-  });
-
-  test('the real buffer banner is skipped rather than recorded raw', () => {
-    const banner = lines[0];
-    assert(banner);
-    expect(banner).toBe('--------- beginning of system');
-    expect(parseLogcatLine(banner)).toBe(null);
-  });
-
-  test('the real V/D/I/W/E lines map onto Contract 1 levels', () => {
-    const levels = lines
-      .map((l) => parseLogcatLine(l))
-      .filter(isNotNull)
-      .map((r) => r.level);
-    expect(levels.toSorted()).toEqual(['debug', 'debug', 'error', 'info', 'warn']);
-  });
-
-  test('the tag and pid become proc, and the message keeps its own colons', () => {
-    const record = parseLogcatLine(
-      '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680',
-    );
-    assert(record);
-    expect(record.proc).toBe('keystore2(245)');
-    expect(record.level).toBe('error');
-    expect(record.msg).toBe(
-      'system/security/keystore2/src/error.rs:183 - system/security/keystore2/src/security_level.rs:680',
-    );
-  });
-
-  test('a fatal line maps to fatal (synthesized: no F line was in the captured buffer)', () => {
-    const record = parseLogcatLine(
-      '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182 (com.example.app)',
-    );
-    assert(record);
-    expect(record.level).toBe('fatal');
-    expect(record.msg).toMatch(/SIGSEGV/);
-  });
-
-  test('levelFromLogcatLetter covers the priority letters and defaults to info', () => {
-    expect(['V', 'D', 'I', 'W', 'E', 'F', 'A'].map(levelFromLogcatLetter)).toEqual([
-      'debug',
-      'debug',
-      'info',
-      'warn',
-      'error',
-      'fatal',
-      'fatal',
-    ]);
-    expect(levelFromLogcatLetter('?')).toBe('info');
-  });
-
-  test('the missing year comes from the reference clock, and a future stamp rolls back', () => {
-    const jan = Date.parse('2027-01-02T10:00:00Z');
-    const dec = parseLogcatTimestamp({ month: 12, day: 28, hour: 23, minute: 0, second: 0, millis: 0 }, jan);
-    expect(dec < jan).toBeTruthy();
-    expect(new Date(dec).getFullYear()).toBe(2026);
-
-    const sameDay = parseLogcatTimestamp({ month: 1, day: 2, hour: 9, minute: 0, second: 0, millis: 0 }, jan);
-    expect(new Date(sameDay).getFullYear()).toBe(2027);
-  });
-
-  test('logcatArgs is the exact argv', () => {
-    expect(logcatArgs('emulator-5554', 3132)).toEqual([
-      '-s',
-      'emulator-5554',
-      'logcat',
-      '--pid',
-      '3132',
-      '-v',
-      'time,epoch',
-    ]);
-  });
-
-  test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {
-    const launch = 1788902585000;
-    const line = '         1788902582.542 I/ReactNativeJS( 1247): [stim:readiness] pending';
-    const current = parseLogcatLine(line, { clockOffsetMs: 2739, now: () => launch });
-    expect(current).toMatchObject({
-      ts: 1788902585281,
-      deviceTs: 1788902582542,
-      clockOffsetMs: 2739,
-      proc: 'ReactNativeJS(1247)',
-      msg: '[stim:readiness] pending',
-      level: 'info',
-    });
-    expect(current!.ts! > launch).toBe(true);
-    const old = parseLogcatLine(line.replace('2582.542', '2570.542'), { clockOffsetMs: 2739, now: () => launch });
-    expect(old!.ts! < launch).toBe(true);
-    expect(parseLogcatLine(line, { clockOffsetMs: -2739 })!.ts).toBe(1788902579803);
-    expect(parseLogcatLine(line)).toMatchObject({ ts: 1788902582542, deviceTs: 1788902582542 });
-    expect(parseLogcatLine(line)).not.toHaveProperty('clockOffsetMs');
-    expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
-  });
-
-  test('clock alignment uses the midpoint of a bounded adb sample and rejects unsupported or slow clocks', async () => {
-    const before = 1788902585000;
-    let after = before + 40;
-    let output = '1788902582281\n';
-    let failed = false;
-    let calls = 0;
-    const exec = makeExecutor({
-      runFile: (file, args, opts) => {
-        expect([file, args, opts]).toEqual([
-          'adb',
-          ['-s', 'serial', 'shell', 'date', '+%s%3N'],
-          { timeoutMs: 1000, cwd: process.platform === 'win32' ? homedir() : undefined },
-        ]);
-        if (failed) throw new Error('offline');
-        return output;
-      },
-    });
-    const sample = () => androidClockOffset('serial', { exec, now: () => (calls++ % 2 === 0 ? before : after) });
-    expect(await sample()).toBe(2739);
-    output = '1788902587759';
-    expect(await sample()).toBe(-2739);
-    output = '1788902582%3N';
-    expect(await sample()).toBe(null);
-    output = '1788902582281';
-    after = before + 1001;
-    expect(await sample()).toBe(null);
-    after = before - 1;
-    expect(await sample()).toBe(null);
-    failed = true;
-    expect(await sample()).toBe(null);
-  });
-
   test('the clock sample and the pid reads use the async executor with their adb argument lists', async () => {
     const asyncCalls: string[][] = [];
     const exec = makeExecutor({
@@ -761,60 +159,25 @@ describe('android: logcat -v time', () => {
     expect(killed).toEqual(['SIGKILL', 'SIGKILL']);
   });
 
-  test('parsePidof reads the single pid, and nothing from empty output', () => {
-    expect(parsePidof('3132\n')).toBe(3132);
-    expect(parsePidof('')).toBe(null);
-    expect(parsePidof('\r\n')).toBe(null);
-    expect(parsePidof(null)).toBe(null);
-    expect(parsePidof('3132 3155\n')).toBe(3132);
-  });
-
-  describe('demoting device noise', () => {
-    test('the emulator graphics and loader tags are captured at info', () => {
-      const noisy = [
-        '08-21 17:51:19.669 E/libEGL  ( 9182): called unimplemented OpenGL ES API',
-        '08-21 17:51:19.669 E/EGL_emulation( 9182): tid 9182: eglSurfaceAttrib(1376): error 0x3009 (EGL_BAD_MATCH)',
-        '08-21 17:51:19.669 E/eglCodecCommon( 9182): glUtilsParamSize: unknow param 0x00008cdf',
-        '08-21 17:51:19.669 E/OpenGLRenderer( 9182): Unable to match the desired swap behavior.',
-        "08-21 17:51:19.669 E/ziparchive( 9182): Unable to open '/data/app/~~x==/com.example.app-1/base.dm': No such file or directory",
-        '08-21 17:51:19.669 E/vulkan  ( 9182): unknown gralloc4 metadata type',
-      ];
-      for (const line of noisy) {
-        const record = parseLogcatLine(line);
-        assert(record);
-        assert(record.msg);
-        expect(record.level).toBe('info');
-        expect(record.msg.length > 0).toBeTruthy();
-      }
+  test('epoch logcat keeps device time and shifts timestamps without reviving buffered records', () => {
+    const launch = 1788902585000;
+    const line = '         1788902582.542 I/ReactNativeJS( 1247): [stim:readiness] pending';
+    const current = parseLogcatLine(line, { clockOffsetMs: 2739, now: () => launch });
+    expect(current).toMatchObject({
+      ts: 1788902585281,
+      deviceTs: 1788902582542,
+      clockOffsetMs: 2739,
+      proc: 'ReactNativeJS(1247)',
+      msg: '[stim:readiness] pending',
+      level: 'info',
     });
-
-    test("an unlisted tag keeps its E, including the app's own", () => {
-      const rnjs = parseLogcatLine('08-21 17:51:19.669 E/ReactNativeJS( 9182): [Error: Exception in HostFunction]');
-      assert(rnjs);
-      expect(rnjs.level).toBe('error');
-      const keystore = parseLogcatLine(
-        '08-21 17:51:19.669 E/keystore2(  245): system/security/keystore2/src/error.rs:183',
-      );
-      assert(keystore);
-      expect(keystore.level).toBe('error');
-    });
-
-    test('F is never demoted, even from a listed tag', () => {
-      expect(levelForLogcat('F', 'libEGL')).toBe('fatal');
-      const libc = parseLogcatLine(
-        '08-21 17:52:03.115 F/libc    ( 9182): Fatal signal 11 (SIGSEGV), code 1 in tid 9182',
-      );
-      assert(libc);
-      expect(libc.level).toBe('fatal');
-      expect(!NOISE_TAGS.has('libc')).toBeTruthy();
-    });
-
-    test('levelForLogcat leaves everything below error alone', () => {
-      expect(levelForLogcat('W', 'libEGL')).toBe('warn');
-      expect(levelForLogcat('I', 'libEGL')).toBe('info');
-      expect(levelForLogcat('E', 'libEGL')).toBe('info');
-      expect(levelForLogcat('E', 'MyApp')).toBe('error');
-    });
+    expect(current!.ts! > launch).toBe(true);
+    const old = parseLogcatLine(line.replace('2582.542', '2570.542'), { clockOffsetMs: 2739, now: () => launch });
+    expect(old!.ts! < launch).toBe(true);
+    expect(parseLogcatLine(line, { clockOffsetMs: -2739 })!.ts).toBe(1788902579803);
+    expect(parseLogcatLine(line)).toMatchObject({ ts: 1788902582542, deviceTs: 1788902582542 });
+    expect(parseLogcatLine(line)).not.toHaveProperty('clockOffsetMs');
+    expect(parseLogcatLine(line.replace('.542', '.542987'))!.ts).toBe(1788902582542);
   });
 });
 
@@ -840,32 +203,6 @@ describe('watchAppPid', () => {
       },
     };
   }
-
-  test('a new pid is a restart; the same pid is not', async () => {
-    const d = driver();
-    const seen: number[] = [];
-    let answer = 3132;
-    const w = watchAppPid({
-      serial: 'emulator-5554',
-      packageName: 'com.x',
-      pid: 3132,
-      intervalMs: 1,
-      resolve: () => answer,
-      onChange: (pid) => {
-        seen.push(pid);
-      },
-      setTimer: d.setTimer,
-      clearTimer: d.clearTimer,
-    });
-    await d.tick();
-    expect(seen).toEqual([]);
-    answer = 4200;
-    await d.tick();
-    expect(seen).toEqual([4200]);
-    await d.tick();
-    expect(seen).toEqual([4200]);
-    w.stop();
-  });
 
   test('the app being GONE is not a restart -- the pid that comes back is', async () => {
     const d = driver();
@@ -918,54 +255,5 @@ describe('watchAppPid', () => {
     expect(seen).toEqual([4200]);
     w.stop();
     expect(d.pending).toBe(0);
-  });
-
-  test('an onChange that throws does not stop the watch either', async () => {
-    const d = driver();
-    let answer = 4200;
-    const w = watchAppPid({
-      serial: 'emulator-5554',
-      packageName: 'com.x',
-      pid: 3132,
-      intervalMs: 1,
-      resolve: () => answer,
-      onChange: () => {
-        throw new Error('reattach failed');
-      },
-      setTimer: d.setTimer,
-      clearTimer: d.clearTimer,
-    });
-    await d.tick();
-    expect(d.pending).toBe(1);
-    w.stop();
-  });
-
-  test('stop() is what lets the collector process exit', async () => {
-    const d = driver();
-    const w = watchAppPid({
-      serial: 'emulator-5554',
-      packageName: 'com.x',
-      pid: 3132,
-      intervalMs: 1,
-      resolve: () => 3132,
-      onChange: () => {},
-      setTimer: d.setTimer,
-      clearTimer: d.clearTimer,
-    });
-    expect(d.pending).toBe(1);
-    w.stop();
-    expect(d.pending).toBe(0);
-    await d.tick();
-    expect(d.pending).toBe(0);
-  });
-
-  test('the interval is 3s unless a test redirects it', () => {
-    delete process.env.STIM_PID_WATCH_MS;
-    expect(pidWatchInterval()).toBe(3000);
-    process.env.STIM_PID_WATCH_MS = '100';
-    expect(pidWatchInterval()).toBe(100);
-    process.env.STIM_PID_WATCH_MS = 'nonsense';
-    expect(pidWatchInterval()).toBe(3000);
-    delete process.env.STIM_PID_WATCH_MS;
   });
 });

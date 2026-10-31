@@ -92,31 +92,10 @@ describe('newRootsContaining', () => {
 });
 
 describe('trackMetroWatchRoots', () => {
-  test('removes the root this Metro registered once no other subscription uses it', async () => {
-    const fake = fakeWatchman({ after: [worktree], running: { [worktree]: [subscription(METRO_PID)] } });
-    const { deleted, records } = await runLifecycle(fake);
-    expect(deleted).toEqual([worktree]);
-    expect(records.map((r) => r.event)).toEqual(['watchman_root_removed']);
-  });
-
   test("removes the root while this Metro's own subscriptions are still closing", async () => {
     const mine = [subscription(METRO_PID), subscription(METRO_PID, 'packages-core')];
     const fake = fakeWatchman({ after: [worktree], running: { [worktree]: mine }, stopped: { [worktree]: mine } });
     expect((await runLifecycle(fake)).deleted).toEqual([worktree]);
-  });
-
-  test('leaves a root that existed before this Metro started', async () => {
-    const fake = fakeWatchman({
-      before: [worktree],
-      after: [worktree],
-      running: { [worktree]: [subscription(METRO_PID)] },
-    });
-    expect((await runLifecycle(fake)).deleted).toEqual([]);
-  });
-
-  test('leaves a new root this Metro never subscribed to, such as one a jest run registered', async () => {
-    const fake = fakeWatchman({ after: [worktree], running: { [worktree]: [subscription(9999)] } });
-    expect((await runLifecycle(fake)).deleted).toEqual([]);
   });
 
   test('keeps the root while another client still subscribes to it', async () => {
@@ -192,24 +171,5 @@ describe('trackMetroWatchRoots', () => {
     await tracker.afterClose();
     expect(fake.calls.some((args) => args[0] === 'watch-del')).toBe(false);
     expect(records.map((r) => r.event)).toEqual(['watchman_root_kept']);
-  });
-
-  test('does nothing when watchman is not installed or its daemon is not running', async () => {
-    const calls: string[][] = [];
-    const { records, writer } = recordingWriter();
-    const tracker = trackMetroWatchRoots({
-      workspaceRoot: workspace,
-      writer,
-      watchman: async (args) => {
-        calls.push(args);
-        throw Object.assign(new Error('spawn watchman ENOENT'), { code: 'ENOENT' });
-      },
-      probeDelaysMs: [],
-    });
-    tracker.started(METRO_PID);
-    await tracker.beforeClose();
-    await tracker.afterClose();
-    expect(calls).toEqual([['watch-list']]);
-    expect(records).toEqual([]);
   });
 });

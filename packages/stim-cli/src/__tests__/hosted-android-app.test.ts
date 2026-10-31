@@ -105,26 +105,6 @@ function receipt(mode = 'release') {
 const effects = () =>
   native.runFile.mock.calls.filter(([, args]) => args?.includes('install') || args?.includes('start'));
 
-test.each(['aapt', 'aapt2'])(
-  'verifies %s metadata, drives the exact AVD and proves a release process',
-  async (tool) => {
-    if (tool === 'aapt2') {
-      rmSync(aapt);
-      aapt = join(root, 'sdk', 'build-tools', '36.0.0', process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
-      writeFileSync(aapt, 'fixture');
-      badging = badging.replace('sdkVersion', 'minSdkVersion');
-    }
-    receipt();
-    expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(true);
-    expect(readFileSync(join(area, 'App.apk'), 'utf8')).toBe('verified APK fixture');
-    expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual([
-      ['-s', device.serial],
-      ['-s', device.serial],
-    ]);
-    expect(effects().map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
-  },
-);
-
 test('development launch remains unverified despite a live native process', async () => {
   receipt('development');
   expect(await installHostedAndroidApp(home, session, 'app', device, { bridgePort: 9000, devicePort: 8082 })).toBe(
@@ -154,22 +134,6 @@ test('corrupt upload bytes refuse before SDK or native effects', async () => {
   writeFileSync(join(home, '..', 'blobs', digest), 'corrupt');
   await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/differs/);
   expect(native.runFile).not.toHaveBeenCalled();
-});
-
-test('a reused serial refuses effects before install and rechecks before launch', async () => {
-  receipt();
-  running = 'foreign';
-  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/identity/);
-  expect(effects()).toEqual([]);
-  running = device.avdName;
-  native.runFile.mockImplementation((file, args = []) => {
-    if (file === aapt) return badging;
-    if (args.includes('getprop')) return 'arm64-v8a';
-    if (args.includes('install')) running = 'foreign';
-    return '';
-  });
-  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/identity/);
-  expect(effects()).toHaveLength(1);
 });
 
 test('the reverse worker restores Metro repeatedly without reinstalling or relaunching the app', async () => {

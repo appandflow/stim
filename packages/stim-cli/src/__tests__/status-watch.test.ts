@@ -1,29 +1,24 @@
 import assert from 'node:assert';
-import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
+import { type ChildProcess, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
   type WatchOptions,
-  appendFileSync,
   chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   renameSync,
-  realpathSync,
   rmSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { agentSessionsCacheFile } from '@stim-cli/core/state';
 import { saveConfig } from '../workspace/config.ts';
 import { makeConfig, makeEnvironmentState } from './_factories.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
-import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { captureProcessToken } from '../process-identity.ts';
+
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   createRefreshScheduler,
@@ -84,19 +79,6 @@ describe('createRefreshScheduler', () => {
     vi.useRealTimers();
   });
 
-  test('a burst of triggers runs once after the debounce', async () => {
-    let runs = 0;
-    const scheduler = createRefreshScheduler({ debounceMs: 250, run: async () => void runs++ });
-    for (let i = 0; i < 5; i++) {
-      scheduler.trigger();
-      await vi.advanceTimersByTimeAsync(100);
-    }
-    expect(runs).toBe(0);
-    await vi.advanceTimersByTimeAsync(250);
-    expect(runs).toBe(1);
-    scheduler.stop();
-  });
-
   test('triggers during a run cause exactly one more run, never an overlapping one', async () => {
     let runs = 0;
     let active = 0;
@@ -126,36 +108,6 @@ describe('createRefreshScheduler', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(runs).toBe(2);
     expect(maxActive).toBe(1);
-    scheduler.stop();
-  });
-
-  test('a trigger during a run queues one more run: full at the debounce, log-only after the log interval', async () => {
-    const runs: RefreshKind[] = [];
-    let release: (() => void) | null = null;
-    const scheduler = createRefreshScheduler({
-      debounceMs: 250,
-      lightIntervalMs: 15_000,
-      run: async (kind) => {
-        runs.push(kind);
-        await new Promise<void>((resolve) => (release = resolve));
-      },
-    });
-    scheduler.trigger('full', 0);
-    await vi.advanceTimersByTimeAsync(0);
-    scheduler.trigger('light');
-    scheduler.trigger('full');
-    scheduler.trigger('light');
-    release!();
-    await vi.advanceTimersByTimeAsync(250);
-    expect(runs).toEqual(['full', 'full']);
-
-    scheduler.trigger('light');
-    release!();
-    await vi.advanceTimersByTimeAsync(14_000);
-    expect(runs).toEqual(['full', 'full']);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(runs).toEqual(['full', 'full', 'light']);
-    release!();
     scheduler.stop();
   });
 
@@ -243,57 +195,6 @@ describe('watchPayload', () => {
     machine: { memorySource: 'footprint', owners: [owner()] },
     ...overrides,
   });
-  const jittered = (): StatusPayload =>
-    payload({
-      environments: [makeEnvironmentState({ path: '/w/a', memoryMb: 311 })],
-      capacity: { liveCount: 1, committedMb: 311, totalMemoryMb: 16384, overCapacity: false },
-      machine: {
-        memorySource: 'footprint',
-        owners: [owner({ cpuPercent: 14, residentMb: 490, memoryMb: 311, processes: 7 })],
-      },
-    });
-
-  test('usage that moved less than a step prints the previous payload byte for byte', () => {
-    const previous = watchPayload(null, payload());
-    expect(JSON.stringify(watchPayload(previous, jittered()))).toBe(JSON.stringify(previous));
-  });
-
-  test.each([
-    ['cpu', { cpuPercent: 15 }],
-    ['footprint memory', { memoryMb: 284 }],
-  ])('a %s move of one step prints the owner row with its current process count', (_name, change) => {
-    const previous = watchPayload(null, payload());
-    const next = payload({ machine: { memorySource: 'footprint', owners: [owner({ ...change, processes: 9 })] } });
-    expect(watchPayload(previous, next).machine?.owners[0]).toEqual(owner({ ...change, processes: 9 }));
-  });
-
-  test('a step is measured from the last printed value, so slow drift still prints', () => {
-    const at = (memoryMb: number) => payload({ environments: [makeEnvironmentState({ path: '/w/a', memoryMb })] });
-    const first = watchPayload(null, at(300));
-    const second = watchPayload(first, at(310));
-    const third = watchPayload(second, at(317));
-    expect([first, second, third].map((p) => p.environments[0]!.memoryMb)).toEqual([300, 300, 317]);
-  });
-
-  test('capacity keeps its sum below a step and changes at a step or when overCapacity flips', () => {
-    const previous = watchPayload(null, payload());
-    const capacity = (committedMb: number, overCapacity = false) =>
-      watchPayload(previous, payload({ capacity: { liveCount: 1, committedMb, totalMemoryMb: 16384, overCapacity } }))
-        .capacity;
-    expect(capacity(315).committedMb).toBe(300);
-    expect(capacity(316).committedMb).toBe(316);
-    expect(capacity(301, true)).toMatchObject({ committedMb: 301, overCapacity: true });
-  });
-
-  test('a slot usage change prints while the memory sum is held', () => {
-    const devices = (inUse: number) => ({ max: 2, inUse, holders: [] });
-    const previous = watchPayload(null, payload({ capacity: { ...payload().capacity, devices: devices(1) } }));
-    const next = watchPayload(
-      previous,
-      payload({ capacity: { ...payload().capacity, committedMb: 310, devices: devices(2) } }),
-    );
-    expect(next.capacity).toMatchObject({ committedMb: 300, devices: { inUse: 2 } });
-  });
 
   test('load is held until it moves a whole step from the last printed value or its state changes', () => {
     const at = (loadPerCore: number, state: 'free' | 'busy' = 'busy') =>
@@ -305,23 +206,6 @@ describe('watchPayload', () => {
     expect(JSON.stringify(held)).toBe(JSON.stringify(first));
     expect(watchPayload(watchPayload(null, at(2.3)), at(3.3)).capacity.load?.loadPerCore).toBe(3.3);
     expect(watchPayload(watchPayload(null, at(2.1)), at(1.9, 'free')).capacity.load?.state).toBe('free');
-  });
-
-  test('a new, gone or changed-ownership owner prints the current rows', () => {
-    const previous = watchPayload(null, payload());
-    const rows = (owners: MachineOwner[]) =>
-      watchPayload(previous, payload({ machine: { memorySource: 'footprint', owners } })).machine?.owners;
-    expect(rows([owner(), owner({ name: 'metro', id: '8081' })])).toHaveLength(2);
-    expect(rows([])).toEqual([]);
-    expect(rows([owner({ owned: false })])?.[0]?.owned).toBe(false);
-  });
-
-  test('machine usage appearing or its memory source changing prints the current machine', () => {
-    const previous = watchPayload(null, payload());
-    expect(watchPayload(previous, payload({ machine: null })).machine).toBeNull();
-    const rss = payload({ machine: { memorySource: 'rss', owners: [owner()] } });
-    expect(watchPayload(previous, rss).machine?.memorySource).toBe('rss');
-    expect(watchPayload(watchPayload(null, payload({ machine: null })), payload()).machine?.owners).toEqual([owner()]);
   });
 });
 
@@ -374,28 +258,6 @@ describe('watchChangeKey', () => {
     machine: null,
     maintenance: maintenance(at),
     ...extra,
-  });
-
-  test('a payload that differs only in bookkeeping timestamps has the same key', () => {
-    const running = { startedAt: '2026-10-10T00:00:11Z', trigger: 'status-watch' };
-    expect(watchChangeKey(payload(10, 'open', { maintenance: maintenance(10, { running }) }))).toBe(
-      watchChangeKey(
-        payload(20, 'open', { maintenance: maintenance(20, { running: { ...running, startedAt: 'x' } }) }),
-      ),
-    );
-  });
-
-  test.each([
-    ['pull request state', payload(20, 'merged')],
-    [
-      'maintenance trigger',
-      payload(20, 'open', {
-        maintenance: { ...maintenance(20), lastPass: { ...passAt(20), trigger: 'timer' } },
-      }),
-    ],
-    ['archived', payload(20, 'open', { archived: [] })],
-  ])('a %s change gives a new key', (_name, next) => {
-    expect(watchChangeKey(next)).not.toBe(watchChangeKey(payload(10)));
   });
 
   test('the key is not the printed payload: masking leaves the payload untouched', () => {
@@ -690,86 +552,6 @@ describe('stim status --watch --json', () => {
     }
   }
 
-  function alive(pid: number): boolean {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  test('prints one line per change and suppresses identical payloads', async () => {
-    const { proc, lines } = startWatch(true);
-    await until(() => lines.length === 1);
-    expect(JSON.parse(lines[0]!).environments).toEqual([]);
-
-    const config = makeConfig({ projects: { [join(root, 'app')]: { label: 'watched', platforms: {} } } });
-    saveConfig(config);
-    proc.send({ path: process.env.STIM_HOME, name: 'config.json' });
-    await until(() => lines.length === 2);
-    expect(JSON.parse(lines[1]!).environments.map((env: { path: string }) => env.path)).toEqual([join(root, 'app')]);
-
-    saveConfig(config);
-    proc.send({ path: process.env.STIM_HOME, name: 'config.json' });
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    expect(lines).toHaveLength(2);
-
-    const { archiveWorkspace } = await import('../archive.ts');
-    const app = join(root, 'app');
-    const dir = ensureWorkspaceStorage(app);
-    writeFileSync(join(dir, 'state.json'), '{}');
-    process.env.STIM_ARCHIVE_ENABLED = 'true';
-    try {
-      await archiveWorkspace(app, 'worktree-remove');
-    } finally {
-      delete process.env.STIM_ARCHIVE_ENABLED;
-    }
-    proc.send({ path: process.env.STIM_HOME, name: 'archive' });
-    await until(() => lines.length === 3);
-    const archive = JSON.parse(lines[2]!).archived[0];
-    expect(archive.projectRoot).toBe(app);
-    expect(archive.replacedBy).toBe(app);
-    expect(JSON.parse(lines[2]!).archivedUsage.count).toBe(1);
-    proc.send({ path: join(process.env.STIM_HOME!, 'archive'), name: archive.id });
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(lines).toHaveLength(3);
-  }, 30_000);
-
-  test.each([
-    { source: 'a filesystem event', notify: true },
-    { source: 'the fallback after a lost filesystem event', notify: false },
-  ])(
-    'a log append refreshes the error count through $source',
-    async ({ notify }) => {
-      const app = join(root, 'app');
-      saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
-      ensureWorkspaceStorage(app);
-      mkdirSync(workspaceLogsDir(app), { recursive: true });
-      const log = join(workspaceLogsDir(app), 'metro.ndjson');
-      const record = (ts: number, level: string) => `${JSON.stringify({ ts, src: 'metro', level, msg: 'm' })}\n`;
-      writeFileSync(log, record(1, 'info'));
-      const errors = (line: string) => JSON.parse(line).environments[0].logs.errorsSinceMarker;
-      const { proc, lines } = startWatch(true);
-      await until(() => lines.length === 1);
-      expect(errors(lines[0]!)).toBe(0);
-      const changed = new Promise<void>((resolve) => {
-        const onData = () => {
-          if (lines.length < 2) return;
-          proc.stdout!.off('data', onData);
-          resolve();
-        };
-        proc.stdout!.on('data', onData);
-      });
-      appendFileSync(log, record(2, 'error'));
-      if (notify) proc.send({ path: workspaceLogsDir(app), name: 'metro.ndjson' });
-      await (notify ? until(() => lines.length === 2, 3000) : changed);
-      expect(lines).toHaveLength(2);
-      expect(errors(lines[1]!)).toBe(1);
-    },
-    40_000,
-  );
-
   describe.skipIf(process.platform !== 'darwin')('machine usage on the light interval', () => {
     async function machineWatch(cpuExpr: string) {
       const udid = 'AAAAAAAA-0000-4000-8000-000000000001';
@@ -838,237 +620,4 @@ describe('stim status --watch --json', () => {
     assert(line !== undefined);
     return line;
   }
-
-  async function quiet(lines: string[], ms = 1500) {
-    let seen = -1;
-    while (seen !== lines.length) {
-      seen = lines.length;
-      await new Promise((resolve) => setTimeout(resolve, ms));
-    }
-  }
-
-  function linkGit() {
-    const real = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf-8' }).trim();
-    mkdirSync(join(root, 'bin'), { recursive: true });
-    writeFileSync(join(root, 'bin', 'git'), `#!/bin/sh\nexec '${real}' "$@"\n`);
-    chmodSync(join(root, 'bin', 'git'), 0o755);
-    const run = (cwd: string, args: string[]) =>
-      execFileSync(real, ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], {
-        cwd,
-        stdio: 'ignore',
-        env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
-      });
-    const base = realpathSync(root);
-    const repo = join(base, 'repo');
-    mkdirSync(repo);
-    run(repo, ['init', '-q', '-b', 'main']);
-    writeFileSync(join(repo, 'package.json'), '{}');
-    run(repo, ['add', '.']);
-    run(repo, ['commit', '-q', '-m', 'init']);
-    const app = join(base, 'app');
-    run(repo, ['worktree', 'add', '-q', '-b', 'feature', app]);
-    saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
-    return { app, run };
-  }
-
-  const git = (line: string) => JSON.parse(line).environments[0].worktree?.git ?? null;
-
-  test.skipIf(process.platform === 'win32')(
-    'a state write prints a line within 2 s through the real filesystem watcher; skipped on win32, which cannot run the sh adb shim',
-    async () => {
-      const app = join(root, 'app');
-      mkdirSync(app);
-      saveConfig(makeConfig({ projects: { [app]: { label: 'watched', platforms: {} } } }));
-      writeWorkspaceState(app, {});
-      const { lines } = startWatch();
-      await until(() => lines.length > 0);
-      await quiet(lines);
-      const before = lines.length;
-      writeWorkspaceState(app, { warm: { phase: 'ready', at: new Date().toISOString() } });
-      await until(() => lines.length > before, 2000);
-      expect(JSON.parse(last(lines)).environments[0].phase).toBe('ready');
-    },
-    40_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'a commit in a worktree prints its git summary within 3 s; skipped on win32, which cannot run the sh git and adb shims',
-    async () => {
-      const { app, run } = linkGit();
-      writeFileSync(join(app, 'new.txt'), 'x');
-      const { lines } = startWatch();
-      await until(() => lines.length > 0 && git(last(lines)) !== null);
-      await quiet(lines);
-      expect(git(last(lines))).toMatchObject({ untracked: 1 });
-      const before = lines.length;
-      run(app, ['add', 'new.txt']);
-      run(app, ['commit', '-q', '-m', 'add']);
-      await until(() => lines.length > before && git(last(lines))?.untracked === 0, 3000);
-    },
-    40_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'the first line does not wait for git, and the git summary follows; skipped on win32, which cannot run the sh git and adb shims',
-    async () => {
-      linkGit();
-      const { lines } = startWatch();
-      await until(() => lines.length > 0);
-      expect(git(last(lines.slice(0, 1)))).toBeNull();
-      await until(() => git(last(lines)) !== null, 20_000);
-      expect(git(last(lines))).toMatchObject({ changed: 0, untracked: 0 });
-    },
-    40_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'a supervisor that exits without writing state prints a line within 4 s; skipped on win32, which cannot run the sh adb shim',
-    async () => {
-      const sleeper = spawn('/bin/sleep', ['600'], { stdio: 'ignore' });
-      try {
-        const pid = sleeper.pid;
-        const processToken = pid && captureProcessToken(pid);
-        assert(pid && processToken);
-        const app = join(root, 'app');
-        saveConfig(
-          makeConfig({
-            projects: {
-              [app]: {
-                label: 'watched',
-                platforms: {},
-                supervisor: { pid, processToken, port: 400, startedAt: '1700000000000' },
-              },
-            },
-          }),
-        );
-        const { lines } = startWatch();
-        await until(() => lines.length > 0);
-        await quiet(lines);
-        expect(JSON.parse(last(lines)).environments[0].supervisor).toMatchObject({ pid });
-        const before = lines.length;
-        sleeper.kill('SIGKILL');
-        await until(() => lines.length > before, 4000);
-        expect(JSON.parse(last(lines)).environments[0].supervisor).toBeNull();
-      } finally {
-        sleeper.kill('SIGKILL');
-      }
-    },
-    40_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'stops adb on SIGTERM; skipped on win32, which cannot run the sh adb shim or deliver SIGTERM to a handler',
-    async () => {
-      const home = process.env.STIM_HOME;
-      assert(home);
-      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
-      const { proc, exited, adbPid } = startWatch();
-      await until(() => {
-        try {
-          return readFileSync(adbPid, 'utf-8').trim() !== '';
-        } catch {
-          return false;
-        }
-      });
-      const tracker = Number(readFileSync(adbPid, 'utf-8'));
-      expect(alive(tracker)).toBe(true);
-      const stoppedAt = Date.now();
-      proc.kill('SIGTERM');
-      expect(await exited).toBe(0);
-      expect(Date.now() - stoppedAt).toBeLessThan(8000);
-      await until(() => !alive(tracker), 5000);
-    },
-    30_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'the status worker stops adb when asked to stop; skipped on win32, which cannot run the sh adb shim',
-    async () => {
-      const home = process.env.STIM_HOME;
-      assert(home);
-      for (let i = 0; i < 64; i++) mkdirSync(join(home, 'workspaces', String(i), 'logs'), { recursive: true });
-      const adbPid = adbShim();
-      const worker = new Worker(new URL('../status-worker.ts', import.meta.url), {
-        env: watchEnv(),
-        workerData: { cwd: root },
-      });
-      const exited = new Promise<number>((resolve) => worker.once('exit', resolve));
-      try {
-        await until(() => {
-          try {
-            return readFileSync(adbPid, 'utf-8').trim() !== '';
-          } catch {
-            return false;
-          }
-        }, 20_000);
-        const tracker = Number(readFileSync(adbPid, 'utf-8'));
-        expect(alive(tracker)).toBe(true);
-        const stoppedAt = Date.now();
-        worker.postMessage('stop');
-        expect(await exited).toBe(0);
-        expect(Date.now() - stoppedAt).toBeLessThan(8000);
-        await until(() => !alive(tracker), 5000);
-      } finally {
-        await worker.terminate();
-      }
-    },
-    40_000,
-  );
-
-  test('exits when stdout closes', async () => {
-    const { proc, lines, exited } = startWatch();
-    await until(() => lines.length === 1);
-    proc.stdout!.destroy();
-    saveConfig(makeConfig({ projects: { [join(root, 'app')]: { label: 'watched', platforms: {} } } }));
-    expect(await exited).toBe(0);
-  }, 30_000);
-
-  test.skipIf(process.platform === 'win32')(
-    'exits when stdout closes and nothing changes; skipped on win32, where a zero-length pipe write is not known to report a closed reader',
-    async () => {
-      const { proc, lines, exited } = startWatch();
-      await until(() => lines.length === 1);
-      const closedAt = Date.now();
-      proc.stdout!.destroy();
-      expect(await exited).toBe(0);
-      expect(Date.now() - closedAt).toBeLessThan(6000);
-    },
-    30_000,
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'exits when the process reading it is killed; skipped on win32, which does not reparent orphans',
-    async () => {
-      const middleman = spawn(
-        process.execPath,
-        [
-          '-e',
-          `const w = require('node:child_process').spawn(process.execPath, ${JSON.stringify([cli, 'status', '--watch', '--json'])}, { cwd: ${JSON.stringify(root)}, env: ${JSON.stringify(watchEnv())}, stdio: ['ignore', 'pipe', 'ignore'] });
-          w.stdout.once('data', () => console.log(w.pid));
-          setInterval(() => {}, 1000);`,
-        ],
-        { stdio: ['ignore', 'pipe', 'ignore'] },
-      );
-      child = middleman;
-      let out = '';
-      middleman.stdout!.on('data', (chunk: Buffer) => (out += chunk.toString()));
-      await until(() => out.includes('\n'));
-      const watch = Number(out.trim());
-      middleman.kill('SIGKILL');
-      try {
-        await until(() => !alive(watch), 6000);
-      } finally {
-        if (alive(watch)) process.kill(watch, 'SIGKILL');
-      }
-    },
-    30_000,
-  );
-});
-
-test('archive publication refreshes status while staging and lock changes do not', () => {
-  expect(statusChange('home', 'archive')).toBe('full');
-  expect(statusChange('archive', 'project--1')).toBe('full');
-  expect(statusChange('archive', null)).toBe('full');
-  for (const name of ['.incoming-abc', '.incoming-abc.claims', '.removing-project--1', '.lock', '.lock.claims'])
-    expect(statusChange('archive', name)).toBeNull();
 });

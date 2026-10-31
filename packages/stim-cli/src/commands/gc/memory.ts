@@ -455,8 +455,7 @@ export function runningBuild(locks: readonly BuildLockInfo[], slots: readonly Bu
   return null;
 }
 
-/** A watchman client's pid resolved to the Stim workspace whose supervisor it is or descends from. */
-export function stimWorkspaceOf(
+function stimWorkspaceOf(
   pid: number,
   parentOf: ReadonlyMap<number, number>,
   supervisors: ReadonlyMap<number, string>,

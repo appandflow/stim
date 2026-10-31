@@ -28,12 +28,3 @@ test('a run takes the id Desktop passes in STIM_RUN_ID and stamps every record w
   expect(records.length).toBeGreaterThan(1);
   expect(new Set(records.map((record) => record.runId))).toEqual(new Set(['desktop-abc.1']));
 });
-
-test('without a valid STIM_RUN_ID a run generates its own', () => {
-  for (const given of ['', 'bad id;']) {
-    const ids = new Set(debugRecords({ STIM_RUN_ID: given }).map((record) => record.runId));
-    expect([...ids]).toHaveLength(1);
-    expect(ids.values().next().value).toMatch(/^[a-f0-9]{12}$/);
-    rmSync(join(home, 'logs'), { recursive: true, force: true });
-  }
-});

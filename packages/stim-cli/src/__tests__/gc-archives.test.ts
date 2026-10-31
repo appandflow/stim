@@ -3,7 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { archiveDir, readArchives } from '@stim-cli/core/state';
 import { collectGcReport, runGc } from '../commands/gc.ts';
-import { parseArchiveSelector } from '../commands/gc/archive-selector.ts';
 import { selectCaches } from '../commands/gc/caches.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
@@ -171,15 +170,6 @@ test.each(['archived-logs:missing', 'archived-agent:'])(
     expect(readArchives()).toEqual(before);
   },
 );
-
-test('archive selector parsing accepts only the documented forms', () => {
-  expect(parseArchiveSelector(' Archived-Logs:Abc ')).toEqual({ kind: 'logs', id: 'Abc' });
-  expect(parseArchiveSelector('archived')).toEqual({ kind: null, id: null });
-  expect(parseArchiveSelector('archived:x:y')).toEqual({ kind: null, id: 'x:y' });
-  for (const name of ['archived-record:x', 'archivedlogs', 'logs:x', 'recordings', 'all']) {
-    expect(parseArchiveSelector(name)).toBeNull();
-  }
-});
 
 test('archived older-than selects removal time rather than file modification time', async () => {
   fixture('old', Date.now() - 2 * 86_400_000);

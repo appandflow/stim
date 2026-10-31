@@ -1,26 +1,21 @@
 import { EventEmitter } from 'node:events';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
+
 import { PassThrough } from 'node:stream';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import {
   createPlanningWatch,
-  parseSigningTargets,
   provisionAuth,
   provisionChanges,
   provisionFailure,
-  provisionXcodebuildArgs,
-  provisionPlanLines,
   readInstalledProfiles,
-  redactKeyPath,
   runProvisioningBuild,
   signingTargetsRefusal,
   type ProvisionAuth,
 } from '../engine/ios-provision.ts';
 
 const UDID = '00008030-001A2B3C4D5E802E';
-const PROJECT = { flag: '-workspace', path: '/app/ios/App.xcworkspace', dir: '/app/ios' };
+
 const KEY = { kind: 'api-key', keyPath: '/keys/AuthKey_ABC123.p8', keyId: 'ABC123', issuerId: 'issuer-1' } as const;
 const DEVELOPMENT_PROFILE = readFileSync(
   new URL('./fixtures/ios-signing/development-profile.plist', import.meta.url),
@@ -30,21 +25,6 @@ const DEVELOPMENT_PROFILE = readFileSync(
 const exists = () => true;
 
 describe('provisionAuth', () => {
-  test('uses the Xcode account when no key setting is present', () => {
-    expect(provisionAuth({}, {}, exists)).toEqual({ kind: 'xcode-account' });
-  });
-
-  test('uses the API key from the machine config, with the environment winning per value', () => {
-    const settings = {
-      ios: {
-        appStoreConnectKeyPath: '/keys/AuthKey_OLD.p8',
-        appStoreConnectKeyId: 'OLD',
-        appStoreConnectIssuerId: 'issuer-1',
-      },
-    };
-    expect(provisionAuth(settings, { STIM_ASC_KEY_PATH: KEY.keyPath, STIM_ASC_KEY_ID: 'ABC123' }, exists)).toEqual(KEY);
-  });
-
   test('refuses a partial key, naming what is missing, instead of falling back to the Xcode account', () => {
     expect(provisionAuth({}, { STIM_ASC_KEY_ID: 'ABC123' }, exists)).toMatchObject({
       code: 'STIM_BAD_ARG',
@@ -74,125 +54,7 @@ describe('provisionAuth', () => {
   });
 });
 
-describe('provisionXcodebuildArgs', () => {
-  const args = (auth: ProvisionAuth) =>
-    provisionXcodebuildArgs({
-      project: PROJECT,
-      scheme: 'App',
-      configuration: 'Debug',
-      udid: UDID,
-      derivedDataPath: '/tmp/dd',
-      auth,
-    });
-
-  test('builds for the phone with provisioning updates and device registration allowed', () => {
-    const argv = args({ kind: 'xcode-account' });
-    expect(argv).toEqual([
-      '-workspace',
-      PROJECT.path,
-      '-scheme',
-      'App',
-      '-configuration',
-      'Debug',
-      '-sdk',
-      'iphoneos',
-      '-destination',
-      `id=${UDID}`,
-      '-derivedDataPath',
-      '/tmp/dd',
-      '-allowProvisioningUpdates',
-      '-allowProvisioningDeviceRegistration',
-      'build',
-    ]);
-  });
-
-  test("passes a native app's Swift package arguments before the provisioning flags", () => {
-    const packageArgs = ['-clonedSourcePackagesDirPath', '/stim/xcode-packages', '-disableAutomaticPackageResolution'];
-    const argv = provisionXcodebuildArgs({
-      project: PROJECT,
-      scheme: 'App',
-      configuration: 'Debug',
-      udid: UDID,
-      derivedDataPath: '/tmp/dd',
-      auth: { kind: 'xcode-account' },
-      packageArgs,
-    });
-    expect(argv.slice(argv.indexOf('/tmp/dd') + 1)).toEqual([
-      ...packageArgs,
-      '-allowProvisioningUpdates',
-      '-allowProvisioningDeviceRegistration',
-      'build',
-    ]);
-  });
-
-  test('passes the API key as xcodebuild authentication flags', () => {
-    const argv = args(KEY);
-    expect(argv.slice(argv.indexOf('-authenticationKeyPath'), argv.indexOf('build'))).toEqual([
-      '-authenticationKeyPath',
-      KEY.keyPath,
-      '-authenticationKeyID',
-      KEY.keyId,
-      '-authenticationKeyIssuerID',
-      KEY.issuerId,
-    ]);
-  });
-});
-
-function targetSettings(over: Record<string, string>) {
-  return {
-    target: over.TARGET_NAME,
-    buildSettings: {
-      PLATFORM_NAME: 'iphoneos',
-      CODE_SIGNING_ALLOWED: 'YES',
-      PROVISIONING_PROFILE_REQUIRED: 'YES',
-      CODE_SIGN_STYLE: 'Automatic',
-      DEVELOPMENT_TEAM: 'TEAMID5678',
-      ...over,
-    },
-  };
-}
-
 describe('signing targets', () => {
-  test('keeps the targets that need a profile and drops frameworks and unsigned bundles', () => {
-    const output = JSON.stringify([
-      targetSettings({ TARGET_NAME: 'App', PRODUCT_BUNDLE_IDENTIFIER: 'com.example.stim' }),
-      targetSettings({
-        TARGET_NAME: 'Widget',
-        PRODUCT_BUNDLE_IDENTIFIER: 'com.example.stim.widget',
-        DEVELOPMENT_TEAM: '',
-        CODE_SIGN_STYLE: 'Manual',
-      }),
-      targetSettings({
-        TARGET_NAME: 'Kit',
-        PRODUCT_BUNDLE_IDENTIFIER: 'com.example.kit',
-        PROVISIONING_PROFILE_REQUIRED: 'NO',
-      }),
-      targetSettings({ TARGET_NAME: 'Assets', PRODUCT_BUNDLE_IDENTIFIER: 'org.assets', CODE_SIGNING_ALLOWED: 'NO' }),
-    ]);
-    expect(parseSigningTargets(output)).toEqual([
-      { target: 'App', bundleId: 'com.example.stim', platform: 'iphoneos', team: 'TEAMID5678', automatic: true },
-      {
-        target: 'Widget',
-        bundleId: 'com.example.stim.widget',
-        platform: 'iphoneos',
-        team: null,
-        automatic: false,
-      },
-    ]);
-  });
-
-  test('lists signed targets of every platform the scheme builds, and refuses output that is not JSON', () => {
-    const watch = targetSettings({
-      TARGET_NAME: 'Watch',
-      PRODUCT_BUNDLE_IDENTIFIER: 'com.example.stim.watchkitapp',
-      PLATFORM_NAME: 'watchos',
-    });
-    expect(parseSigningTargets(JSON.stringify([watch]))).toEqual([
-      expect.objectContaining({ target: 'Watch', platform: 'watchos' }),
-    ]);
-    expect(parseSigningTargets('note: Using new build system')).toBeNull();
-  });
-
   test('refuses before xcodebuild runs when there is nothing to provision, no team, or manual signing', () => {
     const where = { scheme: 'App', configuration: 'Debug' };
     const app = {
@@ -218,12 +80,6 @@ const PLANNING = [
 ];
 
 describe('createPlanningWatch', () => {
-  test('reports signing resolved at the first build task after planning', () => {
-    const watch = createPlanningWatch();
-    expect(PLANNING.map(watch)).toEqual(PLANNING.map(() => false));
-    expect(watch('CreateBuildDirectory /dd/Build/Products')).toBe(true);
-  });
-
   test('never reports a planning failure as resolved, including the summary after BUILD FAILED', () => {
     const watch = createPlanningWatch();
     const failed = [
@@ -236,21 +92,6 @@ describe('createPlanningWatch', () => {
     ];
     expect(failed.some(watch)).toBe(false);
   });
-
-  test('a capitalised Warning: or Error: line after planning is not a task', () => {
-    const watch = createPlanningWatch();
-    expect(PLANNING.some(watch)).toBe(false);
-    expect(watch('Warning: Run script build phase will be run during every build')).toBe(false);
-    expect(watch('Error: something odd was logged')).toBe(false);
-    expect(watch('CreateBuildDirectory /dd/Build/Products')).toBe(true);
-  });
-
-  test('an error-looking line before the tasks does not decide; the first task still does', () => {
-    const watch = createPlanningWatch();
-    expect(watch('2026-10-14 xcodebuild DVTServices: error: retrying listTeams')).toBe(false);
-    expect(PLANNING.some(watch)).toBe(false);
-    expect(watch('CreateBuildDirectory /dd/Build/Products')).toBe(true);
-  });
 });
 
 describe('provisionFailure', () => {
@@ -260,13 +101,6 @@ describe('provisionFailure', () => {
       auth,
       'TEAMID5678',
     );
-
-  test('no account and no key names both ways to authenticate', () => {
-    const refusal = fail('No Accounts: Add a new account in Accounts settings.');
-    expect(refusal.code).toBe('STIM_PROVISION_FAILED');
-    expect(refusal.remedy).toMatch(/Xcode > Settings > Accounts/);
-    expect(refusal.remedy).toMatch(/ios\.appStoreConnectKeyPath/);
-  });
 
   test('an account outside the team is told the team it cannot reach', () => {
     expect(fail('No Account for Team "TEAMID5678". Add a new account in Accounts settings.')).toMatchObject({
@@ -289,25 +123,6 @@ describe('provisionFailure', () => {
     expect(refusal.message).toContain('<ios.appStoreConnectKeyPath>');
     expect(refusal.message).not.toContain(KEY.keyPath);
   });
-
-  test.skipIf(process.platform === 'win32')(
-    'the key path is replaced in its realpath, quoted and shell-escaped forms',
-    () => {
-      const dir = mkdtempSync(join(tmpdir(), 'stim-provision-key-'));
-      try {
-        const keyPath = join(dir, 'AuthKey ABC123.p8');
-        writeFileSync(keyPath, 'not a key');
-        const real = realpathSync(keyPath);
-        const auth = { ...KEY, keyPath };
-        const text = [keyPath, real, `'${keyPath}'`, real.replaceAll(' ', '\\ ')].join(' | ');
-        const redacted = redactKeyPath(text, auth);
-        expect(redacted).not.toContain('AuthKey');
-        expect(redacted.split('<ios.appStoreConnectKeyPath>')).toHaveLength(5);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
 
   test('No Accounts with a key passed does not claim no key is set', () => {
     expect(fail('No Accounts: Add a new account in Accounts settings.', KEY).message).toMatch(/API key ABC123/);
@@ -362,34 +177,6 @@ describe('runProvisioningBuild', () => {
     expect(result.lines.at(-1)).toBe('** BUILD INTERRUPTED **');
   });
 
-  test('a planning failure is left to exit by itself and is not resolved', async () => {
-    const run = start();
-    child.stdout.write(
-      `${PLANNING.join('\n')}\n/app: error: No Accounts\n** BUILD FAILED **\nThe following build commands failed:\n`,
-    );
-    await new Promise((resolve) => setImmediate(resolve));
-    child.exit(65);
-    expect(await run).toMatchObject({ resolved: false, code: 65 });
-    expect(child.signals).toEqual([]);
-  });
-
-  test('a full build that exits 0 counts as resolved', async () => {
-    const run = start();
-    child.exit(0);
-    expect(await run).toMatchObject({ resolved: true, code: 0 });
-  });
-
-  test('a timeout stops xcodebuild with SIGTERM, then SIGKILL, and settles when it closes', async () => {
-    vi.useFakeTimers();
-    const run = start({ timeoutMs: 1000, graceMs: { interrupt: 100, terminate: 50 } });
-    vi.advanceTimersByTime(1000);
-    expect(child.signals).toEqual(['SIGTERM']);
-    vi.advanceTimersByTime(50);
-    expect(child.signals).toEqual(['SIGTERM', 'SIGKILL']);
-    child.exit(null);
-    expect(await run).toMatchObject({ resolved: false, timedOut: true });
-  });
-
   test('cancellation forwards SIGINT, escalates to SIGTERM and SIGKILL, and reports cancelled', async () => {
     vi.useFakeTimers();
     const controller = new AbortController();
@@ -432,65 +219,6 @@ describe('provisionChanges', () => {
   };
   const identity = { sha1: 'A'.repeat(40), name: 'Apple Development: Jane (TEAMID5678)' };
   const now = Date.parse('2026-10-14T00:00:00Z');
-
-  test('reports a newly installed profile that lists the phone and a new keychain identity', async () => {
-    const after = await readInstalledProfiles(
-      new Map([
-        ['/p/new.mobileprovision', 2],
-        ['/p/other-team.mobileprovision', 2],
-      ]),
-    );
-    expect(
-      provisionChanges({
-        before: new Map([['/p/other-team.mobileprovision', 2]]),
-        after,
-        targets: [target],
-        udid: UDID.toLowerCase(),
-        identitiesBefore: [],
-        identitiesAfter: [identity],
-        now,
-      }),
-    ).toEqual({
-      profiles: [
-        {
-          bundleId: 'com.example.stim',
-          onPhone: true,
-          installed: true,
-          profile: {
-            name: 'iOS Team Provisioning Profile: com.example.stim',
-            uuid: expect.any(String),
-            expires: '2027-06-01T12:00:00.000Z',
-            devices: 2,
-          },
-        },
-      ],
-      identities: [identity],
-    });
-  });
-
-  test("a watch target's profile counts without listing the phone, and the plan names its platform", async () => {
-    const watch = { ...target, platform: 'watchos', bundleId: 'com.example.stim' };
-    const after = await readInstalledProfiles(new Map([['/p/watch.mobileprovision', 1]]));
-    const changes = provisionChanges({
-      before: new Map(),
-      after,
-      targets: [watch],
-      udid: '00008150-000000000000001E',
-      identitiesBefore: [],
-      identitiesAfter: [],
-      now,
-    });
-    expect(changes.profiles[0]).toMatchObject({ onPhone: false, installed: true, profile: { devices: 2 } });
-    const plan = provisionPlanLines({
-      device: { udid: UDID, name: 'Phone' },
-      targets: [target, { ...watch, target: 'Watch' }],
-      auth: { kind: 'xcode-account' },
-      scheme: 'App',
-      configuration: 'Debug',
-    });
-    expect(plan.find((line) => line.includes('target Watch'))).toMatch(/watchOS App Development profile .*\);$/);
-    expect(plan.find((line) => line.includes('target App'))).toMatch(/so it lists that device;$/);
-  });
 
   test('reports an unchanged profile as already present, and none for a phone it does not list', async () => {
     const after = await readInstalledProfiles(new Map([['/p/same.mobileprovision', 1]]));

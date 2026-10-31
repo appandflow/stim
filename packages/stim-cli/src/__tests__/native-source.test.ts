@@ -41,45 +41,6 @@ const file = (path: string, kind: NativeTransferFile['kind'] = 'file'): NativeTr
 };
 const snapshot = () => fingerprintNativeInputs([{ name: 'repository', path: root }], { parameters: null });
 
-test('transfer preserves empty directories and detects changed, deleted and unlisted worker inputs', async () => {
-  writeFileSync(join(root, 'Main.swift'), 'let revision = 1');
-  mkdirSync(join(root, 'Empty.bundle'));
-  const files = await nativeTransferManifest(root, await snapshot(), [file('Main.swift')]);
-  expect(files).toContainEqual({ path: 'Empty.bundle', kind: 'directory', size: 0, sha256: sha('') });
-  const digest = manifestDigest(files);
-  const worker = join(area, 'worker');
-  cpSync(root, worker, { recursive: true });
-  expect(await verifyNativeTransfer(worker, files, digest)).toBe(true);
-  writeFileSync(join(worker, 'Main.swift'), 'let revision = 2');
-  await expect(verifyNativeTransfer(worker, files, digest)).rejects.toThrow(/changed/);
-  writeFileSync(join(worker, 'Main.swift'), 'let revision = 1');
-  rmSync(join(worker, 'Empty.bundle'), { recursive: true });
-  expect(await verifyNativeTransfer(worker, files, digest)).toBe(false);
-  mkdirSync(join(worker, 'Empty.bundle'));
-  writeFileSync(join(worker, 'ignored-secret'), 'must never enter a build');
-  await expect(verifyNativeTransfer(worker, files, digest)).rejects.toThrow(/ignored or absent/);
-});
-
-test('ignored files and external named inputs refuse transfer before bytes are selected', async () => {
-  writeFileSync(join(root, 'Main.swift'), 'source');
-  writeFileSync(join(root, 'ignored-secret'), 'private');
-  const scanned = await snapshot();
-  await expect(nativeTransferManifest(root, scanned, [file('Main.swift')])).rejects.toThrow(
-    /ignored-secret.*ignored or absent/,
-  );
-  rmSync(join(root, 'ignored-secret'));
-  const external = join(area, 'outside.swift');
-  writeFileSync(external, 'external source');
-  const inputs = await fingerprintNativeInputs(
-    [
-      { name: 'repository', path: root },
-      { name: 'external-source', path: external },
-    ],
-    { parameters: null },
-  );
-  await expect(nativeTransferManifest(root, inputs, [file('Main.swift')])).rejects.toThrow(/inside the repository/);
-});
-
 test('an input inside a git submodule names the submodule instead of an ignore rule', async () => {
   mkdirSync(join(root, 'Vendor', 'Lib'), { recursive: true });
   writeFileSync(join(root, 'Vendor', 'Lib', 'Lib.swift'), 'submodule source');

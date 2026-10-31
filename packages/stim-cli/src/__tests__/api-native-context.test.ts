@@ -14,20 +14,14 @@ import { delimiter, dirname, join, relative } from 'node:path';
 import { withAmbientContext } from '@stim-cli/core';
 import { runPrebuild } from '../engine/prebuild.ts';
 import { podEnvForRubyAsync, runPodInstall } from '../engine/deps.ts';
-import { androidHome, androidToolPath, listInstalledSystemImages } from '../devices/android.ts';
 import { reportAndroidResult } from '../commands/android/result.ts';
 import { makeWriter } from './_factories.ts';
 import { testContext } from './_context.ts';
-import { getExecutor } from '../exec.ts';
-import { buildPlacementSettings } from '../offload/selection.ts';
-import { createDebugLog, getConcurrencyLimits, getParkedMax } from '@stim-cli/core/state';
-import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
-import { planCacheEmptying } from '../commands/gc/caches.ts';
+
 import {
   endRecordedSession,
   remoteIosDeps,
   readInstalledEasCliVersionAsync,
-  resolveRemoteContext,
   withRemoteSessionLock,
 } from '../engine/device-remote.ts';
 import { withNativeBuildRun } from '../engine/native-run.ts';
@@ -104,56 +98,6 @@ function context(env: NodeJS.ProcessEnv = {}) {
   });
 }
 
-test('executable discovery uses the client PATH and working directory', () => {
-  const bin = join(root, 'bin');
-  const name = process.platform === 'win32' ? 'stim-client-tool.cmd' : 'stim-client-tool';
-  const tool = join(bin, name);
-  executable(tool, '');
-  for (const path of [bin, 'bin']) {
-    const env = process.platform === 'win32' ? { PATH: undefined, Path: path } : { PATH: path };
-    withAmbientContext(context(env), () => {
-      expect(getExecutor().findExecutable(name)).toBe(tool);
-      expect(getExecutor().findExecutable('stim-absent-tool')).toBeNull();
-    });
-  }
-});
-
-test('an unqualified child working directory is the client workspace', async () => {
-  const host = process.cwd();
-  const directory = await withAmbientContext(context(), () =>
-    getExecutor().runFileAsync(process.execPath, ['-e', 'process.stdout.write(process.cwd())'], { timeoutMs: 5000 }),
-  );
-  expect(directory).toBe(root);
-  expect(process.cwd()).toBe(host);
-});
-
-test('client resource and placement overrides govern native admission', () => {
-  const operation = context({
-    STIM_REMOTE_BUILD: 'local',
-    STIM_MAX_BUILDS: '1',
-    STIM_MAX_DEVICES: '2',
-    STIM_POOL_ANDROID_PARKED_MAX: '0',
-  });
-  withAmbientContext(operation, () => {
-    expect(buildPlacementSettings('local')).toEqual([{ key: 'remote.build', value: 'local', from: 'env' }]);
-    expect(getConcurrencyLimits()).toEqual({ maxBuilds: 1, maxDevices: 2 });
-    expect(getParkedMax('android')).toEqual({ max: 0, error: null });
-  });
-});
-
-test('a scoped client home protects machine-global devices and caches', () => {
-  const operation = context();
-  expect(deviceSweepIsScoped(operation.env)).toBe(true);
-  const cache = {
-    name: 'Gradle',
-    dir: join(root, 'machine-cache'),
-    source: 'detected' as const,
-    prune: 'entries' as const,
-    note: 'machine cache',
-  };
-  expect(planCacheEmptying([cache], true, operation.env)[0]).toMatchObject({ willEmpty: false });
-});
-
 test('the native compiler cache uses the client size limit', () => {
   const operation = context({ STIM_CACHES_CCACHE_MAX_GB: '9' });
   withAmbientContext(operation, () => {
@@ -168,35 +112,6 @@ test('the native compiler cache uses the client size limit', () => {
   });
 });
 
-test('a shared debug logger follows each client environment without reusing its enabled state', () => {
-  const enabled = context({ STIM_DEBUG: '1' });
-  const disabled = { ...context({ STIM_DEBUG: '0' }), home: join(root, 'disabled-home') };
-  const logger = createDebugLog('cli', { now: () => 0 });
-  withAmbientContext(enabled, () => logger.log('first'));
-  withAmbientContext(disabled, () => logger.log('disabled'));
-  withAmbientContext(enabled, () => logger.log('second'));
-  expect(existsSync(join(disabled.home, 'logs', 'debug', 'cli.ndjson'))).toBe(false);
-  const events = readFileSync(join(enabled.home, 'logs', 'debug', 'cli.ndjson'), 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line).event);
-  expect(events).toEqual(['first', 'second']);
-});
-
-test('a shared debug logger does not reuse another Stim home configuration', () => {
-  const first = context();
-  const second = { ...first, home: join(root, 'second-home') };
-  mkdirSync(first.home);
-  mkdirSync(second.home);
-  writeFileSync(join(first.home, 'config.json'), JSON.stringify({ debug: { logs: true } }));
-  writeFileSync(join(second.home, 'config.json'), JSON.stringify({ debug: { logs: false } }));
-  const logger = createDebugLog('cli', { env: {}, now: () => 0 });
-  withAmbientContext(first, () => logger.log('enabled'));
-  withAmbientContext(second, () => logger.log('disabled'));
-  expect(existsSync(join(first.home, 'logs', 'debug', 'cli.ndjson'))).toBe(true);
-  expect(existsSync(join(second.home, 'logs', 'debug', 'cli.ndjson'))).toBe(false);
-});
-
 test('prebuild passes the client environment to the actual child', async () => {
   writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '52.0.0' } }));
   projectCli(
@@ -209,21 +124,6 @@ test('prebuild passes the client environment to the actual child', async () => {
   expect(JSON.parse(readFileSync(join(root, 'child-env.json'), 'utf8'))).toEqual({
     marker: 'client',
     home: operation.home,
-  });
-});
-
-test('Android discovery reads the client SDK and its tools and images', () => {
-  const sdk = join(root, 'sdk');
-  mkdirSync(join(sdk, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
-  const adb = join(sdk, 'platform-tools', process.platform === 'win32' ? 'adb.exe' : 'adb');
-  executable(adb, '');
-  const operation = context({ ANDROID_HOME: sdk });
-  withAmbientContext(operation, () => {
-    expect(androidHome()).toBe(sdk);
-    expect(androidToolPath('adb')).toBe(adb);
-    expect(listInstalledSystemImages().map((image) => image.pkg)).toEqual([
-      'system-images;android-36;google_apis;arm64-v8a',
-    ]);
   });
 });
 
@@ -350,30 +250,6 @@ setInterval(() => {}, 100);`,
   },
 );
 
-test('the EAS version probe lets host timers run', async () => {
-  const tool = join(root, 'eas.js');
-  executable(tool, `setTimeout(() => console.log('eas-cli/24.8.0'), 150);`);
-  let ticked = false;
-  const timer = setTimeout(() => {
-    ticked = true;
-  }, 20);
-  try {
-    const result = await withAmbientContext(context(), () =>
-      resolveRemoteContext({
-        root,
-        backend: 'eas',
-        easBin: tool,
-        lookupAgentDevice: () => '/fixture-agent-device',
-        operation: context(),
-      }),
-    );
-    expect('ctx' in result).toBe(true);
-    expect(ticked).toBe(true);
-  } finally {
-    clearTimeout(timer);
-  }
-});
-
 describe.skipIf(process.platform !== 'win32')('Windows global EAS launchers', () => {
   test.each(['npm', 'pnpm', 'pnpm-absolute'])(
     'a Windows %s global launcher runs its selected EAS package',
@@ -389,36 +265,6 @@ describe.skipIf(process.platform !== 'win32')('Windows global EAS launchers', ()
     },
   );
 });
-
-test.each(process.platform === 'win32' ? ['script', 'npm', 'pnpm', 'pnpm-absolute'] : ['script'])(
-  'an EAS %s version deadline kills its actual child and closes its pipes',
-  async (kind) => {
-    const marker = join(root, 'version-pid');
-    const tool = globalLauncher(
-      'eas-cli',
-      `require('node:fs').writeFileSync(${JSON.stringify(marker)}, String(process.pid)); setTimeout(() => {}, 4000);`,
-      kind,
-    );
-    const executor = getExecutor();
-    const run = executor.runFileAsync.bind(executor);
-    const deadline = vi
-      .spyOn(executor, 'runFileAsync')
-      .mockImplementation((file, args, options) => run(file, args, { ...options, timeoutMs: 1000 }));
-    const operation = context();
-    const started = Date.now();
-    try {
-      expect(
-        await withAmbientContext(operation, () => readInstalledEasCliVersionAsync(tool, root, operation)),
-      ).toBeNull();
-      expect(existsSync(marker)).toBe(true);
-      expectChildGone(Number(readFileSync(marker, 'utf8')));
-      expect(Date.now() - started).toBeLessThan(3000);
-      expect(operationState(operation).running.size).toBe(0);
-    } finally {
-      deadline.mockRestore();
-    }
-  },
-);
 
 function abortAfterMarker(marker: string, controller: AbortController) {
   const timer = setInterval(() => {

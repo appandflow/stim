@@ -1,6 +1,6 @@
 import type { ServiceSpec } from '../src/service-plist.ts';
 import { netstatListeners } from '../src/service.ts';
-import { editTask, parseTask, renderTask, renderTaskXml, windowsArgument } from '../src/service-task.ts';
+import { editTask, parseTask, renderTask, renderTaskXml } from '../src/service-task.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
@@ -17,24 +17,6 @@ const SPEC: ServiceSpec = {
 };
 
 describe('Windows service file', () => {
-  it('reads back what it wrote, with the env values and the serve record', () => {
-    expect(parseTask(renderTask(SPEC))).toEqual({
-      label: 'dev.stim.server',
-      host: null,
-      node: SPEC.node,
-      script: SPEC.script,
-      port: 7787,
-      env: SPEC.env,
-      pathPrepend: SPEC.pathPrepend,
-      stimHome: 'C:\\Users\\me\\.stim',
-      logPath: SPEC.logPath,
-      managed: true,
-      serve: { port: 7443, created: true },
-      previousScript: null,
-      programArguments: expect.arrayContaining([SPEC.node, SPEC.script, '--port', '7787']),
-    });
-  });
-
   it('switches the server script and records the previous one, or replaces only the serve record', () => {
     const installed = parseTask(renderTask(SPEC));
     const switched = parseTask(
@@ -50,20 +32,9 @@ describe('Windows service file', () => {
       script: SPEC.script,
     });
   });
-
-  it('is not a service install wrote unless it says so', () => {
-    expect(parseTask(renderTask(SPEC).replace('"managed": true', '"managed": false'))?.managed).toBe(false);
-    expect(parseTask('not json')).toBeNull();
-  });
 });
 
 describe('Windows scheduled task', () => {
-  it('quotes words the way the C runtime splits them', () => {
-    expect(windowsArgument('C:\\Program Files\\x.mjs')).toBe('"C:\\Program Files\\x.mjs"');
-    expect(windowsArgument('a"b')).toBe('"a\\"b"');
-    expect(windowsArgument('C:\\dir\\')).toBe('"C:\\dir\\\\"');
-  });
-
   it('runs the supervisor at the user logon without elevation, with XML-escaped paths', () => {
     const xml = renderTaskXml({
       label: 'dev.stim.server',

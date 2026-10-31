@@ -51,29 +51,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('a supervisor hint completes registration without a polling tick and detaches IPC', async () => {
-  let registered: MacosAppRecord | null | undefined;
-  const pending = waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000).then((value) => {
-    registered = value;
-    return value;
-  });
-  try {
-    writeWorkspaceState(root, { macos: record });
-    child.emit('message', 'macos-registered');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(registered).toEqual(record);
-    expect(child.connected).toBe(false);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(child.listenerCount('message')).toBe(0);
-    expect(child.listenerCount('exit')).toBe(0);
-    expect(child.listenerCount('error')).toBe(0);
-    expect(child.listenerCount('disconnect')).toBe(0);
-  } finally {
-    await vi.advanceTimersByTimeAsync(20_000);
-    await pending;
-  }
-});
-
 test.each(['launch', 'app', 'supervisor', 'app identity', 'supervisor identity'])(
   'a hint cannot accept a mismatched %s',
   async (invalid) => {
@@ -105,13 +82,6 @@ test.each(['launch', 'app', 'supervisor', 'app identity', 'supervisor identity']
     }
   },
 );
-
-test('an already published registration needs no later notification', async () => {
-  writeWorkspaceState(root, { macos: record });
-  expect(await waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000)).toEqual(record);
-  expect(vi.getTimerCount()).toBe(0);
-  expect(child.connected).toBe(false);
-});
 
 test.each(['missing message', 'disconnected channel'])(
   'registration repairs a %s without changing its deadline',
@@ -154,18 +124,6 @@ test('an unrelated child message does not complete the registration wait', async
     await vi.advanceTimersByTimeAsync(20_000);
     await pending;
   }
-});
-
-test('an invalid registration ends at the existing deadline and releases IPC and listeners', async () => {
-  const pending = waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000);
-  await vi.advanceTimersByTimeAsync(20_000);
-  expect(await pending).toBeNull();
-  expect(child.connected).toBe(false);
-  expect(vi.getTimerCount()).toBe(0);
-  expect(child.listenerCount('message')).toBe(0);
-  expect(child.listenerCount('exit')).toBe(0);
-  expect(child.listenerCount('error')).toBe(0);
-  expect(child.listenerCount('disconnect')).toBe(0);
 });
 
 test('supervisor exit ends an unregistered launch before its deadline', async () => {

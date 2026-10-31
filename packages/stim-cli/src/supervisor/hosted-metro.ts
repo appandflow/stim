@@ -18,7 +18,7 @@ import { openAgentRelay } from './agent-relay.ts';
 import { openMetroLinks, type MetroLinkPool } from './metro-links.ts';
 import { watchWorkspaceState } from '../workspace/workspace-state-watch.ts';
 
-export function reconcileHostedMetro(
+function reconcileHostedMetro(
   requests: Record<string, HostedMetroRequest>,
   active: Record<string, HostedMetroRequest>,
 ): { close: string[]; open: string[] } {

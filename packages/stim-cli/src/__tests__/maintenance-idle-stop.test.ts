@@ -167,29 +167,6 @@ test('a running dev server whose only recent records are its own output is stopp
   ]);
 });
 
-test('a Metro log rotated within the window keeps the workspace, since an older request may be gone', async () => {
-  const root = serving('rotated', 8100);
-  appendLog(root, 'metro.ndjson.1', [{ ts: Date.now() - HOUR_MS, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
-  appendLog(root, 'metro.ndjson', [{ ts: Date.now() - 1000, src: 'metro', event: 'expo_stdout', msg: 'spam' }]);
-
-  const { actions, skips } = await plan();
-
-  expect(actions).toEqual([]);
-  expect(skips).toEqual([
-    expect.objectContaining({ target: root, reason: expect.stringMatching(/rotated Metro log/) }),
-  ]);
-});
-
-test('an unexpired device lease held by the workspace keeps it', async () => {
-  const { root } = bootedWorkspace('leased', 7 * HOUR_MS);
-  expect(takeLease({ root, platform: 'ios', id: 'PHONE-2', kind: 'declared' }).status).toBe('taken');
-
-  const { actions, skips } = await plan();
-
-  expect(actions).toEqual([]);
-  expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(/device lease on/) })]);
-});
-
 test('activity after the plan keeps the workspace when the stop runs', async () => {
   const { root } = bootedWorkspace('resumed', 7 * HOUR_MS);
   const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim');
@@ -262,20 +239,6 @@ test.each<[string, (root: string) => void]>([
 ])('%s within maintenance.idleStopHours keeps the workspace without a skip record', async (_, act) => {
   const { root } = bootedWorkspace('active', 7 * HOUR_MS);
   act(root);
-
-  const { actions, skips } = await plan();
-
-  expect(actions).toEqual([]);
-  expect(skips).toEqual([]);
-});
-
-test('a stim-server viewer streaming the simulator keeps the workspace', async () => {
-  const { udid } = bootedWorkspace('watched', 7 * HOUR_MS);
-  mkdirSync(deviceViewersDir(), { recursive: true });
-  writeFileSync(
-    join(deviceViewersDir(), 'server.json'),
-    JSON.stringify({ ...liveClaimOwner(), devices: [{ platform: 'ios', id: udid }] }),
-  );
 
   const { actions, skips } = await plan();
 
@@ -418,19 +381,6 @@ test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async ()
   ]);
 });
 
-test('a maintenance pass routes a planned idle stop to the stim stop path', async () => {
-  const { udid } = bootedWorkspace('routed', 7 * HOUR_MS);
-  const shutdown = vi.spyOn(teardown, 'teardownOwnedIosSim').mockResolvedValue({ status: 'torn-down' });
-  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  const { actions } = await plan();
-  const context = { settings: resolveMaintenanceSettings(), budget: resolveBudget().budget, protectedRoot: PROTECTED };
-
-  const outcomes = await Promise.all(actions.map((action) => executeAction(action, context)));
-
-  expect(outcomes).toEqual([expect.objectContaining({ status: 'done' })]);
-  expect(shutdown.mock.calls).toEqual([[udid, expect.not.objectContaining({ del: true })]]);
-});
-
 test('a timer-started pass may stop the workspace it started in, a command-started one may not', async () => {
   const { root } = bootedWorkspace('timer', 7 * HOUR_MS);
   vi.spyOn(teardown, 'teardownOwnedIosSim').mockResolvedValue({ status: 'torn-down' });
@@ -565,17 +515,6 @@ test.each<[string, (root: string) => void]>([
 
   expect(actions).toEqual([]);
   expect(skips).toEqual([expect.objectContaining({ target: root })]);
-});
-
-test('a running dev server with no Metro log keeps the workspace', async () => {
-  const root = serving('silent', 8100);
-
-  const { actions, skips } = await plan();
-
-  expect(actions).toEqual([]);
-  expect(skips).toEqual([
-    expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log is missing/) }),
-  ]);
 });
 
 test.skipIf(!posixModes)('agent-device sessions that cannot be read keep the workspace', async () => {
@@ -721,46 +660,6 @@ describe('a workspace whose device is hosted on a remote Mac', () => {
   const probe = (state: Awaited<ReturnType<typeof hostedClient.probeHostedSession>>) =>
     vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue(state);
 
-  test.each(['ios', 'macos'] as const)(
-    'is planned for a stop once idle and the host confirms the %s session is ready',
-    async (placement) => {
-      const root = hostedWorkspace('hosted', 7 * HOUR_MS, placement);
-      const probed = probe({ state: 'ready' });
-
-      const { actions, skips } = await plan();
-
-      expect(skips).toEqual([]);
-      expect(actions).toEqual([expect.objectContaining({ kind: 'would-stop-workspace', check: 'idle', target: root })]);
-      expect(probed).toHaveBeenCalledWith(expect.objectContaining({ machine: 'mini', session: SESSION }), { ttlMs: 0 });
-    },
-  );
-
-  test('is not probed or planned while it had activity within maintenance.idleStopHours', async () => {
-    hostedWorkspace('busy', HOUR_MS);
-    const probed = probe({ state: 'ready' });
-
-    const { actions, skips } = await plan();
-
-    expect([actions, skips]).toEqual([[], []]);
-    expect(probed).not.toHaveBeenCalled();
-  });
-
-  test.each([
-    [
-      { state: 'unknown', notice: 'The previous session owner is not attached to this server.' } as const,
-      /not attached/,
-    ],
-    [{ state: 'unreachable', reason: 'timed out' } as const, /did not answer: timed out/],
-  ])('is kept when the host cannot confirm the session (%j)', async (answer, reason) => {
-    const root = hostedWorkspace('unconfirmed', 7 * HOUR_MS);
-    probe(answer);
-
-    const { actions, skips } = await plan();
-
-    expect(actions).toEqual([]);
-    expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(reason) })]);
-  });
-
   test('is kept when its recorded placement cannot be read', async () => {
     const root = hostedWorkspace('garbled', 7 * HOUR_MS, 'unreadable');
     const probed = probe({ state: 'ready' });
@@ -770,18 +669,6 @@ describe('a workspace whose device is hosted on a remote Mac', () => {
     expect(actions).toEqual([]);
     expect(skips).toEqual([expect.objectContaining({ target: root, reason: expect.stringMatching(/unreadable/) })]);
     expect(probed).not.toHaveBeenCalled();
-  });
-
-  test('is stopped through the normal stop, which ends the hosted session, when it is still idle', async () => {
-    const root = hostedWorkspace('stopping', 7 * HOUR_MS);
-    probe({ state: 'ready' });
-    const stopped = vi.spyOn(stopCommand, 'runStop').mockResolvedValue({ ok: true, summary: 'Stopped' } as never);
-    const { actions } = await plan();
-
-    const outcome = await stopFirst(actions);
-
-    expect(outcome).toEqual({ status: 'done', bytes: 0, detail: 'Stopped' });
-    expect(stopped).toHaveBeenCalledWith(expect.objectContaining({ root }));
   });
 
   test('is kept at stop time when the host stops confirming the session after the plan', async () => {

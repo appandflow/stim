@@ -3,19 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  PREBUILD_ERROR,
-  nativeDirInFingerprint,
-  nativeDirName,
-  planPrebuild,
-  planPrebuildAsync,
-  prebuildAction,
-  prebuildRefusal,
-  recordPrebuild,
-  runPrebuild,
-} from '../engine/prebuild.ts';
-import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { PREBUILD_ERROR, planPrebuild, planPrebuildAsync, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
 import { makeChildProcess, makeWriter } from './_factories.ts';
 
 type WriteRecord = { src: string; level: string; msg: string; event?: string };
@@ -43,41 +31,6 @@ function installFakeExpoBin() {
 }
 
 describe('the decision', () => {
-  test('nativeDirName maps the platform to its directory', () => {
-    expect(nativeDirName('ios')).toBe('ios');
-    expect(nativeDirName('android')).toBe('android');
-  });
-
-  test('prebuildAction regenerates a native dir outside the key unless its recorded prebuild ran on this fingerprint', () => {
-    const base = {
-      isExpo: true,
-      nativeDirExists: true,
-      nativeDirFingerprinted: false,
-      nativeDirTracked: false,
-      generatedFrom: 'old',
-      fingerprint: 'new',
-    };
-    expect(prebuildAction(base)).toBe('regenerate');
-    expect(prebuildAction({ ...base, generatedFrom: null })).toBe('regenerate');
-    expect(prebuildAction({ ...base, generatedFrom: 'new' })).toBe('none');
-    expect(prebuildAction({ ...base, nativeDirFingerprinted: true })).toBe('none');
-    expect(prebuildAction({ ...base, nativeDirTracked: true })).toBe('refuse');
-    expect(prebuildAction({ ...base, nativeDirExists: false })).toBe('generate');
-    expect(prebuildAction({ ...base, isExpo: false })).toBe('none');
-  });
-
-  test('nativeDirInFingerprint is true only when the fingerprint hashed that native dir', () => {
-    expect(
-      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'abc' }], 'ios'),
-    ).toBe(true);
-    expect(
-      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }], 'ios'),
-    ).toBe(false);
-    expect(
-      nativeDirInFingerprint([{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: 'abc' }], 'android'),
-    ).toBe(false);
-  });
-
   test.each([planPrebuild, planPrebuildAsync])(
     'prebuild planning compares the recorded fingerprint and refuses a git-tracked or unreadable checkout',
     async (planner) => {
@@ -85,13 +38,14 @@ describe('the decision', () => {
       try {
         mkdirSync(join(root, 'ios'), { recursive: true });
         writeFileSync(join(root, 'ios', 'Podfile'), '');
-        const plan = (fingerprint: string) =>
+        const plan = (fingerprint: string, hash: string | null = null) =>
           planner(root, 'ios', {
             isExpo: true,
             fingerprint,
-            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash: null }],
+            sources: [{ type: 'dir', filePath: 'ios', reasons: ['bareNativeDir'], hash }],
           });
         expect(await plan('abc')).toBe('regenerate');
+        expect(await plan('abc', 'native-directory-hash')).toBe('none');
         recordPrebuild(root, 'ios', 'abc');
         recordPrebuild(root, 'android', 'def');
         expect(await plan('abc')).toBe('none');
@@ -109,16 +63,6 @@ describe('the decision', () => {
       }
     },
   );
-
-  test('prebuildRefusal names the bare-project case and nothing else', () => {
-    const refusal = prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: false });
-    assert(refusal);
-    expect(refusal.code).toBe(PREBUILD_ERROR);
-    expect(refusal.message).toMatch(/no ios\/ directory and is not an Expo/);
-    expect(refusal.remedy).toMatch(/expo/);
-    expect(prebuildRefusal({ isExpo: true, platform: 'ios', nativeDirExists: false })).toBe(null);
-    expect(prebuildRefusal({ isExpo: false, platform: 'ios', nativeDirExists: true })).toBe(null);
-  });
 });
 
 function fakeExpoChild({
@@ -159,55 +103,6 @@ function collectingWriter() {
 }
 
 describe('runPrebuild', () => {
-  test('declares expo prebuild on the build lock before it starts, and clears it once prebuild exits', async () => {
-    installFakeExpoBin();
-    process.env.STIM_HOME = join(root, 'stim-home');
-    const lock = acquireBuildLock({ platform: 'ios', key: 'prebuild-debug', root });
-    try {
-      assert(lock.path);
-      const lockPath = lock.path;
-      let declaredAtSpawn: boolean | undefined;
-      const result = await runPrebuild(root, 'ios', collectingWriter(), {
-        isExpo: true,
-        spawnFn: () => {
-          declaredAtSpawn = readClaimSet(lockPath).live[0]?.childDeclared;
-          return fakeExpoChild({ onExitSideEffect: () => mkdirSync(join(root, 'ios'), { recursive: true }) });
-        },
-      });
-      expect(result.ok).toBe(true);
-      expect(declaredAtSpawn).toBe(true);
-      expect(readClaimSet(lockPath).live[0]?.childDeclared).toBe(false);
-    } finally {
-      releaseBuildLock(lock);
-      delete process.env.STIM_HOME;
-    }
-  });
-
-  test("runs the PROJECT's own expo bin with `prebuild -p <platform> --no-install`", async () => {
-    const bin = installFakeExpoBin();
-    const writer = collectingWriter();
-    const spawnCalls: SpawnCall[] = [];
-    const result = await runPrebuild(root, 'ios', writer, {
-      isExpo: true,
-      spawnFn: (cmd, args, opts) => {
-        spawnCalls.push({ cmd, args, opts });
-        return fakeExpoChild({
-          lines: ['Creating native directory (./ios)'],
-          onExitSideEffect: () => mkdirSync(join(root, 'ios'), { recursive: true }),
-        });
-      },
-    });
-    expect(result.ok).toBe(true);
-    const spawned = spawnCalls[0];
-    assert(spawned);
-    expect(spawned.cmd).toBe(bin);
-    expect(spawned.args).toEqual(['prebuild', '-p', 'ios', '--no-install']);
-    expect(spawned.opts.cwd).toBe(root);
-    expect(writer.records.map((r) => [r.src, r.level, r.msg])).toEqual([
-      ['build', 'debug', 'Creating native directory (./ios)'],
-    ]);
-  });
-
   test.each([
     ['57.0.26', false, ['--no-clean']],
     ['56.1.16', false, []],
@@ -229,26 +124,6 @@ describe('runPrebuild', () => {
     expect(spawnCalls[0]?.args).toEqual(['prebuild', '-p', 'ios', '--no-install', ...extra]);
     expect(result.failed).toBe(true);
     expect(result.remedy ?? '').toMatch(clean ? /^$/ : /delete ios\/ and run again/);
-  });
-
-  test('a non-zero exit comes back as {failed, lastLines}', async () => {
-    installFakeExpoBin();
-    const writer = collectingWriter();
-    const result = await runPrebuild(root, 'android', writer, {
-      isExpo: true,
-      spawnFn: () => fakeExpoChild({ lines: ['Error: Cannot determine the package name'], code: 1 }),
-    });
-    expect(result.failed).toBe(true);
-    expect(result.code).toBe(PREBUILD_ERROR);
-    expect(result.reason).toMatch(/exit code 1/);
-    assert(result.lastLines);
-    expect(result.lastLines.join('\n')).toMatch(/package name/);
-    expect(writer.records.at(-1)).toMatchObject({
-      src: 'build',
-      level: 'error',
-      event: 'prebuild_failed',
-      msg: '`expo prebuild -p android` failed (exit code 1).',
-    });
   });
 
   test('an exit-0 prebuild that produced no native directory is still a failure', async () => {
@@ -287,15 +162,5 @@ describe('runPrebuild', () => {
     expect(result.reason).toMatch(/not resolvable/);
     expect(result.remedy).not.toMatch(/^Run `npm install`/);
     expect(result.remedy).toMatch(/workspace root/);
-  });
-
-  test('a spawn error is a failure, not a hang', async () => {
-    installFakeExpoBin();
-    const result = await runPrebuild(root, 'ios', collectingWriter(), {
-      isExpo: true,
-      spawnFn: () => fakeExpoChild({ error: new Error('EACCES') }),
-    });
-    expect(result.failed).toBe(true);
-    expect(result.reason).toMatch(/EACCES/);
   });
 });

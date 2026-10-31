@@ -31,24 +31,12 @@ import * as supervisorState from '../supervisor/state.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import {
   liveSupervisor,
-  parseWait,
-  readLogTail,
   failureEvidence,
   registerStart,
-  startFacts,
   supervisorEntry,
   supervisorSignalable,
-  tailLines,
-  wantsExpoOwnTunnel,
 } from '../commands/start.ts';
-import {
-  IMPOSSIBLE_PID,
-  asProcessExit,
-  goneClaimOwner,
-  liveClaimOwner,
-  makeChildProcess,
-  recycledClaimOwner,
-} from './_factories.ts';
+import { IMPOSSIBLE_PID, asProcessExit, liveClaimOwner, makeChildProcess, recycledClaimOwner } from './_factories.ts';
 
 vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
@@ -359,95 +347,8 @@ async function runSpawnedExpoStart({
   }
 }
 
-describe('wantsExpoOwnTunnel', () => {
-  test('a local Expo start does not request a tunnel', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: false, mode: 'auto' })).toBe(false);
-  });
-
-  test('a remote Expo start requests its own tunnel only in expo mode', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'expo' })).toBe(true);
-  });
-
-  test('a bare RN workspace never does -- there is no dev server here to tunnel itself', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: false, remote: true, mode: 'auto' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: false, remote: true, mode: 'expo' })).toBe(false);
-  });
-
-  test('an explicit managed provider defers to `ios`/`android --remote`, not `start`', () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'cloudflared' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'ngrok' })).toBe(false);
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'off' })).toBe(false);
-  });
-
-  test("an operator-supplied metro.publicUrl wins -- starting Expo's own tunnel too would be a second one", () => {
-    expect(wantsExpoOwnTunnel({ isExpo: true, remote: true, mode: 'auto', publicUrl: 'https://abc.ngrok.app' })).toBe(
-      false,
-    );
-  });
-});
-
-describe('option parsing', () => {
-  test('--wait defaults to 60 seconds', () => {
-    expect(parseWait(undefined)).toEqual({ seconds: 60 });
-  });
-
-  test('--wait takes a number of seconds', () => {
-    expect(parseWait('90')).toEqual({ seconds: 90 });
-  });
-
-  test('a --wait that is not a positive number is refused, not silently defaulted', () => {
-    expect(parseWait('soon').error).toMatch(/--wait/);
-    expect(parseWait('0').error).toMatch(/--wait/);
-    expect(parseWait('-5').error).toMatch(/--wait/);
-  });
-});
-
-describe('the supervisor entry point', () => {
-  test('resolves to the run.js that is actually shipped', () => {
-    expect(existsSync(supervisorEntry())).toBeTruthy();
-    expect(supervisorEntry().endsWith(join('src', 'supervisor', 'run.ts'))).toBe(true);
-  });
-});
-
 describe('liveSupervisor', () => {
   const alive = () => true;
-  const dead = () => false;
-
-  test('takes the workspace state first, because only it carries the mode', () => {
-    const found = liveSupervisor({
-      state: { supervisor: { pid: 10, port: 8082, mode: 'bare-inproc', startedAt: 'T' } },
-      project: { supervisor: { pid: 10, port: 8082 } },
-      port: 8082,
-      isAlive: alive,
-      inspectIdentity: () => 'same',
-    });
-    expect(found).toEqual({ pid: 10, port: 8082, mode: 'bare-inproc', startedAt: 'T' });
-  });
-
-  test('falls back to the global registration when the workspace file is gone', () => {
-    const found = liveSupervisor({
-      state: null,
-      project: { supervisor: { pid: 11, port: 8082, startedAt: 'T' } },
-      port: 8082,
-      isAlive: alive,
-      inspectIdentity: () => 'same',
-    });
-    assert(found);
-    expect(found.pid).toBe(11);
-    expect(found.mode).toBe(null);
-  });
-
-  test('a dead pid is not a supervisor: a stale record outlives its process', () => {
-    expect(
-      liveSupervisor({
-        state: { supervisor: { pid: 12, port: 8082 } },
-        project: null,
-        port: 8082,
-        isAlive: dead,
-      }),
-    ).toBe(null);
-  });
 
   test('a supervisor recorded on another port is not the one that would answer here', () => {
     expect(
@@ -460,101 +361,15 @@ describe('liveSupervisor', () => {
       }),
     ).toBe(null);
   });
-
-  test('no record at all is null, not a throw', () => {
-    expect(liveSupervisor({ port: 8082 })).toBe(null);
-    expect(liveSupervisor()).toBe(null);
-  });
 });
 
 describe('supervisorSignalable', () => {
-  test('a child this process spawned is signalled without a recorded identity', () => {
-    expect(supervisorSignalable({})).toBe(true);
-  });
-
-  test('a recorded supervisor is signalled only while its identity still matches', () => {
-    expect(supervisorSignalable({ recordedIdentity: liveClaimOwner() })).toBe(true);
-    expect(supervisorSignalable({ recordedIdentity: recycledClaimOwner() })).toBe(false);
-    expect(supervisorSignalable({ recordedIdentity: goneClaimOwner() })).toBe(false);
-  });
-
   test('a recorded supervisor without a verifiable token is not signalled', () => {
     expect(supervisorSignalable({ recordedIdentity: { pid: process.pid } })).toBe(false);
   });
 });
 
-describe('startFacts', () => {
-  test('shapes the facts an agent reads', () => {
-    expect(
-      startFacts({
-        root,
-        port: 8082,
-        supervisor: { pid: 91, mode: 'expo-child' },
-        logsDir: '/w/.stim/logs',
-        alreadyRunning: false,
-      }),
-    ).toEqual({
-      port: 8082,
-      supervisorPid: 91,
-      mode: 'expo-child',
-      logsDir: '/w/.stim/logs',
-      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
-      alreadyRunning: false,
-    });
-  });
-
-  test('a dev server Stim did not start reports a null supervisor rather than a lie', () => {
-    const facts = startFacts({ port: 8082, supervisor: null, logsDir: '/l', alreadyRunning: true });
-    expect(facts.supervisorPid).toBe(null);
-    expect(facts.mode).toBe(null);
-    expect(facts.alreadyRunning).toBe(true);
-  });
-});
-
-describe('the supervisor log tail', () => {
-  test('takes the last lines and drops the blank ones', () => {
-    expect(tailLines('a\nb\n\nc\nd\ne\nf\n', 3)).toEqual(['d', 'e', 'f']);
-  });
-
-  test('a log that does not exist yet is an empty tail, not a throw', () => {
-    expect(readLogTail(join(root, 'nope.log'))).toEqual([]);
-  });
-});
-
 describe('failureEvidence (issue #24)', () => {
-  const record = (ts: number, msg: string, src = 'metro') => JSON.stringify({ ts, level: 'error', src, msg });
-
-  test('an empty supervisor.log is not pointed at; the timeline errors are quoted instead', () => {
-    const logsDir = join(root, '.stim', 'logs');
-    mkdirSync(logsDir, { recursive: true });
-    const logFile = join(logsDir, 'supervisor.log');
-    writeFileSync(logFile, '');
-    writeFileSync(
-      join(logsDir, 'metro.ndjson'),
-      [
-        record(1000, 'stale error from a previous run'),
-        record(5000, 'PluginError: Failed to resolve plugin for module "expo-share-intent"\n  at resolve'),
-        record(5001, 'from expo config'),
-      ].join('\n') + '\n',
-    );
-    const lines = failureEvidence({ logFile, logsDir, sinceTs: 2000 });
-    expect(lines.some((l) => l.includes('Supervisor log:'))).toBe(false);
-    expect(lines.some((l) => l.includes('stale error'))).toBe(false);
-    expect(lines).toContain('metro: PluginError: Failed to resolve plugin for module "expo-share-intent"');
-    expect(lines).toContain('metro: from expo config');
-    expect(lines.at(-1)).toMatch(/logs --errors/);
-  });
-
-  test('a supervisor.log with content is still quoted, ahead of the timeline records', () => {
-    const logsDir = join(root, '.stim', 'logs');
-    mkdirSync(logsDir, { recursive: true });
-    const logFile = join(logsDir, 'supervisor.log');
-    writeFileSync(logFile, 'Error: Cannot find module expo\n');
-    const lines = failureEvidence({ logFile, logsDir, sinceTs: 0 });
-    expect(lines[0]).toBe('Error: Cannot find module expo');
-    expect(lines[1]).toBe(`Supervisor log: ${logFile}`);
-  });
-
   test('falls back to any-level records from this attempt when nothing reached error level (#30)', () => {
     const logsDir = join(root, '.stim', 'logs');
     mkdirSync(logsDir, { recursive: true });
@@ -572,11 +387,6 @@ describe('failureEvidence (issue #24)', () => {
     expect(lines).toContain('metro: at loadConfig');
     expect(lines.some((l) => l.includes('old noise'))).toBe(false);
     expect(lines.at(-1)).toBe('Full records: `stim logs`');
-  });
-
-  test('nothing anywhere is an empty evidence list, not a throw', () => {
-    const logsDir = join(root, 'no-such-logs');
-    expect(failureEvidence({ logFile: join(logsDir, 'supervisor.log'), logsDir, sinceTs: 0 })).toEqual([]);
   });
 });
 

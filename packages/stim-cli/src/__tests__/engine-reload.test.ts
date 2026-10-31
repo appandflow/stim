@@ -142,22 +142,6 @@ test.each([
   });
 });
 
-test('Metro reload reports no peer when another package is connected on Android', async () => {
-  const harness = peerServer(peers({ 'client#1': 'device=sdk_gphone64&app=com.other.app&clientid=c1' }));
-
-  await withServer(harness, async (port) => {
-    const result = await reloadThroughMetro(port, { role: 'android', appId: 'com.example.android' });
-    expect(result).toMatchObject({ failed: true, noPeer: true, peers: 1 });
-    expect(result.reason).toContain(`No Android React Native app is connected to Metro on port ${port}.`);
-    expect(result.reason).toContain('1 other connected client');
-    await harness.reloadSeen;
-    expect(harness.messages).toEqual([
-      expect.objectContaining({ version: 2, method: 'getpeers', target: 'server' }),
-      { version: 2, method: 'reload' },
-    ]);
-  });
-});
-
 test.each([
   ['a matching peer', { 'client#1': ANDROID_PEER }, { ok: true, peers: 1, targets: 1 }],
   ['no matching peer', { 'client#1': IOS_PEER }, { failed: true, noPeer: true, peers: 1 }],

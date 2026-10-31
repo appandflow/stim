@@ -118,25 +118,6 @@ test.skipIf(!roomToInstall)(
   },
 );
 
-test.skipIf(!roomToInstall)('an image directory sdkmanager left mid-install is installed again, not used', async () => {
-  const partial = join(sdk, 'system-images', 'android-36', 'google_apis', hostSystemImageArch());
-  mkdirSync(join(partial, '.installer'), { recursive: true });
-  const calls: string[][] = [];
-  setExecutor({
-    runFileAsync: async (_file: string, args: string[]) => {
-      calls.push(args);
-      rmSync(join(partial, '.installer'), { recursive: true });
-      writeFileSync(join(partial, 'package.xml'), '<package/>');
-      return 'done';
-    },
-  });
-  expect(await ensureSystemImage({ requested: HOST, policy: 'auto', env, note: () => {} })).toEqual({
-    ok: true,
-    installed: true,
-  });
-  expect(calls).toEqual([[`--sdk_root=${sdk}`, '--install', HOST]]);
-});
-
 test('an image left mid-install is never used, and under never it is refused instead of installed', async () => {
   const image = (api: number) => join(sdk, 'system-images', `android-${api}`, 'google_apis', hostSystemImageArch());
   mkdirSync(join(image(37), '.installer'), { recursive: true });

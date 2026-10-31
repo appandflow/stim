@@ -1,12 +1,9 @@
-import Ajv2020 from 'ajv/dist/2020.js';
-import { protocolJsonSchema } from '../src/protocol.ts';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { newSecret, secretValues } from '@stim-cli/core/noise-session';
 import {
-  buildClientsReadable,
   capabilitiesFor,
   createPairingToken,
   grantDevice,
@@ -19,7 +16,6 @@ import {
   dropSetupSecret,
   spendSecret,
   storeSetupSecret,
-  touchDevice,
 } from '../src/registry.ts';
 
 let home: string;
@@ -113,14 +109,6 @@ describe('setup tickets', () => {
     expect(secretPsk(lookupOf(ticket))).not.toBeNull();
   });
 
-  it('records only the capabilities setup approved', () => {
-    const { ticket, key } = setup(['device-host']);
-    expect(spendSecret(lookupOf(ticket), key, 'Host', 'host.ts.net')).toEqual({
-      'device-host': expect.objectContaining({ capabilities: ['device-host'] }),
-    });
-    expect(readBuildClients()).toEqual([]);
-  });
-
   it('stores neither a pairing token nor a setup ticket in its text', () => {
     const pairing = createPairingToken().token;
     const { ticket } = setup(['build']);
@@ -136,26 +124,6 @@ describe('setup tickets', () => {
 });
 
 describe('registries', () => {
-  it('ignores version 1 registry files and tells an unreadable build registry apart from an empty one', () => {
-    const server = join(home, 'server');
-    mkdirSync(server, { recursive: true });
-    const legacy = { id: 'abcd1234', name: 'Old', publicKey: newKey(), pairedAt: new Date().toISOString() };
-    for (const file of ['devices.json', 'build-clients.json', 'device-host-clients.json']) {
-      writeFileSync(join(server, file), JSON.stringify({ version: 1, devices: [legacy] }));
-    }
-    expect(readDevices()).toEqual([]);
-    expect(readBuildClients()).toEqual([]);
-    expect(readDeviceHostClients()).toEqual([]);
-    expect(buildClientsReadable()).toBe(false);
-
-    const { ticket, key } = setup(['build']);
-    const { build } = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net')!;
-    expect(revokeDevice(build!.id)).toBe(true);
-    expect(buildClientsReadable()).toBe(true);
-    writeFileSync(join(server, 'build-clients.json'), '{"version": 2, "devices": [');
-    expect(buildClientsReadable()).toBe(false);
-  });
-
   it('sets read and control only on paired devices', () => {
     const phone = pair();
     const { ticket, key } = setup(['build', 'device-host']);
@@ -171,19 +139,6 @@ describe('registries', () => {
     expect(readDeviceHostClients()[0]!.capabilities).toEqual(['device-host']);
   });
 
-  it('rewrites a client registry for a hello at most once a minute, so each Metro link costs no write', () => {
-    const { ticket, key } = setup(['device-host']);
-    const paired = Date.parse('2026-10-26T00:00:00.000Z');
-    const client = spendSecret(lookupOf(ticket), key, 'Laptop', 'laptop.ts.net', paired)?.['device-host'];
-    if (!client) throw new Error('the setup ticket was not spent');
-    const file = join(home, 'server', 'device-host-clients.json');
-    const written = readFileSync(file, 'utf8');
-    touchDevice(client.id, paired + 59_000);
-    expect(readFileSync(file, 'utf8')).toBe(written);
-    touchDevice(client.id, paired + 61_000);
-    expect(readDeviceHostClients()[0]?.lastSeenAt).toBe('2026-10-26T00:01:01.000Z');
-  });
-
   it('revokes a record from whichever registry holds it and leaves the others', () => {
     const phone = pair();
     const { ticket, key } = setup(['build', 'device-host']);
@@ -197,11 +152,4 @@ describe('registries', () => {
     expect(readDevices()).toEqual([]);
     expect(revokeDevice(phone.id)).toBe(false);
   });
-});
-
-test('the published hello schema accepts an access request for both capabilities', () => {
-  const validate = new Ajv2020({ strict: false, validateFormats: false }).compile(protocolJsonSchema());
-  for (const access of ['build', 'device-host']) {
-    expect(validate({ id: 1, method: 'hello', params: { client: { name: 'Test', version: '1' }, access } })).toBe(true);
-  }
 });

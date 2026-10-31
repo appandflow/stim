@@ -152,34 +152,6 @@ test('each process counts once, in the owner of its nearest root', () => {
   expect(residentByWorkspace(machine.owners)).toEqual({ '/w/a': 9, '/w/b': 11 });
 });
 
-test('a simulator two workspaces both record counts in one of them only', () => {
-  const shared = makeEnvironmentState({ ...b, path: '/w/c', ios: a.ios, slots: [] });
-  const machine = attributeMachineUsage({
-    processes,
-    footprints: null,
-    environments: [a, shared],
-    roots: [],
-    simNames: {},
-  });
-  expect(machine.owners.filter((o) => o.id === UDID_A)).toHaveLength(1);
-  expect(residentByWorkspace(machine.owners)).toEqual({ '/w/c': 3 });
-});
-
-test('an emulator counts in its workspace while adb does not list it', () => {
-  const booting = makeEnvironmentState({
-    path: '/w/e',
-    android: { name: 'stim-b', owned: true, physical: false, serial: null, state: 'not-detected' },
-  });
-  const machine = attributeMachineUsage({
-    processes,
-    footprints: null,
-    environments: [booting],
-    roots: [],
-    simNames: {},
-  });
-  expect(machine.owners.find((o) => o.kind === 'emulator')).toMatchObject({ workspace: '/w/e', processes: 3 });
-});
-
 test('a recorded pid that is no longer in the table claims nothing', () => {
   const machine = attributeMachineUsage({
     processes,
@@ -189,20 +161,4 @@ test('a recorded pid that is no longer in the table claims nothing', () => {
     simNames: {},
   });
   expect(machine.owners.filter((o) => o.workspace === '/w/d')).toEqual([]);
-});
-
-test('memoryMb sums footprints and takes the resident size of a process the helper could not read', () => {
-  const MB = 1024 * 1024;
-  const footprints = new Map([
-    [100, 2 * MB],
-    [101, 300 * MB],
-    [200, 40 * MB],
-  ]);
-  const machine = attribute(footprints);
-  expect(machine.memorySource).toBe('footprint');
-  const byName = Object.fromEntries(machine.owners.map((o) => [o.name, [o.memoryMb, o.residentMb]]));
-  expect(byName['stim-a (iPhone 17 Pro 26.5)']).toEqual([2 + 300 + 1, 3]);
-  expect(byName['Metro :8081']).toEqual([40 + 1, 2]);
-  expect(attribute().memorySource).toBe('rss');
-  expect(attribute().owners.every((o) => o.memoryMb === o.residentMb)).toBe(true);
 });

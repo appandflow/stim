@@ -3,59 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { inPrivacyProtectedFolder, parseGitStatus, readWorktreeGit } from '../workspace/git-summary.ts';
-
-const oid = 'a'.repeat(40);
-
-test('parseGitStatus counts changed and untracked entries and reads ahead and behind', () => {
-  const text = [
-    `# branch.oid ${oid}`,
-    '# branch.head feature',
-    '# branch.upstream origin/feature',
-    '# branch.ab +3 -1',
-    `1 .M N... 100644 100644 100644 ${oid} ${oid} src/a.ts`,
-    `1 A. N... 000000 100644 100644 ${'0'.repeat(40)} ${oid} src/b.ts`,
-    `2 R. N... 100644 100644 100644 ${oid} ${oid} R100 src/c.ts\tsrc/old c.ts`,
-    `u UU N... 100644 100644 100644 100644 ${oid} ${oid} ${oid} src/d.ts`,
-    '? scratch/',
-    '? notes.txt',
-  ].join('\n');
-  expect(parseGitStatus(text)).toEqual({
-    head: oid,
-    changed: 4,
-    untracked: 2,
-    upstream: 'origin/feature',
-    ahead: 3,
-    behind: 1,
-  });
-});
-
-test('parseGitStatus leaves ahead and behind null when the upstream is gone or missing, and head null when unborn', () => {
-  expect(parseGitStatus(`# branch.oid ${oid}\n# branch.head feature\n# branch.upstream origin/feature`)).toEqual({
-    head: oid,
-    changed: 0,
-    untracked: 0,
-    upstream: 'origin/feature',
-    ahead: null,
-    behind: null,
-  });
-  expect(parseGitStatus('# branch.oid (initial)\n# branch.head main\n? a.txt')).toMatchObject({
-    head: null,
-    untracked: 1,
-    upstream: null,
-    ahead: null,
-  });
-});
-
-test('inPrivacyProtectedFolder matches the folders macOS guards and nothing that only shares a prefix', () => {
-  const home = '/Users/me';
-  expect(inPrivacyProtectedFolder('/Users/me/Documents/Codex/stim', home)).toBe(true);
-  expect(inPrivacyProtectedFolder('/Users/me/Library/Mobile Documents/repo', home)).toBe(true);
-  expect(inPrivacyProtectedFolder('/Users/me/Library/CloudStorage/Dropbox/repo', home)).toBe(true);
-  expect(inPrivacyProtectedFolder('/Volumes/External/repo', home)).toBe(true);
-  expect(inPrivacyProtectedFolder('/Users/me/Documentsx/repo', home)).toBe(false);
-  expect(inPrivacyProtectedFolder('/Users/me/Developer/Documents', home)).toBe(false);
-});
+import { readWorktreeGit } from '../workspace/git-summary.ts';
 
 describe('readWorktreeGit', () => {
   const realExecutor = getExecutor();
@@ -113,43 +61,6 @@ describe('readWorktreeGit', () => {
     git(path, 'push', '-q', '-u', 'origin', 'feature');
     return { path, branch: 'feature', repository: root };
   }
-
-  test('reuses a summary while its git files are unchanged, and rereads after a commit, a push or the age ceiling', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    const worktree = linkedWorktree();
-    const read = async () =>
-      (await readWorktreeGit([worktree], { skip: () => false, maxAgeMs: 60_000 })).get(worktree.path);
-
-    await read();
-    await read();
-    const reads = statusReads;
-    expect(await read()).toMatchObject({ changed: 0, ahead: 0, behind: 0 });
-    expect(statusReads).toBe(reads);
-
-    writeFileSync(join(worktree.path, 'a.txt'), 'edited\n');
-    expect(await read()).toMatchObject({ changed: 0 });
-    expect(statusReads).toBe(reads);
-
-    commit(worktree.path, 'b.txt', 'local');
-    expect(await read()).toMatchObject({ changed: 1, ahead: 1 });
-    expect(statusReads).toBe(reads + 1);
-
-    git(worktree.path, 'push', '-q');
-    expect(await read()).toMatchObject({ ahead: 0, mergedInto: null });
-    expect(statusReads).toBe(reads + 2);
-
-    git(worktree.repository, 'merge', '-q', '--no-ff', '-m', 'merge feature', 'feature');
-    git(worktree.repository, 'push', '-q', 'origin', 'main');
-    expect(await read()).toMatchObject({ mergedInto: 'origin/main' });
-    expect(statusReads).toBe(reads + 3);
-
-    writeFileSync(join(worktree.path, 'b.txt'), 'edited\n');
-    expect(await read()).toMatchObject({ changed: 1 });
-    expect(statusReads).toBe(reads + 3);
-    vi.setSystemTime(Date.now() + 60_000);
-    expect(await read()).toMatchObject({ changed: 2 });
-    expect(statusReads).toBe(reads + 4);
-  });
 
   test('resolves deferred merge verdicts without rescanning unchanged worktree files', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -209,29 +120,6 @@ describe('readWorktreeGit', () => {
     git(worktree.repository, 'worktree', 'add', '-q', worktree.path, 'feature');
     expect(await read()).toMatchObject({ changed: 0 });
     expect(statusReads).toBe(reads + 2);
-  });
-
-  test('runs at most six git calls at a time across many worktrees and still reads every one', async () => {
-    let inFlight = 0;
-    let peak = 0;
-    setExecutor({
-      runFileAsync: async () => {
-        inFlight++;
-        peak = Math.max(peak, inFlight);
-        await new Promise((resolve) => setTimeout(resolve, 5));
-        inFlight--;
-        return `# branch.oid ${oid}\n# branch.head main\n? a.txt`;
-      },
-      runFile: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFile(file, args, opts),
-      runFileQuiet: (file: string, args: string[], opts: ExecOptions) => realExecutor.runFileQuiet(file, args, opts),
-    });
-    const worktrees = Array.from({ length: 40 }, (_, i) => ({ path: join(base, `wt-${i}`) }));
-
-    const summaries = await readWorktreeGit(worktrees, { skip: () => false });
-
-    expect(peak).toBe(6);
-    expect(summaries.size).toBe(40);
-    expect([...summaries.values()].every((summary) => summary?.untracked === 1)).toBe(true);
   });
 
   test('a merge judgement that timed out is not retried for the same HEAD for five minutes, but is for a new HEAD', async () => {

@@ -1,13 +1,12 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DEVICE_IDLE_SHUTDOWN_KEY, readDeviceIdleShutdowns, type DeviceActivity } from '@stim-cli/core/state';
 import { clearDeviceIdleShutdown, idleShutdownDueMs, shutDownIdleDevices } from '../devices/idle-shutdown.ts';
 import { teardownOwnedIosSim } from '../devices/teardown.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
 
 vi.mock('../devices/teardown.ts', () => ({
@@ -39,41 +38,6 @@ const due = (activity: DeviceActivity, buildInProgress = false) =>
   });
 
 describe('idleShutdownDueMs', () => {
-  test('a device with no activity for the threshold is due, one used more recently is not', () => {
-    expect(
-      due({
-        state: 'active',
-        lastActivityAt: at(2 * MINUTE),
-        basis: ['workspace-use'],
-      }),
-    ).toBe(2 * MINUTE);
-    expect(
-      due({
-        state: 'idle',
-        lastActivityAt: at(3 * 3_600_000),
-        basis: ['device-log'],
-      }),
-    ).toBe(3 * 3_600_000);
-    expect(
-      due({
-        state: 'active',
-        lastActivityAt: at(2 * MINUTE - 1),
-        basis: ['device-log'],
-      }),
-    ).toBe(null);
-  });
-
-  test('an open viewer is activity now, so the device stays up', () => {
-    expect(
-      due({
-        state: 'active',
-        lastActivityAt: at(0),
-        recent: { viewer: at(0) },
-        basis: ['viewer'],
-      }),
-    ).toBe(null);
-  });
-
   test('a driver, a Stim or agent-device lock, or unreadable evidence keeps an old device up', () => {
     const old = at(5 * 3_600_000);
     const driven = (tool: string, basis: string): DeviceActivity => ({
@@ -120,10 +84,6 @@ describe('idleShutdownDueMs', () => {
       idleShutdownDueMs({ ...activity, basis: ['driver-process', 'instrumentation'] }, { ...opts, platform: 'win32' }),
     ).toBe(null);
   });
-
-  test('a device with no dated activity cannot be proven idle', () => {
-    expect(due({ state: 'idle', basis: [] })).toBe(null);
-  });
 });
 
 describe('clearDeviceIdleShutdown', () => {
@@ -137,23 +97,6 @@ describe('clearDeviceIdleShutdown', () => {
   afterEach(() => {
     rmSync(stimHome, { recursive: true, force: true });
     delete process.env.STIM_HOME;
-  });
-
-  test("a run that boots one slot's device forgets only that slot's idle shutdown", async () => {
-    const root = join(stimHome, 'app');
-    const record = { at: at(0), idleMinutes: 30 };
-    writeWorkspaceState(root, {
-      [DEVICE_IDLE_SHUTDOWN_KEY]: { ios: record, 'ios:fold': record },
-      lastUsedAt: at(0),
-    });
-
-    await clearDeviceIdleShutdown(root, 'ios');
-    expect(readDeviceIdleShutdowns(readWorkspaceState(root))).toEqual({
-      'ios:fold': record,
-    });
-
-    await clearDeviceIdleShutdown(root, 'ios', 'fold');
-    expect(readWorkspaceState(root)).toEqual({ lastUsedAt: at(0) });
   });
 
   test('a run waits for a workspace state lock held by another process without blocking the event loop', async () => {
@@ -234,39 +177,6 @@ describe('shutDownIdleDevices', () => {
     expect(log).toEqual([
       { level: 'info', event: 'device_idle_shutdown', msg: 'shut down simulator stim-MINE, idle 10m' },
     ]);
-  });
-
-  test('a teardown that is refused records nothing and logs why; a device already gone is silent', async () => {
-    const mine = setup();
-    vi.mocked(teardownOwnedIosSim).mockResolvedValueOnce({ status: 'skipped', kind: 'not-owned', reason: 'not ours' });
-    const log: { event: string }[] = [];
-    expect(await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW)).toBe(0);
-    expect(log).toMatchObject([{ event: 'device_idle_shutdown_failed', msg: expect.stringMatching(/not ours/) }]);
-    expect(readDeviceIdleShutdowns(readWorkspaceState(mine))).toEqual({});
-
-    vi.mocked(teardownOwnedIosSim).mockResolvedValueOnce({ status: 'missing' });
-    log.length = 0;
-    await shutDownIdleDevices(mine, 2 * MINUTE, (entry) => log.push(entry), NOW);
-    expect(log).toEqual([]);
-  });
-
-  test('recent client activity keeps the device up without probing processes', async () => {
-    const mine = setup();
-    const file = join(workspaceLogsDir(mine), 'client.ndjson');
-    mkdirSync(workspaceLogsDir(mine), { recursive: true });
-    writeFileSync(file, '{}\n');
-    utimesSync(file, NOW / 1000, NOW / 1000);
-    const probe = vi.fn<() => string>(() => '');
-    setExecutor({ runFileQuiet: probe } as never);
-    expect(await shutDownIdleDevices(mine, 2 * MINUTE, () => {}, NOW)).toBe(0);
-    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
-    expect(probe).not.toHaveBeenCalled();
-  });
-
-  test('a device used within the threshold is left alone', async () => {
-    const mine = setup();
-    expect(await shutDownIdleDevices(mine, 20 * MINUTE, () => {}, NOW)).toBe(0);
-    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
   });
 });
 

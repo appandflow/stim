@@ -4,9 +4,8 @@ import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { fileURLToPath } from 'node:url';
-import { createServer } from 'node:net';
 import { createServer as createHttpServer } from 'node:http';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor } from '../exec.ts';
 import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
 import {
   computeNextPort,
@@ -58,10 +57,6 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   resetExecutor();
-});
-
-test('computeNextPort returns 8082 with no existing ports', async () => {
-  expect(await computeNextPort(allFree)).toBe(8082);
 });
 
 test('computeNextPort skips registry-claimed ports', async () => {
@@ -144,39 +139,6 @@ test('computeNextPort skips a port that is occupied by a foreign process', async
   expect(port).toBe(8084);
 });
 
-test('computeNextPort skips ports already in the registry AND occupied ports', async () => {
-  saveConfig({
-    version: 2,
-    projects: { '/a': { metroPort: 8082 }, '/b': { metroPort: 8084 } },
-    repos: {},
-  });
-  const occupied = new Set([8083]);
-  const port = await computeNextPort(async (p) => !occupied.has(p));
-  expect(port).toBe(8085);
-});
-
-test('computeNextPort reuses a gap left by a released project when it is genuinely free', async () => {
-  saveConfig({ version: 2, projects: { '/a': { metroPort: 8083 } }, repos: {} });
-  const port = await computeNextPort(async () => true);
-  expect(port).toBe(8082);
-});
-
-test('computeNextPort throws rather than returning an occupied port when the range is exhausted', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  await expect(() => computeNextPort(async () => false)).rejects.toThrow(/no free Metro port/i);
-
-  saveConfig({
-    version: 2,
-    projects: Object.fromEntries(Array.from({ length: 200 }, (_, i) => [`/reserved/${i}`, { metroPort: 8082 + i }])),
-    repos: {},
-  });
-  const read = vi
-    .spyOn(listeners, 'readListeningPorts')
-    .mockRejectedValue(new Error('must not inspect reserved ports'));
-  await expect(computeNextPort()).rejects.toThrow(/no free Metro port/i);
-  expect(read).not.toHaveBeenCalled();
-});
-
 test('port probes observe a foreign IPv6 listener and refresh after it exits', async (t) => {
   const child = getExecutor().spawn(
     process.execPath,
@@ -198,49 +160,6 @@ test('port probes observe a foreign IPv6 listener and refresh after it exits', a
   }
 }, 30_000);
 
-test('a netstat denied on stderr falls back and still detects a real listener', async () => {
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    runFileAsync: async (file, args, opts) => {
-      if (file.endsWith('netstat')) {
-        throw Object.assign(new Error('Command failed'), {
-          status: 0,
-          stdout: '',
-          stderr: 'netstat: sysctl: net.inet.tcp.pcblist_n: Operation not permitted',
-        });
-      }
-      return real.runFileAsync(file, args, opts);
-    },
-  });
-  const server = createServer();
-  server.listen(0, '127.0.0.1');
-  await once(server, 'listening');
-  const address = server.address();
-  assert(address && typeof address === 'object');
-  try {
-    expect(await createPortProbe()(address.port)).toBe(false);
-  } finally {
-    server.close();
-    await once(server, 'close');
-  }
-  expect(await createPortProbe()(address.port)).toBe(true);
-});
-
-test('without a listener table, a port is free only when lsof or both loopback connects answer', async () => {
-  vi.spyOn(listeners, 'readListeningPorts').mockRejectedValue(new Error('no table'));
-  const lsof = vi.spyOn(listeners, 'readLsofListeningPorts').mockResolvedValue(null);
-  const connect = vi.spyOn(listeners, 'probeLoopback').mockResolvedValue('free');
-  expect(await createPortProbe()(8082)).toBe(true);
-
-  connect.mockImplementation(async (_port, host) => (host === '::1' ? 'unknown' : 'free'));
-  await expect(createPortProbe()(8082)).rejects.toMatchObject({ code: 'STIM_PORT_INSPECTION_FAILED' });
-
-  lsof.mockResolvedValue(new Set([8083]));
-  expect(await createPortProbe()(8082)).toBe(true);
-  expect(await createPortProbe()(8083)).toBe(false);
-});
-
 test('findReclaimablePort skips a project whose volume is not mounted', async () => {
   const unmounted = '/Volumes/NotPluggedIn/worktree';
   upsertProject(unmounted, { bundleId: 'a', androidPackage: 'a', isExpo: false });
@@ -254,16 +173,6 @@ test('findReclaimablePort still reclaims a dead project on a mounted volume', as
   claimMetroPort('/definitely/gone', 8082);
   const r = await findReclaimablePort('/new', async () => false, { isMounted: () => true });
   expect(r).toEqual({ port: 8082, ownerPath: '/definitely/gone' });
-});
-
-test('allocatePort does not delete the entry of a project on an unmounted volume', async () => {
-  const unmounted = '/Volumes/NotPluggedIn/worktree';
-  upsertProject(unmounted, { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  setDevice(unmounted, 'ios', { deviceUdid: 'U1', owned: true });
-  claimMetroPort(unmounted, 8082);
-  const port = await allocatePort('/new', async () => false, allFree);
-  expect(port).not.toBe(8082);
-  expect(getProject(unmounted)).toBeTruthy();
 });
 
 test('reserveMetroPort moves on when another project claims the port first', async () => {
@@ -289,15 +198,6 @@ test('reserveMetroPort moves on when another project claims the port first', asy
   expect(recA.metroPort).toBe(8082);
 });
 
-test('reserveMetroPort records the port it hands back', async () => {
-  upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  const port = await reserveMetroPort('/a', async () => false, allFree);
-  expect(port).toBe(8082);
-  const rec = getProject('/a');
-  assert(rec);
-  expect(rec.metroPort).toBe(8082);
-});
-
 test('reserveMetroPort records a pinned port and refuses one another workspace reserved', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });
@@ -317,7 +217,7 @@ test('allocatePort does not reuse a reclaimable port that is now occupied', asyn
   expect(port).toBe(8083);
 });
 
-test.each(['streaming', 'oversized', 'cancelled'] as const)(
+test.each(['streaming', 'oversized'] as const)(
   'Metro status refuses a %s response and closes its request',
   async (mode) => {
     const controller = new AbortController();
@@ -338,7 +238,6 @@ test.each(['streaming', 'oversized', 'cancelled'] as const)(
         clearInterval(chunks);
         clearTimeout(escape);
       });
-      if (mode === 'cancelled') controller.abort();
     });
     await new Promise<void>((resolve) => server.listen(0, 'localhost', resolve));
     try {

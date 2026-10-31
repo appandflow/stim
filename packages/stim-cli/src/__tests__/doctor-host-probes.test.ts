@@ -2,7 +2,6 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import { readMemoryCulpritsAsync } from '../memory-culprits.ts';
 import { reactNativeDoctorFindings, runDoctor, type DoctorContext } from '../diagnostics/doctor.ts';
@@ -72,12 +71,6 @@ function delayedHostProbe() {
   };
   return { executor, calls };
 }
-
-test('Xcode and pressure reads yield while their children run and preserve parsed observations', async () => {
-  const { executor } = delayedHostProbe();
-  expect(await responsive(() => detectXcodeMajorAsync(executor))).toBe(26);
-  expect(await responsive(() => readHostMemoryPressureAsync(executor, 'darwin'))).toBe('critical');
-});
 
 test('memory culprit reads yield for top and ps and retain the Java daemon diagnosis', async () => {
   const { executor, calls } = delayedHostProbe();

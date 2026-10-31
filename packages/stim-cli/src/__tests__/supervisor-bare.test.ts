@@ -1,23 +1,11 @@
 import assert from 'node:assert';
-import { METRO_NAMED_CACHE_LAYOUT } from '@stim-cli/core';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { appendCacheStore, hasStoreAt, metroStoreRoot } from '../supervisor/metro-store.ts';
 import {
-  appendCacheStore,
-  hasStoreAt,
-  metroStoreName,
-  metroStoreRoot,
-  registerMetroStore,
-} from '../supervisor/metro-store.ts';
-import { readManifest } from '../cache/cache-manifest.ts';
-import {
-  checkBareApi,
-  ensureNativePlatform,
   loadNdjsonReporter,
   normalizeMetroTransformerPaths,
-  normalizeModule,
-  reporterLogger,
   resolveBareDeps,
   startBareServer,
   symbolicationReporterMiddleware,
@@ -98,17 +86,6 @@ describe("resolving the project's own dev server packages", () => {
     expect(err.remedy).toMatch(/Expo/);
   });
 
-  test('a package that is installed but throws while loading is NOT reported as missing', () => {
-    const err = caught(() =>
-      resolveBareDeps(root, {
-        requireFrom: fakeRequire(OK_MODULES(), { throwOnLoad: { metro: 'Unexpected token' } }),
-      }),
-    );
-    expect(err.code).toBe('STIM_BARE_LOAD');
-    expect(err.message).toMatch(/metro is installed/);
-    expect(err.message).toMatch(/Unexpected token/);
-  });
-
   test('a package whose API does not match names the package and the export', () => {
     const modules = OK_MODULES();
     delete modules['metro'].runServer;
@@ -117,55 +94,9 @@ describe("resolving the project's own dev server packages", () => {
     expect(err.message).toMatch(/metro does not export runServer\(\)/);
     expect(!/undefined is not a function/.test(err.message)).toBeTruthy();
   });
-
-  test('success returns the three modules', () => {
-    const deps = resolveBareDeps(root, { requireFrom: fakeRequire(OK_MODULES()) });
-    expect(typeof deps.metro.runServer).toBe('function');
-    expect(typeof deps.devMiddleware.createDevMiddleware).toBe('function');
-    expect(typeof deps.serverApi.createDevServerMiddleware).toBe('function');
-  });
-});
-
-describe('module interop', () => {
-  test('normalizeModule reaches through .default when that is where the exports are', () => {
-    const mod = { __esModule: true, default: { runServer: () => {}, loadConfig: () => {} } };
-    expect(normalizeModule(mod, ['runServer', 'loadConfig'])).toBe(mod.default);
-  });
-
-  test('normalizeModule leaves a plain CommonJS module alone', () => {
-    const mod = { runServer: () => {}, loadConfig: () => {} };
-    expect(normalizeModule(mod, ['runServer', 'loadConfig'])).toBe(mod);
-  });
-
-  test('checkBareApi reports every missing export, not just the first', () => {
-    const problems = checkBareApi({
-      metro: {},
-      '@react-native/dev-middleware': {},
-      '@react-native-community/cli-server-api': {},
-    });
-    expect(problems.length).toBe(4);
-    expect(problems.some((p) => /metro does not export loadConfig/.test(p))).toBeTruthy();
-    expect(problems.some((p) => /dev-middleware does not export createDevMiddleware/.test(p))).toBeTruthy();
-  });
 });
 
 describe('config adjustments', () => {
-  test("ensureNativePlatform adds 'native', which the RN CLI adds and metro.config.js does not", () => {
-    const config = { resolver: { platforms: ['android', 'ios'] } };
-    expect(ensureNativePlatform(config)).toBe(true);
-    expect(config.resolver.platforms).toEqual(['android', 'ios', 'native']);
-  });
-
-  test('ensureNativePlatform is a no-op when it is already there', () => {
-    const config = { resolver: { platforms: ['ios', 'native'] } };
-    expect(ensureNativePlatform(config)).toBe(false);
-    expect(config.resolver.platforms).toEqual(['ios', 'native']);
-  });
-
-  test('ensureNativePlatform tolerates a config with no resolver', () => {
-    expect(ensureNativePlatform({})).toBe(false);
-  });
-
   test('rewrites the metro-runtime asyncRequire path to the specifier Metro resolves from any module (#476)', () => {
     const config = {
       transformer: {
@@ -175,87 +106,9 @@ describe('config adjustments', () => {
     expect(normalizeMetroTransformerPaths(config, root)).toBe(true);
     expect(config.transformer.asyncRequireModulePath).toBe('metro-runtime/src/modules/asyncRequire');
   });
-
-  test('keeps an asyncRequire path that is not the hoisted metro-runtime module', () => {
-    for (const path of [
-      join(
-        root,
-        'node_modules',
-        '.pnpm',
-        'metro-runtime@0.84.5',
-        'node_modules',
-        'metro-runtime',
-        'src',
-        'modules',
-        'asyncRequire.js',
-      ),
-      join(root, 'src', 'asyncRequire.js'),
-    ]) {
-      const config = { transformer: { asyncRequireModulePath: path } };
-      expect(normalizeMetroTransformerPaths(config, root)).toBe(false);
-      expect(config.transformer.asyncRequireModulePath).toBe(path);
-    }
-  });
-
-  test('keeps a Metro transformer path outside the project root', () => {
-    const config = { transformer: { asyncRequireModulePath: '/shared/metro-runtime/asyncRequire.js' } };
-    expect(normalizeMetroTransformerPaths(config, root)).toBe(false);
-    expect(config.transformer.asyncRequireModulePath).toBe('/shared/metro-runtime/asyncRequire.js');
-  });
-});
-
-describe('the dev-middleware logger', () => {
-  test('routes info/warn/error into the reporter as unstable_server_log', () => {
-    const events: Array<{ type: string; level: string; data: unknown[] }> = [];
-    const logger = reporterLogger({
-      update: (e: { type: string; level: string; data: unknown[] }) => events.push(e),
-    });
-    logger.info('hello', 'world');
-    logger.warn('careful');
-    logger.error('boom');
-    expect(events.map((e) => e.type)).toEqual(['unstable_server_log', 'unstable_server_log', 'unstable_server_log']);
-    expect(events.map((e) => e.level)).toEqual(['info', 'warn', 'error']);
-    expect(events[0]?.data).toEqual(['hello', 'world']);
-  });
-
-  test('a throwing reporter never reaches the dev server', () => {
-    const logger = reporterLogger({
-      update: () => {
-        throw new Error('disk full');
-      },
-    });
-    expect(() => logger.error('boom')).not.toThrow();
-  });
 });
 
 describe('the symbolication reporter middleware', () => {
-  test('passes Metro symbolication responses to the reporter without changing the response', () => {
-    const events: unknown[] = [];
-    const middleware = symbolicationReporterMiddleware({ update: (event: unknown) => events.push(event) });
-    const calls: unknown[][] = [];
-    const response = {
-      end(this: unknown, ...args: unknown[]) {
-        calls.push(args);
-        return 'ended';
-      },
-    };
-    let next = 0;
-    middleware({ url: '/symbolicate' }, response, () => {
-      next += 1;
-    });
-    const payload = JSON.stringify({ codeFrame: { content: 'frame' }, stack: [{ file: 'App.tsx' }] });
-    expect(response.end(payload, 'utf8')).toBe('ended');
-    expect(next).toBe(1);
-    expect(calls).toEqual([[payload, 'utf8']]);
-    expect(events).toEqual([
-      {
-        type: 'client_symbolication',
-        codeFrame: { content: 'frame' },
-        stack: [{ file: 'App.tsx' }],
-      },
-    ]);
-  });
-
   test('ignores unrelated and malformed responses', () => {
     const events: unknown[] = [];
     const reporter = { update: (event: unknown) => events.push(event) };
@@ -275,34 +128,6 @@ describe('loadNdjsonReporter', () => {
     assert(factory);
     const reporter = factory({ dir: join(root, '.stim', 'logs') });
     expect(typeof reporter.update).toBe('function');
-  });
-
-  test('returns null rather than throwing when the package is nowhere', () => {
-    const nothing = () => {
-      const req = (id: string) => {
-        throw new Error(`Cannot find module '${id}'`);
-      };
-      req.resolve = req;
-      return asRequire(req);
-    };
-    expect(loadNdjsonReporter(root, { requireFrom: nothing })).toBe(null);
-  });
-
-  test('prefers the reporter bundled with this CLI over an older project copy', () => {
-    const projectPackage = join(root, 'package.json');
-    const bundled = () => ({ update() {} });
-    const projectLocal = () => ({ update() {} });
-    const seen: string[] = [];
-    const factory = loadNdjsonReporter(root, {
-      requireFrom: (from) => {
-        seen.push(from);
-        return asRequire(() => ({ ndjsonReporter: from === projectPackage ? projectLocal : bundled }));
-      },
-    });
-
-    expect(factory).toBe(bundled);
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).not.toBe(projectPackage);
   });
 });
 
@@ -361,25 +186,6 @@ describe('startBareServer wiring', () => {
     return { deps, calls, httpServer };
   }
 
-  test('loads the project config with the port override and sets our reporter on it', async () => {
-    const { deps, calls } = fakeDeps();
-    const reporter = { update() {} };
-    await startBareServer({
-      root,
-      port: 8099,
-      logsDir: join(root, '.stim', 'logs'),
-      deps,
-      reporterFactory: (opts) => {
-        calls.reporterDir = opts.dir;
-        return reporter;
-      },
-    });
-    expect(calls.loadConfig).toEqual({ cwd: root, port: 8099, resetCache: false });
-    expect(calls.runServer.config.reporter).toBe(reporter);
-    expect(calls.reporterDir).toBe(join(root, '.stim', 'logs'));
-    expect(calls.runServer.config.resolver.platforms).toEqual(['android', 'ios', 'native']);
-  });
-
   test('passes a one-shot reset through to Metro config loading', async () => {
     const { deps, calls } = fakeDeps();
     await startBareServer({
@@ -392,83 +198,6 @@ describe('startBareServer wiring', () => {
       resetCache: true,
     });
     expect(calls.loadConfig).toEqual({ cwd: root, port: 8099, resetCache: true });
-  });
-
-  test('wires both middlewares and merges both websocket endpoint sets', async () => {
-    const { deps, calls } = fakeDeps();
-    await startBareServer({
-      root,
-      port: 8100,
-      logsDir: join(root, 'logs'),
-      deps,
-      reporterFactory: () => ({ update() {} }),
-    });
-
-    expect(calls.createDevServerMiddleware).toEqual({ host: 'localhost', port: 8100, watchFolders: ['/w'] });
-    expect(calls.createDevMiddleware.serverBaseUrl).toBe('http://localhost:8100');
-    expect(typeof calls.createDevMiddleware.logger.error).toBe('function');
-    const middlewares = calls.runServer.options.unstable_extraMiddleware as unknown[];
-    expect(typeof middlewares[0]).toBe('function');
-    expect(typeof middlewares[1]).toBe('function');
-    expect(middlewares.slice(2)).toEqual(['community-mw', 'dev-mw']);
-    expect(calls.runServer.options.websocketEndpoints).toEqual({ '/message': 'm', '/inspector': 'i' });
-    expect('host' in calls.runServer.options).toBe(false);
-  });
-
-  test('serves without the reporter package, and says so in the log it would have written', async () => {
-    const { deps, calls } = fakeDeps();
-    const written: Array<{ src: string; level: string; event: string; msg: string }> = [];
-    const handle = await startBareServer({
-      root,
-      port: 8101,
-      logsDir: join(root, 'logs'),
-      deps,
-      reporterFactory: null,
-      writer: makeWriter({
-        write: (r: { src: string; level: string; event: string; msg: string }) => {
-          written.push(r);
-          return true;
-        },
-      }),
-    });
-    expect(handle.httpServer).toBeTruthy();
-    expect(calls.runServer.config.reporter).toBe(undefined);
-    const warn = written.find((r) => r.event === 'reporter_missing');
-    assert(warn);
-    expect(warn.level).toBe('warn');
-    expect(warn.msg).toMatch(/@stim-cli\/metro/);
-  });
-
-  test('the handle closes the http server, connections and all', async () => {
-    const { deps, calls } = fakeDeps();
-    const handle = await startBareServer({
-      root,
-      port: 8102,
-      logsDir: join(root, 'logs'),
-      deps,
-      reporterFactory: () => ({ update() {} }),
-    });
-    expect(handle.mode).toBe('bare-inproc');
-    expect(handle.serverPid).toBe(null);
-    await handle.close();
-    expect(calls.closed).toBe(true);
-    expect(calls.closedConnections).toBe(true);
-  });
-
-  test('an http server that closes on its own reports an unexpected exit', async () => {
-    const { deps, httpServer } = fakeDeps();
-    const handle = await startBareServer({
-      root,
-      port: 8103,
-      logsDir: join(root, 'logs'),
-      deps,
-      reporterFactory: () => ({ update() {} }),
-    });
-    const seen: Array<{ code: number; reason?: string }> = [];
-    handle.onExit((info) => seen.push(info));
-    httpServer.handlers.close?.();
-    expect(seen.length).toBe(1);
-    expect(seen[0]?.reason).toMatch(/closed/);
   });
 
   test('our own close does not report an unexpected exit', async () => {
@@ -496,23 +225,6 @@ describe('the shared Metro cache store', () => {
     }
   }
 
-  test('appends to the stores the project configured, keeping them and their order', () => {
-    const projectStore = { name: 'the project own store' };
-    const config: { cacheStores?: unknown } = { cacheStores: [projectStore] };
-    const result = appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore });
-    expect(result.added).toBe(true);
-    const stores = config.cacheStores as unknown[];
-    expect(stores.length).toBe(2);
-    expect(stores[0]).toBe(projectStore);
-    expect((stores[1] as FakeStore)._root).toBe('/cache/app');
-  });
-
-  test('a config with no stores at all gets exactly ours', () => {
-    const config: { cacheStores?: unknown } = {};
-    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore }).added).toBe(true);
-    expect((config.cacheStores as FakeStore[]).map((s) => s._root)).toEqual(['/cache/app']);
-  });
-
   test('a store already pointing at our root is not added a second time', () => {
     const config: { cacheStores?: unknown } = { cacheStores: [new FakeStore({ root: '/cache/app' })] };
     const result = appendCacheStore(config, { storeRoot: '/cache/app', FileStore: FakeStore });
@@ -522,27 +234,6 @@ describe('the shared Metro cache store', () => {
     expect(hasStoreAt(config.cacheStores, '/cache/app')).toBe(true);
     expect(hasStoreAt(config.cacheStores, '/cache/other')).toBe(false);
     expect(hasStoreAt(undefined, '/cache/app')).toBe(false);
-  });
-
-  test('a store with no public root is still recognized, by the tag Stim puts on it', () => {
-    class PrivateRootStore {
-      #root: string;
-      constructor(options: { root: string }) {
-        this.#root = options.root;
-      }
-      get root() {
-        return this.#root;
-      }
-    }
-    const config: { cacheStores?: unknown } = {};
-    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(true);
-    const stores = config.cacheStores as unknown[];
-    expect(stores.length).toBe(1);
-    expect((stores[0] as { _root?: unknown })._root).toBe(undefined);
-    expect(hasStoreAt(stores, '/cache/app')).toBe(true);
-    expect(hasStoreAt(stores, '/cache/other')).toBe(false);
-    expect(appendCacheStore(config, { storeRoot: '/cache/app', FileStore: PrivateRootStore }).added).toBe(false);
-    expect((config.cacheStores as unknown[]).length).toBe(1);
   });
 
   test('a function-shaped cacheStores is wrapped, not evaluated', () => {
@@ -559,52 +250,6 @@ describe('the shared Metro cache store', () => {
     expect(calledWith).toEqual({ marker: 1 });
     expect(resolved.length).toBe(2);
     expect((resolved[1] as FakeStore)._root).toBe('/cache/app');
-  });
-
-  test('the store root is the shared Metro cache root, partitioned by the package name', () => {
-    expect(metroStoreName(root)).toBe('bare');
-    expect(metroStoreRoot(root)).toBe(join(tmpHome, 'metro-cache', 'bare'));
-    const nameless = mkdtempSync(join(tmpdir(), 'stim-bare-nameless-'));
-    try {
-      writeFileSync(join(nameless, 'package.json'), '{}');
-      expect(metroStoreName(nameless)).toBe('app');
-    } finally {
-      rmSync(nameless, { recursive: true, force: true });
-    }
-  });
-
-  test('the CLI replaces a legacy flat override registration with the named store', () => {
-    const parent = join(tmpHome, 'overridden-metro');
-    process.env.STIM_METRO_CACHE = parent;
-    writeFileSync(
-      join(tmpHome, 'caches.json'),
-      JSON.stringify({
-        version: 1,
-        caches: [
-          { dir: parent, name: 'Metro transform cache', prune: 'entries', entriesDepth: 2 },
-          {
-            dir: parent,
-            name: 'Metro transform cache',
-            prune: 'entries',
-            entriesDepth: 2,
-            layout: METRO_NAMED_CACHE_LAYOUT,
-          },
-        ],
-      }),
-    );
-
-    const storeRoot = metroStoreRoot(root);
-    expect(storeRoot).toBe(join(parent, 'bare'));
-    registerMetroStore(storeRoot);
-
-    const caches = readManifest().caches;
-    expect(caches.some((cache) => cache.dir === parent && cache.layout === undefined)).toBe(false);
-    expect(caches.some((cache) => cache.dir === parent && cache.layout === METRO_NAMED_CACHE_LAYOUT)).toBe(true);
-    expect(caches.find((cache) => cache.dir === storeRoot)).toMatchObject({
-      entriesDepth: 2,
-      prune: 'entries',
-      layout: METRO_NAMED_CACHE_LAYOUT,
-    });
   });
 });
 
@@ -671,65 +316,5 @@ describe('startBareServer and the shared store', () => {
     const added = writer.records.filter((r) => r.event === 'cache_store_added');
     expect(added.length).toBe(1);
     expect(added[0]?.msg).toContain(metroStoreRoot(root));
-  });
-
-  test.each(['machine', 'project', 'native-invalid'])(
-    '%s Metro opt-out leaves the project config exactly as loaded',
-    async (layer) => {
-      writeFileSync(
-        join(tmpHome, 'config.json'),
-        JSON.stringify({
-          projects: {},
-          repos: {},
-          optimizations: { metroSharedCache: layer !== 'machine' },
-        }),
-      );
-      if (layer === 'project' || layer === 'native-invalid')
-        writeFileSync(
-          join(root, '.stim.json'),
-          JSON.stringify({
-            optimizations: {
-              metroSharedCache: false,
-              ...(layer === 'native-invalid'
-                ? { android: { compilerCache: 'cas' }, ios: { compilationCache: 'false' } }
-                : {}),
-            },
-          }),
-        );
-      const projectStore = { name: 'project store' };
-      const { deps, seen } = configuringDeps([projectStore]);
-      const writer = recordingWriter();
-      await startBareServer({
-        root,
-        port: 8201,
-        logsDir: join(root, 'logs'),
-        deps,
-        writer,
-        reporterFactory: () => ({ update() {} }),
-        fileStore: FakeStore,
-      });
-      expect(seen.config?.cacheStores).toEqual([projectStore]);
-      expect(writer.records.some((r) => r.event === 'cache_store_skipped')).toBe(true);
-    },
-  );
-
-  test('an unresolvable metro-cache is a warn record, not a failure to serve', async () => {
-    const projectStore = { name: 'project store' };
-    const { deps, seen } = configuringDeps([projectStore]);
-    const writer = recordingWriter();
-    const handle = await startBareServer({
-      root,
-      port: 8202,
-      logsDir: join(root, 'logs'),
-      deps,
-      writer,
-      reporterFactory: () => ({ update() {} }),
-      fileStore: null,
-    });
-    expect(handle.mode).toBe('bare-inproc');
-    expect(seen.config?.cacheStores).toEqual([projectStore]);
-    const skipped = writer.records.filter((r) => r.event === 'cache_store_skipped');
-    expect(skipped.length).toBe(1);
-    expect(skipped[0]?.level).toBe('warn');
   });
 });

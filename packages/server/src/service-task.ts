@@ -103,7 +103,7 @@ export function editTask(
 const xml = (text: string) => text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 
 /** A command-line word as the Windows C runtime splits it: quoted, with backslashes before a quote doubled. */
-export function windowsArgument(value: string): string {
+function windowsArgument(value: string): string {
   return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\+)$/, '$1$1')}"`;
 }
 

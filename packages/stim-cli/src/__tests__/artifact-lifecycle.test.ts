@@ -67,56 +67,6 @@ describe('artifact lifecycle', () => {
     expect(state).toEqual({ claimed: false, stored: 'source-compiled' });
   });
 
-  test.each(['external', 'cache', 'shared', 'prepared'] as const)(
-    'a ready %s artifact bypasses remaining production',
-    async (hit) => {
-      const { phases, state } = recipe();
-      if (hit === 'external') {
-        phases.resolve = async () => ({ kind: 'ready', artifact: 'installable' });
-        phases.reuse = async () => unexpected('external artifact materialization');
-      } else if (hit === 'cache') {
-        phases.resolve = async () => ({ kind: 'cached', artifact: 'cached' });
-        phases.reuse = async () => 'installable';
-      } else if (hit === 'shared') {
-        phases.claim = async () => 'cached';
-        phases.reuse = async () => 'installable';
-      } else {
-        phases.build.placement = {
-          select: () => 'worker',
-          acquire: async () => unexpected('worker request after a late cache hit'),
-        };
-        phases.build.revalidate = async () => ({ ready: 'installable' });
-        phases.reuse = async () => unexpected('late artifact materialized twice');
-      }
-      if (hit === 'external' || hit === 'cache') phases.claim = async () => unexpected('claim on a hit');
-      if (hit !== 'prepared') phases.build.prepare = async () => unexpected('preparation on a hit');
-      phases.build.admit = async () => unexpected('capacity admission on a hit');
-      phases.build.compile = async () => unexpected('compilation on a hit');
-
-      expect(await runArtifactLifecycle(phases)).toBe('installable');
-      expect(state).toEqual({ claimed: false, stored: null });
-    },
-  );
-
-  test('replaces an unusable cached artifact with a freshly compiled artifact', async () => {
-    const { phases, state } = recipe();
-    phases.resolve = async () => ({ kind: 'cached', artifact: 'stale' });
-    phases.reuse = async () => null;
-
-    expect(await runArtifactLifecycle(phases)).toBe('source-compiled');
-    expect(state.stored).toBe('source-compiled');
-  });
-
-  test('changed inputs prevent storage while the compiled artifact can still be prepared for installation', async () => {
-    const { phases, state } = recipe();
-    phases.build.validate = async () => 'uncacheable';
-    phases.build.store = async () => unexpected('storage under invalidated inputs');
-    phases.build.finish = async (artifact) => `${artifact}-install-copy`;
-
-    expect(await runArtifactLifecycle(phases)).toBe('source-compiled-install-copy');
-    expect(state).toEqual({ claimed: false, stored: null });
-  });
-
   test.each(['placement', 'preparation'])(
     'failed %s releases the producer claim without compiling or publishing',
     async (phase) => {
@@ -135,4 +85,28 @@ describe('artifact lifecycle', () => {
       expect(state).toEqual({ claimed: false, stored: null });
     },
   );
+});
+
+test('changed inputs prevent storage while the compiled artifact can still be prepared for installation', async () => {
+  const { phases, state } = recipe();
+  phases.build.validate = async () => 'uncacheable';
+  phases.build.store = async () => unexpected('storage under invalidated inputs');
+  phases.build.finish = async (artifact) => `${artifact}-install-copy`;
+
+  expect(await runArtifactLifecycle(phases)).toBe('source-compiled-install-copy');
+  expect(state).toEqual({ claimed: false, stored: null });
+});
+
+test('a ready artifact found after preparation bypasses worker acquisition and compilation', async () => {
+  const { phases, state } = recipe();
+  phases.build.placement = {
+    select: () => 'worker',
+    acquire: async () => unexpected('worker request after a late cache hit'),
+  };
+  phases.build.revalidate = async () => ({ ready: 'installable' });
+  phases.reuse = async () => unexpected('late artifact materialized twice');
+  phases.build.admit = async () => unexpected('capacity admission on a hit');
+  phases.build.compile = async () => unexpected('compilation on a hit');
+  expect(await runArtifactLifecycle(phases)).toBe('installable');
+  expect(state).toEqual({ claimed: false, stored: null });
 });

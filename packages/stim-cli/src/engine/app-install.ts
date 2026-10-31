@@ -211,7 +211,7 @@ export async function clearOtherUserApps(
   return { listed: true, kept: keep ? installed.includes(keep) : false, removed, failed };
 }
 
-export function jsLocationValue(metroPort: number | string): string {
+function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
@@ -245,7 +245,7 @@ export function devClientUrl(
   return devClientDeepLink(scheme, `http://${host}:${metroPort}`, options);
 }
 
-export function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
+function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
   return [...new Set([bundleId, ...schemes])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
 }
 
@@ -536,7 +536,7 @@ export async function installAndroidApp(
   }
 }
 
-export function parseResolvedActivity(text: unknown): string | null {
+function parseResolvedActivity(text: unknown): string | null {
   if (typeof text !== 'string') return null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -686,7 +686,7 @@ export function androidDevClientUrl(scheme: string, metroPort: number | string, 
   return devClientUrl(scheme, metroPort, androidMetroHost(physical));
 }
 
-export function amStartError(text: unknown): string | null {
+function amStartError(text: unknown): string | null {
   const out = String(text ?? '');
   for (const raw of out.split('\n')) {
     const line = raw.trim();
@@ -695,7 +695,7 @@ export function amStartError(text: unknown): string | null {
   return null;
 }
 
-export async function openAndroidDevClientUrl(
+async function openAndroidDevClientUrl(
   {
     serial,
     url,
@@ -890,7 +890,7 @@ function describe(err: unknown) {
   return stderr ? `${message}: ${stderr}` : message;
 }
 
-export function parsePidof(text: unknown): number | null {
+function parsePidof(text: unknown): number | null {
   const first = String(text ?? '')
     .trim()
     .split(/\s+/)[0];
@@ -898,7 +898,7 @@ export function parsePidof(text: unknown): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
-export function parsePsPid(text: unknown, packageName: string): number | null {
+function parsePsPid(text: unknown, packageName: string): number | null {
   for (const raw of String(text ?? '').split('\n')) {
     const cols = raw.trim().split(/\s+/);
     if (cols.length < 2) continue;

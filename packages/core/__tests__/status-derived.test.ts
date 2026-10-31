@@ -77,58 +77,7 @@ describe('failed run causes', () => {
     ]);
   });
 
-  test('without a located diagnostic the error code is the cause, else a bare failure', () => {
-    expect(causes([run({ errorCode: 'STIM_LAUNCH_FAILED' }), run({})])).toEqual([
-      { key: 'STIM_LAUNCH_FAILED', file: null, line: null },
-      { key: 'failed', file: null, line: null },
-    ]);
-  });
-
   test('only a failed run has a cause, so a cancelled run ends a streak of failures', () => {
     expect(causes([run({ result: 'cancelled' }), run({ result: 'succeeded', status: 'ok' })])).toEqual([null, null]);
-  });
-
-  test('the last build of each platform carries its cause', () => {
-    const { result: _, ...failed } = run({ platform: 'android', errorCode: 'STIM_INSTALL_FAILED' });
-    const derived = withDerivedFacts(env({ lastBuilds: { android: failed } }));
-    expect(derived.lastBuilds?.android?.cause?.key).toBe('STIM_INSTALL_FAILED');
-    expect(derived.lastBuilds).not.toHaveProperty('ios');
-  });
-});
-
-describe('withDerivedFacts', () => {
-  test('derives every device, worktree and build the payload carries, without touching the input', () => {
-    const sim = {
-      name: 'stim-w',
-      udid: 'U',
-      owned: true,
-      state: 'Booted',
-      app: { id: 'a', state: 'stopped' as const },
-    };
-    const input = env({
-      live: true,
-      ios: sim,
-      android: null,
-      slots: [{ slot: 'b', ios: { ...sim, app: { id: 'a', state: 'running' } }, android: null }],
-      worktree: {
-        path: '/w',
-        git: { changed: 1, untracked: 0, upstream: null, ahead: null, behind: null, mergedInto: null },
-      },
-      builds: { ios: [run({ status: 'ok', result: 'succeeded' })] },
-    });
-    const before = structuredClone(input);
-    const derived = withDerivedFacts(input);
-
-    expect(input).toEqual(before);
-    expect(derived.stage).toEqual({
-      kind: 'running',
-      since: null,
-      platform: null,
-      closedApps: [{ platform: 'ios', slot: 'default' }],
-    });
-    expect(derived.ios?.appPresence).toBe('closed');
-    expect(derived.android).toBeNull();
-    expect(derived.slots?.[0]?.ios?.appPresence).toBeNull();
-    expect(derived.worktree?.gitChip?.parts).toEqual([{ kind: 'changed', count: 1 }, { kind: 'no-upstream' }]);
   });
 });

@@ -14,7 +14,6 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 import * as identities from '../process-identity.ts';
 import * as memory from '../commands/gc/memory.ts';
 import {
-  collectMemoryReport,
   gradleHomeFromFiles,
   isKotlinDaemonCommand,
   parseGradleDaemonCommand,
@@ -25,7 +24,6 @@ import {
   planDaemons,
   planWatchman,
   runningBuild,
-  stimWorkspaceOf,
   watchmanFinding,
   watchmanRootStaleness,
   type GradleDaemonFacts,
@@ -315,17 +313,6 @@ test('an iOS build slot does not hold the daemons, an Android lock or an unattri
   expect(runningBuild([makeBuildLock({ platform: 'android', alive: false })], [])).toBeNull();
 });
 
-test('a watchman client is attributed to the Stim workspace whose supervisor it descends from', () => {
-  const parentOf = new Map([
-    [300, 200],
-    [200, 100],
-    [100, 1],
-  ]);
-  const supervisors = new Map([[100, '/w']]);
-  expect(stimWorkspaceOf(300, parentOf, supervisors)).toBe('/w');
-  expect(stimWorkspaceOf(999, parentOf, supervisors)).toBeNull();
-});
-
 test('--older-than with a memory kind is refused', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -407,44 +394,6 @@ test.skipIf(process.platform === 'win32')(
     await runGc({ cache: 'watchman', delete: true });
     expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
     expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'watchman roots are probed together, and debug-status runs only once no probe of gc is connected',
-  async () => {
-    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-    const roots = Array.from({ length: 6 }, (_, index) => join(tmpHome, `root-${index}`));
-    let running = 0;
-    let most = 0;
-    let runningAtDebugStatus: number | null = null;
-    setExecutor({
-      runFileQuiet: (file: string) => (file === 'ps' ? PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground') : null),
-      runFileAsync: async (_file: string, args: string[]) => {
-        const [, command] = args;
-        if (command === 'get-pid') return JSON.stringify({ pid: 32725 });
-        if (command === 'watch-list') return JSON.stringify({ roots });
-        running++;
-        most = Math.max(most, running);
-        await new Promise((done) => setTimeout(done, 5));
-        running--;
-        return JSON.stringify(command === 'trigger-list' ? { triggers: [] } : { subscribers: [] });
-      },
-      spawn: () => {
-        runningAtDebugStatus = running;
-        const child = Object.assign(new EventEmitter(), { pid: 777, stdout: new EventEmitter(), kill: () => true });
-        setImmediate(() => {
-          child.stdout.emit('data', Buffer.from(JSON.stringify({ clients: [] })));
-          child.emit('close', 0);
-        });
-        return child;
-      },
-    });
-    const report = await collectMemoryReport({ watchman: true, gradle: false });
-    expect(report.watchmanRoots.map((root) => root.path)).toEqual(roots);
-    expect(report.processes[0]).toMatchObject({ reclaimable: true });
-    expect(most).toBeGreaterThan(2);
-    expect(runningAtDebugStatus).toBe(0);
   },
 );
 

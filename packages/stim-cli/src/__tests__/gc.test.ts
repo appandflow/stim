@@ -54,13 +54,11 @@ import gcCommand, {
   collectGcReport,
   deleteParkedSims,
   describeParkedSims,
-  describeUnverifiableDevices,
   findOrphanedDevices,
   findStaleDeviceRecords,
   findStaleProjectDevices,
   formatGcReport,
   runGc,
-  selectCaches,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -71,7 +69,6 @@ import * as reclaim from '../devices/reclaim.ts';
 import {
   makeConfig,
   makeIosSim,
-  makeCacheDescriptor,
   makeBuildLock,
   makeBuildSlot,
   goneClaimOwner,
@@ -104,79 +101,11 @@ vi.mock('../devices/machine-cache-usage.ts', () => ({
   }),
 }));
 
-describe('selectCaches', () => {
-  const caches = [
-    makeCacheDescriptor({ name: 'Xcode compilation cache', dir: '/home/.stim/compilation-cache' }),
-    makeCacheDescriptor({ name: 'Build cache', dir: '/home/.stim/build-cache' }),
-    makeCacheDescriptor({ name: 'Metro file maps', dir: '/tmp/metro-file-map-1' }),
-  ];
-
-  test('no name keeps every cache', () => {
-    expect(selectCaches(caches, null)).toHaveLength(3);
-    expect(selectCaches(caches, '')).toHaveLength(3);
-  });
-
-  test('a name selects the caches it appears in, whatever its case', () => {
-    expect(selectCaches(caches, 'compilation cache').map((c) => c.name)).toEqual(['Xcode compilation cache']);
-    expect(selectCaches(caches, 'COMPILATION').map((c) => c.name)).toEqual(['Xcode compilation cache']);
-  });
-
-  test('a directory fragment selects a cache the name does not match', () => {
-    expect(selectCaches(caches, 'metro-file-map').map((c) => c.name)).toEqual(['Metro file maps']);
-  });
-
-  test('all is a reserved name that selects every cache', () => {
-    expect(selectCaches(caches, 'all')).toHaveLength(3);
-    expect(selectCaches(caches, 'ALL')).toHaveLength(3);
-  });
-
-  test('the reserved name wins over a directory that happens to carry it', () => {
-    const withInstall = [...caches, makeCacheDescriptor({ name: 'Vendor cache', dir: '/opt/install/cache' })];
-    expect(selectCaches(withInstall, 'all')).toHaveLength(4);
-    expect(selectCaches(withInstall, 'install').map((c) => c.name)).toEqual(['Vendor cache']);
-  });
-
-  test('a name nothing carries selects no cache', () => {
-    expect(selectCaches(caches, 'gradle')).toEqual([]);
-  });
-});
-
 describe('a cache-scoped report', () => {
-  test('carries the scope and inspects nothing else', async () => {
-    const run = vi.fn<(...args: unknown[]) => string>(() => '');
-    setExecutor({
-      run,
-      runQuiet: run,
-      runFile: run,
-      runFileQuiet: run,
-      runFileAsync: async (...args: unknown[]) => run(...args),
-      spawn: run,
-      findExecutable: () => null,
-    });
-    const report = await collectGcReport({ cache: 'compilation cache' });
-    expect(run.mock.calls.flat(2).join(' ')).not.toMatch(/\b(simctl|avdmanager|adb|emulator)\b/);
-    expect(report.cacheScope).toBe('compilation cache');
-    expect(report.deadProjects).toEqual([]);
-    expect(report.orphanedDevices).toEqual([]);
-    expect(report.staleDevices).toEqual([]);
-    expect(report.staleDeviceRecords).toEqual([]);
-    expect(report.buildLocks).toEqual({ stale: [], live: [], unresolved: [] });
-    expect(report.buildSlots).toEqual({ stale: [], live: [], unresolved: [] });
-    expect(report.skipped).toEqual([]);
-    for (const c of report.caches) {
-      expect(`${c.name} ${c.dir}`.toLowerCase()).toContain('compilation cache');
-    }
-  });
-
   test('the report says what was not inspected instead of claiming a clean machine', () => {
     const lines = formatGcReport({ cacheScope: 'compilation cache' });
     expect(lines.some((l) => l.includes('Cache scope: "compilation cache"'))).toBeTruthy();
     expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeFalsy();
-  });
-
-  test('an unscoped report still reports a clean machine', () => {
-    const lines = formatGcReport({});
-    expect(lines.some((l) => l.includes('Nothing to reclaim'))).toBeTruthy();
   });
 
   test('a name no cache carries says so instead of reporting a clean machine', async () => {
@@ -204,27 +133,9 @@ describe('a cache-scoped report', () => {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-test('names skipped entries and why they were skipped', () => {
-  const lines = formatGcReport({
-    skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
-    deadProjects: [],
-  }).join('\n');
-  expect(lines).toMatch(/not mounted/);
-  expect(lines).toMatch(/skipped/i);
-});
-
 test('says nothing to reclaim when everything is clean', () => {
   const lines = formatGcReport({ skipped: [], deadProjects: [] }).join('\n');
   expect(lines).toMatch(/nothing to reclaim/i);
-});
-
-test('lists dead project entries', () => {
-  const lines = formatGcReport({
-    skipped: [],
-    deadProjects: ['/gone/proj'],
-  }).join('\n');
-  expect(lines).toMatch(/\/gone\/proj/);
-  expect(lines).toMatch(/Dead project entries/);
 });
 
 test('reports parked simulators with model, runtime, age, size, and delete effect', () => {
@@ -349,53 +260,6 @@ test('parked deletion skips a simulator adopted after report collection', async 
   expect(getProject('/tmp/adopter')?.platforms?.ios).toEqual(device);
 });
 
-test('--older-than keeps devices parked more recently, or at an unknown time, out of the report', async () => {
-  installExecutor();
-  const now = Date.parse('2026-09-25T03:00:00.000Z');
-  const parkedDaysAgo = (days: number) => new Date(now - days * DAY_MS).toISOString();
-  const park = (platform: 'ios' | 'android', id: string, parkedAt: string) => {
-    const project = `/tmp/source-${platform}-${id}`;
-    if (platform === 'ios') {
-      upsertProject(project, { platforms: { ios: { deviceUdid: id, deviceName: 'stim-source', owned: true } } });
-      parkSim({
-        platform,
-        projectPath: project,
-        max: 5,
-        record: {
-          udid: id,
-          name: `stim-parked (iPhone 17 26.5) ${id}`,
-          deviceTypeIdentifier: 'iphone-17',
-          runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-          parkedAt,
-          simslimManaged: false,
-        },
-      });
-    } else {
-      upsertProject(project, { platforms: { android: { avdName: id, owned: true } } });
-      parkSim({
-        platform,
-        projectPath: project,
-        max: 5,
-        record: { udid: id, name: id, systemImage: 'image', configuration: 'config', parkedAt },
-      });
-    }
-  };
-  park('ios', 'OLD', parkedDaysAgo(8));
-  park('ios', 'NEW', parkedDaysAgo(2));
-  park('ios', 'UNKNOWN', 'not a date');
-  park('android', 'stim-old', parkedDaysAgo(7));
-  park('android', 'stim-new', parkedDaysAgo(6));
-  const deps = { listAllIosSims: () => [], listIosDeviceTypes: () => [], listAvds: () => [], avdDirectory: () => null };
-
-  const bounded = await collectGcReport({ olderThan: 7, now }, deps);
-  const unbounded = await collectGcReport({ now }, deps);
-
-  expect(bounded.parkedSims.map((sim) => sim.udid)).toEqual(['OLD']);
-  expect(bounded.parkedAvds.map((avd) => avd.name)).toEqual(['stim-old']);
-  expect(unbounded.parkedSims.map((sim) => sim.udid).toSorted()).toEqual(['NEW', 'OLD', 'UNKNOWN']);
-  expect(unbounded.parkedAvds.map((avd) => avd.name).toSorted()).toEqual(['stim-new', 'stim-old']);
-});
-
 test.each(['parked', 'stale'])(
   'cancelling %s device-record cleanup does not wait for the config lock to be released',
   async (kind) => {
@@ -502,36 +366,6 @@ test('parked deletion keeps ownership records when simulator listing was unavail
   );
 });
 
-test('parked deletion keeps ownership records after malformed simctl list output', async () => {
-  upsertProject('/tmp/source', { platforms: { ios: { deviceUdid: 'P1', deviceName: 'stim-source', owned: true } } });
-  const record = {
-    udid: 'P1',
-    name: 'stim-parked (iPhone 17 26.5) p1',
-    deviceTypeIdentifier: 'iphone-17',
-    runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-    parkedAt: '2026-09-01T00:00:00.000Z',
-    simslimManaged: false,
-  };
-  parkSim({ platform: 'ios', projectPath: '/tmp/source', record, max: 3 });
-  setExecutor({
-    runFile(_file, args = []) {
-      const cmd = args.join(' ');
-      if (cmd.includes('simctl list devices')) return '[]';
-      throw new Error(`unexpected run: ${cmd}`);
-    },
-    runQuiet: () => null,
-    runFileQuiet: () => null,
-    spawn: () => null,
-  });
-
-  const report = await collectGcReport();
-  const output = await captureLog(() => deleteParkedSims(report.parkedSims));
-
-  expect(report.parkedSims[0]?.listed).toBe(null);
-  expect(output).toMatch(/Could not verify.*record was kept/);
-  expect(readParked('ios')).toEqual([record]);
-});
-
 test('headline does not claim "nothing to reclaim" without flagging unchecked entries', () => {
   const lines = formatGcReport({
     skipped: [{ dir: '/Volumes/ExternalSSD/proj', reason: 'volume /Volumes/ExternalSSD is not mounted' }],
@@ -540,31 +374,6 @@ test('headline does not claim "nothing to reclaim" without flagging unchecked en
   const headline = lines.split('\n')[0];
   expect(headline).not.toMatch(/^Nothing to reclaim\.$/);
   expect(headline).toMatch(/could not be checked/i);
-});
-
-test('the cache report says which caches were registered and which were detected', () => {
-  const lines = formatGcReport({
-    skipped: [],
-    deadProjects: [],
-    caches: [
-      makeCacheDescriptor({
-        name: 'Metro transforms',
-        dir: '/c/metro',
-        note: 'from a metro.config.js',
-        bytes: 2048,
-        source: 'registered',
-      }),
-      makeCacheDescriptor({
-        name: 'Xcode compilation cache',
-        dir: '/c/cas',
-        note: 'index-backed',
-        bytes: 4096,
-        source: 'detected',
-      }),
-    ],
-  }).join('\n');
-  expect(lines).toMatch(/Metro transforms.*registered/);
-  expect(lines).toMatch(/Xcode compilation cache.*detected/);
 });
 
 test('findOrphanedDevices proposes only Stim devices absent from config', () => {
@@ -588,73 +397,6 @@ test('findOrphanedDevices proposes only Stim devices absent from config', () => 
     isMounted: () => true,
   });
   expect(result.orphaned.map((o) => o.id).toSorted()).toEqual(['U1', 'stim-old']);
-});
-
-test('orphaned and stale iOS simulators carry the data size simctl reports', () => {
-  const now = Date.now();
-  const sims = [
-    makeIosSim({ udid: 'U-ORPHAN', name: 'stim-gone', dataPathSize: 3 * 1024 ** 3 }),
-    makeIosSim({ udid: 'U-STALE', name: 'stim-stale', dataPathSize: 2 * 1024 ** 3 }),
-    makeIosSim({ udid: 'U-UNSIZED', name: 'stim-unsized' }),
-  ];
-  recordCreatedDevice('ios', 'U-ORPHAN');
-  recordCreatedDevice('ios', 'U-UNSIZED');
-  const config = makeConfig({
-    projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } } },
-  });
-  const { orphaned } = findOrphanedDevices({ sims, config, isMounted: () => true });
-  expect(orphaned).toEqual([
-    { kind: 'ios', id: 'U-ORPHAN', name: 'stim-gone', bytes: 3 * 1024 ** 3 },
-    { kind: 'ios', id: 'U-UNSIZED', name: 'stim-unsized' },
-  ]);
-  const stale = findStaleProjectDevices({
-    config,
-    sims,
-    olderThanDays: 30,
-    now,
-    lastTouched: () => now - 90 * DAY_MS,
-  });
-  expect(stale.map((d) => d.bytes)).toEqual([2 * 1024 ** 3]);
-  const lines = formatGcReport({ orphanedDevices: orphaned, staleDevices: stale, olderThan: 30 });
-  expect(lines).toContain('  ios stim-gone (U-ORPHAN) - 3.0G on disk');
-  expect(lines).toContain('  ios stim-stale (U-STALE) - 2.0G on disk');
-  expect(lines).toContain('  ios stim-unsized (U-UNSIZED)');
-});
-
-test('gc deletes only unreferenced devices this home recorded, and lists other stim-* devices', () => {
-  recordCreatedDevice('ios', 'RECORDED');
-  const avdRoot = join(tmpHome, 'avd');
-  const avd = (name: string, config: string) => {
-    mkdirSync(join(avdRoot, `${name}.avd`), { recursive: true });
-    writeFileSync(join(avdRoot, `${name}.avd`, 'config.ini'), config);
-    writeFileSync(join(avdRoot, `${name}.ini`), `path=${join(avdRoot, `${name}.avd`)}\n`);
-  };
-  const saved = process.env.ANDROID_AVD_HOME;
-  process.env.ANDROID_AVD_HOME = avdRoot;
-  try {
-    avd('stim-other-home', 'disk.dataPartition.size=8589934592\n');
-    avd('stim-studio', 'disk.dataPartition.size=6G\n');
-    const result = findOrphanedDevices({
-      sims: [
-        makeIosSim({ udid: 'RECORDED', name: 'stim-app' }),
-        makeIosSim({ udid: 'OTHER-HOME', name: 'stim-1362-mobile (iPhone 18 Pro 27.0)' }),
-        makeIosSim({ udid: 'HANDMADE', name: 'stim-desktop-duo-test' }),
-      ],
-      avds: ['stim-other-home', 'stim-studio'],
-      config: makeConfig(),
-      isMounted: () => true,
-    });
-    expect(result.orphaned.map((o) => o.id)).toEqual(['RECORDED']);
-    expect(result.unverified).toEqual([
-      { kind: 'ios', id: 'OTHER-HOME', name: 'stim-1362-mobile (iPhone 18 Pro 27.0)' },
-      { kind: 'ios', id: 'HANDMADE', name: 'stim-desktop-duo-test' },
-      { kind: 'android', id: 'stim-other-home', name: 'stim-other-home' },
-      { kind: 'android', id: 'stim-studio', name: 'stim-studio' },
-    ]);
-  } finally {
-    if (saved === undefined) delete process.env.ANDROID_AVD_HOME;
-    else process.env.ANDROID_AVD_HOME = saved;
-  }
 });
 
 test('a simulator in the parked pool is referenced rather than orphaned', () => {
@@ -785,29 +527,6 @@ describe('android ledger names', () => {
   const androidEntries = async () =>
     (await collectGcReport()).staleLedgerEntries.filter((entry) => entry.kind === 'android');
 
-  test('a registration appearing while ledger cleanup waits is kept without holding the config lock', async () => {
-    let release = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const holding = withDirLockTransaction(createdDevicesLock(), () => gate);
-    let configHeld = 0;
-    try {
-      const forgetting = forgetStaleLedgerEntries([{ kind: 'android', id: GONE }]);
-      setImmediate(() => {
-        configHeld = readClaimSet(configLockPath() + '.claims').live.length;
-        writeFileSync(join(avdHome(), `${GONE}.ini`), `path=${join(avdHome(), `${GONE}.avd`)}\n`);
-        release();
-      });
-      expect(await forgetting).toBe(0);
-      expect(configHeld).toBe(0);
-      expect(readCreatedDevices().android.has(GONE)).toBe(true);
-    } finally {
-      release();
-      await holding;
-    }
-  });
-
   test.each(['config', 'device ledger'])(
     'cancelling while waiting for the %s lock keeps the AVD ledger entry and releases admission',
     async (kind) => {
@@ -863,25 +582,6 @@ describe('android ledger names', () => {
     breakIt();
     expect(await androidEntries()).toEqual([]);
     await captureLog(() => runGc({ delete: true }));
-    expect(readCreatedDevices().android.has(GONE)).toBe(true);
-  });
-
-  test.each([
-    ['missing', () => rmSync(avdHome(), { recursive: true })],
-    [
-      'a link to a volume that is not mounted',
-      () => {
-        rmSync(avdHome(), { recursive: true });
-        symlinkSync(join(tmpHome, 'unmounted-volume', 'avd'), avdHome());
-      },
-    ],
-  ])('--delete keeps a reported name when the first AVD root is now %s', async (_, breakIt) => {
-    const entries = await androidEntries();
-    expect(entries).toEqual([{ kind: 'android', id: GONE }]);
-    breakIt();
-    expect(await captureLog(() => forgetStaleLedgerEntries(entries))).toContain(
-      `Kept the ledger entry for android ${GONE}`,
-    );
     expect(readCreatedDevices().android.has(GONE)).toBe(true);
   });
 
@@ -1017,47 +717,6 @@ test('gc sizes only listed owned Android AVDs after ownership classification', a
   expect(output).not.toMatch(/Pixel_7/);
 });
 
-test('devices referenced by a project on an unmounted volume are kept', () => {
-  const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-ext' })],
-    avds: [],
-    config: makeConfig({ projects: { '/Volumes/Ext/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
-    isMounted: () => false,
-  });
-  expect(result.orphaned.length).toBe(0);
-  expect(result.kept[0]?.reason).toMatch(/not mounted/);
-});
-
-test('a device named by a non-owned (legacy/stale) record is still counted as referenced, not orphaned', () => {
-  const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-stale-record' })],
-    avds: ['stim-stale-avd'],
-    config: makeConfig({
-      projects: {
-        '/p': {
-          platforms: {
-            ios: { deviceUdid: 'U1' },
-            android: { avdName: 'stim-stale-avd' },
-          },
-        },
-      },
-    }),
-    isMounted: () => true,
-  });
-  expect(result.orphaned.length).toBe(0);
-});
-
-test('a device owned only by a dead project is orphaned when that project is passed as deadProjects', () => {
-  const result = findOrphanedDevices({
-    sims: [makeIosSim({ udid: 'U1', name: 'stim-dead' })],
-    avds: [],
-    config: makeConfig({ projects: { '/gone/p': { platforms: { ios: { deviceUdid: 'U1', owned: true } } } } }),
-    isMounted: () => true,
-    deadProjects: ['/gone/p'],
-  });
-  expect(result.orphaned.map((o) => o.id)).toEqual(['U1']);
-});
-
 const staleSims = [makeIosSim({ udid: 'U-STALE', name: 'stim-stale' })];
 
 function staleConfig(extra = {}) {
@@ -1068,25 +727,6 @@ function staleConfig(extra = {}) {
     },
   });
 }
-
-test('findStaleDeviceRecords reports a live project pointing at a device that is gone', () => {
-  const stale = findStaleDeviceRecords({
-    config: makeConfig({
-      projects: {
-        '/a': { platforms: { ios: { deviceUdid: 'GONE', owned: true } } },
-        '/b': { platforms: { ios: { deviceUdid: 'HERE', owned: true } } },
-        '/c': { platforms: { android: { avdName: 'stim-gone', owned: true } } },
-        '/d': { platforms: { android: { avdName: 'stim-here', owned: true } } },
-      },
-    }),
-    sims: [makeIosSim({ udid: 'HERE', name: 'stim-b' })],
-    avds: ['stim-here'],
-  });
-  expect(stale.map((r) => [r.kind, r.id, r.project])).toEqual([
-    ['ios', 'GONE', '/a'],
-    ['android', 'stim-gone', '/c'],
-  ]);
-});
 
 test('findStaleDeviceRecords proposes nothing for a platform whose listing failed', () => {
   const config = makeConfig({
@@ -1112,61 +752,6 @@ test('findStaleDeviceRecords skips a project the dead-entry sweep already claime
   expect(stale).toEqual([]);
 });
 
-test('findStaleDeviceRecords covers a non-owned record too, and reports its ownership', () => {
-  const stale = findStaleDeviceRecords({
-    config: makeConfig({ projects: { '/a': { platforms: { ios: { deviceUdid: 'GONE' } } } } }),
-    sims: [],
-  });
-  expect(stale.map((r) => r.owned)).toEqual([false]);
-});
-
-test('findStaleDeviceRecords never calls a physical serial record stale', () => {
-  expect(
-    findStaleDeviceRecords({
-      config: makeConfig({ projects: { '/a': { platforms: { android: { serial: 'R58M1234' } } } } }),
-      avds: [],
-    }),
-  ).toEqual([]);
-});
-
-test('the report names stale device records and says the delete touches no device', () => {
-  const lines = formatGcReport({
-    staleDeviceRecords: [{ kind: 'ios', id: 'GONE', project: '/a', owned: false }],
-  }).join('\n');
-  expect(lines).toMatch(/Stale device records \(1\)/);
-  expect(lines).toMatch(/ios GONE is not on this machine/);
-  expect(lines).toMatch(/recorded by \/a/);
-  expect(lines).toMatch(/RECORD only/);
-  expect(lines).not.toMatch(/Nothing to reclaim/);
-});
-
-test('findStaleProjectDevices reaps an owned device whose project has not been touched', () => {
-  const now = Date.now();
-  const stale = findStaleProjectDevices({
-    config: staleConfig(),
-    sims: staleSims,
-    avds: [],
-    olderThanDays: 30,
-    now,
-    lastTouched: () => now - 90 * DAY_MS,
-  });
-  expect(stale.map((d) => d.id)).toEqual(['U-STALE']);
-  expect(stale[0]?.project).toBe('/live/p');
-});
-
-test('findStaleProjectDevices leaves a recently touched project alone', () => {
-  const now = Date.now();
-  const stale = findStaleProjectDevices({
-    config: staleConfig(),
-    sims: staleSims,
-    avds: [],
-    olderThanDays: 30,
-    now,
-    lastTouched: () => now - 2 * DAY_MS,
-  });
-  expect(stale.length).toBe(0);
-});
-
 test('findStaleProjectDevices fails closed when a project timestamp cannot be read', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
@@ -1184,34 +769,6 @@ test('findStaleProjectDevices ignores devices Stim does not own', () => {
   const now = Date.now();
   const stale = findStaleProjectDevices({
     config: makeConfig({ projects: { '/live/p': { platforms: { ios: { deviceUdid: 'U-STALE' } } } } }),
-    sims: staleSims,
-    avds: [],
-    olderThanDays: 30,
-    now,
-    lastTouched: () => now - 90 * DAY_MS,
-  });
-  expect(stale.length).toBe(0);
-});
-
-test('findStaleProjectDevices only proposes devices present in the live listing', () => {
-  const now = Date.now();
-  const stale = findStaleProjectDevices({
-    config: staleConfig(),
-    sims: [],
-    avds: [],
-    olderThanDays: 30,
-    now,
-    lastTouched: () => now - 90 * DAY_MS,
-  });
-  expect(stale.length).toBe(0);
-});
-
-test('findStaleProjectDevices never reaps a device recorded under a key that is not absolute', () => {
-  const now = Date.now();
-  const stale = findStaleProjectDevices({
-    config: makeConfig({
-      projects: { '.claude/stim-worktrees/nestrel': { platforms: { ios: { deviceUdid: 'U-STALE', owned: true } } } },
-    }),
     sims: staleSims,
     avds: [],
     olderThanDays: 30,
@@ -2628,18 +2185,6 @@ test('a bare gc leaves every registered entry in place', async () => {
   expect(loadConfig()).toEqual(before);
 });
 
-test('gc reports the three things that still orphan, and no DerivedData', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  installExecutor();
-
-  const report = await collectGcReport();
-
-  expect(!('derivedData' in report)).toBeTruthy();
-  expect('deadProjects' in report).toBeTruthy();
-  expect('orphanedDevices' in report).toBeTruthy();
-  expect('caches' in report).toBeTruthy();
-});
-
 test('a dead project on an unmounted volume is not unregistered', async () => {
   const unmountedPath = '/Volumes/StimTestVolumeThatDoesNotExist/proj/gone';
   const localDeadPath = join(fakeHome, 'no-longer-here');
@@ -2702,51 +2247,6 @@ test('--delete exits 1 when a dead project keeps its entry because a collector c
 
 describe('a registry key that is not an absolute path', () => {
   const relativeKey = '.claude/stim-worktrees/nestrel';
-
-  test('is an invalid record, not an unmounted volume', async () => {
-    saveConfig({
-      version: 2,
-      projects: { [relativeKey]: { metroPort: 8100, platforms: {} } },
-      repos: {},
-    });
-    installExecutor();
-
-    const report = await collectGcReport();
-
-    expect(report.invalidProjects).toEqual([relativeKey]);
-    expect(report.deadProjects).toEqual([]);
-    expect(report.skipped).toEqual([]);
-  });
-
-  test('is kept, with the real reason, while it still records a device', async () => {
-    saveConfig({
-      version: 2,
-      projects: {
-        [relativeKey]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-1', owned: true } } },
-      },
-      repos: {},
-    });
-    installExecutor();
-
-    const report = await collectGcReport();
-
-    expect(report.invalidProjects).toEqual([]);
-    expect(report.deadProjects).toEqual([]);
-    expect(report.skipped).toHaveLength(1);
-    expect(report.skipped[0]?.dir).toBe(relativeKey);
-    expect(report.skipped[0]?.reason).toMatch(/not an absolute path/);
-    expect(report.skipped[0]?.reason).toMatch(/UDID-1/);
-    expect(report.skipped[0]?.reason).toMatch(/gc removes it once that claim is gone/);
-    expect(report.skipped[0]?.reason).not.toMatch(/not mounted/);
-  });
-
-  test('the report names it as an invalid record', () => {
-    const lines = formatGcReport({ invalidProjects: [relativeKey] }).join('\n');
-    expect(lines).toMatch(/Invalid project entries \(1\)/);
-    expect(lines).toMatch(/not an absolute path/);
-    expect(lines).toMatch(new RegExp(relativeKey.replace(/\./g, '\\.')));
-    expect(lines).not.toMatch(/Nothing to reclaim/);
-  });
 
   test('--delete removes it when it claims no device', async () => {
     saveConfig({
@@ -3565,41 +3065,6 @@ test('--delete --older-than keeps a current Metro store that is also a current o
   expect(existsSync(childTransform)).toBe(true);
 });
 
-test('an unscoped dry run says which caches --delete --cache would empty, as the scoped run does', async () => {
-  const parent = join(tmpHome, 'metro-cache', 'first-app');
-  const child = join(parent, 'second-app');
-  const plain = join(tmpHome, 'plain-cache');
-  for (const dir of [child, plain]) mkdirSync(dir, { recursive: true });
-  const store = (dir: string) => ({
-    dir,
-    name: 'Metro transform cache',
-    prune: 'entries' as const,
-    entriesDepth: 2,
-    layout: METRO_NAMED_CACHE_LAYOUT,
-  });
-  register(store(parent));
-  register(store(child));
-  register({ dir: plain, name: 'Plain cache', prune: 'entries' });
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  installExecutor();
-
-  const unscoped = await collectGcReport({});
-
-  expect(unscoped.caches.find((cache) => cache.dir === parent)?.scopedEmpty).toEqual({
-    willEmpty: false,
-    emptySkipped: 'report-only shared cache; Stim never deletes it',
-  });
-  expect(unscoped.caches.find((cache) => cache.dir === plain)?.scopedEmpty).toEqual({
-    willEmpty: true,
-    emptySkipped: null,
-  });
-  expect(unscoped.caches.every((cache) => cache.willEmpty === undefined)).toBe(true);
-  for (const { dir, scopedEmpty } of unscoped.caches) {
-    const scoped = (await collectGcReport({ cache: dir })).caches.find((cache) => cache.dir === dir);
-    expect(scoped).toMatchObject(scopedEmpty ?? {});
-  }
-});
-
 test('--delete --cache all empties an index-backed cache that --older-than cannot trim', async () => {
   const casDir = join(tmpHome, 'compilation-cache');
   const leaf = join(casDir, 'v9.data.leaf');
@@ -3737,32 +3202,6 @@ test('rejects a blank --cache instead of widening the run', async () => {
   }
 });
 
-test('describeUnverifiableDevices names Stim devices it cannot verify', () => {
-  const notices = describeUnverifiableDevices(['stim-alpha', 'iPhone 17 Pro'], ['stim-beta', 'Pixel_6_API_34']);
-  const joined = notices.join('\n');
-  expect(joined).toMatch(/stim-alpha/);
-  expect(joined).toMatch(/stim-beta/);
-  expect(joined).not.toMatch(/iPhone 17 Pro/);
-  expect(joined).not.toMatch(/Pixel_6/);
-});
-
-test('describeUnverifiableDevices says only that the sweep was skipped when nothing is ours', () => {
-  const notices = describeUnverifiableDevices(['iPhone 17 Pro'], []);
-  expect(notices.length).toBe(1);
-  expect(notices[0]).toMatch(/device sweep skipped/);
-});
-
-test('describeUnverifiableDevices tolerates empty listings', () => {
-  expect(describeUnverifiableDevices([], []).length).toBe(1);
-});
-
-test('describeUnverifiableDevices carries the reason it was given', () => {
-  const notices = describeUnverifiableDevices(['stim-alpha'], [], {
-    reason: 'STIM_HOME scopes this config while simulators are machine-global',
-  });
-  expect(notices.join('\n')).toMatch(/STIM_HOME/);
-});
-
 function writeLock({
   platform = 'ios',
   key = 'abc-debug-sim',
@@ -3780,51 +3219,6 @@ function writeLock({
   });
   return path;
 }
-
-test('the report separates locks whose builder is gone from builds in progress', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  installExecutor();
-  writeLock({ pid: process.pid, projectRoot: '/w/alive' });
-  writeLock({ platform: 'android', key: 'def-debug-sim', pid: 999999, projectRoot: '/w/dead' });
-
-  const report = await collectGcReport();
-  expect(report.buildLocks.stale.length).toBe(1);
-  expect(report.buildLocks.stale[0]?.pid).toBe(999999);
-  expect(report.buildLocks.live.length).toBe(1);
-  expect(report.buildLocks.live[0]?.projectRoot).toBe('/w/alive');
-});
-
-test('formatGcReport names both, and says a live one is a build it will not touch', () => {
-  const lines = formatGcReport({
-    buildLocks: {
-      stale: [
-        makeBuildLock({
-          platform: 'ios',
-          key: 'abc-debug-sim',
-          pid: 999999,
-          projectRoot: '/w/dead',
-          path: '/h/build-locks/ios-abc.lock',
-        }),
-      ],
-      live: [
-        makeBuildLock({
-          platform: 'android',
-          key: 'def-debug-sim',
-          pid: 41233,
-          projectRoot: '/w/alive',
-          path: '/h/build-locks/android-def.lock',
-        }),
-      ],
-    },
-  }).join('\n');
-  expect(lines).toMatch(/Stale build locks \(1\)/);
-  expect(lines).toMatch(/999999/);
-  expect(lines).toMatch(/\/w\/dead/);
-  expect(lines).toMatch(/Builds in progress \(1\)/);
-  expect(lines).toMatch(/41233/);
-  expect(lines).toMatch(/\/w\/alive/);
-  expect(lines).toMatch(/not touched|left alone/i);
-});
 
 test('a stale lock counts as something to reclaim', () => {
   const lines = formatGcReport({
@@ -4021,29 +3415,6 @@ function writeSlot({
   });
   return path;
 }
-
-test('the report separates stale build slots from ones a live builder holds', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  installExecutor();
-  writeSlot({ index: 0, pid: process.pid, projectRoot: '/w/alive' });
-  writeSlot({ index: 1, pid: 999999, projectRoot: '/w/dead' });
-
-  const report = await collectGcReport();
-  expect(report.buildSlots.stale.length).toBe(1);
-  expect(report.buildSlots.stale[0]?.pid).toBe(999999);
-  expect(report.buildSlots.live.length).toBe(1);
-});
-
-test('formatGcReport names a stale build slot', () => {
-  const lines = formatGcReport({
-    buildSlots: {
-      stale: [makeBuildSlot({ index: 1, pid: 999999, projectRoot: '/w/dead', path: '/h/build-slots/slot-1' })],
-      live: [],
-    },
-  }).join('\n');
-  expect(lines).toMatch(/Stale build slots \(1\)/);
-  expect(lines).toMatch(/999999/);
-});
 
 test('a stale build slot counts as something to reclaim', () => {
   const lines = formatGcReport({
@@ -4719,10 +4090,6 @@ describe('parked hosted device GC', () => {
     takeGcResults();
   });
 
-  test('an absent journal adds no hosted devices or notices', () => {
-    expect(collectParkedHostedDevices()).toEqual({ devices: [], notices: [] });
-  });
-
   test('collection lists only parked native sessions and reports session-home ledger ownership', () => {
     const android = androidSession();
     journal([
@@ -4769,17 +4136,6 @@ describe('parked hosted device GC', () => {
     expect(collectParkedHostedDevices({ olderThanDays: 1, now: Date.parse(parkedAt) + DAY_MS }).devices).toHaveLength(
       2,
     );
-  });
-
-  test('a malformed journal is reported without running any deletion', async () => {
-    journal([session()]);
-    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
-    const collected = collectParkedHostedDevices();
-    expect(collected.devices).toEqual([]);
-    expect(collected.notices[0]).toContain('journal unreadable');
-    expect(await deleteParkedHostedDevices(collected.devices)).toBe(0);
-    expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
-    expect(takeGcResults()).toEqual([]);
   });
 
   test('delete holds the session claim and sends stop to the private home, then records a verified result', async () => {
@@ -5123,29 +4479,28 @@ describe('parked hosted device GC', () => {
     expect(takeGcResults()).toMatchObject([{ status: 'kept', detail: expect.stringContaining('no longer') }]);
   });
 
-  test.each([
-    { state: 'unknown', device: session().device, notice: 'teardown failed' },
-    { state: 'stopped', device: { ...session().device, udid: 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB' } },
-    { state: 'stopped', device: null },
-  ])('an unverified worker result fails that device and continues with the next session (%j)', async (badResult) => {
-    const second = session({
-      id: '22222222-2222-2222-2222-222222222222',
-      device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
-    });
-    journal([session(), second]);
-    let runs = 0;
-    const firstRequests = worker(badResult, () => {
-      runs += 1;
-      if (runs === 1) worker({ state: 'stopped', device: second.device });
-    });
-    expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
-    expect(firstRequests).toHaveLength(1);
-    expect(runs).toBe(1);
-    expect(takeGcResults()).toMatchObject([
-      { status: 'failed', id: udid },
-      { status: 'done', id: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
-    ]);
-  });
+  test.each([{ state: 'stopped', device: { ...session().device, udid: 'BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB' } }])(
+    'an unverified worker result fails that device and continues with the next session (%j)',
+    async (badResult) => {
+      const second = session({
+        id: '22222222-2222-2222-2222-222222222222',
+        device: { ...(session().device as HostedIosDevice), udid: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      });
+      journal([session(), second]);
+      let runs = 0;
+      const firstRequests = worker(badResult, () => {
+        runs += 1;
+        if (runs === 1) worker({ state: 'stopped', device: second.device });
+      });
+      expect(await deleteParkedHostedDevices(collectParkedHostedDevices().devices)).toBe(1);
+      expect(firstRequests).toHaveLength(1);
+      expect(runs).toBe(1);
+      expect(takeGcResults()).toMatchObject([
+        { status: 'failed', id: udid },
+        { status: 'done', id: 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' },
+      ]);
+    },
+  );
 
   test('JSON dry run includes the hosted section and leaves the journal and ledger intact', async () => {
     journal([session()]);

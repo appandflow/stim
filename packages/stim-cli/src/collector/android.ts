@@ -14,11 +14,11 @@ const LEVEL_BY_LETTER: Record<string, string> = {
   S: 'debug',
 };
 
-export function levelFromLogcatLetter(letter: string): string {
+function levelFromLogcatLetter(letter: string): string {
   return LEVEL_BY_LETTER[String(letter || '').toUpperCase()] ?? 'info';
 }
 
-export const NOISE_TAGS: Set<string> = new Set([
+const NOISE_TAGS: Set<string> = new Set([
   'libEGL',
   'EGL_emulation',
   'eglCodecCommon',
@@ -35,7 +35,7 @@ export const NOISE_TAGS: Set<string> = new Set([
   'chatty',
 ]);
 
-export function levelForLogcat(letter: string, tag: string): string {
+function levelForLogcat(letter: string, tag: string): string {
   const level = levelFromLogcatLetter(letter);
   if (level !== 'error') return level;
   return NOISE_TAGS.has(String(tag || '').trim()) ? 'info' : level;
@@ -44,7 +44,7 @@ export function levelForLogcat(letter: string, tag: string): string {
 const LOGCAT_TIME = /^(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})\.(\d{3})\s+([A-Z])\/(.*?)\(\s*(\d+)\):\s?(.*)$/;
 const LOGCAT_EPOCH = /^\s*(\d+)\.(\d{3,6})\s+([A-Z])\/(.*?)\(\s*(\d+)\):\s?(.*)$/;
 
-export function parseLogcatTimestamp(
+function parseLogcatTimestamp(
   {
     month,
     day,
@@ -124,7 +124,7 @@ export function androidLogGroups(entries: NdjsonRecord[]): NdjsonRecord[][] {
   return groups;
 }
 
-export function logcatArgs(serial: string, pid: number | string): string[] {
+function logcatArgs(serial: string, pid: number | string): string[] {
   return ['-s', serial, 'logcat', '--pid', String(pid), '-v', 'time,epoch'];
 }
 
@@ -249,7 +249,7 @@ export function startAndroidLogcat({
 
 const PID_WATCH_MS = 3000;
 
-export function pidWatchInterval(): number {
+function pidWatchInterval(): number {
   const override = Number(process.env.STIM_PID_WATCH_MS);
   return Number.isFinite(override) && override > 0 ? override : PID_WATCH_MS;
 }

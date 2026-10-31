@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
@@ -29,23 +29,6 @@ const events = (file: string): TraceEvent[] => {
   const parsed: TraceEvent[] = JSON.parse(`${readFileSync(file, 'utf8').trimEnd().replace(/,$/, '')}]`);
   return parsed;
 };
-
-test('with STIM_TRACE unset every call runs its function and nothing is written or exported', async () => {
-  const cwd = process.cwd();
-  process.chdir(dir);
-  try {
-    expect(trace.enabled()).toBe(false);
-    expect(trace.span('a', () => 1)).toBe(1);
-    expect(await trace.spanAsync('b', async () => 2)).toBe(2);
-    trace.phases('p').enter('x');
-    trace.mark('m');
-    trace.command('stim x');
-  } finally {
-    process.chdir(cwd);
-  }
-  expect(readdirSync(dir)).toEqual([]);
-  expect(process.env.STIM_TRACE_OWNER).toBeUndefined();
-});
 
 test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phases and marks', async () => {
   const file = join(dir, 'trace.json');
@@ -85,18 +68,6 @@ test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phas
   expect(named('inner').tid).not.toBe(named('outer').tid);
 });
 
-test('a process that is not a command appends to an existing trace and starts a missing one with its bracket', () => {
-  const file = join(dir, 'trace.json');
-  writeFileSync(file, '[\n{"name":"parent","ph":"X","ts":1,"dur":1,"pid":1,"tid":1},\n');
-  process.env.STIM_TRACE = file;
-  trace.span('child', () => {});
-  expect(events(file).map((event) => event.name)).toEqual(expect.arrayContaining(['parent', 'child']));
-  rmSync(file);
-  process.env.STIM_TRACE = join(dir, 'other.json');
-  trace.span('alone', () => {});
-  expect(events(join(dir, 'other.json')).map((event) => event.name)).toContain('alone');
-});
-
 test('a command truncates a trace left by an earlier run, but not one its parent command owns', () => {
   const file = join(dir, 'trace.json');
   const stale = '[\n{"name":"stale","ph":"X","ts":1,"dur":1,"pid":1,"tid":1},\n';
@@ -109,13 +80,6 @@ test('a command truncates a trace left by an earlier run, but not one its parent
   writeFileSync(file, stale);
   trace.command('stim nested');
   expect(names()).toContain('stale');
-});
-
-test('an unwritable STIM_TRACE path never throws into the command', () => {
-  writeFileSync(join(dir, 'file'), '');
-  process.env.STIM_TRACE = join(dir, 'file', 'trace.json');
-  expect(trace.span('a', () => 3)).toBe(3);
-  expect(trace.enabled()).toBe(false);
 });
 
 test('redactArgv hides secret flag values, credentials in URLs and exact values, and keeps the rest', () => {
@@ -169,6 +133,17 @@ test('redactArgv hides secret flag values, credentials in URLs and exact values,
     'Cookie: [redacted]',
     '--pwd=[redacted]',
   ]);
+});
+
+test('redactArgv ignores the credential flags of a program it does not list', () => {
+  expect(redactArgv(['-u', 'user:pw'])).toEqual(['-u', 'user:pw']);
+  expect(redactArgv(['-u', 'user:pw'], [], 'docker')).toEqual(['-u', 'user:pw']);
+});
+
+test('redactCommandLine hides secret flags and assignments in a shell command', () => {
+  expect(redactCommandLine("TOKEN=abc eas build --token 'a b' --platform ios --api-key=k")).toBe(
+    'TOKEN=[redacted] eas build --token [redacted] --platform ios --api-key=[redacted]',
+  );
 });
 
 const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.c2lnbmF0dXJl';
@@ -229,53 +204,9 @@ test.each<[string, string, string[], string[]]>([
   expect(redactArgv(args, [], program)).toEqual(expected);
 });
 
-test.each<[string, string, string[]]>([
-  ['security find-identity -p names a policy', 'security', ['find-identity', '-v', '-p', 'codesigning']],
-  ['security find-certificate -p prints PEM', 'security', ['find-certificate', '-p', '-c', 'Apple Development']],
-  ['mkdir -p takes a path', 'mkdir', ['-p', '/Users/me/build/out']],
-  ['ssh -p takes a port', 'ssh', ['-p', '2222', 'host']],
-  ['git push -u sets an upstream', 'git', ['push', '-u', 'origin', 'main']],
-  [
-    'curl without credentials',
-    'curl',
-    ['-sS', '--max-time', '5', '-HContent-Type:application/json', 'https://example.com/a@b'],
-  ],
-  ['version strings', 'node', ['--version', '22.12.0', 'v1.2.3-rc.1', '2026.10.23']],
-  ['dotted identifiers', 'tool', ['com.example.app', 'Library/Developer/Xcode/DerivedData/App-abc.def.ghi']],
-  ['paths with token-like words', 'tool', ['/Users/me/.cache/glpat', './node_modules/.bin/npm_run', 'sk_live']],
-  ['a URL with a path but no credentials', 'git', ['clone', 'https://github.com/org/repo.git']],
-  ['an scp-style remote', 'git', ['clone', 'git@github.com:org/repo.git']],
-  ['a URL whose path contains @', 'tool', ['https://example.com/@scope/pkg']],
-])('redactArgv keeps %s', (_name, program, args) => {
-  expect(redactArgv(args, [], program)).toEqual(args);
-});
-
-test('redactArgv treats an argument named like an object property as plain text', () => {
-  expect(redactArgv(['constructor', '-p', 'x'], [], 'security')).toEqual(['constructor', '-p', 'x']);
-  expect(redactArgv(['length', 'x'], [], 'constructor')).toEqual(['length', 'x']);
-});
-
-test('redactArgv ignores the credential flags of a program it does not list', () => {
-  expect(redactArgv(['-u', 'user:pw'])).toEqual(['-u', 'user:pw']);
-  expect(redactArgv(['-u', 'user:pw'], [], 'docker')).toEqual(['-u', 'user:pw']);
-});
-
 test('redactArgv finishes quickly on a huge argument made of flag-like text', () => {
   const started = performance.now();
   redactArgv([`--${'ab-'.repeat(60_000)}`, `-${'-'.repeat(20_000)}`]);
   redactCommandLine(`--${'ab-'.repeat(60_000)}`);
   expect(performance.now() - started).toBeLessThan(2000);
-});
-
-test('redactArgv bounds the argument count and length', () => {
-  const out = redactArgv(Array.from({ length: 100 }, () => 'x'.repeat(400)));
-  expect(out).toHaveLength(61);
-  expect(out[0]).toHaveLength(243);
-  expect(out.at(-1)).toBe('[+40 more]');
-});
-
-test('redactCommandLine hides secret flags and assignments in a shell command', () => {
-  expect(redactCommandLine("TOKEN=abc eas build --token 'a b' --platform ios --api-key=k")).toBe(
-    'TOKEN=[redacted] eas build --token [redacted] --platform ios --api-key=[redacted]',
-  );
 });

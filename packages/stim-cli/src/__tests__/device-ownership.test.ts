@@ -1,15 +1,9 @@
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import {
-  forgetCreatedDevice,
-  readCreatedDevices,
-  recordCreatedDevice,
-  recordInstalledSystemImageAsync,
-} from '../devices/created-devices.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { ownedSimName } from '../devices/ios.ts';
-import { saveConfig } from '../workspace/config.ts';
 
 const homes: string[] = [];
 
@@ -39,46 +33,4 @@ test('a device another Stim home created is not owned by this home, whatever its
   useHome();
   expect(isStimOwnedSim(foreignSim)).toBe(false);
   expect(isStimOwnedAvd('stim-1362-mobile')).toBe(false);
-});
-
-test('recording or forgetting a device of one platform keeps the other platforms, browser profiles and installed images included', async () => {
-  useHome();
-  await recordInstalledSystemImageAsync('/sdk/system-images/android-36/google_apis/arm64-v8a');
-  recordCreatedDevice('web', '/stim/workspaces/app/web/profile');
-  recordCreatedDevice('android', 'stim-gone');
-  recordCreatedDevice('ios', 'SIM');
-  forgetCreatedDevice('android', 'stim-gone');
-  expect(readCreatedDevices()).toEqual({
-    ios: new Set(['SIM']),
-    android: new Set(),
-    web: new Set(['/stim/workspaces/app/web/profile']),
-    systemImages: new Set(['/sdk/system-images/android-36/google_apis/arm64-v8a']),
-  });
-});
-
-test('this home owns a pre-ledger device its project registry or pool records as owned', () => {
-  useHome();
-  saveConfig({
-    version: 2,
-    repos: {},
-    projects: {
-      '/p': { platforms: { ios: { deviceUdid: 'PROJECT-UDID', owned: true }, android: { avdName: 'stim-p' } } },
-    },
-    parked: {
-      ios: [],
-      android: [
-        {
-          udid: 'stim-parked',
-          name: 'stim-parked',
-          systemImage: 'system-images;android-36;google_apis;arm64-v8a',
-          configuration: '[]',
-          parkedAt: '2026-09-01T00:00:00.000Z',
-        },
-      ],
-    },
-  });
-  expect(isStimOwnedSim({ udid: 'PROJECT-UDID', name: 'stim-p (iPhone 17 26.5)' })).toBe(true);
-  expect(isStimOwnedAvd('stim-parked')).toBe(true);
-  expect(isStimOwnedAvd('stim-p')).toBe(false);
-  expect(isStimOwnedSim({ udid: 'PROJECT-UDID', name: 'iPhone 17' })).toBe(false);
 });

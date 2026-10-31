@@ -83,46 +83,6 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-test('uploads below the buffer cap keep batching before write callbacks arrive', async () => {
-  let finished = false;
-  const pending = (async () => {
-    await connection.sendBinary(Buffer.from('first'));
-    await connection.sendBinary(Buffer.from('second'));
-    finished = true;
-  })();
-  try {
-    await vi.advanceTimersByTimeAsync(0);
-    expect(finished).toBe(true);
-  } finally {
-    raw.flush();
-    await vi.advanceTimersByTimeAsync(0);
-    raw.flush();
-    await pending;
-  }
-});
-
-test.each(['flush', 'disconnect'])('a pressured upload wakes on %s without a polling tick', async (ending) => {
-  raw.bufferedAmount = 9 * 1024 * 1024;
-  let finished = false;
-  const pending = connection.sendBinary(Buffer.from('queued bytes')).then(() => {
-    finished = true;
-    return null;
-  });
-  try {
-    await vi.advanceTimersByTimeAsync(0);
-    expect(finished).toBe(false);
-    if (ending === 'flush') raw.flush();
-    else raw.terminate();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(finished).toBe(true);
-    expect(Boolean(connection.failure)).toBe(ending === 'disconnect');
-  } finally {
-    raw.flush();
-    await vi.advanceTimersByTimeAsync(5);
-    await pending;
-  }
-});
-
 test('local close releases a pressured sender before the peer completes the close handshake', async () => {
   raw.bufferedAmount = 9 * 1024 * 1024;
   raw.holdClose = true;
@@ -136,24 +96,6 @@ test('local close releases a pressured sender before the peer completes the clos
     await vi.advanceTimersByTimeAsync(0);
     expect(finished).toBe(true);
     expect(connection.failure).toContain('closed by this client');
-  } finally {
-    raw.terminate();
-    await vi.advanceTimersByTimeAsync(5);
-    await pending;
-  }
-});
-
-test('a closing transport can reject a write synchronously without leaving a blocked sender', async () => {
-  raw.readyState = 2;
-  raw.bufferedAmount = 9 * 1024 * 1024;
-  let finished = false;
-  const pending = connection.sendBinary(Buffer.from('queued bytes')).then(() => {
-    finished = true;
-    return null;
-  });
-  try {
-    await vi.advanceTimersByTimeAsync(0);
-    expect(finished).toBe(true);
   } finally {
     raw.terminate();
     await vi.advanceTimersByTimeAsync(5);

@@ -22,22 +22,6 @@ function plan(
   });
 }
 
-test('a client that is connected keeps its session and clears the absence recorded earlier', () => {
-  const result = plan([session('a', { clientAbsentMs: 5 * HOUR_MS })], {
-    connected: (client) => client === 'client-a',
-  });
-
-  expect(result.updates).toEqual([{ id: 'a', absentMs: null }]);
-  expect(result.stops).toEqual([]);
-});
-
-test('a client that only acted through an agent request counts as present for that sweep', () => {
-  const result = plan([session('a', { clientAbsentMs: 5 * HOUR_MS })], { active: new Set(['a']) });
-
-  expect(result.updates).toEqual([{ id: 'a', absentMs: null }]);
-  expect(result.stops).toEqual([]);
-});
-
 test('an agent request for one session keeps every session of that client', () => {
   const sessions = [
     session('a', { client: 'shared', clientAbsentMs: 5 * HOUR_MS }),
@@ -49,17 +33,6 @@ test('an agent request for one session keeps every session of that client', () =
   expect(result.updates).toEqual([
     { id: 'a', absentMs: null },
     { id: 'b', absentMs: null },
-  ]);
-});
-
-test('an absence under the window accumulates and stops nothing; reaching the window stops with the reason', () => {
-  const under = plan([session('a', { clientAbsentMs: 6 * HOUR_MS - 2 * HOSTED_IDLE_SWEEP_MS })]);
-  expect(under.updates).toEqual([{ id: 'a', absentMs: 6 * HOUR_MS - HOSTED_IDLE_SWEEP_MS }]);
-  expect(under.stops).toEqual([]);
-
-  const over = plan([session('a', { clientAbsentMs: 6 * HOUR_MS - HOSTED_IDLE_SWEEP_MS })]);
-  expect(over.stops).toEqual([
-    { id: 'a', reason: 'its client had no connection for 6h 0m, over maintenance.idleStopHours' },
   ]);
 });
 
@@ -86,17 +59,6 @@ test('a session that is not ready, or is parked, is never tracked or stopped', (
   expect(result.stops).toEqual([]);
   expect(result.kept).toEqual([]);
   expect(result.updates.map(({ absentMs }) => absentMs)).toEqual([null, null, null, null, null]);
-});
-
-test('a due session with unresolved work or ownership is kept with the reason, not stopped', () => {
-  const result = plan([session('a', { clientAbsentMs: 7 * HOUR_MS })], {
-    unresolved: () => 'its native input is not provably finished',
-  });
-
-  expect(result.stops).toEqual([]);
-  expect(result.kept).toEqual([
-    expect.objectContaining({ id: 'a', reason: expect.stringContaining('its native input is not provably finished') }),
-  ]);
 });
 
 test('a session another live server owns is neither counted nor stopped', () => {

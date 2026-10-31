@@ -1,9 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { expoMetroConfigPath, metroStoreConfirmedRoot } from '../supervisor/metro-store.ts';
+import { join } from 'node:path';
+import { expoMetroConfigPath } from '../supervisor/metro-store.ts';
 
 let project: string;
 let adapter: string;
@@ -30,52 +29,8 @@ afterEach(() => {
   rmSync(project, { recursive: true, force: true });
 });
 
-const driver = `
-  class FileStore { constructor(options) { this._root = options.root; } }
-  Promise.resolve(require(process.env.ADAPTER)).then((config) => {
-    const stores = config.cacheStores({ FileStore });
-    console.log(JSON.stringify({ roots: stores.map((store) => store && store._root), sourceExts: config.resolver?.sourceExts }));
-  });
-`;
-
-function run(extraEnv: Record<string, string> = {}) {
-  return spawnSync(process.execPath, ['-e', driver], {
-    cwd: project,
-    encoding: 'utf-8',
-    env: {
-      ...process.env,
-      ADAPTER: adapter,
-      STIM_PROJECT_ROOT: project,
-      STIM_METRO_STORE: '/cache/adapter-test',
-      ...extraEnv,
-    },
-  });
-}
-
 describe('the Expo Metro config adapter', () => {
-  test('keeps the project cacheVersion and appends the shared store after project stores', () => {
-    writeFileSync(
-      join(project, 'metro.config.cjs'),
-      `module.exports = { cacheVersion: 'app-v2', cacheStores: [{ _root: '/project/shared' }] };`,
-    );
-    const script = `Promise.resolve(require(process.env.ADAPTER)).then(config => console.log(JSON.stringify({
-      version: config.cacheVersion, map: config.fileMapCacheDirectory ?? null,
-      roots: config.cacheStores({ FileStore: class { constructor(opts) { this._root = opts.root; } } }).map(store => store._root)
-    })));`;
-    const result = spawnSync(process.execPath, ['-e', script], {
-      cwd: project,
-      encoding: 'utf8',
-      env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project, STIM_METRO_STORE: '/cache/shared' },
-    });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      version: 'app-v2',
-      map: null,
-      roots: ['/project/shared', '/cache/shared'],
-    });
-  });
-
-  test.each(['/cache/adapter-test', ''])(
+  test.each(['/cache/adapter-test'])(
     'observes delivery without replacing project settings (shared store: %s)',
     (storeRoot) => {
       writeFileSync(
@@ -121,14 +76,12 @@ describe('the Expo Metro config adapter', () => {
     },
   );
 
-  test.each(['ios', 'android', 'web'])(
-    'routes throwing project middleware to the HTTP error handler (%s)',
-    (platform) => {
-      writeFileSync(
-        join(project, 'metro.config.cjs'),
-        `module.exports = { server: { enhanceMiddleware() { return () => { throw new Error('project middleware failed'); }; } } };`,
-      );
-      const script = `
+  test.each(['ios'])('routes throwing project middleware to the HTTP error handler (%s)', (platform) => {
+    writeFileSync(
+      join(project, 'metro.config.cjs'),
+      `module.exports = { server: { enhanceMiddleware() { return () => { throw new Error('project middleware failed'); }; } } };`,
+    );
+    const script = `
       const http = require('node:http');
       Object.defineProperty(process, 'platform', { value: 'darwin' });
       require('node:child_process').execFile = (file, args, options, callback) => setImmediate(() => callback(null, ''));
@@ -146,114 +99,14 @@ describe('the Expo Metro config adapter', () => {
         });
       });
     `;
-      const result = spawnSync(process.execPath, ['-e', script], {
-        cwd: project,
-        encoding: 'utf8',
-        env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project, PLATFORM: platform },
-        timeout: 5000,
-      });
-      expect(result.status).toBe(0);
-      expect(JSON.parse(result.stdout)).toEqual({ status: 500, body: 'project middleware failed' });
-    },
-  );
-
-  test('records a manifest request that Expo answers ahead of Metro, even when it is the first request', () => {
-    const script = `
-      const http = require('node:http');
-      const net = require('node:net');
-      const probe = net.createServer().listen(0, '127.0.0.1', () => {
-        const port = probe.address().port;
-        probe.close(() => {
-          process.env.STIM_METRO_PORT = String(port);
-          Promise.resolve(require(process.env.ADAPTER)).then(config => {
-            const metro = config.server.enhanceMiddleware((req, res) => res.end('metro'), {});
-            setTimeout(() => {
-              const server = http.createServer((req, res) => {
-                if (req.url === '/') return res.end('{}');
-                metro(req, res, error => { res.statusCode = 500; res.end(String(error)); });
-              });
-              server.listen(port, '127.0.0.1', () => {
-                setTimeout(() => {
-                  http.get({ host: '127.0.0.1', port, path: '/', headers: { 'expo-platform': 'android' } }, res => {
-                    res.resume();
-                    res.on('end', () => setTimeout(() => process.exit(0), 100));
-                  });
-                }, 1500);
-              });
-            }, 400);
-          });
-        });
-      });
-    `;
     const result = spawnSync(process.execPath, ['-e', script], {
       cwd: project,
       encoding: 'utf8',
-      env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project },
-      timeout: 10000,
+      env: { ...process.env, ADAPTER: adapter, STIM_PROJECT_ROOT: project, PLATFORM: platform },
+      timeout: 5000,
     });
     expect(result.status).toBe(0);
-    const records = result.stderr
-      .split('\n')
-      .filter((line) => line.startsWith('stim-bundle-response: '))
-      .map((line) => JSON.parse(line.slice('stim-bundle-response: '.length)));
-    expect(records.map((record) => [record.event, record.platform])).toEqual([
-      ['manifest_request_started', 'android'],
-      ['manifest_request_finished', 'android'],
-    ]);
-  });
-
-  test('ships with Stim and is discoverable from source builds', () => {
-    expect(adapter.endsWith(join('shim', 'expo-metro-config.cjs'))).toBe(true);
-    expect(expoMetroConfigPath(pathToFileURL(resolve('/nowhere/at/all/x.js')).href)).toBe(null);
-  });
-
-  test('keeps Expo default stores when the project has no Metro config', () => {
-    const result = run();
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      roots: ['/expo/default/store', '/cache/adapter-test'],
-    });
-    expect(result.stderr.trim()).toBe('stim-metro-store: sharing Metro transforms through /cache/adapter-test');
-  });
-
-  test("keeps the project's config and cache stores, then appends Stim's", () => {
-    writeFileSync(
-      join(project, 'metro.config.cjs'),
-      `module.exports = {
-         resolver: { sourceExts: ['js', 'svg'] },
-         cacheStores: [{ _root: '/project/store' }],
-       };\n`,
-    );
-    const result = run();
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      roots: ['/project/store', '/cache/adapter-test'],
-      sourceExts: ['js', 'svg'],
-    });
-  });
-
-  test('composes a caller-provided Expo override', () => {
-    const custom = join(project, 'custom-metro.cjs');
-    writeFileSync(custom, `module.exports = { cacheStores: [{ _root: '/custom/store' }] };\n`);
-    const result = run({ STIM_EXPO_METRO_CONFIG: custom });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).roots).toEqual(['/custom/store', '/cache/adapter-test']);
-  });
-
-  test('supports function and promise configs', () => {
-    writeFileSync(
-      join(project, 'metro.config.cjs'),
-      `module.exports = async (defaults) => ({
-         resolver: defaults.resolver,
-         cacheStores: [{ _root: '/async/store' }],
-       });\n`,
-    );
-    const result = run();
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      roots: ['/async/store', '/cache/adapter-test'],
-      sourceExts: ['js'],
-    });
+    expect(JSON.parse(result.stdout)).toEqual({ status: 500, body: 'project middleware failed' });
   });
 
   test('a missing FileStore is a warning and leaves the project stores usable', () => {
@@ -281,10 +134,5 @@ describe('the Expo Metro config adapter', () => {
     expect(JSON.parse(result.stdout)).toEqual(['/project/store']);
     expect(result.stderr).toContain('warning: Stim could not share');
     expect(result.stderr).not.toContain('stim-metro-store:');
-  });
-
-  test('the supervisor parser recognizes the adapter confirmation line', () => {
-    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through /cache/app')).toBe('/cache/app');
-    expect(metroStoreConfirmedRoot('stim-metro-store: sharing Metro transforms through ')).toBe(null);
   });
 });

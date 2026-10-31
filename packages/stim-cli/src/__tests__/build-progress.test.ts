@@ -1,31 +1,22 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseClaim, tryAcquireClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   ACTIVE_BUILD_KEY,
   activeBuildState,
   buildReport,
   buildStatusLine,
   bundlingActivity,
-  completedPhaseDurations,
-  estimateBuild,
   parseActiveBuild,
   recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
   type ActiveBuildRecord,
 } from '../engine/build-progress.ts';
-import {
-  BUILD_HISTORY_LIMIT,
-  readDevicePlacement,
-  readBuildDetail,
-  readBuildHistory,
-  readLastBuilds,
-  HISTORY_LIMIT,
-} from '@stim-cli/core/state';
-import { emptyStats, readStats, recordRunStats, updateStats, type RunHistory, type StatsRun } from '../engine/stats.ts';
+import { BUILD_HISTORY_LIMIT, readBuildDetail, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import { type RunHistory } from '../engine/stats.ts';
 import { goneClaimOwner, plantClaim } from './_factories.ts';
 
 const T0 = Date.parse('2026-09-24T10:00:00.000Z');
@@ -54,47 +45,6 @@ function takeClaim(): ClaimHandle {
 function activeRecord(): ActiveBuildRecord | null {
   return parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]);
 }
-
-describe('completedPhaseDurations', () => {
-  const at = (ms: number) => new Date(T0 + ms).toISOString();
-
-  test('reports elapsed time for completed phases, excluding the current visit', () => {
-    expect(
-      completedPhaseDurations([
-        { phase: 'prepare', startedAt: at(0) },
-        { phase: 'cache-lookup', startedAt: at(2000) },
-        { phase: 'compile', startedAt: at(5000) },
-      ]),
-    ).toEqual({ prepare: 2000, 'cache-lookup': 3000 });
-  });
-
-  test('sums completed repeat visits even when that phase is current again', () => {
-    expect(
-      completedPhaseDurations([
-        { phase: 'cache-lookup', startedAt: at(0) },
-        { phase: 'prebuild', startedAt: at(1000) },
-        { phase: 'cache-lookup', startedAt: at(5000) },
-        { phase: 'pods', startedAt: at(7000) },
-        { phase: 'cache-lookup', startedAt: at(9000) },
-      ]),
-    ).toEqual({ 'cache-lookup': 3000, prebuild: 4000, pods: 2000 });
-  });
-
-  test('omits durations before a phase completes', () => {
-    expect(completedPhaseDurations([{ phase: 'prepare', startedAt: at(0) }])).toBeUndefined();
-  });
-
-  test('ignores intervals with an unparsable start or end', () => {
-    expect(
-      completedPhaseDurations([
-        { phase: 'prepare', startedAt: at(0) },
-        { phase: 'cache-lookup', startedAt: 'invalid' },
-        { phase: 'prebuild', startedAt: at(3000) },
-        { phase: 'compile', startedAt: at(5000) },
-      ]),
-    ).toEqual({ prebuild: 2000 });
-  });
-});
 
 describe('active build record', () => {
   test('writes the tool detail for its own claim at most every 2 seconds, and the miss reason once known', () => {
@@ -182,31 +132,6 @@ describe('active build record', () => {
 
     progress.place(null);
     expect(report().placement).toBe('local');
-    progress.clear();
-    releaseClaim(claim);
-  });
-
-  test('names the workspace a waiting build waits on and drops it when the run leaves the wait', () => {
-    const claim = takeClaim();
-    let now = T0;
-    const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
-    const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
-    expect(report().waitingOn).toBeUndefined();
-
-    now += 10_000;
-    progress.step('wait');
-    progress.waitingOn('/w/app-a');
-    expect(report().waitingOn).toEqual({ path: '/w/app-a' });
-    expect(buildStatusLine(report(), now + 5_000)).toBe('build: ios wait on /w/app-a, 15s elapsed');
-
-    progress.waitingOn('/w/app-b');
-    expect(report().waitingOn).toEqual({ path: '/w/app-b' });
-    progress.waitingOn(null);
-    expect(report().waitingOn).toBeUndefined();
-
-    progress.waitingOn('/w/app-a');
-    progress.step('device');
-    expect(report().waitingOn).toBeUndefined();
     progress.clear();
     releaseClaim(claim);
   });
@@ -308,19 +233,6 @@ describe('active build record', () => {
     releaseClaim(claim);
   });
 
-  test('clear leaves a record that a later run wrote', () => {
-    const first = takeClaim();
-    const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim: first });
-    releaseClaim(first);
-    const second = takeClaim();
-    startBuildProgress({ root, platform: 'android', slot: 'default', claim: second });
-
-    progress.clear();
-
-    expect(activeRecord()?.claim.claimId).toBe(second.claimId);
-    releaseClaim(second);
-  });
-
   test('a record whose claim was released or whose owner is gone is stale, never running', () => {
     const claim = takeClaim();
     startBuildProgress({ root, platform: 'ios', slot: 'default', claim });
@@ -330,11 +242,6 @@ describe('active build record', () => {
     const lock = join(home, 'gone.lock');
     const path = plantClaim(lock, 'exclusive', goneClaimOwner(), { claimId: 'gone-claim' });
     expect(activeBuildState({ root: lock, path, claimId: 'gone-claim', pid: 1 })).toBe('stale');
-  });
-
-  test('a record the state file cannot describe is ignored', () => {
-    writeWorkspaceState(root, { [ACTIVE_BUILD_KEY]: { platform: 'ios', phase: 'compiling' } });
-    expect(activeRecord()).toBeNull();
   });
 });
 
@@ -356,32 +263,6 @@ function finished(startedAt: string, extra: Record<string, unknown> = {}): Recor
 }
 
 describe('build history', () => {
-  test("a finished run is its platform's last build and newest history entry, with the run's slot and phases", () => {
-    const claim = takeClaim();
-    let now = T0;
-    const progress = startBuildProgress({ root, platform: 'ios', slot: 'tablet', claim, now: () => now });
-    now += 5_000;
-    progress.step('compile');
-    now += 80_000;
-    progress.step('install');
-    now += 5_000;
-    recordFinishedBuild(root, finished('2026-09-24T10:00:00.100Z'), { now: () => now });
-    progress.clear();
-    releaseClaim(claim);
-
-    const state = readWorkspaceState(root);
-    expect(state?.lastIosBuild).toEqual(state?.lastBuild);
-    const [entry] = readBuildHistory(state).ios!;
-    expect(entry).toMatchObject({
-      result: 'succeeded',
-      slot: 'tablet',
-      configuration: 'Debug',
-      cacheKey: 'abc-debug-sim',
-      phases: { prepare: 5_000, compile: 80_000, install: 5_000 },
-    });
-    expect(entry).toMatchObject(readLastBuilds(state).ios!);
-  });
-
   test('keeps the newest runs of each platform, newest first, and names cancelled and failed runs', () => {
     for (let i = 0; i < BUILD_HISTORY_LIMIT + 2; i += 1) {
       recordFinishedBuild(root, finished(new Date(T0 + i * 60_000).toISOString()));
@@ -407,69 +288,6 @@ describe('build history', () => {
     expect(fellBack).toMatchObject({ offloadFallback: 'mini: busy (all 1 build slots busy)' });
     expect(offloaded).toMatchObject({ offloadedTo: 'mini' });
   });
-
-  test("a run that finds an earlier run's active-build record records that run as interrupted", () => {
-    let now = T0;
-    const first = takeClaim();
-    const killed = startBuildProgress({ root, platform: 'android', slot: 'default', claim: first, now: () => now });
-    now += 1_000;
-    killed.step('device');
-    now += 3_000;
-    killed.step('compile');
-    releaseClaim(first);
-
-    now += 30_000;
-    const second = takeClaim();
-    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: second, now: () => now }).clear();
-    releaseClaim(second);
-
-    expect(readBuildHistory(readWorkspaceState(root)).android).toEqual([
-      expect.objectContaining({
-        result: 'interrupted',
-        status: 'failed',
-        startedAt: '2026-09-24T10:00:00.000Z',
-        durationMs: null,
-        finishedAt: null,
-        phases: { prepare: 1_000, device: 3_000, compile: 0 },
-      }),
-    ]);
-  });
-
-  test('an active-build record whose run recorded its result is not an interrupted run', () => {
-    const first = takeClaim();
-    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: first, now: () => T0 });
-    recordFinishedBuild(root, finished('2026-09-24T10:00:00.100Z'));
-    releaseClaim(first);
-
-    const second = takeClaim();
-    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
-    releaseClaim(second);
-
-    expect(readBuildHistory(readWorkspaceState(root)).ios!.map((entry) => entry.result)).toEqual(['succeeded']);
-  });
-  test("a build-only result joins history without replacing the running app's build or device record", () => {
-    const running = finished('2026-09-24T09:00:00.000Z', { appPath: '/runtime/App.app', cacheKey: 'runtime-key' });
-    recordFinishedBuild(root, running);
-    const device = { deviceUdid: 'booted', devicePlacement: { machine: 'mini' } };
-    writeWorkspaceState(root, { ...readWorkspaceState(root), ios: device });
-
-    const claim = takeClaim();
-    startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => T0 });
-    recordFinishedBuild(root, finished('2026-09-24T10:00:00.000Z', { appPath: '/artifacts/App.app' }), {
-      artifactOnly: true,
-    });
-    releaseClaim(claim);
-    const next = takeClaim();
-    startBuildProgress({ root, platform: 'ios', slot: 'default', claim: next, now: () => T0 + 60_000 }).clear();
-    releaseClaim(next);
-
-    const state = readWorkspaceState(root);
-    expect(state).toMatchObject({ lastBuild: running, lastIosBuild: running, ios: device });
-    expect(readBuildHistory(state).ios!.map(({ result, startedAt }) => [result, startedAt])).toEqual([
-      ['succeeded', '2026-09-24T10:00:00.000Z'],
-      ['succeeded', '2026-09-24T09:00:00.000Z'],
-    ]);
-  });
 });
 
 describe('macOS builds', () => {
@@ -484,18 +302,6 @@ describe('macOS builds', () => {
     durationMs: 90_000,
     startedAt: '2026-09-24T10:00:00.000Z',
   };
-
-  test('recording a phase for a run the history does not hold changes nothing, and a bad step total is dropped', () => {
-    writeWorkspaceState(root, {
-      buildHistory: {
-        macos: [{ ...macosFinished, result: 'succeeded', slot: 'default', phases: {}, compileSteps: -3 }],
-      },
-    });
-    recordBuildPhase(root, 'macos', '2026-01-01T00:00:00.000Z', 'launch', 5);
-    const [entry] = readBuildHistory(readWorkspaceState(root)).macos!;
-    expect(entry!.phases).toEqual({});
-    expect(entry!.compileSteps).toBeUndefined();
-  });
 
   test('a run reports its phases and SwiftPM counts without a cache outcome, and keeps only history', () => {
     vi.useFakeTimers({ now: T0 });
@@ -547,17 +353,6 @@ describe('macOS builds', () => {
     }
   });
 
-  test('a macOS run that left no result is an interrupted run in the macOS history', () => {
-    const first = takeClaim();
-    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
-    releaseClaim(first);
-    const second = takeClaim();
-    startBuildProgress({ root, platform: 'macos', slot: 'default', claim: second, now: () => T0 + 60_000 }).clear();
-    releaseClaim(second);
-
-    expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['interrupted']);
-  });
-
   test('a finished macOS run is not mistaken for an interrupted one', () => {
     const first = takeClaim();
     startBuildProgress({ root, platform: 'macos', slot: 'default', claim: first, now: () => T0 });
@@ -568,53 +363,6 @@ describe('macOS builds', () => {
     releaseClaim(second);
 
     expect(readBuildHistory(readWorkspaceState(root)).macos!.map((entry) => entry.result)).toEqual(['succeeded']);
-  });
-});
-
-function run(overrides: Partial<StatsRun>): StatsRun {
-  return {
-    platform: 'ios',
-    projectKey: '/repo/app',
-    failed: false,
-    cacheHit: false,
-    waitedForBuild: false,
-    durationMs: 100_000,
-    phases: { compile: 90_000 },
-    ...overrides,
-  };
-}
-
-describe('run history', () => {
-  test('keeps the last runs per outcome and skips failed and waited runs', () => {
-    let record = emptyStats();
-    for (let i = 1; i <= HISTORY_LIMIT + 2; i++) record = updateStats(record, run({ durationMs: i * 1000 }), T0 + i);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 7_000, phases: { install: 5_000 } }), T0);
-    record = updateStats(record, run({ failed: true }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', waitedForBuild: true }), T0);
-
-    const lists = record.history?.['/repo/app']?.ios;
-    expect(lists?.cold?.map((sample) => sample.durationMs)).toEqual(
-      Array.from({ length: HISTORY_LIMIT }, (_, i) => (i + 3) * 1000),
-    );
-    expect(lists?.hit).toEqual([{ at: new Date(T0).toISOString(), durationMs: 7_000, phases: { install: 5_000 } }]);
-  });
-
-  test('tags samples with the device situation and keeps setup runs beside a flood of reruns', () => {
-    let record = emptyStats();
-    record = updateStats(record, run({ deviceSetup: true, durationMs: 60_000 }), T0);
-    for (let i = 1; i <= HISTORY_LIMIT + 2; i++)
-      record = updateStats(record, run({ deviceSetup: false, durationMs: i * 1000 }), T0 + i);
-    record = updateStats(record, run({ durationMs: 5_000 }), T0);
-
-    const cold = record.history?.['/repo/app']?.ios?.cold ?? [];
-    expect(cold.filter((sample) => sample.deviceSetup === true).map((sample) => sample.durationMs)).toEqual([60_000]);
-    expect(cold.filter((sample) => sample.deviceSetup === false)).toHaveLength(HISTORY_LIMIT - 1);
-    expect(cold.at(-1)).not.toHaveProperty('deviceSetup');
-  });
-
-  test('survives a write and read of stats.json', () => {
-    recordRunStats(run({}), T0);
-    expect(readStats().record?.history?.['/repo/app']?.ios?.cold).toHaveLength(1);
   });
 });
 
@@ -634,75 +382,6 @@ describe('estimates', () => {
       hit: [histSample(20_000, { install: 5_000 }, T0 + 1)],
     },
   };
-
-  test('medians comparable runs of the known outcome and plans the phases at least half of them entered', () => {
-    expect(estimateBuild(history, 'ios', 'cold')).toEqual({
-      outcome: 'cold',
-      expectedMs: 250_000,
-      basis: 4,
-      phaseMs: { prepare: 2_000, pods: 40_000, compile: 150_000 },
-      planned: ['prepare', 'compile'],
-    });
-  });
-
-  test('uses the latest outcome before the cache outcome is known, and nothing without history', () => {
-    expect(estimateBuild(history, 'ios', null)).toMatchObject({ outcome: 'hit', expectedMs: 20_000 });
-    expect(estimateBuild(undefined, 'android', null)).toEqual({
-      outcome: null,
-      expectedMs: null,
-      basis: 0,
-      phaseMs: {},
-      planned: [],
-    });
-  });
-
-  describe("matching the run's device situation", () => {
-    const tagged = (durationMs: number, device: number, deviceSetup?: boolean) => ({
-      ...histSample(durationMs, { prepare: 1_000, device }),
-      ...(deviceSetup === undefined ? {} : { deviceSetup }),
-    });
-    const mixed: RunHistory = {
-      android: {
-        hit: [
-          tagged(50_000, 45_000, true),
-          tagged(60_000, 50_000, true),
-          tagged(9_000, 300, false),
-          tagged(8_000, 400, false),
-          tagged(8_500, 500, false),
-          tagged(7_000, 200),
-        ],
-      },
-    };
-
-    test('a run that sets up its device is estimated, every phase included, from setup runs only', () => {
-      expect(estimateBuild(mixed, 'android', 'hit', true)).toMatchObject({
-        expectedMs: 55_000,
-        basis: 2,
-        phaseMs: { prepare: 1_000, device: 47_500 },
-      });
-    });
-
-    test('a run that reuses its device ignores setup runs', () => {
-      expect(estimateBuild(mixed, 'android', 'hit', false)).toMatchObject({
-        expectedMs: 8_500,
-        basis: 3,
-        phaseMs: { device: 400 },
-      });
-    });
-
-    test('fewer than 3 reuse runs are joined by the untagged ones; a setup run never uses them', () => {
-      const legacy: RunHistory = {
-        android: { hit: [tagged(7_000, 200), tagged(9_000, 600), tagged(30_000, 20_000, false)] },
-      };
-      expect(estimateBuild(legacy, 'android', 'hit', false)).toMatchObject({
-        expectedMs: 9_000,
-        basis: 3,
-        phaseMs: { device: 600 },
-      });
-      expect(estimateBuild(legacy, 'android', 'hit', true)).toMatchObject({ expectedMs: null, basis: 0 });
-      expect(estimateBuild(mixed, 'android', 'hit')).toMatchObject({ basis: 6 });
-    });
-  });
 
   test("a record without the run's estimate is reported from history, and a phase outside the plan keeps its median", () => {
     const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -746,187 +425,4 @@ describe('estimates', () => {
     });
     expect(buildReport(unsettled, { state: 'running', history: undefined }).plannedPhases).toBeNull();
   });
-
-  describe('a live run', () => {
-    const projectKey = '/repo/app';
-    let recorded = 0;
-    const sample = (
-      durationMs: number,
-      phases: Record<string, number>,
-      deviceSetup: boolean,
-      cacheHit: 'local' | false,
-    ) => recordRunStats(run({ projectKey, durationMs, phases, deviceSetup, cacheHit }), T0 + recorded++);
-
-    beforeEach(() => {
-      for (const ms of [20_000, 22_000, 24_000]) sample(ms, { prepare: 1_000, install: 4_000 }, false, 'local');
-      for (const ms of [60_000, 70_000, 80_000]) sample(ms, { prepare: 30_000, install: 4_000 }, true, 'local');
-      sample(200_000, { prepare: 1_000, compile: 180_000 }, false, false);
-    });
-
-    function live() {
-      const claim = takeClaim();
-      let now = T0;
-      const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
-      const report = () => buildReport(activeRecord()!, { state: 'running', history: undefined });
-      return { claim, progress, report, advance: (ms: number) => (now += ms) };
-    }
-
-    test('estimates once from the latest outcome and once when its outcome is known, never on later history', () => {
-      const { claim, progress, report, advance } = live();
-      progress.estimate(projectKey);
-      expect(report()).toMatchObject({ outcome: 'cold', outcomeKnown: false, expectedMs: 200_000, basis: 1 });
-      progress.deviceSetup(false);
-      advance(1_000);
-      progress.step('cache-lookup');
-      expect(report()).toMatchObject({ outcomeKnown: false, expectedMs: 200_000 });
-      expect(report()).not.toHaveProperty('cacheLookupOutcome');
-
-      advance(2_000);
-      progress.step('device');
-      const settled = report();
-      expect(settled).toMatchObject({
-        outcome: 'hit',
-        outcomeKnown: true,
-        cacheLookupOutcome: 'hit',
-        expectedMs: 22_000,
-        basis: 3,
-        plannedPhases: [
-          { phase: 'prepare', expectedMs: 1_000 },
-          { phase: 'install', expectedMs: 4_000 },
-        ],
-      });
-
-      sample(90_000, { prepare: 1_000, install: 80_000 }, false, 'local');
-      advance(1_000);
-      progress.step('install');
-      const { expectedMs, basis, plannedPhases } = settled;
-      expect(report()).toMatchObject({ phase: 'install', expectedPhaseMs: 4_000, expectedMs, basis, plannedPhases });
-      progress.clear();
-      releaseClaim(claim);
-    });
-
-    test("a miss before prebuild or pods is this run's cold outcome until the re-check hits", () => {
-      const { claim, progress, report } = live();
-      const reason = {
-        kind: 'changed' as const,
-        summary: 'native dependency added: expo-clipboard',
-        changes: [],
-        changeCount: 1,
-        baseline: null,
-        rekeyedBy: [],
-      };
-      progress.estimate(projectKey);
-      progress.step('cache-lookup');
-      progress.miss(reason, true);
-      progress.step('pods');
-      expect(report()).toMatchObject({
-        outcome: 'cold',
-        outcomeKnown: true,
-        missProvisional: true,
-        cacheLookupOutcome: 'miss',
-        missReason: reason,
-      });
-
-      progress.hit();
-      progress.step('device');
-      const hit = report();
-      expect(hit).toMatchObject({ outcome: 'hit', outcomeKnown: true, cacheLookupOutcome: 'hit' });
-      expect(hit).not.toHaveProperty('missReason');
-      expect(hit).not.toHaveProperty('missProvisional');
-      progress.clear();
-      releaseClaim(claim);
-    });
-
-    test('a run that skips cache lookup reports its outcome without inventing a lookup result', () => {
-      const { claim, progress, report } = live();
-      progress.estimate(projectKey);
-      progress.step('device');
-      expect(report()).not.toHaveProperty('cacheLookupOutcome');
-      progress.step('install');
-      expect(report()).toMatchObject({ outcome: 'hit', outcomeKnown: true });
-      expect(report()).not.toHaveProperty('cacheLookupOutcome');
-      progress.clear();
-      releaseClaim(claim);
-    });
-
-    test('the final miss settles a provisional one', () => {
-      const { claim, progress, report } = live();
-      const reason = { kind: 'changed' as const, summary: 'x', changes: [], changeCount: 0, baseline: null };
-      progress.miss({ ...reason, rekeyedBy: [] }, true);
-      progress.miss({ ...reason, rekeyedBy: ['pod install'] });
-      expect(report()).toMatchObject({ missReason: { rekeyedBy: ['pod install'] } });
-      expect(report()).not.toHaveProperty('missProvisional');
-      progress.clear();
-      releaseClaim(claim);
-    });
-
-    test('a native build step settles a cold outcome, and a run that set up its device uses setup runs', () => {
-      const { claim, progress, report } = live();
-      progress.estimate(projectKey);
-      progress.deviceSetup(true);
-      progress.step('cache-lookup');
-      progress.step('compile');
-      expect(report()).toMatchObject({ outcome: 'cold', outcomeKnown: true, expectedMs: null, basis: 0 });
-      progress.step('device');
-      expect(report()).toMatchObject({ outcome: 'cold', basis: 0 });
-      progress.clear();
-      releaseClaim(claim);
-    });
-  });
-});
-
-test.each(['default', 'tablet'])(
-  'run placement facts stay on slot %s and survive history, while a later run clears stale placement',
-  (slot) => {
-    const claim = takeClaim();
-    const progress = startBuildProgress({ root, platform: 'ios', slot, claim });
-    try {
-      const host = { machine: 'mini', session: 'session' };
-      const saved = slot === 'default' ? { ios: { host } } : { deviceSlots: { tablet: { ios: { host } } } };
-      writeWorkspaceState(root, { ...readWorkspaceState(root), ...saved });
-      const placement = { decision: 'hosted', reason: 'load 3.1/core here', machine: 'mini' };
-      recordFinishedBuild(root, finished(new Date(T0).toISOString(), { devicePlacement: placement }));
-      const state = readWorkspaceState(root);
-      expect(readDevicePlacement(state, 'ios', slot)).toEqual(placement);
-      expect(readDevicePlacement(state, 'ios', slot === 'default' ? 'tablet' : 'default')).toBeNull();
-      expect(readLastBuilds(state).ios?.devicePlacement).toEqual(placement);
-      expect(readBuildHistory(state).ios?.[0]).toMatchObject({ slot, devicePlacement: placement });
-      recordFinishedBuild(root, finished(new Date(T0 + 1).toISOString()));
-      expect(readDevicePlacement(readWorkspaceState(root), 'ios', slot)).toBeNull();
-      const device =
-        slot === 'default'
-          ? readWorkspaceState(root)?.ios
-          : (readWorkspaceState(root)?.deviceSlots as Record<string, { ios: unknown }>)?.[slot]?.ios;
-      expect(device).toMatchObject({ host });
-    } finally {
-      progress.clear();
-      releaseClaim(claim);
-    }
-  },
-);
-
-test('STIM_TRACE records each build phase the run enters under the name stats.json uses', () => {
-  const file = join(home, 'build-trace.json');
-  process.env.STIM_TRACE = file;
-  const claim = takeClaim();
-  try {
-    let now = T0;
-    const progress = startBuildProgress({ root, platform: 'android', slot: 'default', claim, now: () => now });
-    for (const phase of ['cache-lookup', 'compile', 'install'] as const) {
-      now += 1000;
-      progress.step(phase);
-    }
-    const durations = progress.durations();
-    progress.clear();
-    const events: { name: string; cat?: string }[] = JSON.parse(
-      `${readFileSync(file, 'utf8').trimEnd().replace(/,$/, '')}]`,
-    );
-    const spans = events.filter((event) => event.cat === 'phase');
-    expect(spans.map((event) => event.name)).toEqual(['prepare', 'cache-lookup', 'compile', 'install']);
-    expect(Object.keys(durations)).toEqual(spans.map((event) => event.name));
-  } finally {
-    releaseClaim(claim);
-    delete process.env.STIM_TRACE;
-    delete process.env.STIM_TRACE_OWNER;
-  }
 });

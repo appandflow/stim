@@ -23,7 +23,7 @@ export const DEV_MENU_LAUNCH_ARGS: readonly string[] = [
 
 // Anchored, because a message that merely quotes one of these is an app
 // logging about a crash, not a crash. Swift prints its own file:line first.
-export const FATAL_MARKERS: RegExp[] = [
+const FATAL_MARKERS: RegExp[] = [
   /^\*\*\* Terminating app due to uncaught exception/,
   /^libc\+\+abi: terminating/,
   /^\*\*\* Assertion failure in/,

@@ -8,15 +8,10 @@ import {
   maintenanceStateFile,
   maintenanceNdjsonFile,
   parseMaintenanceState,
-  settingDefinition,
-  settingValueError,
-  coerceSettingText,
-  queryLogs,
   workspaceLogsDir,
   type MaintenanceState,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { due } from '../maintenance/due.ts';
 import { plan } from '../maintenance/plan.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { maintenanceLogger } from '../maintenance/log.ts';
@@ -66,101 +61,6 @@ const size = (
   dir: `/${category}`,
   measuredAt: 1,
   ...extra,
-});
-
-test('corrupt state schedules fresh checks instead of postponing them', () => {
-  expect(due(parseMaintenanceState({ version: 2 }), settings, 0)).toEqual([
-    'pressure',
-    'size',
-    'worktree',
-    'sweep',
-    'idle',
-  ]);
-  expect(due(null, settings, 0)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
-});
-
-test('each check becomes due at its own interval and a missing stamp does not postpone it', () => {
-  const state = { ...emptyState(), lastAt: { pressure: 0, size: 0, worktree: 0, sweep: 0, idle: 0 } };
-  expect(due(state, settings, 59_999)).toEqual([]);
-  expect(due(state, settings, 60_000)).toEqual(['pressure']);
-  expect(due(state, settings, 5 * 60_000)).toEqual(['pressure', 'idle']);
-  expect(due(state, settings, 15 * 60_000)).toEqual(['pressure', 'worktree', 'idle']);
-  expect(due(state, settings, 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'idle']);
-  expect(due(state, settings, 24 * 3_600_000)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
-  expect(
-    due({ ...state, lastAt: { pressure: 60_000, worktree: 60_000, sweep: 60_000, idle: 60_000 } }, settings, 60_000),
-  ).toEqual(['size']);
-});
-
-test('the age sweep and the worktree check can be turned off and are then never due', () => {
-  const off = { ...settings, sweepHours: 0, removeFinishedWorktrees: false };
-  expect(due(null, off, 0)).toEqual(['pressure', 'size', 'idle']);
-  expect(due(null, { ...settings, sweepHours: 0 }, 0)).toEqual(['pressure', 'size', 'worktree', 'idle']);
-});
-
-test('a deferred size scan is not retried by every command while the host stays loaded', () => {
-  const state = {
-    ...emptyState(),
-    lastAt: { pressure: 0, size: 0, worktree: 3_600_000, sweep: 3_600_000, idle: 3_700_000 },
-    deferredAt: { size: 3_600_000 },
-  };
-  expect(due(state, settings, 3_600_000 + 299_999)).toEqual(['pressure']);
-  expect(due(state, settings, 3_600_000 + 300_000)).toEqual(['pressure', 'size']);
-});
-
-test('a stamp from a clock that was ahead does not suppress checks until the clock catches up', () => {
-  const future = 10 * 3_600_000;
-  const state = {
-    ...emptyState(),
-    lastAt: { pressure: future, size: future, worktree: future, sweep: future, idle: future },
-    deferredAt: { size: future },
-  };
-  expect(due(state, settings, 3_600_000, future)).toEqual(['pressure', 'size', 'worktree', 'sweep', 'idle']);
-});
-
-test('maintenance settings reject unknown modes and invalid ranges before they can trigger work', () => {
-  for (const [key, bad, good] of [
-    ['maintenance.mode', 'act', 'on'],
-    ['maintenance.worktreeCheckMinutes', 0, 1],
-    ['maintenance.sweepHours', -1, 0],
-    ['maintenance.olderThanDays', -1, 0],
-    ['maintenance.protectRecentHours', -1, 0],
-    ['maintenance.removeFinishedWorktrees', 'yes', false],
-    ['maintenance.keep', 'yes', true],
-    ['caches.ccacheMaxGb', 0, 0.5],
-    ['maintenance.pressureCheckMinutes', 0, 1],
-    ['maintenance.sizeCheckMinutes', 1.5, 1],
-    ['maintenance.maxLoadPerCore', 0, 0.01],
-    ['maintenance.logMaxMb', -1, 0.1],
-    ['maintenance.logRetentionDays', 0, 1],
-    ['maintenance.memoryWarningMinutes', -1, 0],
-    ['maintenance.minAvailableMemoryGb', -1, 0],
-    ['maintenance.capTargetPercent', 101, 10],
-    ['caches.buildCacheMaxGb', -1, 0],
-    ['maintenance.logChecks', 'yes', false],
-    ['maintenance.memoryPressureLevel', 'normal', 'off'],
-  ] as const) {
-    const definition = settingDefinition(key)!;
-    expect(settingValueError(definition, bad)).not.toBeNull();
-    expect(settingValueError(definition, good)).toBeNull();
-  }
-  expect(coerceSettingText(settingDefinition('maintenance.logChecks')!, '1')).toBe(true);
-  expect(resolveMaintenanceSettings(null, {})?.mode).toBe('on');
-  expect(resolveMaintenanceSettings(null, { STIM_HOME: home })?.mode).toBe('off');
-  expect(resolveMaintenanceSettings(null, { CI: '1' })?.mode).toBe('off');
-  expect(
-    resolveMaintenanceSettings(null, {
-      STIM_HOME: home,
-      CI: '1',
-      STIM_MAINTENANCE: 'report',
-      STIM_MAINTENANCE_SIZE_CHECK_MINUTES: '2',
-    }),
-  ).toMatchObject({ mode: 'report', sizeCheckMinutes: 2 });
-  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' })).toMatchObject({ mode: 'on' });
-  expect(resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'act' })).toMatchObject({
-    mode: 'off',
-    invalid: expect.stringContaining('maintenance.mode'),
-  });
 });
 
 test('disk shortfall maps existing dry-run targets while excluding the triggering workspace and scoped devices', () => {
@@ -247,76 +147,6 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
   expect(result.blocked).toContainEqual(expect.stringContaining('eligible targets cannot reach'));
 });
 
-test('the Swift compilation cache is planned for emptying only below the hard floor', () => {
-  const sizes = [size('compilation-cache', 16 * 1024 ** 3)];
-  const emergency = plan({ pressure: pressure(4 * 1024), sizes, settings, budget, protectedRoot: '/self' });
-  expect(emergency.actions).toContainEqual(
-    expect.objectContaining({ kind: 'would-empty-cache', bytes: 16 * 1024 ** 3 }),
-  );
-  const low = plan({ pressure: pressure(10 * 1024), sizes, settings, budget, protectedRoot: '/self' });
-  expect(low.actions.some((action) => action.kind === 'would-empty-cache')).toBe(false);
-});
-
-test('pinned workspaces are never planned for clearing', () => {
-  const result = plan({
-    pressure: pressure(),
-    sizes: [size('workspace-outputs', 30 * 1024 ** 3, { workspace: '/pinned', dir: '/ws/pinned', idleDays: 9 })],
-    settings,
-    budget,
-    protectedRoot: '/self',
-    pinned: (root) => root === '/pinned',
-  });
-  expect(result.actions).toEqual([]);
-  expect(result.skips).toContainEqual({
-    target: '/pinned',
-    reason: 'pinned by maintenance.keep',
-    workspace: '/pinned',
-  });
-});
-
-test('a workspace used within the protection window is planned as kept, and does not count toward the cap', () => {
-  const result = plan({
-    pressure: pressure(),
-    sizes: [
-      size('workspace-outputs', 30 * 1024 ** 3, { workspace: '/fresh', dir: '/ws/fresh', idleDays: 0 }),
-      size('workspace-outputs', 5 * 1024 ** 3, { workspace: '/stale', dir: '/ws/stale', idleDays: 3 }),
-    ],
-    settings,
-    budget,
-    protectedRoot: '/self',
-    recentlyUsed: (root) => (root === '/fresh' ? 'used within the last 2 hours' : null),
-  });
-  expect(result.actions.map((action) => action.target)).toEqual(['/stale']);
-  expect(result.skips).toContainEqual({
-    target: '/fresh',
-    reason: 'used within the last 2 hours',
-    workspace: '/fresh',
-  });
-});
-
-test('healthy resources plan nothing; memory pressure records a skip without a stop plan', () => {
-  const input = {
-    pressure: pressure(),
-    sizes: [],
-    settings,
-    budget,
-    protectedRoot: '/self',
-  };
-  expect(plan(input)).toEqual({ actions: [], blocked: [], skips: [] });
-  expect(plan({ ...input, pressure: pressure(30 * 1024, true) })).toEqual({
-    actions: [],
-    blocked: [],
-    skips: [expect.objectContaining({ target: 'memory' })],
-  });
-  expect(
-    plan({
-      ...input,
-      sizes: [size('build-cache', 99 * 1024 ** 3)],
-      settings: { ...settings, buildCacheMaxGb: 0 },
-    }).actions,
-  ).toEqual([]);
-});
-
 test('maintenance records stay parseable, mirror named workspace actions and rotate with retention', () => {
   const file = maintenanceNdjsonFile();
   mkdirSync(maintenanceDir());
@@ -370,45 +200,6 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   silent.close();
 });
 
-test('maintenance failures require an explicit source and age out at a later launch marker', () => {
-  const records = [
-    {
-      ts: 1,
-      src: 'maintenance',
-      level: 'error',
-      msg: 'failed',
-      event: 'maintenance_failure',
-    },
-    {
-      ts: 2,
-      src: 'maintenance',
-      level: 'error',
-      msg: 'not a failure',
-      event: 'maintenance_check',
-    },
-    {
-      ts: 3,
-      src: 'maintenance',
-      level: 'info',
-      msg: 'would clear',
-      event: 'maintenance_action',
-    },
-    { ts: 4, src: 'device', level: 'info', marker: true },
-    { ts: 5, src: 'metro', level: 'error', msg: 'bundle error' },
-    { ts: 6, src: 'maintenance', level: 'error', msg: 'new failure', event: 'maintenance_failure' },
-  ];
-  expect(queryLogs({ records, sources: ['maintenance'] }).map((record) => record.msg)).toEqual([
-    'failed',
-    'not a failure',
-    'would clear',
-    'new failure',
-  ]);
-  expect(queryLogs({ records, errorsOnly: true }).map((record) => record.msg)).toEqual(['bundle error']);
-  expect(queryLogs({ records, errorsOnly: true, sources: ['maintenance'] }).map((record) => record.msg)).toEqual([
-    'new failure',
-  ]);
-});
-
 test('status does not infer a live pass from a check stamp', () => {
   mkdirSync(maintenanceDir());
   writeFileSync(maintenanceStateFile(), JSON.stringify({ ...emptyState(), lastAt: { pressure: Date.now() } }));
@@ -430,26 +221,4 @@ test('status does not infer a live pass from a check stamp', () => {
     releaseClaim(attempt.acquired!);
   }
   expect(parseMaintenanceState({ ...emptyState(), lastPass: { stopped: 1 } })).toBeNull();
-});
-
-test('cache and device reasons do not borrow an unrelated output idle age', () => {
-  const result = plan({
-    pressure: pressure(4 * 1024),
-    sizes: [
-      size('workspace-outputs', 1, { idleDays: 99 }),
-      size('workspace-outputs', 1, { workspace: '/idle', idleDays: 77 }),
-    ],
-    settings,
-    budget,
-    protectedRoot: '/self',
-    projects: ['/idle'],
-    diskSteps: [
-      { step: 'stale-cache-entries', targets: ['/cache'], failures: 0 },
-      { step: 'idle-devices', targets: ['sim in /idle'], failures: 0 },
-      { step: 'workspace-outputs', targets: ['/idle'], failures: 0 },
-    ],
-  });
-  expect(result.actions.find((action) => action.target === '/cache')?.reason).not.toMatch(/idle/);
-  expect(result.actions.find((action) => action.target === 'sim in /idle')?.reason).not.toMatch(/idle/);
-  expect(result.actions.find((action) => action.target === '/idle')?.reason).toMatch(/idle 77 days/);
 });

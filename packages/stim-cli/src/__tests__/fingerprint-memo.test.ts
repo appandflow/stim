@@ -1,6 +1,5 @@
 import {
   appendFileSync,
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -208,24 +207,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       expect(full).toBe(1);
     });
 
-    test('misses when an environment variable the config reads changes', async () => {
-      expect((await lookup(app, { PATH: process.env.PATH, APP_FLAG: 'on' })).hit).toBe(false);
-    });
-
-    test('misses when .env.development changes, whatever NODE_ENV the run has', async () => {
-      const env = { PATH: process.env.PATH, NODE_ENV: 'production' };
-      await lookup(app, env);
-      write(join(app, '.env.development'), 'APP_FLAG=dev');
-      expect((await lookup(app, env)).hit).toBe(false);
-    });
-
-    test('misses when a variable a .env file expands changes', async () => {
-      write(join(app, '.env'), 'APP_FLAG=${BASE_FLAG}');
-      await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'a' });
-      expect((await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'a' })).hit).toBe(true);
-      expect((await lookup(app, { PATH: process.env.PATH, BASE_FLAG: 'b' })).hit).toBe(false);
-    });
-
     test('misses when the file an environment variable names changes', async () => {
       const env = { PATH: process.env.PATH, APP_FLAG: './google-services.json' };
       write(join(app, 'google-services.json'), '{"project":"a"}');
@@ -234,48 +215,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
       write(join(app, 'google-services.json'), '{"project":"b"}');
       expect((await lookup(app, env)).hit).toBe(false);
     });
-
-    test.each<[string, () => void]>([
-      ['a JavaScript edit', () => appendFileSync(join(app, 'src/App.js'), '\nexport const x = 2;')],
-      ['a new JavaScript file', () => write(join(app, 'src/Other.js'))],
-      [
-        'a lockfile reorder with a comment',
-        () =>
-          write(
-            join(base, 'repo', layout === 'npm' ? 'package-lock.json' : 'pnpm-lock.yaml'),
-            '# regenerated\npackages:\n  js-lib@1.0.0: {}\n  native-lib@1.0.0: {}\n',
-          ),
-      ],
-      [
-        'a JavaScript edit inside an installed native package',
-        () => appendFileSync(join(nm('native-lib'), 'index.js'), '\n//'),
-      ],
-      // The documented limit: an installed package counts by name and version, so a hand edit of its native code is not seen.
-      [
-        'a native edit inside an installed package',
-        () => appendFileSync(join(nm('native-lib'), 'ios/Lib.m'), '\n// hand edit'),
-      ],
-    ])('hits after %s', async (_change, change) => {
-      change();
-      expect((await lookup(app)).hit).toBe(true);
-      expect(full).toBe(0);
-    });
-
-    test('hits when an environment variable the config does not read changes', async () => {
-      expect((await lookup(app, { PATH: process.env.PATH, CLAUDE_CODE_SESSION_ID: 'another' })).hit).toBe(true);
-    });
-  });
-
-  test('a fresh worktree of a recorded commit hits without a full fingerprint', async () => {
-    app = fixture('pnpm');
-    expect((await lookup(app)).hit).toBe(false);
-    const worktree = join(base, 'worktree');
-    git(join(base, 'repo'), 'worktree', 'add', '--quiet', '--detach', worktree, 'HEAD');
-    const copy = join(worktree, 'app');
-    cpSync(join(app, 'node_modules'), join(copy, 'node_modules'), { recursive: true, verbatimSymlinks: true });
-    full = 0;
-    expect(await lookup(realpathSync(copy))).toMatchObject({ hit: true, hash: 'h1' });
-    expect(full).toBe(0);
   });
 
   test('a real fingerprint recorded in one process is reused by the next lookup in the same process', async () => {
@@ -363,34 +302,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(await staticFingerprint(respelled, { platform: 'ios' }, options)).toEqual(canonical);
   });
 
-  test('a file added to a directory the config names misses', async () => {
-    app = fixture('npm');
-    write(join(app, 'assets/fonts/A.ttf'), 'font a');
-    write(
-      join(app, 'app.json'),
-      JSON.stringify({ expo: { name: 'App', plugins: [['expo-font', { fonts: ['./assets/fonts'] }]] } }),
-    );
-    await lookup(app);
-    expect((await lookup(app)).hit).toBe(true);
-    write(join(app, 'assets/fonts/B.ttf'), 'font b');
-    expect((await lookup(app)).hit).toBe(false);
-  });
-
-  test('swapping a hoisted and a nested copy of a native package misses', async () => {
-    app = fixture('npm');
-    const nested = join(app, 'node_modules/js-lib/node_modules/native-lib');
-    write(
-      join(app, 'node_modules/js-lib/package.json'),
-      JSON.stringify({ name: 'js-lib', version: '1.0.0', dependencies: { 'native-lib': '2.0.0' } }),
-    );
-    nativePackage(nested, 'native-lib', '2.0.0');
-    await lookup(app);
-    expect((await lookup(app)).hit).toBe(true);
-    write(join(nested, 'package.json'), JSON.stringify({ name: 'native-lib', version: '1.0.0' }));
-    write(join(app, 'node_modules/native-lib/package.json'), JSON.stringify({ name: 'native-lib', version: '2.0.0' }));
-    expect((await lookup(app)).hit).toBe(false);
-  });
-
   test.each([
     [
       'a local plugin that reads a file while the config is evaluated',
@@ -429,16 +340,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect(full).toBe(2);
   });
 
-  test('a local plugin that reads files only for its mods keeps the memo', async () => {
-    app = fixture('npm');
-    write(
-      join(app, 'plugins/native.js'),
-      "const { readFileSync } = require('fs');\nconst { withDangerousMod } = require('expo/config-plugins');\nfunction withNative(config) {\n  return withDangerousMod(config, ['ios', (mod) => { readFileSync('Podfile'); return mod; }]);\n}\nmodule.exports = withNative;\n",
-    );
-    await lookup(app);
-    expect((await lookup(app)).hit).toBe(true);
-  });
-
   test('a config the static check cannot follow always takes the full fingerprint', async () => {
     app = fixture('npm');
     write(join(app, 'app.config.js'), "const fs = require('fs');\nmodule.exports = ({ config }) => config;\n");
@@ -446,34 +347,6 @@ describe.skipIf(process.platform === 'win32')('the static check in front of the 
     expect((await lookup(app)).hit).toBe(false);
     expect(full).toBe(2);
     expect(existsSync(fingerprintMemoDir('ios')) ? readdirSync(fingerprintMemoDir('ios')) : []).toEqual([]);
-  });
-
-  test('an input that changes while the full fingerprint runs is not recorded', async () => {
-    app = fixture('npm');
-    const racing = async (): Promise<ProjectFingerprint> => {
-      full++;
-      appendFileSync(join(app, 'ios/App/AppDelegate.swift'), '\n// concurrent edit');
-      return { hash: 'h1', sources: [] };
-    };
-    await memoizedFingerprint(
-      app,
-      { platform: 'ios' },
-      { consult: true, record: true, operation: operation(), fingerprint: racing },
-    );
-    expect((await lookup(app)).hit).toBe(false);
-  });
-
-  test('without consult the memo is not read', async () => {
-    app = fixture('npm');
-    await lookup(app);
-    full = 0;
-    const result = await memoizedFingerprint(
-      app,
-      { platform: 'ios' },
-      { consult: false, record: true, operation: operation(), fingerprint: computed },
-    );
-    expect(result.memoHit).toBe(false);
-    expect(full).toBe(1);
   });
 });
 

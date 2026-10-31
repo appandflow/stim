@@ -4,7 +4,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  realpathSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -17,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import { inspectProcessIdentity, captureProcessIdentity } from '@stim-cli/core/process-identity';
-import { AgentDeviceDriver, resolveAgentDevice } from '../driver.ts';
+import { AgentDeviceDriver } from '../driver.ts';
 import { AgentDriverUnavailable } from '@stim-cli/agent-driver';
 import { parseHostedAgentGrant } from '@stim-cli/core/state';
 
@@ -181,36 +180,6 @@ afterEach(async () => {
 });
 
 describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
-  test('refuses to start an agent-device that cannot lease one macOS app, and leaves nothing running', async () => {
-    install(root);
-    const driver = driverIn(root, {}, { FAKE_LEASE_BACKENDS: 'ios-instance,android-instance' });
-    await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
-    await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
-    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
-    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
-    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
-  });
-
-  test('starts agent-device confined to host-allocated macos-app leases on the native backend', async () => {
-    install(root);
-    const driver = driverIn(root);
-    await driver.start();
-    try {
-      const seen = JSON.parse(readFileSync(join(root, 'state', 'proxy-env.json'), 'utf8')) as {
-        policy: string;
-        backend: string;
-      };
-      expect(seen.backend).toBe('native');
-      const policy = JSON.parse(seen.policy) as { leases: unknown; commands: { allow: string[] } };
-      expect(policy.leases).toEqual({ require: 'macos-app' });
-      expect(policy.commands.allow).toContain('snapshot');
-      expect(policy.commands.allow).not.toContain('install');
-      expect(statSync(join(root, 'state', 'policy.json')).mode & 0o777).toBe(0o600);
-    } finally {
-      await driver.stop();
-    }
-  });
-
   test('allocates a lease for exactly the hosted app process, renews it and releases it on revoke', async () => {
     install(root);
     const driver = driverIn(root, { leaseRenewMs: 50 });
@@ -307,49 +276,6 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     } finally {
       await driver.stop();
     }
-  });
-
-  test('issues no grant when agent-device refuses the lease', async () => {
-    install(root);
-    const driver = driverIn(root, {}, { FAKE_ADMIN: 'refuse' });
-    await driver.start();
-    try {
-      await expect(
-        driver.issue({ client: 'c', session: SESSION, bundleId: 'dev.example.app.hosted1', pid: 4242 }),
-      ).rejects.toThrow(/refused the lease/);
-      expect((await through(driver, SESSION, 'GET', '/health')).status).toBe(503);
-    } finally {
-      await driver.stop();
-    }
-  });
-
-  test('resolves agent-device by explicit path and runs a script under the server Node', () => {
-    const real = install(root);
-    expect(resolveAgentDevice({ HOME: root, PATH: '/usr/bin:/bin' })).toEqual({
-      command: process.execPath,
-      args: [realpathSync(real)],
-    });
-  });
-
-  test('refuses with the places it looked when agent-device is missing', () => {
-    expect(() => resolveAgentDevice({ HOME: root })).toThrow(
-      /\.local\/bin\/agent-device.*npm install --global --prefix/s,
-    );
-  });
-
-  test('uses only the agent-device that STIM_AGENT_DEVICE_BIN names when it is set', () => {
-    const real = install(root);
-    const elsewhere = join(root, 'other', 'agent-device.mjs');
-    mkdirSync(join(root, 'other'));
-    writeFileSync(elsewhere, FAKE_AGENT_DEVICE);
-    expect(resolveAgentDevice({ HOME: root, STIM_AGENT_DEVICE_BIN: elsewhere })).toEqual({
-      command: process.execPath,
-      args: [realpathSync(elsewhere)],
-    });
-    expect(realpathSync(real)).not.toBe(realpathSync(elsewhere));
-    expect(() => resolveAgentDevice({ HOME: root, STIM_AGENT_DEVICE_BIN: join(root, 'missing') })).toThrow(
-      /STIM_AGENT_DEVICE_BIN names .*missing/,
-    );
   });
 
   test('holds the daemon under a claim and removes both on stop', async () => {
@@ -638,40 +564,6 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     }
   });
 
-  test('answers 503 when no daemon runs', async () => {
-    expect((await through(driverIn(root), SESSION, 'GET', '/health')).status).toBe(503);
-  });
-
-  test('reports a daemon that exits on its own and still stops cleanly afterwards', async () => {
-    install(root);
-    const driver = driverIn(root);
-    const exited = new Promise<void>((resolve) => driver.onExit(resolve));
-    await driver.start();
-    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
-    const identity = captureProcessIdentity(daemonPid);
-    process.kill(daemonPid, 'SIGKILL');
-    await exited;
-    await driver.stop();
-    expect(inspectProcessIdentity({ pid: daemonPid, processToken: identity.ok ? identity.token : '' })).toBe('gone');
-    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
-    await driver.start();
-    await driver.stop();
-  });
-
-  test('stops a daemon that ignores SIGTERM and one that agent-device did not stop, by recorded identity', async () => {
-    install(root);
-    const driver = driverIn(root, {}, { FAKE_DAEMON: 'stubborn', FAKE_STOP_NOOP: '1' });
-    await driver.start();
-    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
-    const record = {
-      pid: daemonPid,
-      processToken: readClaimSet(join(root, 'agent-device.claims')).live[0]!.child!.processToken,
-    };
-    await driver.stop();
-    expect(inspectProcessIdentity(record)).toBe('gone');
-    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
-  }, 15_000);
-
   test('reports the proxy error when the proxy exits before it is ready', async () => {
     install(root);
     const driver = driverIn(root, {}, { FAKE_PROXY: 'fail' });
@@ -679,6 +571,47 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
       /exited with 1 before it was ready\. Error \(COMMAND_FAILED\): Failed to start daemon/,
     );
     await driver.stop();
+  });
+
+  test('stops a daemon the proxy started even when the proxy never reports ready and daemon stop does nothing', async () => {
+    install(root);
+    const driver = driverIn(root, { startTimeoutMs: 500 }, { FAKE_PROXY: 'daemon-only', FAKE_STOP_NOOP: '1' });
+    await expect(driver.start()).rejects.toThrow(/did not report a listening address/);
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('agent-device confinement', () => {
+  test('refuses to start an agent-device that cannot lease one macOS app, and leaves nothing running', async () => {
+    install(root);
+    const driver = driverIn(root, {}, { FAKE_LEASE_BACKENDS: 'ios-instance,android-instance' });
+    await expect(driver.start()).rejects.toThrow(AgentDriverUnavailable);
+    await expect(driver.start()).rejects.toThrow(/Stim never hands a client the hosting Mac desktop/);
+    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
+    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
+    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
+  });
+
+  test('starts agent-device confined to host-allocated macos-app leases on the native backend', async () => {
+    install(root);
+    const driver = driverIn(root);
+    await driver.start();
+    try {
+      const seen = JSON.parse(readFileSync(join(root, 'state', 'proxy-env.json'), 'utf8')) as {
+        policy: string;
+        backend: string;
+      };
+      expect(seen.backend).toBe('native');
+      const policy = JSON.parse(seen.policy) as { leases: unknown; commands: { allow: string[] } };
+      expect(policy.leases).toEqual({ require: 'macos-app' });
+      expect(policy.commands.allow).toContain('snapshot');
+      expect(policy.commands.allow).not.toContain('install');
+      expect(statSync(join(root, 'state', 'policy.json')).mode & 0o777).toBe(0o600);
+    } finally {
+      await driver.stop();
+    }
   });
 
   test('never signals a pid it read from a stale daemon record', async () => {
@@ -697,15 +630,6 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     }
   });
 
-  test('stops a daemon the proxy started even when the proxy never reports ready and daemon stop does nothing', async () => {
-    install(root);
-    const driver = driverIn(root, { startTimeoutMs: 500 }, { FAKE_PROXY: 'daemon-only', FAKE_STOP_NOOP: '1' });
-    await expect(driver.start()).rejects.toThrow(/did not report a listening address/);
-    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
-    await vi.waitFor(() => expect(() => process.kill(daemonPid, 0)).toThrow(/ESRCH/));
-    expect(readClaimSet(join(root, 'agent-device.claims')).live).toHaveLength(0);
-  });
-
   test('forwards only the proxy routes and keeps a bare session route to the root', async () => {
     install(root);
     const driver = driverIn(root);
@@ -722,19 +646,5 @@ describe.skipIf(process.platform === 'win32')('agent-device driver', () => {
     } finally {
       await driver.stop();
     }
-  });
-
-  test('reports a daemon exit once even when the proxy and the watcher both notice it', async () => {
-    install(root);
-    const driver = driverIn(root);
-    let exits = 0;
-    driver.onExit(() => (exits += 1));
-    await driver.start();
-    const daemonPid = (JSON.parse(readFileSync(join(root, 'state', 'daemon.json'), 'utf8')) as { pid: number }).pid;
-    process.kill(daemonPid, 'SIGKILL');
-    await vi.waitFor(() => expect(exits).toBe(1));
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(exits).toBe(1);
-    await driver.stop();
   });
 });

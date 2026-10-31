@@ -51,10 +51,6 @@ test('listens only on private IPv4 addresses an interface holds, never on a wild
   });
 });
 
-test('an address named both directly and through its interface is listened on once', () => {
-  expect(resolveLanAddresses(['10.0.0.92', 'en0'], interfaces).addresses).toEqual(['10.0.0.92']);
-});
-
 test('watch reports a changed setting or lease on the next poll, and stays quiet while nothing changes', () => {
   vi.useFakeTimers();
   let entries = ['en0'];

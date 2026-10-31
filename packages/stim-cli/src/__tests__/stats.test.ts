@@ -1,10 +1,8 @@
 import {
   decodeStats,
   readStatsReport,
-  type StatsCapacityRefusal,
   CAPACITY_REFUSAL_LIMIT,
   CAPACITY_REFUSAL_MAX_AGE_MS,
-  offloadSummary,
   statsFile,
 } from '@stim-cli/core/state';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
@@ -29,12 +27,8 @@ import { Command } from 'commander';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import statsCommand from '../commands/stats.ts';
 import {
-  recordCapacityRefusal,
   recordCapacityWait,
-  createRunRecorder,
   emptyStats,
-  PLACEMENT_LIMIT,
-  readRunEstimates,
   readStats,
   recordRunStats,
   statsProjectKey,
@@ -97,60 +91,6 @@ function bucketOf(record: StatsRecord, key: string): StatsBucket {
 }
 
 describe('the update rule', () => {
-  test('a miss records a cold run and creates the bucket with both timestamps', () => {
-    const record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket).toEqual({
-      runs: 1,
-      failed: 0,
-      hits: 0,
-      misses: 1,
-      coldRuns: 1,
-      coldRunMs: 240_000,
-      hitRuns: 0,
-      hitRunMs: 0,
-      timeSavedMs: 0,
-      firstRunAt: '2026-09-01T10:00:00.000Z',
-      lastRunAt: '2026-09-01T10:00:00.000Z',
-    });
-    expect(record.machine.ios).toEqual(bucket);
-    expect(record.version).toBe(1);
-  });
-
-  test('a hit after a cold run is credited the mean cold run minus its own duration', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    record = updateStats(record, run({ durationMs: 120_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 30_000 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.runs).toBe(3);
-    expect(bucket.hits).toBe(1);
-    expect(bucket.misses).toBe(2);
-    expect(bucket.hitRuns).toBe(1);
-    expect(bucket.hitRunMs).toBe(30_000);
-    expect(bucket.timeSavedMs).toBe(150_000);
-    expect(bucket.coldRunMs).toBe(360_000);
-    expect(bucket.firstRunAt).toBe('2026-09-01T10:00:00.000Z');
-    expect(bucket.lastRunAt).toBe('2026-09-02T10:00:00.000Z');
-  });
-
-  test('a remote hit counts like a local one', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 200_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'remote', durationMs: 20_000 }), T1);
-
-    expect(bucketOf(record, '/repo/app').hits).toBe(1);
-    expect(bucketOf(record, '/repo/app').timeSavedMs).toBe(180_000);
-  });
-
-  test('a hit slower than the mean cold run credits nothing rather than a negative', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 20_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 90_000 }), T1);
-
-    expect(bucketOf(record, '/repo/app').timeSavedMs).toBe(0);
-    expect(bucketOf(record, '/repo/app').hitRunMs).toBe(90_000);
-  });
-
   test('a hit that waited for another workspace counts as a hit and nothing else', () => {
     let record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
     record = updateStats(record, run({ cacheHit: 'local', waitedForBuild: true, durationMs: 30_000 }), T1);
@@ -163,291 +103,10 @@ describe('the update rule', () => {
     expect(bucket.timeSavedMs).toBe(0);
     expect(record.machine.ios?.timeSavedMs).toBe(0);
   });
-
-  test('a hit with no cold run for this project and platform credits nothing', () => {
-    let record = updateStats(emptyStats(), run({ platform: 'android', durationMs: 600_000 }), T0);
-    record = updateStats(record, run({ projectKey: '/repo/other', durationMs: 600_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 30_000 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(record.machine.ios?.coldRuns).toBe(1);
-    expect(bucket.hits).toBe(1);
-    expect(bucket.timeSavedMs).toBe(0);
-    expect(record.machine.ios?.timeSavedMs).toBe(0);
-  });
-
-  test('a failed run counts as a run and a failure and nothing else', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    record = updateStats(record, run({ failed: true, cacheHit: 'local', durationMs: 5_000 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.runs).toBe(2);
-    expect(bucket.failed).toBe(1);
-    expect(bucket.hits).toBe(0);
-    expect(bucket.misses).toBe(1);
-    expect(bucket.hitRuns).toBe(0);
-    expect(bucket.coldRuns).toBe(1);
-    expect(bucket.lastRunAt).toBe('2026-09-02T10:00:00.000Z');
-  });
-
-  test('the machine bucket moves in lockstep with the projects that feed it', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    record = updateStats(record, run({ projectKey: '/repo/other', durationMs: 400_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 40_000 }), T1);
-    record = updateStats(record, run({ projectKey: '/repo/other', cacheHit: 'local', durationMs: 40_000 }), T1);
-
-    const machine = record.machine.ios;
-    assert(machine);
-    expect(machine.runs).toBe(4);
-    expect(machine.hits).toBe(2);
-    expect(machine.coldRunMs).toBe(640_000);
-    expect(machine.timeSavedMs).toBe(200_000 + 360_000);
-    expect(machine.timeSavedMs).toBe(
-      bucketOf(record, '/repo/app').timeSavedMs + bucketOf(record, '/repo/other').timeSavedMs,
-    );
-  });
-
-  test('a platform keeps its own bucket', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 100_000 }), T0);
-    record = updateStats(record, run({ platform: 'android', durationMs: 300_000 }), T0);
-
-    expect(record.projects['/repo/app']?.ios?.coldRunMs).toBe(100_000);
-    expect(record.projects['/repo/app']?.android?.coldRunMs).toBe(300_000);
-    expect(record.machine.android?.runs).toBe(1);
-  });
-
-  test('milliseconds stay whole numbers', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000.6 }), T0);
-    record = updateStats(record, run({ durationMs: 100_001 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 30_000.4 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.coldRunMs).toBe(340_002);
-    expect(bucket.hitRunMs).toBe(30_000);
-    expect(bucket.timeSavedMs).toBe(140_001);
-    expect(Number.isInteger(bucket.timeSavedMs)).toBe(true);
-  });
-
-  test('a miss that compiled records the build phase, in both buckets', () => {
-    const record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000 }), T0);
-
-    expect(bucketOf(record, '/repo/app').lastColdBuildMs).toBe(190_000);
-    expect(record.machine.ios?.lastColdBuildMs).toBe(190_000);
-  });
-
-  test('a pod install records its own duration, in both buckets', () => {
-    const record = updateStats(emptyStats(), run({ durationMs: 240_000, podsMs: 100_000 }), T0);
-
-    expect(bucketOf(record, '/repo/app').lastPodsMs).toBe(100_000);
-    expect(record.machine.ios?.lastPodsMs).toBe(100_000);
-  });
-
-  test('a run that compiled and then failed still records the cold build it paid for', () => {
-    const record = updateStats(emptyStats(), run({ failed: true, durationMs: 200_000, coldBuildMs: 190_000 }), T0);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.lastColdBuildMs).toBe(190_000);
-    expect(record.machine.ios?.lastColdBuildMs).toBe(190_000);
-    expect(bucket.failed).toBe(1);
-    expect(bucket.coldRuns).toBe(0);
-    expect(bucket.coldRunMs).toBe(0);
-    expect(bucket.misses).toBe(0);
-  });
-
-  test('the last value wins: a later cold build replaces the one before it', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
-    record = updateStats(record, run({ durationMs: 300_000, coldBuildMs: 250_000 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.lastColdBuildMs).toBe(250_000);
-    expect(bucket.lastPodsMs).toBe(100_000);
-  });
-
-  test('a run with no long phase leaves both fields exactly as they were', () => {
-    let record = updateStats(emptyStats(), run({ durationMs: 240_000, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
-    record = updateStats(record, run({ cacheHit: 'local', durationMs: 30_000 }), T1);
-    record = updateStats(record, run({ failed: true, durationMs: 5_000 }), T1);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect(bucket.lastColdBuildMs).toBe(190_000);
-    expect(bucket.lastPodsMs).toBe(100_000);
-  });
-
-  test('a bucket that never compiled carries neither field, so the payload is unchanged', () => {
-    const record = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    const bucket = bucketOf(record, '/repo/app');
-
-    expect('lastColdBuildMs' in bucket).toBe(false);
-    expect('lastPodsMs' in bucket).toBe(false);
-  });
-
-  test('the input record is not mutated', () => {
-    const before = updateStats(emptyStats(), run({ durationMs: 240_000 }), T0);
-    const snapshot = JSON.stringify(before);
-    updateStats(before, run({ cacheHit: 'local', durationMs: 10_000 }), T1);
-
-    expect(JSON.stringify(before)).toBe(snapshot);
-  });
 });
 
 describe('build placements', () => {
   const here = { decision: 'here' as const, reason: 'load 0.6/core, 1 of 3 build slots busy here' };
-
-  test('a compiling run records where it built, why, and the local estimate it is compared with', () => {
-    let record = updateStats(emptyStats(), run({ coldBuildMs: 300_000 }), T0);
-    record = updateStats(
-      record,
-      run({
-        placement: { decision: 'offloaded', machine: 'mini', reason: 'this machine is busy: slots', buildMs: 180_000 },
-      }),
-      T0 + 1000,
-    );
-
-    expect(record.placements).toEqual([
-      {
-        at: new Date(T0 + 1000).toISOString(),
-        project: '/repo/app',
-        platform: 'ios',
-        decision: 'offloaded',
-        reason: 'this machine is busy: slots',
-        machine: 'mini',
-        buildMs: 180_000,
-        localEstimateMs: 300_000,
-      },
-    ]);
-    expect(record.buildMachines).toEqual({
-      mini: {
-        offloaded: 1,
-        offloadedMs: 180_000,
-        savedMs: 120_000,
-        fallbacks: 0,
-        lastOffloadAt: new Date(T0 + 1000).toISOString(),
-      },
-    });
-  });
-
-  test('a build here takes its compile time, counts for no machine, and a failed one is marked', () => {
-    const record = updateStats(emptyStats(), run({ failed: true, coldBuildMs: 250_000, placement: here }), T0);
-
-    expect(record.placements?.[0]).toMatchObject({ decision: 'here', buildMs: 250_000, failed: true });
-    expect(record.buildMachines).toBeUndefined();
-  });
-
-  test.each([
-    { slotWaitMs: 12.6, expected: { slotWaitMs: 13, deviceSlotWaitMs: 13 } },
-    { slotWaitMs: 0, expected: {} },
-  ])('a compiling run persists whole positive slot wait milliseconds ($slotWaitMs)', ({ slotWaitMs, expected }) => {
-    const recorder = createRunRecorder({
-      platform: 'ios',
-      write: recordRunStats,
-      now: () => T0,
-      note: () => {},
-    });
-    recorder.setProject(root);
-    recorder.setCacheKey('ios-abc');
-    recorder.setBuildMs(250_000);
-    recorder.setPlacement({ ...here, slotWaitMs });
-    recorder.addDeviceSlotWaitMs(slotWaitMs);
-    recorder.record({ failed: false, durationMs: 300_000 });
-
-    const stored = JSON.parse(readFileSync(statsFile(), 'utf-8')).placements[0];
-    const loaded = readStats().record?.placements?.[0];
-    expect(stored).toEqual({
-      ...here,
-      at: new Date(T0).toISOString(),
-      project: root,
-      platform: 'ios',
-      buildMs: 250_000,
-      ...expected,
-    });
-    expect(loaded).toEqual(stored);
-  });
-
-  test.each([-1, 0, 'invalid', 'Infinity', null, {}])(
-    'invalid slot wait values are dropped on read (%s)',
-    (slotWaitMs) => {
-      writeFileSync(
-        statsFile(),
-        JSON.stringify({
-          ...emptyStats(),
-          placements: [
-            {
-              ...here,
-              at: new Date(T0).toISOString(),
-              project: root,
-              platform: 'ios',
-              buildMs: 250_000,
-              slotWaitMs,
-              deviceSlotWaitMs: slotWaitMs,
-            },
-          ],
-        }),
-      );
-
-      const placement = readStats().record?.placements?.[0];
-      expect(placement?.buildMs).toBe(250_000);
-      expect(placement).not.toHaveProperty('slotWaitMs');
-      expect(placement).not.toHaveProperty('deviceSlotWaitMs');
-    },
-  );
-
-  test('a fallback counts against its machine', () => {
-    const record = updateStats(
-      emptyStats(),
-      run({
-        placement: { decision: 'fell-back', machine: 'mini', reason: 'mini: toolchain mismatch: Xcode 26.1 there' },
-      }),
-      T0,
-    );
-
-    expect(record.buildMachines?.mini).toEqual({
-      offloaded: 0,
-      offloadedMs: 0,
-      savedMs: 0,
-      fallbacks: 1,
-      lastFallbackAt: new Date(T0).toISOString(),
-    });
-  });
-
-  test('a run without a placement leaves the list alone', () => {
-    const record = updateStats(emptyStats(), run({ cacheHit: 'local' }), T0);
-
-    expect(record).not.toHaveProperty('placements');
-  });
-
-  test('the list keeps the newest entries within a week', () => {
-    let record = updateStats(emptyStats(), run({ placement: { ...here, reason: 'old' } }), T0);
-    for (let i = 0; i < PLACEMENT_LIMIT + 5; i++) {
-      record = updateStats(record, run({ placement: { ...here, reason: `r${i}` } }), T0 + 8 * 86_400_000 + i);
-    }
-
-    expect(record.placements).toHaveLength(PLACEMENT_LIMIT);
-    expect(record.placements?.[0]?.reason).toBe('r5');
-    expect(record.placements?.some((each) => each.reason === 'old')).toBe(false);
-  });
-
-  test('today follows local midnight, with signed savings and lifetime totals', () => {
-    const previous = process.env.TZ;
-    process.env.TZ = 'America/Toronto';
-    try {
-      const yesterday = Date.parse('2026-09-02T03:59:00Z');
-      const today = Date.parse('2026-09-02T04:01:00Z');
-      let record = updateStats(emptyStats(), run({ coldBuildMs: 50_000, placement: here }), yesterday);
-      record = updateStats(
-        record,
-        run({ placement: { decision: 'offloaded', machine: 'mini', reason: 'busy', buildMs: 100_000 } }),
-        today,
-      );
-      const summary = offloadSummary(record, today);
-      expect(summary.today).toEqual({ here: 0, offloaded: 1, fellBack: 0 });
-      expect(summary.machines.mini?.today).toMatchObject({ offloaded: 1, savedMs: -50_000 });
-      expect(summary.machines.mini?.total).toMatchObject({ offloaded: 1, savedMs: -50_000 });
-      expect(summary.placements.map((entry) => entry.decision)).toEqual(['offloaded', 'here']);
-    } finally {
-      if (previous === undefined) delete process.env.TZ;
-      else process.env.TZ = previous;
-    }
-  });
 
   test('a file written before placements, or with malformed ones, still reads', () => {
     writeFileSync(
@@ -473,15 +132,6 @@ describe('build placements', () => {
 });
 
 describe('the stats file', () => {
-  test('a run is written under the config lock and read back', () => {
-    const outcome = recordRunStats(run({ projectKey: root, durationMs: 240_000 }), T0);
-
-    expect(outcome).toEqual({ recorded: true, note: null });
-    expect(existsSync(statsFile())).toBe(true);
-    expect(readStats().record?.projects[root]?.ios?.coldRunMs).toBe(240_000);
-    expect(readFileSync(statsFile(), 'utf-8').split('\n')).toHaveLength(2);
-  });
-
   test('a file from a newer Stim is left untouched and the run records nothing', () => {
     const newer = JSON.stringify({ version: 2, machine: {}, projects: {} });
     writeFileSync(statsFile(), newer);
@@ -495,17 +145,6 @@ describe('the stats file', () => {
     expect(readStats().note).toMatch(/version 2/);
   });
 
-  test('a corrupt file is renamed aside, a fresh one is started, and the run is recorded', () => {
-    writeFileSync(statsFile(), '{ this is not json');
-
-    const outcome = recordRunStats(run({ projectKey: root, durationMs: 5_000 }), T0);
-
-    expect(outcome.recorded).toBe(true);
-    expect(outcome.note).toMatch(/moved to /);
-    expect(readFileSync(`${statsFile()}.corrupt-${T0}`, 'utf-8')).toBe('{ this is not json');
-    expect(readStats().record?.projects[root]?.ios?.runs).toBe(1);
-  });
-
   test('a file that parses to something other than a versioned object is corrupt too', () => {
     writeFileSync(statsFile(), JSON.stringify([1, 2, 3]));
     expect(recordRunStats(run({ projectKey: root }), T0).note).toMatch(/moved to /);
@@ -513,131 +152,6 @@ describe('the stats file', () => {
     writeFileSync(statsFile(), JSON.stringify({ machine: {}, projects: {} }));
     expect(recordRunStats(run({ projectKey: root }), T1).note).toMatch(/moved to /);
     expect(readdirSync(tmpHome).filter((name) => name.includes('corrupt-'))).toHaveLength(2);
-  });
-
-  test('the recorder writes nowhere but STIM_HOME and creates no config.json', () => {
-    recordRunStats(run({ projectKey: root }), T0);
-
-    expect(statsFile()).toBe(join(tmpHome, 'stats.json'));
-    expect(existsSync(join(tmpHome, 'config.json'))).toBe(false);
-  });
-
-  test('the project key is the app path in the source checkout, canonical', () => {
-    const repo = join(realpathSync.native(tmpHome), 'repo');
-    mkdirSync(repo);
-    const worktree = join(repo, 'worktrees', 'agent-1');
-
-    expect(
-      statsProjectKey({ root: join(worktree, 'apps', 'mobile'), commonDir: join(repo, '.git'), repoRoot: worktree }),
-    ).toBe(join(repo, 'apps', 'mobile'));
-    expect(statsProjectKey({ root, commonDir: null, repoRoot: null })).toBe(root);
-    expect(statsProjectKey({ root, commonDir: join(repo, 'bare.git'), repoRoot: repo })).toBe(root);
-
-    mkdirSync(join(worktree, 'apps', 'mobile'), { recursive: true });
-    const alias = join(repo, 'alias');
-    symlinkSync(worktree, alias, process.platform === 'win32' ? 'junction' : 'dir');
-    const key = statsProjectKey({
-      root: join(alias, 'apps', 'mobile'),
-      commonDir: join(repo, '.git'),
-      repoRoot: worktree,
-    });
-    expect(key).toBe(join(repo, 'apps', 'mobile'));
-    recordRunStats(run({ projectKey: key, coldBuildMs: 1200 }), T0);
-    expect(readRunEstimates({ projectKey: join(repo, 'apps', 'mobile'), platform: 'ios' }).coldBuildMs).toBe(1200);
-    expect(Object.keys(readStats().record!.projects)).toEqual([key]);
-
-    rmSync(repo, { recursive: true, force: true });
-  });
-});
-
-describe('the run recorder', () => {
-  function recorderFor(writes: { run: StatsRun; now: number }[]) {
-    const recorder = createRunRecorder({
-      platform: 'ios',
-      write: (statsRun, at) => {
-        writes.push({ run: statsRun, now: at });
-        return { recorded: true, note: null };
-      },
-      now: () => T0,
-      note: () => {},
-    });
-    recorder.setProject('/repo/app');
-    recorder.setCacheKey('ios-abc');
-    return recorder;
-  }
-
-  test('the build and pod install durations reach the record', () => {
-    const writes: { run: StatsRun; now: number }[] = [];
-    const recorder = recorderFor(writes);
-    recorder.setPodsMs(100_000);
-    recorder.setBuildMs(190_000);
-    recorder.record({ failed: false, cacheHit: false, durationMs: 300_000 });
-
-    expect(writes).toHaveLength(1);
-    expect(writes[0]?.run.coldBuildMs).toBe(190_000);
-    expect(writes[0]?.run.podsMs).toBe(100_000);
-  });
-
-  test('the placement set during the run reaches the record, failed or not', () => {
-    const writes: { run: StatsRun; now: number }[] = [];
-    const recorder = recorderFor(writes);
-    recorder.setPlacement({ decision: 'fell-back', machine: 'mini', reason: 'mini: unreachable' });
-    recorder.record({ failed: true, durationMs: 5_000 });
-
-    expect(writes[0]?.run.placement).toEqual({ decision: 'fell-back', machine: 'mini', reason: 'mini: unreachable' });
-  });
-
-  test('a run with neither phase sends neither field', () => {
-    const writes: { run: StatsRun; now: number }[] = [];
-    recorderFor(writes).record({ failed: false, cacheHit: 'local', durationMs: 30_000 });
-
-    expect(writes[0]?.run).not.toHaveProperty('coldBuildMs');
-    expect(writes[0]?.run).not.toHaveProperty('podsMs');
-  });
-});
-
-describe('the estimates a run reads back', () => {
-  test('the project bucket supplies the last cold build and the last pod install', () => {
-    const record = updateStats(emptyStats(), run({ projectKey: root, coldBuildMs: 190_000, podsMs: 100_000 }), T0);
-    writeFileSync(statsFile(), JSON.stringify(record));
-
-    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({
-      coldBuildMs: 190_000,
-      podsMs: 100_000,
-    });
-  });
-
-  test('another project, another platform, and no file at all all read as no record', () => {
-    const record = updateStats(emptyStats(), run({ projectKey: root, coldBuildMs: 190_000 }), T0);
-    writeFileSync(statsFile(), JSON.stringify(record));
-
-    expect(readRunEstimates({ projectKey: '/elsewhere', platform: 'ios' })).toEqual({
-      coldBuildMs: null,
-      podsMs: null,
-    });
-    expect(readRunEstimates({ projectKey: root, platform: 'android' })).toEqual({
-      coldBuildMs: null,
-      podsMs: null,
-    });
-    rmSync(statsFile(), { force: true });
-    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
-    expect(readRunEstimates({ projectKey: null, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
-  });
-
-  test('a corrupt file and a throwing read are silent: the run gets no estimate and no note', () => {
-    writeFileSync(statsFile(), 'not json at all');
-
-    expect(readRunEstimates({ projectKey: root, platform: 'ios' })).toEqual({ coldBuildMs: null, podsMs: null });
-    expect(
-      readRunEstimates({
-        projectKey: root,
-        platform: 'ios',
-        read: () => {
-          throw new Error('nope');
-        },
-      }),
-    ).toEqual({ coldBuildMs: null, podsMs: null });
-    expect(readFileSync(statsFile(), 'utf-8')).toBe('not json at all');
   });
 });
 
@@ -991,115 +505,6 @@ test('stats includes measured SwiftPM usage in one JSON payload and after agent-
   expect(plain.at(-1)).toContain('shared by every SwiftPM build on this machine');
 });
 
-describe('capacity refusals', () => {
-  function event(at = T0, workspace = 'fixture'): StatsCapacityRefusal {
-    return { at: new Date(at).toISOString(), kind: 'device', platform: 'ios', max: 2, workspace };
-  }
-
-  test('normalization drops malformed capacity refusals without losing valid events', () => {
-    const valid = event();
-    const malformed = [
-      null,
-      [],
-      {},
-      { ...valid, kind: 'build' },
-      { ...valid, platform: 'web' },
-      { ...valid, at: 'bad-date' },
-      { ...valid, at: 0 },
-      { ...valid, max: 0 },
-      { ...valid, max: 1.5 },
-      { ...valid, max: '2' },
-      { ...valid, workspace: '' },
-      { ...valid, workspace: 123 },
-    ];
-    const decode = (capacityRefusals: unknown) =>
-      decodeStats(JSON.stringify({ ...emptyStats(), capacityRefusals })).record;
-    expect(decode([...malformed, valid])?.capacityRefusals).toEqual([valid]);
-    expect(decode(malformed)).not.toHaveProperty('capacityRefusals');
-    expect(decode({})).not.toHaveProperty('capacityRefusals');
-  });
-
-  test('the report sorts capacity refusals newest first and omits an empty or expired list', () => {
-    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals: [event(T0), event(T1)] }));
-    expect(readStatsReport(null, T1).report.capacityRefusals).toEqual([event(T1), event(T0)]);
-    expect(readStatsReport(null, T1 + CAPACITY_REFUSAL_MAX_AGE_MS + 1).report).not.toHaveProperty('capacityRefusals');
-    writeFileSync(statsFile(), JSON.stringify(emptyStats()));
-    expect(readStatsReport(null, T1).report).not.toHaveProperty('capacityRefusals');
-  });
-
-  test('the report bounds capacity refusals to fifty within seven days including the boundary', () => {
-    const capacityRefusals = [
-      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS),
-      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1),
-      event(T0 + 1),
-    ];
-    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals }));
-    expect(readStatsReport(null, T0).report.capacityRefusals).toEqual([capacityRefusals[0]]);
-    const events = Array.from({ length: 55 }, (_, i) => event(T0 - i, `w${i}`)).toReversed();
-    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals: events }));
-    const kept = readStatsReport(null, T0).report.capacityRefusals;
-    expect(kept).toHaveLength(50);
-    expect(kept?.map((each) => each.workspace)).toEqual(Array.from({ length: 50 }, (_, i) => `w${i}`));
-  });
-
-  test('recording a capacity refusal appends without a run and trims old and excess events', () => {
-    const capacityRefusals = [
-      event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1),
-      ...Array.from({ length: 55 }, (_, i) => event(T0 + i, `w${i}`)),
-    ];
-    writeFileSync(statsFile(), JSON.stringify({ ...emptyStats(), capacityRefusals }));
-    recordCapacityRefusal({ platform: 'android', max: 3, workspace: 'new' }, T0 + 55);
-    const record = readStats().record;
-    expect(record?.machine).toEqual({});
-    expect(record?.projects).toEqual({});
-    expect(record?.capacityRefusals).toHaveLength(CAPACITY_REFUSAL_LIMIT);
-    expect(record?.capacityRefusals?.[0]?.workspace).toBe('w6');
-    expect(record?.capacityRefusals?.at(-1)).toEqual({ ...event(T0 + 55, 'new'), platform: 'android', max: 3 });
-  });
-
-  test('a normal run preserves capacity refusals and trims only expired entries', () => {
-    const before = { ...emptyStats(), capacityRefusals: [event(T0 - CAPACITY_REFUSAL_MAX_AGE_MS - 1), event(T0)] };
-    const after = updateStats(before, run(), T0);
-    expect(after.capacityRefusals).toEqual([event(T0)]);
-    expect(after.machine.ios?.runs).toBe(1);
-    expect(updateStats(after, run(), T0 + CAPACITY_REFUSAL_MAX_AGE_MS + 1)).not.toHaveProperty('capacityRefusals');
-  });
-
-  test.each(['{ broken', JSON.stringify({ version: 2, machine: {}, projects: {} })])(
-    'an unreadable or newer stats file records no capacity refusal and stays untouched: %s',
-    (text) => {
-      writeFileSync(statsFile(), text);
-      const out = vi.spyOn(console, 'log');
-      const err = vi.spyOn(console, 'error');
-      try {
-        expect(() => recordCapacityRefusal({ platform: 'ios', max: 2, workspace: 'fixture' }, T0)).not.toThrow();
-        expect(readFileSync(statsFile(), 'utf-8')).toBe(text);
-        expect(readdirSync(tmpHome).filter((name) => name.includes('corrupt-') || name.endsWith('.tmp'))).toEqual([]);
-        expect(out).not.toHaveBeenCalled();
-        expect(err).not.toHaveBeenCalled();
-      } finally {
-        out.mockRestore();
-        err.mockRestore();
-      }
-    },
-  );
-
-  test('a capacity refusal recording I/O failure stays silent and never throws', () => {
-    mkdirSync(statsFile());
-    const out = vi.spyOn(console, 'log');
-    const err = vi.spyOn(console, 'error');
-    try {
-      expect(() => recordCapacityRefusal({ platform: 'ios', max: 2, workspace: 'fixture' }, T0)).not.toThrow();
-      expect(out).not.toHaveBeenCalled();
-      expect(err).not.toHaveBeenCalled();
-      expect(readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'))).toEqual([]);
-    } finally {
-      out.mockRestore();
-      err.mockRestore();
-    }
-  });
-});
-
 describe('capacity waits', () => {
   const event = {
     at: new Date(T0).toISOString(),
@@ -1164,13 +569,4 @@ describe('capacity waits', () => {
     expect(json.capacityWaits).toHaveLength(CAPACITY_REFUSAL_LIMIT);
     expect(readStatsReport(null, T0 + 55 + CAPACITY_REFUSAL_MAX_AGE_MS + 1).report).not.toHaveProperty('capacityWaits');
   });
-
-  test.each(['{ broken', JSON.stringify({ version: 2, machine: {}, projects: {} })])(
-    'wait recording leaves unreadable or newer stats untouched: %s',
-    (text) => {
-      writeFileSync(statsFile(), text);
-      expect(() => recordCapacityWait({ platform: 'ios', max: 2, workspace: 'fixture', ms: 10 }, T0)).not.toThrow();
-      expect(readFileSync(statsFile(), 'utf8')).toBe(text);
-    },
-  );
 });

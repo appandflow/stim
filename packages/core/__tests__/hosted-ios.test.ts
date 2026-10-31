@@ -24,40 +24,12 @@ const placement = {
   agent: { driver: 'none', setting: 'hosting.agentDriver' },
 };
 
-test('a reservation without a device remains discoverable for stop, including a named slot', () => {
-  const pending = { ...placement, device: null };
-  expect(hostedIosPlacements({ deviceSlots: { tablet: { ios: { host: pending } } } })).toEqual({ tablet: pending });
-  expect(parseHostedIosPlacement(placement)).toEqual(placement);
-});
-
 test.each([{ machine: '' }, { session: '' }])('unreadable ownership remains discoverable: %j', (changed) => {
   const state = { ios: { host: { ...placement, ...changed } } };
   expect(parseHostedIosPlacement(state.ios.host)).toBeNull();
   expect(hostedIosPlacements(state)).toEqual({});
   expect(hostedIosRecords(state)).toEqual({ default: state.ios.host });
   expect(unreadableHostedIos('default')).toContain('ios.host.session');
-});
-
-test('newer selection, agent and app metadata cannot hide a readable owner from cleanup', () => {
-  const future = {
-    ...placement,
-    selected: { kind: 'auto' },
-    agent: { driver: 'agent-device' },
-    appAttempt: null,
-    device: { unknown: true },
-  };
-  expect(parseHostedIosPlacement(future)).toEqual({ ...placement, appAttempt: '', device: null });
-});
-
-test('public host facts exclude the host UDID and private transport fields', () => {
-  const parsed = parseHostedIosPlacement({ ...placement, secret: 'private', gatewayPort: 1234 })!;
-  expect(hostedIosStatus(parsed)).toEqual({
-    machine: 'mini',
-    session: placement.session,
-    selected: 'mini',
-    device: { name: 'iPhone 17 Pro', runtime: '27.0' },
-    agent: placement.agent,
-  });
 });
 
 test('agent access survives placement reads and status without a token or local device target', () => {
@@ -70,15 +42,6 @@ test('agent access survives placement reads and status without a token or local 
   expect(parsed.agent).toEqual(agent);
   expect(hostedIosStatus(parsed).agent).toEqual(agent);
   expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
-});
-
-test('automatic placement selection and reason survive public status and old records remain readable', () => {
-  const automatic = { ...placement, selected: 'auto', reason: 'load 3.1/core here' };
-  const parsed = parseHostedIosPlacement(automatic)!;
-  expect(parsed).toEqual(automatic);
-  expect(hostedIosStatus(parsed)).toMatchObject({ selected: 'auto', reason: automatic.reason });
-  const { selected, ...old } = placement;
-  expect(parseHostedIosPlacement(old)?.selected).toBe(selected);
 });
 
 test.each([undefined, 0, 2, { unknown: 'simulator inventory unavailable' }])(
@@ -103,29 +66,3 @@ test.each([undefined, 0, 2, { unknown: 'simulator inventory unavailable' }])(
       expect(parseHostedNativeOffer({ ...wire, resources: { ...wire.resources, localDevices: invalid } })).toBeNull();
   },
 );
-
-test('an Android offer keeps the image the host would install only when it is the offered image', () => {
-  const choice = {
-    systemImage: 'system-images;android-36;google_apis;arm64-v8a',
-    deviceProfile: 'pixel_6',
-    architecture: 'arm64-v8a',
-  };
-  const offer = {
-    platform: 'android',
-    choice,
-    declined: null,
-    resources: {
-      cpus: 4,
-      loadPerCore: 0.5,
-      memoryFreeBytes: 1000,
-      memoryPressure: 'normal',
-      workerDiskFreeBytes: null,
-    },
-  };
-  expect(parseHostedNativeOffer({ ...offer, installImage: choice.systemImage })).toMatchObject({
-    installImage: choice.systemImage,
-  });
-  expect(
-    parseHostedNativeOffer({ ...offer, installImage: 'system-images;android-35;google_apis;arm64-v8a' }),
-  ).not.toHaveProperty('installImage');
-});

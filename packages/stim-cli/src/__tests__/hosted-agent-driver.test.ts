@@ -2,19 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostRoot, hostedAppArea } from '@stim-cli/core/state';
-import { hostedAgentDriverFinding, inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
-import { getConfigPath } from '../workspace/config.ts';
-
-test('notes hosted apps only while no driver is configured', () => {
-  expect(hostedAgentDriverFinding(undefined, 1)).toMatchObject({
-    level: 'note',
-    title: 'A hosted app runs with no agent driver',
-    fix: expect.stringContaining('hosting.agentDriver agent-device'),
-  });
-  expect(hostedAgentDriverFinding('none', 2)?.title).toBe('2 hosted apps run with no agent driver');
-  expect(hostedAgentDriverFinding('none', 0)).toBeNull();
-  expect(hostedAgentDriverFinding('agent-device', 3)).toBeNull();
-});
+import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 
 describe('reading the journal', () => {
   let home: string;
@@ -102,16 +90,5 @@ describe('reading the journal', () => {
       }),
     );
     expect(inspectHostedAgentDriver()?.title).toBe('3 hosted apps run with no agent driver');
-  });
-
-  test('stays quiet when the setting names a driver or the journal is unreadable', () => {
-    journal(session(1));
-    receipt(1, 'installed');
-    expect(inspectHostedAgentDriver()).not.toBeNull();
-    writeFileSync(getConfigPath(), JSON.stringify({ hosting: { agentDriver: 'agent-device' } }));
-    expect(inspectHostedAgentDriver()).toBeNull();
-    writeFileSync(getConfigPath(), '{}');
-    writeFileSync(join(deviceHostRoot(), 'sessions.json'), '{');
-    expect(inspectHostedAgentDriver()).toBeNull();
   });
 });

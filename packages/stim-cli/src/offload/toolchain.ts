@@ -207,7 +207,7 @@ function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): 
 }
 
 /** The major version in a JDK's `release` file, as `JAVA_VERSION="17.0.19"` (or `"1.8.0_402"` for Java 8) gives it. */
-export function jdkMajor(release: string): string | null {
+function jdkMajor(release: string): string | null {
   return /^JAVA_VERSION="(?:1\.)?(\d+)/m.exec(release)?.[1] ?? null;
 }
 
@@ -326,7 +326,7 @@ export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */
-export function parseAndroidRequirements(catalog: string): AndroidRequirements {
+function parseAndroidRequirements(catalog: string): AndroidRequirements {
   const value = (key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm').exec(catalog)?.[1] ?? null;
   return { ndk: value('ndkVersion'), buildTools: value('buildTools'), compileSdk: value('compileSdk') };
 }
@@ -360,7 +360,7 @@ export function androidRequirements(
 }
 
 /** Runtime identifiers that have at least one available iPhone simulator, from `simctl list devices -j`. */
-export function iphoneRuntimes(listed: unknown): string[] {
+function iphoneRuntimes(listed: unknown): string[] {
   const devices = (
     listed as { devices?: Record<string, Array<{ deviceTypeIdentifier?: unknown; isAvailable?: unknown }>> }
   )?.devices;

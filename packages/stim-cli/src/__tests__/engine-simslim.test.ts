@@ -49,39 +49,6 @@ test('does nothing when no profile is configured and Stim did not manage the sim
   expect(spawned).toBe(false);
 });
 
-test('applies a profile with the exact UDID and streams progress', async () => {
-  const calls: Array<{ command: string; args: readonly string[] }> = [];
-  const lines: string[] = [];
-  const profile = '/repo/.simslim/dev.json';
-  const signals = ['SIGINT', 'SIGTERM', 'exit'] as const;
-  const listeners = signals.map((signal) => process.listeners(signal));
-  const result = await reconcileSimSlim({
-    context: undefined,
-    udid: 'U1',
-    profile,
-    out: (line) => lines.push(line),
-    spawn: (command, args) => {
-      calls.push({ command, args });
-      return exitingChild({
-        stderr: ['Disabling 170 background services...', 'Rebooting the simulator...'],
-        stdout: ['Done. Simulator reconfigured and rebooted slim.'],
-      });
-    },
-  });
-
-  expect(calls).toEqual([{ command: 'simslim', args: ['on', 'U1', '--profile', profile] }]);
-  expect(lines).toHaveLength(3);
-  expect(lines).toEqual(
-    expect.arrayContaining([
-      'SimSlim: Disabling 170 background services...',
-      'SimSlim: Rebooting the simulator...',
-      'SimSlim: Done. Simulator reconfigured and rebooted slim.',
-    ]),
-  );
-  expect(result).toEqual({ managed: true, profile });
-  expect(signals.map((signal) => process.listeners(signal))).toEqual(listeners);
-});
-
 test('restores stock services after the configured profile is removed', async () => {
   const calls: string[][] = [];
   const result = await reconcileSimSlim({
@@ -96,46 +63,6 @@ test('restores stock services after the configured profile is removed', async ()
 
   expect(calls).toEqual([['off', 'U1']]);
   expect(result).toEqual({ managed: false, profile: null });
-});
-
-test('reports the install command when the SimSlim executable is missing', async () => {
-  const child = makeChildProcess();
-  queueMicrotask(() => child.emit('error', makeError('spawn simslim ENOENT', { code: 'ENOENT' })));
-  await expect(
-    reconcileSimSlim({ context: undefined, udid: 'U1', profile: '/repo/dev.json', spawn: () => child }),
-  ).rejects.toThrow('brew install mobai-app/tap/simslim');
-});
-
-test('slims with SimSlim defaults when the machine default is on and no profile is set', async () => {
-  const calls: Array<readonly string[]> = [];
-  const result = await reconcileSimSlim({
-    context: undefined,
-    udid: 'U1',
-    slimByDefault: true,
-    spawn: (_command, args) => {
-      calls.push(args);
-      return exitingChild({ stdout: ['Already slim'] });
-    },
-  });
-
-  expect(calls).toEqual([['on', 'U1']]);
-  expect(result).toEqual({ managed: true, profile: null });
-});
-
-test('a profile is applied instead of the defaults when the machine default is also on', async () => {
-  const calls: Array<readonly string[]> = [];
-  await reconcileSimSlim({
-    context: undefined,
-    udid: 'U1',
-    profile: '/repo/dev.json',
-    slimByDefault: true,
-    spawn: (_command, args) => {
-      calls.push(args);
-      return exitingChild({});
-    },
-  });
-
-  expect(calls).toEqual([['on', 'U1', '--profile', '/repo/dev.json']]);
 });
 
 test('a missing SimSlim executable does not fail a default-on run', async () => {

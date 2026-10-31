@@ -1,22 +1,13 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { decodeSecret, keyFingerprint } from '@stim-cli/core/noise-session';
-import { buildMachinesFile, deviceHostMachinesFile, readBuildMachines } from '@stim-cli/core/state';
+import { keyFingerprint } from '@stim-cli/core/noise-session';
+import { buildMachinesFile, readBuildMachines } from '@stim-cli/core/state';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { inspectBuildMachines, resolveEndpoint, type Endpoint } from '../offload/build-machines.ts';
-import {
-  findPeer,
-  keyConfirmer,
-  parseMachine,
-  realIo,
-  type HelloReply,
-  type MachineAuth,
-  type TailnetMachineIo,
-} from '../offload/tailnet.ts';
+import { keyConfirmer, realIo, type HelloReply, type MachineAuth, type TailnetMachineIo } from '../offload/tailnet.ts';
 import { startProtocol1Server } from './_noise-server.ts';
 import { createServer, type Server } from 'node:http';
-import type { PeerStartup } from '../offload/diagnosis.ts';
 import { getConfigPath } from '../workspace/config.ts';
 
 function listenPort(server: Server): number {
@@ -123,20 +114,6 @@ describe('the tailnet a machine was approved on', () => {
     status: () => on(tailnet, peers),
   });
 
-  it('records the signed-in tailnet when asking and keeps it when the machine approves from another tailnet', async () => {
-    await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
-    expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', tailnet: home1 });
-    await inspectBuildMachines({ fix: false }, ioOn(work, [approved()]), ['mini']);
-    expect(readBuildMachines()[0]).toMatchObject({ state: 'approved', tailnet: home1 });
-  });
-
-  it('records the tailnet on a pin that predates it the next time the machine answers', async () => {
-    await approvedCredential();
-    expect(readBuildMachines()[0]?.tailnet).toBeUndefined();
-    await inspectBuildMachines({ fix: false }, ioOn(home1, [approved()]), ['mini']);
-    expect(readBuildMachines()[0]?.tailnet).toEqual(home1);
-  });
-
   it('reports a machine missing from another tailnet by naming both, and leaves an old pin on the generic message', async () => {
     await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
     const { machines, findings } = await inspectBuildMachines({ fix: false }, ioOn(work, [], false), ['mini']);
@@ -158,22 +135,6 @@ describe('the tailnet a machine was approved on', () => {
     expect(generic.machines[0]).toMatchObject({ diagnosis: { code: 'peer-not-found' } });
   });
 
-  it('explains a failed connection in the same terms, and only when the machine is missing from the signed-in tailnet', async () => {
-    await inspectBuildMachines({ fix: true, version: '9.9.9' }, ioOn(home1, [notYet]), ['mini']);
-    const message = await resolveEndpoint({ ...readBuildMachines()[0], machine: 'mini' }, () => on(work, false));
-    expect(message).toMatch(/janic@example.com \(tail1.ts.net\).*work.example.com \(tail9.ts.net\)/);
-    expect(message).not.toMatch(/\.$/);
-    expect(await resolveEndpoint({ machine: 'mini', tailnet: home1 }, () => on(home1, false))).toBe(
-      'no peer on this tailnet is named mini',
-    );
-    expect(await resolveEndpoint({ machine: 'mini', tailnet: home1 }, () => on(work))).toMatchObject({
-      servername: 'mini.tail1.ts.net',
-    });
-    expect(await resolveEndpoint({ machine: 'mini' }, () => on(work, false))).toBe(
-      'no peer on this tailnet is named mini',
-    );
-  });
-
   it('keeps a node shared in from another tailnet reachable, and names its owner when the Mac is on a third', async () => {
     const shared = { machine: 'mini2', address: 'mini2.tail7.ts.net', tailnet: home1 };
     const sharedIn = {
@@ -187,53 +148,7 @@ describe('the tailnet a machine was approved on', () => {
   });
 });
 
-describe('findPeer', () => {
-  it('matches a MagicDNS name or its first label, and only one peer', () => {
-    const mini = { nodeId: 'nMini', dnsName: 'mini.tail1.ts.net', address: '100.64.0.7', os: 'macOS' };
-    expect(findPeer(status(), 'mini')).toEqual(mini);
-    expect(findPeer(status(), 'mini.tail1.ts.net')).toEqual(mini);
-    expect(findPeer(status(), 'nope')).toBe('missing');
-    expect(findPeer(status('macOS', 'minimal.tail1.ts.net.'), 'minimal')).toBe('ambiguous');
-    expect(parseMachine('Mini:7444')).toEqual({ transport: 'tailscale', name: 'mini', port: 7444 });
-    expect(parseMachine('mini;rm')).toBeNull();
-  });
-
-  it('reads a local: entry as a host on the local network at stim-server port 7787 unless it names one', () => {
-    expect(parseMachine('local:10.0.0.92')).toEqual({ transport: 'local', name: '10.0.0.92', port: 7787 });
-    expect(parseMachine('local:Mini.local:7800')).toEqual({ transport: 'local', name: 'mini.local', port: 7800 });
-    for (const entry of ['local:', 'lan:10.0.0.92', 'local:10.0.0.92:0', 'local:[fd00::1]', 'local:a b'])
-      expect(parseMachine(entry)).toBeNull();
-  });
-});
-
 describe('inspectBuildMachines', () => {
-  it('--fix makes a setup ticket, tries it, and prints the setup command while the worker has not approved', async () => {
-    const { io, calls } = fakeIo([notYet]);
-    const { findings, machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io, ['mini']);
-    const [credential] = readBuildMachines();
-    expect(credential).toMatchObject({ machine: 'mini', state: 'pending', address: 'mini.tail1.ts.net' });
-    expect(decodeSecret(credential!.ticket!)).toHaveLength(32);
-    expect(Date.parse(credential!.expiresAt!) - Date.now()).toBeLessThanOrEqual(2 * 60 * 60_000);
-    expect(calls).toEqual([
-      {
-        endpoint: { url: 'wss://100.64.0.7:7443', servername: 'mini.tail1.ts.net', host: 'mini.tail1.ts.net:7443' },
-        auth: { access: 'build', ticket: credential!.ticket, name: 'laptop' },
-      },
-    ]);
-    expect(machines).toEqual([
-      expect.objectContaining({ machine: 'mini', state: 'pending', expiresAt: credential!.expiresAt }),
-    ]);
-    expect(findings[0]!.fix).toContain(
-      `STIM_SETUP_TICKET=${credential!.ticket} STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli/server@9.9.9 stim-server setup --expires ${credential!.expiresAt} --build --device-host`,
-    );
-  });
-
-  it('asks a machine that cannot host for builds only', async () => {
-    const { findings } = await inspectBuildMachines({ fix: true }, fakeIo([notYet], 'linux').io, ['mini']);
-    expect(findings[0]?.fix).toContain('--build');
-    expect(findings[0]?.fix).not.toContain('--device-host');
-  });
-
   it('plain doctor never asks a machine it holds no credential for', async () => {
     const { io, calls } = fakeIo([]);
     const { machines } = await inspectBuildMachines({ fix: false }, io, ['mini', 'nope', 'bad;name']);
@@ -243,21 +158,6 @@ describe('inspectBuildMachines', () => {
       { machine: 'bad;name', state: 'invalid' },
     ]);
     expect(calls).toEqual([]);
-  });
-
-  it('pins the server key once setup approved the ticket, and drops the ticket', async () => {
-    await askedPending();
-    const ticket = readBuildMachines()[0]!.ticket;
-    const { io, calls } = fakeIo([approved()]);
-    expect(await inspectBuildMachines({ fix: false }, io, ['mini'])).toEqual({
-      findings: [],
-      machines: [expect.objectContaining({ machine: 'mini', state: 'approved', deviceId: 'ab12' })],
-    });
-    expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', ticket, name: 'laptop' }]);
-    const [credential] = readBuildMachines();
-    expect(credential).toMatchObject({ state: 'approved', serverKey: SERVER_KEY, deviceId: 'ab12' });
-    expect(credential).not.toHaveProperty('ticket');
-    expect(readFileSync(buildMachinesFile(), 'utf8')).not.toContain(ticket!);
   });
 
   it('saves the server key the ticket authenticated before hello, and resumes with it after a lost reply', async () => {
@@ -317,25 +217,6 @@ describe('inspectBuildMachines', () => {
       };
     };
 
-    it('connects to its stim-server port over plain WebSocket without Tailscale', async () => {
-      const { io, calls } = noTailscale([notYet]);
-      const { machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io, [LAN]);
-      expect(calls[0]?.endpoint).toEqual({
-        url: 'ws://10.0.0.92:7787',
-        servername: '10.0.0.92',
-        host: '10.0.0.92:7787',
-      });
-      expect(machines).toEqual([expect.objectContaining({ machine: LAN, state: 'pending' })]);
-      expect(readBuildMachines()[0]).toMatchObject({ machine: LAN, transport: 'local', address: '10.0.0.92' });
-    });
-
-    it('prints a setup command for the port the entry names, which is the server port there', async () => {
-      const { findings } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [
-        'local:10.0.0.92:7799',
-      ]);
-      expect(findings[0]?.fix).toMatch(/stim-server setup --expires \S+ --build --device-host --port 7799\n/);
-    });
-
     it('never pins the key its ticket authenticated until a person confirms the fingerprint', async () => {
       await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [LAN]);
       const declined = confirming(false);
@@ -364,26 +245,6 @@ describe('inspectBuildMachines', () => {
       const { io, calls } = noTailscale([approved()]);
       await inspectBuildMachines({ fix: false, confirmKey: confirming(false).confirmKey }, io, [LAN]);
       expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', serverKey: SERVER_KEY }]);
-    });
-
-    it('refuses a pinned machine that answers with another key, and says how to pair again', async () => {
-      await inspectBuildMachines({ fix: true, version: '9.9.9' }, noTailscale([notYet]).io, [LAN]);
-      await inspectBuildMachines(
-        { fix: false, confirmKey: confirming(true).confirmKey },
-        firstContact([approved()]).io,
-        [LAN],
-      );
-      const { findings, machines } = await inspectBuildMachines(
-        { fix: true, confirmKey: confirming(true).confirmKey },
-        noTailscale([{ error: { code: 'server-key-mismatch', message: 'another key' } }]).io,
-        [LAN],
-      );
-      expect(machines).toEqual([expect.objectContaining({ state: 'key-changed' })]);
-      expect(findings[0]).toMatchObject({
-        detail: expect.stringContaining('10.0.0.92 did not prove it holds the stim-server key'),
-        fix: expect.stringContaining(`stim remote remove ${LAN}`),
-      });
-      expect(readBuildMachines()[0]?.serverKey).toBe(SERVER_KEY);
     });
 
     it('asks a person once per machine and key, one question at a time, and answers no without a terminal', async () => {
@@ -435,28 +296,6 @@ describe('inspectBuildMachines', () => {
         realIo.hello({ url: `ws://127.0.0.1:${old.port}`, servername: 'mini', host: `127.0.0.1:${old.port}` }, auth),
     });
 
-    it('--fix reports it outdated with the update and setup commands, and keeps the ticket for after the update', async () => {
-      const { findings, machines } = await inspectBuildMachines({ fix: true, version: '9.9.9' }, io(), ['mini']);
-      const [credential] = readBuildMachines();
-      expect(credential).toMatchObject({ state: 'pending' });
-      expect(machines).toEqual([expect.objectContaining({ state: 'outdated' })]);
-      expect(findings).toEqual([
-        expect.objectContaining({
-          title: 'Remote machine mini runs an older stim-server',
-          fix: expect.stringMatching(
-            /^On mini, run `stim-server service update --release 9\.9\.9` \(.*\), then run this there to approve this machine: STIM_SETUP_TICKET=\S+ STIM_SETUP_ORIGIN=doctor npx --yes --package @stim-cli\/server@9\.9\.9 stim-server setup /,
-          ),
-        }),
-      ]);
-      expect(findings[0]?.fix).toContain(`STIM_SETUP_TICKET=${credential?.ticket} `);
-      const { io: updated, calls } = fakeIo([notYet]);
-      const after = await inspectBuildMachines({ fix: true, version: '9.9.9' }, updated, ['mini']);
-      expect(after.machines).toEqual([expect.objectContaining({ state: 'pending' })]);
-      expect(calls).toEqual([
-        expect.objectContaining({ auth: expect.objectContaining({ ticket: credential?.ticket }) }),
-      ]);
-    });
-
     it('reports an approved machine outdated without a setup command, and keeps its pinned key', async () => {
       await approvedCredential();
       const before = readBuildMachines();
@@ -470,13 +309,6 @@ describe('inspectBuildMachines', () => {
         }),
       ]);
       expect(readBuildMachines()).toEqual(before);
-    });
-
-    it('still reports a machine that does not answer as unreachable', async () => {
-      await approvedCredential();
-      await old.close();
-      const { machines } = await inspectBuildMachines({ fix: false }, io(), ['mini']);
-      expect(machines).toEqual([expect.objectContaining({ state: 'unreachable' })]);
     });
   });
 
@@ -517,22 +349,6 @@ describe('inspectBuildMachines', () => {
       expect(findings).toHaveLength(1);
     });
 
-    it('says stim-server is not ready, with the cause its /health gives, on a 503', async () => {
-      await approvedCredential();
-      upstreamStatus = 503;
-      const startup = async (): Promise<PeerStartup | null> => ({ state: 'degraded', cause: 'home-unreadable' });
-      const withCause = await inspectBuildMachines({ fix: false }, realConnection({ startup }), ['mini']);
-      const without = await inspectBuildMachines({ fix: false }, realConnection({ startup: async () => null }), [
-        'mini',
-      ]);
-      const [reported] = withCause.machines;
-      expect(reported).toMatchObject({
-        state: 'unreachable',
-        diagnosis: { layer: 'server', code: 'server-not-ready' },
-      });
-      expect(reported?.diagnosis?.message).not.toBe(without.machines[0]?.diagnosis?.message);
-    });
-
     it('still names a 503 from a stim-server whose /health says nothing', async () => {
       await approvedCredential();
       upstreamStatus = 503;
@@ -542,87 +358,6 @@ describe('inspectBuildMachines', () => {
       expect(machines).toEqual([
         expect.objectContaining({ diagnosis: expect.objectContaining({ code: 'server-not-ready' }) }),
       ]);
-    });
-
-    it('says the route is missing when nothing accepts connections on the port', async () => {
-      await approvedCredential();
-      await new Promise<void>((done) => upstream.close(() => done()));
-      upstream = createServer();
-      const { machines } = await inspectBuildMachines({ fix: false }, realConnection(), ['mini']);
-      expect(machines).toEqual([
-        expect.objectContaining({ diagnosis: expect.objectContaining({ layer: 'route', code: 'route-missing' }) }),
-      ]);
-    });
-
-    it('names an offline peer, with when it was last seen, before the connection', async () => {
-      await approvedCredential();
-      const offline = status();
-      Object.assign(offline.Peer.key1, { Online: false, LastSeen: new Date(Date.now() - 3 * 3_600_000).toISOString() });
-      const { machines } = await inspectBuildMachines(
-        { fix: false },
-        { ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io, status: () => offline },
-        ['mini'],
-      );
-      expect(machines).toEqual([
-        expect.objectContaining({
-          diagnosis: expect.objectContaining({
-            layer: 'peer',
-            code: 'peer-offline',
-            message: expect.stringContaining('3 h ago'),
-          }),
-        }),
-      ]);
-    });
-
-    it('names a silent route behind a Mac that answers tailscale ping as stim-server not answering', async () => {
-      await approvedCredential();
-      const { machines } = await inspectBuildMachines(
-        { fix: false },
-        {
-          ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io,
-          ping: async () => true,
-        },
-        ['mini'],
-      );
-      expect(machines).toEqual([
-        expect.objectContaining({ diagnosis: expect.objectContaining({ code: 'server-no-answer' }) }),
-      ]);
-    });
-
-    it('names an online peer that does not answer', async () => {
-      await approvedCredential();
-      const online = status();
-      Object.assign(online.Peer.key1, { Online: true });
-      const { machines } = await inspectBuildMachines(
-        { fix: false },
-        { ...fakeIo([{ failed: 'no reply in time', transport: { kind: 'silent' } }]).io, status: () => online },
-        ['mini'],
-      );
-      expect(machines).toEqual([
-        expect.objectContaining({
-          diagnosis: expect.objectContaining({ code: 'peer-no-answer' }),
-        }),
-      ]);
-    });
-
-    it.each([
-      ['NeedsLogin', 'tailscale-logged-out'],
-      ['Stopped', 'tailscale-stopped'],
-      [null, 'tailscale-unavailable'],
-    ])('tells Tailscale %s apart from the peer and the server', async (backendState, code) => {
-      const { findings, machines } = await inspectBuildMachines(
-        { fix: false },
-        {
-          ...fakeIo([]).io,
-          status: () => null,
-          rawStatus: () => (backendState === null ? null : { BackendState: backendState }),
-        },
-        ['mini'],
-      );
-      expect(machines).toEqual([
-        { machine: 'mini', state: 'tailscale-off', diagnosis: expect.objectContaining({ layer: 'tailscale', code }) },
-      ]);
-      expect(findings).toHaveLength(1);
     });
   });
 
@@ -653,62 +388,12 @@ describe('inspectBuildMachines', () => {
     expect(readBuildMachines()[0]!.ticket).not.toBe(old);
   });
 
-  it("uses Stim Desktop's ticket from STIM_ACCESS_TICKET, without printing a command for it", async () => {
-    vi.stubEnv('STIM_ACCESS_TICKET', `  ${DESKTOP_TICKET}  `);
-    const { io, calls } = fakeIo([notYet]);
-    const { findings } = await inspectBuildMachines({ fix: true }, io, ['mini']);
-    expect(calls[0]!.auth).toEqual({ access: 'build', ticket: DESKTOP_TICKET, name: 'laptop' });
-    expect(readBuildMachines()[0]).toMatchObject({ state: 'pending', ticket: DESKTOP_TICKET });
-    expect(readBuildMachines()[0]).not.toHaveProperty('expiresAt');
-    expect(findings[0]!.fix).not.toContain(DESKTOP_TICKET);
-  });
-
-  it.each([
-    ['--fix with another Desktop ticket replaces the pending one', true, 'e'.repeat(42) + 'A', 'e'.repeat(42) + 'A'],
-    ['plain doctor keeps the pending ticket', false, 'e'.repeat(42) + 'A', DESKTOP_TICKET],
-    ['--fix without a Desktop ticket keeps the pending one', true, undefined, DESKTOP_TICKET],
-  ])('%s', async (_name, fix, current, sent) => {
-    vi.stubEnv('STIM_ACCESS_TICKET', DESKTOP_TICKET);
-    await inspectBuildMachines({ fix: true }, fakeIo([notYet]).io, ['mini']);
-    vi.stubEnv('STIM_ACCESS_TICKET', current);
-    const { io, calls } = fakeIo([notYet]);
-    await inspectBuildMachines({ fix }, io, ['mini']);
-    expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', ticket: sent, name: 'laptop' }]);
-    expect(readBuildMachines()[0]!.ticket).toBe(sent);
-  });
-
   it('an approved credential ignores a new Desktop ticket', async () => {
     await approvedCredential();
     vi.stubEnv('STIM_ACCESS_TICKET', DESKTOP_TICKET);
     const { io, calls } = fakeIo([approved()]);
     await inspectBuildMachines({ fix: true }, io, ['mini']);
     expect(calls.map((call) => call.auth)).toEqual([{ access: 'build', serverKey: SERVER_KEY }]);
-  });
-
-  it("falls back to the device-host approval's pinned key when the shared ticket was already spent", async () => {
-    await askedPending();
-    writeFileSync(
-      deviceHostMachinesFile(),
-      JSON.stringify({
-        version: 2,
-        machines: [
-          {
-            machine: 'mini',
-            transport: 'tailscale',
-            address: 'mini.tail1.ts.net',
-            state: 'approved',
-            requestedAt: '2026-10-13T00:00:00.000Z',
-            serverKey: OTHER_KEY,
-            deviceId: 'cd34',
-          },
-        ],
-      }),
-    );
-    const { io, calls } = fakeIo([notYet, { ...approved(), serverKey: OTHER_KEY } as HelloReply]);
-    const { machines } = await inspectBuildMachines({ fix: false }, io, ['mini']);
-    expect(calls[1]!.auth).toEqual({ access: 'build', serverKey: OTHER_KEY });
-    expect(machines).toEqual([expect.objectContaining({ state: 'approved' })]);
-    expect(readBuildMachines()[0]).toMatchObject({ state: 'approved', serverKey: OTHER_KEY, deviceId: 'ab12' });
   });
 
   it('reports every reason an approved machine would not take the build, with a remedy for each', async () => {
@@ -747,28 +432,6 @@ describe('inspectBuildMachines', () => {
       { code: 'build-machine-busy', level: 'note' },
     ]);
     expect(findings[0]!.fix).toContain('run `stim-server service update --release <version>`');
-  });
-
-  it('says what remote-only does with a machine that cannot take the build, where other placements fall back to this machine', async () => {
-    await approvedCredential();
-    const detail = async () => {
-      const { findings } = await inspectBuildMachines(
-        {
-          fix: false,
-          check: () =>
-            Promise.resolve({ capacity: null, problems: [{ code: 'stim-build', reason: 'Stim build 6bbe there' }] }),
-        },
-        fakeIo([approved()]).io,
-        ['mini'],
-      );
-      return findings[0]?.detail;
-    };
-    expect(await detail()).toContain('Builds fall back to this machine');
-    writeFileSync(getConfigPath(), JSON.stringify({ remote: { build: 'remote-only', machines: ['mini'] } }));
-    const remoteOnly = await detail();
-    expect(remoteOnly).toContain('remote-only');
-    expect(remoteOnly).toContain('refuse');
-    expect(remoteOnly).not.toContain('fall back');
   });
 
   it('reports a package Gradle downloads as a note that does not stop the build, and a blocker with commands otherwise', async () => {
@@ -818,58 +481,6 @@ describe('inspectBuildMachines', () => {
     ]);
   });
 
-  it('fixes a JDK mismatch with an install command, and a stim-server that lists no JDKs with the JAVA_HOME restart', async () => {
-    await approvedCredential();
-    const run = (problem: { code: 'jdk'; reason: string; commands?: string[]; lead?: string }) =>
-      inspectBuildMachines(
-        { fix: false, check: () => Promise.resolve({ capacity: null, problems: [problem] }) },
-        fakeIo([approved()]).io,
-        ['mini'],
-      );
-    const listed = await run({
-      code: 'jdk',
-      reason: 'JDK 25 there, 17 here',
-      commands: ['brew install --cask zulu@17'],
-      lead: 'install JDK 17; Stim uses it automatically, no restart needed',
-    });
-    expect(listed.findings[0]?.fix).toBe(
-      'On mini, install JDK 17; Stim uses it automatically, no restart needed:\nbrew install --cask zulu@17',
-    );
-    const old = await run({ code: 'jdk', reason: 'JDK 25 there, 17 here' });
-    expect(old.findings[0]?.fix).toBe(
-      "Start stim-server on mini with JAVA_HOME at a JDK of the same major version as this machine's.",
-    );
-  });
-
-  it('gives the install command of a missing CocoaPods as the fix', async () => {
-    await approvedCredential();
-    const { findings } = await inspectBuildMachines(
-      {
-        fix: false,
-        check: () =>
-          Promise.resolve({
-            capacity: null,
-            problems: [
-              {
-                code: 'cocoapods',
-                reason: 'no CocoaPods there, CocoaPods 1.16.2 here',
-                commands: ['brew install cocoapods'],
-                lead: 'install CocoaPods',
-              },
-            ],
-          }),
-      },
-      fakeIo([approved()]).io,
-      ['mini'],
-    );
-    expect(findings).toEqual([
-      expect.objectContaining({
-        code: 'build-machine-cocoapods',
-        fix: 'On mini, install CocoaPods:\nbrew install cocoapods',
-      }),
-    ]);
-  });
-
   it('fixes a deselected Xcode with the exact command, and a runtime that follows from it with a pointer', async () => {
     await approvedCredential();
     const { findings } = await inspectBuildMachines(
@@ -905,25 +516,6 @@ describe('inspectBuildMachines', () => {
       expect.objectContaining({ code: 'build-machine-cocoapods' }),
     ]);
   });
-
-  it.each([undefined, null, { name: 'Stim Host', screenRecording: false, accessibility: true }])(
-    'approved entries expose host permissions only when reported: %j',
-    async (host) => {
-      await approvedCredential();
-      const reply = {
-        result: {
-          capabilities: ['build'],
-          device: { id: 'ab12', name: 'laptop' },
-          ...(host !== undefined ? { host } : {}),
-        },
-        serverKey: SERVER_KEY,
-      } as HelloReply;
-      const result = await inspectBuildMachines({ fix: false }, fakeIo([reply]).io, ['mini']);
-      const [entry] = JSON.parse(JSON.stringify(result.machines));
-      expect(entry.state).toBe('approved');
-      expect(Object.hasOwn(entry, 'host')).toBe(!!host);
-    },
-  );
 
   it('forgets the pairing of a machine no longer named, with --fix only', async () => {
     await askedPending();

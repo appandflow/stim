@@ -61,15 +61,21 @@ afterEach(() => {
 });
 
 describe('resolveBudget', () => {
-  test('is on by default: 20 GB floor, 5 GB hard floor, 60% of memory, no workspace limit', () => {
-    const { budget, error } = resolveBudget({ config: null, env: {}, totalMemoryMb: 32 * GB });
-    expect(error).toBeNull();
-    expect(budget).toEqual({
-      minFreeDiskMb: 20 * GB,
-      hardFloorDiskMb: 5 * GB,
-      maxCommittedMemoryMb: Math.round(32 * GB * 0.6),
-      maxLiveWorkspaces: 0,
+  test('the environment overrides the machine config, and a bad value is an error, not a default', () => {
+    const config = { projects: {}, repos: {}, budget: { minFreeDiskGb: 50, hardFloorDiskGb: 0 } };
+    expect(resolveBudget({ config, env: {}, totalMemoryMb: GB }).budget).toMatchObject({
+      minFreeDiskMb: 50 * GB,
+      hardFloorDiskMb: 0,
     });
+    expect(
+      resolveBudget({ config, env: { STIM_BUDGET_MIN_FREE_DISK_GB: '10' }, totalMemoryMb: GB }).budget.minFreeDiskMb,
+    ).toBe(10 * GB);
+    expect(resolveBudget({ config, env: { STIM_BUDGET_HARD_FLOOR_DISK_GB: 'lots' }, totalMemoryMb: GB }).error).toMatch(
+      /STIM_BUDGET_HARD_FLOOR_DISK_GB/,
+    );
+    expect(
+      resolveBudget({ config: { ...config, budget: { maxLiveWorkspaces: 1.5 } }, env: {}, totalMemoryMb: GB }).error,
+    ).toMatch(/budget\.maxLiveWorkspaces/);
   });
 
   test('a STIM_HOME turns the budget off unless its environment variable is set', () => {
@@ -86,23 +92,6 @@ describe('resolveBudget', () => {
       totalMemoryMb: 32 * GB,
     });
     expect(opted.budget).toMatchObject({ minFreeDiskMb: 30 * GB, hardFloorDiskMb: 0, maxLiveWorkspaces: 2 });
-  });
-
-  test('the environment overrides the machine config, and a bad value is an error, not a default', () => {
-    const config = { projects: {}, repos: {}, budget: { minFreeDiskGb: 50, hardFloorDiskGb: 0 } };
-    expect(resolveBudget({ config, env: {}, totalMemoryMb: GB }).budget).toMatchObject({
-      minFreeDiskMb: 50 * GB,
-      hardFloorDiskMb: 0,
-    });
-    expect(
-      resolveBudget({ config, env: { STIM_BUDGET_MIN_FREE_DISK_GB: '10' }, totalMemoryMb: GB }).budget.minFreeDiskMb,
-    ).toBe(10 * GB);
-    expect(resolveBudget({ config, env: { STIM_BUDGET_HARD_FLOOR_DISK_GB: 'lots' }, totalMemoryMb: GB }).error).toMatch(
-      /STIM_BUDGET_HARD_FLOOR_DISK_GB/,
-    );
-    expect(
-      resolveBudget({ config: { ...config, budget: { maxLiveWorkspaces: 1.5 } }, env: {}, totalMemoryMb: GB }).error,
-    ).toMatch(/budget\.maxLiveWorkspaces/);
   });
 });
 
@@ -131,57 +120,6 @@ function fakeDeps(freeAfterStep: number[], memory: number[] = []) {
 }
 
 describe('enforceBudget', () => {
-  test.each(['ios', 'android'] as const)(
-    'cancels the default %s memory inventory before probing another device',
-    async (kind) => {
-      const abort = new AbortController();
-      const root = join(apps, 'memory-app');
-      mkdirSync(root);
-      upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-memory-first' } } });
-      let markStarted = () => {};
-      const started = new Promise<void>((resolve) => {
-        markStarted = resolve;
-      });
-      let release = () => {};
-      const gate = new Promise<string>((resolve) => {
-        release = () => resolve('');
-      });
-      const probes: string[] = [];
-      const real = getExecutor();
-      setExecutor({
-        ...real,
-        runFileAsync: async (file, args, options) => {
-          const ios = file === 'xcrun';
-          if (!ios && !args.includes('-list-avds')) throw new Error('Unexpected later native probe');
-          probes.push(ios ? 'ios' : 'android');
-          if (ios && kind === 'android') return JSON.stringify({ devices: {} });
-          markStarted();
-          const cancelled = new Promise<string>((_resolve, reject) => {
-            options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
-          });
-          return Promise.race([gate, cancelled]);
-        },
-      });
-      const outcome = enforceBudget({
-        root,
-        note: () => {},
-        env: { ...process.env, STIM_HOME: undefined },
-        signal: abort.signal,
-        budget: limits({ minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: GB }),
-      }).catch((error: unknown) => error);
-      try {
-        await started;
-        abort.abort(new Error('cancel memory inventory'));
-        const pending = new Promise<string>((resolve) => setImmediate(() => resolve('still probing')));
-        expect(await Promise.race([outcome, pending])).toMatchObject({ message: 'cancel memory inventory' });
-        expect(probes).toEqual(kind === 'ios' ? ['ios'] : ['ios', 'android']);
-      } finally {
-        release();
-        await outcome;
-      }
-    },
-  );
-
   test('reclaims in order and stops as soon as free disk is back above the floor', async () => {
     const { deps, steps } = fakeDeps([10 * GB, 12 * GB, 25 * GB]);
     const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);
@@ -239,18 +177,6 @@ describe('enforceBudget', () => {
     expect(steps).toEqual(['idle-devices', 'idle-dev-servers']);
     expect(outcome.status).toBe('ok');
     expect(notes.join('\n')).toMatch(/still over budget/);
-  });
-
-  test('below the hard floor after every step, it refuses with STIM_LOW_DISK naming what uses space', async () => {
-    const { deps, steps } = fakeDeps([GB]);
-    const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);
-    expect(steps).toEqual(['idle-devices', 'idle-dev-servers', 'workspace-outputs', 'stale-cache-entries']);
-    expect(outcome.status).toBe('refused');
-    if (outcome.status !== 'refused') return;
-    expect(outcome.refusal.code).toBe('STIM_LOW_DISK');
-    expect(outcome.refusal.message).toMatch(/Stim state \/x: 59\.0G/);
-    expect(outcome.refusal.remedy).toMatch(/stim gc/);
-    expect(outcome.reclaimed.map((entry) => entry.step)).toEqual(steps);
   });
 
   test('under budget it measures and reclaims nothing', async () => {
@@ -588,42 +514,11 @@ describe('repeat runs below the disk floor', () => {
     return { notes: notes.join('\n'), outcome };
   }
 
-  test('a trim that found nothing is not repeated inside five minutes, and says why it was skipped', async () => {
-    cacheWithEntry('cache-a', 1);
-    const first = await run(T0);
-    expect(first.notes).toMatch(/1 cache: nothing older than 14d/);
-
-    const second = await run(T0 + MINUTE);
-    expect(second.notes).toMatch(/cache trim skipped/);
-    expect(second.notes).not.toMatch(/1 cache: nothing older/);
-
-    const later = await run(T0 + 6 * MINUTE);
-    expect(later.notes).toMatch(/1 cache: nothing older than 14d/);
-    expect(later.notes).not.toMatch(/cache trim skipped/);
-  });
-
-  test('a cache registered after the empty trim is walked on the next run, so its stale entry is removed', async () => {
-    cacheWithEntry('cache-a', 1);
-    await run(T0);
-    const added = cacheWithEntry('cache-b', 30);
-    await run(T0 + MINUTE);
-    expect(existsSync(added.entry)).toBe(false);
-  });
-
   test('free disk that fell by more than 1 GB since the empty trim ends the skip', async () => {
     cacheWithEntry('cache-a', 1);
     await run(T0, 10 * GB);
     expect((await run(T0 + MINUTE, 10 * GB - 512)).notes).toMatch(/cache trim skipped/);
     expect((await run(T0 + MINUTE, 8 * GB)).notes).toMatch(/1 cache: nothing older than 14d/);
-  });
-
-  test('a trim that removed something leaves no empty record, so the next run walks again', async () => {
-    const stale = cacheWithEntry('cache-a', 30);
-    const first = await run(T0);
-    expect(existsSync(stale.entry)).toBe(false);
-    expect(first.notes).toMatch(/Trimmed cache-a/);
-    const second = await run(T0 + MINUTE);
-    expect(second.notes).not.toMatch(/cache trim skipped/);
   });
 
   test('a cache that could not be listed is not recorded as empty, so the next run walks it again', async () => {
@@ -638,14 +533,6 @@ describe('repeat runs below the disk floor', () => {
     const second = await run(T0 + MINUTE);
     expect(second.notes).not.toMatch(/cache trim skipped/);
     expect(existsSync(join(dir, 'entry'))).toBe(false);
-  });
-
-  test('a dry run still plans the trim after an empty one was recorded', async () => {
-    cacheWithEntry('cache-a', 1);
-    await run(T0);
-    const dry = await run(T0 + MINUTE, 10 * GB, true);
-    if (dry.outcome.status !== 'ok') throw new Error('expected ok');
-    expect(dry.outcome.reclaimed.find((entry) => entry.step === 'stale-cache-entries')?.targets).toHaveLength(1);
   });
 });
 

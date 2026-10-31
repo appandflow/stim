@@ -21,7 +21,7 @@ function isBundleExecutable(path: string, dirs: readonly string[]): boolean {
 }
 
 /** Pids from `ps -axww -o pid=,comm=` output whose command names a bundle executable inside `dirs`. */
-export function bundleCandidates(psOutput: string, dirs: readonly string[]): number[] {
+function bundleCandidates(psOutput: string, dirs: readonly string[]): number[] {
   const pids: number[] = [];
   for (const line of psOutput.split('\n')) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
@@ -31,7 +31,7 @@ export function bundleCandidates(psOutput: string, dirs: readonly string[]): num
 }
 
 /** Whether `lsof -Fn -d txt` output for one process names a bundle executable inside `dirs`. */
-export function lsofNamesBundleExecutable(lsofOutput: string, dirs: readonly string[]): boolean {
+function lsofNamesBundleExecutable(lsofOutput: string, dirs: readonly string[]): boolean {
   return lsofOutput.split('\n').some((line) => line.startsWith('n') && isBundleExecutable(line.slice(1), dirs));
 }
 

@@ -38,7 +38,7 @@ function covered(path: string, ignoreDirs: string[]): boolean {
  * Watchman joins each ignore_dirs entry to the root without normalizing it, so `.worktrees/` or `./.worktrees`
  * ignores nothing; only an entry spelled exactly as the relative path, or as one of its ancestors, covers it.
  */
-export function nestedWorktreeIgnores(
+function nestedWorktreeIgnores(
   checkout: string,
   worktrees: string[],
   ignoreDirs: string[],

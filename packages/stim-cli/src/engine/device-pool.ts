@@ -28,7 +28,7 @@ export type PoolResult =
   | { status: 'selected'; candidate: PoolCandidate }
   | { status: 'refused'; refusal: RunLeaseRefusal };
 
-export function heldPoolId(
+function heldPoolId(
   root: string,
   platform: LeasePlatform,
   now: number,

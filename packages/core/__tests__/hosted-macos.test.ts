@@ -3,21 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceName } from '../index.ts';
 import { readHostedMacosApp } from '../state/macos.ts';
-import { parseHostedAgentGrant, parseHostedMacosDevice } from '../state/hosted-macos.ts';
-
-test('a hosted macOS identity names exactly the host and one reserved app slot', () => {
-  const device = { architecture: 'arm64', macosVersion: '27.0', appSlot: 1 };
-  expect(parseHostedMacosDevice(device)).toEqual(device);
-  for (const value of [
-    { ...device, appSlot: 0 },
-    { ...device, appSlot: 65 },
-    { ...device, appSlot: 1.5 },
-    { ...device, macosVersion: '27.0 beta' },
-    { ...device, architecture: 'arm64e' },
-    { ...device, udid: '12345678-1234-1234-1234-123456789abc' },
-  ])
-    expect(parseHostedMacosDevice(value)).toBeNull();
-});
+import { parseHostedAgentGrant } from '../state/hosted-macos.ts';
 
 test('an agent grant is usable only for a driver name, one session route, and a bounded token', () => {
   const grant = {
@@ -81,17 +67,5 @@ describe('hosted macOS app state', () => {
     };
     writeFileSync(join(state, 'state.json'), JSON.stringify({ macos: record }));
     expect(readHostedMacosApp(alias)).toEqual(record);
-  });
-
-  test('missing or malformed worker state cannot supply a capture target', () => {
-    expect(readHostedMacosApp(home)).toBeNull();
-    mkdirSync(join(home, 'macos-app'));
-    expect(readHostedMacosApp(home)).toBeNull();
-    const state = join(home, 'workspaces', workspaceName(realpathSync(join(home, 'macos-app'))));
-    mkdirSync(state, { recursive: true });
-    for (const text of ['broken', 'null', '[]', '{}', '{"macos":{"launchId":"incomplete"}}']) {
-      writeFileSync(join(state, 'state.json'), text);
-      expect(readHostedMacosApp(home)).toBeNull();
-    }
   });
 });

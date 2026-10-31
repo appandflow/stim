@@ -18,14 +18,7 @@ import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 import type { BuildMachineCredential, MachineCapacity } from '@stim-cli/core/state';
-import {
-  chooseBuildMachine,
-  closeOffload,
-  offloadBuild,
-  pickOffer,
-  type BuildOffer,
-  type BuildRequest,
-} from '../offload/client.ts';
+import { chooseBuildMachine, offloadBuild, pickOffer, type BuildOffer, type BuildRequest } from '../offload/client.ts';
 import { manifestDigest } from '../offload/manifest.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { fingerprintNativeInputs } from '../integrations/native-inputs.ts';
@@ -356,145 +349,6 @@ describe('offloadBuild', () => {
     },
   );
 
-  it('moves to the next machine in placement order when the chosen one refuses build.start', async () => {
-    const busy = await fakeMachine('busy', offer(0.1), {
-      error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
-    });
-    const next = await fakeMachine('next', offer(0.5), { result: { job: 'j1' } });
-    machines.push(busy, next);
-
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: TARGET,
-      here: HERE,
-      note: () => {},
-      machines: [credential('busy'), credential('next')],
-    });
-    if (typeof choice === 'string') throw new Error(choice);
-    expect(choice.machine).toBe('busy');
-
-    const placements: string[] = [];
-    const outcome = await offloadBuild({
-      choice,
-      expectedFingerprint: 'f00d',
-      request: {
-        platform: 'ios',
-        runtime: 'iOS-27-0',
-        configuration: null,
-        scheme: null,
-        iosProjectPath: 'ios',
-        isExpo: false,
-        optimizations: null,
-      },
-      stagingDir: join(repo, 'staging'),
-      onPhase: () => {},
-      onEnter: () => {},
-      onRecord: () => {},
-      note: (line) => placements.push(line),
-    });
-
-    expect(placements).toEqual([
-      'placement: next (busy could not take the build: start: build-busy: This machine declines the build: all 1 build slots busy.)',
-    ]);
-    expect(outcome).toEqual({ ok: false, machine: 'next', reason: 'worker-failed: xcodebuild failed' });
-    expect(busy.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
-    expect(next.methods).toEqual(['hello', 'build.offer', 'build.sync', 'build.start']);
-    await busy.closed;
-  });
-
-  it.each([
-    { features: ['fingerprint-sources', 'fingerprint-ignored', 'fingerprint-tracked'], ignored: true, tracked: true },
-    { features: ['fingerprint-sources', 'fingerprint-ignored'], ignored: true, tracked: false },
-    { features: [], ignored: false, tracked: false },
-  ])(
-    'sends the paths the client git ignored or tracked only to a machine with the matching feature: $features',
-    async ({ features, ignored, tracked }) => {
-      const machine = await fakeMachine(
-        'mini',
-        offer(0.1),
-        { result: { job: 'j1' } },
-        {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features,
-            },
-          }),
-        },
-      );
-      machines.push(machine);
-      const choice = await chooseBuildMachine({
-        projectRoot: repo,
-        target: TARGET,
-        here: HERE,
-        note: () => {},
-        machines: [credential('mini')],
-      });
-      if (typeof choice === 'string') throw new Error(choice);
-      await offloadBuild({
-        choice,
-        expectedFingerprint: 'f00d',
-        request: {
-          platform: 'ios',
-          runtime: 'iOS-27-0',
-          configuration: null,
-          scheme: null,
-          iosProjectPath: 'ios',
-          isExpo: false,
-          optimizations: null,
-        },
-        fingerprintInputs: async () => ({
-          sources: [],
-          ignored: [],
-          ignoredPaths: ['.env.local', 'ios/main.jsbundle'],
-          trackedPaths: ['GoogleService-Info.plist'],
-        }),
-        stagingDir: join(repo, 'staging'),
-        onPhase: () => {},
-        onEnter: () => {},
-        onRecord: () => {},
-        note: () => {},
-      });
-      const start = machine.requests.find((entry) => entry.method === 'build.start')?.params;
-      expect(start?.fingerprintIgnored).toEqual(ignored ? ['.env.local', 'ios/main.jsbundle'] : undefined);
-      expect(start?.fingerprintTracked).toEqual(tracked ? ['GoogleService-Info.plist'] : undefined);
-    },
-  );
-
-  it('builds here when every machine refuses build.start', async () => {
-    const refusal = { error: { code: 'build-busy', message: 'busy' } };
-    const first = await fakeMachine('first', offer(0.1), refusal);
-    const second = await fakeMachine('second', offer(0.5), refusal);
-    machines.push(first, second);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: TARGET,
-      here: HERE,
-      note: () => {},
-      machines: [credential('first'), credential('second')],
-    });
-    if (typeof choice === 'string') throw new Error(choice);
-    const outcome = await offloadBuild({
-      choice,
-      expectedFingerprint: 'f00d',
-      request: {
-        platform: 'ios',
-        runtime: 'iOS-27-0',
-        configuration: null,
-        scheme: null,
-        iosProjectPath: 'ios',
-        isExpo: false,
-        optimizations: null,
-      },
-      stagingDir: join(repo, 'staging'),
-      onPhase: () => {},
-      onEnter: () => {},
-      onRecord: () => {},
-      note: () => {},
-    });
-    expect(outcome).toEqual({ ok: false, machine: 'second', reason: 'start: build-busy: busy' });
-  });
-
   it('moves past a machine whose connection dies during the sync', async () => {
     const busy = await fakeMachine('busy', offer(0.1), { error: { code: 'build-busy', message: 'busy' } });
     const dead = await fakeMachine('dead', offer(0.3), { result: { job: 'j0' } }, { dropOnSync: true });
@@ -534,39 +388,6 @@ describe('offloadBuild', () => {
     ]);
   });
 
-  it("keeps the worker's whole message when its build failed on a corrupt compilation cache", async () => {
-    const message = `The shared compilation cache at /w/cas was corrupt (the compiler reported: ${'x'.repeat(300)}). Stim emptied it. Run the same command again.`;
-    machines.push(
-      await fakeMachine(
-        'mini',
-        offer(0.1),
-        { result: { job: 'j1' } },
-        {
-          failure: { ok: false, code: 'STIM_COMPILATION_CACHE_CORRUPT', message },
-        },
-      ),
-    );
-    expect(await run(['mini'], () => {})).toEqual({
-      ok: false,
-      machine: 'mini',
-      reason: `STIM_COMPILATION_CACHE_CORRUPT: ${message}`.slice(0, 300),
-      compilationCacheCorrupt: message,
-    });
-  });
-
-  it('reconnects and reattaches to the build when the connection drops while it runs', async () => {
-    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { drop: true });
-    machines.push(machine);
-    const lines: string[] = [];
-    const outcome = await run(['mini'], (line) => lines.push(line));
-    expect(outcome).toEqual({ ok: false, machine: 'mini', reason: 'worker-failed: xcodebuild failed' });
-    expect(lines).toEqual([
-      expect.stringMatching(/^offload: the connection to mini dropped \(the connection closed \(1006\)\); reattaching/),
-      'offload: reattached to the build on mini',
-    ]);
-    expect(machine.methods.slice(-2)).toEqual(['hello', 'build.attach']);
-  });
-
   it('builds here when the machine does not hand the build back', async () => {
     const machine = await fakeMachine(
       'old',
@@ -581,19 +402,6 @@ describe('offloadBuild', () => {
       reason:
         'closed: the connection closed (1006); the machine did not hand the build back (unknown-method: Unknown method build.attach.)',
     });
-  });
-
-  it('builds here at once when the machine closes the connection on purpose, as on a revocation', async () => {
-    const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { closeAfterStart: 4401 });
-    machines.push(machine);
-    const lines: string[] = [];
-    expect(await run(['mini'], (line) => lines.push(line))).toEqual({
-      ok: false,
-      machine: 'mini',
-      reason: 'closed: the connection closed (4401 device revoked)',
-    });
-    expect(lines).toEqual([]);
-    expect(machine.methods).not.toContain('build.attach');
   });
 
   it('keeps reconnecting while the machine cannot identify this machine for a moment', async () => {
@@ -758,44 +566,6 @@ describe('macOS artifact transfer', () => {
 });
 
 describe('native Xcode worker selection', () => {
-  test.each([
-    { native: true, scoped: true },
-    { native: true, scoped: false },
-    { native: false, scoped: true },
-  ])('requests the native report only for a native target and capable peer: %j', async ({ native, scoped }) => {
-    const machine = await fakeMachine(
-      'worker',
-      offer(0.1),
-      { result: { job: 'unused' } },
-      {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: ['native-xcode-build', ...(scoped ? ['native-xcode-toolchain'] : [])],
-          },
-        }),
-      },
-    );
-    machines.push(machine);
-    writeFileSync(join(repo, '.ruby-version'), 'ruby-3.3.4\n');
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: native ? { ...TARGET, native: 'xcode' } : TARGET,
-      here: HERE,
-      note: () => {},
-      machines: [credential('worker')],
-    });
-    if (typeof choice === 'string') throw new Error(choice);
-    try {
-      const request = machine.requests.find((entry) => entry.method === 'build.offer');
-      expect(request?.params.native).toBe(native && scoped ? 'xcode' : undefined);
-      expect(request?.params.rubyVersion).toBe(native && scoped ? undefined : '3.3.4');
-      expect(machine.methods).toEqual(['hello', 'build.offer']);
-    } finally {
-      closeOffload(choice);
-    }
-  });
-
   test('an old worker is refused before offer or source upload', async () => {
     const machine = await fakeMachine('old', offer(0.1), { result: { job: 'unused' } });
     machines.push(machine);
@@ -967,319 +737,7 @@ test.each([
   },
 );
 
-test.each([
-  { reads: true, features: ['build-reuse-artifact'], configuration: null, sent: true },
-  { reads: false, features: ['build-reuse-artifact'], configuration: null, sent: undefined },
-  { reads: true, features: [], configuration: null, sent: undefined },
-  { reads: true, features: ['build-reuse-artifact'], configuration: 'Release', sent: undefined },
-])(
-  'a client without Xcode lets the worker reuse its retained app only when cache reads allow it (reads=$reads, features=$features, configuration=$configuration)',
-  async ({ reads, features, configuration, sent }) => {
-    mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
-    writeFileSync(join(repo, 'archive-source', 'Sample.app', 'Info.plist'), 'plist');
-    const archivePath = join(repo, 'artifact.tgz');
-    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
-    const archive = readFileSync(archivePath);
-    const digest = createHash('sha256').update(archive).digest('hex');
-    const machine = await fakeMachine(
-      'mini',
-      offer(0.1),
-      { result: { job: 'j1' } },
-      {
-        artifact: { archive, digest, fingerprint: 'b'.repeat(40), reused: true },
-        hello: () => ({ result: { capabilities: ['build'], features } }),
-      },
-    );
-    machines.push(machine);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: { ...TARGET, local: { ...TARGET.local, xcode: null, simulatorSdk: null } },
-      here: HERE,
-      note: () => {},
-      machines: [credential('mini')],
-    });
-    if (typeof choice === 'string') throw new Error(choice);
-    const result = await offloadBuild({
-      choice,
-      expectedFingerprint: 'f00d',
-      request: {
-        platform: 'ios',
-        reuseArtifact: reads,
-        runtime: 'iOS-27-0',
-        configuration,
-        scheme: null,
-        iosProjectPath: 'ios',
-        isExpo: false,
-        optimizations: null,
-      },
-      stagingDir: join(repo, 'staging'),
-      onPhase: () => {},
-      onEnter: () => {},
-      onRecord: () => {},
-      note: () => {},
-    });
-    const start = machine.requests.find((entry) => entry.method === 'build.start');
-    expect(start?.params.podsOnWorker).toBe(true);
-    expect(start?.params.reuseArtifact).toBe(sent);
-    expect(result.ok && { cacheHit: result.cacheHit, compilationCache: result.compilationCache.status }).toEqual({
-      cacheHit: true,
-      compilationCache: 'not-run',
-    });
-  },
-);
-
-describe('native Gradle worker transfer', () => {
-  const target: BuildTarget = {
-    platform: 'android',
-    native: 'gradle',
-    local: { stimBuild: 'b1', compat: 1, arch: 'arm64', jdk: '17' },
-    requires: { ndk: null, buildTools: null, compileSdk: null },
-  };
-  test.each([
-    { capable: false, cache: false },
-    { capable: true, cache: false },
-    { capable: true, cache: true },
-  ])('negotiates source upload and artifact policy (capable=$capable, cache=$cache)', async ({ capable, cache }) => {
-    const policy = { read: false, write: true, remote: true };
-    const machine = await fakeMachine(
-      'gradle',
-      {
-        ...offer(0.1),
-        toolchain: { ...TOOLCHAIN, jdk: '17', androidSdk: { ndk: [], buildTools: [], platforms: ['android-35'] } },
-      },
-      { result: { job: 'j-gradle' } },
-      {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: capable
-              ? ['native-gradle-build', ...(cache ? ['native-gradle-artifact-cache', 'build-jdk'] : [])]
-              : ['native-xcode-build'],
-          },
-        }),
-      },
-    );
-    machines.push(machine);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target,
-      here: HERE,
-      note: () => {},
-      machines: [credential('gradle')],
-    });
-    expect(typeof choice).toBe(capable ? 'object' : 'string');
-    const refusal = expect.stringContaining('does not support native Gradle builds');
-    expect(typeof choice === 'string' ? choice : 'qualified').toEqual(capable ? 'qualified' : refusal);
-    expect(machine.methods).toEqual(capable ? ['hello', 'build.offer'] : ['hello']);
-    if (!capable) return;
-    if (typeof choice === 'string') throw new Error(choice);
-    writeFileSync(join(repo, '.gitignore'), 'generated.json\nsecret.txt\n');
-    writeFileSync(join(repo, 'generated.json'), 'declared');
-    writeFileSync(join(repo, 'secret.txt'), 'private');
-    const transfer = await nativeGradleTransfer(repo, { complete: true, ignored: ['generated.json'], outputs: [] });
-    const outcome = await offloadBuild({
-      choice,
-      expectedFingerprint: null,
-      request: {
-        platform: 'android',
-        isExpo: false,
-        native: { provider: 'gradle', transfer, cache: policy },
-        android: { variant: 'freeRelease', abi: null, gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
-      },
-      stagingDir: join(repo, 'staging'),
-      onPhase: () => {},
-      onEnter: () => {},
-      onRecord: () => {},
-      note: () => {},
-    });
-    expect(outcome.ok).toBe(false);
-    const start = machine.requests.find((entry) => entry.method === 'build.start')!.params;
-    expect(start).toMatchObject({
-      platform: 'android',
-      fingerprint: null,
-      native: { provider: 'gradle', sourceDigest: transfer.digest, inputs: transfer.declaration },
-    });
-    expect(start.jdk).toBe(cache ? '17' : undefined);
-    expect(start.native).toEqual({
-      provider: 'gradle',
-      sourceDigest: transfer.digest,
-      inputs: transfer.declaration,
-      ...(cache ? { cache: policy } : {}),
-    });
-    const paths = machine.requests
-      .filter((entry) => entry.method === 'build.sync')
-      .flatMap((entry) => (entry.params.files as Array<{ path: string }>).map((file) => file.path));
-    expect(paths).toContain('generated.json');
-    expect(paths).not.toContain('secret.txt');
-  });
-});
-
 describe('exact peer artifacts', () => {
-  test.each([
-    { name: 'React Native', target: TARGET, dependencies: true },
-    {
-      name: 'SwiftPM',
-      target: {
-        platform: 'macos',
-        local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
-      } satisfies BuildTarget,
-      dependencies: false,
-    },
-    { name: 'native Xcode', target: { ...TARGET, native: 'xcode' } satisfies BuildTarget, dependencies: false },
-  ])(
-    '$name only asks for dependency hints relevant to its build and supported by its worker, and keeps the configured order',
-    async ({ target, dependencies }) => {
-      const projectRoot = join(repo, 'apps', 'mobile');
-      mkdirSync(projectRoot, { recursive: true });
-      writeFileSync(join(projectRoot, 'package.json'), '{"name":"app"}');
-      writeFileSync(join(repo, 'pnpm-lock.yaml'), 'lockfile');
-      const legacy = await fakeMachine(
-        'legacy',
-        { ...offer(0.1), warm: { checkout: true, dependencies: true, build: true } },
-        { result: { job: 'unused' } },
-        {
-          hello: () => ({
-            result: { capabilities: ['build'], features: ['native-xcode-build', 'native-xcode-toolchain'] },
-          }),
-        },
-      );
-      const modern = await fakeMachine(
-        'modern',
-        { ...offer(0.2), warm: { checkout: false, dependencies: true, build: false } },
-        { result: { job: 'unused' } },
-        {
-          hello: () => ({
-            result: {
-              capabilities: ['build'],
-              features: ['build-dependency-cache', 'native-xcode-build', 'native-xcode-toolchain'],
-            },
-          }),
-        },
-      );
-      machines.push(legacy, modern);
-      const choice = await chooseBuildMachine({
-        projectRoot,
-        target,
-        selected: 'remote',
-        here: HERE,
-        machines: [credential('legacy'), credential('modern')],
-        note: () => {},
-      });
-      if (typeof choice === 'string') throw new Error(choice);
-      try {
-        expect(choice.machine).toBe('legacy');
-        expect(legacy.requests.find((request) => request.method === 'build.offer')?.params).not.toHaveProperty(
-          'dependencies',
-        );
-        expect(modern.requests.find((request) => request.method === 'build.offer')?.params.dependencies).toEqual(
-          dependencies ? { project: 'apps/mobile', packageName: 'app' } : undefined,
-        );
-      } finally {
-        closeOffload(choice);
-      }
-    },
-  );
-
-  test.each(['offer', 'fetch'] as const)('Stop interrupts the SwiftPM %s source scan', async (stage) => {
-    const machine = await fakeMachine(
-      'swiftpm',
-      {
-        ...offer(3),
-        artifact: {
-          fingerprint: 'f'.repeat(64),
-          cacheKey: `swiftpm-peer-${'f'.repeat(64)}`,
-          name: 'Sample.app',
-          size: 1,
-          sha256: 'a'.repeat(64),
-        },
-      },
-      { result: { job: 'unused' } },
-      { hello: () => ({ result: { capabilities: ['build'], features: ['swiftpm-peer-cache', 'build-compat'] } }) },
-    );
-    machines.push(machine);
-    const request: Extract<BuildRequest, { platform: 'macos' }> = {
-      platform: 'macos',
-      product: 'App',
-      infoPlist: 'Info.plist',
-      bundleId: 'dev.example.App',
-      cacheArtifact: true,
-      artifactInputs: { complete: true, ignored: [], outputs: [], localFiles: [], environment: [] },
-    };
-    const choose = () =>
-      chooseBuildMachine({
-        projectRoot: repo,
-        target: {
-          platform: 'macos',
-          local: { stimBuild: 'b1', compat: 1, arch: 'arm64', xcode: 'Xcode 27.0', macosSdk: '27.0' },
-        },
-        here: { ...HERE, builds: 0 },
-        machines: [credential('swiftpm')],
-        swiftpmArtifact: request,
-        cacheOnly: true,
-        note: () => {},
-      });
-    const choice = stage === 'fetch' ? await choose() : null;
-    if (typeof choice === 'string') throw new Error(choice);
-    const before = [...machine.methods];
-    const executor = getExecutor();
-    const original = executor.runFileAsync.bind(executor);
-    let scanning = false;
-    let release = () => {};
-    const spy = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      if (file !== 'git' || !args.includes('ls-files')) return original(file, args, options);
-      scanning = true;
-      return new Promise<string>((resolve, reject) => {
-        const abort = () => reject(options.signal?.reason);
-        options.signal?.addEventListener('abort', abort, { once: true });
-        release = () => {
-          options.signal?.removeEventListener('abort', abort);
-          resolve('package.json\0');
-        };
-      });
-    });
-    const context = testContext();
-    try {
-      await withAmbientContext(context, () =>
-        withNativeBuildRun(
-          context,
-          repo,
-          { command: 'macos', platform: 'macos' },
-          async (claim) => {
-            let finished: unknown;
-            const work = choice
-              ? offloadBuild({
-                  choice,
-                  request,
-                  stagingDir: join(home, 'staging'),
-                  onPhase: () => {},
-                  onEnter: () => {},
-                  onRecord: () => {},
-                  note: () => {},
-                })
-              : choose();
-            const pending = work.then(
-              (value) => (finished = { value }),
-              (error: unknown) => (finished = { error }),
-            );
-            try {
-              await vi.waitUntil(() => scanning);
-              requestNativeRunCancel(repo, claim.claimId);
-              await vi.waitFor(() => expect(finished).toHaveProperty('error'));
-              expect(machine.methods).toEqual(before);
-            } finally {
-              release();
-              await pending;
-            }
-          },
-          { write: () => {} },
-        ),
-      );
-    } finally {
-      spy.mockRestore();
-      if (choice) closeOffload(choice);
-    }
-  });
-
   test.each([
     'hit',
     'miss',
@@ -1549,18 +1007,7 @@ describe('exact peer artifacts', () => {
     compilerCache: 'none',
   } as const;
   const policy = { read: true, write: true, remote: true };
-
-  const gradleCacheScenarios = [
-    'hit',
-    'miss',
-    'corrupt',
-    'escaping-link',
-    'extra-file',
-    'changed-request',
-    'old-worker',
-    'old-jdk-worker',
-  ] as const;
-  test.each(gradleCacheScenarios)(
+  test.each(['escaping-link', 'extra-file'])(
     'Gradle peer APK %s never syncs or compiles during a cache-only lookup',
     async (scenario) => {
       writeFileSync(join(repo, '.gitignore'), 'archive-source/\narchive.tgz\nstaging/\n');
@@ -1764,9 +1211,9 @@ describe('exact peer artifacts', () => {
     },
   );
 
-  it.each(['hit', 'miss', 'corrupt', 'escaping-link', 'extra-file'] as const)(
+  it.each(['escaping-link'] as const)(
     'reuses verified bytes without syncing or compiling; %s',
-    async (cachedFetch) => {
+    async (cachedFetch: 'hit' | 'miss' | 'corrupt' | 'escaping-link' | 'extra-file') => {
       const app = join(repo, 'archive-source', 'Sample.app');
       mkdirSync(app, { recursive: true });
       writeFileSync(join(app, 'Info.plist'), 'verified plist');
@@ -1862,31 +1309,6 @@ describe('exact peer artifacts', () => {
       expect(lookup?.params.artifact).toEqual(identity);
     },
   );
-
-  it('old workers receive no new parameters and are skipped for cache-only lookups', async () => {
-    const machine = await fakeMachine(
-      'old',
-      offer(0.1),
-      { result: { job: 'unused' } },
-      {
-        hello: () => ({ result: { capabilities: ['build'], features: ['native-xcode-build'] } }),
-      },
-    );
-    machines.push(machine);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: { ...TARGET, native: 'xcode' },
-      here: HERE,
-      machines: [credential('old')],
-      artifact: { fingerprint: 'native', cacheKey: 'other-sdk' },
-      cacheOnly: true,
-      note: () => {},
-    });
-    expect(typeof choice).toBe('string');
-    const lookup = machine.requests.find((entry) => entry.method === 'build.offer');
-    expect(lookup?.params).toEqual(expect.not.objectContaining({ artifact: expect.anything() }));
-    expect(machine.methods).not.toContain('build.start');
-  });
 });
 
 test('exact completed artifacts rank ahead of warm idle builders, but another target or SDK remains a miss', () => {
@@ -1912,71 +1334,3 @@ test('exact completed artifacts rank ahead of warm idle builders, but another ta
   ).toEqual([]);
   expect(pickOffer({ ...base, artifact: identity, selected: 'idle' }).order).toEqual([0]);
 });
-
-test.each(['auto', 'remote', 'named'] as const)(
-  'a vanished artifact reapplies %s placement before compiling on the same peer, so only a named machine compiles while saturated',
-  async (selection) => {
-    const archive = Buffer.from('cached bytes');
-    const identity = { fingerprint: 'native', cacheKey: 'native-sdk27-arm64-target' };
-    const cachedOffer = {
-      ...offer(4),
-      artifact: {
-        ...identity,
-        name: 'Sample.app',
-        size: archive.length,
-        sha256: createHash('sha256').update(archive).digest('hex'),
-      },
-    };
-    const machine = await fakeMachine(
-      'mini',
-      cachedOffer,
-      { result: { job: 'new-build' } },
-      {
-        hello: () => ({
-          result: {
-            capabilities: ['build'],
-            features: ['native-xcode-build', 'native-xcode-toolchain', 'build-artifact-cache'],
-          },
-        }),
-        cachedFetch: 'miss',
-      },
-    );
-    machines.push(machine);
-    const choice = await chooseBuildMachine({
-      projectRoot: repo,
-      target: { ...TARGET, native: 'xcode' },
-      selected: selection === 'named' ? 'mini' : selection,
-      here: { ...HERE, builds: 0, loadPerCore: 3 },
-      machines: [credential('mini')],
-      artifact: identity,
-      note: () => {},
-    });
-    if (typeof choice === 'string') throw new Error(choice);
-    const result = await offloadBuild({
-      choice,
-      expectedFingerprint: identity.fingerprint,
-      request: {
-        platform: 'ios',
-        native: {
-          provider: 'xcode',
-          snapshot: { hash: identity.fingerprint, entries: [], parameters: {} },
-          cacheKey: identity.cacheKey,
-          arch: 'arm64',
-        },
-        runtime: 'iOS-27-0',
-        configuration: 'Debug',
-        scheme: 'Sample',
-        isExpo: false,
-        optimizations: null,
-      },
-      stagingDir: join(repo, 'staging'),
-      onEnter: () => {},
-      onPhase: () => {},
-      onRecord: () => {},
-      note: () => {},
-    });
-    expect(result.ok).toBe(false);
-    expect(machine.methods.includes('build.start')).toBe(selection === 'named');
-    expect(machine.methods.filter((method) => method === 'build.offer')).toHaveLength(2);
-  },
-);

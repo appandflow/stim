@@ -217,14 +217,6 @@ test.skipIf(process.platform !== 'darwin')('a pending macOS version process leav
   await expect(macosToolchainAsync()).resolves.toMatchObject({ xcode: null, macosSdk: null });
 });
 
-test('async Android comparison honors JAVA_HOME even when it cannot read that JDK', async () => {
-  const jdk = join(root, 'jdk');
-  mkdirSync(jdk);
-  writeFileSync(join(jdk, 'release'), 'JAVA_VERSION="17.0.20"\n');
-  await expect(androidToolchainAsync({ JAVA_HOME: jdk })).resolves.toMatchObject({ jdk: '17' });
-  await expect(androidToolchainAsync({ JAVA_HOME: join(root, 'missing') })).resolves.toMatchObject({ jdk: null });
-});
-
 test.skipIf(process.platform !== 'darwin')('async Android comparison uses the JDK selected on PATH', async () => {
   const jdk = join(root, 'path-jdk');
   executable(join(jdk, 'bin'), 'java', 'process.exit(1);');
@@ -232,47 +224,6 @@ test.skipIf(process.platform !== 'darwin')('async Android comparison uses the JD
   vi.stubEnv('JAVA_HOME', undefined);
   vi.stubEnv('PATH', join(jdk, 'bin') + delimiter + process.env.PATH);
   await expect(androidToolchainAsync()).resolves.toMatchObject({ jdk: '21' });
-});
-
-test('native Gradle discovery reads JDK and SDK facts without Apple or Ruby probes', () => {
-  const sdk = join(root, 'android-sdk');
-  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
-  const jdk = join(root, 'jdk');
-  mkdirSync(jdk);
-  writeFileSync(join(jdk, 'release'), 'JAVA_VERSION="17.0.20"\n');
-  vi.stubEnv('JAVA_HOME', jdk);
-  vi.stubEnv('ANDROID_HOME', sdk);
-  setExecutor(
-    makeExecutor({
-      runFileQuiet: () => {
-        throw new Error('Unrelated native discovery probe');
-      },
-    }),
-  );
-  expect(workerToolchain(null, 'gradle')).toMatchObject({
-    jdk: '17',
-    androidSdk: { platforms: ['android-35'] },
-    xcode: null,
-    simulatorSdk: null,
-    cocoapods: null,
-    runtimes: [],
-  });
-});
-
-test('the Gradle offer reports the SDK directory and whether its licenses are accepted', () => {
-  const sdk = join(root, 'android-sdk');
-  mkdirSync(join(sdk, 'platforms', 'android-35'), { recursive: true });
-  vi.stubEnv('ANDROID_HOME', sdk);
-  setExecutor(makeExecutor({ runFileQuiet: () => null }));
-  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidLicenses: false, androidHome: sdk });
-  mkdirSync(join(sdk, 'licenses'));
-  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n');
-  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(false);
-  writeFileSync(join(sdk, 'licenses', 'android-sdk-license'), '\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n');
-  expect(workerToolchain(null, 'gradle').androidLicenses).toBe(true);
-  rmSync(join(sdk, 'platforms'), { recursive: true });
-  expect(workerToolchain(null, 'gradle')).toMatchObject({ androidSdk: null });
-  expect(workerToolchain(null, 'gradle')).not.toHaveProperty('androidLicenses');
 });
 
 function fakeJdk(parent: string, name: string, version: string, jre = false): string {

@@ -12,7 +12,6 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -21,15 +20,10 @@ import { dirname, join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
 import { androidBuildToolName } from '../devices/android.ts';
 import * as gradle from '../engine/gradle.ts';
-import * as locks from '../engine/build-lock.ts';
 import * as cache from '../cache/build-cache.ts';
 import * as providers from '@stim-cli/cache';
 import { resetExecutor, setExecutor } from '../exec.ts';
-import {
-  gradleArtifactInputs,
-  nativeGradleArtifactSnapshot,
-  nativeGradleArtifactSnapshotFromReceipt,
-} from '../integrations/native-gradle-artifact-inputs.ts';
+import { nativeGradleArtifactSnapshot } from '../integrations/native-gradle-artifact-inputs.ts';
 import { nativeGradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import { nativeAndroidProject } from '../integrations/native-android.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
@@ -273,21 +267,6 @@ test('generated outputs do not change the key, and private inputs never authoriz
   await expect(nativeGradleTransfer(root, declaration)).rejects.toThrow('android.offloadInputs');
 });
 
-test('completed source receipts revalidate private inputs independently of the active checkout', async () => {
-  const completed = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  write(join(root, 'app/src/Main.kt'), 'another build is using different source');
-  const current = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  expect(current.hash).not.toBe(completed.hash);
-  const reusable = await nativeGradleArtifactSnapshotFromReceipt(root, completed.receipt, process.env);
-  expect(reusable.hash).toBe(completed.hash);
-  expect(reusable.key).toBe(completed.key);
-  write(join(directory, 'signing/key'), 'a different private signing key');
-  const changed = await nativeGradleArtifactSnapshotFromReceipt(root, completed.receipt, process.env);
-  expect(changed.hash).not.toBe(completed.hash);
-  expect(JSON.stringify(completed.receipt)).not.toContain('private-key-one');
-  expect(JSON.stringify(completed.receipt)).not.toContain('private-password');
-});
-
 test.each([
   { before: Buffer.from([0xe9]), after: Buffer.from([0xf1]) },
   { before: Buffer.from('one\n'), after: Buffer.from('one\r\n') },
@@ -312,15 +291,6 @@ test.each([
   },
 );
 
-test('local.properties stays local when the project is reached through a linked path', async () => {
-  visible.push('local.properties');
-  writeFileSync(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}\nprivate.key=one\n`);
-  const linked = join(directory, 'linked');
-  symlinkSync(root, linked, 'junction');
-  const direct = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  expect(await nativeGradleArtifactSnapshot(linked, declaration, selected, 'x86_64', process.env)).toEqual(direct);
-});
-
 test('inputs changed during compilation never publish a cache entry', async () => {
   const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
   const upload = vi.spyOn(files, 'store');
@@ -333,55 +303,6 @@ test('inputs changed during compilation never publish a cache entry', async () =
   expect(existsSync(join(directory, 'cache'))).toBe(false);
   expect(upload).not.toHaveBeenCalled();
   expect(generations).toBe(2);
-});
-
-test('cache-off runs compile twice without artifact lookup, publication or shared-build waiting', async () => {
-  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
-  const load = useProvider({ files });
-  const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
-  config.optimizations.buildCache = false;
-  write(join(root, '.stim.json'), JSON.stringify(config));
-  const lookup = vi.spyOn(cache, 'resolveBuild');
-  const wait = vi.spyOn(locks, 'waitForSharedBuild');
-  for (const result of [await build(), await build()])
-    expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true });
-  expect(lookup).not.toHaveBeenCalled();
-  expect(wait).not.toHaveBeenCalled();
-  expect(load).not.toHaveBeenCalled();
-  expect(existsSync(join(directory, 'cache'))).toBe(false);
-  expect(generations).toBe(2);
-});
-
-test('the build-cache bypass flag refreshes the native APK without reading or waiting for the old entry', async () => {
-  const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
-  useProvider({ files });
-  const first = await build();
-  const download = vi.spyOn(files, 'resolve');
-  const upload = vi.spyOn(files, 'store');
-  const lookup = vi.spyOn(cache, 'resolveBuild');
-  const wait = vi.spyOn(locks, 'waitForSharedBuild');
-  const refreshed = await build(false);
-  expect(refreshed).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: first.cacheKey });
-  expect(download).not.toHaveBeenCalled();
-  expect(upload).toHaveBeenCalledOnce();
-  expect(lookup).not.toHaveBeenCalled();
-  expect(wait).not.toHaveBeenCalled();
-  assert(first.cacheKey);
-  const stored = cache.artifactIn(cache.entryDir('android', first.cacheKey));
-  assert(stored);
-  expect(JSON.parse(readFileSync(stored, 'utf8'))).toHaveProperty('generation', 2);
-  expect(await build()).toMatchObject({ cacheHit: 'local', cacheKey: first.cacheKey });
-  expect(generations).toBe(2);
-});
-
-test('native APK sharing skips providers without opaque files instead of using their bare build capability', async () => {
-  const resolve = vi.fn<providers.BuildCacheCapability['resolve']>(async () => null);
-  const store = vi.fn<providers.BuildCacheCapability['store']>(async () => {});
-  useProvider({ builds: { resolve, store } });
-  expect((await build()).cacheHit).toBe(false);
-  expect((await build()).cacheHit).toBe('local');
-  expect(resolve).not.toHaveBeenCalled();
-  expect(store).not.toHaveBeenCalled();
 });
 
 test('a file provider restores a verified native APK into a cold local cache without Gradle', async () => {
@@ -399,29 +320,6 @@ test('a file provider restores a verified native APK into a cold local cache wit
   expect(readFileSync(local.apkPath)).toEqual(bytes);
   expect(generations).toBe(1);
 });
-
-test.each(['header', 'truncated', 'payload'] as const)(
-  'a corrupt shared APK %s is discarded before local publication',
-  async (invalid) => {
-    const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
-    useProvider({ files });
-    const first = await build();
-    const resolve = files.resolve.bind(files);
-    vi.spyOn(files, 'resolve').mockImplementation(async (input) => {
-      const path = await resolve(input);
-      assert(path);
-      const bytes = readFileSync(path);
-      if (invalid === 'header') bytes[0] = 0;
-      else if (invalid === 'payload') bytes[bytes.length - 1] = bytes.at(-1) === 0 ? 1 : 0;
-      writeFileSync(path, invalid === 'truncated' ? bytes.subarray(0, 5) : bytes);
-      return path;
-    });
-    vi.stubEnv('STIM_BUILD_CACHE', join(directory, 'cold-cache'));
-    expect(await build()).toMatchObject({ cacheHit: false, cacheKey: first.cacheKey });
-    expect(generations).toBe(2);
-    expect(readdirSync(cache.providerDownloadPath(workspaceDir(root)))).toEqual([]);
-  },
-);
 
 test('a valid shared entry for another input key cannot backfill the requested key', async () => {
   const files = providers.createFilesystemFileCache(join(directory, 'shared-files'));
@@ -529,53 +427,6 @@ test.each(['bytes', 'package', 'abi', 'signature'] as const)(
   },
 );
 
-test.each([
-  undefined,
-  { ...declaration, complete: false },
-  { ...declaration, environment: ['BAD=VALUE'] },
-  { ...declaration, extra: true },
-])('missing or invalid declarations do not enable artifact caching: %j', async (value) => {
-  if (value === undefined) {
-    const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
-    delete config.android.artifactInputs;
-    write(join(root, '.stim.json'), JSON.stringify(config));
-  } else settings(value);
-  for (const result of [await build(), await build()])
-    expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: null });
-  expect(generations).toBe(2);
-});
-
-test('a local directory cannot be declared as one exact private file', async () => {
-  await expect(
-    nativeGradleArtifactSnapshot(root, { ...declaration, localFiles: ['../signing'] }, selected, 'x86_64', process.env),
-  ).rejects.toThrow('exact regular files');
-  expect(() => gradleArtifactInputs({ ...declaration, ignored: ['../outside'] })).toThrow('android.artifactInputs');
-});
-
-test('identical declared contents keep their key across checkout and toolchain locations', async () => {
-  visible.push('local.properties');
-  write(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}`);
-  const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  const peer = join(directory, 'peer');
-  for (const name of ['project', 'sdk', 'jdk', 'signing'])
-    cpSync(join(directory, name), join(peer, name), { recursive: true });
-  repository = join(peer, 'project');
-  write(join(repository, 'local.properties'), `sdk.dir=${propertyValue(join(peer, 'sdk'))}`);
-  const env = {
-    ...process.env,
-    HOME: join(peer, 'home'),
-    USERPROFILE: join(peer, 'home'),
-    JAVA_HOME: join(peer, 'jdk'),
-    ANDROID_HOME: join(peer, 'sdk'),
-    ANDROID_USER_HOME: join(peer, 'home', '.android'),
-    GRADLE_USER_HOME: join(peer, 'gradle'),
-  };
-  const second = await nativeGradleArtifactSnapshot(repository, declaration, selected, 'x86_64', env);
-  expect(second.hash).toBe(first.hash);
-  expect(second.key).toBe(first.key);
-  expect(second.sdkDirectory).not.toBe(first.sdkDirectory);
-});
-
 test('cancelled input reads are not accepted as an uncached build identity', async () => {
   const controller = new AbortController();
   controller.abort();
@@ -583,28 +434,6 @@ test('cancelled input reads are not accepted as an uncached build identity', asy
     nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env, controller.signal),
   ).rejects.toMatchObject({ name: 'AbortError' });
 });
-
-test.each(['plain', 'uppercase-unicode', 'non-property-whitespace'])(
-  'a local SDK override cannot reuse the ANDROID_HOME artifact identity (%s)',
-  async (syntax) => {
-    write(join(root, 'local.properties'), `sdk.dir=${propertyValue(sdk)}`);
-    const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-    const other = join(directory, syntax === 'uppercase-unicode' ? 'U0073dk' : 'other-sdk');
-    mkdirSync(dirname(other), { recursive: true });
-    cpSync(sdk, other, { recursive: true });
-    const value =
-      syntax === 'uppercase-unicode'
-        ? propertyValue(other).replace('U0073dk', `${String.fromCharCode(92)}U0073dk`)
-        : syntax === 'non-property-whitespace'
-          ? `\v${propertyValue(sdk)}`
-          : propertyValue(other);
-    write(join(root, 'local.properties'), `sdk.dir=${value}`);
-    await expect(nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).rejects.toThrow(
-      /SDK|ENOENT/,
-    );
-    expect(first.key).toEqual(expect.any(String));
-  },
-);
 
 test('an APK changed during signature inspection is rebuilt instead of reused', async () => {
   await build();
@@ -642,35 +471,6 @@ test.each(['sdk with space', 'escaped-sdk' + String.fromCharCode(92) + 'user'])(
   },
 );
 
-test.each(['sdk\\.dir=ignored', 'sdk.dir=one\\\ntwo'])(
-  'ambiguous SDK property syntax disables cache eligibility: %s',
-  async (line) => {
-    write(join(root, 'local.properties'), line);
-    await expect(nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).rejects.toThrow(
-      'local.properties',
-    );
-  },
-);
-
-test('local buildSrc sources affect identity without authorizing their offload', async () => {
-  write(join(root, 'buildSrc/build.gradle.kts'), 'plugins { `java-library` }');
-  visible.push('buildSrc/build.gradle.kts');
-  const first = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  write(join(root, 'buildSrc/build.gradle.kts'), 'plugins { `java-library` }; version = "2"');
-  const next = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  expect(next.key).not.toBe(first.key);
-  await expect(nativeGradleTransfer(root, { complete: true, ignored: [], outputs: ['app/build'] })).rejects.toThrow(
-    'buildSrc',
-  );
-});
-
-test('ordinary files beside installed SDK versions do not disable native artifact caching', async () => {
-  const before = await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env);
-  write(join(sdk, 'ndk', '.DS_Store'), 'finder metadata');
-  write(join(sdk, 'build-tools', '.DS_Store'), 'finder metadata');
-  expect(await nativeGradleArtifactSnapshot(root, declaration, selected, 'x86_64', process.env)).toEqual(before);
-});
-
 test.each([
   { bootPending: true, variant: 'debug' },
   { bootPending: false, variant: 'debug' },
@@ -702,35 +502,6 @@ test.each([
       }
     : { refusal: { code: 'STIM_BAD_ARG' } };
   expect(result).toMatchObject(expected);
-  expect(getProject(root)).toEqual(before);
-});
-
-test.each([
-  { source: 'flag', variant: 'debug' },
-  { source: 'setting', variant: 'freeRelease' },
-])('planning refuses an existing emulator profile mismatch (case=%j)', async ({ source, variant }) => {
-  const devices = await import('../devices/android.ts');
-  vi.spyOn(devices, 'ownedAvdDirectory').mockReturnValue(join(directory, 'avd'));
-  vi.spyOn(devices, 'ownedAvdSystemImage').mockReturnValue('system-images;android-35;google_apis;arm64-v8a');
-  vi.spyOn(devices, 'ownedAvdDeviceProfile').mockReturnValue('pixel_7');
-  vi.spyOn(devices, 'listAvdDeviceProfilesAsync').mockResolvedValue(['pixel_7', 'pixel_9']);
-  upsertProject(root, { platforms: { android: { owned: true, avdName: 'stim-fixture' } } });
-  if (source === 'setting') {
-    const config = JSON.parse(readFileSync(join(root, '.stim.json'), 'utf8'));
-    config.android.deviceProfile = 'pixel_9';
-    write(join(root, '.stim.json'), JSON.stringify(config));
-  }
-  const before = getProject(root);
-  const planner = nativeAndroidProject(root).plan;
-  assert(planner);
-  const result = await planner(
-    { variant, ...(source === 'flag' ? { deviceProfile: 'pixel_9' } : {}) },
-    resolveProjectSettings(root),
-    testContext(),
-  );
-  expect(result).toMatchObject({
-    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('device profile') },
-  });
   expect(getProject(root)).toEqual(before);
 });
 

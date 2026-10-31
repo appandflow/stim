@@ -11,7 +11,7 @@ import { resolvePackageJson } from '../workspace/project-files.ts';
  * ninja then cannot create. `shim/android-optimizations.gradle` sets that maximum on Windows.
  * https://github.com/appandflow/stim/issues/893
  */
-export const ANDROID_OBJECT_PATH_MAX = 240;
+const ANDROID_OBJECT_PATH_MAX = 240;
 
 /**
  * CMake's single-config Ninja generator measures an object against CMAKE_OBJECT_PATH_MAX from
@@ -31,7 +31,7 @@ export interface AndroidLongestObject {
  * `\android\app\.cxx\<4 hex>\Debug\<8 chars>\<abi>\safeareacontext_autolinked_build/CMakeFiles/react_codegen_safeareacontext.dir/<md5>/RNCSafeAreaViewShadowNode.cpp.o`,
  * measured on the bare e2e fixture and on trailhead (Expo SDK 58, RN 0.88).
  */
-export const SAFE_AREA_CONTEXT_OBJECT: AndroidLongestObject = { target: 'react_codegen_safeareacontext', tail: 181 };
+const SAFE_AREA_CONTEXT_OBJECT: AndroidLongestObject = { target: 'react_codegen_safeareacontext', tail: 181 };
 
 /**
  * react-native-gesture-handler 3 compiles shadow nodes from its `shared/shadowNodes` directory into
@@ -44,7 +44,7 @@ export const GESTURE_HANDLER_OBJECT: AndroidLongestObject = {
   tail: 208,
 };
 
-export function longestAndroidObject(root: string): AndroidLongestObject {
+function longestAndroidObject(root: string): AndroidLongestObject {
   const gestureHandler = resolvePackageJson(root, 'react-native-gesture-handler');
   return gestureHandler && existsSync(join(dirname(gestureHandler), 'shared', 'shadowNodes'))
     ? GESTURE_HANDLER_OBJECT

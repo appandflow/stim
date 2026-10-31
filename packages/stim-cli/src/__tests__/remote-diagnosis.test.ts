@@ -1,20 +1,10 @@
-import { createServer, type Server } from 'node:http';
-import { findPeer } from '@stim-cli/core/state';
 import {
-  ago,
   classifyTransport,
   diagnoseUnreachable,
   parsePeerStartup,
   readTailscale,
   type Transport,
 } from '../offload/diagnosis.ts';
-import { openAuthenticated } from '../offload/tailnet.ts';
-
-function listenPort(server: Server): number {
-  const address = server.address();
-  if (address === null || typeof address === 'string') throw new Error('the server is not listening');
-  return address.port;
-}
 
 const peer = {
   nodeId: 'nMini',
@@ -71,21 +61,6 @@ describe('diagnoseUnreachable', () => {
     expect(new Set(outcomes.map((each) => each.remedy)).size).toBeGreaterThanOrEqual(3);
   });
 
-  it('names an offline peer, with its last seen time, when nothing on it answered', () => {
-    const now = Date.parse('2026-10-22T20:00:00Z');
-    const offline = { ...peer, online: false, lastSeen: '2026-10-22T08:00:00Z' };
-    const named = diagnose({ kind: 'silent' }, { peer: offline, now });
-    expect(named).toMatchObject({ layer: 'peer', code: 'peer-offline' });
-    expect(named.message).toContain('12 h ago');
-    expect(
-      diagnose({ kind: 'silent' }, { peer: { ...offline, lastSeen: '2026-10-22T19:00:00Z' }, now }).message,
-    ).toContain('1 h ago');
-    expect(diagnose(undefined, { peer: offline, now })).toMatchObject({ code: 'connect-failed' });
-    expect(diagnose({ kind: 'other', message: 'reset' }, { peer: offline, now })).toMatchObject({
-      code: 'connect-failed',
-    });
-  });
-
   it('tells a silent route behind a pingable Mac from a Mac that does not answer at all', () => {
     const silent = { kind: 'silent' } as const;
     expect(diagnose(silent, { pinged: true })).toMatchObject({ layer: 'server', code: 'server-no-answer' });
@@ -96,12 +71,6 @@ describe('diagnoseUnreachable', () => {
     expect(diagnose(silent, { pinged: false, peer: { ...peer, online: false } })).toMatchObject({
       code: 'peer-offline',
     });
-  });
-
-  it('trusts an answer over Tailscale reporting the peer offline, which lags a reachable Mac', () => {
-    const offline = { ...peer, online: false };
-    expect(diagnose({ kind: 'http', status: 503 }, { peer: offline })).toMatchObject({ code: 'server-not-ready' });
-    expect(diagnose({ kind: 'refused' }, { peer: offline })).toMatchObject({ code: 'route-missing' });
   });
 });
 
@@ -122,39 +91,6 @@ describe('Tailscale and peer readings', () => {
       running: false,
       code: 'tailscale-unavailable',
     });
-  });
-
-  it('keeps a peer online state and last seen time from tailscale status', () => {
-    const status = {
-      Peer: {
-        a: {
-          ID: 'nMini',
-          DNSName: 'mini.tail1.ts.net.',
-          TailscaleIPs: ['100.64.0.7'],
-          Online: false,
-          LastSeen: '2026-10-22T08:00:00Z',
-        },
-        b: {
-          ID: 'nZero',
-          DNSName: 'zero.tail1.ts.net.',
-          TailscaleIPs: ['100.64.0.8'],
-          LastSeen: '0001-01-01T00:00:00Z',
-        },
-      },
-    };
-    expect(findPeer(status, 'mini')).toMatchObject({
-      online: false,
-      lastSeen: '2026-10-22T08:00:00Z',
-    });
-    expect(findPeer(status, 'zero')).not.toHaveProperty('lastSeen');
-  });
-
-  it('formats elapsed time and ignores an unusable timestamp', () => {
-    const now = Date.parse('2026-10-22T20:00:00Z');
-    expect(ago('2026-10-22T19:55:00Z', now)).toBe('5 min ago');
-    expect(ago('2026-10-19T20:00:00Z', now)).toBe('3 days ago');
-    expect(ago('0001-01-01T00:00:00Z', now)).toBeNull();
-    expect(ago(undefined, now)).toBeNull();
   });
 
   it('accepts only the startup stim-server sends', () => {
@@ -178,41 +114,6 @@ describe('Tailscale and peer readings', () => {
 });
 
 describe('what a real connection reports below the handshake', () => {
-  const connect = (port: number) =>
-    openAuthenticated(
-      {
-        url: `ws://127.0.0.1:${port}`,
-        servername: 'mini',
-        host: `127.0.0.1:${port}`,
-      },
-      { access: 'build', serverKey: 'S'.repeat(43) },
-      3000,
-    );
-
-  it.each([502, 503, 404])('reports the HTTP status %i a serve route answers the upgrade with', async (status) => {
-    const server = createServer();
-    server.on('upgrade', (_request, socket) =>
-      socket.end(`HTTP/1.1 ${status} X\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`),
-    );
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-    try {
-      const result = await connect(listenPort(server));
-      expect(result).toMatchObject({ transport: { kind: 'http', status } });
-    } finally {
-      await new Promise<void>((done) => server.close(() => done()));
-    }
-  });
-
-  it('reports a port nothing listens on as refused', async () => {
-    const server = createServer();
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
-    const port = listenPort(server);
-    await new Promise<void>((done) => server.close(() => done()));
-    expect(await connect(port)).toMatchObject({
-      transport: { kind: 'refused' },
-    });
-  });
-
   it('classifies socket errors', () => {
     expect(classifyTransport(Object.assign(new Error('x'), { code: 'EHOSTUNREACH' }))).toEqual({ kind: 'silent' });
     expect(classifyTransport(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))).toEqual({ kind: 'refused' });

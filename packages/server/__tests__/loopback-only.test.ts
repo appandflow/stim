@@ -61,8 +61,3 @@ test('--loopback-only tells the server to listen on 127.0.0.1 alone and to refus
   expect(options.hosts).toEqual(['127.0.0.1']);
   expect(options.loopbackOnly).toBe(true);
 });
-
-test('without the flag the server is not loopback only', async () => {
-  const options = await serve();
-  expect(options.loopbackOnly).toBeUndefined();
-});

@@ -3,9 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { SIGNED_TAIL_FILE } from '../engine/apk-signed-tail.ts';
 
-export const V2_SCHEME_ID = 0x7109871a;
-export const V3_SCHEME_ID = 0xf05368c0;
-export const VERITY_PADDING_ID = 0x42726577;
+const V2_SCHEME_ID = 0x7109871a;
 
 export interface SignedApk {
   file: Buffer;

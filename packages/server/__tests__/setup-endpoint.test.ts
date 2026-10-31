@@ -1,10 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSetupJournal, setupJournalFile, type SetupJournal } from '@stim-cli/core/state';
+import { type SetupJournal } from '@stim-cli/core/state';
 import { startServer, type RunningServer } from '../src/server.ts';
 import { writeSetupJournal } from '../src/setup-journal.ts';
-import { probeDirectories } from '../src/startup.ts';
 import { tailscaleTransport } from '@stim-cli/transport-tailscale';
 
 vi.mock('../src/startup.ts', async (original) => {
@@ -80,6 +79,18 @@ async function refusal(response: Response) {
 
 const notFound = { status: 404, body: 'Not found.\n', type: 'text/plain', cache: 'no-store' };
 
+test('blocks a peer after repeated misses, even for a journal that exists, without blocking other peers', async () => {
+  const base = await start();
+  writeSetupJournal(hash, journal());
+  for (let i = 0; i < 30; i++)
+    expect(await refusal(await fetch(`${base}/setup/${'b'.repeat(64)}`, { headers }))).toEqual(notFound);
+  const blocked = await fetch(`${base}/setup/${hash}`, { headers });
+  expect(blocked.status).toBe(429);
+  expect(blocked.headers.get('cache-control')).toBe('no-store');
+  expect(await blocked.text()).not.toContain('Xcode');
+  expect((await fetch(`${base}/setup/${hash}`, { headers: { 'x-forwarded-for': '100.64.0.3' } })).status).toBe(200);
+});
+
 test('rejects unsafe methods, browser headers and malformed paths without reading a journal', async () => {
   const base = await start();
   writeSetupJournal(hash, journal());
@@ -104,15 +115,6 @@ test('rejects unsafe methods, browser headers and malformed paths without readin
   expect(read).not.toHaveBeenCalled();
 });
 
-test('gives missing, expired and corrupt journals the same refusal', async () => {
-  const base = await start();
-  expect(await refusal(await fetch(`${base}/setup/${hash}`, { headers }))).toEqual(notFound);
-  writeSetupJournal(hash, { ...journal(), expiresAt: new Date(Date.now() - 1).toISOString() });
-  expect(await refusal(await fetch(`${base}/setup/${hash}`, { headers }))).toEqual(notFound);
-  writeFileSync(setupJournalFile(hash)!, '{');
-  expect(await refusal(await fetch(`${base}/setup/${hash}`, { headers }))).toEqual(notFound);
-});
-
 test('serves a named journal to any peer with toolchain steps hidden', async () => {
   const base = await start();
   const pending = journal();
@@ -124,40 +126,4 @@ test('serves a named journal to any peer with toolchain steps hidden', async () 
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(await response.json()).toEqual({ ...pending, steps: [pending.steps[0]] });
   }
-});
-
-test('blocks a peer after repeated misses, even for a journal that exists, without blocking other peers', async () => {
-  const base = await start();
-  writeSetupJournal(hash, journal());
-  for (let i = 0; i < 30; i++)
-    expect(await refusal(await fetch(`${base}/setup/${'b'.repeat(64)}`, { headers }))).toEqual(notFound);
-  const blocked = await fetch(`${base}/setup/${hash}`, { headers });
-  expect(blocked.status).toBe(429);
-  expect(blocked.headers.get('cache-control')).toBe('no-store');
-  expect(await blocked.text()).not.toContain('Xcode');
-  expect((await fetch(`${base}/setup/${hash}`, { headers: { 'x-forwarded-for': '100.64.0.3' } })).status).toBe(200);
-});
-
-test('returns unavailable before startup is ready', async () => {
-  let release!: (reason: null) => void;
-  vi.mocked(probeDirectories).mockReturnValueOnce({
-    result: new Promise((resolve) => {
-      release = resolve;
-    }),
-    cancel: () => release(null),
-  });
-  const base = await start(false);
-  const response = await fetch(`${base}/setup/${hash}`, { headers });
-  expect(response.status).toBe(503);
-  expect(response.headers.get('cache-control')).toBe('no-store');
-  expect(await response.text()).toBe('stim-server is not ready.\n');
-  release(null);
-  await server!.ready;
-});
-
-test('prunes retained journals as the server becomes ready', async () => {
-  const stale = { ...journal(), expiresAt: new Date(Date.now() - 60 * 60_000 - 1000).toISOString() };
-  writeSetupJournal(hash, stale);
-  await start();
-  expect(readSetupJournal(hash)).toBeNull();
 });

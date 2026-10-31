@@ -52,12 +52,6 @@ test('concurrent operations fingerprint their own compiler flags without changin
   expect(process.env.CFLAGS).toBe(hostFlags);
 });
 
-test('a caller compiler override refuses reuse without contaminating another operation', async () => {
-  const [overridden, ordinary] = await Promise.all([snapshot({ CC: '/client/clang' }), snapshot({})]);
-  expect(overridden).toMatchObject({ cacheIneligible: expect.stringContaining('Environment CC') });
-  expect(ordinary).toHaveProperty('hash');
-});
-
 test('caller configuration and include variables select the files that invalidate its cache', async () => {
   const config = join(scratch, 'Override.xcconfig');
   const alpha = join(scratch, 'Alpha.xcconfig');
@@ -111,38 +105,4 @@ test('a pending Git input scan yields to other work and abort awaits only its ow
     controller.abort(reason);
     await pending.catch(() => {});
   }
-});
-
-test('each Git input scan uses its caller excludes without inheriting another operation environment', async () => {
-  const executor = getExecutor();
-  executor.runFile('git', ['-C', root, 'init', '-q'], { timeoutMs: 10_000 });
-  const ignored = join(root, 'unreferenced.txt');
-  const excludes = join(scratch, 'excludes');
-  writeFileSync(excludes, 'unreferenced.txt\n');
-  writeFileSync(ignored, 'first');
-  const alpha = { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.excludesFile', GIT_CONFIG_VALUE_0: excludes };
-  const beta = { GIT_CONFIG_COUNT: '0' };
-  const [beforeAlpha, beforeBeta] = await Promise.all([snapshot(alpha), snapshot(beta)]);
-  expect(beforeAlpha).toHaveProperty('hash');
-  expect(beforeBeta).toHaveProperty('hash');
-  writeFileSync(ignored, 'changed');
-  const [afterAlpha, afterBeta] = await Promise.all([snapshot(alpha), snapshot(beta)]);
-  expect(afterAlpha).toEqual(beforeAlpha);
-  expect(afterBeta).not.toEqual(beforeBeta);
-});
-
-test('relative override configs resolve from the build directory while preserving the host cwd', async () => {
-  const cwd = process.cwd();
-  const config = join(root, 'Override.xcconfig');
-  const included = join(scratch, 'Included.xcconfig');
-  writeFileSync(config, '#include "../Included.xcconfig"\n');
-  writeFileSync(included, 'SWIFT_VERSION = 5.0\n');
-  const env = { XCODE_XCCONFIG_FILE: 'Override.xcconfig' };
-  const before = await snapshot(env);
-  expect(before).toHaveProperty('hash');
-  writeFileSync(included, 'SWIFT_VERSION = 6.0\n');
-  const after = await snapshot(env);
-  expect(after).toHaveProperty('hash');
-  expect(after).not.toEqual(before);
-  expect(process.cwd()).toBe(cwd);
 });

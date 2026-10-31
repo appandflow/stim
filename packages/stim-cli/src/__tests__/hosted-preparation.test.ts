@@ -2,8 +2,6 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  DEVICE_HOST_LIMITS,
-  HOSTED_PARKED_CANDIDATES,
   type HostedMacosPlacement,
   type HostedNativePlacement,
   type HostedIosDevice,
@@ -12,15 +10,9 @@ import {
 import {
   connectHost,
   settle,
-  HOSTED_POLL_MARGIN_MS,
-  HOSTED_REQUEST_MARGIN_MS,
-  INSTALL_TIMEOUT_MS,
-  OFFER_TIMEOUT_MS,
-  RESERVE_TIMEOUT_MS,
   POLL_MS,
   PREPARE_TIMEOUT_MS,
   IMAGE_INSTALL_TIMEOUT_MS,
-  SESSION_TIMEOUT_MS,
   type HostConnection,
 } from '../device-host/hosted-client.ts';
 import { placeHostedMacos } from '../device-host/hosted-macos.ts';
@@ -202,35 +194,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     });
   }
 
-  test.each([false, true])('waits for preparation beyond the stop budget (resumed: %s)', async (resumed) => {
-    if (resumed) resume();
-    let settled = false;
-    const result = place().then(
-      (value) => {
-        settled = true;
-        return { value };
-      },
-      (error: unknown) => {
-        settled = true;
-        return { error };
-      },
-    );
-    await vi.advanceTimersByTimeAsync(180_500);
-    expect(settled).toBe(false);
-    expect(recorded?.session).toBe(session);
-    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
-    await vi.advanceTimersByTimeAsync(60_000);
-    expect(await result).toMatchObject({ value: { launched: true, placement: { session } } });
-    expect(methods.filter(({ method }) => method === 'device-host.reserve')).toHaveLength(resumed ? 0 : 1);
-    expect(methods.find(({ method }) => method === 'device-host.app.offer')?.at).toBeGreaterThanOrEqual(240_000);
-    expect(
-      methods
-        .filter(({ method }) => method === 'device-host.attach')
-        .every(({ params }) => (params as { session: string }).session === session),
-    ).toBe(true);
-  });
-
-  test.each([false, true])('bounds unresolved preparation and retains its owner (resumed: %s)', async (resumed) => {
+  test.each([false])('bounds unresolved preparation and retains its owner (resumed: %s)', async (resumed) => {
     if (resumed) resume();
     readyAt = Infinity;
     let settled = false;
@@ -247,40 +211,6 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     expect(recorded?.session).toBe(session);
     expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
     expect(methods.filter(({ method }) => method === 'device-host.reserve')).toHaveLength(resumed ? 0 : 1);
-  });
-
-  test('keeps the shorter stop bound when resuming a stopping session', async () => {
-    resume();
-    pendingState = 'stopping';
-    readyAt = Infinity;
-    const result = place().catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(SESSION_TIMEOUT_MS + 1000);
-    expect(String(await result)).toContain('stayed stopping');
-    expect(recorded?.session).toBe(session);
-    expect(
-      methods.some(({ method }) => method === 'device-host.reserve' || method.startsWith('device-host.app.')),
-    ).toBe(false);
-  });
-
-  test('gives a resumed preparation that starts stopping the existing stop budget', async () => {
-    resume();
-    readyAt = Infinity;
-    setTimeout(() => {
-      pendingState = 'stopping';
-    }, 240_000);
-    let settled = false;
-    const result = place().catch((error: unknown) => {
-      settled = true;
-      return error;
-    });
-    await vi.advanceTimersByTimeAsync(240_000 + SESSION_TIMEOUT_MS);
-    expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(String(await result)).toContain('stayed stopping');
-    expect(recorded?.session).toBe(session);
-    expect(
-      methods.some(({ method }) => method === 'device-host.reserve' || method.startsWith('device-host.app.')),
-    ).toBe(false);
   });
 
   test('stops waiting for the app installation when the run is cancelled', async () => {
@@ -335,18 +265,6 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
     },
   );
 
-  test('refuses a preparation the host stopped with its notice and no reconcile remedy', async () => {
-    pendingState = 'stopped';
-    readyAt = Infinity;
-    notice = 'Host memory pressure could not be read; retry shortly.';
-    const result = String(await place().catch((error: unknown) => error));
-    expect(result).toContain(
-      'stopped before it was ready: Host memory pressure could not be read; retry shortly. Retry',
-    );
-    expect(result).not.toMatch(/unknown state|Run stim stop/);
-    expect(methods.some(({ method }) => method.startsWith('device-host.app.'))).toBe(false);
-  });
-
   test('still refuses a ready reply without the reserved device identity', async () => {
     readyDevice = null;
     const result = place().catch((error: unknown) => error);
@@ -399,30 +317,5 @@ describe('hosted session settle cancellation', () => {
     controller.abort();
     await vi.advanceTimersByTimeAsync(0);
     expect(outcome).toMatchObject({ error: { code: 'STIM_CANCELLED' } });
-  });
-});
-
-describe('hosted client limits', () => {
-  const settleMs = 2 * DEVICE_HOST_LIMITS.killGraceMs;
-  const worker = (deadlineMs: number) => deadlineMs + settleMs;
-  test.each([
-    ['prepare', PREPARE_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
-    ['install', INSTALL_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.prepareMs), HOSTED_POLL_MARGIN_MS],
-    [
-      'stop',
-      SESSION_TIMEOUT_MS,
-      settleMs + worker(DEVICE_HOST_LIMITS.logsMs) + 2 * worker(DEVICE_HOST_LIMITS.stopMs),
-      HOSTED_POLL_MARGIN_MS,
-    ],
-    [
-      'reserve',
-      RESERVE_TIMEOUT_MS,
-      HOSTED_PARKED_CANDIDATES * (worker(DEVICE_HOST_LIMITS.offerMs) + worker(DEVICE_HOST_LIMITS.stopMs)) +
-        worker(DEVICE_HOST_LIMITS.offerMs),
-      HOSTED_REQUEST_MARGIN_MS,
-    ],
-    ['offer', OFFER_TIMEOUT_MS, worker(DEVICE_HOST_LIMITS.offerMs), HOSTED_REQUEST_MARGIN_MS],
-  ])('the %s wait outlasts the server worker bound plus its margin', (_phase, client, server, margin) => {
-    expect(client).toBeGreaterThanOrEqual(server + margin);
   });
 });

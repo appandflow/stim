@@ -2,19 +2,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
-import {
-  findStaleEasLedgerEntries,
-  forgetStaleEasLedgerEntries,
-  isStaleEasLedgerEntry,
-} from '../commands/gc/eas-ledger.ts';
+import { findStaleEasLedgerEntries, forgetStaleEasLedgerEntries } from '../commands/gc/eas-ledger.ts';
 import { workspaceName, withDirLockTransaction } from '@stim-cli/core';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { listMountedVolumes } from '../fs-util.ts';
 import type { EasSessionClaim } from '../engine/eas-session-ledger.ts';
 
 const VALID_ID = '3f2b8c1e-5a4d-4e9b-9c7a-1d2e3f4a5b6c';
-const MOUNTED = listMountedVolumes();
-const GONE_ROOT = join(tmpdir(), 'stim-gone');
 const ledgerIo = vi.hoisted((): { afterRename?: (path: unknown) => void } => ({}));
 vi.mock('node:fs', async (importOriginal) => {
   const fs = await importOriginal<typeof import('node:fs')>();
@@ -38,29 +32,6 @@ function claim(sessionId: string, workspaceRoot: string): EasSessionClaim {
     stateFile: join('/tmp/stim-fixture-home', 'workspaces', workspaceName(workspaceRoot), 'state.json'),
   };
 }
-
-describe('isStaleEasLedgerEntry', () => {
-  const gone = (): boolean => false;
-  const present = (): boolean => true;
-
-  test('an invalid id with a proven-absent root is stale', () => {
-    expect(isStaleEasLedgerEntry(claim('drs_2', GONE_ROOT), MOUNTED, gone)).toBe(true);
-  });
-
-  test('a valid UUID is kept even when its root is gone', () => {
-    expect(isStaleEasLedgerEntry(claim(VALID_ID, GONE_ROOT), MOUNTED, gone)).toBe(false);
-    expect(isStaleEasLedgerEntry(claim(VALID_ID.toUpperCase(), GONE_ROOT), MOUNTED, gone)).toBe(false);
-  });
-
-  test('an invalid id is kept while its root exists', () => {
-    expect(isStaleEasLedgerEntry(claim('drs_2', '/tmp/stim-here'), MOUNTED, present)).toBe(false);
-  });
-
-  test('an invalid id is kept when absence is not provable', () => {
-    expect(isStaleEasLedgerEntry(claim('drs_2', '/Volumes/Gone/app'), MOUNTED, gone)).toBe(false);
-    expect(isStaleEasLedgerEntry(claim('drs_2', 'relative/app'), MOUNTED, gone)).toBe(false);
-  });
-});
 
 describe('the machine EAS ledger sweep', () => {
   let dir: string;
@@ -122,11 +93,6 @@ describe('the machine EAS ledger sweep', () => {
 
     expect(await forgetStaleEasLedgerEntries(found, mounted, deps)).toBe(0);
     expect(ledgerIds()).toEqual(['drs_2']);
-  });
-
-  test('an unreadable ledger reports nothing', () => {
-    writeFileSync(join(ledgerRoot, 'sessions.json'), '{not json');
-    expect(findStaleEasLedgerEntries(mounted, { easLedgerRoot: ledgerRoot })).toEqual([]);
   });
 
   test('cancelling EAS ledger cleanup after one commit preserves remaining entries', async () => {

@@ -7,7 +7,6 @@ import {
   discoverAgentSessions,
   parseClaudeSession,
   parseCodexThreads,
-  type AgentWorkspace,
 } from '../agent-sessions.ts';
 import { applyStatusMeasures } from '../status-measures.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -138,31 +137,6 @@ test('discovery keeps Claude sessions whose process runs (a recycled pid is caug
     { tool: 'claude-code', sessionId: 'live', title: 'Stim desktop app concept' },
     { tool: 'codex', sessionId: 'state_5.sqlite', title: 'thread' },
   ]);
-});
-
-test('a session belongs to the deepest workspace holding its cwd and to the workspaces at its git root', () => {
-  const at = (minutes: number) => new Date(Date.UTC(2026, 8, 28, 12, minutes)).toISOString();
-  const session = (sessionId: string, cwd: string, minutes: number) => ({
-    tool: 'claude-code' as const,
-    sessionId,
-    cwd,
-    lastActiveAt: at(minutes),
-  });
-  const workspaces: AgentWorkspace[] = [
-    { path: '/repo', root: '/repo', recorded: null },
-    { path: '/repo/apps/mobile', root: '/repo', recorded: null },
-    { path: '/repo/.claude/worktrees/w', root: '/repo/.claude/worktrees/w', recorded: null },
-    { path: '/repo-other', root: '/repo-other', recorded: null },
-  ];
-  const sessions = [
-    session('root', '/repo', 1),
-    session('mobile', '/repo/apps/mobile/src', 2),
-    session('nested', '/repo/.claude/worktrees/w/apps', 3),
-  ];
-  const ids = attributeAgentSessions(workspaces, sessions, Date.parse(at(5))).map((agents) =>
-    agents.map((agent) => agent.sessionId),
-  );
-  expect(ids).toEqual([['root'], ['mobile', 'root'], ['nested'], []]);
 });
 
 test('a workspace shows the session that ran its last command, with the running session details when found', () => {

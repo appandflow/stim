@@ -24,7 +24,7 @@ const LAST_LINES = 20;
 
 type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => ChildProcess;
 
-export function nativeDirName(platform: string): string {
+function nativeDirName(platform: string): string {
   return platform === 'android' ? 'android' : 'ios';
 }
 
@@ -34,7 +34,7 @@ function nativeDir(root: string, platform: string) {
 
 export type PrebuildAction = 'none' | 'generate' | 'regenerate' | 'refuse';
 
-export function nativeDirInFingerprint(sources: readonly FingerprintSource[], platform: string): boolean {
+function nativeDirInFingerprint(sources: readonly FingerprintSource[], platform: string): boolean {
   const dir = nativeDirName(platform);
   return sources.some((source) => source.type === 'dir' && source.filePath === dir && source.hash != null);
 }
@@ -43,7 +43,7 @@ export function nativeDirInFingerprint(sources: readonly FingerprintSource[], pl
  * @expo/fingerprint leaves a native directory out of the hash when git ignores it (CNG), so the cache
  * key only covers that directory when this workspace's recorded prebuild ran on the same fingerprint.
  */
-export function prebuildAction({
+function prebuildAction({
   isExpo,
   nativeDirExists,
   nativeDirFingerprinted,
@@ -184,7 +184,7 @@ export function staleNativeDirRefusal(platform: string): { code: string; message
   };
 }
 
-export function prebuildRefusal({
+function prebuildRefusal({
   isExpo,
   platform,
   nativeDirExists,

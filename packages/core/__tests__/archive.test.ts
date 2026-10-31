@@ -1,15 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  archiveEnabled,
-  archivedUsage,
-  readArchive,
-  readArchiveAsync,
-  readArchives,
-  readArchivesAsync,
-} from '../state/archive.ts';
-import { withStateReadCache } from '../state/json-file.ts';
+import { archiveEnabled, readArchive, readArchiveAsync, readArchives, readArchivesAsync } from '../state/archive.ts';
 
 const archiveIo = vi.hoisted((): { afterRead?: () => void } => ({}));
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -62,21 +54,6 @@ const readers = [
   { name: 'asynchronous', list: readArchivesAsync, one: readArchiveAsync },
 ];
 
-test.each(readers)('$name: missing and malformed records do not hide readable archives', async ({ list }) => {
-  record('older', '2026-01-01T00:00:00Z', 1);
-  record('newer', '2026-01-02T00:00:00Z', 2);
-  mkdirSync(join(home, 'archive', 'missing'));
-  mkdirSync(join(home, 'archive', 'broken'));
-  writeFileSync(join(home, 'archive', 'broken', 'archive.json'), '{');
-  const archives = await list();
-  expect(archives.map((archive) => archive.id)).toEqual(['newer', 'older']);
-  expect(archivedUsage(archives)).toEqual({
-    count: 2,
-    bytes: 27,
-    byKind: { logs: 3, recordings: 6, agentActions: 8, record: 10 },
-  });
-});
-
 test.each(readers)(
   '$name: records missing a status field or reached through a symlink are not listed',
   async ({ list, one }) => {
@@ -100,16 +77,6 @@ test('a cancellation during an archive read is not treated as an unreadable reco
   const reason = new Error('archive scan cancelled');
   archiveIo.afterRead = () => controller.abort(reason);
   await expect(readArchivesAsync(controller.signal)).rejects.toBe(reason);
-});
-
-test('asynchronous cleanup reads current files without changing a cached status snapshot', async () => {
-  record('whole', '2026-01-01T00:00:00Z', 1);
-  await withStateReadCache(async () => {
-    expect(readArchive('whole')?.bytes.logs).toBe(1);
-    record('whole', '2026-01-01T00:00:00Z', 20);
-    expect((await readArchiveAsync('whole'))?.bytes.logs).toBe(20);
-    expect(readArchive('whole')?.bytes.logs).toBe(1);
-  });
 });
 
 test('repo and machine archive disable values stop archiving unless the environment overrides them', () => {

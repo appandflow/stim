@@ -119,8 +119,7 @@ function cpuTicks(list: ReturnType<typeof cpus>): CpuTicks {
   return { idle, total };
 }
 
-/** The busy fraction (0..1) between two `os.cpus()` tick totals. Null when the totals did not advance. */
-export function cpuUsageFraction(previous: CpuTicks, current: CpuTicks): number | null {
+function cpuUsageFraction(previous: CpuTicks, current: CpuTicks): number | null {
   const totalDelta = current.total - previous.total;
   if (totalDelta <= 0) return null;
   const idleDelta = current.idle - previous.idle;

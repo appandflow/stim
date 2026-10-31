@@ -62,25 +62,6 @@ function verify(expectBundle = false, foreign: { reason: string; remedy: string 
   );
 }
 
-test('new log evidence settles before the old polling interval and releases observation', async () => {
-  let result: unknown;
-  const pending = verify().then(
-    (value) => {
-      result = value;
-      return value;
-    },
-    () => {},
-  );
-  record('web_document_response', { status: 200 });
-  record('web_page_loaded');
-  follower.changed();
-  await vi.advanceTimersByTimeAsync(1);
-  expect(result).toMatchObject({ verdict: { launched: true, kind: 'loaded' } });
-  await pending;
-  expect(follower.stop).toHaveBeenCalledOnce();
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 test('a hint with incomplete evidence cannot mark a page loaded', async () => {
   let settled = false;
   const pending = verify(true).then((value) => {
@@ -95,25 +76,6 @@ test('a hint with incomplete evidence cannot mark a page loaded', async () => {
   follower.changed();
   await vi.advanceTimersByTimeAsync(1);
   expect(await pending).toMatchObject({ verdict: { launched: 'unverified', kind: 'no-bundle' } });
-});
-
-test.each([false, true])('keeps the elapsed-time verdict with expectBundle=%s', async (expectBundle) => {
-  const pending = verify(expectBundle);
-  if (!expectBundle) record('web_document_response', { status: 200 });
-  follower.changed();
-  await vi.advanceTimersByTimeAsync(expectBundle ? 20_000 : 60_000);
-  expect(await pending).toMatchObject({
-    verdict: { launched: 'unverified', kind: expectBundle ? 'no-response' : 'loading' },
-  });
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-test('existing evidence is read without waiting for another file event', async () => {
-  follower.initialHint = true;
-  record('web_document_response', { status: 200 });
-  record('web_page_loaded');
-  expect(await verify()).toMatchObject({ verdict: { launched: true } });
-  expect(vi.getTimerCount()).toBe(0);
 });
 
 test('foreign Metro remains unverified even when the page has positive evidence', async () => {

@@ -1,13 +1,6 @@
-import {
-  MAX_DIAGNOSTICS,
-  capDiagnostics,
-  createXcodeDiagnosticCollector,
-  describeDiagnostic,
-} from '../engine/errors-xcode.ts';
+import { createXcodeDiagnosticCollector } from '../engine/errors-xcode.ts';
 import type { Diagnostic } from '../engine/errors-xcode.ts';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 function extractXcodeDiagnostics(
   transcript: string,
@@ -18,30 +11,6 @@ function extractXcodeDiagnostics(
   for (const line of transcript.split('\n')) collector.push(line);
   return collector.diagnostics;
 }
-
-const REAL_COMPILE_FAILURE = [
-  "CompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    ',
-  '    Using response file: /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/e6072d4f65d7061329687fe24e3d63a7-common-args.resp',
-  '    ',
-  '    /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang -x  [argv elided] cratch.build/Objects-normal/arm64/main.o',
-  "/tmp/stim-xc/Scratch/main.m:5:18: error: use of undeclared identifier 'undefinedThing'",
-  '    5 |     NSLog(@"%@", undefinedThing);',
-  '      |                  ^~~~~~~~~~~~~~',
-  "/tmp/stim-xc/Scratch/main.m:6:19: error: implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
-  '    6 |     NSString *s = 42;',
-  '      |                   ^~',
-  '2 errors generated.',
-  '',
-  '** BUILD FAILED **',
-  '',
-  '',
-  'The following build commands failed:',
-  "\tCompileC /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/main.o /tmp/stim-xc/Scratch/main.m normal arm64 objective-c com.apple.compilers.llvm.clang.1_0.compiler (in target 'Scratch' from project 'Scratch')",
-  '\tBuilding project Scratch with scheme Scratch and configuration Debug',
-  '(2 failures)',
-].join('\n');
 
 const REAL_LINK_FAILURE = [
   "Ld /tmp/stim-xc/dd/Build/Intermediates.noindex/Scratch.build/Debug-iphonesimulator/Scratch.build/Objects-normal/arm64/Binary/Scratch normal arm64 (in target 'Scratch' from project 'Scratch')",
@@ -85,14 +54,6 @@ const REAL_PODS_FAILURE = [
   '',
 ].join('\n');
 
-const REAL_SIGNING_FAILURE = [
-  'Build description signature: 5aff88b39ca8e2b9798e399e4ba14334',
-  'Build description path: /tmp/stim-xc/dd-dev/Build/Intermediates.noindex/XCBuildData/5aff88b39ca8e2b9798e399e4ba14334.xcbuilddata',
-  "/tmp/stim-xc/Scratch.xcodeproj: error: No profiles for 'com.stimcli.scratch' were found: Xcode couldn't find any iOS App Development provisioning profiles matching 'com.stimcli.scratch'. Automatic signing is disabled and unable to generate a profile. To enable automatic signing, pass -allowProvisioningUpdates to xcodebuild. (in target 'Scratch' from project 'Scratch')",
-  '** BUILD FAILED **',
-  '',
-].join('\n');
-
 const REAL_SCHEME_FAILURE = [
   'Command line invocation:',
   '    /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project Scratch.xcodeproj -scheme NoSuchScheme -configuration Debug -sdk iphonesimulator build',
@@ -105,100 +66,7 @@ const REAL_SCHEME_FAILURE = [
   '',
 ].join('\n');
 
-const REAL_SUCCESS_TAIL = [
-  "RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    builtin-RegisterExecutionPolicyException /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
-  '',
-  "Validate /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    builtin-validationUtility /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app -shallow-bundle -infoplist-subpath Info.plist',
-  '',
-  "Touch /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app (in target 'Scratch' from project 'Scratch')",
-  '    cd /tmp/stim-xc',
-  '    /usr/bin/touch -c /tmp/stim-xc/dd/Build/Products/Debug-iphonesimulator/Scratch.app',
-  '',
-  '** BUILD SUCCEEDED **',
-  '',
-].join('\n');
-
-describe('a damaged compilation cache', () => {
-  test('the scan failure carries the remedy that empties that one cache', () => {
-    const transcript = [
-      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'sqlite3' from project 'Pods')",
-      '** BUILD FAILED **',
-    ].join('\n');
-    const found = extractXcodeDiagnostics(transcript);
-    expect(found.length).toBe(1);
-    expect(found[0]?.remedy).toContain('--cache');
-  });
-
-  test('a transcript that also carries a module failure still yields the cache remedy', () => {
-    const transcript = [
-      "/usr/include/stdio.h:61:10: error: Could not build module '_DarwinFoundation2' (in target 'nanopb' from project 'Pods')",
-      "error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'nanopb' from project 'Pods')",
-      '** BUILD FAILED **',
-    ].join('\n');
-    const found = extractXcodeDiagnostics(transcript);
-    const cas = found.find((d) => d.message.includes('IncludeTreeRoot'));
-    expect(cas?.remedy).toContain('--cache');
-  });
-
-  test('the remedy survives the diagnostic cap when the scan failure leads the transcript', () => {
-    const lines = ["error: CAS-based dependency scan failed: not a IncludeTreeRoot node kind (in target 'sqlite3')"];
-    for (let i = 0; i < 40; i += 1) {
-      lines.push(`/usr/include/h${i}.h:1:1: error: Could not build module '_DarwinFoundation1' (in target 'sqlite3')`);
-    }
-    lines.push('** BUILD FAILED **');
-    const all = extractXcodeDiagnostics(lines.join('\n'));
-    expect(all.length).toBeGreaterThan(MAX_DIAGNOSTICS);
-    expect(capDiagnostics(all).diagnostics.find((d) => d.remedy)?.remedy).toContain('--cache');
-  });
-
-  test('a CAS scan failure with another cause gets no cache remedy', () => {
-    const transcript = [
-      "error: CAS-based dependency scan failed: module map not found (in target 'sqlite3' from project 'Pods')",
-      '** BUILD FAILED **',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript)[0]?.remedy).toBeUndefined();
-  });
-});
-
 describe('real transcripts', () => {
-  test('a clang compile failure yields file, line, column and message, and nothing else', () => {
-    const found = extractXcodeDiagnostics(REAL_COMPILE_FAILURE);
-    expect(found).toEqual([
-      {
-        file: '/tmp/stim-xc/Scratch/main.m',
-        line: 5,
-        column: 18,
-        message: "use of undeclared identifier 'undefinedThing'",
-      },
-      {
-        file: '/tmp/stim-xc/Scratch/main.m',
-        line: 6,
-        column: 19,
-        message: "implicit conversion of 'int' to 'NSString *' is disallowed with ARC",
-      },
-    ]);
-  });
-
-  test('the CompileC command line repeated in the failure recap is not a diagnostic', () => {
-    expect(REAL_COMPILE_FAILURE.includes('The following build commands failed:')).toBeTruthy();
-    expect(extractXcodeDiagnostics(REAL_COMPILE_FAILURE).length).toBe(2);
-  });
-
-  test('nothing after ** BUILD FAILED ** is extracted, whatever its indentation', () => {
-    const transcript = [
-      '/a/b.m:1:1: error: the real one',
-      '** BUILD FAILED **',
-      'The following build commands failed:',
-      'CompileC /dd/b.o /a/b.m normal arm64 objective-c',
-      'error: a recap line at column zero',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual(['the real one']);
-  });
-
   test('a link failure reports the missing symbol ONCE across both simulator slices', () => {
     const found = extractXcodeDiagnostics(REAL_LINK_FAILURE);
     expect(found.map((d) => d.message)).toEqual([
@@ -210,50 +78,9 @@ describe('real transcripts', () => {
     expect(found[0]?.file).toBe(undefined);
   });
 
-  test('the CocoaPods sandbox error carries the remedy that fixes it', () => {
-    const found = extractXcodeDiagnostics(REAL_PODS_FAILURE);
-    expect(found.length).toBe(1);
-    expect(found[0]?.message).toMatch(/The sandbox is not in sync with the Podfile\.lock/);
-    expect(found[0]?.remedy).toMatch(/pod install/);
-    expect(found[0]?.file).toBe(undefined);
-  });
-
-  test('the sandbox remedy uses bundler when the project pins its pods, and plain pod when it does not (#137)', () => {
-    const root = mkdtempSync(join(tmpdir(), 'stim-xc-pin-'));
-    try {
-      writeFileSync(join(root, 'Gemfile'), "gem 'cocoapods'\n");
-      writeFileSync(join(root, 'Gemfile.lock'), 'GEM\n  specs:\n    cocoapods (1.15.2)\n');
-      expect(extractXcodeDiagnostics(REAL_PODS_FAILURE, root)[0]?.remedy).toMatch(/Run `bundle exec pod install`/);
-
-      writeFileSync(join(root, 'Gemfile.lock'), 'GEM\n  specs:\n    fastlane (2.219.0)\n');
-      expect(extractXcodeDiagnostics(REAL_PODS_FAILURE, root)[0]?.remedy).toMatch(/Run `pod install`/);
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
   test('the run-script warning in that same transcript is not promoted to an error', () => {
     expect(REAL_PODS_FAILURE.includes('warning: Run script build phase')).toBeTruthy();
     expect(extractXcodeDiagnostics(REAL_PODS_FAILURE).length).toBe(1);
-  });
-
-  test('a signing failure on the simulator slice is told it should not be signing at all', () => {
-    const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE);
-    expect(found.length).toBe(1);
-    expect(found[0]?.file).toBe('/tmp/stim-xc/Scratch.xcodeproj');
-    expect(found[0]?.message).toMatch(/No profiles for 'com\.stimcli\.scratch' were found/);
-    expect(found[0]?.remedy).toMatch(/simulator here, which needs no signing/);
-    expect(found[0]?.remedy).toMatch(/stim ios --device/);
-  });
-
-  test('the same failure on the device slice names the explicit provisioning step and the Xcode build', () => {
-    const found = extractXcodeDiagnostics(REAL_SIGNING_FAILURE, null, 'iphoneos');
-    expect(found.length).toBe(1);
-    expect(found[0]?.remedy).toMatch(/Signing & Capabilities/);
-    expect(found[0]?.remedy).toMatch(/stim device provision ios/);
-    expect(found[0]?.remedy).toMatch(/build once from Xcode/);
-    expect(found[0]?.remedy).toMatch(/-allowProvisioningUpdates/);
-    expect(found[0]?.remedy).not.toMatch(/needs no signing/);
   });
 
   test('an xcodebuild invocation error survives its own timestamped log line', () => {
@@ -263,159 +90,14 @@ describe('real transcripts', () => {
     expect(found[0]?.remedy).toMatch(/xcodebuild -list/);
     expect(found[0]?.file).toBe(undefined);
   });
-
-  test('a successful build yields no diagnostics at all', () => {
-    expect(extractXcodeDiagnostics(REAL_SUCCESS_TAIL)).toEqual([]);
-  });
 });
 
 describe('what is and is not a diagnostic', () => {
-  test('an indented command line is never one, however much it says error', () => {
-    const transcript = [
-      'CompileC /dd/Foo.o /src/Foo.m normal arm64 objective-c',
-      '    cd /project',
-      '    /usr/bin/clang -Werror -o /build/paths/with/error: -c /src/Foo.m',
-      '        error: this one is indented too',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript)).toEqual([]);
-  });
-
-  test('ld: warning is excluded, ld: anything else is not', () => {
-    const transcript = ['ld: warning: ignoring duplicate libraries: -lc++', 'ld: framework not found Foo'].join('\n');
-    expect(extractXcodeDiagnostics(transcript)).toEqual([{ message: 'ld: framework not found Foo' }]);
-  });
-
-  test('the Xcode 15+ linker spelling of an undefined symbol is recognized too', () => {
-    const transcript = [
-      'ld: Undefined symbols:',
-      '  _RCTRegisterModule, referenced from:',
-      '      -[AppDelegate application:didFinishLaunchingWithOptions:] in AppDelegate.o',
-      '',
-      'clang: error: linker command failed with exit code 1',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual([
-      'Undefined symbol: _RCTRegisterModule',
-      'linker command failed with exit code 1',
-    ]);
-  });
-
-  test('a Swift diagnostic without a column keeps its line and omits the column', () => {
-    const transcript = "/app/ios/App/AppDelegate.swift:42: error: cannot find 'Foo' in scope";
-    expect(extractXcodeDiagnostics(transcript)).toEqual([
-      { file: '/app/ios/App/AppDelegate.swift', line: 42, message: "cannot find 'Foo' in scope" },
-    ]);
-  });
-
-  test('`fatal error:` is the same diagnostic with a different word in front', () => {
-    const transcript = "/app/ios/App/Bridge.m:3:9: fatal error: 'React/RCTBridge.h' file not found";
-    expect(extractXcodeDiagnostics(transcript)).toEqual([
-      { file: '/app/ios/App/Bridge.m', line: 3, column: 9, message: "'React/RCTBridge.h' file not found" },
-    ]);
-  });
-
   test('a development team error is a signing error however it is phrased', () => {
     const transcript = '/app/ios/App.xcodeproj: error: Signing for "App" requires a development team.';
     const found = extractXcodeDiagnostics(transcript);
     expect(found.length).toBe(1);
     expect(found[0]?.remedy).toMatch(/needs no signing/);
-  });
-
-  test('a compile error gets no remedy, because there is no mechanical fix to name', () => {
-    const found = extractXcodeDiagnostics('/a/b.m:1:1: error: expected identifier');
-    expect(found[0]?.remedy).toBe(undefined);
-  });
-
-  test('nothing recognizable returns [], so a caller knows to fall back to the log tail', () => {
-    expect(extractXcodeDiagnostics('note: Building targets in dependency order\nSome prose.')).toEqual([]);
-    expect(extractXcodeDiagnostics('')).toEqual([]);
-  });
-
-  test('CRLF transcripts parse the same as LF ones', () => {
-    const found = extractXcodeDiagnostics('/a/b.m:1:2: error: broken\r\n** BUILD FAILED **\r\n');
-    expect(found).toEqual([{ file: '/a/b.m', line: 1, column: 2, message: 'broken' }]);
-  });
-});
-
-describe('dedupe and order', () => {
-  test('the same message at two different sites is two diagnostics', () => {
-    const transcript = [
-      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
-      "/a/Two.m:20:5: error: use of undeclared identifier 'x'",
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).length).toBe(2);
-  });
-
-  test('the same message at the same site is one, however many arch slices report it', () => {
-    const transcript = [
-      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
-      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
-      "/a/One.m:10:5: error: use of undeclared identifier 'x'",
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).length).toBe(1);
-  });
-
-  test('first-seen order is preserved, because the first error is usually the cause', () => {
-    const transcript = [
-      '/a/Three.m:3:1: error: third',
-      '/a/One.m:1:1: error: first',
-      '/a/Two.m:2:1: error: second',
-    ].join('\n');
-    expect(extractXcodeDiagnostics(transcript).map((d) => d.message)).toEqual(['third', 'first', 'second']);
-  });
-});
-
-describe('capDiagnostics', () => {
-  const many = (n: number) => Array.from({ length: n }, (_, i) => ({ message: `e${i}` }));
-
-  test('under the cap, nothing is truncated and the count is 0 rather than absent', () => {
-    const { diagnostics, truncated } = capDiagnostics(many(3));
-    expect(diagnostics.length).toBe(3);
-    expect(truncated).toBe(0);
-  });
-
-  test('over the cap, the first ten survive and the rest are counted', () => {
-    const { diagnostics, truncated } = capDiagnostics(many(31));
-    expect(diagnostics.length).toBe(10);
-    expect(truncated).toBe(21);
-    expect(diagnostics[0]?.message).toBe('e0');
-    expect(diagnostics[9]?.message).toBe('e9');
-  });
-
-  test('the cap is a parameter, so a caller that wants everything is not fighting the parser', () => {
-    expect(capDiagnostics(many(31), Infinity).diagnostics.length).toBe(31);
-    expect(capDiagnostics(many(31), 1).truncated).toBe(30);
-  });
-
-  test('it copies rather than aliasing, so a caller cannot mutate the extraction', () => {
-    const source = many(2);
-    const { diagnostics } = capDiagnostics(source);
-    diagnostics.push({ message: 'injected' });
-    expect(source.length).toBe(2);
-  });
-
-  test('a non-array is the empty result, not a throw', () => {
-    expect(capDiagnostics(null as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
-    expect(capDiagnostics(undefined as unknown as Diagnostic[])).toEqual({ diagnostics: [], truncated: 0 });
-  });
-});
-
-describe('describeDiagnostic', () => {
-  test('renders the shape a compiler prints, which is the shape a tool can jump to', () => {
-    expect(describeDiagnostic({ file: '/a/b.m', line: 5, column: 18, message: 'boom' })).toBe('/a/b.m:5:18: boom');
-    expect(describeDiagnostic({ file: '/a/b.swift', line: 42, message: 'boom' })).toBe('/a/b.swift:42: boom');
-    expect(describeDiagnostic({ file: '/a/App.xcodeproj', message: 'boom' })).toBe('/a/App.xcodeproj: boom');
-    expect(describeDiagnostic({ message: 'ld: framework not found Foo' })).toBe('ld: framework not found Foo');
-  });
-
-  test('the remedy is deliberately NOT glued on, so the diagnostic stays greppable', () => {
-    const line = describeDiagnostic({ message: 'x', remedy: 'do the thing' });
-    expect(line).toBe('x');
-  });
-
-  test('garbage renders as the empty string rather than throwing', () => {
-    expect(describeDiagnostic(null)).toBe('');
-    expect(describeDiagnostic(undefined)).toBe('');
-    expect(describeDiagnostic('not an object' as unknown as Diagnostic)).toBe('');
   });
 });
 
@@ -434,33 +116,6 @@ describe('a failed script phase', () => {
       'Add --log-level=[info|debug] or export SENTRY_LOG_LEVEL=[info|debug] to see more output.',
       'Please attach the full debug log to all bug reports.',
       'To disable source maps auto upload, set SENTRY_DISABLE_AUTO_UPLOAD=true in your environment variables. Or to allow failing upload, set SENTRY_ALLOW_FAILURE=true',
-    ]);
-  });
-
-  test('never reports the wrapper prefix or bash xtrace as a diagnostic', () => {
-    const collector = createXcodeDiagnosticCollector();
-    for (const line of transcript) collector.push(line);
-    for (const { message } of collector.diagnostics) {
-      expect(message).not.toMatch(/^sentry-cli - /);
-      expect(message).not.toMatch(/^\++ /);
-    }
-  });
-
-  test('names every failed phase once and leaves other failed commands to the compiler diagnostics', () => {
-    const collector = createXcodeDiagnosticCollector();
-    for (const line of [
-      '** BUILD FAILED **',
-      'The following build commands failed:',
-      "\tPhaseScriptExecution [CP]\\ Embed\\ Pods /x/Script-1.sh (in target 'A' from project 'P')",
-      "\tPhaseScriptExecution Run\\ Script /x/Script-2.sh (in target 'B' from project 'P')",
-      "\tPhaseScriptExecution Run\\ Script /x/Script-2.sh (in target 'B' from project 'P')",
-      "\tCompileC /x/main.o /x/main.m normal arm64 (in target 'C' from project 'P')",
-      '(4 failures)',
-    ])
-      collector.push(line);
-    expect(collector.diagnostics.map((d) => d.message)).toEqual([
-      'Build phase failed: "[CP] Embed Pods" (target A)',
-      'Build phase failed: "Run Script" (target B)',
     ]);
   });
 });

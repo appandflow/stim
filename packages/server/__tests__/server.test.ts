@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -117,7 +118,7 @@ vi.mock('node:fs', async (importOriginal) => {
 });
 
 const FAKE_STATUS_WORKER = `
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { parentPort, threadId, workerData } from 'node:worker_threads';
 const env = process.env;
@@ -127,6 +128,7 @@ lifecycle('start');
 appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker', cwd: workerData.cwd }) + '\\n');
 const payloads = JSON.parse(env.FAKE_STIM_PAYLOADS);
 let index = 0;
+let lastStatus;
 parentPort.on('message', (message) => {
   if (message !== 'stop') return;
   appendFileSync(env.FAKE_STIM_CALLS, JSON.stringify({ args: 'status-worker stop', cwd: workerData.cwd }) + '\\n');
@@ -134,6 +136,12 @@ parentPort.on('message', (message) => {
   process.exit(0);
 });
 setInterval(() => {
+  if (env.FAKE_STIM_STATUS_FILE) {
+    const line = readFileSync(env.FAKE_STIM_STATUS_FILE, 'utf8');
+    if (line !== lastStatus) parentPort.postMessage({ line });
+    lastStatus = line;
+    return;
+  }
   if (index < payloads.length) return void parentPort.postMessage({ line: JSON.stringify(payloads[index++]) });
   if (env.FAKE_STIM_EXIT) {
     lifecycle('stop');
@@ -7944,17 +7952,17 @@ describe('frames.subscribe', () => {
   });
 
   test.skipIf(!fakeTailscale)('ends the subscription when the simulator stops, and stops capturing', async () => {
-    const booted = statusPayload({ ios: OWNED_SIM });
+    const statusFile = join(root, 'status.json');
+    writeFileSync(statusFile, JSON.stringify(statusPayload({ ios: OWNED_SIM })));
     const port = await startWithTools({
-      FAKE_STIM_PAYLOADS: JSON.stringify([
-        ...Array.from({ length: 25 }, () => booted),
-        statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } }),
-      ]),
+      FAKE_STIM_STATUS_FILE: statusFile,
       FAKE_FRAMES: JSON.stringify([jpeg(10, 20, 'A').toString('base64')]),
     });
     const client = await authed(port);
     await client.request('frames.subscribe', { workspace, platform: 'ios' });
     expect(await client.next()).toMatchObject({ event: 'frame', width: 10, height: 20 });
+    writeFileSync(`${statusFile}.next`, JSON.stringify(statusPayload({ ios: { ...OWNED_SIM, state: 'Shutdown' } })));
+    renameSync(`${statusFile}.next`, statusFile);
     expect(await client.next()).toEqual({
       event: 'error',
       subscription: 's1',

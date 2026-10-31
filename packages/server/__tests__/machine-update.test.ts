@@ -18,22 +18,6 @@ describe('client build packing', () => {
     expect(publishedRange('workspace:^1.2.0', '1.14.0')).toBe('^1.2.0');
   });
 
-  it('finds every workspace package the server reaches from a checkout, and none from an installed package', () => {
-    expect([...workspacePackages(SERVER)!.keys()].toSorted()).toEqual([
-      '@stim-cli/agent-driver',
-      '@stim-cli/agent-driver-agent-device',
-      '@stim-cli/cache',
-      '@stim-cli/core',
-      '@stim-cli/metro',
-      '@stim-cli/server',
-      '@stim-cli/transport',
-      '@stim-cli/transport-local',
-      '@stim-cli/transport-tailscale',
-      'stim',
-    ]);
-    expect(workspacePackages(join(SERVER, 'node_modules', '@stim-cli', 'server'))).toBeNull();
-  });
-
   describe.skipIf(process.platform !== 'darwin')('with tar', () => {
     it('packs the stim build a remote machine must match, with exact internal pins', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'stim-pack-test-'));

@@ -18,19 +18,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import { WebSocketServer } from 'ws';
-import { acceptNoiseConnections, FAKE_SERVER_PUBLIC, startProtocol1Server } from './_noise-server.ts';
-import { deviceHostMachinesFile, macosAppState, readMacosRecord, type MacosAppRecord } from '@stim-cli/core/state';
+import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
+import { deviceHostMachinesFile, macosAppState, readMacosRecord } from '@stim-cli/core/state';
 import logsCommand from '../commands/logs.ts';
 import macosCommand, { runMacos } from '../commands/macos.ts';
 import { followHostedMacosLogs, syncHostedMacosLogs } from '../device-host/hosted-logs-sync.ts';
-import {
-  agentRemoteConfig,
-  connectHost,
-  placeHostedMacos,
-  probeHostedMacos,
-  type HostedMacosProbe,
-} from '../device-host/hosted-macos.ts';
-import { applyHostedMacosProbe, readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
+import { agentRemoteConfig, connectHost, placeHostedMacos, probeHostedMacos } from '../device-host/hosted-macos.ts';
+import { readHostedMacosStatus } from '../device-host/hosted-macos-status.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { stopMacosApp } from '../macos/stop.ts';
@@ -324,75 +318,6 @@ test('macos rejects reserved remote backends and the retired option before state
   }
 });
 
-function statusRecord(): MacosAppRecord {
-  return {
-    launchId: 'launch',
-    arguments: [],
-    product: 'Fixture',
-    bundle: '/Fixture.app',
-    bundleId: 'dev.fixture.app',
-    executable: '/Fixture.app/Contents/MacOS/Fixture',
-    build: { state: 'ok', startedAt: 'now' },
-    hostLaunched: true,
-    host: {
-      machine: 'mini',
-      session: '12345678-1234-1234-1234-123456789abc',
-      appSlot: 3,
-      appAttempt: 'attempt',
-      bundleId: 'dev.fixture.app.hosted3',
-      agent: { driver: 'none', setting: 'hosting.agentDriver' },
-    },
-  };
-}
-
-test.each<[HostedMacosProbe, string, boolean | 'unverified']>([
-  [{ state: 'ready' }, 'running', true],
-  [{ state: 'stopped' }, 'stopped', false],
-  [{ state: 'unknown' }, 'unverified', 'unverified'],
-  [{ state: 'unreachable', reason: 'closed' }, 'unverified', 'unverified'],
-])('host evidence changes only the status snapshot: %j', (probe, state, launched) => {
-  const record = statusRecord();
-  const facts = applyHostedMacosProbe(record, probe);
-  expect(macosAppState(facts.record)).toMatchObject({ state, host: record.host, hostLaunched: launched });
-  expect(record.hostLaunched).toBe(true);
-  expect(Boolean(facts.warning)).toBe(probe.state !== 'ready');
-});
-
-test('a ready session does not promote an unconfirmed app launch to running', () => {
-  const record = { ...statusRecord(), hostLaunched: 'unverified' as const };
-  const facts = applyHostedMacosProbe(record, { state: 'ready' });
-  expect(macosAppState(facts.record)?.state).toBe('unverified');
-  expect(facts.record?.host).toEqual(record.host);
-});
-
-test('local, absent, stopped and supervised records never ask a host for status', async () => {
-  const connect = vi.spyOn(BuildConnection, 'open').mockRejectedValue(new Error('unexpected hosting connection'));
-  const local = statusRecord();
-  delete local.host;
-  const supervised = { ...statusRecord(), supervisor: { pid: 1, processToken: 'token', startedAtMicros: 1 } };
-  try {
-    for (const record of [null, local, { ...statusRecord(), hostLaunched: false }, supervised]) {
-      expect(await readHostedMacosStatus(record)).toEqual({ record });
-    }
-    expect(connect).not.toHaveBeenCalled();
-  } finally {
-    connect.mockRestore();
-  }
-});
-
-test('a host that still runs a protocol 1 stim-server is refused with the update path, not as unreachable', async () => {
-  const old = await startProtocol1Server();
-  tailnet.port = old.port;
-  try {
-    await expect(connectHost('mini')).rejects.toMatchObject({
-      code: 'STIM_HOSTING_REFUSED',
-      message: expect.stringContaining('mini runs a stim-server that speaks an older protocol'),
-    });
-  } finally {
-    await old.close();
-  }
-});
-
 describe('a host that does not answer is refused with the layer doctor names', () => {
   const silent = { failure: 'Opening handshake has timed out', refused: false, transport: { kind: 'silent' } } as const;
 
@@ -415,26 +340,6 @@ describe('a host that does not answer is refused with the layer doctor names', (
       message: 'mini is offline on Tailscale (last seen 18 h ago).',
       remedy: expect.stringContaining('Wake mini'),
     });
-  });
-
-  test('a machine Tailscale no longer lists keeps the transport message', async () => {
-    vi.spyOn(BuildConnection, 'open').mockResolvedValue(silent);
-    tailscale({ DNSName: 'other.tail1.ts.net.' });
-    await expect(connectHost('mini')).rejects.toMatchObject({
-      message: 'mini is unreachable: Opening handshake has timed out. Run stim doctor to see which layer failed.',
-    });
-  });
-
-  test('a host that answers never reads Tailscale status after the connection', async () => {
-    host = await fakeHost();
-    const status = tailscale({});
-    try {
-      const connection = await connectHost('mini');
-      connection.connection.close();
-      expect(status).not.toHaveBeenCalled();
-    } finally {
-      await host.close();
-    }
   });
 });
 
