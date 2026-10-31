@@ -592,7 +592,9 @@ test.each([
 test('an Enter pressed before the question is discarded on a terminal and left alone without one', async () => {
   const tty = Object.assign(new PassThrough(), { isTTY: true });
   tty.write('\n');
-  await discardTypedAhead(tty);
+  const discarded = discardTypedAhead(tty);
+  await vi.runAllTimersAsync();
+  await discarded;
   expect(tty.read()).toBeNull();
   const pipe = new PassThrough();
   pipe.write('y\n');
@@ -602,7 +604,9 @@ test('an Enter pressed before the question is discarded on a terminal and left a
 
 test('a question timeout returns no answer rather than an interrupt refusal', async () => {
   const input = createInterface({ input: new PassThrough(), output: new PassThrough() });
-  await expect(confirmSetup(input, 'Approve? ', 1)).resolves.toBe(false);
+  const answer = confirmSetup(input, 'Approve? ', 1);
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(answer).resolves.toBe(false);
 });
 
 test.each(['install', 'approval wait', 'tools'])(
@@ -705,7 +709,7 @@ test('a registry hint completes only this ticket grant before the next approval 
   } finally {
     await vi.advanceTimersByTimeAsync(1000);
     expect(await pending).toBe(0);
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 

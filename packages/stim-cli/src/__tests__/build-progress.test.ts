@@ -105,7 +105,7 @@ describe('active build record', () => {
       expect(readBuildDetail(root, claim.claimId)).toBeNull();
       releaseClaim(claim);
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   });
 
@@ -349,7 +349,7 @@ describe('macOS builds', () => {
         }),
       ]);
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   });
 

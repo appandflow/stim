@@ -214,7 +214,7 @@ describe.skipIf(process.platform !== 'darwin')('service lifecycle', () => {
 
   afterEach(() => {
     process.argv = previousArgv;
-    vi.useRealTimers();
+    vi.clearAllTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();

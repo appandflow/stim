@@ -88,7 +88,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
+  vi.clearAllTimers();
   vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
 });

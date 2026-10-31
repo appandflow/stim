@@ -1,7 +1,7 @@
 import { LatestFrames } from '../src/frame-delivery.ts';
 
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+afterEach(() => vi.clearAllTimers());
 
 it('keeps only the latest JPEG while congested and cancels pending delivery on stop', () => {
   const sent: string[] = [];

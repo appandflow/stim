@@ -84,7 +84,7 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
-  vi.useRealTimers();
+  vi.clearAllTimers();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });

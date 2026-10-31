@@ -68,7 +68,7 @@ afterEach(async () => {
     await closed;
   }
   child = undefined;
-  vi.useRealTimers();
+  vi.clearAllTimers();
   resetExecutor();
   vi.unstubAllEnvs();
   rmSync(home, { recursive: true, force: true });

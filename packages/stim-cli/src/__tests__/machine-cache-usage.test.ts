@@ -183,7 +183,7 @@ test('machine report probes serialize their real children on the operation owner
     probe.mockRestore();
     for (const child of children) {
       if (inspectProcessIdentity(child) === 'same') process.kill(child.pid, 'SIGKILL');
-      expect(await waitForProcessExit(child, 5000)).toBe(true);
+      await vi.waitFor(async () => expect(await waitForProcessExit(child, 0)).toBe(true), { timeout: 5000 });
     }
   }
 });

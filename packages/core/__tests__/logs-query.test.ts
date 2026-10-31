@@ -45,7 +45,7 @@ describe('incremental tailing', () => {
       stop();
       expect(seen).toEqual(['before rotation', 'after rotation']);
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   });
 
@@ -86,7 +86,7 @@ describe('incremental tailing', () => {
       ]);
       stop();
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   });
 });
@@ -149,7 +149,7 @@ test('stopping a follow emits the Expo error it was still holding', () => {
     stop();
     expect(seen).toEqual([' ERROR  boom\n    at a (/app/a.js:1:2)']);
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 

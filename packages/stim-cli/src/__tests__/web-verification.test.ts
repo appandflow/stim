@@ -35,7 +35,7 @@ beforeEach(() => {
 
 afterEach(() => {
   abort.abort();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });

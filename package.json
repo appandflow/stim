@@ -14,6 +14,8 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "test": "vitest run",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:compat": "vitest run --config vitest.compat.config.ts",
     "test:runtime": "node test/runtime-floor.mjs",
     "test:watch": "vitest",

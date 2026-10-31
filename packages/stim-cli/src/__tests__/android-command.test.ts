@@ -3021,7 +3021,7 @@ describe('the remote cache', () => {
     });
     try {
       await installed;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.advanceTimersByTimeAsync(20);
       expect(installationStarted).toBe(true);
       expect(returned).toBe(false);
     } finally {
@@ -3057,7 +3057,7 @@ describe('the remote cache', () => {
         resolveRemoteBuild: async () => ({ timedOut: true }),
       });
       result = await h.run();
-      await new Promise((r) => setTimeout(r, 20));
+      await vi.advanceTimersByTimeAsync(20);
     } finally {
       process.exit = originalExit;
     }
@@ -3628,7 +3628,7 @@ describe('Contract 5: the device-log collector', () => {
     writeWorkspaceState(root, {
       collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
     });
-    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }) });
+    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }), pidAlive: () => false });
     await h.run();
     expect(h.calls.kill).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
     expect(h.calls.spawn.length).toBe(1);

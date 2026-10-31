@@ -56,7 +56,7 @@ beforeEach(() => {
 afterEach(() => {
   stop?.();
   stop = undefined;
-  vi.useRealTimers();
+  vi.clearAllTimers();
   rmSync(home, { recursive: true, force: true });
 });
 

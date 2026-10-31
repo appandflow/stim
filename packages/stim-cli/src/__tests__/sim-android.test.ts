@@ -237,7 +237,7 @@ describe('resolveOwnedAvdSerialAsync with a busy foreign emulator', () => {
     vi.useFakeTimers();
   });
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   async function settlesWithin<T>(promise: Promise<T>, ms: number): Promise<{ settled: boolean; value?: T }> {
@@ -586,7 +586,9 @@ test('waitForBoot keeps waiting after the boot properties until the package mana
     },
     spawn: () => null,
   });
-  const result = await waitForBoot('emulator-5554', 5000, { pollMs: 1 });
+  const booting = waitForBoot('emulator-5554', 5000, { pollMs: 1 });
+  await vi.runAllTimersAsync();
+  const result = await booting;
   expect(result).toEqual({ ok: true });
   expect(calls.filter((cmd) => /shell pm path android/.test(cmd))).toHaveLength(3);
   expect(calls.filter((cmd) => /getprop/.test(cmd)).length).toBeGreaterThanOrEqual(3);
@@ -628,7 +630,7 @@ test.each([25, 2000])('boot timeout retains diagnostics within a separate budget
     );
     expect(Date.now() - diagnostics[0]!.at).toBeLessThanOrEqual(5000);
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 

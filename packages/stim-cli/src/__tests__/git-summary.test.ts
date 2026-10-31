@@ -39,7 +39,7 @@ describe('readWorktreeGit', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
     resetExecutor();
     delete process.env.STIM_HOME;
     rmSync(base, { recursive: true, force: true });

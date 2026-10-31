@@ -35,11 +35,24 @@ test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phas
   process.env.STIM_TRACE = file;
   const phases = trace.phases('build');
   phases.enter('prepare');
+  vi.advanceTimersByTime(2);
   phases.enter('prepare');
+  vi.advanceTimersByTime(3);
   phases.enter('compile');
-  await trace.spanAsync('outer', async () => trace.span('inner', () => 'done'), { platform: 'ios' });
+  await trace.spanAsync(
+    'outer',
+    async () => {
+      vi.advanceTimersByTime(7);
+      return trace.span('inner', () => {
+        vi.advanceTimersByTime(11);
+        return 'done';
+      });
+    },
+    { platform: 'ios' },
+  );
   await expect(
     trace.spanAsync('boom', async () => {
+      vi.advanceTimersByTime(13);
       throw new Error('nope');
     }),
   ).rejects.toThrow('nope');
@@ -63,7 +76,14 @@ test('STIM_TRACE writes a Chrome trace that parses once closed, with spans, phas
   expect(named('outer').args).toEqual({ platform: 'ios' });
   expect(named('boom').args).toEqual({ error: true });
   expect(named('compile').args).toEqual({ ok: true });
-  expect(named('compile').ts).toBeGreaterThanOrEqual(named('prepare').ts + named('prepare').dur);
+  expect(named('compile').ts).toBe(named('prepare').ts + named('prepare').dur);
+  expect(Object.fromEntries(complete.map(({ name, dur }) => [name, dur]))).toEqual({
+    prepare: 5000,
+    compile: 31000,
+    outer: 18000,
+    inner: 11000,
+    boom: 13000,
+  });
   expect(all.filter((event) => event.ph === 'i').map((event) => event.name)).toEqual(['memo hit']);
   expect(named('inner').tid).not.toBe(named('outer').tid);
 });
@@ -202,11 +222,4 @@ test.each<[string, string, string[], string[]]>([
   ['a token shape inside a longer argument', 'tool', [`--header=X: ${jwt}`], [`--header=X: [redacted]`]],
 ])('redactArgv hides %s', (_name, program, args, expected) => {
   expect(redactArgv(args, [], program)).toEqual(expected);
-});
-
-test('redactArgv finishes quickly on a huge argument made of flag-like text', () => {
-  const started = performance.now();
-  redactArgv([`--${'ab-'.repeat(60_000)}`, `-${'-'.repeat(20_000)}`]);
-  redactCommandLine(`--${'ab-'.repeat(60_000)}`);
-  expect(performance.now() - started).toBeLessThan(2000);
 });

@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const stop of stops.splice(0)) stop();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   vi.restoreAllMocks();
   syncBuiltinESMExports();
   rmSync(root, { recursive: true, force: true });

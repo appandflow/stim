@@ -197,7 +197,10 @@ test.each([true, false])('native hosted readiness requires a live app process: %
   native.runFile.mockImplementation((file, args = [], options) =>
     args.includes('pidof') && !alive ? '' : run(file, args, options),
   );
-  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(alive ? true : 'unverified');
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('am')));
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe(alive ? true : 'unverified');
   expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual(
     Array.from({ length: 2 }, () => ['-s', device.serial]),
   );
