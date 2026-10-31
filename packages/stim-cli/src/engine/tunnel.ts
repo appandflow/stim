@@ -3,6 +3,7 @@ import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
 import {
   closeSync,
+  existsSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -202,20 +203,12 @@ export function managedLockHolders(root: string): string[] {
   return reasons;
 }
 
-/**
- * Removes directories that are empty, deepest first. rmdir refuses a directory holding a claim file,
- * and a concurrent acquirer that loses its freshly created parent retries, so a live lock is never
- * removed. Any other failure leaves the directory in place.
- */
-function removeEmptyDirs(dirs: string[]): number {
-  let removed = 0;
+function removeEmptyDirs(dirs: string[]): void {
   for (const dir of dirs) {
     try {
       rmdirSync(dir);
-      removed++;
     } catch {}
   }
-  return removed;
 }
 
 function childDirs(dir: string): string[] {
@@ -228,14 +221,15 @@ function childDirs(dir: string): string[] {
   }
 }
 
-/** Removes the empty lock directories that removed worktrees and projects left under `process-locks/`. */
 export function pruneEmptyProcessLockDirs(): number {
   const base = join(getConfigDir(), 'process-locks');
   let removed = 0;
   for (const top of childDirs(base)) {
-    const isWorktrees = basename(top) === 'worktrees';
-    const dirs = isWorktrees ? childDirs(top) : [join(top, '.stim'), top];
-    removed += removeEmptyDirs(dirs);
+    const entries = basename(top) === 'worktrees' ? childDirs(top) : [top];
+    for (const entry of entries) {
+      removeEmptyDirs(entry === top ? [join(top, '.stim'), top] : [entry]);
+      if (!existsSync(entry)) removed++;
+    }
   }
   return removed;
 }

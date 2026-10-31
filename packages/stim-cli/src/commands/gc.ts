@@ -1230,8 +1230,10 @@ async function runGcCore(
     );
   }
 
-  const emptyLockDirs = pruneEmptyProcessLockDirs();
-  if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock directories`));
+  if (report.cacheScope === null) {
+    const emptyLockDirs = pruneEmptyProcessLockDirs();
+    if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock entries`));
+  }
 
   for (const slot of buildSlots.stale) {
     throwIfCancelled(signal, 'GC');
