@@ -45,7 +45,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllTimers();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   if (previousHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = previousHome;
   rmSync(dir, { recursive: true, force: true });

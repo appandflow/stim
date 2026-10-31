@@ -48,8 +48,8 @@ change needs formatting, not the unit suite. Use CI for the full unit suite,
 dead-code, runtime-floor and RPC gates; all required checks and the merge gate
 must pass before merging. A PR that only modifies existing root unit test files
 runs those files first; its merge candidate still runs the full unit suite.
-Other PRs run the full suite on their pushed head. Run a full local suite when
-investigating a broad regression, changing shared test setup or discovery, or
+Other PRs run the unit stage on their pushed head; main and manual runs also
+run integrations. Run a full local suite when investigating a broad regression, changing shared test setup or discovery, or
 when CI cannot validate the affected behavior. Do not repeat a passing check on
 unchanged code without a new failure or unresolved concern. Run
 `pnpm run test:e2e` when a change affects an end-to-end workflow, and keep the
@@ -119,16 +119,39 @@ validation, never a compatibility pass.
 
 Before adding a test, name the independent requirement or bug and the concrete
 failure it catches. Its expected result must be able to disagree with the
-implementation. Assert observable results at the lowest stable boundary that
-provides confidence: parser output, state transitions, ownership decisions,
-emitted payloads, or real command behavior. Check existing coverage first;
+implementation. Prefer command and public API tests that exercise real
+collaborators, with mocks at external boundaries. Keep focused lower-level
+tests for complex parsing, algorithms, decision logic and regressions when
+they protect behavior the API tests do not. Simple helpers already covered
+through their callers do not need their own suite. Search existing tests and
 extend a relevant case instead of repeating it at another layer.
+
+Choose representative equivalence classes and boundary cases in parameter
+tables. Each row must protect a distinct contract, boundary or known failure
+mode; extra spellings and combinations do not justify more cases by themselves.
+Use a cross-product only when the interaction between its dimensions is a
+requirement. Repeating the same assertions at a second layer or on another
+platform requires a distinct contract there.
 
 Do not add tests that only check a constant, a pass-through call, import spelling,
 or implementation source text. A mock returning the expected result does not
 prove the operation works. Use mocks for external boundaries and assert the
 behavior Stim adds. Keep regression tests for real failure modes even when the
 implementation is short.
+
+Unit tests use fake clocks by default. Test timeout and retry policy with
+immediate external failures, explicit clock advancement or controlled events.
+Real-clock contracts, such as OS process termination, socket deadlines and
+filesystem watchers, belong in `*.integration.test.ts` or
+`*.integration.test.mjs`; name the real interaction the test protects. Do not
+disable fake clocks in a unit test or repeat executor deadline waits in every
+caller. Synchronize fixture readiness with events or handshakes instead of
+fixed sleeps.
+
+For bulk test changes, report the expanded case count and measured runtime;
+parameter-table rows count as cases. Compare line, branch and function coverage
+when removing tests. A test's failure history informs this decision, but a test
+that has never failed can still protect a distinct regression or safety rule.
 
 Guide tests protect rendering, routing, safety instructions, and agreement with
 code-defined contracts such as error codes and settings. Keep assertions to the
@@ -284,7 +307,8 @@ outside it moves to its own issue and pull request.
   elsewhere in the CLI source. `expo-build-cache` cannot import CLI code, so it
   calls `node:child_process` directly.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
-  thin I/O wrappers. Unit-test the pure functions.
+  thin I/O wrappers. Test complex logic directly when it adds distinct coverage;
+  simple helpers remain covered through their callers.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. An ownership claim held across a long operation -- a
   build, an install, a supervisor lifetime -- goes through

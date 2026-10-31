@@ -401,7 +401,7 @@ describe('buildAndroid', () => {
       },
     );
     child.stdout.emit('data', '> Task :app:compileDebugKotlin\n');
-    await new Promise((r) => setTimeout(r, 80));
+    await vi.advanceTimersByTimeAsync(80);
     expect(beats.length).toBeGreaterThanOrEqual(1);
     expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
     writeApk();
@@ -410,7 +410,7 @@ describe('buildAndroid', () => {
     const result = await promise;
     assert(result.ok);
     const settled = beats.length;
-    await new Promise((r) => setTimeout(r, 40));
+    await vi.advanceTimersByTimeAsync(40);
     expect(beats.length).toBe(settled);
   });
 

@@ -1,9 +1,26 @@
 # Test stages
 
-`pnpm test` runs the deterministic parser and decision tests alongside real Git,
-process, filesystem, HTTP, and WebSocket integration fixtures. It needs Node and
-Git, but no Xcode, Android SDK, signing identity, or connected phone. The default
-Vitest worker count and five-second unit timeout remain unchanged.
+`pnpm run test:unit` runs the fast suite with fake elapsed-time clocks enabled
+before each test. Advance clocks explicitly when testing deadlines or retries;
+use events and promises for readiness. The linter rejects `useRealTimers`, real
+sleep imports and blocking `Atomics.wait` calls in unit tests.
+
+`pnpm run test:integration` runs the explicit `*.integration.test.ts` and
+`*.integration.test.mjs` fixtures. Use this stage when the contract needs real
+processes, socket deadlines, filesystem watchers or cross-process ownership.
+Keep each exception tied to the real interaction it verifies. These tests may
+use fake clocks for policy inside the fixture, such as a child process clock.
+
+`pnpm test` remains the complete unit and integration run. It needs Node and
+Git, but no Xcode, Android SDK, signing identity, or connected phone. Vitest's
+worker count and test deadlines are unchanged. The native compatibility stage
+keeps its real clocks.
+
+Linux PR jobs run the unit stage on each push. Integration runs remain required
+in the merge candidate's complete `pnpm test`; main and manual CI runs also run
+both stages. Existing Windows and Darwin-specific smoke selections retain
+their integration coverage. Run affected integrations locally when changing
+the behavior they protect, rather than waiting for merge validation.
 
 `pnpm run test:compat` runs the explicit native tool compatibility stage. It
 requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security`,
@@ -79,8 +96,8 @@ The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
 Run the tests that protect the changed behavior while iterating and before a
 commit. Use the relevant formatting, lint, build and type checks locally, then
-let CI validate the full merge candidate. Source changes also run the full
-suite on the pushed PR head. A prose-only change needs
+let CI validate the full merge candidate. Source changes run the unit stage on
+the pushed PR head; run affected integrations locally. A prose-only change needs
 formatting. Full local runs are useful for broad regressions, shared test setup
 or discovery changes, and behavior that CI cannot validate. A passing unchanged
 check does not need another run unless a new failure or concern justifies it.
@@ -134,20 +151,20 @@ include real Windows subprocesses and filesystem/cache operations. The full
 `test:e2e` command also contains Unix shell fixtures and is not the Windows
 smoke lane.
 
-A PR that only modifies existing root unit test files runs those changed files
-on Node 22 and 24. Adding, deleting or renaming tests, or changing source, shared
-fixtures, documentation, configuration or compatibility tests, runs the full PR
-suite. Missing base history or an empty/uncertain selection also uses the full
-suite. The selector reads the checked-out PR merge commit against its first
+A PR that only modifies existing root test files runs those changed files,
+including affected integrations, on Node 22 and 24. Other changes run the fast
+unit stage. Missing base history or an empty/uncertain selection also uses the
+unit stage. The selector reads the checked-out PR merge commit against its first
 parent; checkout retains both parents. Other PR checks remain enabled.
 
-The merge queue always runs the full unit suite on its combined candidate before
-merging. Main pushes, scheduled validation and release validation retain their
+The merge queue always runs the full unit and integration suite on its combined
+candidate before merging. Main pushes, scheduled validation and release validation retain their
 full suites. Focused PR selection never replaces the merge-candidate gate.
 
 The Linux Node 22 and 24 jobs retain a `unit-test-timings-node-<version>` JSON
-artifact for seven days, including failing runs that produce a report. Use
-these reports to compare case and file costs on the same runner type. Required
+artifact for seven days, including failing runs that produce a report. Main and
+manual runs also retain `integration-test-timings-node-<version>`. Use these
+reports to compare case and file costs on the same runner type. Required
 full suites still run before merge; local affected selection does not change
 that gate.
 

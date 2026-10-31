@@ -192,6 +192,7 @@ test.each(['caller', 'timeout'] as const)(
     try {
       await ready;
       if (mode === 'caller') controller.abort();
+      else await vi.advanceTimersByTimeAsync(20);
       await cancelled;
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);
@@ -311,7 +312,7 @@ test('a provider that ignores cancellation refuses bounded cleanup and retains i
     release();
     await failure;
     if (downloading) rmSync(downloading, { recursive: true, force: true });
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 
@@ -421,6 +422,6 @@ test.each([
     await failure;
     await cleanupDone;
     if (downloading) rmSync(downloading, { recursive: true, force: true });
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });

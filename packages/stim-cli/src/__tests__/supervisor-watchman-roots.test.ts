@@ -146,7 +146,7 @@ describe('trackMetroWatchRoots', () => {
       ]);
       expect(records.map((r) => r.msg)).toEqual([`kept the watchman root ${worktree}: could not list its triggers`]);
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   });
 

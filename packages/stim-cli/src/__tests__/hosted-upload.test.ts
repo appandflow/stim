@@ -73,7 +73,7 @@ test('delivers every file byte-exact without waiting for each reply, and resumes
   const resumed = bytesOf(HOSTED_APP_CHUNK_BYTES * 3 + 5, 11);
   const fake = fakeHost();
   fake.received.set('resumed', resumed.subarray(0, HOSTED_APP_CHUNK_BYTES));
-  await upload(
+  const delivered = upload(
     fake.host,
     ids,
     [
@@ -89,6 +89,8 @@ test('delivers every file byte-exact without waiting for each reply, and resumes
       ['resumed', () => resumed],
     ]),
   );
+  await vi.runAllTimersAsync();
+  await delivered;
   expect(fake.received.get('big')?.equals(big)).toBe(true);
   expect(fake.received.get('small')?.equals(small)).toBe(true);
   expect(fake.received.get('empty')?.length).toBe(0);
@@ -99,8 +101,13 @@ test('delivers every file byte-exact without waiting for each reply, and resumes
 test('stops sending and reports the first refused chunk', async () => {
   const fake = fakeHost({ refuseAt: 3 });
   const big = bytesOf(HOSTED_APP_CHUNK_BYTES * 300, 5);
-  await expect(upload(fake.host, ids, [{ sha256: 'big', offset: 0 }], new Map([['big', () => big]]))).rejects.toThrow(
-    'mini refused device-host.app.chunk: refused',
+  const refused = upload(fake.host, ids, [{ sha256: 'big', offset: 0 }], new Map([['big', () => big]])).then(
+    () => null,
+    (error: unknown) => error,
   );
+  await vi.runAllTimersAsync();
+  expect(await refused).toMatchObject({
+    message: expect.stringContaining('mini refused device-host.app.chunk: refused'),
+  });
   expect(fake.sent()).toBeLessThan(150);
 });

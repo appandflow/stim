@@ -58,7 +58,7 @@ describe('failing closed', () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>().mockRejectedValue(fetchError));
     vi.mocked(resolve4).mockImplementation(() => new Promise<string[]>(() => {}));
 
-    const result = await gateMetroOrigin({
+    const pending = gateMetroOrigin({
       origin: ORIGIN,
       metroPort: 8085,
       platform: 'ios',
@@ -67,6 +67,8 @@ describe('failing closed', () => {
       sleep: () => new Promise((resolve) => setTimeout(resolve, 1)),
       timeoutMs: 20,
     });
+    await vi.runAllTimersAsync();
+    const result = await pending;
 
     expect(result.failed).toBe(true);
     expect(result.reason).toContain('did not answer');

@@ -144,7 +144,7 @@ test('a slow warm can outlast the report budget before its copy completes', asyn
     release();
     await pending.catch(() => {});
     copy.mockRestore();
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 }, 30_000);
 
@@ -183,7 +183,7 @@ test('warming waits for the target writer and cancels without copying past it', 
     controller.abort();
     await pending.catch(() => {});
     releaseClaim(held.acquired);
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 }, 30_000);
 

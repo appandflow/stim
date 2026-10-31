@@ -23,7 +23,7 @@ beforeEach(() => {
 
 afterEach(() => {
   stop();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   vi.restoreAllMocks();
   syncBuiltinESMExports();
   delete process.env.STIM_HOME;

@@ -41,7 +41,7 @@ test.skipIf(process.platform !== 'darwin')(
     reportMemoryCulprits('critical', (advice) => emitted.push(advice));
     finish(null);
     await vi.waitFor(() => expect(topReads).toHaveBeenCalledTimes(1));
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.advanceTimersByTimeAsync(10);
     expect(emitted).toEqual([]);
   },
 );
@@ -67,7 +67,7 @@ test.skipIf(process.platform !== 'darwin')(
       await memoryCulpritsUnderAsync('warning');
       expect(topReads).toHaveBeenCalledTimes(2);
     } finally {
-      vi.useRealTimers();
+      vi.clearAllTimers();
     }
   },
 );

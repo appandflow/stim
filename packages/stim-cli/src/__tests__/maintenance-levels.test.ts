@@ -423,10 +423,23 @@ test('level 3 stops an idle Gradle daemon, then deletes the version it was block
 });
 
 test('a daemon that does not exit after the stop still keeps the version', async () => {
-  const version = idleUnpinnedVersion(() => DAEMON_ROW);
+  let stopped = false;
+  let observed!: () => void;
+  const polled = new Promise<void>((resolve) => {
+    observed = resolve;
+  });
+  const version = idleUnpinnedVersion(() => {
+    if (stopped) observed();
+    return DAEMON_ROW;
+  });
   daemonPlan({ state: 'idle' });
-  stopsDaemon();
-  await pass();
+  stopsDaemon(() => {
+    stopped = true;
+  });
+  const pending = pass();
+  await polled;
+  await vi.advanceTimersByTimeAsync(10_000);
+  await pending;
   expect(existsSync(join(version, 'keep'))).toBe(true);
   expect(actionKinds()).toContain('stop-gradle-daemons');
   expect(actionKinds()).not.toContain('delete-gradle-version');

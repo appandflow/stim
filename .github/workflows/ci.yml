@@ -129,8 +129,6 @@ jobs:
       - name: Dead code (knip)
         run: pnpm run knip
 
-      # The unit suite on vitest (rolldown-vite): stim-cli + the cache packages,
-      # 70 files. Real processes, real ports, real git; fakes for xcrun/adb.
       - name: Unit tests (vitest)
         shell: bash
         run: |
@@ -138,7 +136,15 @@ jobs:
           while IFS= read -r -d '' unit_file; do
             unit_files+=("$unit_file")
           done < <(node scripts/ci-unit-test-files.mjs)
-          pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+          if ((${#unit_files[@]})); then
+            pnpm run test "${unit_files[@]}" --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+          else
+            pnpm run test:unit --reporter=default --reporter=json --outputFile.json=test-results/unit-${{ matrix.node }}.json
+          fi
+
+      - name: Integration tests (vitest)
+        if: github.event_name != 'pull_request'
+        run: pnpm run test:integration --reporter=default --reporter=json --outputFile.json=test-results/integration-${{ matrix.node }}.json
 
       - name: Retain unit-test timings
         if: always()
@@ -146,6 +152,15 @@ jobs:
         with:
           name: unit-test-timings-node-${{ matrix.node }}
           path: test-results/unit-${{ matrix.node }}.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Retain integration-test timings
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-timings-node-${{ matrix.node }}
+          path: test-results/integration-${{ matrix.node }}.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -171,21 +186,21 @@ jobs:
       - name: Windows CLI and cache smoke
         run: >-
           pnpm test
-          packages/stim-cli/src/__tests__/exec.test.ts
-          packages/stim-cli/src/__tests__/api-reports.test.ts
-          packages/stim-cli/src/__tests__/report-runtime.test.ts
+          packages/stim-cli/src/__tests__/exec.integration.test.ts
+          packages/stim-cli/src/__tests__/api-reports.integration.test.ts
+          packages/stim-cli/src/__tests__/report-runtime.integration.test.ts
           packages/stim-cli/src/__tests__/doctor-fingerprint.test.ts
           packages/stim-cli/src/__tests__/stim-installations.test.ts
           packages/stim-cli/src/__tests__/detached-entry.test.ts
-          packages/stim-cli/src/__tests__/logs-command.test.ts
+          packages/stim-cli/src/__tests__/logs-command.integration.test.ts
           packages/stim-cli/src/__tests__/cache-packages.test.ts
-          packages/stim-cli/src/__tests__/engine-build-lock.test.ts
+          packages/stim-cli/src/__tests__/engine-build-lock.integration.test.ts
           packages/stim-cli/src/__tests__/metro.test.ts
 
       - name: Windows startup cancellation
         run: |
-          pnpm test packages/stim-cli/src/__tests__/api-start.test.ts -t "cancelling startup drains dynamic Expo config"
-          pnpm test packages/stim-cli/src/__tests__/start-context.test.ts -t "pending Windows supervisor launcher"
+          pnpm test packages/stim-cli/src/__tests__/api-start.integration.test.ts -t "cancelling startup drains dynamic Expo config"
+          pnpm test packages/stim-cli/src/__tests__/start-context.integration.test.ts -t "pending Windows supervisor launcher"
 
   test-macos:
     name: test (macos)
@@ -290,7 +305,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
       - name: Build-stage regression tests
-        run: pnpm test packages/stim-cli/src/__tests__/macos.test.ts packages/stim-cli/src/__tests__/ios-build.test.ts packages/stim-cli/src/__tests__/android-build.test.ts packages/ci/src/__tests__/build.test.ts
+        run: pnpm test packages/stim-cli/src/__tests__/macos.integration.test.ts packages/stim-cli/src/__tests__/ios-build.test.ts packages/stim-cli/src/__tests__/android-build.test.ts packages/ci/src/__tests__/build.test.ts
       - name: Real SwiftPM build and artifact export with a running app
         env:
           STIM_BUILD_QA_ARTIFACTS: ${{ runner.temp }}/stim-build-stage-evidence

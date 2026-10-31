@@ -5,7 +5,7 @@ import type { DesktopReportSnapshot, DesktopReportTarget } from '../src/protocol
 const caches: DesktopReports[] = [];
 afterEach(() => {
   for (const cache of caches.splice(0)) cache.close();
-  vi.useRealTimers();
+  vi.clearAllTimers();
 });
 
 function deferred<T>() {

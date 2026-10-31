@@ -77,7 +77,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   connection.close();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   if (previousHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = previousHome;
   rmSync(directory, { recursive: true, force: true });

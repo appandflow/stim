@@ -197,7 +197,7 @@ test.each(['timeout', 'cancellation'])('a provider that ignores %s refuses withi
     expect(existsSync(destination)).toBe(true);
     expect(lookupSettled).toBe(true);
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 

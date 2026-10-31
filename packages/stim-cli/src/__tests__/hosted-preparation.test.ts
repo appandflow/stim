@@ -141,7 +141,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
     vi.unstubAllEnvs();
     vi.clearAllMocks();
     rmSync(home, { recursive: true, force: true });
@@ -278,7 +278,7 @@ describe.each(['ios', 'android', 'macos'] as const)('hosted %s preparation deadl
 
 describe('hosted session settle cancellation', () => {
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   test('a cancelled run stops waiting within one poll interval', async () => {
