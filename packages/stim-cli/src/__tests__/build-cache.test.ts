@@ -308,6 +308,39 @@ describe('fingerprints that depend on a local git exclude', () => {
   }, 30_000);
 });
 
+describe('library example apps in linked worktrees', () => {
+  test('fingerprint alike although each worktree has its own .git file', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'stim-bc-lib-'));
+    const git = (...args: string[]) => getExecutor().runFile('git', ['-C', repo, ...args], { timeoutMs: 10_000 });
+    try {
+      mkdirSync(join(repo, 'example/ios'), { recursive: true });
+      writeFileSync(join(repo, 'package.json'), '{"name":"lib"}');
+      writeFileSync(join(repo, 'example/package.json'), '{"name":"example"}');
+      writeFileSync(join(repo, 'example/ios/Podfile'), 'platform :ios');
+      git('init', '--quiet');
+      git('add', '.');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '--quiet', '-m', 'init');
+      git('worktree', 'add', '--quiet', '--detach', `${repo}-a`, 'HEAD');
+      git('worktree', 'add', '--quiet', '--detach', `${repo}-b`, 'HEAD');
+      const withLibrary: typeof expoFingerprint.createFingerprintAsync = (dir, options) =>
+        offlineFingerprint(dir, { ...options, extraSources: [{ type: 'dir', filePath: '..', reasons: ['library'] }] });
+      const hashes = await Promise.all(
+        ['a', 'b'].map(async (suffix) => {
+          const worktree = `${repo}-${suffix}`;
+          expect(readFileSync(join(worktree, '.git'), 'utf8')).toContain('worktrees/');
+          return (
+            await fingerprintProject(join(worktree, 'example'), { platform: 'ios', createFingerprint: withLibrary })
+          )?.hash;
+        }),
+      );
+      expect(hashes[0]).toBeTruthy();
+      expect(hashes[0]).toBe(hashes[1]);
+    } finally {
+      for (const dir of [repo, `${repo}-a`, `${repo}-b`]) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
 describe('untracked native files on a first miss', () => {
   test('runs git without a shell and returns one name per line', () => {
     const calls: { file: string; args: string[] }[] = [];
