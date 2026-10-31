@@ -1046,7 +1046,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   if (!options) return { ok: false, code: 'bad-request', message: 'The native Gradle job has no build options.' };
   for (const key of ['compilerCache', 'pch', 'gradleBuildCache'] as const)
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
-  removeDaemonIdleLimit();
+  removeLegacyDaemonIdleLimit();
   const logFile = join(workspaceLogsDir(root), 'build-android.ndjson');
   let cacheArtifact: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt } | undefined;
   note('build', `native Gradle ${options.variant ?? 'debug'}`);
@@ -1247,8 +1247,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   return { ok: true, path: built.appPath, cache: built.compilationCache };
 }
 
-/** Earlier Stim versions wrote this file, holding only that line, to cap the client's Gradle daemon idle time. */
-function removeDaemonIdleLimit(): void {
+function removeLegacyDaemonIdleLimit(): void {
   const home = process.env.GRADLE_USER_HOME;
   if (!home) return;
   const file = join(home, 'gradle.properties');
@@ -1266,7 +1265,7 @@ async function compileAndroid(
 ): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
-  removeDaemonIdleLimit();
+  removeLegacyDaemonIdleLimit();
   const onNote = (line: string) => note('build', line);
   note(
     'build',

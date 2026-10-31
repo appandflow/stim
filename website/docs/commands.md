@@ -2031,8 +2031,8 @@ stop them; each kind has its own `--cache` value:
   and `--cache all` never includes these versions. With `STIM_HOME` set, gc
   deletes nothing in a Gradle home outside that directory. At disk pressure
   level 3, automatic maintenance first stops the idle Gradle and Kotlin
-  daemons `stim gc --delete --cache gradle-daemons` would stop under low
-  memory, whatever the memory now, only when
+  daemons `stim gc --delete --cache gradle-daemons` would stop, whatever
+  the memory, only when
   every Gradle process that keeps a version is such a daemon, and waits up to
   3 seconds for them to exit, then does the
   same for versions unmodified for `maintenance.gradleVersionIdleDays` days

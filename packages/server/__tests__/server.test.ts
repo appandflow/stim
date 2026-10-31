@@ -3394,26 +3394,23 @@ describe('offloaded builds', () => {
       },
     );
 
-    test.skipIf(!fakeTailscale)(
-      'stops idle daemons under low memory only once no offloaded build runs',
-      async () => {
-        const gate = join(root, 'gate');
-        const port = await start({
-          env: { FAKE_WORKER_GATE: gate },
-          buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
-        });
-        const { client, id } = await buildClient(port);
-        const other = await buildClient(port, '100.64.0.3');
-        await launch(client);
-        const building = daemonOf(id);
-        const idle = daemonOf(other.id);
-        await new Promise((resolve) => setTimeout(resolve, 300));
-        expect(running(building) && running(idle)).toBe(true);
-        writeFileSync(gate, '');
-        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
-        await eventually(() => !running(building) && !running(idle));
-      },
-    );
+    test.skipIf(!fakeTailscale)('stops idle daemons under low memory only once no offloaded build runs', async () => {
+      const gate = join(root, 'gate');
+      const port = await start({
+        env: { FAKE_WORKER_GATE: gate },
+        buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: Number.MAX_SAFE_INTEGER },
+      });
+      const { client, id } = await buildClient(port);
+      const other = await buildClient(port, '100.64.0.3');
+      await launch(client);
+      const building = daemonOf(id);
+      const idle = daemonOf(other.id);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(running(building) && running(idle)).toBe(true);
+      writeFileSync(gate, '');
+      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
+      await eventually(() => !running(building) && !running(idle));
+    });
   });
 });
 

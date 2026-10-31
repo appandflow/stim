@@ -456,8 +456,8 @@ export class BuildHost {
   /**
    * Stops the Gradle daemons that offloaded Android builds left warm: every one while available memory is under
    * `minFreeMemoryBytes` and no offloaded build runs, and those of `client` unless one of its builds runs. Calls made
-   * while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
-   * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
+   * while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A
+   * daemon whose Gradle home is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
   sweepDaemons(client: string | null = null): Promise<void> {
     if (client !== null) this.forced.add(client);

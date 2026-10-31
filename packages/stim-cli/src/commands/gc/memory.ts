@@ -355,9 +355,9 @@ export interface KotlinDaemonFacts extends ProcessMeasure {
 
 /**
  * Decides which Gradle and Kotlin daemons gc may stop. A running Stim build (`buildRunning`) keeps every one, and so
- * does memory that is not low (`memoryOk`, why). An offload worker's daemon is left to stim-server while it runs. A Gradle daemon goes only when its own `gradle
- * --status` says IDLE. A Kotlin daemon goes only when every Gradle daemon is idle and each of its connections comes from
- * a Gradle daemon gc stops in the same run.
+ * does memory that is not low (`memoryOk`, why). An offload worker's daemon is left to stim-server while it runs. A
+ * Gradle daemon goes only when its own `gradle --status` says IDLE. A Kotlin daemon goes only when every Gradle daemon
+ * is idle and each of its connections comes from a Gradle daemon gc stops in the same run.
  */
 export function planDaemons({
   gradle,
@@ -805,7 +805,9 @@ async function memoryNotLow(operation?: StimContext): Promise<string | null> {
   const floor =
     settings.minAvailableMemoryGb === undefined ? totalmem() * 0.1 : settings.minAvailableMemoryGb * 1024 ** 3;
   const available = freemem();
-  return available < floor ? null : `${formatBytes(available)} of memory is available, at or above ${formatBytes(floor)}`;
+  return available < floor
+    ? null
+    : `${formatBytes(available)} of memory is available, at or above ${formatBytes(floor)}`;
 }
 
 export async function collectMemoryReport(
@@ -1195,8 +1197,8 @@ async function reclaimDaemons(
 }
 
 /**
- * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop under low memory, whatever the memory
- * now: never during a Stim build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
+ * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop, whatever the memory: never during a Stim
+ * build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
  * Gradle daemon is in `pids` too, since one left running may still be its client. Nothing stops while STIM_HOME scopes
  * the config.
  */

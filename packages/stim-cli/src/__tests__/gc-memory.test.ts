@@ -293,7 +293,8 @@ test('a running Stim build or memory that is not low keeps every daemon, and sti
   expect(decisions(offload)).toEqual([
     [1, false, 'stim-server'],
     [2, true, null],
-  ]);  const roomy = planDaemons({
+  ]);
+  const roomy = planDaemons({
     gradle: [gradle(1, { state: 'idle' }, 'client-a'), gradle(2, { state: 'idle' })],
     kotlin: [kotlin(10, [])],
     buildRunning: null,
