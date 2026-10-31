@@ -33,6 +33,11 @@ workspace references them. It lists any other `stim-*` device, including one
 another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
 for AVD data with no registration), and leaves it for you to run.
 
+With `STIM_HOME` set, gc skips the device sweep because simulators and AVDs are
+machine-global. Pruning a dead project still deletes the devices its record marks
+as owned, and the dry run lists them under "Device sweep notices". Every other
+`stim-*` device is reported as not touched.
+
 When a simulator in the ledger is deleted outside Stim, for example from Xcode,
 `stim gc` reports its UDID as a stale ledger entry and `stim gc --delete` removes
 it from the ledger. Stim does this only when `simctl` lists every simulator,
