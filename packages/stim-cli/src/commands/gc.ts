@@ -67,6 +67,8 @@ import {
   eraseParkedDevices,
   deleteProjectDevices,
   describeUnverifiableDevices,
+  describeDeadProjectDevices,
+  findDeadProjectOwnedDevices,
   deviceSweepIsScoped,
   DEVICE_LIST_TIMEOUT_MS,
   findOrphanedDevices,
@@ -403,12 +405,10 @@ export async function collectGcReport(
 
   phase('devices', 'listing simulators and emulators', operation);
   if (unsweepableReason) {
-    let simNames: string[] = [];
+    let allSims: IosSimRecord[] = [];
     let avdNames: string[] = [];
     try {
-      simNames = (
-        await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal })
-      ).map((s) => s.name);
+      allSims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal });
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
@@ -419,7 +419,17 @@ export async function collectGcReport(
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
     }
-    deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
+    const deadOwned =
+      cfg === null ? [] : findDeadProjectOwnedDevices({ config: cfg, deadProjects, sims: allSims, avds: avdNames });
+    const deadOwnedIds = new Set(deadOwned.map((device) => device.id));
+    deviceSweepNotices.push(
+      ...describeDeadProjectDevices(deadOwned),
+      ...describeUnverifiableDevices(
+        allSims.filter((sim) => !deadOwnedIds.has(sim.udid)).map((sim) => sim.name),
+        avdNames.filter((name) => !deadOwnedIds.has(name)),
+        { reason: unsweepableReason },
+      ),
+    );
   } else {
     let sims: IosSimRecord[] = [];
     let simsChecked = true;

@@ -2750,6 +2750,32 @@ test.each(['CLI', 'obsolete internal option'])(
   },
 );
 
+test("under a scoped STIM_HOME, the dry run lists a dead project's owned device as to be deleted and the rest as not touched", async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({
+    version: 2,
+    projects: {
+      [localDeadPath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-DEAD', owned: true } } },
+    },
+    repos: {},
+  });
+  const execCalls: string[] = [];
+  installDeviceExecutor({
+    devices: [
+      { udid: 'UDID-DEAD', name: 'stim-dead-owner' },
+      { udid: 'UDID-REAL-1', name: 'stim-real-env-1' },
+    ],
+    execCalls,
+  });
+
+  const output = await captureLog(() => cli([]));
+
+  expect(output).toMatch(/stim-dead-owner is owned by the dead project .*--delete tries to delete it/);
+  expect(output).toMatch(/cannot be verified as orphaned: stim-real-env-1\b/);
+  expect(output).not.toMatch(/cannot be verified as orphaned:.*stim-dead-owner/);
+  expect(execCalls.some((c) => c.includes('simctl delete'))).toBe(false);
+});
+
 test("under a scoped STIM_HOME, --delete tears down a pruned dead project's owned device and leaves other stim devices alone", async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({

@@ -889,6 +889,10 @@ WHICH stim-* DEVICES gc DELETES
   \`rm -rf <dir>\` for AVD data with no registration), and
   never runs it. Boot, shutdown and teardown re-check ownership by the same
   rule, so a device that stops matching is left alone.
+  With STIM_HOME set, gc skips the device sweep because simulators and AVDs
+  are machine-global, but pruning a dead project still deletes the devices its
+  record marks as owned. gc lists them as to be deleted under "Device sweep
+  notices"; every other stim-* device is reported as not touched.
 
 ANDROID DATA WITHOUT A REGISTRATION
   \`gc\` also reports stim-*.avd directories whose .ini registration is
