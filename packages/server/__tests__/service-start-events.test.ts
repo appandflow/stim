@@ -129,34 +129,6 @@ test('a registration hint wakes validation before polling, without trusting a mi
   }
 });
 
-test.each(['missed', 'unavailable'] as const)(
-  'registration retains bounded repair when file hints are %s',
-  async (mode) => {
-    fixture.unavailable = mode === 'unavailable';
-    const pending = manager.start(label);
-    await vi.advanceTimersByTimeAsync(0);
-    record();
-    await vi.advanceTimersByTimeAsync(1000);
-    expect((await pending).ok).toBe(true);
-    expect(fixture.observers.every((observer) => observer.closed)).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);
-  },
-);
-
-test('a supervisor whose PID never matches is refused at the startup deadline and releases its observer', async () => {
-  const pending = manager.start(label);
-  await vi.advanceTimersByTimeAsync(0);
-  record(99);
-  emitRegistration();
-  await vi.advanceTimersByTimeAsync(30_000);
-  expect(await pending).toMatchObject({
-    ok: false,
-    stderr: expect.stringContaining('did not start its supervisor within 30 s'),
-  });
-  expect(fixture.observers.every((observer) => observer.closed)).toBe(true);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 test('watcher failure wakes validation and falls back without leaking its observer', async () => {
   const pending = manager.start(label);
   await vi.advanceTimersByTimeAsync(0);

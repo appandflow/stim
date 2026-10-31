@@ -8,7 +8,7 @@ export interface Diagnostic {
   remedy?: string;
 }
 
-export const MAX_DIAGNOSTICS = 10;
+const MAX_DIAGNOSTICS = 10;
 
 const BUILD_FAILED = '** BUILD FAILED **';
 

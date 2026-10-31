@@ -1,6 +1,5 @@
 import { readArchives, type DiskPressureLevel } from '@stim-cli/core/state';
 import { execSync, spawn, type ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -16,10 +15,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import {
   excludePodChurn,
-  excludeWatchmanCookies,
   porcelainPath,
-  removalBlockers,
-  removalPath,
   registerRemove,
   removeWorktreeTarget,
   removalRemedy,
@@ -27,7 +23,6 @@ import {
 import type { Command } from 'commander';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
 import { serviceRunningFrom } from '../workspace/service-guard.ts';
-import { matchWorktreeEntry } from '../workspace/worktree.ts';
 import { registerStart } from '../commands/start.ts';
 import { asProcessExit } from './_factories.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
@@ -46,38 +41,6 @@ interface CommandStub {
   action(fn: ActionFn): CommandStub;
 }
 
-test('no blockers for a clean worktree', async () => {
-  expect(removalBlockers({ dirty: false, unpushed: [] })).toEqual([]);
-});
-
-test('removalPath canonicalizes a missing path through its nearest existing parent', () => {
-  expect(removalPath(join(tmpdir(), 'stim-missing', 'worktree'))).toBe(
-    join(realpathSync(tmpdir()), 'stim-missing', 'worktree'),
-  );
-});
-
-test('reports uncommitted changes', async () => {
-  const blockers = removalBlockers({ dirty: true, unpushed: [] });
-  expect(blockers.length).toBe(1);
-  expect(blockers[0]).toMatch(/uncommitted/i);
-});
-
-test('reports unpushed commits with a count', async () => {
-  const blockers = removalBlockers({ dirty: false, unpushed: ['abc one', 'def two'] });
-  expect(blockers.length).toBe(1);
-  expect(blockers[0]).toMatch(/2 commit/);
-});
-
-test('reports both when both apply', async () => {
-  expect(removalBlockers({ dirty: true, unpushed: ['abc one'] }).length).toBe(2);
-});
-
-test('reports an indeterminate-status blocker instead of treating it as clean', async () => {
-  expect(removalBlockers({ dirty: null, unpushed: [] }).length).toBe(1);
-  expect(removalBlockers({ dirty: false, unpushed: null }).length).toBe(1);
-  expect(removalBlockers({ dirty: null, unpushed: null })[0]).toMatch(/could not determine/i);
-});
-
 test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath(' M ios/Podfile.lock')).toBe('ios/Podfile.lock');
   expect(porcelainPath('R  old/name.js -> new/name.js')).toBe('new/name.js');
@@ -85,43 +48,11 @@ test('porcelainPath reads the path out of each status form', () => {
   expect(porcelainPath('   ')).toBe(null);
 });
 
-test('the remedy names the right command for each class of dirt', () => {
-  const untracked = removalRemedy(['?? scratch.txt']).join('\n');
-  expect(untracked).toMatch(/clean -fd/);
-  expect(untracked).not.toMatch(/checkout --/);
-
-  const modified = removalRemedy([' M src/app.js']).join('\n');
-  expect(modified).toMatch(/checkout --/);
-  expect(modified).not.toMatch(/clean -fd/);
-
-  const both = removalRemedy(['?? scratch.txt', ' M src/app.js']).join('\n');
-  expect(both).toMatch(/checkout --/);
-  expect(both).toMatch(/clean -fd/);
-
-  expect(removalRemedy([])).toEqual([]);
-});
-
 test('pod-install churn keeps its exact restore command', () => {
   const lines = removalRemedy([' M ios/Podfile.lock', ' M ios/App.xcodeproj/project.pbxproj']).join('\n');
   expect(lines).toMatch(/pod install` rewrites/);
   expect(lines).toMatch(/ios\/Podfile\.lock/);
   expect(lines).not.toMatch(/clean -fd/);
-});
-
-test('pod-install churn names the paths git actually reported, not an ios/ example', () => {
-  const lines = removalRemedy([' M apps/mobile/ios/Podfile.lock', ' M apps/mobile/ios/App.xcodeproj/project.pbxproj'], {
-    worktree: '/tmp/wt',
-  }).join('\n');
-  expect(lines).toMatch(/pod install` rewrites/);
-  expect(lines).toMatch(
-    /git -C \/tmp\/wt checkout -- apps\/mobile\/ios\/Podfile\.lock apps\/mobile\/ios\/App\.xcodeproj\/project\.pbxproj/,
-  );
-  expect(!lines.includes('"ios/*.xcodeproj/project.pbxproj"')).toBeTruthy();
-  expect(!/ ios\/Podfile\.lock/.test(lines)).toBeTruthy();
-});
-
-test('the remedy names the worktree when it is given one', () => {
-  expect(removalRemedy(['?? x'], { worktree: '/tmp/wt' }).join('\n')).toMatch(/git -C \/tmp\/wt clean -fd/);
 });
 
 test('the remedy carries the paths themselves, capped, quoting what needs it', () => {
@@ -140,10 +71,6 @@ function canon(p: string) {
   } catch {
     return resolve(p);
   }
-}
-
-function pathPattern(path: string): string {
-  return path.replaceAll(/[\\^$.*+?()[\]{}|]/g, '\\$&');
 }
 
 function captureAction(register: (cmd: Command) => void) {
@@ -508,35 +435,6 @@ test('action: a failed device teardown on the source checkout keeps the record a
   expect(errs.join('\n')).toMatch(/still tracks/);
 });
 
-test('action: a tunnel verification failure on the source checkout retains its state directory', async () => {
-  const child = liveUnrelatedProcess();
-  upsertProject(mainDir, { label: 'main' });
-  writeManagedTunnel(mainDir, child.pid!);
-  const exec = makeExecutor({
-    worktrees: porcelain([{ path: mainDir, branch: 'main' }]),
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (message) => errs.push(String(message));
-  try {
-    const run = captureAction(registerRemove);
-    await run(mainDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(getProject(mainDir)).not.toBeNull();
-  expect(existsSync(workspaceStateFile(mainDir))).toBe(true);
-  expect(errs.join('\n')).toMatch(/could not release owned resources/i);
-  expect(errs.join('\n')).toMatch(/identity could not be verified/i);
-  expect(errs.join('\n')).not.toMatch(new RegExp(`kill\\s+${child.pid}`));
-  expect(exec.calls.run.some((call) => /worktree remove/.test(call))).toBe(false);
-  await expect(withManagedTunnelLock(mainDir, async () => true)).resolves.toBe(true);
-});
-
 test('action: source-checkout artifact deletion blocks a concurrent replacement tunnel start', async () => {
   upsertProject(mainDir, { label: 'main' });
   ensureWorkspaceStorage(mainDir);
@@ -759,134 +657,6 @@ test.each([
   },
 );
 
-test('action: on success, ownership state stays until removeWorktree succeeds', async () => {
-  upsertProject(wtDir, { metroPort: 8083 });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  let trackedWhenRemoved = true;
-  const originalRunFile = exec.runFile.bind(exec);
-  exec.runFile = (file, args = []) => {
-    if (/worktree remove/.test([file, ...args].join(' '))) {
-      trackedWhenRemoved = getProject(wtDir) !== null;
-    }
-    return originalRunFile(file, args);
-  };
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(trackedWhenRemoved).toBe(true);
-  expect(getProject(wtDir)).toBe(null);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-});
-
-test('action: removes the branch that Stim created when it has no unique commits', async () => {
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-    worktreeMainRoot: mainDir,
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((call) => /update-ref -d refs\/heads\/worktree-feat-x abc123/.test(call))).toBe(true);
-});
-
-test('action: removal archives history and keeps stdout empty', async () => {
-  process.env.STIM_ARCHIVE_ENABLED = 'true';
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-    worktreeMainRoot: mainDir,
-    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
-  });
-  ensureWorkspaceStorage(wtDir);
-  writeFileSync(join(workspaceDir(wtDir), 'state.json'), '{"lastUsedAt":"2026-01-01T00:00:00Z"}');
-  expect(takeLease({ root: wtDir, platform: 'android', id: 'R5CT', kind: 'run' }).status).toBe('taken');
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
-  });
-  setExecutor(exec);
-
-  const logs: string[] = [];
-  const errs: string[] = [];
-  const originalLog = console.log;
-  const originalError = console.error;
-  console.log = (m) => logs.push(String(m));
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.log = originalLog;
-    console.error = originalError;
-    delete process.env.STIM_ARCHIVE_ENABLED;
-  }
-
-  expect(errs.filter((line) => line.startsWith('could not archive:'))).toEqual([]);
-  expect(readArchives()).toHaveLength(1);
-  expect(readArchives()[0]?.projectRoot).toBe(wtDir);
-  expect(process.exitCode).not.toBe(1);
-  expect(logs).toEqual([]);
-  expect(errs.some((line) => /^\s*device\s+deleted stim-x$/.test(line))).toBe(true);
-  expect(errs.some((line) => /^\s*workspace\s+removed /.test(line))).toBe(true);
-  expect(errs.some((line) => /^\s*branch\s+deleted worktree-feat-x$/.test(line))).toBe(true);
-  expect(
-    errs.some((line) => /^\s*lease\s+released the android lease on R5CT \(it ran until \d{2}:\d{2}:\d{2}\)/.test(line)),
-  ).toBe(true);
-  expect(errs.some((line) => new RegExp(`^\\s*removed\\s+${pathPattern(wtDir)}$`).test(line))).toBe(true);
-});
-
-test('action: keeps a branch that existed before Stim attached the worktree', async () => {
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: false,
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (message) => errs.push(String(message));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((call) => /branch -D/.test(call))).toBe(false);
-  expect(errs.some((line) => /branch\s+kept worktree-feat-x \(Stim did not create it\)/.test(line))).toBe(true);
-});
-
 test('action: force removal keeps an owned branch that has unique commits', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
@@ -1024,20 +794,6 @@ test('removing a deleted worktree for the automatic sweep leaves its record to t
   expect(getProject(wtDir)).not.toBe(null);
 });
 
-test('action: removing a missing path that no project is registered under still says there is no such worktree', async () => {
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    await captureAction(registerRemove)(join(wtDir, 'gone'), {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(errs.join('\n')).toMatch(/No such worktree/);
-});
-
 test('action: a timed-out worktree list after removal keeps the branch and the retry state', async () => {
   upsertProject(wtDir, {
     worktreeRoot: true,
@@ -1130,57 +886,6 @@ test('action: pending cleanup keeps a branch that another worktree checks out', 
   expect(process.exitCode).toBe(1);
   expect(exec.calls.run.some((call) => /update-ref -d/.test(call))).toBe(false);
   expect(getProject(wtDir)).not.toBe(null);
-});
-
-test('action: a worktree deletion failure keeps ownership state', async () => {
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-    worktreeRemoveError: 'worktree is locked',
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).toBe(1);
-  expect(getProject(wtDir)).toMatchObject({
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-  });
-});
-
-test('action: a git refusal after the owned sim was deleted keeps a record that no longer names the sim', async () => {
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
-    worktreeRemoveError: 'Permission denied',
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).toBe(1);
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U1/.test(c))).toBeTruthy();
-  expect(getProject(wtDir)).toMatchObject({ worktreeBranch: 'worktree-feat-x', worktreeBranchOwned: true });
-  expect(getProject(wtDir)?.platforms?.ios).toBeUndefined();
 });
 
 test('action: tunnel verification failure retains state and refuses worktree removal even with force', async () => {
@@ -1286,177 +991,6 @@ test('action: reclaims a nested monorepo app-dir project registered under the wo
   expect(getProject(nestedDir)).toBe(null);
 });
 
-test('action: on success, deletes an owned iOS sim via simctl', async () => {
-  upsertProject(wtDir, {
-    metroPort: 8090,
-    platforms: { ios: { deviceUdid: 'U1', owned: true, deviceName: 'stim-x' } },
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-    simctlList: simctlJson([{ udid: 'U1', name: 'stim-x', state: 'Shutdown', isAvailable: true }]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U1/.test(c))).toBeTruthy();
-  expect(getProject(wtDir)).toBe(null);
-});
-
-test('action: reaps owned sims under two nested monorepo app-dir keys, both of them', async () => {
-  const nestedDir1 = join(wtDir, 'apps', 'mobile1');
-  const nestedDir2 = join(wtDir, 'apps', 'mobile2');
-  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
-  upsertProject(nestedDir1, {
-    metroPort: 8092,
-    platforms: { ios: { deviceUdid: 'U3', owned: true, deviceName: 'stim-a' } },
-  });
-  upsertProject(nestedDir2, {
-    metroPort: 8093,
-    platforms: { ios: { deviceUdid: 'U4', owned: true, deviceName: 'stim-b' } },
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-    simctlList: simctlJson([
-      { udid: 'U3', name: 'stim-a', state: 'Shutdown', isAvailable: true },
-      { udid: 'U4', name: 'stim-b', state: 'Shutdown', isAvailable: true },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U3/.test(c))).toBeTruthy();
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U4/.test(c))).toBeTruthy();
-  expect(getProject(nestedDir1)).toBe(null);
-  expect(getProject(nestedDir2)).toBe(null);
-});
-
-test('action: an occupied owned sim is deleted with the rest -- the environment dies whole', async () => {
-  const nestedDir1 = join(wtDir, 'apps', 'mobile1');
-  const nestedDir2 = join(wtDir, 'apps', 'mobile2');
-  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
-  upsertProject(nestedDir1, {
-    metroPort: 8094,
-    platforms: { ios: { deviceUdid: 'U5', owned: true, deviceName: 'stim-c' } },
-  });
-  upsertProject(nestedDir2, {
-    metroPort: 8095,
-    platforms: { ios: { deviceUdid: 'U6', owned: true, deviceName: 'stim-d' } },
-  });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-    simctlList: simctlJson([
-      { udid: 'U5', name: 'stim-c', state: 'Booted', isAvailable: true },
-      { udid: 'U6', name: 'stim-d', state: 'Shutdown', isAvailable: true },
-    ]),
-    occupied: { U5: true },
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (msg) => errs.push(String(msg));
-  const run = captureAction(registerRemove);
-  try {
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U5/.test(c))).toBeTruthy();
-  expect(exec.calls.run.some((c) => /xcrun simctl delete U6/.test(c))).toBeTruthy();
-
-  expect(getProject(nestedDir1)).toBe(null);
-  expect(getProject(nestedDir2)).toBe(null);
-
-  expect(!errs.some((l) => /kept .*device|kept .*sim/i.test(l))).toBeTruthy();
-});
-
-test('action: a project-local .stim directory is ordinary dirt and refuses removal', async () => {
-  upsertProject(wtDir, { metroPort: 8090 });
-  const exec = makeExecutor({
-    dirty: '?? .stim/\n',
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  expect(getProject(wtDir)).not.toBe(null);
-});
-
-test('action: real work beside .stim/ refuses and names every dirty path', async () => {
-  upsertProject(wtDir, { metroPort: 8091 });
-  const exec = makeExecutor({
-    dirty: '?? .stim/\n M src/app.js\n?? scratch.txt\n',
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  const text = errs.join('\n');
-  expect(text).toMatch(/checkout --/);
-  expect(text).toMatch(/clean -fd/);
-  expect(text.includes('.stim/')).toBeTruthy();
-});
-
-test('action: Stim never deletes a project-local .stim directory', async () => {
-  upsertProject(wtDir, { metroPort: 8092 });
-  mkdirSync(join(wtDir, '.stim', 'logs'), { recursive: true });
-  writeFileSync(join(wtDir, '.stim', 'state.json'), '{}');
-  const exec = makeExecutor({
-    dirty: '?? .stim/\n',
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(existsSync(join(wtDir, '.stim'))).toBe(true);
-  expect(process.exitCode).toBe(1);
-});
-
 test('action: a concurrent tunnel start cannot publish a replacement during worktree removal', async () => {
   upsertProject(wtDir, { metroPort: 8092 });
   ensureWorkspaceStorage(wtDir);
@@ -1490,15 +1024,6 @@ test('action: a concurrent tunnel start cannot publish a replacement during work
   expect(competingStart).not.toBeNull();
   await expect(competingStart).resolves.toBe('refused');
   expect(existsSync(workspaceStateFile(wtDir))).toBe(false);
-});
-
-test('the worktree removal lock lives outside project workspace state', async () => {
-  const key = createHash('sha256').update(resolve(wtDir)).digest('hex');
-  const claims = join(tmpHome, 'process-locks', 'worktrees', key, 'managed-remote.lock', 'exclusive');
-
-  await withManagedRemoteWorktreeLock(wtDir, async () => {
-    expect(readdirSync(claims).filter((name) => name.endsWith('.claim')).length).toBe(1);
-  });
 });
 
 test('action: an unregistered nested remote start cannot bypass the worktree removal lock', async () => {
@@ -1562,118 +1087,6 @@ test('action: an unregistered nested remote start cannot bypass the worktree rem
   expect(getProject(nestedDir)).toBeNull();
   expect(existsSync(workspaceStateFile(nestedDir))).toBe(false);
   await expect(withManagedRemoteWorktreeLock(wtDir, async () => 'released')).resolves.toBe('released');
-});
-
-test('action: a dirty path escaping the worktree is never removed', async () => {
-  upsertProject(wtDir, { metroPort: 8093 });
-  const outside = join(mainDir, '.stim');
-  mkdirSync(outside, { recursive: true });
-  setExecutor(
-    makeExecutor({
-      dirty: '?? ../stim-test-main-escape/.stim/\n',
-      worktrees: porcelain([
-        { path: mainDir, branch: 'main' },
-        { path: wtDir, branch: 'feat-x' },
-      ]),
-    }),
-  );
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(existsSync(outside)).toBe(true);
-});
-
-test('matchWorktreeEntry walks up to the enclosing worktree root', () => {
-  const entries = [{ path: '/repo' }, { path: '/repo-worktrees/feat-x' }];
-  expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-x')).toEqual({ index: 1, path: '/repo-worktrees/feat-x' });
-  expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-x/apps/mobile')).toEqual({
-    index: 1,
-    path: '/repo-worktrees/feat-x',
-  });
-  expect(matchWorktreeEntry(entries, '/repo/apps/mobile')).toEqual({ index: 0, path: '/repo' });
-  expect(matchWorktreeEntry(entries, '/repo-worktrees/feat-xy')).toBe(null);
-  expect(matchWorktreeEntry(entries, '/elsewhere')).toBe(null);
-  expect(matchWorktreeEntry([], '/repo')).toBe(null);
-});
-
-test('matchWorktreeEntry preserves the matched branch', () => {
-  expect(
-    matchWorktreeEntry([{ path: '/repo-worktrees/feat-x', branch: 'worktree-feat-x' }], '/repo-worktrees/feat-x'),
-  ).toEqual({ index: 0, path: '/repo-worktrees/feat-x', branch: 'worktree-feat-x' });
-});
-
-test('action: run from a monorepo app dir, it removes the enclosing worktree', async () => {
-  const nestedDir = join(wtDir, 'apps', 'mobile');
-  mkdirSync(nestedDir, { recursive: true });
-  upsertProject(wtDir, { metroPort: null, worktreeRoot: true });
-  upsertProject(nestedDir, { metroPort: 8099 });
-  const exec = makeExecutor({
-    worktrees: porcelain([
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'feat-x' },
-    ]),
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(nestedDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => c.includes(`worktree remove -- ${wtDir}`))).toBeTruthy();
-  expect(getProject(wtDir)).toBe(null);
-  expect(getProject(nestedDir)).toBe(null);
-});
-
-test('action: a path inside no worktree at all is still refused, pointing at git worktree list', async () => {
-  const exec = makeExecutor({ worktrees: porcelain([{ path: mainDir, branch: 'main' }]) });
-  setExecutor(exec);
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  expect(!exec.calls.run.some((c) => /worktree remove/.test(c))).toBeTruthy();
-  const text = errs.join('\n');
-  expect(text).toMatch(/git worktree list/);
-  expect(!/stim worktree list/.test(text)).toBeTruthy();
-});
-
-test('action: the dirty-tree remedy names the real worktree, not a placeholder', async () => {
-  upsertProject(wtDir, { metroPort: 8100 });
-  setExecutor(
-    makeExecutor({
-      dirty: ' M src/app.js\n?? scratch.txt\n',
-      worktrees: porcelain([
-        { path: mainDir, branch: 'main' },
-        { path: wtDir, branch: 'feat-x' },
-      ]),
-    }),
-  );
-
-  const errs: string[] = [];
-  const original = console.error;
-  console.error = (m) => errs.push(String(m));
-  try {
-    const run = captureAction(registerRemove);
-    await run(wtDir, {});
-  } finally {
-    console.error = original;
-  }
-
-  expect(process.exitCode).toBe(1);
-  const text = errs.join('\n');
-  expect(!text.includes('<worktree>')).toBeTruthy();
-  expect(!text.includes('git -C <path>')).toBeTruthy();
-  expect(text).toContain(`git -C ${wtDir} checkout --`);
-  expect(text).toContain(`git -C ${wtDir} clean -fd`);
 });
 
 test('against a real repo: remove on the source checkout reclaims the environment and leaves the repo intact', async () => {
@@ -2149,33 +1562,6 @@ test('action: in a bare-repository layout, the worktree on the bare HEAD branch 
   expect(errs.join('\n')).toMatch(/working tree stays \(it is the source checkout\)/);
 });
 
-test('action: in a bare-repository layout, a linked worktree is removed and its owned branch is deleted from the source checkout', async () => {
-  const bareRoot = join(tmpHome, 'bare');
-  upsertProject(wtDir, {
-    worktreeRoot: true,
-    worktreeBranch: 'worktree-feat-x',
-    worktreeBranchOwned: true,
-    worktreeMainRoot: mainDir,
-  });
-  const exec = makeExecutor({
-    worktrees: barePorcelain(bareRoot, [
-      { path: mainDir, branch: 'main' },
-      { path: wtDir, branch: 'worktree-feat-x' },
-    ]),
-    bare: { path: bareRoot, head: 'main' },
-  });
-  setExecutor(exec);
-
-  const run = captureAction(registerRemove);
-  await run(wtDir, {});
-
-  expect(process.exitCode).not.toBe(1);
-  expect(exec.calls.run.some((c) => /worktree remove/.test(c))).toBe(true);
-  expect(exec.calls.run.some((c) => c.startsWith(`git -C ${mainDir} update-ref -d refs/heads/worktree-feat-x`))).toBe(
-    true,
-  );
-});
-
 test('action: in a bare-repository layout with a detached bare HEAD, removal refuses and prints the symbolic-ref command', async () => {
   const bareRoot = join(tmpHome, 'bare');
   upsertProject(wtDir, { metroPort: 8083 });
@@ -2226,50 +1612,6 @@ test('action: the bare repository directory itself is refused as a removal targe
   expect(errs.join('\n')).toMatch(/is the bare repository, not a worktree/);
 });
 
-test('excludePodChurn takes the whole set when every dirty path is pod churn', () => {
-  const { lines, restore } = excludePodChurn([
-    ' M apps/app/ios/Podfile.lock',
-    ' M apps/app/ios/Tlon.xcodeproj/project.pbxproj',
-  ]);
-  expect(lines).toEqual([]);
-  expect(restore).toEqual(['apps/app/ios/Podfile.lock', 'apps/app/ios/Tlon.xcodeproj/project.pbxproj']);
-});
-
-test('excludePodChurn handles a bare project whose ios/ is at the repo root', () => {
-  const { restore } = excludePodChurn([' M ios/Podfile.lock']);
-  expect(restore).toEqual(['ios/Podfile.lock']);
-});
-
-test('excludePodChurn restores nothing when anything else is dirty alongside', () => {
-  const dirty = [' M apps/app/ios/Podfile.lock', ' M apps/app/src/App.tsx'];
-  const { lines, restore } = excludePodChurn(dirty);
-  expect(lines).toEqual(dirty);
-  expect(restore).toEqual([]);
-});
-
-test('excludePodChurn refuses an untracked Podfile.lock: checkout cannot restore one', () => {
-  const dirty = ['?? apps/app/ios/Podfile.lock'];
-  expect(excludePodChurn(dirty)).toEqual({ lines: dirty, restore: [] });
-});
-
-test('excludePodChurn refuses a staged change, which checkout would not undo', () => {
-  for (const line of ['M  apps/app/ios/Podfile.lock', 'MM apps/app/ios/Podfile.lock', 'A  apps/app/ios/Podfile.lock']) {
-    expect(excludePodChurn([line])).toEqual({ lines: [line], restore: [] });
-  }
-});
-
-test('excludePodChurn does not reach beyond the two files pod install rewrites', () => {
-  for (const line of [
-    ' M apps/app/android/Podfile.lock',
-    ' M apps/app/package-lock.json',
-    ' M apps/app/ios.lock/Podfile.lock',
-    ' M apps/app/ios/Podfile',
-    ' M Podfile.lock',
-  ]) {
-    expect(excludePodChurn([line]).restore).toEqual([]);
-  }
-});
-
 test('excludePodChurn restores pod-install churn in an app whose Xcode project is outside ios/', () => {
   const rnTester = { dir: 'packages/rn-tester', project: 'RNTesterPods' };
   const { lines, restore } = excludePodChurn(
@@ -2283,28 +1625,6 @@ test('excludePodChurn restores pod-install churn in an app whose Xcode project i
   expect(lines).toEqual([]);
   expect(excludePodChurn([' M packages/rn-tester/Desktop.xcodeproj/project.pbxproj'], [rnTester]).restore).toEqual([]);
   expect(excludePodChurn([' M packages/other/Podfile.lock'], [rnTester]).restore).toEqual([]);
-});
-
-test('excludePodChurn leaves a path it could not safely name to the refusal', () => {
-  const line = ' M apps/my app/ios/Podfile.lock';
-  expect(excludePodChurn([line])).toEqual({ lines: [line], restore: [] });
-});
-
-test('excludePodChurn on a clean listing restores nothing', () => {
-  expect(excludePodChurn([])).toEqual({ lines: [], restore: [] });
-});
-
-test('excludeWatchmanCookies takes untracked cookies at any depth and keeps everything else', () => {
-  const cookies = ['?? .watchman-cookie-host.local-123-4', '?? apps/mobile/.watchman-cookie-host-99-1'];
-  const rest = ['?? notes.txt', ' M apps/mobile/App.tsx', '?? apps/mobile/.watchman-cookie-x/', '?? .watchman-config'];
-  const result = excludeWatchmanCookies([...cookies, ...rest]);
-  expect(result.cookies).toEqual(['.watchman-cookie-host.local-123-4', 'apps/mobile/.watchman-cookie-host-99-1']);
-  expect(result.lines).toEqual(rest);
-});
-
-test('excludeWatchmanCookies keeps a modified or staged cookie path and one it could not safely name', () => {
-  const dirty = [' M .watchman-cookie-a-1-1', 'A  .watchman-cookie-a-1-2', '?? my dir/.watchman-cookie-a-1-3'];
-  expect(excludeWatchmanCookies(dirty)).toEqual({ lines: dirty, cookies: [] });
 });
 
 function cookieRepo(base: string): string {

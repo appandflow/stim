@@ -14,7 +14,7 @@ export function canonical(path: string): string {
   }
 }
 
-export function parseDu(output: string): Map<string, number> {
+function parseDu(output: string): Map<string, number> {
   const sizes = new Map<string, number>();
   for (const line of output.split('\n')) {
     const match = /^(\d+)\t(.+?)\r?$/.exec(line);

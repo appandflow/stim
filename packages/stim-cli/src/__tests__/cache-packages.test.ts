@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, wri
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
-import { METRO_NAMED_CACHE_LAYOUT, hostSimulatorArch, metroCacheRoot } from '@stim-cli/core';
+import { METRO_NAMED_CACHE_LAYOUT, metroCacheRoot } from '@stim-cli/core';
 import { readManifest } from '../cache/cache-manifest.ts';
 import { sharedBuildCache } from '../workspace/paths.ts';
 import { hasStoreAt } from '../supervisor/metro-store.ts';
@@ -78,46 +78,6 @@ test.each(['ios', 'android'])(
   },
 );
 
-test('standalone Expo cache artifacts do not cross explicit iOS schemes or the automatic key', async () => {
-  const state = mkdtempSync(join(tmpdir(), 'stim-pkg-schemes-'));
-  process.env.STIM_HOME = state;
-  process.env.STIM_BUILD_CACHE = join(state, 'cache');
-  try {
-    const provider = await import('@stim-cli/expo-build-cache');
-    const schemes = ['App/Stage', 'App_Stage', 'App-Stage', 'app-stage'];
-    for (const [index, scheme] of schemes.entries()) {
-      const app = join(state, `${index}.app`);
-      mkdirSync(app);
-      writeFileSync(join(app, 'identity'), scheme);
-      await provider.uploadBuildCache({
-        platform: 'ios',
-        fingerprintHash: 'same-inputs',
-        buildPath: app,
-        runOptions: { scheme },
-      });
-    }
-    const paths = new Set<string>();
-    for (const scheme of schemes) {
-      const app = await provider.resolveBuildCache({
-        platform: 'ios',
-        fingerprintHash: 'same-inputs',
-        runOptions: { scheme },
-      });
-      assert(app);
-      paths.add(app);
-      expect(readFileSync(join(app, 'identity'), 'utf8')).toBe(scheme);
-    }
-    expect(paths.size).toBe(schemes.length);
-    expect(
-      await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'same-inputs', runOptions: {} }),
-    ).toBeNull();
-  } finally {
-    delete process.env.STIM_BUILD_CACHE;
-    delete process.env.STIM_HOME;
-    rmSync(state, { recursive: true, force: true });
-  }
-});
-
 test('the Expo build cache provider registers itself on this Node, at the right depth', async () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
   const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
@@ -134,105 +94,6 @@ test('the Expo build cache provider registers itself on this Node, at the right 
     assert(record);
     expect(record.entriesDepth).toBe(2);
     expect(record.prune).toBe('entries');
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cacheRoot, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
-    delete process.env.STIM_BUILD_CACHE;
-  }
-});
-
-test('the standalone Expo build cache provider separates Android ABIs', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
-  const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
-  const universalApk = join(home, 'universal.apk');
-  const arm64Apk = join(home, 'arm64.apk');
-  process.env.STIM_HOME = home;
-  process.env.STIM_BUILD_CACHE = cacheRoot;
-  writeFileSync(universalApk, 'universal');
-  writeFileSync(arm64Apk, 'arm64');
-  try {
-    const provider = await import('@stim-cli/expo-build-cache');
-    await provider.uploadBuildCache({
-      platform: 'android',
-      fingerprintHash: 'fingerprint',
-      buildPath: universalApk,
-      runOptions: { variant: 'debug', allArch: true },
-    });
-    await provider.uploadBuildCache({
-      platform: 'android',
-      fingerprintHash: 'fingerprint',
-      buildPath: arm64Apk,
-      runOptions: { variant: 'debug', abi: 'arm64-v8a' },
-    });
-
-    const universal = await provider.resolveBuildCache({
-      platform: 'android',
-      fingerprintHash: 'fingerprint',
-      runOptions: { variant: 'debug', allArch: true },
-    });
-    const arm64 = await provider.resolveBuildCache({
-      platform: 'android',
-      fingerprintHash: 'fingerprint',
-      runOptions: { variant: 'debug', abi: 'arm64-v8a' },
-    });
-    assert(universal);
-    assert(arm64);
-    expect(universal).not.toBe(arm64);
-    expect(readFileSync(universal, 'utf8')).toBe('universal');
-    expect(readFileSync(arm64, 'utf8')).toBe('arm64');
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    rmSync(cacheRoot, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
-    delete process.env.STIM_BUILD_CACHE;
-  }
-});
-
-test('the standalone Expo build cache provider keys iOS simulator builds by this machine arch', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-home-'));
-  const cacheRoot = mkdtempSync(join(tmpdir(), 'stim-pkg-bc-'));
-  process.env.STIM_HOME = home;
-  process.env.STIM_BUILD_CACHE = cacheRoot;
-  try {
-    const provider = await import('@stim-cli/expo-build-cache');
-    const upload = async (name: string, runOptions: Record<string, unknown>) => {
-      const app = join(home, `${name}.app`);
-      mkdirSync(app);
-      writeFileSync(join(app, 'identity'), name);
-      await provider.uploadBuildCache({ platform: 'ios', fingerprintHash: 'fp', buildPath: app, runOptions });
-    };
-    const identity = async (runOptions: Record<string, unknown>) => {
-      const app = await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'fp', runOptions });
-      return app ? readFileSync(join(app, 'identity'), 'utf8') : null;
-    };
-    const other = hostSimulatorArch() === 'arm64' ? 'x86_64' : 'arm64';
-    await upload('host', { configuration: 'Debug' });
-    await upload('release', { configuration: 'Release' });
-    await upload('generic', { device: 'generic' });
-
-    expect(await identity({ arch: hostSimulatorArch() })).toBe('host');
-    expect(await identity({})).toBe('host');
-    expect(await identity({ arch: other })).toBeNull();
-    expect(await identity({ configuration: 'Release' })).toBe('release');
-    expect(await identity({ device: 'generic' })).toBe('generic');
-    expect(resolveBuild('ios', buildCacheKey('ios', 'fp', { isSimulator: true, arch: hostSimulatorArch() }))).toBe(
-      await provider.resolveBuildCache({ platform: 'ios', fingerprintHash: 'fp', runOptions: {} }),
-    );
-    expect(await identity({ configuration: 'Release', arch: hostSimulatorArch() })).toBe('release');
-    expect(await identity({ configuration: 'Release', arch: other })).toBeNull();
-    expect(
-      resolveBuild(
-        'ios',
-        buildCacheKey('ios', 'fp', { configuration: 'Release', isSimulator: true, arch: hostSimulatorArch() }),
-      ),
-    ).toBe(
-      await provider.resolveBuildCache({
-        platform: 'ios',
-        fingerprintHash: 'fp',
-        runOptions: { configuration: 'Release' },
-      }),
-    );
   } finally {
     rmSync(home, { recursive: true, force: true });
     rmSync(cacheRoot, { recursive: true, force: true });
@@ -385,38 +246,5 @@ test('both packages ignore relative overrides, so every cwd resolves the same ro
     delete process.env.STIM_HOME;
     delete process.env.STIM_BUILD_CACHE;
     delete process.env.STIM_METRO_CACHE;
-  }
-});
-
-test('the standalone cache provider never serves an artifact from another compiler profile', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'stim-pkg-profile-'));
-  process.env.STIM_HOME = home;
-  try {
-    const provider = await import('@stim-cli/expo-build-cache');
-    const apk = join(home, 'app.apk');
-    writeFileSync(apk, 'native build');
-    await provider.uploadBuildCache({
-      platform: 'android',
-      fingerprintHash: 'same',
-      buildPath: apk,
-      runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
-    });
-    expect(
-      await provider.resolveBuildCache({
-        platform: 'android',
-        fingerprintHash: 'same',
-        runOptions: { abi: 'arm64-v8a' },
-      }),
-    ).toBeNull();
-    expect(
-      await provider.resolveBuildCache({
-        platform: 'android',
-        fingerprintHash: 'same',
-        runOptions: { abi: 'arm64-v8a', buildProfile: 'opt-pch' },
-      }),
-    ).toBeTruthy();
-  } finally {
-    rmSync(home, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
   }
 });

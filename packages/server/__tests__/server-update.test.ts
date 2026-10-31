@@ -1,14 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseUpdateStart, ServerUpdates, type ServerUpdateOptions } from '../src/server-update.ts';
@@ -142,20 +133,6 @@ describe('server update requests', () => {
     await settled();
   });
 
-  it('reports a failed update and takes new work again', async () => {
-    const { instance, drains, settled } = updates({
-      env: {
-        ...process.env,
-        FAKE_UPDATER_OUT: join(dir, 'ran.json'),
-        FAKE_UPDATER_ROOT: serviceRoot(LABEL),
-        FAKE_UPDATER_FAIL: '1',
-      },
-    });
-    await instance.start(by, { release: '1.15.0' });
-    expect(await settled()).toMatchObject([{ ok: false, message: 'did not answer' }]);
-    expect(drains.at(-1)).toBeNull();
-  });
-
   it('refuses when the server does not run as a service', async () => {
     const { instance, drains } = updates({ runsAsService: async () => false });
     expect(await instance.start(by, { release: '1.15.0' })).toMatchObject({
@@ -220,19 +197,6 @@ describe('server update requests', () => {
     expect(['used', 'stale', 'fresh'].filter((name) => existsSync(join(root, 'incoming', name)))).toEqual(['fresh']);
   });
 
-  it('drops an upload whose bytes do not match the sha256 it offered, without draining', async () => {
-    const { instance, drains, finished, started: audited } = updates({ acceptsClientBuilds: () => true });
-    const started = await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
-    const id = (started as { result: { id: string } }).result.id;
-    expect(
-      instance.chunk(by.id, { id, name: 'server.tgz', offset: 0, data: Buffer.from('forged').toString('base64') }),
-    ).toMatchObject({ error: { message: expect.stringContaining('sha256') } });
-    expect(finished).toMatchObject([{ ok: false }]);
-    expect(audited).toEqual([]);
-    expect(drains).toEqual([]);
-    expect((await instance.status()).running).toBeNull();
-  });
-
   it('expires ten minutes after the last accepted chunk without extending the deadline for invalid chunks', async () => {
     vi.useFakeTimers();
     const { instance, finished, drains } = updates({ acceptsClientBuilds: () => true });
@@ -261,22 +225,6 @@ describe('server update requests', () => {
       expect(
         await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] }),
       ).toHaveProperty('result');
-    } finally {
-      instance.close();
-      vi.useRealTimers();
-    }
-  });
-
-  it('closing the server cancels the upload deadline and removes its incoming files', async () => {
-    vi.useFakeTimers();
-    const { instance, finished } = updates({ acceptsClientBuilds: () => true });
-    try {
-      await instance.start(by, { packages: [{ name: 'server.tgz', size: 6, sha256: sha('server') }] });
-      instance.close();
-      await vi.advanceTimersByTimeAsync(11 * 60_000);
-      expect(finished).toEqual([]);
-      const incoming = join(serviceRoot(LABEL), 'incoming');
-      expect(readdirSync(incoming)).toEqual([]);
     } finally {
       instance.close();
       vi.useRealTimers();

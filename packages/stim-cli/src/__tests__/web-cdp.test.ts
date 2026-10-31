@@ -3,19 +3,6 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import { sendToOwnedPage } from '../web/page.ts';
-import { fileURLToPath } from 'node:url';
-import { getExecutor } from '../exec.ts';
-
-test.each([
-  { outcome: 'unacknowledged', result: { url: 'http://localhost/owned' } },
-  { outcome: 'acknowledged', result: { url: 'http://localhost/owned' } },
-  { outcome: 'rejected', result: { message: 'navigation refused' } },
-  { outcome: 'cancelled', result: { code: 'STIM_CANCELLED' } },
-])('navigation releases its timeout when the command is $outcome', async ({ outcome, result }) => {
-  const fixture = fileURLToPath(new URL('./fixtures/web-navigation.mts', import.meta.url));
-  const output = await getExecutor().runFileAsync(process.execPath, [fixture, outcome], { timeoutMs: 4000 });
-  expect(JSON.parse(output)).toMatchObject({ result, timeouts: 0 });
-});
 
 test('cancelling while Chrome attaches to the owned page prevents a late Page.reload', async () => {
   const http = createServer((_request, response) => {

@@ -26,7 +26,7 @@ export function pidExists(pid: number): boolean {
   }
 }
 
-export function parseLsofPids(out: unknown): number[] {
+function parseLsofPids(out: unknown): number[] {
   if (!out) return [];
   return String(out)
     .split('\n')
@@ -76,7 +76,7 @@ export async function listeningPidsAsync(
   );
 }
 
-export function parseLsofCwd(out: unknown): string | null {
+function parseLsofCwd(out: unknown): string | null {
   if (!out) return null;
   const lines = String(out).split('\n');
   const idx = lines.findIndex((l) => l === 'fcwd');
@@ -105,7 +105,7 @@ export async function listeningPidsByPort(ports: number[]): Promise<Map<number, 
   return result;
 }
 
-export function parseLsofCwds(out: unknown): Map<number, string> {
+function parseLsofCwds(out: unknown): Map<number, string> {
   const cwds = new Map<number, string>();
   let pid: number | null = null;
   let inCwd = false;
@@ -170,7 +170,7 @@ export function isInsideProject(cwd: string | null | undefined, projectPath: str
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep);
 }
 
-export const NOT_OURS_UNRESPONSIVE = 'unresponsive';
+const NOT_OURS_UNRESPONSIVE = 'unresponsive';
 const NOT_OURS_UNREADABLE_CWD = 'unreadable-cwd';
 export const NOT_OURS_FOREIGN_CWD = 'foreign-cwd';
 

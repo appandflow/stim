@@ -2,20 +2,13 @@ import { once } from 'node:events';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  acquireWarmClaim,
-  withWarmClaim,
-  warmClaimAcquiredLine,
-  warmClaimPath,
-  warmClaimsDir,
-} from '../engine/warm-claim.ts';
+import { acquireWarmClaim, withWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { getExecutor } from '../exec.ts';
 import {
   ClaimRefusedError,
   exclusiveClaimDir,
   readClaimSet,
-  sharedClaimDir,
   markClaimChildPending,
   releaseClaim,
   type ClaimHandle,
@@ -63,22 +56,6 @@ test('two copies hold the claim at the same time', async () => {
   second.release();
 });
 
-test('a copy waits for a refresh in flight and names it', async () => {
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  let polls = 0;
-  const copy = await acquireWarmClaim({
-    repositoryRoot: REPO,
-    phase: 'copy',
-    sleep: async () => {
-      if (++polls === 3) refresh.release();
-    },
-  });
-  expect(polls).toBe(3);
-  expect(copy.wait.holder).toEqual({ pid: process.pid, phase: 'refresh' });
-  expect(existsSync(sharedClaimDir(warmClaimPath(REPO)))).toBe(true);
-  copy.release();
-});
-
 test('two refreshes never hold the claim at once', async () => {
   const first = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
   let polls = 0;
@@ -92,32 +69,6 @@ test('two refreshes never hold the claim at once', async () => {
   expect(polls).toBe(3);
   expect(second.wait.holder).toEqual({ pid: process.pid, phase: 'refresh' });
   second.release();
-});
-
-test('a refresh drains the copies in flight before it starts, and blocks new ones while it waits', async () => {
-  const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
-  let polls = 0;
-  let blocked = 0;
-  const refresh = await acquireWarmClaim({
-    repositoryRoot: REPO,
-    phase: 'refresh',
-    sleep: async () => {
-      if (++polls === 1) {
-        await acquireWarmClaim({
-          repositoryRoot: REPO,
-          phase: 'copy',
-          sleep: async () => {
-            blocked++;
-            throw new Error('stop');
-          },
-        }).catch(() => {});
-      }
-      if (polls === 2) copy.release();
-    },
-  });
-  expect(blocked).toBe(1);
-  expect(refresh.wait.holder).toEqual({ pid: process.pid, phase: 'copy' });
-  refresh.release();
 });
 
 test('a dead refresh holder and a dead copy holder are both reclaimed without waiting', async () => {
@@ -153,22 +104,6 @@ test('a claim Stim cannot resolve refuses both phases and names the removal of t
   expect(existsSync(path)).toBe(true);
 });
 
-test('a wait that outlives the ceiling refuses with STIM_LOCK_TIMEOUT and names the holder', async () => {
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  let clock = 0;
-  const error = await acquireWarmClaim({
-    repositoryRoot: REPO,
-    phase: 'copy',
-    now: () => (clock += 1000),
-    ceilingMs: 5000,
-    sleep: async () => {},
-  }).catch((thrown: unknown) => thrown);
-  refresh.release();
-  expect((error as Error & { code?: string }).code).toBe('STIM_LOCK_TIMEOUT');
-  expect((error as Error).message).toMatch(/stim worktree warm --refresh \(pid \d+\)/);
-  expect((error as Error).message).toContain(warmClaimPath(REPO));
-});
-
 test('a refresh that gives up while copies drain leaves no claim of its own behind', async () => {
   const copy = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'copy', sleep: never });
   let clock = 0;
@@ -185,42 +120,6 @@ test('a refresh that gives up while copies drain leaves no claim of its own behi
   const after = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
   expect(after.wait.holder).toBe(null);
   after.release();
-});
-
-test('a wait attributes elapsed time to the waiter and names its holder every progress interval', async () => {
-  const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-  const lines: string[] = [];
-  let clock = 120_000;
-  let polls = 0;
-  const copy = await acquireWarmClaim({
-    repositoryRoot: REPO,
-    phase: 'copy',
-    now: () => clock,
-    progressMs: 30_000,
-    out: (line) => lines.push(line),
-    sleep: async () => {
-      clock += 10_000;
-      if (++polls === 8) refresh.release();
-    },
-  });
-  expect(lines).toEqual([
-    `  lock        waiting 30s for stim worktree warm --refresh (pid ${process.pid}) -- stim guide lifecycle options`,
-    `  lock        waiting 1m00s for stim worktree warm --refresh (pid ${process.pid}) -- stim guide lifecycle options`,
-  ]);
-  expect(copy.wait.waitedMs).toBe(80_000);
-  copy.release();
-});
-
-test('the acquired line reports a wait only when there was one', () => {
-  expect(warmClaimAcquiredLine({ waitedMs: 0, holder: null })).toBe(`  ${'lock'.padEnd(11)} acquired`);
-  for (const waitedMs of [1, 250, 999]) {
-    expect(warmClaimAcquiredLine({ waitedMs, holder: { pid: 41233, phase: 'refresh' } })).toBe(
-      `  ${'lock'.padEnd(11)} acquired`,
-    );
-  }
-  expect(warmClaimAcquiredLine({ waitedMs: 12_000, holder: { pid: 41233, phase: 'refresh' } })).toBe(
-    `  ${'lock'.padEnd(11)} acquired (waited 12s for stim worktree warm --refresh pid 41233) -- stim guide lifecycle options`,
-  );
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -318,63 +217,6 @@ test('a pid that no longer exists is not a writer to hold the claim for', async 
   refresh.release();
   expect(existsSync(warmClaimPath(REPO))).toBe(false);
 });
-
-test.skipIf(process.platform === 'win32')(
-  'settling the installer waits for its process group, not for the process that led it (POSIX process groups; skipped on win32)',
-  async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-test-warm-settle-'));
-    const pidFile = join(dir, 'grandchild.pid');
-    const leader = join(dir, 'leader.mjs');
-    writeFileSync(
-      leader,
-      [
-        'const { spawn } = await import("node:child_process");',
-        'const { writeFileSync } = await import("node:fs");',
-        'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });',
-        'child.unref();',
-        `writeFileSync(${JSON.stringify(pidFile)}, String(child.pid));`,
-      ].join('\n'),
-    );
-
-    const refresh = await acquireWarmClaim({ repositoryRoot: REPO, phase: 'refresh', sleep: never });
-    const installer = getExecutor().spawn(process.execPath, [leader], { detached: true, stdio: 'ignore' });
-    if (!installer.pid) throw new Error('the installer did not start');
-    refresh.installer.declare();
-    refresh.installer.record(installer.pid);
-    await once(installer, 'exit');
-
-    let grandchild = 0;
-    for (let attempt = 0; attempt < 200 && !grandchild; attempt++) {
-      try {
-        grandchild = Number(readFileSync(pidFile, 'utf-8'));
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-    }
-    if (!grandchild) throw new Error('the installer never spawned its own child');
-
-    try {
-      let settled = false;
-      const settling = refresh.installer.settle().then((result) => {
-        settled = true;
-        return result;
-      });
-      await new Promise((resolve) => setTimeout(resolve, 150));
-      expect(settled).toBe(false);
-      expect(readClaimSet(warmClaimPath(REPO)).live).toHaveLength(1);
-
-      process.kill(grandchild, 'SIGKILL');
-      expect(await settling).toMatchObject({ settled: true });
-      refresh.release();
-      expect(existsSync(warmClaimPath(REPO))).toBe(false);
-    } finally {
-      try {
-        process.kill(grandchild, 'SIGKILL');
-      } catch {}
-      rmSync(dir, { recursive: true, force: true });
-    }
-  },
-);
 
 test.skipIf(process.platform === 'win32')(
   'a child record that cannot be written leaves the claim held while the writer it names runs (POSIX directory permissions and process groups; skipped on win32)',

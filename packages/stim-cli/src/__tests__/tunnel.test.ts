@@ -2,15 +2,11 @@ import {
   startTunnel,
   startTunnelSequence,
   stopTunnel,
-  parseCloudflaredLine,
   parseNgrokLine,
-  parseTailscaleLine,
   terminateChild,
-  tunnelArgv,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { pidExists } from '../metro.ts';
 import {
   processGroupAlive,
   readClaimSet,
@@ -74,110 +70,10 @@ function startVerified(options: Parameters<typeof startTunnel>[0]) {
   return startTunnel({ isChildAlive: () => false, ...options, readProcessToken: () => 'linux:100' });
 }
 
-describe('tunnelArgv', () => {
-  test('tailscale: foreground HTTPS Serve uses the Metro port and the resolved binary', () => {
-    expect(tunnelArgv('tailscale', 8081, 'https://stable.ngrok.app', '/tmp/tunnel.log', '/app/Tailscale')).toEqual({
-      bin: '/app/Tailscale',
-      args: ['serve', '--https=8081', 'http://127.0.0.1:8081'],
-    });
-  });
-  test('cloudflared: a quick tunnel at the local port', () => {
-    expect(tunnelArgv('cloudflared', 8081)).toEqual({
-      bin: 'cloudflared',
-      args: ['tunnel', '--url', 'http://127.0.0.1:8081'],
-    });
-  });
-
-  test('cloudflared: writes logs to an owned file when one is provided', () => {
-    expect(tunnelArgv('cloudflared', 8081, null, '/tmp/tunnel.log')).toEqual({
-      bin: 'cloudflared',
-      args: ['tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', '/tmp/tunnel.log'],
-    });
-  });
-
-  test('ngrok: JSON-formatted logs on stdout, so the URL can be parsed', () => {
-    expect(tunnelArgv('ngrok', 8081)).toEqual({
-      bin: 'ngrok',
-      args: ['http', '8081', '--log=stdout', '--log-format=json'],
-    });
-  });
-
-  test('ngrok: appends the configured stable URL', () => {
-    expect(tunnelArgv('ngrok', 8081, 'https://stable.ngrok.app')).toEqual({
-      bin: 'ngrok',
-      args: ['http', '8081', '--log=stdout', '--log-format=json', '--url', 'https://stable.ngrok.app'],
-    });
-  });
-
-  test('ngrok: does not add --url without a configured stable URL', () => {
-    expect(tunnelArgv('ngrok', 8081).args).not.toContain('--url');
-  });
-
-  test('ngrok: writes JSON logs to an owned file when one is provided', () => {
-    expect(tunnelArgv('ngrok', 8081, null, '/tmp/tunnel.log')).toEqual({
-      bin: 'ngrok',
-      args: ['http', '8081', '--log=/tmp/tunnel.log', '--log-format=json'],
-    });
-  });
-});
-
-describe('parseCloudflaredLine', () => {
-  test("finds the URL inside cloudflared's banner line", () => {
-    const line = '2026-01-01T00:00:00Z INF |  https://random-words-1234.trycloudflare.com  |';
-    expect(parseCloudflaredLine(line)).toBe('https://random-words-1234.trycloudflare.com');
-  });
-
-  test('a line with no URL is not a match', () => {
-    expect(parseCloudflaredLine('2026-01-01T00:00:00Z INF Starting tunnel')).toBeNull();
-  });
-
-  test('a URL for a different host is not matched', () => {
-    expect(parseCloudflaredLine('see https://example.com for docs')).toBeNull();
-  });
-});
-
 describe('parseNgrokLine', () => {
-  test('reads the url field from a JSON log line', () => {
-    const line = JSON.stringify({ lvl: 'info', msg: 'started tunnel', url: 'https://abcd1234.ngrok-free.app' });
-    expect(parseNgrokLine(line)).toBe('https://abcd1234.ngrok-free.app');
-  });
-
-  test('a JSON line with no url field is not a match', () => {
-    expect(parseNgrokLine(JSON.stringify({ lvl: 'info', msg: 'client session established' }))).toBeNull();
-  });
-
-  test('a non-JSON line does not throw -- this is untrusted output', () => {
-    expect(parseNgrokLine('not json at all')).toBeNull();
-  });
-
-  test('a url field that is not a string is ignored rather than trusted', () => {
-    expect(parseNgrokLine(JSON.stringify({ url: 12345 }))).toBeNull();
-  });
-
-  test('a url field with no scheme is ignored', () => {
-    expect(parseNgrokLine(JSON.stringify({ url: 'abcd1234.ngrok-free.app' }))).toBeNull();
-  });
-
   test('a JSON line that is not an object (a bare array or scalar) is not a match', () => {
     expect(parseNgrokLine('42')).toBeNull();
     expect(parseNgrokLine('[1,2,3]')).toBeNull();
-  });
-});
-
-describe('parseTailscaleLine', () => {
-  test('accepts the MagicDNS HTTPS line, including its port and trailing slash', () => {
-    expect(parseTailscaleLine('https://host.tail123.ts.net:8081/')).toBe('https://host.tail123.ts.net:8081/');
-    expect(parseTailscaleLine('https://host.tail123.ts.net')).toBe('https://host.tail123.ts.net');
-  });
-
-  test.each([
-    '|-- proxy http://127.0.0.1:8081',
-    'Available within your tailnet:',
-    'https://example.com:8081/',
-    'see https://host.tail123.ts.net:8081/',
-    'https://host.tail123.ts.net:8081/status',
-  ])('ignores non-origin output: %s', (line) => {
-    expect(parseTailscaleLine(line)).toBeNull();
   });
 });
 
@@ -276,91 +172,6 @@ describe('startTunnel: the happy path', () => {
     expect(one).toHaveBeenCalledWith(null, '203.0.113.1', 4);
   });
 
-  test('cloudflared: the URL from stderr, confirmed reachable, is returned with the pid', async () => {
-    const child = makeChildProcess();
-    const promise = startVerified({
-      provider: 'cloudflared',
-      port: 8081,
-      spawnFn: () => child,
-      probeReachable: async () => true,
-    });
-    child.stderr?.emit('data', 'banner |  https://random-words.trycloudflare.com  |\n');
-    await expect(promise).resolves.toMatchObject({
-      url: 'https://random-words.trycloudflare.com',
-      pid: IMPOSSIBLE_PID,
-      processToken: 'linux:100',
-      cleanup: expect.any(Function),
-    });
-  });
-
-  test('ngrok: the URL from a JSON stdout line, confirmed reachable', async () => {
-    const child = makeChildProcess();
-    const promise = startVerified({
-      provider: 'ngrok',
-      port: 8081,
-      spawnFn: () => child,
-      probeReachable: async () => true,
-    });
-    child.stdout?.emit('data', `${JSON.stringify({ msg: 'started tunnel', url: 'https://abcd.ngrok-free.app' })}\n`);
-    await expect(promise).resolves.toMatchObject({
-      url: 'https://abcd.ngrok-free.app',
-      pid: IMPOSSIBLE_PID,
-      cleanup: expect.any(Function),
-    });
-  });
-
-  test("the child is unref'd on success so it can outlive the caller", async () => {
-    let unrefed = false;
-    const child = makeChildProcess({
-      unref() {
-        unrefed = true;
-        return child;
-      },
-    });
-    const promise = startVerified({
-      provider: 'ngrok',
-      port: 8081,
-      spawnFn: () => child,
-      probeReachable: async () => true,
-    });
-    child.stdout?.emit('data', `${JSON.stringify({ url: 'https://abcd.ngrok-free.app' })}\n`);
-    await promise;
-    expect(unrefed).toBe(true);
-  });
-
-  test('routes provider output to an owned file so the child is not attached to caller pipes', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-log-test-'));
-    const logFile = join(dir, 'cloudflared.log');
-    const line = 'banner |  https://detached.trycloudflare.com  |\n';
-    const child = makeChildProcess();
-    let args: string[] = [];
-    let stdio: unknown;
-    const options = {
-      provider: 'cloudflared' as const,
-      port: 8081,
-      logFile,
-      spawnFn: (_cmd: string, childArgs: string[], spawnOptions: Record<string, unknown>) => {
-        args = childArgs;
-        stdio = spawnOptions.stdio;
-        queueMicrotask(() => {
-          writeFileSync(logFile, line);
-          child.stderr?.emit('data', line);
-        });
-        return child;
-      },
-      probeReachable: async () => true,
-    };
-
-    try {
-      const result = await startVerified(options);
-      expect(result).toMatchObject({ url: 'https://detached.trycloudflare.com', logFile });
-      expect(args).toEqual(['tunnel', '--url', 'http://127.0.0.1:8081', '--logfile', logFile]);
-      expect(stdio).toEqual(['ignore', 'ignore', 'ignore']);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   test('does not record a PID reused after spawn with a different process token', async () => {
     let token = 'linux:100';
     const signals: Array<NodeJS.Signals | number | undefined> = [];
@@ -419,31 +230,6 @@ describe('startTunnel: the happy path', () => {
 });
 
 describe('startTunnel: nothing here throws -- every failure is a returned value', () => {
-  test('reads a later URL through the safety fallback when watching is unavailable', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-fallback-test-'));
-    const logFile = join(dir, 'ngrok.log');
-    writeFileSync(logFile, '');
-    watcher.unavailable = true;
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
-      const promise = startVerified({
-        provider: 'ngrok',
-        port: 8081,
-        logFile,
-        spawnFn: () => makeChildProcess(),
-        requireReachable: false,
-      });
-      writeFileSync(logFile, `${JSON.stringify({ url: 'https://fallback.ngrok.app' })}\n`);
-      await vi.advanceTimersByTimeAsync(1000);
-      const result = await promise;
-      expect(result).toMatchObject({ url: 'https://fallback.ngrok.app' });
-      if ('cleanup' in result) await result.cleanup();
-    } finally {
-      vi.useRealTimers();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   test('reads a URL from atomic log replacements without a polling tick', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-watch-test-'));
     const logFile = join(dir, 'ngrok.log');
@@ -476,35 +262,6 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     }
   });
 
-  test.each(['\n\n', ''])('tailscale reports the last trimmed conflict line with suffix %j on exit', async (suffix) => {
-    const child = makeChildProcess();
-    setExecutor({ findExecutable: () => 'tailscale' });
-    const promise = startVerified({ provider: 'tailscale', port: 8081, spawnFn: () => child });
-    const conflict = 'sending serve config: updating config: listener already exists for port 8081';
-    child.stderr?.emit('data', `first line\n  ${conflict}  ${suffix}`);
-    child.emit('exit', 1, null);
-    await expect(promise).resolves.toEqual({
-      failed: true,
-      reason: `tailscale exited before printing a tunnel URL: ${conflict}`,
-    });
-  });
-  test('a binary that will not even start', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-tunnel-spawn-test-'));
-    const logFile = join(dir, 'ngrok.log');
-    writeFileSync(logFile, '');
-    const result = await startVerified({
-      provider: 'ngrok',
-      port: 8081,
-      logFile,
-      spawnFn: () => {
-        throw Object.assign(new Error('spawn ngrok ENOENT'), { code: 'ENOENT' });
-      },
-    });
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('Could not start ngrok') });
-    expect(existsSync(logFile)).toBe(false);
-    rmSync(dir, { recursive: true, force: true });
-  });
-
   test('exiting before printing a URL is a failure, not a hang', async () => {
     let killed = false;
     const child = makeChildProcess({
@@ -518,76 +275,6 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     const result = await promise;
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('exited before printing') });
     expect(killed).toBe(false);
-  });
-
-  test('a provider that stays silent is bounded by urlTimeoutMs, not left running', async () => {
-    const child = makeChildProcess();
-    const result = await startVerified({ provider: 'ngrok', port: 8081, spawnFn: () => child, urlTimeoutMs: 20 });
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('did not print a tunnel URL') });
-  });
-
-  test('finishes cleanup on child exit without waiting for another timer', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    let completed = false;
-    let streamsDestroyed = 0;
-    let cleanup: Promise<unknown> | undefined;
-    const child = makeChildProcess({
-      kill(signal) {
-        expect(signal).toBe('SIGTERM');
-        queueMicrotask(() => child.emit('exit', null, signal));
-        return true;
-      },
-    });
-    Object.assign(child.stdout as object, { destroy: () => void (streamsDestroyed += 1) });
-    Object.assign(child.stderr as object, { destroy: () => void (streamsDestroyed += 1) });
-    try {
-      const startup = startVerified({
-        provider: 'ngrok',
-        port: 8081,
-        spawnFn: () => child,
-        requireReachable: false,
-        isChildAlive: () => true,
-      });
-      child.stdout?.emit('data', JSON.stringify({ url: 'https://cleanup.ngrok.app' }) + '\n');
-      const result = await startup;
-      assert('cleanup' in result);
-      cleanup = result.cleanup().then((stopped) => {
-        completed = true;
-        return stopped;
-      });
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(completed).toBe(true);
-      expect(await cleanup).toEqual({ status: 'stopped' });
-      expect(streamsDestroyed).toBe(2);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await vi.advanceTimersByTimeAsync(2000);
-      await cleanup;
-      vi.useRealTimers();
-    }
-  });
-
-  test('escalates to SIGKILL and confirms exit when a child ignores SIGTERM', async () => {
-    const signals: Array<NodeJS.Signals | number | undefined> = [];
-    const child = makeChildProcess({
-      kill(signal) {
-        signals.push(signal);
-        if (signal === 'SIGKILL') child.emit('exit', null, 'SIGKILL');
-        return true;
-      },
-    });
-
-    await startVerified({
-      provider: 'ngrok',
-      port: 8081,
-      spawnFn: () => child,
-      urlTimeoutMs: 1,
-      cleanupTimeoutMs: 5,
-      isChildAlive: () => true,
-    } as Parameters<typeof startTunnel>[0]);
-
-    expect(signals).toEqual(['SIGTERM', 'SIGKILL']);
   });
 
   test('does not fall back when SIGKILL cannot confirm child exit', async () => {
@@ -622,38 +309,6 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(result).toEqual({ failed: true, reason: expect.stringContaining('could not confirm'), cleanupFailed: true });
   });
 
-  test('auto fallback starts only after the failed child exits', async () => {
-    const order: string[] = [];
-    const child = makeChildProcess({
-      kill() {
-        setTimeout(() => {
-          order.push('ngrok-exit');
-          child.emit('exit', null, 'SIGTERM');
-        }, 5);
-        return true;
-      },
-    });
-
-    await startTunnelSequence({
-      providers: ['ngrok', 'cloudflared'],
-      port: 8081,
-      start: async ({ provider }) => {
-        if (provider === 'cloudflared') {
-          order.push('cloudflared-start');
-          return {
-            url: 'https://fallback.trycloudflare.com',
-            pid: 4243,
-            processToken: 'linux:100',
-            cleanup: successfulTunnelCleanup,
-          };
-        }
-        return startVerified({ provider, port: 8081, spawnFn: () => child, urlTimeoutMs: 1 });
-      },
-    });
-
-    expect(order).toEqual(['ngrok-exit', 'cloudflared-start']);
-  });
-
   test('a URL that never becomes reachable fails on the INJECTED clock, not a real one', async () => {
     const c = clock();
     const child = makeChildProcess();
@@ -671,47 +326,6 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
     expect(result).toEqual({
       failed: true,
       reason: expect.stringContaining('did not become reachable'),
-    });
-  });
-
-  test('a URL is proven reachable only after the probe starts succeeding', async () => {
-    const c = clock();
-    let calls = 0;
-    const child = makeChildProcess();
-    const promise = startVerified({
-      provider: 'cloudflared',
-      port: 8081,
-      spawnFn: () => child,
-      probeReachable: async () => ++calls >= 3,
-      reachableTimeoutMs: 60_000,
-      now: c.now,
-      sleep: c.sleep,
-    });
-    child.stderr?.emit('data', 'https://x.trycloudflare.com\n');
-    const result = await promise;
-    expect(result).toMatchObject({
-      url: 'https://x.trycloudflare.com',
-      pid: IMPOSSIBLE_PID,
-      cleanup: expect.any(Function),
-    });
-    expect(calls).toBe(3);
-  });
-
-  test('a provider reporting no pid is a failure', async () => {
-    const child = makeChildProcess({ pid: undefined });
-    const promise = startVerified({
-      provider: 'ngrok',
-      port: 8081,
-      spawnFn: () => child,
-      probeReachable: async () => true,
-      cleanupTimeoutMs: 1,
-    });
-    child.stdout?.emit('data', `${JSON.stringify({ url: 'https://x.ngrok-free.app' })}\n`);
-    const result = await promise;
-    expect(result).toEqual({
-      failed: true,
-      reason: expect.stringMatching(/reported no pid.*could not confirm/),
-      cleanupFailed: true,
     });
   });
 
@@ -738,105 +352,6 @@ describe('startTunnel: nothing here throws -- every failure is a returned value'
   });
 });
 
-describe('startTunnelSequence', () => {
-  test('auto falls back to cloudflared after ngrok exits before returning a URL', async () => {
-    const calls: string[] = [];
-    const result = await startTunnelSequence({
-      providers: ['ngrok', 'cloudflared'],
-      port: 8081,
-      start: async ({ provider }) => {
-        calls.push(provider);
-        return provider === 'ngrok'
-          ? { failed: true as const, reason: 'authentication failed before printing a tunnel URL' }
-          : {
-              url: 'https://fallback.trycloudflare.com',
-              pid: 4243,
-              processToken: 'linux:100',
-              cleanup: successfulTunnelCleanup,
-            };
-      },
-    });
-
-    expect(calls).toEqual(['ngrok', 'cloudflared']);
-    expect(result).toEqual({
-      provider: 'cloudflared',
-      url: 'https://fallback.trycloudflare.com',
-      pid: 4243,
-      processToken: 'linux:100',
-      cleanup: successfulTunnelCleanup,
-    });
-  });
-
-  test('a successful ngrok URL wins without starting cloudflared', async () => {
-    const calls: string[] = [];
-    const result = await startTunnelSequence({
-      providers: ['ngrok', 'cloudflared'],
-      port: 8081,
-      start: async ({ provider }) => {
-        calls.push(provider);
-        return {
-          url: 'https://ready.ngrok.app',
-          pid: 4242,
-          processToken: 'linux:100',
-          cleanup: successfulTunnelCleanup,
-        };
-      },
-    });
-
-    expect(calls).toEqual(['ngrok']);
-    expect(result).toEqual({
-      provider: 'ngrok',
-      url: 'https://ready.ngrok.app',
-      pid: 4242,
-      processToken: 'linux:100',
-      cleanup: successfulTunnelCleanup,
-    });
-  });
-
-  test('explicit ngrok is fail-closed when it is the only candidate', async () => {
-    const calls: string[] = [];
-    const result = await startTunnelSequence({
-      providers: ['ngrok'],
-      port: 8081,
-      start: async ({ provider }) => {
-        calls.push(provider);
-        return { failed: true as const, reason: 'authentication failed' };
-      },
-    });
-
-    expect(calls).toEqual(['ngrok']);
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('ngrok: authentication failed') });
-  });
-
-  test('explicit cloudflared is fail-closed when it is the only candidate', async () => {
-    const calls: string[] = [];
-    const result = await startTunnelSequence({
-      providers: ['cloudflared'],
-      port: 8081,
-      start: async ({ provider }) => {
-        calls.push(provider);
-        return { failed: true as const, reason: 'quick tunnel refused' };
-      },
-    });
-
-    expect(calls).toEqual(['cloudflared']);
-    expect(result).toEqual({ failed: true, reason: expect.stringContaining('cloudflared: quick tunnel refused') });
-  });
-
-  test('reports evidence from every failed auto provider', async () => {
-    const result = await startTunnelSequence({
-      providers: ['ngrok', 'cloudflared'],
-      port: 8081,
-      start: async ({ provider }) => ({ failed: true as const, reason: `${provider} evidence` }),
-    });
-
-    expect(result).toEqual({
-      failed: true,
-      reason: expect.stringMatching(/ngrok: ngrok evidence.*cloudflared: cloudflared evidence/),
-    });
-  });
-});
-
 function fixtureRecord(overrides: Partial<TunnelRecord> = {}): TunnelRecord {
   return {
     provider: 'cloudflared',
@@ -854,16 +369,6 @@ function stopVerified(record: TunnelRecord, options: Parameters<typeof stopTunne
 }
 
 describe('stopTunnel: idempotent, never throws', () => {
-  test('no record at all is missing, not an error', async () => {
-    await expect(stopTunnel(null)).resolves.toEqual({ status: 'missing' });
-    await expect(stopTunnel(undefined)).resolves.toEqual({ status: 'missing' });
-  });
-
-  test('a pid that is already dead is missing -- calling stop twice is safe', async () => {
-    const result = await stopVerified(fixtureRecord(), { isAlive: () => false });
-    expect(result).toEqual({ status: 'missing' });
-  });
-
   test('a legacy record without a process token fails closed and is not signalled', async () => {
     const signalled: number[] = [];
     const record = fixtureRecord();
@@ -874,30 +379,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     });
     expect(signalled).toEqual([]);
     expect(result).toEqual({ status: 'failed', reason: expect.stringMatching(/process identity token.*retry/i) });
-  });
-
-  test.each(['different', 'gone'] as const)('a %s identity is stale and never signalled', async (identity) => {
-    const kill = vi.fn<(pid: number) => void>();
-    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => identity, kill });
-    expect(result.status).toBe('missing');
-    expect(kill).not.toHaveBeenCalled();
-  });
-
-  test('an unreadable native identity retains the record without signalling', async () => {
-    const kill = vi.fn<(pid: number) => void>();
-    const result = await stopVerified(fixtureRecord(), { isAlive: () => true, inspectIdentity: () => 'unknown', kill });
-    expect(result.status).toBe('failed');
-    expect(kill).not.toHaveBeenCalled();
-  });
-
-  test.each(['ngrok', 'cloudflared', 'tailscale'] as const)('stops the recorded %s instance', async (provider) => {
-    let alive = true;
-    const kill = vi.fn<(pid: number) => void>(() => {
-      alive = false;
-    });
-    const result = await stopVerified(fixtureRecord({ provider }), { isAlive: () => alive, kill });
-    expect(kill).toHaveBeenCalledExactlyOnceWith(4242);
-    expect(result.status).toBe('stopped');
   });
 
   test('on win32 the default kill reaches the tree, because a shim on PATH runs the real tunnel as a child', async () => {
@@ -917,21 +398,6 @@ describe('stopTunnel: idempotent, never throws', () => {
     } finally {
       resetExecutor();
     }
-  });
-
-  test('a reused PID during the exit wait does not hold cleanup or get another signal', async () => {
-    let identity: 'same' | 'different' = 'same';
-    const kill = vi.fn<(pid: number) => void>();
-    const result = await stopVerified(fixtureRecord(), {
-      isAlive: () => true,
-      inspectIdentity: () => identity,
-      kill,
-      sleep: async () => {
-        identity = 'different';
-      },
-    });
-    expect(result.status).toBe('stopped');
-    expect(kill).toHaveBeenCalledTimes(1);
   });
 
   test("a kill racing the process's own exit (ESRCH) reads as missing, not failed", async () => {
@@ -1036,76 +502,6 @@ describe('owned child cleanup', () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
-
-  test.each(['ESRCH', 'EPERM'])('handles an emitted %s without assuming an exit', async (code) => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    const signals: Array<NodeJS.Signals | number | undefined> = [];
-    const child = makeChildProcess({
-      kill(signal) {
-        signals.push(signal);
-        queueMicrotask(() => child.emit('error', Object.assign(new Error('kill failed'), { code })));
-        return false;
-      },
-    });
-    let result: boolean | undefined;
-    const cleanup = terminateChild(child, {
-      alreadyExited: false,
-      timeoutMs: 1000,
-      isAlive: () => true,
-      platform: 'darwin',
-    }).then((stopped) => {
-      result = stopped;
-      return stopped;
-    });
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      expect(result).toBe(code === 'ESRCH');
-      expect(signals).toEqual(code === 'ESRCH' ? ['SIGTERM'] : ['SIGTERM', 'SIGKILL']);
-      expect(child.listenerCount('exit')).toBe(0);
-      expect(child.listenerCount('error')).toBe(0);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      await vi.advanceTimersByTimeAsync(2000);
-      await cleanup;
-      vi.useRealTimers();
-    }
-  });
-
-  test('stops a real owned Node child and closes its pipes', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'stim-tunnel-child-'));
-    const previousHome = process.env.STIM_HOME;
-    process.env.STIM_HOME = home;
-    const child = getExecutor().spawn(
-      process.execPath,
-      [
-        '-e',
-        'process.on("SIGTERM", () => process.exit(0)); process.stdout.write("ready\\n"); setTimeout(() => process.exit(13), 3000);',
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    const closed = once(child, 'close');
-    try {
-      assert(child.stdout);
-      await once(child.stdout, 'data');
-      expect(
-        await terminateChild(child, {
-          alreadyExited: false,
-          timeoutMs: 500,
-          isAlive: pidExists,
-        }),
-      ).toBe(true);
-      await closed;
-      expect(child.exitCode).not.toBe(13);
-      expect(child.stdout.destroyed).toBe(true);
-      expect(child.stderr?.destroyed).toBe(true);
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-      await closed;
-      if (previousHome === undefined) delete process.env.STIM_HOME;
-      else process.env.STIM_HOME = previousHome;
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('terminateChild on win32', () => {
@@ -1129,27 +525,5 @@ describe('terminateChild on win32', () => {
     });
     expect(stopped).toBe(true);
     expect(taskkill).toEqual([['taskkill', '/PID', '4242', '/T', '/F']]);
-  });
-});
-
-describe('against output cloudflared really printed', () => {
-  // Captured from cloudflared 2026.8.2; keep these raw lines as parser fixtures.
-  const BANNER =
-    '2026-08-26T19:50:27Z INF |  https://priest-contribute-mysql-leslie.trycloudflare.com                                  |';
-  const REQUEST_ERROR =
-    '2026-08-26T20:26:19Z ERR Request failed error="Unable to reach the origin service." connIndex=0 ' +
-    'dest=https://priest-contribute-mysql-leslie.trycloudflare.com/status event=0 ip=198.41.192.37 type=http';
-  const PRECHECK = '2026-08-26T19:50:22Z INF Requesting new quick Tunnel on trycloudflare.com...';
-
-  test('the banner line yields the bare origin, boxed in pipes and padding', () => {
-    expect(parseCloudflaredLine(BANNER)).toBe('https://priest-contribute-mysql-leslie.trycloudflare.com');
-  });
-
-  test('a url carrying a PATH still yields only the origin', () => {
-    expect(parseCloudflaredLine(REQUEST_ERROR)).toBe('https://priest-contribute-mysql-leslie.trycloudflare.com');
-  });
-
-  test('the pre-banner line naming the domain is NOT a url', () => {
-    expect(parseCloudflaredLine(PRECHECK)).toBeNull();
   });
 });

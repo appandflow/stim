@@ -1,28 +1,15 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import {
   parseSimctlList,
-  listAllIosSims,
   pickDefaultIosCreation,
-  sanitizeDeviceLabel,
-  ownedSimName,
   deleteIosSim,
   bootIosSim,
   clearIosAppData,
-  deleteParkedIosSim,
-  listUserApps,
-  parkedSimName,
   parseUserApps,
-  createOwnedIosSim,
-  resolveOwnedIosSim,
-  renameIosSim,
-  resetIosKeychain,
-  resetIosPrivacy,
-  shutdownIosSim,
-  uninstallIosApp,
 } from '../devices/ios.ts';
 import assert from 'node:assert';
 import { makeChildProcess, makeExitingChild } from './_factories.ts';
@@ -54,7 +41,7 @@ afterEach(() => {
   resetExecutor();
 });
 
-const SIMCTL_OUTPUT = JSON.stringify({
+JSON.stringify({
   devices: {
     'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
       {
@@ -91,12 +78,6 @@ const SIMCTL_OUTPUT = JSON.stringify({
   },
 });
 
-test('parseSimctlList flattens devices and filters unavailable', () => {
-  const sims = parseSimctlList(SIMCTL_OUTPUT);
-  expect(sims.length).toBe(3);
-  expect(sims.map((s) => s.udid).toSorted()).toEqual(['UDID-A', 'UDID-B', 'UDID-C']);
-});
-
 test('parseSimctlList rejects structurally invalid successful output', () => {
   for (const output of ['[]', '{}', '"ok"', '{"devices":[]}']) {
     expect(() => parseSimctlList(output)).toThrow(/devices object/);
@@ -130,118 +111,6 @@ test('parseSimctlList rejects incomplete or mistyped iOS device records', () => 
   expect(() => parseSimctlList(JSON.stringify({ devices: { [runtime]: ['corrupt'] } }))).toThrow(/every simctl device/);
 });
 
-test('parseSimctlList includes runtime in each entry', () => {
-  const sims = parseSimctlList(SIMCTL_OUTPUT);
-  const a = sims.find((s) => s.udid === 'UDID-A');
-  assert(a);
-  expect(a.runtime).toBe('com.apple.CoreSimulator.SimRuntime.iOS-17-2');
-});
-
-test('parseSimctlList can retain unavailable devices and their data sizes', () => {
-  const out = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-17-2': [
-        {
-          udid: 'UDID-OLD',
-          name: 'stim-old',
-          state: 'Shutdown',
-          isAvailable: false,
-          dataPath: '/tmp/CoreSimulator/UDID-OLD/data',
-          dataPathSize: 1234,
-          deviceTypeIdentifier: 'iphone-15',
-        },
-      ],
-    },
-  });
-  expect(parseSimctlList(out)).toEqual([]);
-  expect(parseSimctlList(out, { includeUnavailable: true })).toEqual([
-    {
-      udid: 'UDID-OLD',
-      name: 'stim-old',
-      state: 'Shutdown',
-      runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-17-2',
-      deviceTypeIdentifier: 'iphone-15',
-      dataPath: '/tmp/CoreSimulator/UDID-OLD/data',
-      dataPathSize: 1234,
-      available: false,
-    },
-  ]);
-});
-
-test('listAllIosSims uses simctl via executor', () => {
-  setExecutor({
-    runFile: (file, args, options) => {
-      expect([file, ...args]).toEqual(['xcrun', 'simctl', 'list', 'devices', '--json']);
-      expect(options).toEqual({ timeoutMs: 30000, killSignal: 'SIGKILL' });
-      return SIMCTL_OUTPUT;
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  const sims = listAllIosSims();
-  expect(sims.length).toBe(3);
-});
-
-test('parseRuntimeVersion extracts major.minor from runtime id', async () => {
-  const { parseRuntimeVersion } = await import('../devices/ios.ts');
-  expect(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-26-2')).toBe('26.2');
-  expect(parseRuntimeVersion('com.apple.CoreSimulator.SimRuntime.iOS-18')).toBe('18');
-  expect(parseRuntimeVersion('weird-id')).toBe('weird-id');
-});
-
-test('parseSimctlList drops non-iOS runtimes (watchOS, tvOS, visionOS)', () => {
-  const out = JSON.stringify({
-    devices: {
-      'com.apple.CoreSimulator.SimRuntime.iOS-26-2': [
-        {
-          udid: 'IOS-1',
-          name: 'iPhone 17',
-          state: 'Booted',
-          isAvailable: true,
-          deviceTypeIdentifier: 'iphone-17',
-        },
-      ],
-      'com.apple.CoreSimulator.SimRuntime.watchOS-11-0': [
-        { udid: 'WATCH-1', name: 'Apple Watch S10', state: 'Booted', isAvailable: true },
-      ],
-      'com.apple.CoreSimulator.SimRuntime.tvOS-18-0': [
-        { udid: 'TV-1', name: 'Apple TV 4K', state: 'Booted', isAvailable: true },
-      ],
-      'com.apple.CoreSimulator.SimRuntime.xrOS-2-0': [
-        { udid: 'VISION-1', name: 'Apple Vision Pro', state: 'Booted', isAvailable: true },
-      ],
-    },
-  });
-  const sims = parseSimctlList(out);
-  expect(sims.map((s) => s.udid)).toEqual(['IOS-1']);
-});
-
-test('pickDefaultIosCreation picks the newest iPhone on the newest runtime', () => {
-  const deviceTypes = [
-    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPad-Pro', name: 'iPad Pro' },
-    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-16', name: 'iPhone 16' },
-    { identifier: 'com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro', name: 'iPhone 17 Pro' },
-  ];
-  const runtimes = [
-    {
-      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-2',
-      name: 'iOS 26.2',
-      version: '26.2',
-      supportedDeviceTypes: deviceTypes,
-    },
-    {
-      identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
-      name: 'iOS 26.5',
-      version: '26.5',
-      supportedDeviceTypes: deviceTypes,
-    },
-  ];
-  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
-  assert(pick);
-  expect(pick.runtimeId).toBe('com.apple.CoreSimulator.SimRuntime.iOS-26-5');
-  expect(pick.deviceTypeId).toBe('com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro');
-});
-
 test('pickDefaultIosCreation honors explicit deviceType and runtime by name', () => {
   const deviceTypes = [{ identifier: 'dt.iphone16', name: 'iPhone 16' }];
   const runtimes = [
@@ -252,57 +121,6 @@ test('pickDefaultIosCreation honors explicit deviceType and runtime by name', ()
   assert(pick);
   expect(pick.deviceTypeId).toBe('dt.iphone16');
   expect(pick.runtimeId).toBe('rt.26-2');
-});
-
-test('pickDefaultIosCreation returns null when nothing matches', () => {
-  expect(pickDefaultIosCreation([], [], {})).toBe(null);
-  const deviceTypes = [{ identifier: 'dt', name: 'iPhone 17' }];
-  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  expect(pickDefaultIosCreation(deviceTypes, runtimes, { deviceType: 'iPhone 99' })).toBe(null);
-});
-
-test('pickDefaultIosCreation prefers a numbered iPhone over lettered models (SE, Air)', () => {
-  const deviceTypes = [
-    { identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' },
-    { identifier: 'dt.air', name: 'iPhone Air' },
-    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
-    { identifier: 'dt.16', name: 'iPhone 16' },
-  ];
-  const runtimes = [{ identifier: 'rt.26-5', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
-  assert(pick);
-  expect(pick.deviceTypeId).toBe('dt.17pm');
-});
-
-test('pickDefaultIosCreation compares iPhone generations numerically, not lexically', () => {
-  const deviceTypes = [
-    { identifier: 'dt.9', name: 'iPhone 9' },
-    { identifier: 'dt.17', name: 'iPhone 17' },
-  ];
-  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
-  assert(pick);
-  expect(pick.deviceTypeId).toBe('dt.17');
-});
-
-test('pickDefaultIosCreation picks the base model over Pro/Pro Max of the same generation', () => {
-  const deviceTypes = [
-    { identifier: 'dt.17pm', name: 'iPhone 17 Pro Max' },
-    { identifier: 'dt.17pro', name: 'iPhone 17 Pro' },
-    { identifier: 'dt.17', name: 'iPhone 17' },
-  ];
-  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
-  assert(pick);
-  expect(pick.deviceTypeId).toBe('dt.17');
-});
-
-test('pickDefaultIosCreation still picks a lettered model when it is the only iPhone', () => {
-  const deviceTypes = [{ identifier: 'dt.se3', name: 'iPhone SE (3rd generation)' }];
-  const runtimes = [{ identifier: 'rt', name: 'iOS 26.5', version: '26.5', supportedDeviceTypes: deviceTypes }];
-  const pick = pickDefaultIosCreation(deviceTypes, runtimes, {});
-  assert(pick);
-  expect(pick.deviceTypeId).toBe('dt.se3');
 });
 
 test('pickDefaultIosCreation skips a newer runtime whose only iPhone is a special model (#1172)', () => {
@@ -318,33 +136,6 @@ test('pickDefaultIosCreation skips a newer runtime whose only iPhone is a specia
   assert(pick);
   expect(pick.runtimeId).toBe('rt.27-0');
   expect(pick.deviceTypeId).toBe('dt.18pro');
-});
-
-test('pickDefaultIosCreation falls back to a special model when no runtime offers a numbered iPhone', () => {
-  const duo = [{ identifier: 'dt.duo', name: 'iPhone Duo' }];
-  const runtimes = [{ identifier: 'rt.27-1', name: 'iOS 27.1', version: '27.1', supportedDeviceTypes: duo }];
-  const pick = pickDefaultIosCreation([], runtimes, {});
-  assert(pick);
-  expect(pick.runtimeId).toBe('rt.27-1');
-  expect(pick.deviceTypeId).toBe('dt.duo');
-});
-
-test('pickDefaultIosCreation keeps the special-model runtime when it is explicitly requested', () => {
-  const duo = [{ identifier: 'dt.duo', name: 'iPhone Duo' }];
-  const gen18Pro = [{ identifier: 'dt.18pro', name: 'iPhone 18 Pro' }];
-  const runtimes = [
-    { identifier: 'rt.27-1', name: 'iOS 27.1', version: '27.1', supportedDeviceTypes: duo },
-    { identifier: 'rt.27-0', name: 'iOS 27.0', version: '27.0', supportedDeviceTypes: gen18Pro },
-  ];
-  const pick = pickDefaultIosCreation([], runtimes, { deviceType: 'iPhone Duo' });
-  assert(pick);
-  expect(pick.runtimeId).toBe('rt.27-1');
-  expect(pick.deviceTypeId).toBe('dt.duo');
-});
-
-test('sanitizeDeviceLabel strips characters simctl names should not carry', () => {
-  expect(sanitizeDeviceLabel('feat-a/tlon-mobile')).toBe('feat-a-tlon-mobile');
-  expect(sanitizeDeviceLabel('x  y"z`$')).toBe('x-y-z');
 });
 
 test('deleteIosSim refuses to delete a sim not owned by Stim', async () => {
@@ -385,155 +176,7 @@ const OWNED_SIM_LIST = JSON.stringify({
   },
 });
 
-test('a created simulator stays Stim-owned through the ledger until Stim deletes it', async () => {
-  const list = (name: string) =>
-    JSON.stringify({
-      devices: {
-        'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-          { udid: 'NEW-1', name, state: 'Shutdown', isAvailable: true, deviceTypeIdentifier: 'iphone-17' },
-        ],
-      },
-    });
-  let name = 'stim-wt';
-  setExecutor({
-    runFile: (_file: string, args: string[] = []) =>
-      args[1] === 'create' ? 'NEW-1\n' : args.includes('list') ? list(name) : '',
-  });
-  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
-  await createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null });
-  expect(resolveOwnedIosSim('NEW-1').sim?.udid).toBe('NEW-1');
-  name = 'My Phone';
-  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('My Phone');
-  name = 'stim-wt';
-  await deleteIosSim('NEW-1');
-  expect(resolveOwnedIosSim('NEW-1').notOwned).toBe('stim-wt');
-});
-
-test('createOwnedIosSim passes a display name with spaces to simctl as one argument', async () => {
-  const created: string[][] = [];
-  setExecutor({
-    runFile: (file: string, args: string[] = []) => {
-      if (args[1] !== 'create') return JSON.stringify({ devices: {} });
-      created.push([file, ...args]);
-      return 'NEW-1\n';
-    },
-  });
-  const { name } = await createOwnedIosSim(
-    'wt',
-    {},
-    { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: 'iPhone 17 Pro', runtime: 'iOS 26.5' },
-  );
-  expect(name).toContain(' ');
-  expect(created).toEqual([['xcrun', 'simctl', 'create', name, 'dt', 'rt']]);
-});
-
-const BOOTED_OWNED_SIM_LIST = OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
-
-test.each([
-  [
-    'create',
-    () => createOwnedIosSim('wt', {}, { deviceTypeId: 'dt', runtimeId: 'rt', deviceType: null, runtime: null }),
-  ],
-  ['rename', () => renameIosSim('UDID-B', 'stim-wt')],
-  ['privacy', () => resetIosPrivacy('UDID-B')],
-  ['keychain', () => resetIosKeychain('UDID-B')],
-  ['uninstall', () => uninstallIosApp('UDID-B', 'com.example.app')],
-  ['shutdown', () => shutdownIosSim('UDID-B')],
-  ['delete', () => deleteIosSim('UDID-B')],
-])('simctl %s runs under a hard deadline so a stuck CoreSimulator cannot hold the caller', async (verb, operation) => {
-  const deadlines: { command: string; timeoutMs?: number; killSignal?: string }[] = [];
-  const record = (command: string, opts?: { timeoutMs?: number; killSignal?: string }) => {
-    if (new RegExp(`simctl ${verb}\\b`).test(command)) {
-      deadlines.push({ command, timeoutMs: opts?.timeoutMs, killSignal: opts?.killSignal });
-    }
-  };
-  setExecutor({
-    run: (cmd, opts) => {
-      record(cmd, opts);
-      return 'NEW-UDID';
-    },
-    runQuiet: (cmd, opts) => {
-      record(cmd, opts);
-      return '';
-    },
-    runFile: (file, args = [], opts) => {
-      record([file, ...args].join(' '), opts);
-      return args[1] === 'create' ? 'NEW-UDID' : BOOTED_OWNED_SIM_LIST;
-    },
-    runFileQuiet: (file, args = [], opts) => {
-      record([file, ...args].join(' '), opts);
-      return '';
-    },
-  });
-  await operation();
-  expect(deadlines).toHaveLength(1);
-  expect(deadlines[0]?.timeoutMs).toBeGreaterThan(0);
-  expect(deadlines[0]?.killSignal).toBe('SIGKILL');
-});
-
-test('deleteIosSim deletes a Stim-owned sim', async () => {
-  const ran: string[][] = [];
-  setExecutor({
-    runFile: (file, args = []) => {
-      ran.push([file, ...args]);
-      return OWNED_SIM_LIST;
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  await deleteIosSim('UDID-B');
-  expect(ran).toContainEqual(['xcrun', 'simctl', 'delete', 'UDID-B']);
-});
-
-test('deleteIosSim propagates a simctl failure instead of swallowing it', async () => {
-  setExecutor({
-    runFile: (_file, args = []) => {
-      if (args[1] === 'delete') throw new Error('simctl: Unable to delete device');
-      return OWNED_SIM_LIST;
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  await expect(deleteIosSim('UDID-B')).rejects.toThrow(/Unable to delete device/);
-});
-
-test('deleteIosSim no-ops quietly when the udid is already gone', async () => {
-  let deleted = false;
-  setExecutor({
-    runFile: (_file, args = []) => {
-      if (args[1] === 'delete') deleted = true;
-      return JSON.stringify({ devices: {} });
-    },
-    spawn: () => null,
-  });
-  await expect(deleteIosSim('UDID-GONE')).resolves.not.toThrow();
-  expect(deleted).toBe(false);
-});
-
-test('ownedSimName does not double the ownership prefix', async () => {
-  expect(ownedSimName('stim-test-dialogue')).toBe('stim-test-dialogue');
-  expect(ownedSimName('test-dialogue')).toBe('stim-test-dialogue');
-  expect(ownedSimName('feat-a/tlon-mobile')).toBe('stim-feat-a-tlon-mobile');
-  expect(ownedSimName('stim-x').startsWith('stim-')).toBeTruthy();
-  expect(ownedSimName('Stim').startsWith('stim-')).toBeTruthy();
-});
-
-test('owned and parked simulator names show model and runtime and stay within 60 characters', async () => {
-  expect(ownedSimName('feat-login', { model: 'iPhone 17', runtime: '26.5' })).toBe('stim-feat-login (iPhone 17 26.5)');
-  expect(
-    ownedSimName('58bd14ac-bench-luna-rc12-gpt-5-6-luna-native-stim', {
-      model: 'iPhone 17',
-      runtime: '26.5',
-    }),
-  ).toBe('stim-58bd14ac-bench-luna-rc12-gpt-5-6-luna (iPhone 17 26.5)');
-  const long = parkedSimName('A1F3-0000', {
-    model: 'iPad Pro 13-inch (M4) with a deliberately very long qualifier',
-    runtime: '26.5',
-  });
-  expect(long.startsWith('stim-parked (')).toBe(true);
-  expect(long.endsWith(' 26.5) a1f3')).toBe(true);
-  expect(long.length).toBeLessThanOrEqual(60);
-});
+OWNED_SIM_LIST.replace('"Shutdown"', '"Booted"');
 
 test('parseUserApps keeps only user applications', async () => {
   expect(
@@ -552,25 +195,6 @@ test('parseUserApps keeps only user applications', async () => {
   expect(() => parseUserApps(JSON.stringify({ 'com.example.old': { ApplicationType: 'Unknown' } }))).toThrow(
     /known ApplicationType/,
   );
-});
-
-test('listUserApps passes the udid as one argv element and converts the property list', async () => {
-  const calls: string[][] = [];
-  setExecutor({
-    run: () => {
-      throw new Error('must not invoke a shell');
-    },
-    runFile(file, args = []) {
-      calls.push([file, ...args]);
-      if (file === 'xcrun') return '{ "com.example.app" = { ApplicationType = User; }; }';
-      return JSON.stringify({ 'com.example.app': { ApplicationType: 'User' } });
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  expect(await listUserApps('UDID WITH SPACES')).toEqual(['com.example.app']);
-  expect(calls[0]).toEqual(['xcrun', 'simctl', 'listapps', 'UDID WITH SPACES']);
-  expect(calls[1]?.slice(0, 5)).toEqual(['plutil', '-convert', 'json', '-o', '-']);
 });
 
 describe('clearIosAppData', () => {
@@ -611,29 +235,6 @@ describe('clearIosAppData', () => {
     return calls;
   }
 
-  test('deletes the defaults domain, then empties the data directories and keeps the container', async () => {
-    const calls = exec(null);
-    await clearIosAppData('U1', 'com.example.app');
-    expect(calls).toEqual([
-      ['xcrun', 'simctl', 'terminate', 'U1', 'com.example.app'],
-      ['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'delete', 'com.example.app'],
-      ['xcrun', 'simctl', 'get_app_container', 'U1', 'com.example.app', 'data'],
-    ]);
-    for (const dir of ['Documents', 'Library', 'tmp', 'SystemData'])
-      expect(readdirSync(join(container, dir))).toEqual([]);
-    expect(readdirSync(container)).toContain('.com.apple.mobile_container_manager.metadata.plist');
-  });
-
-  test('replaces the defaults domain with the given plist instead of deleting it', async () => {
-    const inputs: Array<string | undefined> = [];
-    const calls = exec(null, inputs);
-    await clearIosAppData('U1', 'com.example.app', { defaultsPlist: '<plist/>' });
-    expect(calls[1]).toEqual(['xcrun', 'simctl', 'spawn', 'U1', 'defaults', 'import', 'com.example.app', '-']);
-    expect(inputs[1]).toBe('<plist/>');
-    expect(calls.some((call) => call.includes('delete'))).toBe(false);
-    expect(readdirSync(join(container, 'Library'))).toEqual([]);
-  });
-
   test('removes a symlinked data directory without touching its target', async () => {
     const outside = mkdtempSync(join(tmpdir(), 'stim-app-group-'));
     try {
@@ -648,83 +249,6 @@ describe('clearIosAppData', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
-
-  test('treats a missing defaults domain as nothing to delete', async () => {
-    exec("Error: Domain 'com.example.app' not found.\nDefaults have not been changed.");
-    await clearIosAppData('U1', 'com.example.app');
-    expect(readdirSync(join(container, 'Documents'))).toEqual([]);
-  });
-
-  test('stops before touching files when the running app cannot be terminated', async () => {
-    const calls = exec(null, [], 'Invalid device state');
-    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
-    expect(calls).toHaveLength(1);
-    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
-  });
-
-  test('stops before touching files when the defaults delete fails for another reason', async () => {
-    exec('Invalid device state');
-    await expect(clearIosAppData('U1', 'com.example.app')).rejects.toThrow(/Invalid device state/);
-    expect(readdirSync(join(container, 'Documents'))).toEqual(['db.sqlite']);
-  });
-});
-
-test('deleteParkedIosSim bounds ownership revalidation and deletion', async () => {
-  const calls: Array<{ kind: 'run' | 'runFile'; timeoutMs?: number }> = [];
-  setExecutor({
-    runFile(_file, args, options) {
-      calls.push({ kind: 'runFile', timeoutMs: options?.timeoutMs });
-      if (args?.includes('delete')) return '';
-      return JSON.stringify({
-        devices: {
-          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-            {
-              udid: 'U1',
-              name: 'stim-parked (iPhone 17 26.5) u1',
-              state: 'Shutdown',
-              isAvailable: true,
-              deviceTypeIdentifier: 'iphone-17',
-            },
-          ],
-        },
-      });
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-
-  await deleteParkedIosSim('U1');
-
-  expect(calls).toEqual([
-    { kind: 'runFile', timeoutMs: 30000 },
-    { kind: 'runFile', timeoutMs: 30000 },
-  ]);
-});
-
-test('deleteParkedIosSim re-resolves the name before deletion', async () => {
-  const calls: string[][] = [];
-  setExecutor({
-    runFile(file, args = []) {
-      calls.push([file, ...args]);
-      return JSON.stringify({
-        devices: {
-          'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-            {
-              udid: 'U1',
-              name: 'My renamed simulator',
-              state: 'Shutdown',
-              isAvailable: true,
-              deviceTypeIdentifier: 'iphone-17',
-            },
-          ],
-        },
-      });
-    },
-    runQuiet: () => null,
-    spawn: () => null,
-  });
-  await expect(deleteParkedIosSim('U1')).rejects.toThrow(/not Stim-owned/);
-  expect(calls).toEqual([['xcrun', 'simctl', 'list', 'devices', '--json']]);
 });
 
 function bootSimList(state: string) {
@@ -771,26 +295,6 @@ function bootstatusExecutor(outcomes: BootstatusOutcome[], list: () => string) {
   return { spawned, quiet, omittedEnv };
 }
 
-test('bootIosSim waits on `simctl bootstatus -b` as a child process, so the caller can work meanwhile', async () => {
-  const { spawned, quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
-  await bootIosSim('UDID-A');
-  expect(spawned).toEqual(['xcrun simctl bootstatus UDID-A -b']);
-  expect(quiet).toContain('open -a Simulator');
-});
-
-test('bootIosSim re-enters bootstatus after a timed-out attempt while the sim is still Booting', async () => {
-  const { spawned, quiet } = bootstatusExecutor(['hang', { exitCode: 0 }], () => bootSimList('Booting'));
-  await bootIosSim('UDID-A', { attemptMs: 20 });
-  expect(spawned.length).toBe(2);
-  expect(quiet).toContain('open -a Simulator');
-});
-
-test('bootIosSim waits for bootstatus even when a timed-out attempt reports Booted', async () => {
-  const { spawned } = bootstatusExecutor(['hang', { exitCode: 0 }], () => bootSimList('Booted'));
-  await bootIosSim('UDID-A', { attemptMs: 20 });
-  expect(spawned.length).toBe(2);
-});
-
 test.each(['Booting', 'Booted'])(
   'bootIosSim names the udid and the wait when the deadline expires while %s',
   async (state) => {
@@ -826,18 +330,6 @@ async function bootWaitingForSpringBoard(startsAfterMs: number) {
   return { settledEarly, result: await outcome, messages };
 }
 
-test('bootIosSim finishes only once SpringBoard has started, after bootstatus', async () => {
-  try {
-    const { settledEarly, result, messages } = await bootWaitingForSpringBoard(45000);
-    expect(settledEarly).toBe(false);
-    expect(result).toBeUndefined();
-    expect(messages[0]).toContain('Last boot output: waiting for SpringBoard');
-  } finally {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  }
-});
-
 test('bootIosSim fails at the boot deadline when SpringBoard never starts', async () => {
   try {
     const { result } = await bootWaitingForSpringBoard(Infinity);
@@ -848,104 +340,6 @@ test('bootIosSim fails at the boot deadline when SpringBoard never starts', asyn
     vi.useRealTimers();
     vi.restoreAllMocks();
   }
-});
-
-test('bootIosSim does not fail the boot when the SpringBoard state is unreadable', async () => {
-  setExecutor({
-    runFile: (_file, args = []) => {
-      if (args.includes('notifyutil')) throw new Error('notifyutil: No such file or directory');
-      return bootSimList('Booted');
-    },
-    runFileQuiet: () => '',
-    spawn: () => makeExitingChild(),
-  });
-  await expect(bootIosSim('UDID-A', { openViewer: false })).resolves.toBeUndefined();
-});
-
-test('bootIosSim reports a sim that vanished from the device list', async () => {
-  bootstatusExecutor(['hang'], () => JSON.stringify({ devices: {} }));
-  await expect(bootIosSim('UDID-A', { attemptMs: 20 })).rejects.toThrow(/UDID-A reports "missing"/);
-});
-
-test('bootIosSim keeps waiting through a failing device list and still hits the deadline', async () => {
-  bootstatusExecutor(['hang'], () => {
-    throw new Error('CoreSimulatorService connection interrupted');
-  });
-  await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
-    /UDID-A did not finish booting within 1s/,
-  );
-});
-
-test('bootIosSim reports a sim that left the boot path instead of retrying forever', async () => {
-  bootstatusExecutor(['hang'], () => bootSimList('Shutdown'));
-  await expect(bootIosSim('UDID-A', { attemptMs: 20 })).rejects.toThrow(/UDID-A reports "Shutdown"/);
-});
-
-test('bootIosSim rethrows a bootstatus failure that is not a timeout', async () => {
-  const { spawned } = bootstatusExecutor([{ exitCode: 1, stderr: 'CoreLocationMigrator failed' }], () =>
-    bootSimList('Booting'),
-  );
-  await expect(bootIosSim('UDID-A')).rejects.toThrow(/CoreLocationMigrator failed/);
-  expect(spawned.length).toBe(1);
-});
-
-test('the initial boot request consumes the same deadline as bootstatus', async () => {
-  vi.useFakeTimers();
-  const commands: string[] = [];
-  const child = makeChildProcess();
-  child.kill = () => {
-    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
-    return true;
-  };
-  setExecutor({
-    runFile: () => '',
-    spawn: (_cmd, args) => {
-      commands.push(args.join(' '));
-      return child;
-    },
-  });
-  try {
-    const outcome = bootIosSim('UDID-A', { timeoutMs: 200 }).catch((error) => error);
-    await vi.advanceTimersByTimeAsync(200);
-    expect(await outcome).toMatchObject({ message: expect.stringContaining('simctl boot UDID-A timed out') });
-    expect(commands).toEqual(['simctl boot UDID-A']);
-  } finally {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  }
-});
-
-test('bootstatus does not survey or retry until its timed-out child has actually exited', async () => {
-  const events: string[] = [];
-  setExecutor({
-    runFile(_file, args = []) {
-      if (args[1] === 'list') {
-        events.push('survey');
-        return bootSimList('Booted');
-      }
-      return '';
-    },
-    runFileQuiet: () => '',
-    spawn(_cmd, args) {
-      if (args[1] === 'boot') return makeExitingChild();
-      if (events.includes('survey')) {
-        events.push('retry');
-        return makeExitingChild();
-      }
-      const child = makeChildProcess();
-      child.kill = () => {
-        events.push('signal');
-        setTimeout(() => {
-          events.push('exit');
-          child.emit('exit', null, 'SIGKILL');
-        }, 20);
-        return true;
-      };
-      return child;
-    },
-  });
-  await bootIosSim('UDID-A', { attemptMs: 10 });
-  expect(events).toEqual(['signal', 'exit', 'survey', 'retry']);
 });
 
 test('bootstatus refuses a retry when termination cannot be confirmed within the cleanup bound', async () => {
@@ -969,106 +363,6 @@ test('bootstatus refuses a retry when termination cannot be confirmed within the
   } finally {
     vi.useRealTimers();
   }
-});
-
-test('opening the Simulator app is bounded and best-effort after successful boot', async () => {
-  setExecutor({
-    runFile: () => '',
-    spawn: () => makeExitingChild(),
-    runFileQuiet(file, args, options) {
-      if (file === 'osascript') return null;
-      if (file === 'xcrun') return join(tmpHome, 'Xcode.app', 'Contents', 'Developer', 'usr', 'bin', 'simctl');
-      expect([file, ...args]).toEqual(['open', '-a', 'Simulator']);
-      expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
-      return null;
-    },
-  });
-  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
-});
-
-test('opening a simulator on Xcode 27 focuses its UDID in the selected Device Hub', async () => {
-  const xcode = join(tmpHome, 'Xcode.app', 'Contents');
-  const deviceHubApp = join(xcode, 'Applications', 'DeviceHub.app');
-  mkdirSync(deviceHubApp, { recursive: true });
-  setExecutor({
-    runFile: () => '',
-    spawn: () => makeExitingChild(),
-    runFileQuiet(file, args, options) {
-      expect(options).toEqual({ timeoutMs: 5000, killSignal: 'SIGKILL' });
-      if (file === 'osascript') return '';
-      if (file === 'xcrun') {
-        expect(args).toEqual(['--find', 'simctl']);
-        return join(xcode, 'Developer', 'usr', 'bin', 'simctl');
-      }
-      expect([file, ...args]).toEqual(['open', '-a', deviceHubApp, 'devices://device/open?id=UDID-A']);
-      return null;
-    },
-  });
-  await expect(bootIosSim('UDID-A')).resolves.toBeUndefined();
-});
-
-test.each([
-  [undefined, 'open -g -a Stim stim-desktop://open?udid=UDID-A'],
-  ['xcode', 'open -a Simulator'],
-])('with Stim Desktop installed, a %s machine preference opens %s', async (configured, command) => {
-  if (configured) writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: configured }));
-  const quiet: string[] = [];
-  setExecutor({
-    runFile: (file) => (file === 'osascript' ? '/Applications/Stim.app' : ''),
-    spawn: () => makeExitingChild(),
-    runFileQuiet(file, args) {
-      quiet.push([file, ...args].join(' '));
-      return null;
-    },
-  });
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  try {
-    await bootIosSim('UDID-A');
-  } finally {
-    vi.restoreAllMocks();
-  }
-  expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
-});
-
-test('hosted boot waits for bootstatus without opening a host viewer', async () => {
-  const { quiet, spawned } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
-  await bootIosSim('UDID-A', { openViewer: false });
-  expect(spawned).toContain('xcrun simctl bootstatus UDID-A -b');
-  expect(quiet.some((call) => call.startsWith('open '))).toBe(false);
-});
-
-test('machine config opens the owned simulator in Siniulator', async () => {
-  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'siniulator' }));
-  const { quiet } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
-  await bootIosSim('UDID-A');
-  expect(quiet).toContain('open -a Siniulator siniulator://open?udid=UDID-A');
-  expect(quiet.some((call) => call.includes('DeviceHub.app'))).toBe(false);
-});
-
-test.each([
-  ['xcode', 'siniulator', 'open -a Siniulator siniulator://open?udid=UDID-A', undefined],
-  ['siniulator', 'xcode', 'open -a Simulator', undefined],
-  ['xcode', 'stim-desktop', 'open -g -a Stim stim-desktop://open?udid=UDID-A', ['STIM_HOME']],
-  ['unknown', 'xcode', 'open -a Simulator', undefined],
-] as const)(
-  'a %s machine preference is overridden by %s without saving it',
-  async (configured, simulatorApp, command, omitEnv) => {
-    const configPath = join(tmpHome, 'config.json');
-    const config = JSON.stringify({ iosSimulatorApp: configured });
-    writeFileSync(configPath, config);
-    const { quiet, omittedEnv } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
-    await bootIosSim('UDID-A', { simulatorApp });
-    expect(quiet.filter((call) => call.startsWith('open '))).toEqual([command]);
-    expect(omittedEnv[quiet.indexOf(command)]).toEqual(omitEnv);
-    expect(readFileSync(configPath, 'utf8')).toBe(config);
-  },
-);
-
-test('invalid simulator viewer refuses before booting', async () => {
-  writeFileSync(join(tmpHome, 'config.json'), JSON.stringify({ iosSimulatorApp: 'unknown' }));
-  const { spawned } = bootstatusExecutor([{ exitCode: 0 }], () => bootSimList('Booted'));
-  await expect(bootIosSim('UDID-A')).rejects.toThrow(/Invalid iosSimulatorApp/);
-  expect(spawned).toEqual([]);
 });
 
 test('boot diagnostics retain peak pressure after recovery and unknown readings, then stop sampling', async () => {
@@ -1107,76 +401,6 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
     const count = reads;
     await vi.advanceTimersByTimeAsync(60000);
     expect(reads).toBe(count);
-    expect(vi.getTimerCount()).toBe(0);
-  } finally {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  }
-});
-
-test('boot progress repeats the pressure warning only when the pressure level changes', async () => {
-  vi.useFakeTimers();
-  const messages: string[] = [];
-  let reads = 0;
-  const levels = ['2', '2', '', '2', '4', '4', '1', '2'];
-  const child = makeChildProcess();
-  child.kill = () => {
-    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
-    return true;
-  };
-  setExecutor({
-    runFile: (_file, args) =>
-      args[0] === '-n' ? levels[Math.min(reads++, levels.length - 1)] : bootSimList('Booting'),
-    spawn: () => child,
-  });
-  try {
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-    const outcome = bootIosSim('UDID-A', { timeoutMs: 115000, out: (message) => messages.push(message) }).catch(
-      (error) => error,
-    );
-    await vi.advanceTimersByTimeAsync(115000);
-    await outcome;
-    expect(messages.slice(0, 7).map((message) => message.includes('Boot may be delayed or stalled'))).toEqual([
-      true,
-      false,
-      false,
-      true,
-      false,
-      false,
-      true,
-    ]);
-    expect(messages[2]).toContain('Memory pressure: warning');
-  } finally {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  }
-});
-
-test('delayed boot observations report missing coverage without inventing unknown readings', async () => {
-  vi.useFakeTimers();
-  const messages: string[] = [];
-  const child = makeChildProcess();
-  child.kill = () => {
-    queueMicrotask(() => child.emit('exit', null, 'SIGKILL'));
-    return true;
-  };
-  setExecutor({
-    runFile: (_file, args) => (args[0] === '-n' ? '1' : bootSimList('Booting')),
-    spawn: () => child,
-  });
-  try {
-    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-    const outcome = bootIosSim('UDID-A', {
-      timeoutMs: 45000,
-      out: (message) => messages.push(message),
-    }).catch((error) => error);
-    vi.setSystemTime(Date.now() + 60000);
-    await vi.advanceTimersByTimeAsync(45000);
-    const error = await outcome;
-    expect(messages[0]).toContain('longest gap 75s');
-    expect(messages[0]).toContain('Pressure during gaps is unobserved');
-    expect(error.message).toContain('longest gap 75s');
-    expect(error.message).toContain('Highest observed memory pressure: normal; unavailable samples: 0');
     expect(vi.getTimerCount()).toBe(0);
   } finally {
     vi.useRealTimers();

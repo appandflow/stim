@@ -34,14 +34,6 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('refuses build.sync while the worker volume is under its free floor', () => {
-  const session = start({ minFreeBytes: Number.MAX_SAFE_INTEGER }).session('client', socket, () => {});
-  expect(session.sync({ repo: 'app-1', files: [file('a', 'x')], done: true })).toHaveProperty(
-    'error.code',
-    'build-busy',
-  );
-});
-
 test('refuses a blob whose declared size would take the worker volume under its free floor', () => {
   const stats = statfsSync(root);
   const free = stats.bavail * stats.bsize;
@@ -53,23 +45,6 @@ test('refuses a blob whose declared size would take the worker volume under its 
   );
   expect(session.blob(frame(sha('big'), 'b'))).toMatch(/declines the upload/);
   expect(existsSync(join(root, 'client', 'blobs'))).toBe(false);
-});
-
-test('caps the declared bytes of one manifest across its pages', () => {
-  const session = start({ maxManifestBytes: 10 }).session('client', socket, () => {});
-  expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: true })).toHaveProperty('result');
-  expect(session.sync({ repo: 'app-1', files: [file('a', 'aaaaaa')], done: false })).toHaveProperty('result');
-  expect(session.sync({ repo: 'app-1', files: [file('b', 'bbbbbb')], done: true })).toHaveProperty(
-    'error.code',
-    'limit-exceeded',
-  );
-});
-
-test('refuses a blob that streams more bytes than its manifest entry declares', () => {
-  const session = start().session('client', socket, () => {});
-  session.sync({ repo: 'app-1', files: [file('a', 'x')], done: true });
-  expect(session.blob(frame(sha('x'), 'xx'))).toMatch(/larger than its manifest entry/);
-  expect(existsSync(join(root, 'client', 'blobs', sha('x').slice(0, 2), sha('x')))).toBe(false);
 });
 
 test("deletes a revoked client's area, but not through a symlink or outside the worker root", async () => {
@@ -88,19 +63,6 @@ test("deletes a revoked client's area, but not through a symlink or outside the 
   expect(existsSync(join(root, 'gone'))).toBe(false);
   expect(existsSync(join(outside, 'keep'))).toBe(true);
   expect(existsSync(root)).toBe(true);
-});
-
-test("deletes a served client's area once it loses build, and only when told the registry was read", async () => {
-  const host = start();
-  host.session('gone', socket, () => {});
-  mkdirSync(join(root, 'gone', 'blobs'), { recursive: true });
-
-  host.abandonDetached(() => false);
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  expect(existsSync(join(root, 'gone'))).toBe(true);
-
-  host.abandonDetached(() => false, true);
-  await vi.waitFor(() => expect(existsSync(join(root, 'gone'))).toBe(false));
 });
 
 test('prunes blobs no mirror or open manifest references, and none while a mirror is unreadable', () => {

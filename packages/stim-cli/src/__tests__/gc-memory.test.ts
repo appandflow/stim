@@ -14,9 +14,7 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 import * as identities from '../process-identity.ts';
 import * as memory from '../commands/gc/memory.ts';
 import {
-  collectMemoryReport,
   gradleHomeFromFiles,
-  isKotlinDaemonCommand,
   parseGradleDaemonCommand,
   parseGradleStatus,
   offloadClientOf,
@@ -25,7 +23,6 @@ import {
   planDaemons,
   planWatchman,
   runningBuild,
-  stimWorkspaceOf,
   watchmanFinding,
   watchmanRootStaleness,
   type GradleDaemonFacts,
@@ -75,16 +72,6 @@ test('a GradleDaemon command line gives its version, Java home and own distribut
     javaHome: '/Applications/Android Studio.app/Contents/jbr/Contents/Home',
     distribution: '/Users/me/.gradle/wrapper/dists/gradle-8.10.2-all/x/gradle-8.10.2',
   });
-});
-
-test('a process that only names a daemon class, such as pgrep, is not a daemon', () => {
-  expect(parseGradleDaemonCommand('pgrep -f org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1')).toBeNull();
-  expect(isKotlinDaemonCommand('pgrep -fl KotlinCompileDaemon')).toBe(false);
-  expect(
-    isKotlinDaemonCommand(
-      '/opt/jdk/bin/java -cp /Users/me/.gradle/caches/kotlin-compiler-embeddable-2.1.20.jar -Xmx2g org.jetbrains.kotlin.daemon.KotlinCompileDaemon --daemon-runFilesPath /Users/me/Library/kotlin/daemon',
-    ),
-  ).toBe(true);
 });
 
 test('gradle --status rows are read past its banner and footer', () => {
@@ -271,29 +258,6 @@ test('only a Gradle daemon its own status calls idle is stopped, and a Kotlin da
   ]);
 });
 
-test('a running Stim build keeps every daemon, and stim-server keeps its offload clients daemons', () => {
-  const plans = planDaemons({
-    gradle: [gradle(1, { state: 'idle' })],
-    kotlin: [kotlin(10, [])],
-    buildRunning: 'a running Android build holds /lock',
-    stimServerRunning: false,
-  });
-  expect(decisions(plans)).toEqual([
-    [1, false, 'build-running'],
-    [10, false, 'build-running'],
-  ]);
-  const offload = planDaemons({
-    gradle: [gradle(1, { state: 'idle' }, 'client-a'), gradle(2, { state: 'idle' })],
-    kotlin: [],
-    buildRunning: null,
-    stimServerRunning: true,
-  });
-  expect(decisions(offload)).toEqual([
-    [1, false, 'stim-server'],
-    [2, true, null],
-  ]);
-});
-
 test('an iOS build slot does not hold the daemons, an Android lock or an unattributed slot does', () => {
   const iosLock = makeBuildLock({ platform: 'ios', pid: 40, alive: true });
   const slot = {
@@ -313,17 +277,6 @@ test('an iOS build slot does not hold the daemons, an Android lock or an unattri
   expect(runningBuild([], [{ ...slot, alive: false, unresolved: true }])).toContain('an unresolved build');
   expect(runningBuild([makeBuildLock({ platform: 'android', pid: 41, alive: true })], [])).toContain('Android build');
   expect(runningBuild([makeBuildLock({ platform: 'android', alive: false })], [])).toBeNull();
-});
-
-test('a watchman client is attributed to the Stim workspace whose supervisor it descends from', () => {
-  const parentOf = new Map([
-    [300, 200],
-    [200, 100],
-    [100, 1],
-  ]);
-  const supervisors = new Map([[100, '/w']]);
-  expect(stimWorkspaceOf(300, parentOf, supervisors)).toBe('/w');
-  expect(stimWorkspaceOf(999, parentOf, supervisors)).toBeNull();
 });
 
 test('--older-than with a memory kind is refused', async () => {
@@ -407,44 +360,6 @@ test.skipIf(process.platform === 'win32')(
     await runGc({ cache: 'watchman', delete: true });
     expect(calls.filter((args) => args[1] === 'shutdown-server')).toHaveLength(1);
     expect(calls.some((args) => args[1] === 'watch-del')).toBe(false);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'watchman roots are probed together, and debug-status runs only once no probe of gc is connected',
-  async () => {
-    vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-    const roots = Array.from({ length: 6 }, (_, index) => join(tmpHome, `root-${index}`));
-    let running = 0;
-    let most = 0;
-    let runningAtDebugStatus: number | null = null;
-    setExecutor({
-      runFileQuiet: (file: string) => (file === 'ps' ? PS_ROW(32725, '/opt/homebrew/bin/watchman --foreground') : null),
-      runFileAsync: async (_file: string, args: string[]) => {
-        const [, command] = args;
-        if (command === 'get-pid') return JSON.stringify({ pid: 32725 });
-        if (command === 'watch-list') return JSON.stringify({ roots });
-        running++;
-        most = Math.max(most, running);
-        await new Promise((done) => setTimeout(done, 5));
-        running--;
-        return JSON.stringify(command === 'trigger-list' ? { triggers: [] } : { subscribers: [] });
-      },
-      spawn: () => {
-        runningAtDebugStatus = running;
-        const child = Object.assign(new EventEmitter(), { pid: 777, stdout: new EventEmitter(), kill: () => true });
-        setImmediate(() => {
-          child.stdout.emit('data', Buffer.from(JSON.stringify({ clients: [] })));
-          child.emit('close', 0);
-        });
-        return child;
-      },
-    });
-    const report = await collectMemoryReport({ watchman: true, gradle: false });
-    expect(report.watchmanRoots.map((root) => root.path)).toEqual(roots);
-    expect(report.processes[0]).toMatchObject({ reclaimable: true });
-    expect(most).toBeGreaterThan(2);
-    expect(runningAtDebugStatus).toBe(0);
   },
 );
 

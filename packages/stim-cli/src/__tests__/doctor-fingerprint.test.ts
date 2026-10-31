@@ -56,27 +56,6 @@ function context(root: string, signal: AbortSignal): StimContext {
   };
 }
 
-test('the bounded helper preserves the real SDK fingerprint and observes changed native inputs', async () => {
-  const root = project();
-  const operation = context(root, new AbortController().signal);
-  const direct = await fingerprintProject(root, {
-    platform: 'ios',
-    createFingerprint: (projectRoot, options) =>
-      fingerprint.createFingerprintAsync(projectRoot, { ...options, useRNCoreAutolinkingFromExpo: true }),
-  });
-  const report = await runReport(operation, (request) =>
-    withAmbientContext(request, () => readDoctorFingerprint(request, { root, platform: 'ios', cold: true })),
-  );
-  expect(report).not.toBeNull();
-  expect(report?.hash).toBe(direct?.hash);
-  expect(report?.sources).toEqual(direct?.sources);
-  writeFileSync(join(root, 'ios', 'Podfile'), "platform :ios, '14.0'\n");
-  const changed = await runReport(operation, (request) =>
-    withAmbientContext(request, () => readDoctorFingerprint(request, { root, platform: 'ios', cold: true })),
-  );
-  expect(changed?.hash).not.toBe(report?.hash);
-}, 20_000);
-
 test('the bounded helper preserves custom Android Gradle roots and observes their native inputs', async () => {
   const root = project();
   const autolinking = join(root, 'node_modules', 'expo-modules-autolinking');

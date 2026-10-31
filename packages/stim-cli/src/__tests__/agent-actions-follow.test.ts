@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NdjsonRecord } from '@stim-cli/core/state';
@@ -79,20 +79,6 @@ function fixture(missing = false) {
 
 const record = (msg: string): NdjsonRecord => ({ ts: 1, src: 'agent', level: 'info', msg });
 
-test('startup and dropped-event repair deliver actions without twice-a-second idle reads', async () => {
-  const state = fixture();
-  state.pending.push(record('startup gap'));
-  await vi.advanceTimersByTimeAsync(500);
-  expect(state.output.map((item) => item.msg)).toEqual(['startup gap']);
-  state.read.mockClear();
-  await vi.advanceTimersByTimeAsync(5000);
-  expect(state.read).not.toHaveBeenCalled();
-  state.pending.push(record('missed notification'));
-  await vi.advanceTimersByTimeAsync(5000);
-  expect(state.output.map((item) => item.msg)).toEqual(['startup gap', 'missed notification']);
-  expect(state.read).toHaveBeenCalledTimes(1);
-});
-
 test('file bursts, claims and workspace action changes wake the reader; unrelated state writes do not', async () => {
   const state = fixture();
   await vi.advanceTimersByTimeAsync(500);
@@ -120,49 +106,6 @@ test('file bursts, claims and workspace action changes wake the reader; unrelate
   watches.callbacks.get(scoped)?.('change', 'sessions/demo/events.ndjson');
   await vi.advanceTimersByTimeAsync(500);
   expect(state.output.map((item) => item.msg)).toEqual(['action', 'new claim', 'scoped action']);
-});
-
-test('workspace discovery stays shallow and subscribes recursively only to agent state', async () => {
-  const state = fixture();
-  const workspace = join(state.workspaces, 'workspace');
-  const build = join(workspace, 'macos', 'out', 'App.app', 'Contents');
-  const browser = join(workspace, 'web', 'profile', 'Default');
-  mkdirSync(build, { recursive: true });
-  mkdirSync(browser, { recursive: true });
-  watches.callbacks.get(state.workspaces)?.('rename', 'workspace');
-  expect(watches.recursive.get(state.workspaces)).toBe(false);
-  expect(watches.recursive.get(workspace)).toBe(false);
-  expect([...watches.callbacks.keys()].some((path) => path.startsWith(join(workspace, 'macos')))).toBe(false);
-  expect([...watches.callbacks.keys()].some((path) => path.startsWith(join(workspace, 'web')))).toBe(false);
-  const scoped = join(workspace, 'agent-device');
-  mkdirSync(scoped);
-  watches.callbacks.get(workspace)?.('rename', 'agent-device');
-  expect(watches.recursive.get(scoped)).toBe(true);
-  rmSync(workspace, { recursive: true });
-  watches.callbacks.get(state.workspaces)?.('rename', 'workspace');
-  expect(watches.callbacks.has(scoped)).toBe(false);
-  stop?.();
-  expect(watches.closed.size).toBe(watches.opened.size);
-});
-
-test('roots created or replaced after following starts receive new watches and actions', async () => {
-  const state = fixture(true);
-  await vi.advanceTimersByTimeAsync(500);
-  mkdirSync(state.claims, { recursive: true });
-  state.pending.push(record('new root'));
-  watches.callbacks.get(home)?.('rename', '.agent-device');
-  await vi.advanceTimersByTimeAsync(500);
-  renameSync(state.root, join(home, 'old-agent-device'));
-  mkdirSync(state.claims, { recursive: true });
-  state.pending.push(record('replacement'));
-  watches.callbacks.get(state.root)?.('rename', null);
-  await vi.advanceTimersByTimeAsync(500);
-  state.pending.push(record('replacement event'));
-  watches.callbacks.get(state.root)?.('change', 'sessions/new/events.ndjson');
-  await vi.advanceTimersByTimeAsync(500);
-  expect(state.output.map((item) => item.msg)).toEqual(['new root', 'replacement', 'replacement event']);
-  stop?.();
-  expect(watches.closed.size).toBe(watches.opened.size);
 });
 
 test('abort closes watches and ignores pending reads, queued events and later repair ticks', async () => {

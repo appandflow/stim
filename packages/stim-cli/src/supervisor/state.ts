@@ -117,7 +117,7 @@ export function readWorkspaceLaunches(root: string): Record<string, WorkspaceLau
   return records;
 }
 
-export function writeWorkspaceLaunch(
+function writeWorkspaceLaunch(
   root: string,
   platform: WorkspaceLaunchPlatform,
   record: WorkspaceLaunchRecord,

@@ -37,12 +37,7 @@ function expandHome(value: string, home: string): string {
   return v;
 }
 
-/**
- * Whether the sandbox actually stops Stim, rather than whether a harness that
- * can sandbox is present: a session with its sandbox off exports the same
- * variables as one with it on, so only a write says which this is.
- */
-export function sandboxBlocksStimHome(stimHome: string, home: string = homedir()): boolean {
+function sandboxBlocksStimHome(stimHome: string, home: string = homedir()): boolean {
   const dir = expandHome(stimHome, home);
   const probe = join(dir, `.probe-${process.pid}-${Math.random().toString(36).slice(2)}`);
   try {
@@ -164,8 +159,7 @@ export function unmergeableKey(settings: Settings): string | null {
   return null;
 }
 
-/** Merge the allowance into a settings object, leaving everything else as it is. */
-export function withAllowance(settings: Settings, allowance: SandboxAllowance): Settings {
+function withAllowance(settings: Settings, allowance: SandboxAllowance): Settings {
   const next = { ...settings };
   const sandbox = isPlainObject(next.sandbox) ? { ...next.sandbox } : {};
   const filesystem = isPlainObject(sandbox.filesystem) ? { ...sandbox.filesystem } : {};

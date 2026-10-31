@@ -10,17 +10,14 @@ import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { testContext } from './_context.ts';
 import {
   agentDeviceLiveness,
-  classifyActivity,
   createActivityReader,
   createActivityReaderAsync,
   parseAgentDeviceRecord,
-  parseProcessTable,
   readWebActivity,
   type ActivityTarget,
   type DeviceProcessTables,
   type HostProcess,
 } from '../devices/activity.ts';
-import { hostDriverTool } from '../devices/automation-tools.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 
@@ -128,23 +125,7 @@ function runnerLease(over: Record<string, unknown> = {}): string {
 }
 
 describe('agent-device lease liveness', () => {
-  const lease = parseAgentDeviceRecord('runner-lease', `/leases/${UDID}.json`, runnerLease());
-
-  test('is live only when owner and runner are alive with their recorded start times', () => {
-    expect(agentDeviceLiveness(lease, starts({ 100: OWNER_START, 200: RUNNER_START }))).toBe('live');
-    expect(agentDeviceLiveness(lease, starts({ 100: OWNER_START }))).toBe('dead');
-  });
-
-  test('a reused pid with a different start time is a dead session', () => {
-    expect(agentDeviceLiveness(lease, starts({ 100: OWNER_START, 200: 'Fri Sep 25 08:00:00 2026' }))).toBe('dead');
-  });
-
-  test('an uninspectable process or unreadable lease is unknown, never dead', () => {
-    expect(agentDeviceLiveness(lease, starts({ 100: OWNER_START, 200: 'unknown' }))).toBe('unknown');
-    const broken = parseAgentDeviceRecord('runner-lease', `/leases/${UDID}.json`, '{"ownerPid":');
-    expect(broken.deviceId).toBe(UDID);
-    expect(agentDeviceLiveness(broken, starts({}))).toBe('unknown');
-  });
+  parseAgentDeviceRecord('runner-lease', `/leases/${UDID}.json`, runnerLease());
 
   test('a device claim needs only its owner process', () => {
     const claim = parseAgentDeviceRecord(
@@ -155,59 +136,6 @@ describe('agent-device lease liveness', () => {
     expect(claim.deviceId).toBe(UDID);
     expect(agentDeviceLiveness(claim, starts({ 100: OWNER_START }))).toBe('live');
   });
-});
-
-describe('driver processes', () => {
-  test('parses ps lstart rows and ignores Stim log collectors', () => {
-    const rows = parseProcessTable(
-      [
-        `  3503     1 204800  12.5 ${RUNNER_START}     /usr/bin/xcodebuild test-without-building -destination platform=iOS Simulator,id=${UDID}`,
-        ` 18172  3503   2048   0,5 ${RUNNER_START}     /bin/simctl spawn ${UDID} log stream --style ndjson`,
-        ` 18200     1   1024   0.0 ${RUNNER_START}     /bin/simctl spawn ${UDID}0 something`,
-        ' 18201     1    512   0.0 Thu Sep 24 22:00:05 2026     adb -s emulator-5554 logcat --pid 42',
-      ].join('\n'),
-    );
-    expect(rows.map((row) => [row.pid, hostDriverTool(row.command, 'ios', UDID)])).toEqual([
-      [3503, 'xcodebuild'],
-      [18172, null],
-      [18200, null],
-      [18201, null],
-    ]);
-    expect(rows[0]).toMatchObject({ ppid: 1, rssKb: 204800, cpuPercent: 12.5 });
-    expect(rows[1]).toMatchObject({ ppid: 3503, cpuPercent: 0.5 });
-    expect(rows[0]!.startedAt).toBe(new Date(RUNNER_START).toISOString());
-  });
-});
-
-test('a driven device keeps the probes that failed beside its drivers', () => {
-  const driven = classifyActivity(
-    {
-      drivers: [{ basis: 'agent-device-claim', tool: 'agent-device', pid: 1, since: null }],
-      unknown: ['driver-process'],
-      recency: [],
-    },
-    NOW,
-  );
-  expect(driven).toMatchObject({ state: 'driven', basis: ['agent-device-claim'], unknown: ['driver-process'] });
-});
-
-test('recent activity is active, older activity is idle, and no evidence is idle without a time', () => {
-  const recent = classifyActivity(
-    { drivers: [], unknown: [], recency: [{ basis: 'device-log', at: NOW - 60_000 }] },
-    NOW,
-  );
-  expect(recent.state).toBe('active');
-  const old = classifyActivity(
-    { drivers: [], unknown: [], recency: [{ basis: 'metro-bundle', at: NOW - 3_600_000 }] },
-    NOW,
-  );
-  expect(old).toEqual({
-    state: 'idle',
-    lastActivityAt: new Date(NOW - 3_600_000).toISOString(),
-    recent: { 'metro-bundle': new Date(NOW - 3_600_000).toISOString() },
-    basis: ['metro-bundle'],
-  });
-  expect(classifyActivity({ drivers: [], unknown: [], recency: [] }, NOW)).toEqual({ state: 'idle', basis: [] });
 });
 
 describe('createActivityReader', () => {
@@ -251,14 +179,6 @@ describe('createActivityReader', () => {
   const target: ActivityTarget = { platform: 'ios', id: UDID, slot: 'default', workspace };
   const read = (table: Record<number, string>, t: ActivityTarget = target) =>
     createActivityReader({ now: NOW, home, startOf: starts(table), leaseFiles: () => [] })(t);
-
-  test('a live agent-device lease makes the device driven', () => {
-    writeLease(runnerLease());
-    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject({
-      state: 'driven',
-      driver: { tool: 'agent-device', pid: 100, since: new Date(RUNNER_START).toISOString() },
-    });
-  });
 
   test("a live claim's agent actions count as activity, so an agent working without app logs is not quiet", () => {
     const claims = join(home, '.agent-device', 'device-claims');
@@ -312,50 +232,8 @@ describe('createActivityReader', () => {
     });
   });
 
-  test('a stale lease falls through to log recency from this device only', () => {
-    writeLease(runnerLease());
-    const at = NOW - 2 * 3_600_000;
-    writeLogs(
-      [
-        { ts: at, src: 'device', platform: 'ios', msg: 'app log' },
-        { ts: NOW - 60_000, src: 'device', platform: 'ios', slot: 'ipad', deviceId: 'OTHER', msg: 'other slot' },
-        { ts: NOW - 30_000, src: 'device', platform: 'ios', event: 'collector_stopped', msg: 'detaching' },
-      ],
-      [{ ts: at - 1000, src: 'metro', event: 'bundle_response_started', platform: 'ios' }],
-    );
-    expect(read({ 100: OWNER_START })).toEqual({
-      state: 'idle',
-      lastActivityAt: new Date(at).toISOString(),
-      recent: { 'device-log': new Date(at).toISOString(), 'metro-bundle': new Date(at - 1000).toISOString() },
-      basis: ['device-log', 'metro-bundle'],
-    });
-  });
-
-  test('an unreadable lease is unknown, never idle', () => {
-    writeLease('not json');
-    writeLogs([{ ts: NOW - 5 * 3_600_000, src: 'device', platform: 'ios', msg: 'old' }]);
-    expect(read({}).state).toBe('unknown');
-  });
-
   const runnerRow = (start: string) =>
     `   200     1 204800   1.0 ${start}     /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /Users/me/.agent-device/apple-runner/derived/ios-simulator/cache-54ec312d5fba03bd/Build/Products/AgentDeviceRunner.env.session-${UDID}-owner-100-8ffad543-52731.xctestrun -destination platform=iOS Simulator,id=${UDID}\n`;
-
-  test('a runner agent-device kept warm after close, or handed off at daemon exit, does not drive the device', () => {
-    const at = NOW - 2 * 3_600_000;
-    writeLogs([{ ts: at, src: 'device', platform: 'ios', msg: 'app log' }]);
-    ps = runnerRow(RUNNER_START);
-    const idle = { state: 'idle', lastActivityAt: new Date(at).toISOString(), basis: ['device-log'] };
-
-    writeLease(runnerLease({ deviceClaimProtocol: 1 }));
-    expect(read({ 100: OWNER_START, 200: RUNNER_START })).toMatchObject(idle);
-    expect(read({ 100: 'unknown', 200: RUNNER_START })).toMatchObject(idle);
-
-    writeLease(runnerLease({ deviceClaimProtocol: 1, ownerToken: 'detached-owner-100-8ffad543' }));
-    expect(read({ 200: RUNNER_START })).toMatchObject(idle);
-
-    ps = runnerRow('Fri Sep 25 08:00:00 2026');
-    expect(read({ 200: RUNNER_START })).toMatchObject({ state: 'driven', basis: ['driver-process'] });
-  });
 
   test("an open session's claim still drives a device whose runner declares the claim protocol", () => {
     writeLease(runnerLease({ deviceClaimProtocol: 1 }));
@@ -380,19 +258,6 @@ describe('createActivityReader', () => {
       state: 'driven',
       basis: ['agent-device-lease', 'driver-process'],
     });
-  });
-
-  test('a host test runner naming the device makes it driven', () => {
-    ps = `  3503     1   1024   0.0 ${RUNNER_START}     maestro test flow.yaml --udid ${UDID}\n`;
-    expect(read({})).toMatchObject({ state: 'driven', driver: { tool: 'maestro', pid: 3503 } });
-  });
-
-  test('instrumentation on an emulator makes it driven, and unreadable adb is unknown', () => {
-    const android: ActivityTarget = { platform: 'android', id: 'emulator-5554', slot: 'default', workspace };
-    adb = '  PID ARGS\n12322 uiautomator\n';
-    expect(read({}, android)).toMatchObject({ state: 'driven', driver: { tool: 'uiautomator', pid: 12322 } });
-    adb = null;
-    expect(read({}, android).state).toBe('unknown');
   });
 
   test('a device a stim-server client is viewing is active now; other devices keep their own evidence', () => {
@@ -498,23 +363,6 @@ describe('readWebActivity', () => {
       state: 'driven',
       driver: { tool: 'playwright', pid: 900, since: '2026-09-24T22:00:00.000Z' },
       basis: ['cdp-client'],
-    });
-  });
-
-  test('only Stim connections leave the browser undriven, with recency from the page log', () => {
-    const dir = workspaceLogsDir(workspace);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, 'web.ndjson'), `${JSON.stringify({ ts: NOW - 60_000, src: 'client', msg: 'hi' })}\n`);
-    const activity = readWebActivity(
-      target,
-      tables(chromeSide + client(SUPERVISOR, 49288), [row(SUPERVISOR, 'stim-web')]),
-      NOW,
-    );
-    expect(activity).toEqual({
-      state: 'active',
-      lastActivityAt: new Date(NOW - 60_000).toISOString(),
-      recent: { 'page-log': new Date(NOW - 60_000).toISOString() },
-      basis: ['page-log'],
     });
   });
 

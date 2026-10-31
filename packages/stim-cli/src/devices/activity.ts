@@ -24,13 +24,13 @@ export type { DeviceActivity } from '@stim-cli/core/state';
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 const LOG_TAIL_BYTES = 256 * 1024;
 
-export interface ActivityEvidence {
+interface ActivityEvidence {
   drivers: (ActivityDriver & { basis: string })[];
   unknown: string[];
   recency: { basis: ActivityRecencyBasis; at: number }[];
 }
 
-export function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
+function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
   const last = evidence.recency.reduce<{ basis: string; at: number } | null>(
     (best, entry) => (Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best),
     null,

@@ -21,7 +21,7 @@ export interface RemoteProfile {
   clientId?: string;
 }
 
-export function sessionNameFor(label: string): string {
+function sessionNameFor(label: string): string {
   return `stim-${sanitizeDeviceLabel(label)}`;
 }
 
@@ -123,7 +123,7 @@ function archField(value: unknown): SimulatorArch | null {
 }
 
 /** agent-device proxies report the daemon machine under `upstream`; a daemon reports itself at the top level. */
-export function parseHealthHostArch(body: unknown): SimulatorArch | null {
+function parseHealthHostArch(body: unknown): SimulatorArch | null {
   if (!body || typeof body !== 'object') return null;
   return archField((body as { upstream?: unknown }).upstream) ?? archField(body);
 }

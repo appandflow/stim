@@ -322,16 +322,12 @@ function noOwnedDevice(platform: ToolPlatform, slot: string, runCommand: string)
   );
 }
 
-export interface PermissionReadBack {
+interface PermissionReadBack {
   name: string;
   granted: boolean;
 }
 
-/** Reads each permission's grant state out of `dumpsys package <id>`; a permission the dump does not list is omitted. */
-export function parsePackagePermissions(
-  dump: string,
-  names: readonly string[],
-): (PermissionReadBack & { flags: string[] })[] {
+function parsePackagePermissions(dump: string, names: readonly string[]): (PermissionReadBack & { flags: string[] })[] {
   const states: (PermissionReadBack & { flags: string[] })[] = [];
   for (const name of names) {
     const match = new RegExp(

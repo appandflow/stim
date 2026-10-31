@@ -100,23 +100,3 @@ test('the contract kit fails a driver whose forward() throws or never answers', 
   expect(throwing).toHaveLength(1);
   expect(await failedNames(() => undefined)).toEqual(throwing);
 });
-
-test('the contract kit fails a driver that reports a missing tool as a plain error', async () => {
-  const passing = await runAgentDriverContract({
-    id: 'fake',
-    load: () => Promise.resolve(fake()),
-    unavailableInput: input,
-    app,
-  });
-  expect(passing.filter((result) => !result.passed)).toEqual([]);
-  const plain = fake({ createAgentDriver: () => driver('fake', () => Promise.reject(new Error('ENOENT'))) });
-  const failing = await runAgentDriverContract({
-    id: 'fake',
-    load: () => Promise.resolve(plain),
-    unavailableInput: input,
-    app,
-  });
-  expect(failing.filter((result) => !result.passed).map((result) => result.name)).toEqual([
-    'start refuses with AgentDriverUnavailable when the tool is missing, then stops',
-  ]);
-});

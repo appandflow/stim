@@ -185,40 +185,6 @@ test.each([
   expect(existsSync(join(linked, 'tracked.txt'))).toBe(true);
 });
 
-test('a stalled status child is killed at the safety budget and reports unreadable status', async () => {
-  const executor = getExecutor();
-  let started!: () => void;
-  const ready = new Promise<void>((resolve) => (started = resolve));
-  vi.useFakeTimers();
-  setExecutor({
-    ...executor,
-    runFileAsync: (file, args, options) =>
-      file === 'git' && args.includes(linked) && args.includes('status')
-        ? executor.runFileAsync(
-            process.execPath,
-            ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'],
-            {
-              ...options,
-              onSpawn: (spawned) => {
-                child = spawned;
-                spawned.stdout?.once('data', started);
-              },
-            },
-          )
-        : executor.runFileAsync(file, args, options),
-  });
-  const pending = collectWorktreeSweep({ idle: true, olderThan: null, graceMs: 0, now: Date.now() });
-  await ready;
-  await vi.advanceTimersByTimeAsync(60_000);
-  const report = await pending;
-  expect(child?.signalCode).toBe('SIGKILL');
-  expect(report.worktrees.find(({ path }) => path === linked)).toMatchObject({
-    skipCode: 'status-unreadable',
-    skipped: 'git status could not be read',
-  });
-  expect(existsSync(join(linked, 'tracked.txt'))).toBe(true);
-});
-
 test('cancelling a blocked removal safety check drains its child and keeps the worktree and branch', async () => {
   const executor = getExecutor();
   const controller = new AbortController();

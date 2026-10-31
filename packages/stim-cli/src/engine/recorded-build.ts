@@ -56,7 +56,7 @@ export async function pruneArtifactCopies(
   }
 }
 
-export function readRecordedBuild(root: string, key: string): RecordedBuild | null {
+function readRecordedBuild(root: string, key: string): RecordedBuild | null {
   const recorded = readWorkspaceState(root)?.[RECORDED_BUILDS_KEY];
   const entry = isJsonObject(recorded) ? recorded[key] : null;
   if (!isJsonObject(entry) || typeof entry.appPath !== 'string' || !existsSync(entry.appPath)) return null;

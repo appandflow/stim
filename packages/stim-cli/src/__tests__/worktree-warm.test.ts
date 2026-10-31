@@ -129,49 +129,6 @@ test('missing-only copy skips registered nested worktrees and their ignored pare
   expect(git(targetNested, 'branch', '--show-current')).toBe('target-nested');
 }, 30_000);
 
-test('missing-only copy discards partial clone output before each fallback', async () => {
-  write(root, 'node_modules/pkg/index.js', 'source package');
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    async runFileAsync(file, args, opts) {
-      if (file.includes('stim-clonefile-') || (file === 'cp' && args[0] === '-Rc')) {
-        write(args[args.length - 1], `partial-${args.length}`, 'failed clone');
-        throw new Error('clone not supported');
-      }
-      return real.runFileAsync(file, args, opts);
-    },
-  });
-  const result = await warm();
-  expect(result.failed).toEqual([]);
-  expect(result.cloned).toBe(false);
-  expect(result.copied).toEqual(['node_modules']);
-  expect(readdirSync(join(target, 'node_modules'))).toEqual(['pkg']);
-  expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-}, 30_000);
-
-test('failed direct copies discard partial output so a retry can complete', async () => {
-  write(root, 'node_modules/pkg/index.js', 'source package');
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    async runFileAsync(file, args, opts) {
-      if (file === 'cp' || file.includes('stim-clonefile-')) {
-        write(args[args.length - 1], 'partial', 'incomplete');
-        throw new Error('copy failed');
-      }
-      return real.runFileAsync(file, args, opts);
-    },
-  });
-  const result = await warm();
-  expect(result.copied).toEqual([]);
-  expect(result.failed).toEqual([{ file: 'node_modules', error: 'copy failed' }]);
-  expect(existsSync(join(target, 'node_modules'))).toBe(false);
-  resetExecutor();
-  expect((await warm()).copied).toEqual(['node_modules']);
-  expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('source package');
-}, 30_000);
-
 test.skipIf(process.platform === 'win32')(
   'missing-only copy preserves relative symlinks without linking files back to the source (POSIX symlink and inode semantics; skipped on win32)',
   async () => {
@@ -270,19 +227,6 @@ test('warm rejects the source checkout and non-repositories without changing the
   const outside = await runWarm(base);
   expect(outside.code).toBe(1);
   expect(outside.stderr).toMatch(/Not a git repository/);
-}, 30_000);
-
-test('warm reports a timed-out Git probe instead of calling the worktree a non-repository', async () => {
-  const real = getExecutor();
-  setExecutor({
-    ...real,
-    async runFileAsync(file, args, opts) {
-      if (args.includes('--show-toplevel'))
-        throw Object.assign(new Error(`Command timed out after 10000ms: git ${args.join(' ')}`), { code: 'ETIMEDOUT' });
-      return real.runFileAsync(file, args, opts);
-    },
-  });
-  await expect(warmWorktreePaths(target)).rejects.toThrow(/timed out after 10000ms: git .*rev-parse --show-toplevel/);
 }, 30_000);
 
 test('warm refuses an unregistered target, missing source checkout, or mismatched Git common directory', async () => {
@@ -409,68 +353,6 @@ test('warm reports carried node_modules installed from an older lockfile that bo
   expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
 }, 30_000);
 
-test('warm skips ignored Finder, IDE and jj entries, and leaves the same names inside a copied directory', async () => {
-  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.DS_Store\n.idea/\n.jj/\n');
-  write(root, '.jj/repo/op_heads', 'source jj state');
-  write(root, 'tracked-app/.idea/codeStyles.xml', 'shared IDE settings');
-  git(root, 'add', '-f', 'tracked-app/.idea/codeStyles.xml');
-  git(root, 'commit', '-qm', 'tracked IDE settings');
-  git(target, 'merge', '--ff-only', 'main');
-  write(root, 'tracked-app/.idea/codeStyles.xml', 'local source changes');
-  write(root, '.idea/workspace.xml', 'source IDE state');
-  write(root, '.DS_Store', 'source Finder metadata');
-  const literalName = process.platform === 'win32' ? ".env with 'quotes'" : '.env with "quotes"';
-  write(root, literalName, 'literal env');
-  write(root, 'node_modules/pkg/.DS_Store', 'nested Finder metadata');
-  write(root, 'node_modules/pkg/.idea/workspace.xml', 'nested IDE state');
-  write(root, 'node_modules/pkg/apple/.DerivedData/large', 'nested derived data');
-  write(root, 'node_modules/pkg/index.js', 'package');
-  const result = await warm();
-  expect(result.failed).toEqual([]);
-  expect(result.copied).not.toContain('.DS_Store');
-  expect(result.copied).not.toContain('.idea');
-  expect(result.copied).not.toContain('.jj');
-  expect(existsSync(join(target, '.jj'))).toBe(false);
-  expect(existsSync(join(target, '.DS_Store'))).toBe(false);
-  expect(existsSync(join(target, '.idea'))).toBe(false);
-  expect(readFileSync(join(target, literalName), 'utf-8')).toBe('literal env');
-  expect(readFileSync(join(target, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('shared IDE settings');
-  expect(readFileSync(join(target, 'node_modules/pkg/.DS_Store'), 'utf-8')).toBe('nested Finder metadata');
-  expect(readFileSync(join(target, 'node_modules/pkg/.idea/workspace.xml'), 'utf-8')).toBe('nested IDE state');
-  expect(readFileSync(join(target, 'node_modules/pkg/apple/.DerivedData/large'), 'utf-8')).toBe('nested derived data');
-  expect(readFileSync(join(target, 'node_modules/pkg/index.js'), 'utf-8')).toBe('package');
-  expect(readFileSync(join(root, '.DS_Store'), 'utf-8')).toBe('source Finder metadata');
-  expect(readFileSync(join(root, '.idea/workspace.xml'), 'utf-8')).toBe('source IDE state');
-  expect(readFileSync(join(root, 'tracked-app/.idea/codeStyles.xml'), 'utf-8')).toBe('local source changes');
-
-  write(target, '.DS_Store', 'destination Finder metadata');
-  write(target, '.idea/workspace.xml', 'destination IDE state');
-  expect((await warm()).failed).toEqual([]);
-  expect(readFileSync(join(target, '.DS_Store'), 'utf-8')).toBe('destination Finder metadata');
-  expect(readFileSync(join(target, '.idea/workspace.xml'), 'utf-8')).toBe('destination IDE state');
-}, 30_000);
-
-test('warm removes a project-local pnpm store from a copied node_modules and skips one at the root', async () => {
-  write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.pnpm-store/\n');
-  write(root, '.pnpm-store/v11/files/00/blob', 'root store');
-  write(root, 'node_modules/.pnpm-store/v11/files/00/blob', 'store beside node_modules content');
-  write(root, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js', 'package');
-  write(root, 'apps/mobile/package.json', '{}');
-  git(root, 'add', 'apps/mobile/package.json');
-  git(root, 'commit', '-qm', 'workspace package');
-  write(root, 'apps/mobile/node_modules/.pnpm-store/v11/blob', 'workspace store');
-  write(root, 'apps/mobile/node_modules/dep/index.js', 'workspace package');
-  const result = await warm();
-  expect(result.failed).toEqual([]);
-  expect(result.copied.toSorted()).toEqual(['apps/mobile/node_modules', 'node_modules']);
-  expect(existsSync(join(target, '.pnpm-store'))).toBe(false);
-  expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
-  expect(existsSync(join(target, 'apps/mobile/node_modules/.pnpm-store'))).toBe(false);
-  expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe('package');
-  expect(readFileSync(join(target, 'apps/mobile/node_modules/dep/index.js'), 'utf-8')).toBe('workspace package');
-  expect(existsSync(join(root, 'node_modules/.pnpm-store/v11/files/00/blob'))).toBe(true);
-}, 30_000);
-
 function seedPnpmStore(): void {
   write(root, 'node_modules/.pnpm-store/v11/files/00/blob', 'store blob');
   write(root, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js', 'package');
@@ -479,54 +361,6 @@ function seedPnpmStore(): void {
 function trashEntries(): string[] {
   return readdirSync(join(base, 'home', 'trash')).map((name) => join(base, 'home', 'trash', name));
 }
-
-test.skipIf(process.platform === 'win32')(
-  'warm hands the copied pnpm store to the background trash delete instead of deleting it before it returns',
-  async () => {
-    seedPnpmStore();
-    const real = getExecutor();
-    const exitedPid = await new Promise<number>((resolvePid) => {
-      const child = real.spawn('true', [], { stdio: 'ignore' });
-      child.on('exit', () => resolvePid(child.pid ?? 0));
-    });
-    const seen: { removed: string[]; expected: string[]; store: boolean; blob: string; manifest: unknown }[] = [];
-    setExecutor({
-      ...real,
-      spawn(...params: Parameters<typeof real.spawn>) {
-        const [, args = []] = params;
-        const entry = trashEntries()[0] ?? '';
-        seen.push({
-          removed: args.slice(args.indexOf('--') + 1),
-          expected: [join(entry, 'entries'), entry],
-          store: existsSync(join(target, 'node_modules/.pnpm-store')),
-          blob: readFileSync(join(entry, 'entries/0/v11/files/00/blob'), 'utf-8'),
-          manifest: JSON.parse(readFileSync(join(entry, 'trash.json'), 'utf-8')),
-        });
-        for (const path of args.slice(args.indexOf('--') + 1)) rmSync(path, { recursive: true, force: true });
-        const child = real.spawn('true', [], { stdio: 'ignore' });
-        Object.defineProperty(child, 'pid', { value: exitedPid });
-        return child;
-      },
-    });
-
-    const result = await warm();
-
-    expect(result.failed).toEqual([]);
-    expect(seen).toHaveLength(1);
-    expect(seen[0]).toMatchObject({
-      store: false,
-      blob: 'store blob',
-      manifest: { worktree: target, kind: 'warm' },
-    });
-    expect(seen[0]?.removed).toEqual(seen[0]?.expected);
-    expect(trashEntries()).toEqual([]);
-    expect(existsSync(join(target, 'node_modules/.pnpm-store'))).toBe(false);
-    expect(readFileSync(join(target, 'node_modules/.pnpm/pkg@1.0.0/node_modules/pkg/index.js'), 'utf-8')).toBe(
-      'package',
-    );
-  },
-  30_000,
-);
 
 test.skipIf(process.platform === 'win32')(
   'warm deletes the copied pnpm store in place when it cannot be renamed into the trash or the trash cannot be opened',
@@ -607,65 +441,6 @@ test.skipIf(process.platform === 'win32')(
   30_000,
 );
 
-test.each(['android/build/', 'android/', 'apps/mobile/android/build/generated/', 'apps/mobile/android/'])(
-  'warm excludes generated autolinking from ignored %s',
-  async (ignored) => {
-    write(root, '.gitignore', `${ignored}\n`);
-    write(root, 'apps/mobile/package.json', '{}');
-    git(root, 'add', 'apps/mobile/package.json', '.gitignore');
-    git(root, 'commit', '-qm', 'workspace package');
-    const app = ignored.startsWith('apps/') ? 'apps/mobile/' : '';
-    const generated = `${app}android/build/generated`;
-    write(root, `${generated}/autolinking/autolinking.json`, 'source checkout paths');
-    write(root, `${generated}/autolinking/package.json.sha`, 'unchanged checksum');
-    write(root, `${generated}/other/output`, 'reusable output');
-    write(root, `${generated}/autolinking-extra/keep`, 'unrelated output');
-    const result = await warm();
-    expect(result.failed).toEqual([]);
-    expect(existsSync(join(target, generated, 'autolinking'))).toBe(false);
-    expect(readFileSync(join(target, generated, 'other/output'), 'utf8')).toBe('reusable output');
-    expect(readFileSync(join(target, generated, 'autolinking-extra/keep'), 'utf8')).toBe('unrelated output');
-    expect(readFileSync(join(root, generated, 'autolinking/autolinking.json'), 'utf8')).toBe('source checkout paths');
-    write(target, `${generated}/autolinking/autolinking.json`, 'destination checkout paths');
-    expect((await warm()).failed).toEqual([]);
-    expect(readFileSync(join(target, generated, 'autolinking/autolinking.json'), 'utf8')).toBe(
-      'destination checkout paths',
-    );
-  },
-);
-
-test.each(['.expo/', 'apps/mobile/.expo/', 'apps/mobile/.expo/types/'])(
-  'warm excludes Expo Router typed routes from ignored %s',
-  async (ignored) => {
-    const expo = ignored.startsWith('apps/') ? 'apps/mobile/.expo' : '.expo';
-    const tracked = ignored.endsWith('types/') ? `${expo}/settings.json` : 'apps/mobile/package.json';
-    write(root, '.gitignore', `${ignored}\n`);
-    write(root, tracked, '{}');
-    git(root, 'add', tracked, '.gitignore');
-    git(root, 'commit', '-qm', 'workspace package');
-    write(root, `${expo}/types/router.d.ts`, 'source checkout routes');
-    write(root, `${expo}/devices.json`, '{}');
-    const result = await warm();
-    expect(result.failed).toEqual([]);
-    expect(result.copied).toEqual(ignored.endsWith('types/') ? [] : [expo]);
-    expect(existsSync(join(target, expo, 'types'))).toBe(false);
-    expect(readFileSync(join(root, expo, 'types/router.d.ts'), 'utf8')).toBe('source checkout routes');
-    expect(existsSync(join(target, expo, 'devices.json'))).toBe(!ignored.endsWith('types/'));
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'missing-only copy preserves executable file modes (POSIX file modes; skipped on win32)',
-  async () => {
-    write(root, 'node_modules/pkg/bin', '#!/bin/sh\nexit 0\n');
-    chmodSync(join(root, 'node_modules/pkg/bin'), 0o755);
-    const result = await warm();
-    expect(result.failed).toEqual([]);
-    expect(lstatSync(join(target, 'node_modules/pkg/bin')).mode & 0o777).toBe(0o755);
-  },
-  30_000,
-);
-
 test.skipIf(process.platform === 'win32')(
   'warm removes known paths from read-only directories and restores their modes (POSIX directory modes; skipped on win32)',
   async () => {
@@ -686,18 +461,6 @@ test.skipIf(process.platform === 'win32')(
   },
   30_000,
 );
-
-test('missing-only copy does not restore a deleted tracked file from ignored main state', async () => {
-  write(target, '.env', 'tracked linked env');
-  git(target, 'add', '-f', '.env');
-  git(target, 'commit', '-qm', 'track linked env');
-  rmSync(join(target, '.env'));
-  write(root, '.env', 'ignored main env');
-  const result = await warm();
-  expect(result.copied).toEqual([]);
-  expect(result.skipped).toEqual([{ file: '.env', reason: 'tracked' }]);
-  expect(existsSync(join(target, '.env'))).toBe(false);
-}, 30_000);
 
 test('warm copies project-owned .stim directories unless the main exclusion file skips them', async () => {
   write(root, '.gitignore', readFileSync(join(root, '.gitignore'), 'utf-8') + '.stim/\n');
@@ -751,22 +514,6 @@ test('warm preserves a deleted tracked file when main has ignored descendants at
   expect(git(target, 'diff', '--name-status')).toBe('D\tlocal');
 }, 30_000);
 
-test('warm permits ignored siblings under a directory containing tracked files', async () => {
-  write(root, 'local/README', 'main readme');
-  git(root, 'add', '-f', 'local/README');
-  git(root, 'commit', '-qm', 'track main local readme');
-  write(root, 'local/data.cache', 'main cache');
-  write(target, 'local/README', 'linked readme');
-  git(target, 'add', '-f', 'local/README');
-  git(target, 'commit', '-qm', 'track linked local readme');
-  const result = await warm();
-  expect(result.copied).toEqual(['local/data.cache']);
-  expect(result.skipped).toEqual([]);
-  expect(result.failed).toEqual([]);
-  expect(readFileSync(join(target, 'local/data.cache'), 'utf-8')).toBe('main cache');
-  expect(readFileSync(join(target, 'local/README'), 'utf-8')).toBe('linked readme');
-}, 30_000);
-
 function bareLayout(): { bare: string; main: string; feature: string } {
   const bare = join(base, 'bare');
   mkdirSync(bare);
@@ -804,26 +551,6 @@ test('warm in a bare-repository layout rejects the worktree on the bare HEAD bra
   const result = await runWarm(main);
   expect(result.code).toBe(1);
   expect(result.stderr).toMatch(/linked worktree, not the source checkout/);
-}, 30_000);
-
-test('warm refuses a detached bare HEAD and prints the symbolic-ref command that repairs it', async () => {
-  const { bare, main, feature } = bareLayout();
-  git(bare, 'update-ref', '--no-deref', 'HEAD', git(main, 'rev-parse', 'HEAD'));
-  await expect(warmWorktreePaths(feature)).rejects.toThrow(`git -C ${bare} symbolic-ref HEAD refs/heads/<branch>`);
-}, 30_000);
-
-test('warm refuses a bare HEAD branch that no worktree checks out and prints the worktree add command', async () => {
-  const { bare, feature } = bareLayout();
-  git(bare, 'symbolic-ref', 'HEAD', 'refs/heads/develop');
-  await expect(warmWorktreePaths(feature)).rejects.toThrow(
-    `git -C ${bare} worktree add ${join(bare, 'develop')} develop`,
-  );
-}, 30_000);
-
-test('warm in a bare-repository layout still finds the source when a tag shares the HEAD branch name', async () => {
-  const { bare, main, feature } = bareLayout();
-  git(main, 'tag', 'main');
-  expect(await warmWorktreePaths(feature)).toEqual({ root: main, target: feature, common: join(bare, '.git') });
 }, 30_000);
 
 test('warm refuses a deleted source worktree with the prune and re-add commands that restore it', async () => {

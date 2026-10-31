@@ -126,13 +126,13 @@ interface DoctorDue {
   reason: string;
 }
 
-export interface GuideStatusFacts {
+interface GuideStatusFacts {
   running: string;
   doctor: DoctorDue[];
   latest: string | null;
 }
 
-export function renderGuideStatus({ running, doctor, latest }: GuideStatusFacts): string | null {
+function renderGuideStatus({ running, doctor, latest }: GuideStatusFacts): string | null {
   const lines: string[] = [];
   if (doctor.length) {
     const named = doctor.map((due) => `${due.platform} (${due.reason})`).join(' and ');

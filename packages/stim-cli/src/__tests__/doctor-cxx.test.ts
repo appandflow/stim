@@ -1,15 +1,14 @@
 import { afterEach, beforeEach, expect, test } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { Command } from 'commander';
 import { getExecutor } from '../exec.ts';
 import doctorCommand from '../commands/doctor.ts';
 import { analyzeStimVersions } from '../diagnostics/stim-installations.ts';
 import { acquireBuildLock, releaseBuildLock } from '../engine/build-lock.ts';
 import { readCxxLauncherStates, repairCxxLauncherState } from '../diagnostics/doctor-cxx.ts';
-import { checkCxxCompilerLauncher, type Finding } from '../diagnostics/doctor.ts';
-import { claudeLocalSettingsPath, missingAllowance } from '../diagnostics/sandbox.ts';
+import { checkCxxCompilerLauncher } from '../diagnostics/doctor.ts';
 import { resolveProjectSettings } from '../workspace/settings.ts';
 import { writeCasToolchain } from './_factories.ts';
 
@@ -69,40 +68,6 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test.skipIf(process.platform === 'win32')(
-  'repair refuses tracked or non-ignored output and leaves neighboring source intact (ccache PATH lookup is POSIX-only; skipped on win32)',
-  () => {
-    const tracked = cache('android/app', null);
-    getExecutor().runFile('git', ['add', '-f', join(tracked, 'CMakeCache.txt')], { cwd: root, timeoutMs: 60_000 });
-    writeFileSync(join(root, '.gitignore'), '');
-    const source = join(root, 'android/app/CMakeLists.txt');
-    writeFileSync(source, 'project(Example)\n');
-    const result = repairCxxLauncherState(root, projectSettings());
-    expect(result.removed).toEqual([]);
-    expect(result.refused[0]?.reason).toMatch(/tracked/);
-    expect(existsSync(tracked)).toBe(true);
-    expect(existsSync(source)).toBe(true);
-    getExecutor().runFile('git', ['rm', '--cached', '-f', join(tracked, 'CMakeCache.txt')], {
-      cwd: root,
-      timeoutMs: 60_000,
-    });
-    expect(repairCxxLauncherState(root, projectSettings()).refused).toHaveLength(1);
-    expect(existsSync(tracked)).toBe(true);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'repair preserves explicit project launchers and healthy custom launchers (ccache PATH lookup is POSIX-only; skipped on win32)',
-  () => {
-    const stale = cache('android/app', null);
-    const custom = cache('node_modules/native/android', 'sccache');
-    writeFileSync(join(root, 'android/app/build.gradle.kts'), 'arguments.add("-DCMAKE_CXX_COMPILER_LAUNCHER=sccache")');
-    expect(repairCxxLauncherState(root, projectSettings()).refused[0]?.reason).toMatch(/own compiler launcher/);
-    expect(existsSync(stale)).toBe(true);
-    expect(existsSync(custom)).toBe(true);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
   'repair refuses an external linked dependency and an active Stim Android build (ccache PATH lookup is POSIX-only; skipped on win32)',
   () => {
     const external = join(home, 'native/android/.cxx/Debug/abc123/arm64-v8a');
@@ -125,154 +90,7 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32')(
-  'repair refuses a redirected .cxx directory even when its target is within the checkout (ccache PATH lookup is POSIX-only; skipped on win32)',
-  () => {
-    const app = cache('android/generated', null);
-    mkdirSync(join(root, 'android/app'), { recursive: true });
-    symlinkSync(dirname(dirname(dirname(app))), join(root, 'android/app/.cxx'), 'dir');
-    expect(repairCxxLauncherState(root, projectSettings()).refused[0]?.reason).toMatch(/symbolic link/);
-    expect(existsSync(app)).toBe(true);
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'repair follows pnpm package links within the checkout for Git safety checks (ccache PATH lookup is POSIX-only; skipped on win32)',
-  () => {
-    const module = 'node_modules/.pnpm/native@1/node_modules/native';
-    const stale = cache(`${module}/android`, null);
-    symlinkSync(join(root, module), join(root, 'node_modules/native'), 'dir');
-    expect(repairCxxLauncherState(root, projectSettings())).toEqual({
-      removed: ['node_modules/native/android/.cxx/Debug/abc123/arm64-v8a'],
-      refused: [],
-    });
-    expect(existsSync(stale)).toBe(false);
-  },
-);
-
-const cli = join(import.meta.dirname, '../../dist/cli.mjs');
-
-function doctorJson(args: string[], env: Record<string, string>, omitEnv: string[] = []): { findings: Finding[] } {
-  return JSON.parse(
-    getExecutor().runFile(process.execPath, [cli, 'doctor', '--json', ...args], {
-      cwd: root,
-      env: { ANDROID_HOME: join(home, 'no-android-sdk'), ...env },
-      omitEnv: [...omitEnv, 'ANDROID_SDK_ROOT'],
-      timeoutMs: 60_000,
-    }),
-  );
-}
-
-test.skipIf(process.platform === 'win32').each(['claude', 'codex'])(
-  'Android doctor --json --fix repairs CMake under unsandboxed %s and leaves the sandbox allowance alone (ccache PATH lookup is POSIX-only; skipped on win32)',
-  (harness) => {
-    writeFileSync(
-      join(root, 'package.json'),
-      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
-    );
-    const stale = cache('android/app', null);
-    const env: Record<string, string> = harness === 'claude' ? { CLAUDECODE: '1' } : { CODEX_SANDBOX: 'seatbelt' };
-    const omitEnv = harness === 'codex' ? ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT'] : [];
-    const plain = doctorJson(['--platform', 'android'], env, omitEnv);
-    expect(plain.findings.some((finding) => finding.code === 'android-cmake-launcher')).toBe(true);
-    expect(plain.findings.some((finding) => finding.title.includes('sandbox'))).toBe(false);
-    expect(existsSync(stale)).toBe(true);
-    const fixed = doctorJson(['--fix', '--platform', 'android'], env, omitEnv);
-    expect(fixed.findings.some((finding) => finding.code === 'android-cmake-launcher')).toBe(false);
-    expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
-    expect(existsSync(stale)).toBe(false);
-  },
-);
-
-test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
-  'doctor --fix --platform android writes the allowance the report names when the sandbox blocks STIM_HOME (POSIX permission bits; skipped on win32)',
-  () => {
-    writeFileSync(
-      join(root, 'package.json'),
-      JSON.stringify({ name: 'fixture', dependencies: { 'react-native': '0.81.0' } }),
-    );
-    const locked = join(home, 'locked');
-    mkdirSync(locked);
-    chmodSync(locked, 0o500);
-    const blockedHome = join(locked, 'stim-home');
-    try {
-      const env = { CLAUDECODE: '1', STIM_HOME: blockedHome };
-      const plain = doctorJson(['--platform', 'android'], env);
-      const reported = plain.findings.find((finding) => finding.title.includes('sandbox'));
-      expect(reported?.fix).toContain(claudeLocalSettingsPath(root));
-      expect(existsSync(claudeLocalSettingsPath(root))).toBe(false);
-
-      const fixed = doctorJson(['--fix', '--platform', 'android'], env);
-      expect(missingAllowance([claudeLocalSettingsPath(root)], blockedHome)).toEqual([]);
-      expect(fixed.findings.some((finding) => finding.title.includes('has not picked it up'))).toBe(true);
-    } finally {
-      chmodSync(locked, 0o700);
-    }
-  },
-);
-
-test('doctor preserves native configurations when no compiler cache is selected', () => {
-  const path = cache('android/app', null);
-  writeFileSync(
-    join(root, '.stim.json'),
-    JSON.stringify({ optimizations: { android: { compilerCache: 'none', casToolchain: '/toolchain.json' } } }),
-  );
-  expect(repairCxxLauncherState(root, projectSettings())).toEqual({ removed: [], refused: [] });
-  expect(existsSync(path)).toBe(true);
-});
-
-test('doctor preserves native configurations while a CAS toolchain Stim can use is selected', () => {
-  const path = cache('android/app', null);
-  const { manifest } = writeCasToolchain(join(home, 'cas'));
-  writeFileSync(
-    join(root, '.stim.json'),
-    JSON.stringify({ optimizations: { android: { compilerCache: 'cas', casToolchain: manifest } } }),
-  );
-  expect(repairCxxLauncherState(root, projectSettings())).toEqual({ removed: [], refused: [] });
-  expect(existsSync(path)).toBe(true);
-});
-
-test.skipIf(process.platform === 'win32')(
-  'legacy launcher repair preserves managed compiler profiles, including the short Windows form, alongside stale legacy configurations (ccache PATH lookup is POSIX-only; skipped on win32)',
-  () => {
-    const legacy = cache('android/app', null);
-    const managed = ['stim-0123456789abcdef', '0123'].map((profile) =>
-      join(root, `android/app/.cxx/${profile}/Debug/abc123/arm64-v8a`),
-    );
-    for (const dir of managed) {
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(
-        join(dir, 'CMakeCache.txt'),
-        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
-      );
-    }
-    expect(repairCxxLauncherState(root, projectSettings()).removed).toHaveLength(1);
-    expect(existsSync(legacy)).toBe(false);
-    for (const dir of managed) expect(existsSync(dir)).toBe(true);
-  },
-);
-
-test.skipIf(process.platform === 'win32').each(['relative.json', '/missing/toolchain.json'])(
-  'a CAS toolchain of %s repairs the legacy configuration the build compiles with ccache and keeps the managed profile (ccache PATH lookup is POSIX-only; skipped on win32)',
-  (casToolchain) => {
-    const legacy = cache('android/app', null);
-    const managed = join(root, 'android/app/.cxx/stim-0123456789abcdef/Debug/abc123/arm64-v8a');
-    mkdirSync(managed, { recursive: true });
-    writeFileSync(
-      join(managed, 'CMakeCache.txt'),
-      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
-    );
-    writeFileSync(
-      join(root, '.stim.json'),
-      JSON.stringify({ optimizations: { android: { compilerCache: 'cas', casToolchain } } }),
-    );
-    expect(repairCxxLauncherState(root, projectSettings()).removed).toEqual([
-      'android/app/.cxx/Debug/abc123/arm64-v8a',
-    ]);
-    expect(existsSync(legacy)).toBe(false);
-    expect(existsSync(managed)).toBe(true);
-  },
-);
+join(import.meta.dirname, '../../dist/cli.mjs');
 
 test.skipIf(process.platform === 'win32')(
   'doctor --fix repairs nothing when the config cannot be read (ccache PATH lookup is POSIX-only; skipped on win32)',

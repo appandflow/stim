@@ -10,12 +10,12 @@ const MERGE_BUDGET_MS = 250;
 const MERGE_TIMEOUT_BACKOFF_MS = 5 * 60_000;
 const ORIGIN_PREFIX = 'refs/remotes/origin/';
 
-export interface GitStatusSummary extends Omit<WorktreeGit, 'mergedInto'> {
+interface GitStatusSummary extends Omit<WorktreeGit, 'mergedInto'> {
   head: string | null;
 }
 
 /** Counts the entries of `git status --porcelain=v2 --branch` output. `head` is null on an unborn branch. */
-export function parseGitStatus(text: string): GitStatusSummary {
+function parseGitStatus(text: string): GitStatusSummary {
   const summary: GitStatusSummary = { head: null, changed: 0, untracked: 0, upstream: null, ahead: null, behind: null };
   for (const line of text.split('\n')) {
     if (line.startsWith('# branch.oid ')) {

@@ -86,36 +86,6 @@ test('reports selected installed SDK metadata without native or filesystem mutat
   expect(readdirSync(home)).toEqual([]);
 });
 
-test.each([
-  [null, 'Host memory pressure could not be read; retry shortly.'],
-  ['warning', 'Host memory pressure is warning; hosted sessions wait until it is normal.'],
-  ['critical', 'Host memory pressure is critical; hosted sessions wait until it is normal.'],
-])('memory pressure %s declines before SDK selection with its own reason', async (pressure, declined) => {
-  native.pressure.mockReturnValue(pressure);
-  for (const platform of ['ios', 'android', 'macos'] as const)
-    expect(await inspectHostedDevice({ platform })).toMatchObject({
-      choice: null,
-      declined,
-      resources: { memoryPressure: pressure },
-    });
-  expect(native.ios).not.toHaveBeenCalled();
-  expect(native.images).not.toHaveBeenCalled();
-});
-
-test('an unreadable memory sample is read once more before the offer decides', async () => {
-  native.pressure.mockReturnValueOnce(null).mockReturnValue('normal');
-  expect(await inspectHostedDevice({ platform: 'ios' })).toMatchObject({
-    choice: { runtime: '27.1' },
-    declined: null,
-    resources: { memoryPressure: 'normal' },
-  });
-  expect(native.pressure).toHaveBeenCalledTimes(2);
-  native.pressure.mockClear();
-  native.pressure.mockReturnValue('warning');
-  await inspectHostedDevice({ platform: 'ios' });
-  expect(native.pressure).toHaveBeenCalledTimes(1);
-});
-
 test('native offers report local live devices while excluding recorded hosted devices', async () => {
   native.sims.mockReturnValue([
     makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' }),

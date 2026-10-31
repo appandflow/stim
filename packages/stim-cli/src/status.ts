@@ -630,7 +630,7 @@ export function parseDfFree(output: unknown): DiskInfo | null {
   return { availableMb: Math.round(availableKb / 1024), totalMb: Math.round(totalKb / 1024) };
 }
 
-export function diskIsTight(disk: DiskInfo | null | undefined): boolean {
+function diskIsTight(disk: DiskInfo | null | undefined): boolean {
   return Boolean(disk && disk.availableMb < 25 * 1024);
 }
 

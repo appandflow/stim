@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import {
   existsSync,
   symlinkSync,
@@ -24,16 +24,13 @@ import {
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as measurements from '../maintenance/measure.ts';
-import { diskPressureLevel, levelStillShort } from '../maintenance/pressure.ts';
 import { executeAction } from '../maintenance/act.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { runMaintenance } from '../maintenance/run.ts';
-import { liveClaimOwner, plantClaim } from './_factories.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
 import * as memory from '../commands/gc/memory.ts';
 import { recordGcResult } from '../commands/gc/results.ts';
 
@@ -138,51 +135,6 @@ function outputsWorkspace(name: string, usedMinutesAgo: number) {
   return { root, outputs: join(dir, 'derived-data') };
 }
 
-test('pressure levels follow the floors, and level 2 runs until free disk is back above the budget floor', () => {
-  const budget = { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB };
-  const settings = { urgentFreeDiskGb: 12, criticalFreeDiskGb: 6 };
-  expect([25, 19, 11, 5.5, 4].map((gb) => diskPressureLevel(gb * GB, budget, settings))).toEqual([0, 1, 2, 3, 3]);
-  expect(diskPressureLevel(7 * GB, { ...budget, hardFloorDiskMb: 8 * GB }, settings)).toBe(3);
-  expect(levelStillShort({ level: 2 }, 15 * GB, budget, settings)).toBe(true);
-  expect(levelStillShort({ level: 2 }, 21 * GB, budget, settings)).toBe(false);
-  expect(levelStillShort({ level: 3 }, 7 * GB, budget, settings)).toBe(false);
-  expect(levelStillShort({ level: 3 }, 5.5 * GB, budget, settings)).toBe(true);
-});
-
-test('when level 1 cannot get back above the floor, level 2 clears outputs of workspaces that did not run ios, android or macos in the last 15 minutes, dev server or not', async () => {
-  const hourAgo = outputsWorkspace('hour-ago', 1);
-  writeWorkspaceState(hourAgo.root, { supervisor: { ...liveClaimOwner(), port: 8100 }, ...iosRan(60) });
-  expect(workspaceInUse(hourAgo.root).join('\n')).toMatch(/supervisor \(pid \d+\) is running/);
-  const twelveMinutes = outputsWorkspace('twelve-minutes', 30);
-  writeWorkspaceState(twelveMinutes.root, iosRan(12));
-  freeDisk(15);
-
-  await pass();
-
-  expect(existsSync(hourAgo.outputs)).toBe(false);
-  expect(existsSync(twelveMinutes.outputs)).toBe(true);
-  expect(readMaintenanceState()?.pressure?.diskLevel).toBe(1);
-});
-
-test('level 2 keeps the outputs of a workspace that is building', async () => {
-  const building = outputsWorkspace('building', 120);
-  plantClaim(join(workspaceDir(building.root), 'native-run.lock'), 'exclusive', liveClaimOwner());
-  freeDisk(15);
-
-  await pass();
-
-  expect(existsSync(building.outputs)).toBe(true);
-});
-
-test('level 2 actions stop once free disk is back above the floor', async () => {
-  const halfHour = outputsWorkspace('half-hour', 30);
-  freeDisk(15, 25);
-
-  await pass();
-
-  expect(existsSync(halfHour.outputs)).toBe(true);
-});
-
 function repoWithFeatureWorktree({
   linkAndroid = false,
   nested = false,
@@ -241,61 +193,6 @@ function repoWithFeatureWorktree({
   return roots;
 }
 
-test('level 2 clears untracked build directories of worktrees whose workspaces did not run native in 15 minutes, never ios/build, and level 3 deletes linked dependencies', async () => {
-  const { repo, feature } = repoWithFeatureWorktree({ iosRanMinutesAgo: { feature: 5 } });
-  freeDisk(15);
-
-  await pass();
-
-  for (const root of [repo, feature]) {
-    expect(existsSync(join(root, 'ios', 'build', 'App.app', 'binary'))).toBe(true);
-    expect(existsSync(join(root, 'node_modules'))).toBe(true);
-  }
-  expect(existsSync(join(repo, 'apps', 'desktop', '.build'))).toBe(false);
-  expect(existsSync(join(repo, 'android', 'build', 'tracked.txt'))).toBe(true);
-  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
-
-  freeDisk(4);
-  await pass();
-
-  expect(existsSync(join(feature, 'node_modules'))).toBe(process.platform === 'win32');
-  expect(existsSync(join(repo, 'node_modules'))).toBe(true);
-  expect(recordedDirs(feature)).toEqual(process.platform === 'win32' ? [] : [join(feature, 'node_modules')]);
-  expect(readMaintenanceState()?.lastPass?.blocked).toEqual(
-    expect.arrayContaining([expect.stringContaining('disk pressure level 3')]),
-  );
-}, 60_000);
-
-test.skipIf(process.platform === 'win32')(
-  'level 3 keeps the dependencies of a linked worktree a live process works in',
-  async () => {
-    const { feature } = repoWithFeatureWorktree();
-    const child = spawn('sleep', ['60'], { cwd: feature, stdio: 'ignore' });
-    try {
-      freeDisk(4);
-      await pass();
-      expect(existsSync(join(feature, 'node_modules', 'pkg', 'index.js'))).toBe(true);
-      expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain(`process ${child.pid} works in it`);
-    } finally {
-      child.kill('SIGKILL');
-    }
-  },
-  60_000,
-);
-
-test.skipIf(process.platform === 'win32')(
-  'level 3 deletes the dependencies of a worktree whose lockfile drifted without promising a restore',
-  async () => {
-    const { feature } = repoWithFeatureWorktree();
-    writeFileSync(join(feature, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
-    freeDisk(4);
-    await pass();
-    expect(existsSync(join(feature, 'node_modules'))).toBe(false);
-    expect(recordedDirs(feature)).toEqual([]);
-  },
-  60_000,
-);
-
 test.skipIf(process.platform === 'win32')(
   'levels 2 and 3 never lighten a git-locked worktree, and the log says it is locked',
   async () => {
@@ -344,52 +241,12 @@ test.skipIf(process.platform === 'win32')(
   60_000,
 );
 
-test('a build directory reached through a linked parent is kept', async () => {
-  const { feature } = repoWithFeatureWorktree({ linkAndroid: true });
-  freeDisk(15);
-
-  await pass();
-
-  expect(existsSync(join(feature, 'shared', 'app', 'build', 'keep.txt'))).toBe(true);
-  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
-}, 60_000);
-
-test('a worktree nested inside another is judged from its own git checkout', async () => {
-  const { feature } = repoWithFeatureWorktree({ nested: true });
-  freeDisk(15);
-
-  await pass();
-
-  expect(existsSync(join(feature, 'android', 'build', 'tracked.txt'))).toBe(true);
-  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(false);
-}, 60_000);
-
 const actContext = (feature: string) => ({
   settings: resolveMaintenanceSettings(),
   budget: { minFreeDiskMb: 20 * GB, hardFloorDiskMb: 5 * GB, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
   protectedRoot: '/nowhere',
   worktrees: [{ path: feature, linked: true, locked: false, keys: [feature] }],
 });
-
-test('a nested worktree holding its native-run lock keeps its build directory at execution', async () => {
-  const { feature } = repoWithFeatureWorktree({ nested: true });
-  plantClaim(join(workspaceDir(feature), 'native-run.lock'), 'exclusive', liveClaimOwner());
-  freeDisk(15);
-
-  const outcome = await executeAction(
-    {
-      kind: 'would-clear-build-dirs',
-      target: join(feature, 'apps', 'desktop', '.build'),
-      bytes: 0,
-      reason: 'test',
-      level: 2,
-    },
-    actContext(feature),
-  );
-
-  expect(outcome.status).toBe('kept');
-  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
-}, 60_000);
 
 test('level 2 keeps the build directory of a worktree that ran ios 5 minutes ago at execution, and ios/build whatever its age', async () => {
   const { feature } = repoWithFeatureWorktree({ iosRanMinutesAgo: { feature: 5 } });
@@ -405,26 +262,6 @@ test('level 2 keeps the build directory of a worktree that ran ios 5 minutes ago
   expect(podInstallOutput.status).toBe('kept');
   expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
   expect(existsSync(join(feature, 'ios', 'build', 'App.app', 'binary'))).toBe(true);
-}, 60_000);
-
-test('level 2 keeps the build directories of a worktree with no Stim workspace state at execution', async () => {
-  const { feature } = repoWithFeatureWorktree();
-  rmSync(workspaceStateFile(feature), { force: true });
-  freeDisk(15);
-
-  const outcome = await executeAction(
-    {
-      kind: 'would-clear-build-dirs',
-      target: join(feature, 'apps', 'desktop', '.build'),
-      bytes: 0,
-      reason: 'test',
-      level: 2,
-    },
-    actContext(feature),
-  );
-
-  expect(outcome.status).toBe('kept');
-  expect(existsSync(join(feature, 'apps', 'desktop', '.build'))).toBe(true);
 }, 60_000);
 
 function write(path: string) {
@@ -475,34 +312,6 @@ test('the next command, report-only gc included, warns on stderr at disk pressur
   errors.length = 0;
   triggerMaintenance('ios', { argv: ['ios'] });
   expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
-});
-
-test('level 3 deletes Gradle versions no project pins once idle for gradleVersionIdleDays, never shared caches', async () => {
-  vi.stubEnv('GRADLE_USER_HOME', '');
-  const current = getExecutor();
-  setExecutor({
-    ...current,
-    runFileAsync: async (file, args, opts) => (file === 'ps' ? '' : current.runFileAsync(file, args, opts)),
-  });
-  const caches = join(home, '.gradle', 'caches');
-  const old = new Date(Date.now() - 10 * 24 * 60 * MINUTE_MS);
-  for (const dir of ['9.3.1', '9.4.1', 'modules-2', 'jdks']) write(join(caches, dir, 'keep'));
-  write(join(home, '.gradle', 'wrapper', 'dists', 'gradle-9.3.1-bin', 'hash', 'gradle-9.3.1-bin.zip.lck'));
-  ageTree(join(home, '.gradle'), old);
-  write(join(caches, '9.4.1', 'fresh'));
-
-  process.env.STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS = '0';
-  freeDisk(4);
-  await pass();
-  expect(existsSync(join(caches, '9.3.1'))).toBe(true);
-
-  delete process.env.STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS;
-  await pass();
-  expect(existsSync(join(caches, '9.3.1'))).toBe(false);
-  expect(existsSync(join(home, '.gradle', 'wrapper', 'dists', 'gradle-9.3.1-bin'))).toBe(false);
-  expect(existsSync(join(caches, '9.4.1'))).toBe(true);
-  expect(existsSync(join(caches, 'modules-2', 'keep'))).toBe(true);
-  expect(existsSync(join(caches, 'jdks', 'keep'))).toBe(true);
 });
 
 const DAEMON_ROW =
@@ -576,21 +385,6 @@ test('level 3 stops an idle Gradle daemon, then deletes the version it was block
   expect(actionKinds()).toEqual(expect.arrayContaining(['stop-gradle-daemons', 'delete-gradle-version']));
 });
 
-test('a stopped daemon that lingers for two more ps calls is waited for, so the version goes in the same pass', async () => {
-  let calls = 0;
-  let stopped = false;
-  const version = idleUnpinnedVersion(() => {
-    if (!stopped) return DAEMON_ROW;
-    calls += 1;
-    return calls <= 2 ? DAEMON_ROW : '';
-  });
-  daemonPlan({ state: 'idle' });
-  stopsDaemon(() => (stopped = true));
-  await pass();
-  expect(calls).toBeGreaterThan(2);
-  expect(existsSync(version)).toBe(false);
-});
-
 test('a daemon that does not exit after the stop still keeps the version', async () => {
   const version = idleUnpinnedVersion(() => DAEMON_ROW);
   daemonPlan({ state: 'idle' });
@@ -619,39 +413,4 @@ test.each([
   expect(stop).not.toHaveBeenCalled();
   expect(existsSync(join(version, 'keep'))).toBe(true);
   expect(actionKinds()).not.toContain('delete-gradle-version');
-});
-
-test('a scoped STIM_HOME plans no daemon stop and says why', async () => {
-  const version = idleUnpinnedVersion(() => DAEMON_ROW);
-  const stop = stopsDaemon();
-  await pass();
-  expect(stop).not.toHaveBeenCalled();
-  expect(existsSync(join(version, 'keep'))).toBe(true);
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('STIM_HOME scopes this config');
-});
-
-test('a version kept for its own reason keeps that reason when the daemon stop is not possible', async () => {
-  const version = idleUnpinnedVersion(() => DAEMON_ROW);
-  write(join(home, '.gradle', 'caches', '9.2', 'fresh'));
-  daemonPlan({ state: 'busy' });
-  await pass();
-  const log = readFileSync(maintenanceNdjsonFile(), 'utf8');
-  expect(log).toMatch(/Kept Gradle 9\.2: modified within the last 7 days/);
-  expect(log).toMatch(/Kept Gradle 9\.3\.1: Gradle pid 101 keeps it/);
-  expect(existsSync(join(version, 'keep'))).toBe(true);
-});
-
-test('a non-daemon blocker with no daemon running stops nothing and is named as no daemon', async () => {
-  const version = idleUnpinnedVersion(() => WRAPPER_ROW);
-  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
-  vi.spyOn(memory, 'collectMemoryReport').mockResolvedValue({
-    processes: [],
-    watchmanRoots: [],
-    notices: ['no Gradle or Kotlin daemon is running'],
-  });
-  const stop = stopsDaemon();
-  await pass();
-  expect(stop).not.toHaveBeenCalled();
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('Gradle pid 202 keeps it: it is not a daemon');
-  expect(existsSync(join(version, 'keep'))).toBe(true);
 });

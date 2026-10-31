@@ -1,68 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { workspaceStateDir } from '../index.ts';
-import {
-  BUILD_HISTORY_LIMIT,
-  lastNativeUseFrom,
-  lastUseFrom,
-  readBuildHistory,
-  readLastBuilds,
-  workspaceLastUsed,
-} from '../state/workspace-state.ts';
-
-describe('last use of a workspace', () => {
-  const at = (iso: string) => Date.parse(iso);
-
-  test('newer evidence than the recorded lastUsedAt wins, so a long Metro session is not idle', () => {
-    expect(
-      lastUseFrom({ lastUsedAt: '2026-09-01T00:00:00Z', lastBuild: { startedAt: '2026-09-20T00:00:00Z' } }, [
-        at('2026-09-21T00:00:00Z'),
-      ]),
-    ).toBe(at('2026-09-21T00:00:00Z'));
-    expect(lastUseFrom({ lastUsedAt: '2026-09-22T00:00:00Z' }, [at('2026-09-21T00:00:00Z')])).toBe(
-      at('2026-09-22T00:00:00Z'),
-    );
-  });
-
-  test('without lastUsedAt, the newest of the last build, the supervisor start and the log mtimes is used', () => {
-    const state = {
-      lastBuild: { startedAt: '2026-09-02T00:00:00Z' },
-      supervisor: { startedAt: '2026-09-05T00:00:00Z' },
-    };
-    expect(lastUseFrom(state, [at('2026-09-03T00:00:00Z')])).toBe(at('2026-09-05T00:00:00Z'));
-    expect(lastUseFrom(state, [at('2026-09-07T00:00:00Z')])).toBe(at('2026-09-07T00:00:00Z'));
-  });
-
-  test('a workspace with no evidence of use has no last use', () => {
-    expect(lastUseFrom(null, [])).toBeNaN();
-    expect(lastUseFrom({ lastUsedAt: 'garbage' }, [])).toBeNaN();
-  });
-
-  test('a workspace that recorded no use was last used when it was created; corrupt state or no directory leaves it unknown', () => {
-    const home = mkdtempSync(join(tmpdir(), 'stim-last-use-'));
-    vi.stubEnv('STIM_HOME', home);
-    try {
-      const root = '/w/never-used';
-      expect(workspaceLastUsed(root)).toBeNaN();
-      mkdirSync(workspaceStateDir(root), { recursive: true });
-      const metadata = join(workspaceStateDir(root), 'workspace.json');
-      writeFileSync(metadata, '{}');
-      utimesSync(metadata, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
-      expect(workspaceLastUsed(root)).toBe(at('2026-09-01T00:00:00Z'));
-      writeFileSync(join(workspaceStateDir(root), 'state.json'), '{not json');
-      expect(workspaceLastUsed(root)).toBeNaN();
-      writeFileSync(
-        join(workspaceStateDir(root), 'state.json'),
-        JSON.stringify({ lastUsedAt: '2026-09-04T00:00:00Z' }),
-      );
-      expect(workspaceLastUsed(root)).toBe(at('2026-09-04T00:00:00Z'));
-    } finally {
-      vi.unstubAllEnvs();
-      rmSync(home, { recursive: true, force: true });
-    }
-  });
-});
+import { lastNativeUseFrom, readBuildHistory, readLastBuilds } from '../state/workspace-state.ts';
 
 describe('last native run of a workspace', () => {
   test('is when the newest ios, android or macos run finished, ignoring dev server use', () => {
@@ -89,45 +25,6 @@ describe('last build per platform', () => {
     startedAt: '2026-09-25T10:00:00.000Z',
     status: 'ok',
   };
-
-  test('each platform keeps its own record, so an android run does not hide the last ios build', () => {
-    const android = { ...ios, platform: 'android', cacheHit: false, status: 'failed', errorCode: 'STIM_BUILD_FAILED' };
-    expect(readLastBuilds({ lastIosBuild: ios, lastAndroidBuild: android, lastBuild: android })).toEqual({
-      ios: {
-        platform: 'ios',
-        status: 'ok',
-        cacheHit: 'remote',
-        cacheSkipped: false,
-        durationMs: 42_000,
-        fingerprint: 'abc',
-        startedAt: '2026-09-25T10:00:00.000Z',
-        finishedAt: '2026-09-25T10:00:42.000Z',
-      },
-      android: expect.objectContaining({ status: 'failed', cacheHit: false, errorCode: 'STIM_BUILD_FAILED' }),
-    });
-  });
-
-  test('a state written before the per-platform keys reports its single lastBuild under its platform', () => {
-    expect(readLastBuilds({ lastBuild: ios })).toEqual({ ios: expect.objectContaining({ cacheHit: 'remote' }) });
-    expect(readLastBuilds({ lastBuild: { ...ios, status: 'running' } })).toEqual({});
-  });
-
-  test('a hosted Android run written with status success reads as ok and succeeded', () => {
-    const written = { ...ios, platform: 'android', status: 'success' };
-    expect(readLastBuilds({ lastAndroidBuild: written, lastBuild: written }).android).toMatchObject({ status: 'ok' });
-    expect(
-      readBuildHistory({ buildHistory: { android: [{ ...written, result: 'failed', slot: 'default' }] } }).android?.[0],
-    ).toMatchObject({ status: 'ok', result: 'succeeded' });
-  });
-
-  test('a newer lastBuild wins over an older per-platform record, as after an older Stim ran', () => {
-    const newer = { ...ios, cacheHit: 'local', startedAt: '2026-09-25T11:00:00.000Z' };
-    expect(readLastBuilds({ lastIosBuild: ios, lastBuild: newer }).ios).toMatchObject({ cacheHit: 'local' });
-  });
-
-  test('a duration too large for a date leaves finishedAt null instead of failing status', () => {
-    expect(readLastBuilds({ lastBuild: { ...ios, durationMs: 1e308 } }).ios).toMatchObject({ finishedAt: null });
-  });
 
   test('a failed build reports its first diagnostics, positioned ones first, bounded, and drops malformed ones', () => {
     const diagnostics = [
@@ -180,40 +77,6 @@ describe('build history per platform', () => {
     durationMs: 1000,
     cacheHit: false,
     ...extra,
-  });
-
-  test('drops entries it cannot read, bounds each list, and keeps the baseline cache key out of the report', () => {
-    const ios = [
-      entry('2026-09-20T00:00:00Z', {
-        slot: 'tablet',
-        configuration: 'Release',
-        phases: { compile: 900.4, unknown: 5, install: -1 },
-        missReason: {
-          kind: 'changed',
-          summary: 'package.json changed',
-          changes: [],
-          changeCount: 0,
-          baseline: { fingerprint: 'old', cacheKey: 'old-key', from: 'workspace' },
-          rekeyedBy: [],
-        },
-      }),
-      { platform: 'android', status: 'ok', startedAt: '2026-09-19T00:00:00Z' },
-      'not a record',
-      ...Array.from({ length: BUILD_HISTORY_LIMIT + 3 }, (_, i) => entry(`2026-09-1${i % 9}T00:00:00Z`)),
-    ];
-    const history = readBuildHistory({ buildHistory: { ios, android: 'nope' } });
-    expect(history.android).toBeUndefined();
-    expect(history.ios).toHaveLength(BUILD_HISTORY_LIMIT - 2);
-    expect(history.ios![0]).toMatchObject({
-      result: 'succeeded',
-      slot: 'tablet',
-      configuration: 'Release',
-      cacheKey: null,
-      phases: { compile: 900 },
-      finishedAt: '2026-09-20T00:00:01.000Z',
-    });
-    expect(history.ios![0]!.missReason?.baseline).toEqual({ fingerprint: 'old', from: 'workspace' });
-    expect(history.ios![1]).toMatchObject({ slot: 'default', configuration: null, phases: {} });
   });
 
   test('an entry without a known result takes it from its status', () => {

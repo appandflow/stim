@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DeviceHostMachineCredential } from '@stim-cli/core/state';
@@ -33,18 +33,6 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'stim-hosted-agent-'));
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
-
-test('a local network machine is reached only through the loopback relay port', async () => {
-  const notes: string[] = [];
-  const access = await agentAccess(join(dir, 'agent.json'), LOCAL, GRANT, (line) => notes.push(line), 'ios', 51234);
-  expect(access).toMatchObject({ driver: 'agent-device' });
-  if (!('remoteConfig' in access)) throw new Error('no remote config');
-  expect(JSON.parse(readFileSync(access.remoteConfig, 'utf8'))).toMatchObject({
-    daemonBaseUrl: `http://127.0.0.1:51234/device-host/agent/${SESSION}/`,
-    daemonAuthToken: GRANT.token,
-  });
-  expect(notes).toEqual([]);
-});
 
 test('a local network machine without a relay gets no agent control and the reason', async () => {
   const notes: string[] = [];

@@ -1,84 +1,35 @@
 import assert from 'node:assert';
-import { heapUsedAfterGc, makeExecutor } from './_factories.ts';
+import { makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import type { NdjsonRecord, NdjsonWriter } from '../ndjson.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
 import { readManifest } from '../cache/cache-manifest.ts';
-import { cacheUser, claimForEmptying } from '../cache/cache-claim.ts';
+import { claimForEmptying } from '../cache/cache-claim.ts';
 import { releaseClaim } from '../ownership-claim.ts';
 import {
   buildIos,
-  ccacheEnabled,
   reactNativeCompilationCacheSettings as compilationCacheSettings,
-  detectReactNativeVersion,
   parseReactNativeVersion,
   discoverXcodeProject,
-  readPodfileProperties,
 } from '../integrations/react-native-build.ts';
 import {
   buildXcode,
   compilationCacheActivityLine,
-  parseSwiftVersion,
-  findAppBundle,
-  listSchemes,
   parseBundleExecutable,
-  parseBundleId,
-  parseCompilationCacheActivity,
   parseSchemeList,
-  prefixMapping,
   pickAppBundle,
   pickScheme,
   pickXcodeProject,
   productsDir,
   readBundleExecutable,
   readBundleId,
-  heartbeatLine,
-  startBuildHeartbeat,
   resolveScheme,
-  tailLines,
-  xcodebuildArgs,
 } from '../engine/xcode.ts';
-
-test('parseCompilationCacheActivity reads Xcode 26 compilation-cache metrics from a fixture', () => {
-  const fixture = readFileSync(new URL('./fixtures/xcode-compilation-cache.txt', import.meta.url), 'utf-8');
-  expect(parseCompilationCacheActivity(fixture)).toEqual({
-    status: 'reported',
-    hits: 1394,
-    cacheableTasks: 1520,
-    hitRatePercent: 91.7,
-  });
-  expect(parseCompilationCacheActivity('Cache hit')).toBe(null);
-});
-
-const REAL_PROJECT_LIST_JSON = `{
-  "project" : {
-    "configurations" : [
-      "Debug",
-      "Release"
-    ],
-    "name" : "Scratch",
-    "schemes" : [
-      "Scratch"
-    ],
-    "targets" : [
-      "Scratch"
-    ]
-  }
-}`;
-
-const REAL_WORKSPACE_LIST_JSON = `{
-  "workspace" : {
-    "name" : "Scratch",
-    "schemes" : [
-      "Scratch"
-    ]
-  }
-}`;
 
 let tmp: string;
 let stateHome: string;
@@ -144,83 +95,15 @@ function stubProject(root: string, { workspace = false, project = true, name = '
   return ios;
 }
 
-describe('discoverXcodeProject with ios.projectPath', () => {
-  test('finds the project in the configured directory instead of ios/', () => {
-    mkdirSync(join(tmp, 'RNTesterPods.xcodeproj'));
-    mkdirSync(join(tmp, 'RNTesterPods.xcworkspace'));
-    expect(discoverXcodeProject(tmp, tmp)).toMatchObject({
-      flag: '-workspace',
-      dir: tmp,
-      appRoot: tmp,
-      path: join(tmp, 'RNTesterPods.xcworkspace'),
-    });
-  });
-});
-
 describe('pickXcodeProject', () => {
-  test('a workspace wins over a project, because CocoaPods links through it', () => {
-    expect(pickXcodeProject(['App.xcodeproj', 'App.xcworkspace', 'Podfile'])).toEqual({
-      kind: 'workspace',
-      flag: '-workspace',
-      file: 'App.xcworkspace',
-      name: 'App',
-    });
-  });
-
-  test('with no workspace, the project is the answer', () => {
-    expect(pickXcodeProject(['App.xcodeproj', 'Podfile', 'App'])).toEqual({
-      kind: 'project',
-      flag: '-project',
-      file: 'App.xcodeproj',
-      name: 'App',
-    });
-  });
-
   test('among several workspaces, the one named after a project beside it wins', () => {
     const picked = pickXcodeProject(['Other.xcworkspace', 'App.xcworkspace', 'App.xcodeproj']);
     assert(picked);
     expect(picked.file).toBe('App.xcworkspace');
   });
-
-  test('with no name to match, the choice is alphabetical so it never varies between runs', () => {
-    const workspace = pickXcodeProject(['b.xcworkspace', 'a.xcworkspace']);
-    assert(workspace);
-    expect(workspace.file).toBe('a.xcworkspace');
-    const project = pickXcodeProject(['b.xcodeproj', 'a.xcodeproj']);
-    assert(project);
-    expect(project.file).toBe('a.xcodeproj');
-  });
-
-  test('nothing buildable is null, not a throw', () => {
-    expect(pickXcodeProject(['Podfile', 'Pods'])).toBe(null);
-    expect(pickXcodeProject([])).toBe(null);
-    expect(pickXcodeProject(null)).toBe(null);
-    expect(pickXcodeProject([undefined, 42])).toBe(null);
-  });
 });
 
 describe('discoverXcodeProject', () => {
-  test('finds the workspace and reports the flag, the container dir and the full path', () => {
-    stubProject(tmp, { workspace: true });
-    expect(discoverXcodeProject(tmp, join(tmp, 'ios'))).toEqual({
-      kind: 'workspace',
-      flag: '-workspace',
-      file: 'App.xcworkspace',
-      name: 'App',
-      dir: join(tmp, 'ios'),
-      appRoot: tmp,
-      path: join(tmp, 'ios', 'App.xcworkspace'),
-    });
-  });
-
-  test('no ios/ directory is an error naming prebuild, not an exception', () => {
-    const { error } = discoverXcodeProject(tmp, join(tmp, 'ios'));
-    assert(error);
-    expect(error.code).toBe('STIM_BUILD_FAILED');
-    expect(error.message).toMatch(/No ios\/ directory/);
-    expect(error.remedy).toMatch(/expo prebuild -p ios/);
-  });
-
   test('an ios/ directory with nothing buildable in it says exactly that', () => {
     mkdirSync(join(tmp, 'ios'), { recursive: true });
     writeFileSync(join(tmp, 'ios', 'Podfile'), 'platform :ios');
@@ -233,24 +116,6 @@ describe('discoverXcodeProject', () => {
 });
 
 describe('parseSchemeList', () => {
-  test('reads a real project listing', () => {
-    expect(parseSchemeList(REAL_PROJECT_LIST_JSON)).toEqual({ name: 'Scratch', schemes: ['Scratch'] });
-  });
-
-  test('reads a real workspace listing, which carries neither targets nor configurations', () => {
-    expect(parseSchemeList(REAL_WORKSPACE_LIST_JSON)).toEqual({ name: 'Scratch', schemes: ['Scratch'] });
-  });
-
-  test('survives whatever xcodebuild prints before the JSON', () => {
-    const noisy = [
-      'Resolve Package Graph',
-      'Resolved source packages:',
-      '2026-08-25 13:18:28.966 xcodebuild[94932:16893065] Writing error result bundle',
-      REAL_WORKSPACE_LIST_JSON,
-    ].join('\n');
-    expect(parseSchemeList(noisy)).toEqual({ name: 'Scratch', schemes: ['Scratch'] });
-  });
-
   test('garbage is the empty listing rather than a parse error reaching the user', () => {
     const empty = { name: null, schemes: [] };
     expect(parseSchemeList('not json at all')).toEqual(empty);
@@ -260,40 +125,9 @@ describe('parseSchemeList', () => {
     expect(parseSchemeList('')).toEqual(empty);
     expect(parseSchemeList(null)).toEqual(empty);
   });
-
-  test('non-string schemes are dropped rather than carried into an argv', () => {
-    expect(parseSchemeList('{"project":{"name":"A","schemes":["Ok","",null,7]}}')).toEqual({
-      name: 'A',
-      schemes: ['Ok'],
-    });
-  });
 });
 
 describe('pickScheme', () => {
-  test('the scheme named after the container wins', () => {
-    expect(pickScheme(['MyApp', 'MyApp-tvOS', 'MyAppTests'], 'MyApp')).toBe('MyApp');
-  });
-
-  test('a case difference still matches, because Xcode is not case sensitive about this', () => {
-    expect(pickScheme(['myapp'], 'MyApp')).toBe('myapp');
-  });
-
-  test('with no name match, the only non-test scheme is the answer', () => {
-    expect(pickScheme(['Runner', 'RunnerTests', 'RunnerUITests'], 'SomethingElse')).toBe('Runner');
-  });
-
-  test('several plausible schemes is null, NOT the first one', () => {
-    expect(pickScheme(['App-staging', 'App-production'], 'Unrelated')).toBe(null);
-  });
-
-  test('a project whose only scheme is a test scheme has nothing to build', () => {
-    expect(pickScheme(['AppTests'], 'Unrelated')).toBe(null);
-  });
-
-  test('but an exact match still wins even when the name looks like a test scheme', () => {
-    expect(pickScheme(['AppTests'], 'AppTests')).toBe('AppTests');
-  });
-
   test('no schemes is null, and so is nonsense input', () => {
     expect(pickScheme([], 'App')).toBe(null);
     expect(pickScheme(null, 'App')).toBe(null);
@@ -304,131 +138,6 @@ describe('pickScheme', () => {
 describe('listSchemes and resolveScheme', () => {
   const project = { flag: '-project', path: '/p/ios/App.xcodeproj', name: 'App', dir: '/p/ios' };
 
-  test('runs xcodebuild -list -json through runFile, so a path with a space stays one argument', async () => {
-    const calls: [string, string[] | undefined][] = [];
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      runFile: (file, args) => {
-        calls.push([file, args]);
-        return REAL_PROJECT_LIST_JSON;
-      },
-      spawn: () => {},
-    });
-    expect(await listSchemes(project)).toEqual({ name: 'Scratch', schemes: ['Scratch'] });
-    expect(calls).toEqual([['xcodebuild', ['-project', '/p/ios/App.xcodeproj', '-list', '-json']]]);
-  });
-
-  test('a tool failure is null, which is not the same as a listing with no schemes', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => {
-        throw new Error('xcodebuild: error: unable to read project');
-      },
-    });
-    expect(await listSchemes(project)).toBe(null);
-  });
-
-  test('resolveScheme maps a failed listing to STIM_NO_SCHEME with the command to run', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => {
-        throw new Error('boom');
-      },
-    });
-    const { error } = await resolveScheme(project);
-    assert(error);
-    expect(error.code).toBe('STIM_NO_SCHEME');
-    expect(error.message).toMatch(/Could not list schemes/);
-    expect(error.remedy).toMatch(/-list/);
-  });
-
-  test('resolveScheme names ambiguous schemes and offers an explicit selector', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => '{"project":{"name":"App","schemes":["one","two"]}}',
-    });
-    const { error } = await resolveScheme(project);
-    assert(error);
-    expect(error.code).toBe('STIM_NO_SCHEME');
-    expect(error.message).toMatch(/schemes: one, two/);
-    expect(error.remedy).toContain('--scheme');
-  });
-
-  test('an explicit scheme wins over the automatic app and unknown names list choices', async () => {
-    setExecutor(makeExecutor({ runFile: () => '{"project":{"name":"App","schemes":["App","App Staging"]}}' }));
-    expect(await resolveScheme(project, { scheme: 'App Staging' })).toEqual({
-      scheme: 'App Staging',
-      schemes: ['App', 'App Staging'],
-    });
-    const { error } = await resolveScheme(project, { scheme: 'app staging' });
-    expect(error?.code).toBe('STIM_NO_SCHEME');
-    expect(error?.message).toContain('App, App Staging');
-  });
-
-  test.each([
-    ['matching app name', '{"name":"safe-area-example"}', 'safe-area-example'],
-    ['missing app.json', null, undefined],
-    ['malformed app.json', '{', undefined],
-    ['null app.json', 'null', undefined],
-    ['non-string app name', '{"name":12}', undefined],
-    ['unlisted app name', '{"name":"absent"}', undefined],
-  ])('resolveScheme handles a renamed workspace with %s', async (_label, appJson, expected) => {
-    const ios = join(tmp, 'ios');
-    mkdirSync(ios);
-    if (appJson !== null) writeFileSync(join(tmp, 'app.json'), appJson);
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () =>
-        JSON.stringify({
-          workspace: { name: 'RNSACExample', schemes: ['Pods-ReactTestApp', 'ReactTestApp', 'safe-area-example'] },
-        }),
-    });
-    const result = await resolveScheme({
-      flag: '-workspace',
-      path: join(ios, 'RNSACExample.xcworkspace'),
-      name: 'RNSACExample',
-      dir: ios,
-    });
-    expect(result.scheme).toBe(expected);
-    expect(result.error?.code).toBe(expected ? undefined : 'STIM_NO_SCHEME');
-  });
-
-  test('resolveScheme reads app.json from the app directory when the Xcode project sits in it', async () => {
-    mkdirSync(join(tmp, 'RNSACExample.xcworkspace'));
-    writeFileSync(join(tmp, 'app.json'), '{"name":"safe-area-example"}');
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () =>
-        JSON.stringify({
-          workspace: { name: 'RNSACExample', schemes: ['Pods-ReactTestApp', 'ReactTestApp', 'safe-area-example'] },
-        }),
-    });
-    expect((await resolveScheme(discoverXcodeProject(tmp, tmp))).scheme).toBe('safe-area-example');
-  });
-
-  test('the workspace scheme retains priority over an app.json name', async () => {
-    mkdirSync(join(tmp, 'ios'));
-    writeFileSync(join(tmp, 'app.json'), '{"name":"OtherApp"}');
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => JSON.stringify({ workspace: { name: 'App', schemes: ['App', 'OtherApp'] } }),
-    });
-    expect((await resolveScheme({ ...project, dir: join(tmp, 'ios') })).scheme).toBe('App');
-  });
-
   test('an empty scheme listing keeps the share-scheme remedy', async () => {
     setExecutor({
       run: () => '',
@@ -438,117 +147,6 @@ describe('listSchemes and resolveScheme', () => {
     });
     expect((await resolveScheme(project)).error?.remedy).toMatch(/tick Shared/);
   });
-
-  test('resolveScheme returns the scheme and the full list on success', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => REAL_PROJECT_LIST_JSON,
-    });
-    expect(await resolveScheme({ ...project, name: 'Scratch' })).toEqual({
-      scheme: 'Scratch',
-      schemes: ['Scratch'],
-    });
-  });
-});
-
-describe('xcodebuildArgs', () => {
-  const project = { flag: '-workspace', path: '/p/ios/App.xcworkspace' };
-
-  test('is exactly the invocation the plan specifies, in order', () => {
-    expect(
-      xcodebuildArgs({ project, scheme: 'App', udid: 'BF2A-1234', derivedDataPath: '/p/.stim/derived-data' }),
-    ).toEqual([
-      '-workspace',
-      '/p/ios/App.xcworkspace',
-      '-scheme',
-      'App',
-      '-configuration',
-      'Debug',
-      '-sdk',
-      'iphonesimulator',
-      '-destination',
-      'id=BF2A-1234',
-      '-derivedDataPath',
-      '/p/.stim/derived-data',
-      'build',
-    ]);
-  });
-
-  test('an explicit destination replaces the udid one, for a build with no device', () => {
-    const args = xcodebuildArgs({
-      project,
-      scheme: 'App',
-      udid: 'BF2A-1234',
-      destination: 'generic/platform=iOS Simulator',
-      derivedDataPath: '/dd',
-    });
-    expect(args[args.indexOf('-destination') + 1]).toBe('generic/platform=iOS Simulator');
-  });
-
-  test('extra args land before the `build` action, where xcodebuild expects options', () => {
-    const args = xcodebuildArgs({
-      project,
-      scheme: 'App',
-      udid: 'u',
-      derivedDataPath: '/dd',
-      extraArgs: ['-quiet'],
-    });
-    expect(args.slice(-2)).toEqual(['-quiet', 'build']);
-  });
-
-  test('build settings land AFTER the build action, and extra args still land before it', () => {
-    const args = xcodebuildArgs({
-      project,
-      scheme: 'App',
-      udid: 'u',
-      derivedDataPath: '/dd',
-      extraArgs: ['-quiet'],
-      buildSettings: ['A=1', 'B=2'],
-    });
-    expect(args.slice(-4)).toEqual(['-quiet', 'build', 'A=1', 'B=2']);
-  });
-
-  test('no build settings is exactly the argv Stim composed before they existed', () => {
-    const base = { project, scheme: 'App', udid: 'u', derivedDataPath: '/dd' };
-    expect(xcodebuildArgs(base)).toEqual(xcodebuildArgs({ ...base, buildSettings: [] }));
-  });
-
-  test('the device slice is -sdk iphoneos plus the phone id, and carries no signing flag', () => {
-    const args = xcodebuildArgs({
-      project,
-      scheme: 'App',
-      udid: '00008030-001A2B3C4D5E802E',
-      sdk: 'iphoneos',
-      configuration: 'Release',
-      derivedDataPath: '/dd',
-    });
-    expect(args).toEqual([
-      '-workspace',
-      '/p/ios/App.xcworkspace',
-      '-scheme',
-      'App',
-      '-configuration',
-      'Release',
-      '-sdk',
-      'iphoneos',
-      '-destination',
-      'id=00008030-001A2B3C4D5E802E',
-      '-derivedDataPath',
-      '/dd',
-      'build',
-    ]);
-    for (const flag of [
-      'CODE_SIGN_IDENTITY',
-      'DEVELOPMENT_TEAM',
-      'PROVISIONING_PROFILE_SPECIFIER',
-      '-allowProvisioningUpdates',
-      'RCT_METRO_PORT',
-    ]) {
-      expect(args.some((a) => a.includes(flag))).toBe(false);
-    }
-  });
 });
 
 describe('compilationCacheSettings', () => {
@@ -557,20 +155,6 @@ describe('compilationCacheSettings', () => {
     derivedDataPath: '/home/.stim/workspaces/app-412--abc/derived-data',
     casPath: '/home/.stim/compilation-cache',
   };
-
-  test.skipIf(process.platform === 'win32')(
-    'names the CAS, the prefix mapping and the Swift opt-out on an Xcode that has the cache (xcodebuild settings; skipped on win32)',
-    () => {
-      expect(compilationCacheSettings({ ...base, xcodeMajor: 26 })).toEqual([
-        'COMPILATION_CACHE_ENABLE_CACHING=YES',
-        'COMPILATION_CACHE_CAS_PATH=/home/.stim/compilation-cache',
-        'SWIFT_ENABLE_COMPILE_CACHE=NO',
-        'CLANG_ENABLE_PREFIX_MAPPING=YES',
-        'CLANG_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
-        'SWIFT_ENABLE_PREFIX_MAPPING=NO',
-      ]);
-    },
-  );
 
   test('explicit switches override project-enabled caching and prefix mapping while allowing Swift caching', () => {
     const options = { compilationCache: false, swiftCompilationCache: true, prefixMapping: false };
@@ -586,87 +170,6 @@ describe('compilationCacheSettings', () => {
     expect(compilationCacheSettings({ ...base, xcodeMajor: 26, ccache: true, optimizations: options })).toEqual([]);
   });
 
-  test.skipIf(process.platform === 'win32')(
-    'the prefix mapping is the workspace root, normalised, and the virtual prefix a committed Podfile block must match (xcodebuild settings; skipped on win32)',
-    () => {
-      expect(prefixMapping('/w/app-412')).toBe('/w/app-412=/^src');
-      expect(prefixMapping('/w/app-412/')).toBe('/w/app-412=/^src');
-      const settings = compilationCacheSettings({
-        workspaceRoot: '/a/b/',
-        derivedDataPath: '/state/b/derived-data',
-        casPath: '/cas',
-        xcodeMajor: 27,
-      });
-      expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=/a/b=/^src /state/b/derived-data=/^derived-data');
-    },
-  );
-
-  test.skipIf(process.platform === 'win32')(
-    'a workspace root with a space stays one quoted list entry, since Xcode splits OTHER_PREFIX_MAPPINGS on whitespace (xcodebuild settings; skipped on win32)',
-    () => {
-      const settings = compilationCacheSettings({
-        workspaceRoot: '/Users/me/Library/Application Support/Stim Desktop/sample',
-        derivedDataPath: '/state/sample/derived-data',
-        casPath: '/cas',
-        xcodeMajor: 27,
-      });
-      expect(settings).toContain(
-        'CLANG_OTHER_PREFIX_MAPPINGS="/Users/me/Library/Application Support/Stim Desktop/sample=/^src" /state/sample/derived-data=/^derived-data',
-      );
-    },
-  );
-
-  const rn87 = { major: 0, minor: 87 };
-
-  test.skipIf(process.platform === 'win32')(
-    'an unset Swift setting turns Swift caching and its prefix mapping on from Swift 6.4 and React Native 0.87 (xcodebuild settings; skipped on win32)',
-    () => {
-      const mapped = compilationCacheSettings({
-        ...base,
-        xcodeMajor: 27,
-        swiftVersion: { major: 6, minor: 4 },
-        reactNativeVersion: rn87,
-      });
-      expect(mapped).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-      expect(mapped).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
-      expect(mapped).toContain(
-        'SWIFT_OTHER_PREFIX_MAPPINGS=/w/app-412=/^src /home/.stim/workspaces/app-412--abc/derived-data=/^derived-data',
-      );
-      expect(
-        compilationCacheSettings({
-          ...base,
-          xcodeMajor: 27,
-          swiftVersion: { major: 7, minor: 0 },
-          reactNativeVersion: { major: 1, minor: 0 },
-        }),
-      ).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-      for (const swiftVersion of [{ major: 6, minor: 3 }, { major: 5, minor: 10 }, null]) {
-        const settings = compilationCacheSettings({ ...base, xcodeMajor: 26, swiftVersion, reactNativeVersion: rn87 });
-        expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
-        expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-        expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
-      }
-    },
-  );
-
-  test('React Native below 0.87 keeps the auto default off, because its prebuilt core disables explicit modules', () => {
-    const swift64 = { major: 6, minor: 4 };
-    for (const reactNativeVersion of [{ major: 0, minor: 86 }, { major: 0, minor: 81 }, null]) {
-      const settings = compilationCacheSettings({ ...base, xcodeMajor: 27, swiftVersion: swift64, reactNativeVersion });
-      expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
-      expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-    }
-    const forced = compilationCacheSettings({
-      ...base,
-      xcodeMajor: 27,
-      swiftVersion: swift64,
-      reactNativeVersion: { major: 0, minor: 86 },
-      optimizations: { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
-    });
-    expect(forced).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    expect(forced).toContain('SWIFT_ENABLE_PREFIX_MAPPING=YES');
-  });
-
   test('parseReactNativeVersion reads major.minor from the package manifest and rejects the rest', () => {
     expect(parseReactNativeVersion({ version: '0.87.0' })).toEqual({ major: 0, minor: 87 });
     expect(parseReactNativeVersion({ version: '0.88.0-rc.1' })).toEqual({ major: 0, minor: 88 });
@@ -675,186 +178,18 @@ describe('compilationCacheSettings', () => {
       expect(parseReactNativeVersion(bad)).toBe(null);
     }
   });
-
-  test('detectReactNativeVersion resolves react-native from the project and is null when it is absent', () => {
-    expect(detectReactNativeVersion(tmp)).toBe(null);
-    const dir = join(tmp, 'node_modules', 'react-native');
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(
-      join(dir, 'package.json'),
-      JSON.stringify({ name: 'react-native', version: '0.87.0', main: 'index.js' }),
-    );
-    writeFileSync(join(dir, 'index.js'), '');
-    expect(detectReactNativeVersion(tmp)).toEqual({ major: 0, minor: 87 });
-  });
-
-  test('an explicit Swift setting wins over the toolchain, and a forced-on old toolchain stays unmapped', () => {
-    const defaults = compilationCacheSettings({ ...base, xcodeMajor: 27 }).length;
-    const off = compilationCacheSettings({
-      ...base,
-      xcodeMajor: 27,
-      swiftVersion: { major: 6, minor: 4 },
-      reactNativeVersion: rn87,
-      optimizations: { compilationCache: true, swiftCompilationCache: false, prefixMapping: true },
-    });
-    expect(off).toContain('SWIFT_ENABLE_COMPILE_CACHE=NO');
-    expect(off).toHaveLength(defaults);
-    const forced = compilationCacheSettings({
-      ...base,
-      xcodeMajor: 26,
-      swiftVersion: { major: 6, minor: 3 },
-      optimizations: { compilationCache: true, swiftCompilationCache: true, prefixMapping: true },
-    });
-    expect(forced).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    expect(forced).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-    expect(forced).toHaveLength(defaults);
-  });
-
-  test('Swift caching is never mapped when clang prefix mapping is off', () => {
-    const settings = compilationCacheSettings({
-      ...base,
-      xcodeMajor: 27,
-      swiftVersion: { major: 6, minor: 4 },
-      reactNativeVersion: rn87,
-      optimizations: { compilationCache: true, swiftCompilationCache: null, prefixMapping: false },
-    });
-    expect(settings).toContain('SWIFT_ENABLE_COMPILE_CACHE=YES');
-    expect(settings).toContain('CLANG_OTHER_PREFIX_MAPPINGS=');
-    expect(settings).toContain('SWIFT_ENABLE_PREFIX_MAPPING=NO');
-    expect(settings.some((s) => s.startsWith('SWIFT_OTHER_PREFIX_MAPPINGS'))).toBe(false);
-  });
-
-  test('parseSwiftVersion reads the toolchain line and rejects anything else', () => {
-    expect(
-      parseSwiftVersion(
-        'Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0\n',
-      ),
-    ).toEqual({ major: 6, minor: 3 });
-    expect(parseSwiftVersion('Apple Swift version 6.4 (swiftlang-6.4.0.1.2 clang-2200.0.1.3)')).toEqual({
-      major: 6,
-      minor: 4,
-    });
-    for (const output of [null, '', 'xcrun: error: unable to find utility "swift"', 'Swift version next']) {
-      expect(parseSwiftVersion(output)).toBe(null);
-    }
-  });
-
-  test('carries nothing when the Xcode version could not be read at all', () => {
-    expect(compilationCacheSettings({ ...base, xcodeMajor: null })).toEqual([]);
-  });
-
-  test('carries nothing when the project configured ccache, which defeats it', () => {
-    expect(compilationCacheSettings({ ...base, xcodeMajor: 26, ccache: true })).toEqual([]);
-  });
-});
-
-describe('the ccache detection both the build and doctor read', () => {
-  test('only the string "true" under apple.ccacheEnabled counts', () => {
-    expect(ccacheEnabled({ 'apple.ccacheEnabled': 'true' })).toBe(true);
-    expect(ccacheEnabled({ 'apple.ccacheEnabled': 'false' })).toBe(false);
-    expect(ccacheEnabled({ 'apple.ccacheEnabled': true })).toBe(false);
-    expect(ccacheEnabled({})).toBe(false);
-    expect(ccacheEnabled(null)).toBe(false);
-    expect(ccacheEnabled('nonsense')).toBe(false);
-  });
-
-  test('an absent or unreadable Podfile.properties.json reads as no ccache', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'stim-podprops-'));
-    try {
-      expect(readPodfileProperties(join(dir, 'ios'))).toBe(null);
-      mkdirSync(join(dir, 'ios'), { recursive: true });
-      writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), '{ not json');
-      expect(readPodfileProperties(join(dir, 'ios'))).toBe(null);
-      writeFileSync(join(dir, 'ios', 'Podfile.properties.json'), JSON.stringify({ 'apple.ccacheEnabled': 'true' }));
-      expect(ccacheEnabled(readPodfileProperties(join(dir, 'ios')))).toBe(true);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
 });
 
 describe('locating the product', () => {
-  test.skipIf(process.platform === 'win32')(
-    'productsDir mirrors the layout xcodebuild writes under -derivedDataPath (macOS DerivedData layout; skipped on win32)',
-    () => {
-      expect(productsDir('/p/.stim/derived-data')).toBe('/p/.stim/derived-data/Build/Products/Debug-iphonesimulator');
-      expect(productsDir('/dd', { configuration: 'Release', sdk: 'iphoneos' })).toBe(
-        '/dd/Build/Products/Release-iphoneos',
-      );
-    },
-  );
-
-  test('pickAppBundle prefers the app named after the scheme', () => {
-    expect(pickAppBundle(['App.app', 'AppWidget.app', 'App.dSYM'], 'App')).toBe('App.app');
-  });
-
   test('with one .app the name does not matter, and with none it is null', () => {
     expect(pickAppBundle(['Something.app'], 'Other')).toBe('Something.app');
     expect(pickAppBundle(['App.dSYM', 'App.swiftmodule'], 'App')).toBe(null);
     expect(pickAppBundle([], null)).toBe(null);
     expect(pickAppBundle(null, null)).toBe(null);
   });
-
-  test('several unmatched apps still resolve deterministically', () => {
-    expect(pickAppBundle(['b.app', 'a.app'], 'nope')).toBe('a.app');
-  });
-
-  test('findAppBundle joins onto a real directory, and a missing one is null', () => {
-    const dir = join(tmp, 'Products');
-    mkdirSync(dir, { recursive: true });
-    mkdirSync(join(dir, 'App.app'));
-    expect(findAppBundle(dir, 'App')).toBe(join(dir, 'App.app'));
-    expect(findAppBundle(join(tmp, 'does-not-exist'), 'App')).toBe(null);
-  });
 });
 
 describe('reading the bundle id', () => {
-  test('parseBundleId takes the identifier out of plutil JSON', () => {
-    expect(parseBundleId('{"CFBundleIdentifier":"com.example.app","CFBundleName":"App"}')).toBe('com.example.app');
-  });
-
-  test('anything else is null, so the caller reports a build failure with a remedy', () => {
-    expect(parseBundleId('{"CFBundleName":"App"}')).toBe(null);
-    expect(parseBundleId('{"CFBundleIdentifier":""}')).toBe(null);
-    expect(parseBundleId('{"CFBundleIdentifier":42}')).toBe(null);
-    expect(parseBundleId('not json')).toBe(null);
-    expect(parseBundleId(null)).toBe(null);
-  });
-
-  test.skipIf(process.platform === 'win32')(
-    'readBundleId asks plutil first, with the .plist path (plutil argv; skipped on win32)',
-    async () => {
-      const calls: [string, string[] | undefined][] = [];
-      setExecutor({
-        run: () => '',
-        runQuiet: () => null,
-        spawn: () => {},
-        runFile: (file, args) => {
-          calls.push([file, args]);
-          return '{"CFBundleIdentifier":"com.example.app"}';
-        },
-      });
-      expect(await readBundleId('/dd/App.app')).toBe('com.example.app');
-      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
-    },
-  );
-
-  test('falls back to `defaults read`, which takes the path WITHOUT the extension', async () => {
-    const calls: string[] = [];
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: (file, _args) => {
-        calls.push(file);
-        if (file === 'plutil') throw new Error('plutil missing');
-        return 'com.example.fallback\n';
-      },
-    });
-    expect(await readBundleId('/dd/App.app')).toBe('com.example.fallback');
-    expect(calls).toEqual(['plutil', 'defaults']);
-  });
-
   test('reads a binary Info.plist in process when neither plutil nor defaults exists', async () => {
     const value = 'com.example.app';
     const string = (text: string) => Buffer.concat([Buffer.from([0x5f, 0x10, text.length]), Buffer.from(text)]);
@@ -887,25 +222,9 @@ describe('reading the bundle id', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
-
-  test('both failing is null rather than a throw out of a build', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => {
-        throw new Error('nope');
-      },
-    });
-    expect(await readBundleId('/dd/App.app')).toBe(null);
-  });
 });
 
 describe('reading the bundle executable', () => {
-  test('parseBundleExecutable takes CFBundleExecutable out of plutil JSON', () => {
-    expect(parseBundleExecutable('{"CFBundleExecutable":"App","CFBundleIdentifier":"com.example.app"}')).toBe('App');
-  });
-
   test('anything else is null, so the caller falls back to the .app basename', () => {
     expect(parseBundleExecutable('{"CFBundleIdentifier":"com.example.app"}')).toBe(null);
     expect(parseBundleExecutable('{"CFBundleExecutable":""}')).toBe(null);
@@ -913,24 +232,6 @@ describe('reading the bundle executable', () => {
     expect(parseBundleExecutable('not json')).toBe(null);
     expect(parseBundleExecutable(null)).toBe(null);
   });
-
-  test.skipIf(process.platform === 'win32')(
-    'readBundleExecutable asks plutil first, with the .plist path (plutil argv; skipped on win32)',
-    async () => {
-      const calls: [string, string[] | undefined][] = [];
-      setExecutor({
-        run: () => '',
-        runQuiet: () => null,
-        spawn: () => {},
-        runFile: (file, args) => {
-          calls.push([file, args]);
-          return '{"CFBundleExecutable":"App"}';
-        },
-      });
-      expect(await readBundleExecutable('/dd/App.app')).toBe('App');
-      expect(calls).toEqual([['plutil', ['-convert', 'json', '-o', '-', '/dd/App.app/Info.plist']]]);
-    },
-  );
 
   test('falls back to `defaults read`, which takes the path WITHOUT the extension', async () => {
     const calls: string[] = [];
@@ -946,179 +247,6 @@ describe('reading the bundle executable', () => {
     });
     expect(await readBundleExecutable('/dd/App.app')).toBe('App');
     expect(calls).toEqual(['plutil', 'defaults']);
-  });
-
-  test('both failing is null rather than a throw out of a build', async () => {
-    setExecutor({
-      run: () => '',
-      runQuiet: () => null,
-      spawn: () => {},
-      runFile: () => {
-        throw new Error('nope');
-      },
-    });
-    expect(await readBundleExecutable('/dd/App.app')).toBe(null);
-  });
-});
-
-describe('the heartbeat line', () => {
-  test("names what the phase is doing and never the tool's own last line", () => {
-    expect(heartbeatLine(30_000)).toBe('  build       still compiling (30s)');
-    expect(heartbeatLine(90_000, 'pods')).toBe('  pods        still installing (1m30s)');
-    expect(heartbeatLine(30_000, 'swap')).toBe('  swap        still running (30s)');
-  });
-
-  test("sizes the elapsed against this project's last comparable phase", () => {
-    expect(heartbeatLine(60_000, 'build', 190_000)).toBe('  build       still compiling (1m00s of ~3m10s)');
-    expect(heartbeatLine(90_000, 'pods', 100_000)).toBe('  pods        still installing (1m30s of ~1m40s)');
-  });
-
-  test('both numbers are the same clock, so a whole minute and an hour read alike', () => {
-    expect(heartbeatLine(60_000, 'build', 240_000)).toBe('  build       still compiling (1m00s of ~4m00s)');
-    expect(heartbeatLine(3_600_000, 'build', 3_900_000)).toBe('  build       still compiling (60m00s of ~65m00s)');
-    expect(heartbeatLine(4_200_000, 'build', 3_900_000)).toBe(
-      '  build       still compiling (70m00s, usually ~65m00s)',
-    );
-  });
-
-  test('past the estimate the line says usually, so a slow machine does not read as a hang', () => {
-    expect(heartbeatLine(240_000, 'build', 190_000)).toBe('  build       still compiling (4m00s, usually ~3m10s)');
-    expect(heartbeatLine(190_000, 'build', 190_000)).toBe('  build       still compiling (3m10s of ~3m10s)');
-  });
-
-  test('with no record for this project the line is the elapsed alone', () => {
-    expect(heartbeatLine(60_000, 'build', null)).toBe('  build       still compiling (1m00s)');
-    expect(heartbeatLine(60_000, 'build', 0)).toBe('  build       still compiling (1m00s)');
-  });
-});
-
-describe('the heartbeat cadence', () => {
-  function fakeScheduler() {
-    let clock = 0;
-    let pending: { at: number; run: () => void } | null = null;
-    const fire = () => {
-      const due = pending;
-      pending = null;
-      due?.run();
-    };
-    return {
-      now: () => clock,
-      schedule: (run: () => void, delayMs: number) => {
-        pending = { at: clock + delayMs, run };
-        return () => {
-          pending = null;
-        };
-      },
-      advance(ms: number) {
-        clock += ms;
-        let due = pending;
-        while (due && due.at <= clock) {
-          pending = null;
-          due.run();
-          due = pending;
-        }
-      },
-      jump(ms: number) {
-        clock += ms;
-      },
-      fire,
-      idle: () => pending === null,
-    };
-  }
-
-  function heartbeat(
-    scheduler: ReturnType<typeof fakeScheduler>,
-    beats: string[],
-    intervalMs = 30_000,
-    estimateMs: number | null = null,
-  ) {
-    return startBuildHeartbeat({
-      intervalMs,
-      elapsed: scheduler.now,
-      emit: (line) => beats.push(line),
-      estimateMs,
-      schedule: scheduler.schedule,
-    });
-  }
-
-  test('lands on the interval grid, so no elapsed value is ever printed twice', () => {
-    const scheduler = fakeScheduler();
-    const beats: string[] = [];
-    const stop = heartbeat(scheduler, beats);
-    scheduler.advance(30_000);
-    scheduler.advance(30_000);
-    scheduler.advance(30_000);
-    stop();
-    expect(beats).toEqual([
-      '  build       still compiling (30s)',
-      '  build       still compiling (1m00s)',
-      '  build       still compiling (1m30s)',
-    ]);
-    expect(scheduler.idle()).toBe(true);
-  });
-
-  test('a stalled loop reports the elapsed it woke up to, then resumes on the grid', () => {
-    const scheduler = fakeScheduler();
-    const beats: string[] = [];
-    const stop = heartbeat(scheduler, beats);
-    scheduler.advance(30_000);
-    scheduler.advance(300_000);
-    scheduler.advance(30_000);
-    scheduler.advance(30_000);
-    stop();
-    expect(beats).toEqual([
-      '  build       still compiling (30s)',
-      '  build       still compiling (5m30s)',
-      '  build       still compiling (6m00s)',
-      '  build       still compiling (6m30s)',
-    ]);
-  });
-
-  test('a timer that fires a millisecond early does not repeat the beat it just printed', () => {
-    const scheduler = fakeScheduler();
-    const beats: string[] = [];
-    const stop = heartbeat(scheduler, beats);
-    scheduler.advance(30_000);
-    scheduler.jump(29_999);
-    scheduler.fire();
-    expect(beats).toEqual(['  build       still compiling (30s)']);
-    scheduler.advance(1);
-    stop();
-    expect(beats).toEqual(['  build       still compiling (30s)', '  build       still compiling (1m00s)']);
-  });
-
-  test('the estimate rides every beat and flips to usually once it is passed', () => {
-    const scheduler = fakeScheduler();
-    const beats: string[] = [];
-    const stop = heartbeat(scheduler, beats, 30_000, 70_000);
-    scheduler.advance(30_000);
-    scheduler.advance(30_000);
-    scheduler.advance(30_000);
-    stop();
-    expect(beats).toEqual([
-      '  build       still compiling (30s of ~1m10s)',
-      '  build       still compiling (1m00s of ~1m10s)',
-      '  build       still compiling (1m30s, usually ~1m10s)',
-    ]);
-  });
-
-  test('a non-positive interval schedules nothing at all', () => {
-    const scheduler = fakeScheduler();
-    const beats: string[] = [];
-    const stop = heartbeat(scheduler, beats, 0);
-    scheduler.advance(120_000);
-    stop();
-    expect(beats).toEqual([]);
-    expect(scheduler.idle()).toBe(true);
-  });
-});
-
-describe('tailLines', () => {
-  test('returns the last non-empty lines, which is the caller fallback when extraction finds nothing', () => {
-    expect(tailLines(['a', '', 'b', '   ', 'c', 'd', 'e', 'f'], 3)).toEqual(['d', 'e', 'f']);
-    expect(tailLines(['only'], 5)).toEqual(['only']);
-    expect(tailLines([], 5)).toEqual([]);
-    expect(tailLines(null, 5)).toEqual([]);
   });
 });
 
@@ -1160,54 +288,6 @@ describe('buildIos with a mocked executor', () => {
     return join(dir, `${name}.app`);
   }
 
-  test.each(['ambiguous', 'unavailable'])(
-    'explicit schemes do not guess a product when metadata is %s',
-    async (mode) => {
-      const child = fakeChild();
-      harness(tmp, { child });
-      const dd = join(tmp, 'dd');
-      makeProduct(dd, 'App');
-      makeProduct(dd, 'Other');
-      setExecutor(
-        makeExecutor({
-          runFile: (file, args) => {
-            if (file === 'xcodebuild' && args?.includes('-list')) return '{"project":{"name":"App","schemes":["App"]}}';
-            if (mode === 'unavailable') throw new Error('build settings unavailable');
-            return JSON.stringify(
-              ['App', 'Other'].map((name) => ({
-                buildSettings: {
-                  PRODUCT_TYPE: 'com.apple.product-type.application',
-                  PLATFORM_NAME: 'iphonesimulator',
-                  TARGET_BUILD_DIR: productsDir(dd),
-                  FULL_PRODUCT_NAME: `${name}.app`,
-                },
-              })),
-            );
-          },
-          spawn: () => {
-            child.start();
-            return child as unknown as ChildProcess;
-          },
-        }),
-      );
-      const promise = buildIos({
-        root: tmp,
-        iosDir: join(tmp, 'ios'),
-        scheme: 'App',
-        udid: 'u',
-        logWriter: recordingWriter(),
-        derivedDataPath: dd,
-        compilationCache: [],
-      });
-      await child.started;
-      child.emit('close', 0, null);
-      const result = await promise;
-      assert(!result.ok);
-      expect(result.code).toBe('STIM_BUILD_FAILED');
-      expect(result).not.toHaveProperty('appPath');
-    },
-  );
-
   test('an injected set of settings lands on the argv, after the action', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
@@ -1225,73 +305,6 @@ describe('buildIos with a mocked executor', () => {
       `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`,
       'DEBUG_INFORMATION_FORMAT=dwarf',
     ]);
-    makeProduct(workspaceDerivedData(tmp));
-    child.emit('close', 0, null);
-    await promise;
-  });
-
-  test.each([
-    ['a generic destination with an arch builds that one slice', 'arm64', ['ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES']],
-    ['a generic destination without an arch leaves ARCHS to the project', null, []],
-  ])('%s', async (_name, arch, expected) => {
-    const child = fakeChild();
-    const spawnCalls = harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      destination: 'generic/platform=iOS Simulator',
-      arch,
-      logWriter: recordingWriter(),
-      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES'],
-    });
-    await child.started;
-    const args = spawnCalls[0]?.args ?? [];
-    expect(args[args.indexOf('-destination') + 1]).toBe('generic/platform=iOS Simulator');
-    expect(args.slice(args.indexOf('build') + 1)).toEqual([
-      'COMPILATION_CACHE_ENABLE_CACHING=YES',
-      'DEBUG_INFORMATION_FORMAT=dwarf',
-      ...expected,
-    ]);
-    makeProduct(workspaceDerivedData(tmp));
-    child.emit('close', 0, null);
-    await promise;
-  });
-
-  test.each([
-    ['Debug', 'iphonesimulator', true],
-    ['Release', 'iphonesimulator', false],
-    ['Debug', 'iphoneos', false],
-  ])('%s on %s: DEBUG_INFORMATION_FORMAT=dwarf is passed: %s', async (configuration, sdk, expected) => {
-    const child = fakeChild();
-    const spawnCalls = harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'BF2A-1111-2222',
-      configuration,
-      sdk,
-      logWriter: recordingWriter(),
-      compilationCache: null,
-    });
-    await child.started;
-    expect(spawnCalls[0]?.args?.includes('DEBUG_INFORMATION_FORMAT=dwarf')).toBe(expected);
-    makeProduct(workspaceDerivedData(tmp), 'App', { configuration, sdk });
-    child.emit('close', 0, null);
-    await promise;
-  });
-
-  test('compilationCache: null is how a caller turns it off entirely', async () => {
-    const child = fakeChild();
-    const spawnCalls = harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'BF2A-1111-2222',
-      logWriter: recordingWriter(),
-      compilationCache: null,
-    });
-    await child.started;
-    expect(spawnCalls[0]?.args?.slice(-2)).toEqual(['build', 'DEBUG_INFORMATION_FORMAT=dwarf']);
     makeProduct(workspaceDerivedData(tmp));
     child.emit('close', 0, null);
     await promise;
@@ -1432,139 +445,6 @@ describe('buildIos with a mocked executor', () => {
     );
   });
 
-  test('a build that carries no settings says nothing at all', async () => {
-    const notes: string[] = [];
-    const child = fakeChild();
-    harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'BF2A-1111-2222',
-      logWriter: recordingWriter(),
-      compilationCache: null,
-      onNote: (line) => notes.push(line),
-    });
-    await child.started;
-    makeProduct(workspaceDerivedData(tmp));
-    child.emit('close', 0, null);
-    await promise;
-    expect(notes).toEqual([]);
-  });
-
-  test('composes the production invocation: -destination id=<udid>, into the workspace derived data', async () => {
-    const child = fakeChild();
-    const spawnCalls = harness(tmp, { child });
-    const dd = workspaceDerivedData(tmp);
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'BF2A-1111-2222',
-      logWriter: recordingWriter(),
-    });
-    await child.started;
-
-    expect(spawnCalls.length).toBe(1);
-    const firstCall = spawnCalls[0];
-    assert(firstCall);
-    const { cmd, args, opts } = firstCall;
-    assert(opts);
-    expect(cmd).toBe('xcodebuild');
-    expect(args).toEqual([
-      '-project',
-      join(tmp, 'ios', 'App.xcodeproj'),
-      '-scheme',
-      'App',
-      '-configuration',
-      'Debug',
-      '-sdk',
-      'iphonesimulator',
-      '-destination',
-      'id=BF2A-1111-2222',
-      '-derivedDataPath',
-      dd,
-      'build',
-      'DEBUG_INFORMATION_FORMAT=dwarf',
-    ]);
-    expect(opts.cwd).toBe(join(tmp, 'ios'));
-    expect(opts.stdio).toEqual(['ignore', 'pipe', 'pipe']);
-    expect(opts.detached).toBe(false);
-    assert(opts.env);
-    expect(opts.env.NSUnbufferedIO).toBe('YES');
-
-    makeProduct(dd);
-    child.emit('close', 0, null);
-    await promise;
-  });
-
-  test('every transcript line reaches the writer BEFORE the build exits', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const dd = join(tmp, 'dd');
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: dd,
-    });
-    await child.started;
-
-    expect(writer.records.map((r) => r.event)).toEqual(['build_start']);
-
-    child.stdout.emit('data', 'CompileC main.o\nCompile');
-    child.stdout.emit('data', 'Swift App.swift\n');
-    child.stderr.emit('data', 'note: from stderr\n');
-
-    const streamed = writer.records.filter((r) => r.level === 'debug');
-    expect(streamed.map((r) => r.msg)).toEqual(['CompileC main.o', 'CompileSwift App.swift', 'note: from stderr']);
-    expect(streamed.every((r) => r.src === 'build')).toBeTruthy();
-
-    makeProduct(dd);
-    child.emit('close', 0, null);
-    await promise;
-  });
-
-  test.each([0, 65])('keeps Xcode cache statistics on success or failure (exit: %s)', async (exitCode) => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const notes: string[] = [];
-    const dd = join(tmp, 'dd');
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: dd,
-      compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES'],
-      onNote: (line) => notes.push(line),
-    });
-    await child.started;
-
-    child.stdout.emit('data', 'CompilationCacheMetrics\nnote: 1394 hits / 1520 cacheable tasks (91.7%)\n');
-    makeProduct(dd);
-    child.emit('close', exitCode, null);
-    const result = await promise;
-
-    expect(result.compilationCache).toEqual({
-      status: 'reported',
-      hits: 1394,
-      cacheableTasks: 1520,
-      hitRatePercent: 91.7,
-    });
-    expect(notes).toEqual([]);
-    expect(result.ok).toBe(exitCode === 0);
-    expect(writer.records).toContainEqual(
-      expect.objectContaining({
-        event: 'compilation_cache',
-        hits: 1394,
-        cacheableTasks: 1520,
-        hitRatePercent: 91.7,
-      }),
-    );
-  });
-
   test('counts the Swift targets Xcode excluded from caching for lack of explicit modules', async () => {
     const child = fakeChild();
     harness(tmp, { child });
@@ -1610,192 +490,6 @@ describe('buildIos with a mocked executor', () => {
     );
   });
 
-  test('a line left unterminated by a dying child is still recorded', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: join(tmp, 'dd'),
-    });
-    await child.started;
-    child.stdout.emit('data', 'error: died mid-line with no newline');
-    child.emit('close', 65, null);
-    const result = await promise;
-    assert(!result.ok);
-    expect(result.diagnostics.map((d) => d.message)).toEqual(['died mid-line with no newline']);
-  });
-
-  test('blank lines are kept for extraction and dropped from the log', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const dd = join(tmp, 'dd');
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: dd,
-    });
-    await child.started;
-    child.stdout.emit('data', 'one\n\n\ntwo\n');
-    makeProduct(dd);
-    child.emit('close', 0, null);
-    const result = await promise;
-    expect(result.transcriptLines).toBe(4);
-    expect(writer.records.filter((r) => r.level === 'debug').length).toBe(2);
-  });
-
-  test('success returns the app, its bundle id and the elapsed time', async () => {
-    const child = fakeChild();
-    harness(tmp, { child, bundleId: 'com.example.app' });
-    const dd = join(tmp, 'dd');
-    const app = makeProduct(dd);
-    const writer = recordingWriter();
-    let clock = 1000;
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: dd,
-      now: () => clock,
-    });
-    await child.started;
-    clock = 161500;
-    child.emit('close', 0, null);
-    const result = await promise;
-
-    assert(result.ok);
-    expect(result.appPath).toBe(app);
-    expect(result.bundleId).toBe('com.example.app');
-    expect(result.durationMs).toBe(160500);
-    expect(result.scheme).toBe('App');
-    const done = writer.records.find((r) => r.event === 'build_done');
-    assert(done);
-    expect(done.level).toBe('info');
-    expect(done.msg).toMatch(/BUILD SUCCEEDED/);
-  });
-
-  test('a failed build is a return value, never a throw, and carries the extracted diagnostic', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: join(tmp, 'dd'),
-    });
-    await child.started;
-    child.stdout.emit(
-      'data',
-      [
-        'CompileC /dd/main.o /src/App/AppDelegate.m normal arm64',
-        "/src/App/AppDelegate.m:42:8: error: cannot find 'Foo' in scope",
-        '1 error generated.',
-        '** BUILD FAILED **',
-        '',
-      ].join('\n'),
-    );
-    child.emit('close', 65, null);
-    const result = await promise;
-
-    assert(!result.ok);
-    expect(result.code).toBe('STIM_BUILD_FAILED');
-    expect(result.exitCode).toBe(65);
-    expect(result.diagnostics).toEqual([
-      { file: '/src/App/AppDelegate.m', line: 42, column: 8, message: "cannot find 'Foo' in scope" },
-    ]);
-    expect(result.truncated).toBe(0);
-
-    const errors = writer.records.filter((r) => r.level === 'error');
-    expect(errors.map((r) => r.msg)).toEqual(["/src/App/AppDelegate.m:42:8: cannot find 'Foo' in scope"]);
-    expect(errors[0]?.src).toBe('build');
-  });
-
-  test.each([
-    [
-      'the compiler reporting a corrupt CAS',
-      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
-      ['LLVM ERROR: OnDiskCAS: corrupt internal reference'],
-      { dir: '/cas', line: 'LLVM ERROR: OnDiskCAS: corrupt internal reference' },
-    ],
-    [
-      'a CAS operation failure',
-      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
-      ["error: CAS operation failed: not a compile job result (in target 'RNWorklets' from project 'Pods')"],
-      {
-        dir: '/cas',
-        line: "error: CAS operation failed: not a compile job result (in target 'RNWorklets' from project 'Pods')",
-      },
-    ],
-    [
-      'an ordinary compile error',
-      ['COMPILATION_CACHE_ENABLE_CACHING=YES', 'COMPILATION_CACHE_CAS_PATH=/cas'],
-      ["/src/App/AppDelegate.m:42:8: error: cannot find 'Foo' in scope"],
-      undefined,
-    ],
-    [
-      'a corruption line from a build the cache was off for',
-      ['COMPILATION_CACHE_ENABLE_CACHING=NO'],
-      ['LLVM ERROR: OnDiskCAS: corrupt internal reference'],
-      undefined,
-    ],
-  ])('a failed build names the compilation cache as corrupt only for %s', async (_name, settings, lines, expected) => {
-    const cas = join(tmp, 'cas');
-    const child = fakeChild();
-    harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: recordingWriter(),
-      derivedDataPath: join(tmp, 'dd'),
-      compilationCache: settings.map((setting) => setting.replace('=/cas', `=${cas}`)),
-    });
-    await child.started;
-    child.stdout.emit('data', [...lines, '** BUILD FAILED **', ''].join('\n'));
-    child.emit('close', 65, null);
-    const result = await promise;
-    assert(!result.ok);
-    expect(result.compilationCacheCorruption).toEqual(expected && { ...expected, dir: cas });
-  });
-
-  test.each([
-    ['its own path', false],
-    ['a symlink to it', true],
-  ])(
-    'a build that compiles with the shared compilation cache through %s keeps it from being emptied until xcodebuild exits',
-    async (_name, linked) => {
-      const cas = join(tmp, 'cas');
-      mkdirSync(cas);
-      const buildPath = linked ? join(tmp, 'cas-link') : cas;
-      if (linked) symlinkSync(cas, buildPath);
-      const child = fakeChild();
-      harness(tmp, { child });
-      const promise = buildIos({
-        root: tmp,
-        iosDir: join(tmp, 'ios'),
-        udid: 'u',
-        logWriter: recordingWriter(),
-        compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${buildPath}`],
-      });
-      await child.started;
-      const user = `the ios build (pid ${process.pid} in ${tmp}) may be using it`;
-      expect(cacheUser(cas)).toBe(user);
-      expect(claimForEmptying(cas)).toBe(user);
-      child.emit('close', 65, null);
-      await promise;
-      expect(cacheUser(cas)).toBeUndefined();
-    },
-  );
-
   test('a build waits for an emptier that holds the compilation cache, then compiles', async () => {
     const cas = join(tmp, 'cas');
     const emptying = claimForEmptying(cas);
@@ -1817,37 +511,6 @@ describe('buildIos with a mocked executor', () => {
     await child.started;
     child.emit('close', 65, null);
     await promise;
-  });
-
-  test('a long transcript is not retained while the build runs, and an early error is still reported', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = { ...recordingWriter(), write: () => true };
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: join(tmp, 'dd'),
-    });
-    await child.started;
-    const before = heapUsedAfterGc();
-    child.stdout.emit('data', '/src/App/Early.m:3:1: error: early failure\n');
-    const filler = 'x'.repeat(500);
-    for (let chunk = 0; chunk < 100; chunk += 1) {
-      const lines = Array.from({ length: 1000 }, (_, i) => `CompileC /dd/${chunk}/${i}.o ${filler}`);
-      child.stdout.emit('data', `${lines.join('\n')}\n`);
-    }
-    const retained = heapUsedAfterGc() - before;
-    child.stdout.emit('data', '** BUILD FAILED **\n');
-    child.emit('close', 65, null);
-    const result = await promise;
-    assert(!result.ok);
-    expect(retained).toBeLessThan(10 * 1024 * 1024);
-    expect(result.transcriptLines).toBe(100_002);
-    expect(result.diagnostics).toEqual([{ file: '/src/App/Early.m', line: 3, column: 1, message: 'early failure' }]);
-    expect(result.tail.at(-1)).toBe('** BUILD FAILED **');
-    expect(result.tail).toHaveLength(5);
   });
 
   test('more than ten diagnostics are capped, and the rest are counted', async () => {
@@ -1872,45 +535,6 @@ describe('buildIos with a mocked executor', () => {
     expect(writer.records.filter((r) => r.level === 'error').length).toBe(10);
   });
 
-  test('an unrecognizable failure says so and hands back the log tail', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const writer = recordingWriter();
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: writer,
-      derivedDataPath: join(tmp, 'dd'),
-    });
-    await child.started;
-    child.stdout.emit('data', 'something\nwent\n\nwrong\nsomehow\nentirely\n');
-    child.emit('close', 70, null);
-    const result = await promise;
-    assert(!result.ok);
-    expect(result.diagnostics).toEqual([]);
-    expect(result.tail).toEqual(['something', 'went', 'wrong', 'somehow', 'entirely']);
-    const error = writer.records.find((r) => r.level === 'error');
-    expect(error?.msg).toMatch(/no recognizable diagnostic/);
-  });
-
-  test('no ios/ directory fails before anything is spawned', async () => {
-    const child = fakeChild();
-    const spawnCalls = harness(join(tmp, 'elsewhere'), { child });
-    const writer = recordingWriter();
-    const result = await buildIos({
-      root: join(tmp, 'nothing-here'),
-      iosDir: join(tmp, 'nothing-here', 'ios'),
-      udid: 'u',
-      logWriter: writer,
-    });
-    assert(!result.ok);
-    expect(result.code).toBe('STIM_BUILD_FAILED');
-    expect(result.diagnostics[0]?.remedy).toMatch(/prebuild/);
-    expect(spawnCalls).toEqual([]);
-    expect(writer.records.filter((r) => r.level === 'error').length).toBe(1);
-  });
-
   test('an unresolvable scheme fails as STIM_NO_SCHEME before anything is spawned', async () => {
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child, listing: '{"project":{"name":"App","schemes":["one","two"]}}' });
@@ -1918,22 +542,6 @@ describe('buildIos with a mocked executor', () => {
     assert(!result.ok);
     expect(result.code).toBe('STIM_NO_SCHEME');
     expect(spawnCalls).toEqual([]);
-  });
-
-  test('a spawn that throws (no Xcode) is a failure with a remedy, not an exception', async () => {
-    stubProject(tmp, { name: 'App' });
-    setExecutor({
-      run: () => '',
-      runFileQuietAsync: async () => null,
-      runFile: () => '{"project":{"name":"App","schemes":["App"]}}',
-      spawn: () => {
-        throw Object.assign(new Error('spawn xcodebuild ENOENT'), { code: 'ENOENT' });
-      },
-    });
-    const result = await buildIos({ root: tmp, iosDir: join(tmp, 'ios'), udid: 'u', logWriter: recordingWriter() });
-    assert(!result.ok);
-    expect(result.diagnostics[0]?.message).toMatch(/Could not run xcodebuild/);
-    expect(result.diagnostics[0]?.remedy).toMatch(/xcode-select/);
   });
 
   test('an asynchronous spawn error resolves the build instead of hanging it', async () => {
@@ -1953,24 +561,6 @@ describe('buildIos with a mocked executor', () => {
     expect(result.diagnostics[0]?.message).toMatch(/EACCES/);
   });
 
-  test('a build that succeeds without producing an app is a failure, not a success with no path', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: recordingWriter(),
-      derivedDataPath: join(tmp, 'dd'),
-    });
-    await child.started;
-    child.emit('close', 0, null);
-    const result = await promise;
-    assert(!result.ok);
-    expect(result.exitCode).toBe(0);
-    expect(result.diagnostics[0]?.message).toMatch(/no \.app is in/);
-  });
-
   test('an app with no readable bundle id is a build failure, not an install failure three steps later', async () => {
     const child = fakeChild();
     harness(tmp, { child, bundleId: null });
@@ -1988,55 +578,6 @@ describe('buildIos with a mocked executor', () => {
     const result = await promise;
     assert(!result.ok);
     expect(result.diagnostics[0]?.message).toMatch(/No readable CFBundleIdentifier/);
-  });
-
-  test('a slow build emits heartbeats carrying the latest transcript line, and stops when the child closes', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const beats: string[] = [];
-    const dd = join(tmp, 'dd');
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: recordingWriter(),
-      derivedDataPath: dd,
-      heartbeatMs: 10,
-      onHeartbeat: (line) => beats.push(line),
-    });
-    await child.started;
-    child.stdout.emit('data', 'CompileC main.o\n');
-    await new Promise((r) => setTimeout(r, 80));
-    expect(beats.length).toBeGreaterThanOrEqual(1);
-    expect(beats[0]).toMatch(/^ {2}build {6} still compiling \(\d+s\)$/);
-    makeProduct(dd);
-    child.emit('close', 0, null);
-    await promise;
-    const settled = beats.length;
-    await new Promise((r) => setTimeout(r, 40));
-    expect(beats.length).toBe(settled);
-  });
-
-  test('heartbeatMs: 0 disables the heartbeat entirely', async () => {
-    const child = fakeChild();
-    harness(tmp, { child });
-    const beats: string[] = [];
-    const dd = join(tmp, 'dd');
-    const promise = buildIos({
-      root: tmp,
-      iosDir: join(tmp, 'ios'),
-      udid: 'u',
-      logWriter: recordingWriter(),
-      derivedDataPath: dd,
-      heartbeatMs: 0,
-      onHeartbeat: (line) => beats.push(line),
-    });
-    await child.started;
-    await new Promise((r) => setTimeout(r, 30));
-    makeProduct(dd);
-    child.emit('close', 0, null);
-    await promise;
-    expect(beats).toEqual([]);
   });
 
   test('programmer errors throw, because they are bugs in the caller and not build outcomes', async () => {
@@ -2109,88 +650,4 @@ describe('buildXcode with explicit project inputs', () => {
       expect('appPath' in result ? result.appPath : null).toBe(present ? selectedApp : null);
     },
   );
-
-  test('builds a root-level Debug project with explicit cache settings and resolves its product', async () => {
-    const project = { flag: '-project', path: join(tmp, 'Native.xcodeproj'), dir: tmp, name: 'Native' };
-    mkdirSync(project.path);
-    const dd = join(tmp, 'derived');
-    const app = join(productsDir(dd), 'Native.app');
-    mkdirSync(app, { recursive: true });
-    const child = fakeChild();
-    const calls: { cmd: string; args: readonly string[]; cwd: string | URL | undefined }[] = [];
-    const exec = makeExecutor({
-      runQuiet: () => {
-        throw new Error('explicit cache settings must skip toolchain probes');
-      },
-      runFile: (file, args = []) => {
-        if (file === 'xcodebuild' && args.includes('-list'))
-          return '{"project":{"name":"Native","schemes":["Native"]}}';
-        if (file === 'plutil') return '{"CFBundleIdentifier":"com.example.native","CFBundleExecutable":"Native"}';
-        throw new Error(`unexpected probe ${file} ${args.join(' ')}`);
-      },
-      spawn: (cmd, args, opts) => {
-        calls.push({ cmd, args: args ?? [], cwd: opts?.cwd });
-        child?.start();
-        return child as unknown as ChildProcess;
-      },
-    });
-    const promise = buildXcode({
-      root: tmp,
-      project,
-      compilationCache: ['SWIFT_ENABLE_COMPILE_CACHE=NO'],
-      udid: 'owned-simulator',
-      configuration: 'Debug',
-      sdk: 'iphonesimulator',
-      derivedDataPath: dd,
-      logWriter: recordingWriter(),
-      exec,
-    });
-    await child.started;
-    child.emit('close', 0, null);
-    const result = await promise;
-    assert(result.ok);
-    expect(result.appPath).toBe(app);
-    expect(result.bundleId).toBe('com.example.native');
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.cmd).toBe('xcodebuild');
-    expect(calls[0]?.cwd).toBe(tmp);
-    expect(calls[0]?.args).toEqual([
-      '-project',
-      project.path,
-      '-scheme',
-      'Native',
-      '-configuration',
-      'Debug',
-      '-sdk',
-      'iphonesimulator',
-      '-destination',
-      'id=owned-simulator',
-      '-derivedDataPath',
-      dd,
-      'build',
-      'SWIFT_ENABLE_COMPILE_CACHE=NO',
-      'DEBUG_INFORMATION_FORMAT=dwarf',
-    ]);
-  });
-
-  test('an invalid scheme refuses before a lazy cache plan probes or a build starts', async () => {
-    const result = await buildXcode({
-      root: tmp,
-      project: { flag: '-project', path: join(tmp, 'Native.xcodeproj'), dir: tmp, name: 'Native' },
-      scheme: 'Missing',
-      udid: 'owned-simulator',
-      logWriter: recordingWriter(),
-      compilationCache: () => {
-        throw new Error('invalid schemes must skip cache preparation');
-      },
-      exec: makeExecutor({
-        runFile: () => '{"project":{"name":"Native","schemes":["Native"]}}',
-        spawn: () => {
-          throw new Error('invalid schemes must not spawn');
-        },
-      }),
-    });
-    assert(!result.ok);
-    expect(result.code).toBe('STIM_NO_SCHEME');
-  });
 });

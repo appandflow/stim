@@ -45,17 +45,11 @@ function sha1(text: string): string {
   return createHash('sha1').update(text).digest('hex');
 }
 
-export function relocatePath(text: string, from: string, to: string): string {
+function relocatePath(text: string, from: string, to: string): string {
   return text.replace(pathPattern(from, 'g'), () => to);
 }
 
-/**
- * Decides whether a carried Pods directory differs from the checkout's Podfile.lock only by
- * checksums of podspecs that embed the source checkout's absolute path. Any other difference,
- * a missing podspec, a podspec that does not embed the path, or a carried checksum that does
- * not match the carried podspec refuses.
- */
-export function planPodsRelocation({
+function planPodsRelocation({
   podfileLock,
   manifest,
   sourceRoot,

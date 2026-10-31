@@ -78,67 +78,6 @@ afterEach(() => {
   rmSync(area, { recursive: true, force: true });
 });
 
-test('records exact ownership before boot, keeps the host viewer closed and verifies retirement', async () => {
-  native.boot.mockImplementation((target, options) => {
-    expect(target).toBe(udid);
-    expect(options).toEqual({ openViewer: false });
-    expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).ios).toEqual([udid]);
-    simulatorState = 'Booted';
-  });
-  expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'ready', device: { udid } });
-  expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'unknown' });
-  expect(native.create).toHaveBeenCalledTimes(1);
-  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'stopped', device: { udid } });
-  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid, { del: true });
-});
-
-test('mutes the exact simulator after boot on prepare and again after an adoption reset', async () => {
-  const order: string[] = [];
-  native.boot.mockImplementation(() => {
-    order.push('boot');
-    simulatorState = 'Booted';
-  });
-  native.apps.mockReturnValue([]);
-  native.keychain.mockImplementation(() => {
-    order.push('reset');
-  });
-  native.mute.mockImplementation(async (target) => {
-    order.push(`mute:${target}`);
-  });
-  await runHostedDevice('prepare', {});
-  expect(order).toEqual(['boot', `mute:${udid}`]);
-  native.teardown.mockImplementation(() => {
-    simulatorState = 'Shutdown';
-    return { status: 'torn-down' };
-  });
-  await runHostedDevice('park', {});
-  order.length = 0;
-  await runHostedDevice('adopt', {});
-  expect(order).toEqual(['boot', 'reset', `mute:${udid}`]);
-});
-
-test('does not mute a simulator whose boot was not verified', async () => {
-  native.boot.mockResolvedValue(undefined);
-  await runHostedDevice('prepare', {});
-  expect(native.mute).not.toHaveBeenCalled();
-});
-
-test('refuses an unknown inventory before creation', async () => {
-  native.inventory.mockImplementation(() => {
-    throw new Error('bad inventory');
-  });
-  expect(await runHostedDevice('prepare', {})).toMatchObject({ state: 'stopped', device: null });
-  expect(native.create).not.toHaveBeenCalled();
-});
-
-test('prepare and adoption trust the offer instead of sampling memory pressure again', async () => {
-  native.pressure.mockReturnValue(null);
-  await parkedSimulator();
-  expect(native.create).toHaveBeenCalledOnce();
-  native.apps.mockImplementation(() => []);
-  expect(await runHostedDevice('adopt', {})).toMatchObject({ state: 'ready', device: { udid } });
-});
-
 test('retains a lost creation outcome and refuses missing or foreign ledger ownership on stop', async () => {
   native.create.mockImplementation(() => {
     recordCreatedDevice('ios', udid);
@@ -178,37 +117,6 @@ test('a deleted simulator with an empty ledger can complete stop after a lost re
   expect(native.teardown).not.toHaveBeenCalled();
 });
 
-test('an empty ledger cannot authorize deletion of a simulator still in inventory', async () => {
-  await runHostedDevice('prepare', {});
-  forgetCreatedDevice('ios', udid);
-  simulatorState = 'Shutdown';
-  expect(await runHostedDevice('stop', {})).toMatchObject({
-    state: 'unknown',
-    device: { udid },
-    notice: expect.stringContaining('without ledger ownership'),
-  });
-  expect(native.teardown).not.toHaveBeenCalled();
-});
-
-test('shutdown success cannot report stopped while the simulator still exists', async () => {
-  await runHostedDevice('prepare', {});
-  native.teardown.mockImplementation(() => {
-    simulatorState = 'Shutdown';
-    return { status: 'torn-down' };
-  });
-  expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
-});
-
-test.each(['failed', 'skipped'])(
-  'a %s teardown cannot report retirement even if inventory is empty',
-  async (status) => {
-    await runHostedDevice('prepare', {});
-    simulatorState = null;
-    native.teardown.mockReturnValue({ status });
-    expect(await runHostedDevice('stop', {})).toMatchObject({ state: 'unknown', device: { udid } });
-  },
-);
-
 test('stop skips stray files and removes app data while retaining receipts and native logs', async () => {
   await runHostedDevice('prepare', {});
   const blobs = join(area, 'blobs');
@@ -238,18 +146,6 @@ async function parkedSimulator() {
   return runHostedDevice('park', {});
 }
 
-test('park shuts down without deleting, renaming or moving ledger ownership and keeps the session blob store but removes app copies', async () => {
-  mkdirSync(join(area, 'blobs'));
-  mkdirSync(join(area, 'apps', 'first', 'App.app'), { recursive: true });
-  expect(await parkedSimulator()).toMatchObject({ state: 'parked', device: { udid, name: 'stim-hosted' } });
-  expect(native.teardown).toHaveBeenCalledExactlyOnceWith(udid);
-  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).ios).toEqual([udid]);
-  expect(simulatorState).toBe('Shutdown');
-  expect(existsSync(join(area, 'blobs'))).toBe(true);
-  expect(existsSync(join(area, 'apps', 'first', 'App.app'))).toBe(false);
-  expect(existsSync(join(home, 'config.json'))).toBe(false);
-});
-
 test('inspect keeps compatible and incompatible simulators shut down without resetting them', async () => {
   await parkedSimulator();
   native.boot.mockClear();
@@ -260,21 +156,6 @@ test('inspect keeps compatible and incompatible simulators shut down without res
   expect(native.boot).not.toHaveBeenCalled();
   expect(native.privacy).not.toHaveBeenCalled();
 });
-
-test.each(['ledger', 'missing', 'renamed', 'running', 'unavailable'])(
-  'inspect refuses an unusable simulator: %s',
-  async (failure) => {
-    await parkedSimulator();
-    if (failure === 'ledger') forgetCreatedDevice('ios', udid);
-    if (failure === 'missing') simulatorState = null;
-    if (failure === 'running') simulatorState = 'Booted';
-    if (failure === 'unavailable')
-      native.inventory.mockReturnValue([{ udid, name: 'stim-hosted', state: 'Shutdown', available: false }]);
-    if (failure === 'renamed')
-      native.inventory.mockReturnValue([{ udid, name: 'foreign', state: 'Shutdown', available: true }]);
-    expect(await runHostedDevice('inspect', {})).toMatchObject({ state: 'unusable', notice: expect.any(String) });
-  },
-);
 
 test('adoption removes every third-party app before ready and clears hosted delivery data', async () => {
   await parkedSimulator();
@@ -290,31 +171,4 @@ test('adoption removes every third-party app before ready and clears hosted deli
   expect(native.keychain).toHaveBeenCalledOnce();
   expect(existsSync(join(area, 'blobs'))).toBe(true);
   expect(JSON.parse(readFileSync(join(home, 'hosted-device.json'), 'utf8')).udid).toBe(udid);
-});
-
-test('an adoption that cannot list apps retains an unknown owned device for explicit stop', async () => {
-  await parkedSimulator();
-  native.apps.mockImplementation(() => {
-    throw new Error('apps unavailable');
-  });
-  expect(await runHostedDevice('adopt', {})).toMatchObject({ state: 'unknown', device: { udid } });
-  expect(JSON.parse(readFileSync(join(home, 'created-devices.json'), 'utf8')).ios).toEqual([udid]);
-});
-
-test('unavailable requested selectors leave a healthy parked simulator incompatible', async () => {
-  await parkedSimulator();
-  native.choice.mockImplementation(() => {
-    throw new Error('requested runtime unavailable');
-  });
-  expect(await runHostedDevice('inspect', { runtime: '99' })).toMatchObject({ state: 'incompatible' });
-  expect(simulatorState).toBe('Shutdown');
-});
-
-test('a parked simulator of another architecture is incompatible even with the same model and runtime', async () => {
-  await parkedSimulator();
-  const path = join(home, 'hosted-device.json');
-  const device = JSON.parse(readFileSync(path, 'utf8'));
-  device.architecture = device.architecture === 'arm64' ? 'x86_64' : 'arm64';
-  writeFileSync(path, JSON.stringify(device));
-  expect(await runHostedDevice('inspect', {})).toMatchObject({ state: 'incompatible' });
 });

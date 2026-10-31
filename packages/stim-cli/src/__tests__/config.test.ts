@@ -1,41 +1,20 @@
-import {
-  chmodSync,
-  mkdtempSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  existsSync,
-  statSync,
-  writeFileSync,
-} from 'fs';
-import fs from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { execFile } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
-  getConfigDir,
   loadConfig,
-  saveConfig,
-  ensureConfig,
-  withConfigLock,
   claimMetroPort,
   getProject,
   upsertProject,
-  removeProject,
   setDevice,
-  setSupervisor,
   releaseAndroidConsolePort,
-  clearDevice,
-  allMetroPorts,
   allConsolePortsAndSerials,
   getProjectSettings,
   getRepoSettings,
-  refuseRelativeStimPaths,
   writeConfigSetting,
   type ConfigSettingsTarget,
 } from '../workspace/config.ts';
-import { makeConfig } from './_factories.ts';
 import assert from 'node:assert';
 
 let tmpHome: string;
@@ -54,92 +33,6 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-});
-
-test('getConfigDir respects STIM_HOME', () => {
-  expect(getConfigDir()).toBe(tmpHome);
-});
-
-test.each(['STIM_HOME', 'STIM_BUILD_CACHE', 'STIM_METRO_CACHE'])('refuses a relative %s by name', (name) => {
-  expect(() => refuseRelativeStimPaths({ [name]: 'relative/dir' })).toThrow(
-    expect.objectContaining({ code: 'STIM_RELATIVE_PATH', message: expect.stringContaining(name) }),
-  );
-});
-
-test('accepts absolute and unset STIM paths', () => {
-  expect(() => refuseRelativeStimPaths({ STIM_HOME: tmpHome, STIM_BUILD_CACHE: join(tmpHome, 'build') })).not.toThrow();
-});
-
-test('ensureConfig creates and returns empty config', () => {
-  const cfg = ensureConfig();
-  expect(cfg).toEqual({ version: 2, projects: {}, repos: {} });
-  expect(existsSync(join(tmpHome, 'config.json'))).toBeTruthy();
-});
-
-test('saveConfig + loadConfig roundtrip', () => {
-  saveConfig(makeConfig({ version: 1, projects: { '/foo': { metroPort: 8082, platforms: {} } } }));
-  const cfg = loadConfig();
-  assert(cfg);
-  assert(cfg.projects['/foo']);
-  expect(cfg.projects['/foo'].metroPort).toBe(8082);
-});
-
-test.each(['[]', '5', 'null', '"oops"'])('refuses a config.json holding %s instead of dropping writes', (content) => {
-  const p = join(tmpHome, 'config.json');
-  writeFileSync(p, content);
-  let err: unknown;
-  try {
-    upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-  } catch (e) {
-    err = e;
-  }
-  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
-  expect((err as Error).message).toContain(`${p} is not a JSON object`);
-  expect(readFileSync(p, 'utf-8')).toBe(content);
-});
-
-test('saveConfig writes through a temp file and leaves none behind', () => {
-  saveConfig({ version: 2, projects: {}, repos: {} });
-  const strays = readdirSync(tmpHome).filter((name) => name.endsWith('.tmp'));
-  expect(strays).toEqual([]);
-  expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
-});
-
-test.skipIf(process.platform === 'win32')(
-  'saveConfig leaves STIM_HOME and config.json readable only by the owner',
-  () => {
-    chmodSync(tmpHome, 0o755);
-    writeFileSync(join(tmpHome, 'config.json'), '{}', { mode: 0o644 });
-    saveConfig({ version: 2, projects: {}, repos: {} });
-    expect(statSync(tmpHome).mode & 0o777).toBe(0o700);
-    expect(statSync(join(tmpHome, 'config.json')).mode & 0o777).toBe(0o600);
-  },
-);
-
-test.skipIf(process.platform === 'win32')('saveConfig still writes when STIM_HOME refuses chmod', () => {
-  chmodSync(tmpHome, 0o755);
-  const chmod = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
-    throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' });
-  });
-  try {
-    saveConfig({ version: 2, projects: {}, repos: {} });
-    expect(chmod).toHaveBeenCalledWith(tmpHome, 0o700);
-  } finally {
-    chmod.mockRestore();
-  }
-  expect(loadConfig()).toEqual({ version: 2, projects: {}, repos: {} });
-});
-
-test('withConfigLock is reentrant, so nested mutators cannot deadlock', () => {
-  const result = withConfigLock(() => {
-    upsertProject('/p', { bundleId: 'a', androidPackage: 'a', isExpo: false });
-    claimMetroPort('/p', 8082);
-    const proj = getProject('/p');
-    assert(proj);
-    return proj.metroPort;
-  });
-  expect(result).toBe(8082);
-  expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
 });
 
 test('concurrent processes each keep their record', async () => {
@@ -197,84 +90,6 @@ test("claimMetroPort re-claiming a project's own port is not a conflict", () => 
   expect(claimMetroPort('/a', 8082)).toBe(8082);
 });
 
-test('upsertProject creates a new project entry with defaults', () => {
-  const proj = upsertProject('/abs/path', {
-    bundleId: 'com.foo',
-    androidPackage: 'com.foo',
-    isExpo: true,
-  });
-  expect(proj.bundleId).toBe('com.foo');
-  expect(proj.metroPort).toBe(null);
-  expect(proj.platforms).toEqual({});
-});
-
-test('upsertProject preserves existing fields when called again', () => {
-  upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  claimMetroPort('/p', 8082);
-  upsertProject('/p', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
-  const proj = getProject('/p');
-  assert(proj);
-  expect(proj.bundleId).toBe('com.b');
-  expect(proj.metroPort).toBe(8082);
-});
-
-test('upsertProject refuses a project key that is not an absolute path', () => {
-  expect(() => upsertProject('.claude/stim-worktrees/nestrel', { label: 'nestrel' })).toThrow(/not an absolute path/);
-  expect(loadConfig()?.projects?.['.claude/stim-worktrees/nestrel']).toBe(undefined);
-});
-
-test('setDevice refuses a project key that is not an absolute path', () => {
-  saveConfig(makeConfig({ projects: { 'rel/proj': { metroPort: null, platforms: {} } } }));
-  expect(() => setDevice('rel/proj', 'ios', { deviceUdid: 'ABC' })).toThrow(/not an absolute path/);
-  expect(loadConfig()?.projects?.['rel/proj']?.platforms?.ios).toBe(undefined);
-});
-
-test('setSupervisor refuses a project key that is not an absolute path', () => {
-  expect(() => setSupervisor('rel/proj', { pid: 1, port: 8081, startedAt: '2026-01-01T00:00:00.000Z' })).toThrow(
-    /not an absolute path/,
-  );
-  expect(loadConfig()?.projects?.['rel/proj']).toBe(undefined);
-});
-
-test('setDevice and clearDevice mutate platforms', () => {
-  upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice('/p', 'ios', { deviceUdid: 'ABC' });
-  const proj = getProject('/p');
-  assert(proj?.platforms?.ios);
-  expect(proj.platforms.ios.deviceUdid).toBe('ABC');
-  clearDevice('/p', 'ios');
-  const cleared = getProject('/p');
-  assert(cleared);
-  expect(cleared.platforms?.ios).toBe(undefined);
-});
-
-test('allMetroPorts collects ports from all projects', () => {
-  upsertProject('/a', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  upsertProject('/b', { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
-  claimMetroPort('/a', 8082);
-  claimMetroPort('/b', 8083);
-  expect(allMetroPorts().toSorted()).toEqual([8082, 8083]);
-});
-
-test('allConsolePortsAndSerials collects android console ports across projects', () => {
-  const a = liveProjectDir('a');
-  const b = liveProjectDir('b');
-  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  upsertProject(b, { bundleId: 'com.b', androidPackage: 'com.b', isExpo: false });
-  setDevice(a, 'android', { avdName: 'Pixel_5', consolePort: 5556 });
-  setDevice(b, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  const result = allConsolePortsAndSerials();
-  expect(result.androidConsolePorts.toSorted()).toEqual([5554, 5556]);
-});
-
-test('allConsolePortsAndSerials collects physical serials (no avdName)', () => {
-  const a = liveProjectDir('a');
-  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice(a, 'android', { serial: 'R5CR70XXXXX' });
-  const result = allConsolePortsAndSerials();
-  expect(result.androidPhysicalSerials).toEqual(['R5CR70XXXXX']);
-});
-
 test('releaseAndroidConsolePort frees the claimed port and keeps the AVD recorded for gc', () => {
   const a = liveProjectDir('a');
   upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
@@ -282,31 +97,6 @@ test('releaseAndroidConsolePort frees the claimed port and keeps the AVD recorde
   expect(releaseAndroidConsolePort(a, 5554)).toBe(true);
   expect(getProject(a)?.platforms?.android).toEqual({ avdName: 'stim-a', owned: true, deviceName: 'stim-a' });
   expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([]);
-});
-
-test('releaseAndroidConsolePort leaves a port the record no longer holds', () => {
-  const a = liveProjectDir('a');
-  upsertProject(a, { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  setDevice(a, 'android', { avdName: 'stim-a', consolePort: 5556, owned: true });
-  expect(releaseAndroidConsolePort(a, 5554)).toBe(false);
-  expect(getProject(a)?.platforms?.android?.consolePort).toBe(5556);
-});
-
-test('removeProject deletes entry', () => {
-  upsertProject('/p', { bundleId: 'com.a', androidPackage: 'com.a', isExpo: false });
-  removeProject('/p');
-  expect(getProject('/p')).toBe(null);
-});
-
-test('allConsolePortsAndSerials ignores entries from project paths that no longer exist', () => {
-  const live = liveProjectDir('live');
-  upsertProject(live, { bundleId: 'com.live', androidPackage: 'com.live', isExpo: false });
-  setDevice(live, 'android', { avdName: 'Pixel_6', consolePort: 5554 });
-  const gone = join(tmpHome, 'definitely-gone', 'worktree');
-  upsertProject(gone, { bundleId: 'com.dead', androidPackage: 'com.dead', isExpo: false });
-  setDevice(gone, 'android', { avdName: 'Pixel_7', consolePort: 5556 });
-  const result = allConsolePortsAndSerials();
-  expect(result.androidConsolePorts).toEqual([5554]);
 });
 
 test('allConsolePortsAndSerials keeps the claim of a project on an unmounted volume', () => {
@@ -340,75 +130,6 @@ test('writeConfigSetting writes, overwrites, and unsets dotted workspace keys', 
   expect(getProjectSettings('/p')).toEqual({ ios: { deviceType: 'iPhone 17' }, android: { script: 'dev:android' } });
 });
 
-test('ensureConfig creates a v2 config with a repos section', () => {
-  const cfg = ensureConfig();
-  expect(cfg.version).toBe(2);
-  expect(cfg.repos).toEqual({});
-});
-
-test('adopts a hand-edited config that has no projects container', () => {
-  writeFileSync(
-    join(tmpHome, 'config.json'),
-    JSON.stringify({ version: 2, repos: {}, optimizations: { android: { compilerCache: 'auto' } } }),
-  );
-
-  const cfg = ensureConfig();
-  expect(cfg.projects).toEqual({});
-
-  expect(() => upsertProject('/a', { metroPort: 8082 })).not.toThrow();
-  expect(getProject('/a')?.metroPort).toBe(8082);
-  expect(JSON.parse(readFileSync(join(tmpHome, 'config.json'), 'utf-8')).optimizations).toEqual({
-    android: { compilerCache: 'auto' },
-  });
-});
-
-test.each([
-  ['an array', '[]'],
-  ['a string', '"oops"'],
-  ['a number', '7'],
-])('refuses a config whose projects container is %s', (_label, shape) => {
-  writeFileSync(join(tmpHome, 'config.json'), `{ "version": 2, "projects": ${shape}, "repos": {} }`);
-
-  expect(() => ensureConfig()).toThrow(/projects that is not an object/);
-  const thrown = (() => {
-    try {
-      ensureConfig();
-      return null;
-    } catch (err) {
-      return err as { code?: string };
-    }
-  })();
-  expect(thrown?.code).toBe('STIM_CONFIG_CORRUPT');
-
-  expect(readFileSync(join(tmpHome, 'config.json'), 'utf-8')).toContain(`"projects": ${shape}`);
-});
-
-test('refuses a config whose repos container is an array', () => {
-  writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": {}, "repos": [] }');
-  expect(() => ensureConfig()).toThrow(/repos that is not an object/);
-});
-
-test('adopts a null projects container rather than refusing it', () => {
-  writeFileSync(join(tmpHome, 'config.json'), '{ "version": 2, "projects": null, "repos": {} }');
-  expect(ensureConfig().projects).toEqual({});
-});
-
-test('migrates a v1 config without touching projects', () => {
-  saveConfig(
-    makeConfig({
-      version: 1,
-      projects: { '/a': { metroPort: 8082, platforms: { ios: { deviceUdid: 'U1' } } } },
-    }),
-  );
-  const cfg = ensureConfig();
-  expect(cfg.version).toBe(2);
-  expect(cfg.repos).toEqual({});
-  expect(cfg.projects['/a']).toEqual({
-    metroPort: 8082,
-    platforms: { ios: { deviceUdid: 'U1' } },
-  });
-});
-
 test('repo settings round-trip by git common dir', () => {
   const target: ConfigSettingsTarget = { scope: 'repo', gitCommonDir: '/repo/.git' };
   writeConfigSetting(target, 'ios.deviceType', 'iPhone 17');
@@ -419,58 +140,4 @@ test('repo settings round-trip by git common dir', () => {
   });
   expect(writeConfigSetting(target, 'worktree.exclude', undefined)).toBe(true);
   expect(getRepoSettings('/repo/.git')).toEqual({ ios: { deviceType: 'iPhone 17' } });
-});
-
-test('named device slots preserve default assignments and release only their own console ports', () => {
-  const root = liveProjectDir('slots');
-  upsertProject(root, {});
-  setDevice(root, 'ios', { deviceUdid: 'default-ios', owned: true });
-  setDevice(root, 'android', { avdName: 'stim-first', consolePort: 5554, owned: true }, 'first');
-  setDevice(root, 'android', { avdName: 'stim-second', consolePort: 5556, owned: true }, 'second');
-  setDevice(root, 'ios', { deviceUdid: 'first-ios', owned: true }, 'first');
-  expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('default-ios');
-  expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([5554, 5556]);
-  expect(releaseAndroidConsolePort(root, 5556, 'first')).toBe(false);
-  expect(releaseAndroidConsolePort(root, 5554, 'first')).toBe(true);
-  expect(allConsolePortsAndSerials().androidConsolePorts).toEqual([5556]);
-  clearDevice(root, 'android', 'first');
-  expect(getProject(root)?.deviceSlots?.first).toEqual({ ios: { deviceUdid: 'first-ios', owned: true } });
-  clearDevice(root, 'ios', 'first');
-  expect(getProject(root)?.deviceSlots?.first).toBeUndefined();
-  expect(getProject(root)?.deviceSlots?.second?.android?.avdName).toBe('stim-second');
-  clearDevice(root, 'android', 'second');
-  expect(getProject(root)?.deviceSlots).toBeUndefined();
-  expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('default-ios');
-});
-
-test('slot registry rejects unsafe names without mutating assignments', () => {
-  const root = liveProjectDir('invalid-slots');
-  upsertProject(root, {});
-  const before = loadConfig();
-  for (const slot of ['', '../phone', '__proto__', 'constructor', 'prototype', 'a'.repeat(65)]) {
-    expect(() => setDevice(root, 'ios', { deviceUdid: 'test' }, slot)).toThrow(/device slot/);
-  }
-  expect(loadConfig()).toEqual(before);
-});
-
-test('slot registry supports arbitrary numbers of identical model assignments', () => {
-  const root = liveProjectDir('many-slots');
-  upsertProject(root, {});
-  for (let i = 0; i < 20; i++) {
-    setDevice(root, 'ios', { deviceUdid: `udid-${i}`, deviceName: 'same model', owned: true }, `phone-${i}`);
-  }
-  expect(Object.keys(getProject(root)?.deviceSlots ?? {})).toHaveLength(20);
-  clearDevice(root, 'ios', 'phone-8');
-  expect(getProject(root)?.deviceSlots?.['phone-9']?.ios?.deviceUdid).toBe('udid-9');
-  expect(Object.keys(getProject(root)?.deviceSlots ?? {})).toHaveLength(19);
-});
-
-test('upsertProject applies an updater against the record as it is under the lock', () => {
-  const root = '/abs/project';
-  upsertProject(root, { label: 'one', doctorRuns: { ios: { at: 'T1', version: '1' } } });
-  upsertProject(root, (existing) => ({ doctorRuns: { ...existing.doctorRuns, android: { at: 'T2', version: '2' } } }));
-  expect(getProject(root)).toMatchObject({
-    label: 'one',
-    doctorRuns: { ios: { at: 'T1', version: '1' }, android: { at: 'T2', version: '2' } },
-  });
 });

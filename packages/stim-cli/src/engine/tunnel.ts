@@ -38,7 +38,7 @@ export interface TunnelRecord {
   logFile?: string | null;
 }
 
-export function tunnelArgv(
+function tunnelArgv(
   provider: ManagedProvider,
   port: number,
   ngrokUrl?: string | null,
@@ -68,7 +68,7 @@ export function tunnelArgv(
 
 const CLOUDFLARED_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
-export function parseCloudflaredLine(line: string): string | null {
+function parseCloudflaredLine(line: string): string | null {
   // cloudflared prints the quick-tunnel URL inside a stderr banner.
   const match = line.match(CLOUDFLARED_URL_RE);
   return match ? match[0] : null;
@@ -87,7 +87,7 @@ export function parseNgrokLine(line: string): string | null {
   return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
 }
 
-export function parseTailscaleLine(line: string): string | null {
+function parseTailscaleLine(line: string): string | null {
   return /^https:\/\/[^\s/]+\.ts\.net(:\d+)?\/?$/.test(line) ? line : null;
 }
 

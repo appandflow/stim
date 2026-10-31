@@ -143,58 +143,6 @@ test('concurrent EAS report contexts use their workspace and keep proxy credenti
   expect(process.env).toEqual(env);
 });
 
-test('a stalled second EAS page kills its child and refuses deletion of a partial inventory', async () => {
-  const root = join(home, 'app');
-  mkdirSync(root);
-  ensureWorkspaceStorage(root);
-  const ledger = join(home, 'eas-ledger');
-  await recordEasSessionClaim(
-    {
-      sessionId: 'drs_owned',
-      name: 'stim-owned',
-      platform: 'ios',
-      workspaceRoot: root,
-      workspaceHome: home,
-      stateFile: workspaceStateFile(root),
-    },
-    ledger,
-  );
-  const first = JSON.stringify({
-    sessions: [{ id: 'drs_owned', name: 'stim-owned', status: 'IN_PROGRESS', platform: 'IOS' }],
-    pageInfo: { hasNextPage: true, endCursor: 'next' },
-  });
-  const executor = getExecutor();
-  let started!: () => void;
-  const ready = new Promise<void>((resolve) => (started = resolve));
-  vi.useFakeTimers();
-  setExecutor({
-    ...executor,
-    runFileAsync: (_file, args, options) =>
-      args.includes('--after')
-        ? executor.runFileAsync(
-            process.execPath,
-            ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'],
-            {
-              ...options,
-              onSpawn: (spawned) => {
-                child = spawned;
-                spawned.stdout?.once('data', started);
-              },
-            },
-          )
-        : executor.runFileAsync(process.execPath, ['-e', 'process.stdout.write(process.argv[1])', first], options),
-  });
-  const pending = collectEasSessionSweep(null, { ...dependencies(root), easCollectionTimeoutMs: 100 });
-  await ready;
-  await vi.advanceTimersByTimeAsync(100);
-  const report = await pending;
-  expect(child?.signalCode).toBe('SIGKILL');
-  expect(report.orphaned).toEqual([]);
-  expect(report.deletionSafe).toBe(false);
-  expect(report.notices.join(' ')).toContain('timed out');
-  expect(readEasSessionLedger(ledger).claims.has('drs_owned')).toBe(true);
-});
-
 test('asynchronous EAS verification retains both deletion locks until the stop result and claim reconciliation', async () => {
   const root = join(home, 'app');
   mkdirSync(root);

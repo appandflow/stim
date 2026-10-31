@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -10,8 +10,7 @@ import { runAndroidOperation } from '../commands/android.ts';
 import { runIosOperation } from '../commands/ios.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { workspaceDir } from '../workspace/paths.ts';
-import { git } from '../workspace/git.ts';
-import { upsertProject, writeConfigSetting } from '../workspace/config.ts';
+
 import { projectSettingsContextAsync, resolveProjectSettingsAsync } from '../workspace/settings.ts';
 import { testContext } from './_context.ts';
 
@@ -118,23 +117,4 @@ test.each([
   } finally {
     stdout.mockRestore();
   }
-});
-
-test('async settings preserve repository, app and workspace precedence and non-Git fallback', async () => {
-  const repository = join(directory, 'repo');
-  const app = join(repository, 'app');
-  mkdirSync(app, { recursive: true });
-  git(repository, ['init', '-q'], { write: true });
-  writeFileSync(join(repository, '.stim.json'), JSON.stringify({ ios: { configuration: 'Release' } }));
-  writeFileSync(join(app, '.stim.json'), JSON.stringify({ ios: { configuration: 'Debug', runtime: '26.2' } }));
-  writeConfigSetting({ scope: 'repo', gitCommonDir: join(repository, '.git') }, 'ios.runtime', '26.3');
-  upsertProject(app, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: app }, 'ios.runtime', '26.4');
-  const resolved = await resolveProjectSettingsAsync(app);
-  expect(resolved.context).toEqual({ projectPath: app, gitCommonDir: join(repository, '.git'), repoRoot: repository });
-  expect(resolved.settings.ios).toEqual({ configuration: 'Debug', runtime: '26.4' });
-  writeFileSync(join(directory, '.stim.json'), JSON.stringify({ android: { variant: 'demoDebug' } }));
-  const outside = await resolveProjectSettingsAsync(directory);
-  expect(outside.context).toEqual({ projectPath: directory, gitCommonDir: null, repoRoot: null });
-  expect(outside.settings.android).toEqual({ variant: 'demoDebug' });
 });

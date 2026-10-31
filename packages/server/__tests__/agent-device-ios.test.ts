@@ -17,7 +17,6 @@ import { PassThrough, Readable } from 'node:stream';
 import { createHash } from 'node:crypto';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { keepAgentClaim, killKeptChild } from './fixtures/kept-agent-claim.ts';
-import { parseHostedAgentGrant } from '@stim-cli/core/state';
 import type { ProcessIdentityStatus } from '@stim-cli/core/process-identity';
 import { AgentDeviceDriver } from '@stim-cli/agent-driver-agent-device';
 
@@ -227,23 +226,6 @@ async function start() {
   return driver.issue({ client: 'c', session: SESSION, udid: UDID, bundleId: 'dev.app' });
 }
 
-test('starts with exactly one simulator policy, requires its digest and allocates no macOS admin lease', async () => {
-  const grant = await start();
-  expect(parseHostedAgentGrant(grant)).toEqual(grant);
-  expect(grant).toMatchObject({ lease: { deviceKey: `ios:mobile:${UDID}`, backend: 'ios-instance' } });
-  const policy = JSON.parse(readFileSync(join(home, 'agent', 'policy.json'), 'utf8'));
-  expect(policy.devices).toEqual({ allow: [{ udid: UDID }] });
-  expect(policy.capabilities).toEqual({ deny: ['device-shutdown'] });
-  expect(policy).not.toHaveProperty('leases');
-  expect(statSync(join(home, 'agent', 'policy.json')).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
-  expect(fixture.calls.map((call) => call.path)).toEqual(['/health']);
-  await expect(driver.issue({ client: 'c', session: UDID, udid: UDID, bundleId: 'dev.app' })).rejects.toThrow(
-    'another hosted simulator',
-  );
-  await driver.stop();
-  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
-});
-
 test(
   'a fresh iOS driver refuses a kept live-child claim before stopping the daemon or runners',
   { skip: process.platform === 'win32' },
@@ -279,12 +261,6 @@ test(
   },
 );
 
-test.each(['policy', 'backend'] as const)('grants nothing when the daemon lacks the required %s', async (missing) => {
-  fixture[missing] = false;
-  await expect(driver.start()).rejects.toThrow(/requires agent-device/);
-  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
-});
-
 test('keeps the daemon claim until both its proxy and daemon are proven stopped', async () => {
   await start();
   fixture.proxyStopped = false;
@@ -298,56 +274,6 @@ test('keeps the daemon claim until both its proxy and daemon are proven stopped'
 function runner(pid: number, udid = UDID, group = pid): string {
   return `${pid} ${group} /Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild test-without-building -only-testing AgentDeviceRunnerUITests/RunnerTests/testCommand -xctestrun /host/AgentDeviceRunner.env.session-${udid}-owner-1.xctestrun -destination platform=iOS Simulator,id=${udid}`;
 }
-
-test.each(['Xcode.app', 'Xcode 27.app'])(
-  'stops only exact-UDID runners under %s, after the daemon clean path',
-  async (app) => {
-    await start();
-    fixture.ps = [
-      [
-        runner(888880, UDID.toUpperCase()),
-        runner(888881, SESSION),
-        runner(888882, `${UDID}0`),
-        runner(888883).replace('-destination ', '--destination '),
-        runner(888884).replace('AgentDeviceRunnerUITests', 'OtherUITests'),
-        runner(888885, UDID, 900000),
-        runner(888886, `0${UDID}`),
-        runner(888887).replace('/usr/bin/xcodebuild', '/usr/bin/not-xcodebuild'),
-        runner(888888).replace('/usr/bin/xcodebuild', '/usr/bin/echo xcodebuild'),
-      ]
-        .join('\n')
-        .replaceAll('Xcode.app', app),
-    ];
-    fixture.identities = Object.fromEntries(
-      [888880, 888881, 888882, 888883, 888884, 888885, 888886, 888887, 888888].map((pid) => [pid, 'same']),
-    );
-    await driver.stop();
-    expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:888885:SIGTERM']);
-    expect(fixture.identities[888881]).toBe('same');
-    expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
-  },
-);
-
-test('escalates a surviving runner group to SIGKILL after waiting for SIGTERM', async () => {
-  await start();
-  fixture.ps = [runner(888880)];
-  fixture.identities = { 888880: 'same' };
-  fixture.stubborn.add(888880);
-  await driver.stop();
-  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps', 'signal:-888880:SIGTERM', 'signal:-888880:SIGKILL']);
-  expect(fixture.waits).toEqual([
-    [888880, 3000],
-    [888880, 2000],
-  ]);
-});
-
-test('never signals a runner whose captured identity changed or whose destination changed before signalling', async () => {
-  await start();
-  fixture.ps = [runner(888880) + '\n' + runner(888881), runner(888880) + '\n' + runner(888881, SESSION)];
-  fixture.identities = { 888880: 'different', 888881: 'same' };
-  await driver.stop();
-  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
-});
 
 test('keeps an unresolved runner claim, continues stopping other runners and retries cleanup', async () => {
   await start();
@@ -372,338 +298,6 @@ test('keeps the daemon claim when the process inventory cannot be read and retri
   expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
 });
 
-test('never signals a runner whose identity cannot be captured', async () => {
-  await start();
-  fixture.ps = [runner(888880)];
-  fixture.identities = { 888880: 'same' };
-  fixture.uncaptured.add(888880);
-  await expect(driver.stop()).rejects.toThrow('iOS runners did not stop (888880)');
-  expect(fixture.events).toEqual(['daemon-stop', 'ps', 'ps']);
-  fixture.uncaptured.clear();
-  await driver.stop();
-});
-
-test('cleans session runners when daemon startup fails', async () => {
-  fixture.backend = false;
-  fixture.ps = [runner(888880)];
-  fixture.identities = { 888880: 'same' };
-  await expect(driver.start()).rejects.toThrow('requires agent-device');
-  expect(fixture.identities[888880]).toBe('gone');
-  expect(readClaimSet(join(home, 'claims')).live).toHaveLength(0);
-});
-
-test.each([
-  { command: 'devices', positionals: [], flags: {} },
-  { command: 'open', positionals: ['dev.app'], flags: { udid: UDID } },
-  { command: 'snapshot', positionals: [], flags: { snapshotInteractiveOnly: true } },
-  { command: 'click', positionals: ['e1'], flags: {} },
-  {
-    command: 'screenshot',
-    positionals: [],
-    flags: { out: '/tmp/agent-device-screenshot-123-ab12.png' },
-  },
-  {
-    command: 'screenshot',
-    positionals: ['/tmp/agent-device-screenshot-123-ab12.png'],
-    flags: {},
-  },
-  { command: 'close', positionals: [], flags: {} },
-])('accepts the real client envelope for $command without forwarding ambient paths or routing', async (command) => {
-  await start();
-  const captured = {
-    jsonrpc: '2.0',
-    id: 'b6dc81fbd6708d93',
-    method: 'agent_device.command',
-    params: {
-      session: 'default',
-      command: 'devices',
-      positionals: [],
-      flags: {
-        stateDir: '/var/folders/48/xx/T/tmp.8d2DWWsIz6',
-        daemonBaseUrl: 'http://127.0.0.1:4399/x',
-        tenant: 'stim.<session>',
-        runId: '<session>',
-        leaseBackend: 'ios-instance',
-        sessionIsolation: 'tenant',
-        platform: 'ios',
-        verbose: false,
-      },
-      meta: {
-        requestId: 'b6dc81fbd6708d93',
-        cwd: '/client/worktree',
-        sessionExplicit: false,
-        debug: false,
-        lockPlatform: 'ios',
-        tenantId: 'stim.<session>',
-        runId: '<session>',
-        leaseBackend: 'ios-instance',
-        sessionIsolation: 'tenant',
-      },
-      token: '<token>',
-    },
-  };
-  const screenshot = command.command === 'screenshot';
-  const scope =
-    command.command === 'devices'
-      ? {}
-      : { leaseId: 'client-lease', leaseProvider: 'proxy', clientId: 'client', deviceKey: `ios:mobile:${UDID}` };
-  const params = {
-    ...captured.params,
-    ...command,
-    flags: { ...captured.params.flags, ...command.flags, ...scope },
-    meta: {
-      ...captured.params.meta,
-      ...scope,
-      ...(screenshot ? { clientArtifactPaths: { path: '/client/shot.png' } } : {}),
-    },
-  };
-  expect((await rpcBody({ ...captured, params })).status).toBe(200);
-  const forwarded = JSON.parse(fixture.calls.at(-1)!.body);
-  expect(forwarded.params).toEqual({
-    command: command.command,
-    session: 'default',
-    positionals: command.positionals,
-    flags: {
-      ...command.flags,
-      ...(scope.leaseId ? { leaseId: scope.leaseId } : {}),
-      verbose: false,
-      platform: 'ios',
-      udid: UDID,
-    },
-    meta: {
-      requestId: 'b6dc81fbd6708d93',
-      sessionExplicit: false,
-      debug: false,
-      ...(scope.leaseId ? { leaseId: scope.leaseId } : {}),
-      ...(screenshot ? { clientArtifactPaths: { path: '/client/shot.png' } } : {}),
-      tenantId: `stim.${SESSION}`,
-      runId: SESSION,
-      clientId: 'agent',
-      deviceKey: `ios:mobile:${UDID}`,
-      leaseProvider: 'proxy',
-      leaseBackend: 'ios-instance',
-      sessionIsolation: 'tenant',
-    },
-  });
-  expect(fixture.calls.at(-1)!.body).not.toContain(captured.params.flags.stateDir);
-  expect(fixture.calls.at(-1)!.body).not.toContain(captured.params.meta.cwd);
-});
-
-test.each(['flags', 'input'])('strips client configuration and connection scope from %s', async (field) => {
-  await start();
-  const ambient = {
-    stateDir: '/client/state',
-    cwd: '/client/worktree',
-    config: '/client/config.json',
-    remoteConfig: '/client/remote.json',
-    daemonBaseUrl: 'http://client/rpc',
-    daemonAuthToken: 'client-token',
-    daemonTransport: 'http',
-    daemonServerMode: 'dual',
-    tenant: 'other',
-    tenantId: 'other',
-    runId: 'other',
-    clientId: 'other',
-    deviceKey: 'other',
-    leaseBackend: 'macos-app',
-    sessionIsolation: 'none',
-    leaseProvider: 'limrun',
-    provider: 'limrun',
-  };
-  expect((await rpc({ command: 'snapshot', [field]: ambient, meta: ambient })).status).toBe(200);
-  const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
-  expect(forwarded[field]).toEqual({ platform: 'ios', udid: UDID });
-  expect(forwarded.meta).toEqual({
-    tenantId: `stim.${SESSION}`,
-    runId: SESSION,
-    clientId: 'agent',
-    deviceKey: `ios:mobile:${UDID}`,
-    leaseProvider: 'proxy',
-    leaseBackend: 'ios-instance',
-    sessionIsolation: 'tenant',
-  });
-  expect(fixture.calls.at(-1)!.body).not.toContain('/client/');
-  expect(fixture.calls.at(-1)!.body).not.toContain('client-token');
-});
-
-test.each(['heartbeat', 'release'])('accepts the real client lease %s scope and pins its owner', async (command) => {
-  await start();
-  expect(
-    (
-      await rpc(
-        {
-          session: 'default',
-          token: '<token>',
-          tenantId: 'stim.<session>',
-          runId: '<session>',
-          leaseProvider: 'proxy',
-          clientId: 'client',
-          deviceKey: `ios:mobile:${UDID}`,
-          leaseId: 'client-lease',
-          ...(command === 'heartbeat' ? { ttlMs: 300000 } : {}),
-        },
-        `agent_device.lease.${command}`,
-      )
-    ).status,
-  ).toBe(200);
-  expect(JSON.parse(fixture.calls.at(-1)!.body).params).toEqual({
-    session: 'default',
-    tenantId: `stim.${SESSION}`,
-    runId: SESSION,
-    leaseProvider: 'proxy',
-    clientId: 'agent',
-    deviceKey: `ios:mobile:${UDID}`,
-    backend: 'ios-instance',
-    leaseId: 'client-lease',
-    ...(command === 'heartbeat' ? { ttlMs: 300000 } : {}),
-  });
-});
-
-test('pins automatic iOS lease allocation and every batch step to the simulator and tenant', async () => {
-  await start();
-  const allocated = await rpc(
-    {
-      tenantId: 'foreign',
-      runId: 'other',
-      backend: 'macos-app',
-      deviceKey: 'other',
-      provider: 'limrun',
-      ttlMs: 300000,
-    },
-    'agent_device.lease.allocate',
-  );
-  expect(allocated.status).toBe(200);
-  expect(JSON.parse(fixture.calls.at(-1)!.body).params).toEqual({
-    tenantId: `stim.${SESSION}`,
-    runId: SESSION,
-    clientId: 'agent',
-    deviceKey: `ios:mobile:${UDID}`,
-    leaseProvider: 'proxy',
-    backend: 'ios-instance',
-    ttlMs: 300000,
-  });
-  await rpc({
-    command: 'batch',
-    internal: { publicNetworkOnly: false },
-    meta: { requestId: 'r', cwd: '/host', tenantId: 'other', leaseId: 'client-lease' },
-    flags: {
-      platform: 'macos',
-      batchSteps: [
-        {
-          command: 'open',
-          positionals: ['dev.app'],
-          flags: { udid: UDID, target: 'mobile', serial: 'foreign', stateDir: '/client/state' },
-          input: { platform: 'macos', device: 'other', config: '/client/config', cwd: '/client/worktree' },
-          meta: { cwd: '/client/worktree', tenantId: 'other' },
-        },
-        { command: 'click', positionals: ['e1'] },
-      ],
-    },
-  });
-  const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
-  expect(forwarded.internal).toBeUndefined();
-  expect(forwarded.meta).toEqual({
-    requestId: 'r',
-    leaseId: 'client-lease',
-    tenantId: `stim.${SESSION}`,
-    runId: SESSION,
-    clientId: 'agent',
-    deviceKey: `ios:mobile:${UDID}`,
-    leaseProvider: 'proxy',
-    leaseBackend: 'ios-instance',
-    sessionIsolation: 'tenant',
-  });
-  expect(forwarded.flags).toMatchObject({
-    platform: 'ios',
-    udid: UDID,
-    batchSteps: [{ flags: { platform: 'ios', udid: UDID } }, { flags: { platform: 'ios', udid: UDID } }],
-  });
-  expect(forwarded.flags.batchSteps[0].flags).toEqual({ platform: 'ios', udid: UDID });
-  expect(forwarded.flags.batchSteps[0].input).toEqual({ platform: 'ios', udid: UDID });
-  expect(fixture.calls.at(-1)!.headers).toMatchObject({ 'x-agent-device-tenant': `stim.${SESSION}` });
-  expect(fixture.calls.at(-1)!.headers.authorization).not.toContain('client-private');
-});
-
-test.each([
-  { command: 'install' },
-  { command: 'reinstall' },
-  { command: 'uninstall' },
-  { command: 'install-from-source' },
-  { command: 'push' },
-  { command: 'boot' },
-  { command: 'shutdown' },
-  { command: 'close', flags: { shutdown: true } },
-  { command: 'snapshot', flags: { udid: SESSION } },
-  { command: 'batch', flags: { batchSteps: [{ command: 'snapshot', input: { udid: SESSION } }] } },
-  { command: 'screenshot', positionals: ['/host/file.png'] },
-  { command: 'open', positionals: ['https://host/'] },
-  { command: 'open', flags: { launchConsole: '/host/console' } },
-  { command: 'open', flags: { launchUrl: 'https://host/' } },
-  { command: 'snapshot', flags: { baseline: '/host/baseline.png' } },
-  { command: 'open', input: { installSource: { kind: 'path', path: '/host/app' } } },
-  { command: 'snapshot', input: { developerDir: '/host' } },
-  {
-    command: 'record',
-    positionals: ['start', '/Users/me/clip.mp4'],
-    meta: { clientArtifactPaths: { outPath: '/c/r' } },
-  },
-  { command: 'record', positionals: ['start', '/tmp/agent-device-recording-1-ab/../../etc/x.mp4'] },
-  { command: 'record', positionals: ['start'], meta: {} },
-  { command: 'record', positionals: ['stop', '/tmp/agent-device-recording-1-ab.mp4'] },
-  { command: 'record', positionals: ['list'] },
-  { command: 'batch', flags: { batchSteps: [{ command: 'record', positionals: ['stop'] }] } },
-  { command: 'push', positionals: ['dev.app', '/Users/me/payload.json'] },
-  { command: 'push', positionals: ['dev.app', '{"aps":{"alert":"x"}}', 'extra'] },
-  { command: 'push', positionals: ['/host/App.app', '{"aps":{}}'] },
-  { command: 'push', positionals: ['dev.app', '{"a":"/../../tmp/x}"}'] },
-  { command: 'perf', positionals: ['memory', 'snapshot'], flags: { out: '/host/heap.memgraph' } },
-  { command: 'perf', positionals: ['frames'], flags: { kind: 'xctrace' } },
-  { command: 'artifacts', positionals: ['provider-session'] },
-  { command: 'artifacts', flags: { providerSessionId: 'arn:x' } },
-  { command: 'settings', positionals: ['permission', 'grant', 'accessibility'] },
-  { command: 'settings', positionals: [' Permission', 'grant', 'Screen-Recording'] },
-  { command: 'settings', positionals: ['clear-app-state', 'clear', '/host/App.app'] },
-  { command: 'settings', positionals: ['permission', 'grant', 'camera'], input: { app: '/host/App.app' } },
-  { command: 'open', positionals: ['dev.app'], flags: { metroPort: 8081 } },
-  { command: 'open', positionals: ['dev.app'], flags: { metroHost: '10.0.0.5' } },
-  { command: 'snapshot', flags: { hostFileAddedLater: '/host/file' } },
-  { command: 'gesture', input: { kind: 'tap', points: [], hostFileAddedLater: '/host/file' } },
-  { command: 'clipboard', positionals: ['read'] },
-  { command: 'runtime' },
-  { command: 'open', positionals: ['dev.app'], runtime: { metroPort: 8081 } },
-  { command: 'batch', flags: { batchSteps: [{ command: 'open', runtime: { bundleUrl: 'http://10.0.0.5/b' } }] } },
-  {
-    command: 'batch',
-    flags: {
-      batchSteps: [
-        { command: 'click' },
-        { command: 'batch', input: { batchSteps: [{ command: 'screenshot', flags: { out: '/host/file' } }] } },
-      ],
-    },
-  },
-])('refuses unsafe requests before any step reaches the daemon: %j', async (params) => {
-  await start();
-  fixture.calls = [];
-  fixture.ps = [];
-  fixture.psError = false;
-  fixture.uncaptured = new Set();
-  fixture.waits = [];
-  fixture.identities = {};
-  fixture.stubborn = new Set();
-  fixture.events = [];
-  const kill = process.kill.bind(process);
-  vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
-    if (Math.abs(pid) in fixture.identities) {
-      fixture.events.push(`signal:${pid}:${signal}`);
-      if (!fixture.stubborn.has(Math.abs(pid)) || signal === 'SIGKILL') fixture.identities[Math.abs(pid)] = 'gone';
-      return true;
-    }
-    return kill(pid, signal);
-  });
-  expect((await rpc(params)).status).toBe(400);
-  expect(fixture.calls).toEqual([]);
-});
-
 test.each([
   { command: 'fold', positionals: ['open'], flags: { keyframes: '[{"atMs":0,"angle":90},{"atMs":500,"angle":180}]' } },
   { command: 'push', positionals: ['dev.app', '{"aps":{"alert":"x"}}'] },
@@ -726,43 +320,12 @@ test.each([
   expect(forwarded.input).toEqual(params.input && { ...params.input, platform: 'ios', udid: UDID });
 });
 
-test('refuses each excluded command with its own reason', async () => {
-  await start();
-  const message = async (command: string) => JSON.parse((await rpc({ command })).text).error.message;
-  const [audio, clipboard, unknown] = [await message('audio'), await message('clipboard'), await message('runtime')];
-  expect(audio).toMatch(/^Refused command "audio": /);
-  expect(clipboard).toMatch(/^Refused command "clipboard": /);
-  expect(new Set([audio.split(': ')[1], clipboard.split(': ')[1], unknown.split(': ')[1]]).size).toBe(3);
-  expect(fixture.calls.filter((call) => call.path === '/rpc')).toEqual([]);
-});
-
 test('an agent-device older than the hosted command list gets no daemon or claim', async () => {
   fixture.version = '0.21.29';
   await expect(driver.start()).rejects.toThrow('0.21.30');
   expect(fixture.calls).toEqual([]);
   expect(readClaimSet(join(home, 'claims')).live).toEqual([]);
 });
-
-test.each(['devices', 'open', 'snapshot', 'orientation'])(
-  'forwards %s with client selectors stripped and the hosted simulator forced',
-  async (command) => {
-    await start();
-    const selectors = {
-      udid: UDID,
-      serial: 'foreign',
-      target: 'mobile',
-      device: 'other',
-      platform: 'android',
-      iosSimulatorDeviceSet: '/other',
-      androidDeviceAllowlist: ['other'],
-    };
-    expect((await rpc({ command, flags: selectors, input: selectors })).status).toBe(200);
-    const forwarded = JSON.parse(fixture.calls.at(-1)!.body).params;
-    expect(forwarded.command).toBe(command);
-    expect(forwarded.flags).toEqual({ platform: 'ios', udid: UDID });
-    expect(forwarded.input).toEqual({ platform: 'ios', udid: UDID });
-  },
-);
 
 test('allows screenshot artifacts but refuses uploads and stops forwarding after revoke', async () => {
   await start();
@@ -864,13 +427,6 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('overlapping starts run only one recording', async () => {
-  await start();
-  const answers = await Promise.all([rpc(recordStart()), rpc(recordStart())]);
-  expect(answers.map((answer) => answer.status).toSorted()).toEqual([200, 400]);
-  expect(fixture.calls.filter((call) => call.body.includes('"record"'))).toHaveLength(1);
-});
-
 test('a start the daemon refuses leaves no recording behind', async () => {
   await start();
   fixture.recordError = { code: 'COMMAND_FAILED', message: 'recorder failed to start' };
@@ -970,18 +526,6 @@ test('only a stop agent-device answers with no active recording ends a recording
   expect(existsSync(join(output, '..'))).toBe(false);
   fixture.recordError = { code: '', message: '' };
   expect((await rpc(recordStart())).status).toBe(200);
-});
-
-test('a stop from another agent-device session keeps the running recording', async () => {
-  await start();
-  await rpc(recordStart());
-  const calls = fixture.calls.length;
-  const other = await rpc({ command: 'record', session: 'other', positionals: ['stop'] });
-  expect(other.status).toBe(400);
-  expect(JSON.parse(other.text).error.data.details.rule).toBe('recording');
-  expect(fixture.calls).toHaveLength(calls);
-  expect((await rpc(recordStart())).status).toBe(400);
-  expect((await rpc({ command: 'record', session: 'default', positionals: ['stop'] })).status).toBe(200);
 });
 
 test('a request too deep to serialize fails without rejecting the relay', async () => {

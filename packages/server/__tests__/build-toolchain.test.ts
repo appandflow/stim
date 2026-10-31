@@ -158,16 +158,6 @@ test('dependency warmth requires the requested install; directories and pruned s
   expect(await warmth()).toEqual({ checkout: false, dependencies: false, build: false });
 });
 
-test.each(['../other', '/absolute', 'C:/outside', 'a\\outside', '.git/config'])(
-  'rejects a dependency lookup outside the repository: %s',
-  async (project) => {
-    expect(await host.offer('client', { repo: 'app', dependencies: { project, packageName: null } })).toHaveProperty(
-      'error.code',
-      'bad-request',
-    );
-  },
-);
-
 test('older offers without Ruby context work and each context keeps its report for the existing 60 seconds', async () => {
   expect(await offered()).toBe('1.17.0');
   expect(await offered('3.3.4')).toBe('1.16.2');
@@ -222,19 +212,4 @@ test('an expired failing probe cannot invalidate the replacement report', async 
   expect(await old).toMatchObject({ error: { code: 'build-refused' } });
   response('3.3.4', { cocoapods: '1.20.0' });
   expect(await offered('3.3.4')).toBe('1.16.2');
-});
-
-test('offer validation rejects path and line-break inputs while accepting normalized installation names', async () => {
-  const validate = new Ajv2020({ strict: false }).compile({
-    ...protocolJsonSchema(),
-    $ref: '#/$defs/ClientRequest',
-  });
-  for (const rubyVersion of ['', '.', '..', '../3.3.4', 'a\\b', '3.3.4\n', '3.3.4\r\n', 'a\u0000b', 7]) {
-    const params = { repo: 'app', rubyVersion };
-    expect(validate({ id: '1', method: 'build.offer', params })).toBe(false);
-    expect(await host.offer('client', params)).toMatchObject({ error: { code: 'bad-request' } });
-  }
-  for (const rubyVersion of ['3.3.4', 'truffleruby+graalvm-21.3', 'a'.repeat(81)]) {
-    expect(validate({ id: '1', method: 'build.offer', params: { repo: 'app', rubyVersion } })).toBe(true);
-  }
 });

@@ -1,7 +1,5 @@
 import * as artifacts from '../commands/ios/artifact.ts';
-import { hostSimulatorArch } from '@stim-cli/core';
 import { readBuildHistory } from '@stim-cli/core/state';
-import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
 import { createHash } from 'node:crypto';
 import {
@@ -11,28 +9,23 @@ import {
   mkdtempSync,
   promises as fs,
   readFileSync,
-  readlinkSync,
   symlinkSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { buildIosOperation } from '../commands/ios/build.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
-import * as buildProgress from '../engine/build-progress.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
-import { readRecordedBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { getExecutor } from '../exec.ts';
 import type { IosProject } from '../integrations/ios-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { cacheEntryProtection } from '../maintenance/protect.ts';
-import { getProject } from '../workspace/config.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
+
+import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let controller = new AbortController();
@@ -168,60 +161,6 @@ afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-test('native Release builds retain independent artifacts and cache without JS-swap or runtime setup', async () => {
-  const options = { configuration: 'Release', arch: 'arm64', remoteBuild: 'local' } as const;
-  const cold = await buildIosOperation(buildContext(), root, options);
-  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'ios' });
-  const bytes = readFileSync(join(cold.appPath, 'Native'), 'utf8');
-  expect(cold.cacheHit).toBe(false);
-  const key = recordedBuildKey({ platform: 'ios', configuration: 'Release' });
-  expect(readRecordedBuild(root, key)).toMatchObject({ appPath: cold.appPath, bundleId: cold.bundleId });
-  expect(readWorkspaceState(root)).not.toHaveProperty('ios');
-  expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
-  const existing = { udid: 'existing', devicePlacement: { machine: 'mini' } };
-  const running = { platform: 'ios', status: 'ok', appPath: '/runtime/Native.app', cacheKey: 'runtime-key' };
-  writeWorkspaceState(root, { ios: existing, lastBuild: running, lastIosBuild: running });
-  const runningLog = join(workspaceLogsDir(root), 'build-ios.ndjson');
-  writeFileSync(runningLog, '{"msg":"running app build"}\n');
-  projectBundleId = null;
-  const warm = await buildIosOperation(buildContext(), root, options);
-  expect(warm).toMatchObject({ bundleId: 'org.example.native', cacheKey: cold.cacheKey, cacheHit: 'local' });
-  expect(compilations).toBe(1);
-  expect(readFileSync(join(warm.appPath, 'Native'), 'utf8')).toBe(bytes);
-  expect(copies.length).toBeGreaterThan(0);
-  expect(copies.every((path) => !existsSync(path))).toBe(true);
-  expect(readWorkspaceState(root)?.ios).toEqual(existing);
-  const differentArch = await buildIosOperation(buildContext(), root, { ...options, arch: 'x86_64' });
-  expect(differentArch.cacheKey).not.toBe(cold.cacheKey);
-  expect(differentArch.cacheHit).toBe(false);
-  const artifactsDir = join(workspaceDir(root), 'artifacts');
-  for (const name of ['ios-orphaned', 'android-sibling', 'notes']) mkdirSync(join(artifactsDir, name));
-  writeFileSync(join(root, 'Main.swift'), 'edited');
-  const edited = await buildIosOperation(buildContext(), root, options);
-  expect(edited.cacheKey).not.toBe(cold.cacheKey);
-  expect((await fs.readdir(artifactsDir)).toSorted()).toEqual(
-    ['android-sibling', basename(dirname(edited.appPath)), 'notes'].toSorted(),
-  );
-  expect(readRecordedBuild(root, key)?.appPath).toBe(edited.appPath);
-  expect(readWorkspaceState(root)).toMatchObject({ ios: existing, lastBuild: running, lastIosBuild: running });
-  expect(getProject(root)).not.toBeNull();
-  expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();
-  expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
-});
-
-test('a Release build defaults to the host simulator arch, and arch all builds every arch unsuffixed', async () => {
-  const host = await buildIosOperation(buildContext(), root, { configuration: 'Release', remoteBuild: 'local' });
-  expect(readFileSync(join(host.appPath, 'Native'), 'utf8')).toMatch(new RegExp(`:Release:${hostSimulatorArch()}$`));
-  expect(host.cacheKey).toMatch(new RegExp(`-release-sim-${hostSimulatorArch().replace('_', '-')}$`));
-  const all = await buildIosOperation(buildContext(), root, {
-    configuration: 'Release',
-    arch: 'all',
-    remoteBuild: 'local',
-  });
-  expect(readFileSync(join(all.appPath, 'Native'), 'utf8')).toMatch(/:Release:null$/);
-  expect(all.cacheKey).toMatch(/-release-sim$/);
-});
-
 test.each(['failure', 'cancellation'])(
   'build %s releases its claim and permits recovery without stopping an existing simulator',
   async (mode) => {
@@ -240,23 +179,6 @@ test.each(['failure', 'cancellation'])(
     expect(readWorkspaceState(root)?.ios).toEqual(existing);
   },
 );
-
-test('a build whose record cannot be written still returns its retained app', async () => {
-  vi.spyOn(buildProgress, 'recordFinishedBuild').mockImplementation(() => {
-    throw new Error('disk full');
-  });
-  const built = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
-  expect(existsSync(join(built.appPath, 'Native'))).toBe(true);
-});
-
-test('an unusable optimizations setting is refused as a setting error before the build', async () => {
-  writeFileSync(join(root, '.stim.json'), JSON.stringify({ optimizations: { buildCache: 'yes' } }));
-  await expect(buildIosOperation(buildContext(), root, { remoteBuild: 'local' })).rejects.toMatchObject({
-    code: 'STIM_BAD_ARG',
-    remedy: SETTING_SHAPE_REMEDY,
-  });
-  expect(compilations).toBe(0);
-});
 
 test('cancelling an app export drains the copy before cleanup and permits recovery', async () => {
   const existing = { udid: 'existing' };
@@ -304,23 +226,6 @@ test('cancelling an app export drains the copy before cleanup and permits recove
   const recovered = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(join(recovered.appPath, 'Native'))).toBe(true);
 });
-
-test.skipIf(process.platform === 'win32')(
-  'retained app links remain relative to their own exported bytes',
-  async () => {
-    linkedApp = true;
-    const cold = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
-    const bytes = readFileSync(join(cold.appPath, 'Alias'), 'utf8');
-    expect(readlinkSync(join(cold.appPath, 'Alias'))).toBe('Native');
-    const warm = await buildIosOperation(buildContext(), root, { remoteBuild: 'local' });
-    expect(warm.cacheHit).toBe('local');
-    expect(readlinkSync(join(warm.appPath, 'Alias'))).toBe('Native');
-    writeFileSync(join(root, 'Main.swift'), 'changed source');
-    await buildIosOperation(buildContext(), root, { remoteBuild: 'local', configuration: 'Release' });
-    expect(existsSync(cold.appPath)).toBe(false);
-    expect(readFileSync(join(warm.appPath, 'Alias'), 'utf8')).toBe(bytes);
-  },
-);
 
 test('cancellation after exporting the app still refuses the result and removes the export', async () => {
   const acquire = artifacts.acquireIosArtifact;

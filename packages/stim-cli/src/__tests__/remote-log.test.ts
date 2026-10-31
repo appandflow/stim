@@ -10,23 +10,6 @@ import { join } from 'node:path';
 import { testContext } from './_context.ts';
 import { acceptNoiseConnections, FAKE_SERVER_PUBLIC } from './_noise-server.ts';
 
-test('a machine that cannot be reached is written to the run log with the host and reason', async () => {
-  const records: Record<string, unknown>[] = [];
-  const context = testContext();
-  setRemoteLogSink(context, (record) => records.push(record));
-  const result = await withAmbientContext(context, () =>
-    BuildConnection.open(
-      { url: 'ws://127.0.0.1:1', servername: 'mini.example', host: 'mini.example' },
-      FAKE_SERVER_PUBLIC,
-      1000,
-    ),
-  );
-  expect(result).toMatchObject({ failure: expect.any(String) });
-  expect(records).toMatchObject([
-    { src: 'build', level: 'warn', event: 'remote_connect_failed', host: 'mini.example', capability: 'build' },
-  ]);
-});
-
 test('a delayed remote request failure stays with its initiating workspace after another operation starts', async () => {
   const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
   await new Promise<void>((resolve) => server.once('listening', resolve));

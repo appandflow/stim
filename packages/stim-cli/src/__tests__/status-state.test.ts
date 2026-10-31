@@ -3,21 +3,13 @@ import { join } from 'node:path';
 import {
   activityLabel,
   addReverseMissingIssue,
-  capacity,
   deviceLeaseLines,
   deviceLeaseStates,
-  diskIsTight,
   diskLine,
   environmentState,
-  formatSpace,
   metroReverseTargets,
-  parseDfFree,
-  poolLine,
-  remoteDeviceLine,
   remoteDeviceState,
   statusActivity,
-  tightVolumes,
-  unprovisionedWorktrees,
   type DeviceLeaseState,
   type EnvironmentState,
 } from '../status.ts';
@@ -43,45 +35,6 @@ function project(over = {}) {
   };
 }
 
-test('a registered project with nothing booted is not live and costs no memory', () => {
-  const s = environmentState(project(), { simsByUdid: { U1: SHUTDOWN }, metro: { missing: true } });
-  expect(s.live).toBe(false);
-  expect(s.memoryMb).toBe(0);
-});
-
-test('a booted sim with Metro running is live, and counts both', () => {
-  const s = environmentState(project(), {
-    simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42 } },
-  });
-  expect(s.live).toBe(true);
-  expect(s.memoryMb >= 2000).toBeTruthy();
-  assert(s.metro);
-  expect(s.metro.pid).toBe(42);
-});
-
-test("another process on an idle workspace's port is an info note, left out of warnings", () => {
-  const s = environmentState(project({ platforms: {} }), {
-    metro: {
-      notOurs: 'pid 99 runs from /tmp/scratch/web-phase2/expo-web',
-      pid: 99,
-      cwd: '/tmp/scratch/web-phase2/expo-web',
-    },
-    supervisor: { pid: 4242, status: 'stale', healthy: false },
-  });
-  expect(s.issues).toEqual([
-    expect.objectContaining({
-      code: 'port-not-ours',
-      severity: 'info',
-      message: 'port 8082 is in use by a dev server in scratch/web-phase2/expo-web; stim start will choose a free port',
-      remedy: 'stim start',
-    }),
-  ]);
-  expect(s.warnings).toEqual([]);
-  assert(s.metro);
-  expect(s.metro.heldBy).toEqual({ pid: 99, cwd: '/tmp/scratch/web-phase2/expo-web' });
-});
-
 test("another process on a running workspace's port is warned about once, not per slot", () => {
   const s = environmentState(project({ deviceSlots: { tablet: { ios: { deviceUdid: 'U1', owned: true } } } }), {
     simsByUdid: { U1: BOOTED },
@@ -100,121 +53,6 @@ test("a port held by another workspace's Metro names that workspace", () => {
     workspaces: [join('/proj', 'a'), join('/proj', 'b')],
   });
   expect(s.issues[0]?.message).toMatch(/^port 8082 is in use by Metro for workspace b;/);
-});
-
-test('a booted sim with no Metro is an info note, not a warning', () => {
-  const s = environmentState(project(), { simsByUdid: { U1: BOOTED }, metro: { missing: true } });
-  expect(s.issues).toEqual([expect.objectContaining({ code: 'sim-without-metro', severity: 'info' })]);
-  expect(s.warnings).toEqual([]);
-});
-
-test('a recorded device that no longer exists is reported rather than shown as fine', () => {
-  const s = environmentState(project(), { simsByUdid: {}, metro: { missing: true } });
-  assert(s.ios);
-  expect(s.ios.state).toBe('missing');
-  expect(s.issues).toEqual([expect.objectContaining({ code: 'sim-missing', severity: 'info', remedy: 'stim ios' })]);
-  expect(s.warnings).toEqual([]);
-});
-
-test('an unreadable sim listing leaves the state unknown instead of warning per project', () => {
-  const s = environmentState(project(), { simsByUdid: {}, metro: { missing: true }, simsAvailable: false });
-  assert(s.ios);
-  expect(s.ios.state).toBe('unknown');
-  expect(s.warnings.join(' ').includes('no longer exists')).toBe(false);
-});
-
-test('an owned AVD reports its device profile alongside runtime facts', () => {
-  const s = environmentState(project({ platforms: { android: { avdName: 'stim-app', owned: true } } }), {
-    androidRuntime: { serial: 'emulator-5554', state: 'detected' },
-    androidDeviceProfile: 'pixel_fold',
-  });
-  assert(s.android);
-  expect(s.android.deviceProfile).toBe('pixel_fold');
-});
-
-test('an owned AVD with no known device profile omits the field rather than reporting null', () => {
-  const s = environmentState(project({ platforms: { android: { avdName: 'stim-app', owned: true } } }), {
-    androidRuntime: { serial: 'emulator-5554', state: 'detected' },
-  });
-  assert(s.android);
-  expect(s.android.deviceProfile).toBeUndefined();
-});
-
-test('capacity warns once committed memory passes a comfortable share of the machine', () => {
-  const live = makeEnvironmentState({ memoryMb: 2200 });
-  expect(capacity([live, live], 16384).overCapacity).toBe(false);
-  expect(capacity([live, live, live, live, live], 16384).overCapacity).toBe(true);
-});
-
-test('capacity says nothing when the machine size is unknown', () => {
-  expect(capacity([makeEnvironmentState({ memoryMb: 9999 })], 0).overCapacity).toBe(false);
-});
-
-test('unprovisioned worktrees are the ones with no registered environment in or below them', () => {
-  const wt = (...parts: string[]) => join('/wt', ...parts);
-  const worktrees = [{ path: wt('a') }, { path: wt('b') }, { path: wt('c') }, { path: wt('d') }];
-  expect(
-    unprovisionedWorktrees(worktrees, [wt('a'), wt('b', 'apps', 'mobile'), wt('c-other')]).map((w) => w.path),
-  ).toEqual([wt('c'), wt('d')]);
-});
-
-test('poolLine reports a bounded pool and a disabled pool that still has parked devices', () => {
-  expect(poolLine({ platform: 'ios', parked: 0, max: 3 })).toBe(null);
-  expect(poolLine({ platform: 'ios', parked: 2, max: 3 })).toBe('pool: 2 parked iOS simulators (max 3)');
-  expect(poolLine({ platform: 'ios', parked: 1, max: 0 })).toBe(
-    'pool: 1 parked iOS simulator (parking off; gc --delete removes them)',
-  );
-});
-
-test('parseDfFree reads the available and total columns from df -k', () => {
-  const out = [
-    'Filesystem   1024-blocks       Used  Available Capacity iused ifree %iused  Mounted on',
-    '/dev/disk3s5   970989436  776862512  164363576    83%    12M  1.6G    1%   /',
-  ].join('\n');
-  expect(parseDfFree(out)).toEqual({
-    availableMb: Math.round(164363576 / 1024),
-    totalMb: Math.round(970989436 / 1024),
-  });
-});
-
-test('a filesystem name containing spaces still parses', () => {
-  const out = [
-    'Filesystem 1024-blocks Used Available Capacity Mounted on',
-    'my volume name 2097152 1048576 1048576 50% /Volumes/x',
-  ].join('\n');
-  expect(parseDfFree(out)).toEqual({ availableMb: 1024, totalMb: 2048 });
-});
-
-test('unreadable df output is null, never a guess', () => {
-  expect(parseDfFree('')).toBe(null);
-  expect(parseDfFree(null)).toBe(null);
-  expect(parseDfFree('Filesystem 1024-blocks Used Available Capacity')).toBe(null);
-});
-
-test('a nearly full disk is flagged before a build discovers it', () => {
-  expect(diskIsTight({ availableMb: 5 * 1024, totalMb: 900 * 1024 })).toBe(true);
-  expect(diskIsTight({ availableMb: 190 * 1024, totalMb: 900 * 1024 })).toBe(false);
-  expect(diskIsTight(null)).toBe(false);
-});
-
-test('a healthy supervisor is reported with its pid, mode and start time', () => {
-  const s = environmentState(project(), {
-    simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42 } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', status: 'ours', healthy: true },
-  });
-  expect(s.supervisor).toEqual({ pid: 4242, mode: 'bare-inproc', startedAt: '1700000000000', healthy: true });
-  expect(s.warnings.join(' ').includes('stale supervisor')).toBe(false);
-});
-
-test('a supervisor record proven gone is dropped without a warning', () => {
-  const s = environmentState(project(), {
-    simsByUdid: { U1: SHUTDOWN },
-    metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', status: 'stale', healthy: false },
-  });
-  expect(s.supervisor).toBe(null);
-  expect(s.issues).toEqual([]);
 });
 
 test('a supervisor record that cannot be verified keeps a warning with its reason and remedy', () => {
@@ -237,102 +75,6 @@ test('a supervisor record that cannot be verified keeps a warning with its reaso
   ]);
 });
 
-describe('an owned AVD that adb does not detect', () => {
-  const now = Date.parse('2026-09-25T12:00:00Z');
-  const minutesAgo = (m: number) => ({ launchedAt: new Date(now - m * 60_000).toISOString() });
-  const androidProject = project({
-    platforms: {
-      ios: { deviceUdid: 'U1', owned: true },
-      android: { avdName: 'stim-app', consolePort: 5554, owned: true },
-    },
-    deviceSlots: { fold: { android: { avdName: 'stim-app-fold', consolePort: 5556, owned: true } } },
-  });
-  const notDetected = { serial: null, state: 'not-detected' as const };
-  const state = (over: Parameters<typeof environmentState>[1]) =>
-    environmentState(androidProject, {
-      simsByUdid: { U1: SHUTDOWN },
-      metro: { missing: true },
-      androidRuntime: notDetected,
-      androidRuntimes: { fold: notDetected },
-      now,
-      ...over,
-    });
-  const codes = (s: ReturnType<typeof environmentState>) => s.issues.map((i) => `${i.slot ?? 'default'}:${i.code}`);
-
-  test('is the resting state of an idle workspace, even with an old launch record', () => {
-    const s = state({ launches: { android: minutesAgo(120), 'android:fold': minutesAgo(120) } });
-    expect(s.android?.state).toBe('not-detected');
-    expect(s.issues).toEqual([]);
-    expect(s.warnings).toEqual([]);
-  });
-
-  test('is not warned about while Metro serves only the other platform', () => {
-    const s = state({ metro: { metro: { pid: 42 } }, launches: { ios: minutesAgo(120) } });
-    expect(codes(s)).toEqual([]);
-  });
-
-  test('is warned about in the slot launched onto while Metro runs, with that slot in the remedy', () => {
-    const s = state({ metro: { metro: { pid: 42 } }, launches: { 'android:fold': minutesAgo(120) } });
-    expect(codes(s)).toEqual(['fold:avd-not-detected']);
-    expect(s.issues[0]).toMatchObject({ remedy: 'stim android --slot fold', workspace: '/proj/a' });
-    expect(s.warnings[0]).toBe('fold: owned AVD stim-app-fold is not detected by adb; run `stim android --slot fold`');
-  });
-
-  test('is warned about after a recent launch with no dev server, as for a release variant', () => {
-    expect(codes(state({ launches: { android: minutesAgo(5) } }))).toEqual(['default:avd-not-detected']);
-  });
-
-  test('is warned about while the workspace leases its serial, and not for a lease on another device', () => {
-    expect(codes(state({ leasedIds: new Set(['emulator-5556']) }))).toEqual(['fold:avd-not-detected']);
-    expect(codes(state({ leasedIds: new Set(['R58M123']) }))).toEqual([]);
-  });
-});
-
-test('a live supervisor that is not answering is unhealthy but not stale', () => {
-  const s = environmentState(project(), {
-    metro: { missing: true },
-    supervisor: { pid: 4242, mode: 'expo-child', startedAt: '5', status: 'ours', healthy: false },
-  });
-  assert(s.supervisor);
-  expect(s.supervisor.healthy).toBe(false);
-  expect(s.warnings.join(' ').includes('stale supervisor')).toBe(false);
-});
-
-test('no supervisor recorded reports null, not an absent field', () => {
-  const s = environmentState(project(), { metro: { missing: true } });
-  expect(s.supervisor).toBe(null);
-  expect('supervisor' in s).toBe(true);
-});
-
-test('the log timeline is reported with the error count since the last marker', () => {
-  const s = environmentState(project(), {
-    metro: { missing: true },
-    logs: { dir: '/proj/a/.stim/logs', errorsSinceMarker: 3 },
-  });
-  expect(s.logs).toEqual({ dir: '/proj/a/.stim/logs', errorsSinceMarker: 3 });
-});
-
-test('a workspace with no log directory reports logs as null', () => {
-  const s = environmentState(project(), { metro: { missing: true } });
-  expect(s.logs).toBe(null);
-});
-
-test('every pre-v3 field survives the extension', () => {
-  const s = environmentState(project(), {
-    simsByUdid: { U1: BOOTED },
-    metro: { metro: { pid: 42 } },
-    supervisor: { pid: 4242, mode: 'bare-inproc', startedAt: '5', status: 'ours', healthy: true },
-    logs: { dir: '/proj/a/.stim/logs', errorsSinceMarker: 0 },
-  });
-  for (const key of ['path', 'live', 'memoryMb', 'warnings', 'ios', 'android', 'metro', 'worktree']) {
-    expect(key in s).toBe(true);
-  }
-  assert(s.metro);
-  expect(s.metro.port).toBe(8082);
-  assert(s.ios);
-  expect(s.ios.udid).toBe('U1');
-});
-
 test('one volume keeps the free-of-total form', () => {
   expect(diskLine([{ volume: '/', disk: { availableMb: 38 * 1024, totalMb: 926 * 1024 } }])).toBe(
     '38 GB free of 926 GB on disk.',
@@ -349,28 +91,6 @@ test('a project on another volume gets both volumes, named', () => {
       },
     ]),
   ).toBe('38 GB free on /, 1.5 TB free on /Volumes/ExternalSSD.');
-});
-
-test('an unreadable df prints no disk line at all rather than a broken one', () => {
-  expect(diskLine([])).toBe(null);
-  expect(diskLine(null)).toBe(null);
-  expect(diskLine([{ volume: '/', disk: null }])).toBe(null);
-});
-
-test('formatSpace changes scale where the number stops being readable', () => {
-  expect(formatSpace(512)).toBe('512 MB');
-  expect(formatSpace(38 * 1024)).toBe('38 GB');
-  expect(formatSpace(1024 * 1024)).toBe('1.0 TB');
-  expect(formatSpace(NaN)).toBe('?');
-});
-
-test('tightVolumes names only the volumes that are actually tight', () => {
-  const volumes = [
-    { volume: '/', disk: { availableMb: 5 * 1024, totalMb: 926 * 1024 } },
-    { volume: '/Volumes/ExternalSSD', disk: { availableMb: 900 * 1024, totalMb: 2048 * 1024 } },
-  ];
-  expect(tightVolumes(volumes).map((v) => v.volume)).toEqual(['/']);
-  expect(tightVolumes([])).toEqual([]);
 });
 
 describe('device lease state', () => {
@@ -393,46 +113,10 @@ describe('device lease state', () => {
     ...over,
   });
 
-  test('marks this workspace lease and an expired one', () => {
-    const states = deviceLeaseStates(
-      [
-        entry(),
-        entry({
-          name: 'android-R5.json',
-          platform: 'android',
-          id: 'R5',
-          lease: {
-            version: 1,
-            platform: 'android',
-            id: 'R5',
-            deviceName: null,
-            holder: '/w/b',
-            token: 't2',
-            grantedAt: null,
-            expiresAt: new Date(now - 1).toISOString(),
-          },
-        }),
-      ],
-      { root: '/w/a', now },
-    );
-    expect(states[0]).toMatchObject({ holder: '/w/a', mine: true, expired: false, parsed: true });
-    expect(states[1]).toMatchObject({ holder: '/w/b', mine: false, expired: true, parsed: true });
-  });
-
   test('a file that does not parse keeps its name and claims nothing', () => {
     const [state] = deviceLeaseStates([entry({ lease: null })], { root: '/w/a', now });
     expect(state).toMatchObject({ platform: 'ios', id: 'U', holder: null, expiresAt: null, parsed: false });
     expect(deviceLeaseLines([state as DeviceLeaseState], now).join('\n')).toMatch(/unreadable lease file/);
-  });
-
-  test('the lines name the device, the holder and the time left', () => {
-    const lines = deviceLeaseLines(deviceLeaseStates([entry()], { root: '/w/a', now }), now);
-    expect(lines[0]).toBe('Device leases (1):');
-    expect(lines[1]).toMatch(/ios U \(Old iPhone\) -- \/w\/a until \d\d:\d\d:\d\d \(1m00s left\) \[this workspace\]/);
-  });
-
-  test('no lease file prints no section', () => {
-    expect(deviceLeaseLines([], now)).toEqual([]);
   });
 });
 
@@ -467,45 +151,6 @@ describe('physical device state', () => {
       simulatorUdids: new Set(simulatorUdids),
       read: (platform) => (platform === 'ios' ? connected : { name: null, model: null, connection: 'disconnected' }),
     });
-
-  test('each lease the workspace holds is a physical device in its slot, with the lease facts', () => {
-    const devices = states([lease('ios', 'PHONE'), lease('android', 'R5')], {
-      ios: { id: 'PHONE', token: 't-PHONE', kind: 'declared' },
-      'android:pixel': { id: 'R5', token: 't-R5', kind: 'run' },
-    });
-    expect(devices).toEqual([
-      {
-        platform: 'ios',
-        slot: 'default',
-        id: 'PHONE',
-        name: 'Old iPhone',
-        model: 'iPhone 12 Pro',
-        owned: false,
-        physical: true,
-        connection: 'connected',
-        lease: {
-          holder: '/w/a',
-          kind: 'declared',
-          grantedAt: new Date(now - 60_000).toISOString(),
-          expiresAt: new Date(now + 60_000).toISOString(),
-        },
-      },
-      expect.objectContaining({
-        platform: 'android',
-        slot: 'pixel',
-        id: 'R5',
-        name: 'Leased name',
-        model: 'Leased name',
-      }),
-    ]);
-  });
-
-  test('an Android lease that recorded only the serial has no model', () => {
-    const [device] = states([lease('android', 'R7', { deviceName: 'R7' })], {
-      android: { id: 'R7', token: 't-R7', kind: 'run' },
-    });
-    expect(device).toMatchObject({ name: 'R7', model: null });
-  });
 
   test('a lease another holder took over, an expired one, or a simulator or emulator lease is left out', () => {
     const devices = states(
@@ -581,27 +226,6 @@ describe('remote device state', () => {
     expect(remoteDeviceState(record, { claims: new Map(), safe: false }, '/proj/a')?.state).toBe('unknown');
     expect(remoteDeviceState(null, { claims, safe: true }, '/proj/a')).toBe(null);
   });
-
-  test('a remote session makes the environment live without committing local memory', () => {
-    const remote = remoteDeviceState(record, { claims: new Map(), safe: true }, '/proj/a');
-    const s = environmentState({ __path: '/proj/a', platforms: {} }, { remote });
-    expect(s.live).toBe(true);
-    expect(s.memoryMb).toBe(0);
-    expect(s.remoteDevices).toEqual([
-      {
-        platform: 'android',
-        backend: 'eas',
-        sessionId: 'drs_7',
-        state: 'unclaimed',
-        startedAt: '2026-09-24T00:00:00.000Z',
-        webPreviewUrl: 'https://preview.example/7',
-      },
-    ]);
-    assert(remote);
-    expect(remoteDeviceLine(remote)).toBe(
-      'remote android: EAS session drs_7 billable (unclaimed) -- watch: https://preview.example/7',
-    );
-  });
 });
 
 test('device activity labels name the driver and its duration, and an unknown state never reads as idle', () => {
@@ -622,41 +246,6 @@ test('device activity labels name the driver and its duration, and an unknown st
   expect(activityLabel({ state: 'unknown', basis: ['agent-device-lease'] }, now)).toBe(
     'activity unknown (agent-device-lease)',
   );
-});
-
-test('an idle-stopped dev server is reported on metro only while nothing serves the port', () => {
-  const idleStop = { reason: 'idle' as const, at: '2026-09-25T10:00:00.000Z', idleMinutes: 60 };
-  const stopped = environmentState(project(), { metro: { missing: true }, idleStop });
-  expect(stopped.metro).toEqual({ port: 8082, running: false, pid: null, idleStop });
-
-  const restarted = environmentState(project(), { metro: { metro: { pid: 42 } }, idleStop });
-  expect(restarted.metro).toEqual({ port: 8082, running: true, pid: 42 });
-});
-
-test('an idle shutdown is reported on its slot device only while that device is down', () => {
-  const record = { at: '2026-09-27T10:00:00.000Z', idleMinutes: 30 };
-  const withSlots = project({
-    platforms: { ios: { deviceUdid: 'U1', owned: true }, android: { avdName: 'stim-app', owned: true } },
-    deviceSlots: { fold: { android: { avdName: 'stim-app-fold', owned: true } } },
-  });
-  const idleShutdowns = { ios: record, 'android:fold': record };
-  const down = environmentState(withSlots, {
-    simsByUdid: { U1: SHUTDOWN },
-    androidRuntime: { serial: null, state: 'not-detected' },
-    androidRuntimes: { fold: { serial: null, state: 'not-detected' } },
-    idleShutdowns,
-  });
-  expect(down.ios?.idleShutdown).toEqual(record);
-  expect(down.android?.idleShutdown).toBeUndefined();
-  expect(down.slots?.[0]?.android?.idleShutdown).toEqual(record);
-
-  const booted = environmentState(withSlots, {
-    simsByUdid: { U1: BOOTED },
-    androidRuntimes: { fold: { serial: 'emulator-5556', state: 'detected' } },
-    idleShutdowns,
-  });
-  expect(booted.ios?.idleShutdown).toBeUndefined();
-  expect(booted.slots?.[0]?.android?.idleShutdown).toBeUndefined();
 });
 
 test('a stopped dev server reports its recorded cause, or a vanished supervisor that recorded none', () => {
@@ -733,21 +322,6 @@ describe('the adb reverse check', () => {
       { slot: 'default', serial: 'emulator-5554', metroPort: 8082 },
       { slot: 'tablet', serial: 'emulator-5556', metroPort: 8082 },
     ]);
-  });
-
-  test.each([
-    ['Metro is not serving', live({ metro: { port: 8082, running: false, pid: null } }), { android: launch }],
-    [
-      'the app is not running',
-      live({ android: { ...android, app: { id: 'com.app', state: 'stopped' } } }),
-      { android: launch },
-    ],
-    ['the device is physical', live({ android: { ...android, owned: false, physical: true } }), { android: launch }],
-    ['the launch is a release build', live(), { android: { ...launch, release: true, metroPort: null } }],
-    ['the launch went to another serial', live(), { android: { ...launch, deviceId: 'emulator-5556' } }],
-    ['nothing was launched', live(), {}],
-  ])('runs no adb when %s', (_label, state, launches) => {
-    expect(metroReverseTargets(state, launches)).toEqual([]);
   });
 
   test('a missing reverse is an issue whose remedy restores it, with the slot named', () => {

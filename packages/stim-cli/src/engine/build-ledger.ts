@@ -152,18 +152,14 @@ function lineId(line: string): unknown {
   }
 }
 
-/**
- * The ledger file's text after appending `line`, keeping only the newest `cap` complete records. A run that records
- * twice (an Android launch that fails after the build was recorded) replaces its earlier record.
- */
-export function appendCapped(existing: string, line: string, cap: number = BUILD_LEDGER_CAP): string {
+function appendCapped(existing: string, line: string, cap: number = BUILD_LEDGER_CAP): string {
   const id = lineId(line);
   const lines = existing.split('\n').filter((each) => each.trim() !== '' && (id === undefined || lineId(each) !== id));
   lines.push(line);
   return `${lines.slice(-cap).join('\n')}\n`;
 }
 
-export function appendBuildLedger(record: BuildLedgerRecord, file: string = buildLedgerFile()): void {
+function appendBuildLedger(record: BuildLedgerRecord, file: string = buildLedgerFile()): void {
   withDirLock(
     buildLedgerLock(),
     () => {

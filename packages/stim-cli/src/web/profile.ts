@@ -37,7 +37,7 @@ export function removeSingletonFiles(profile: string): void {
 }
 
 /** Whether a process in group `pgid` in a `ps -o pgid=,command=` listing has `profile` as its Chrome user data dir. */
-export function groupRunsProfile(listing: string, pgid: number, profile: string): boolean {
+function groupRunsProfile(listing: string, pgid: number, profile: string): boolean {
   const flag = `--user-data-dir=${profile}`;
   return listing.split('\n').some((line) => {
     const row = /^\s*(\d+)\s+(.*)$/.exec(line);

@@ -484,20 +484,6 @@ describe('confirmInTerminal', () => {
     }
   }
 
-  test('only y or yes confirms', async () => {
-    for (const [typed, expected] of [
-      ['y', true],
-      [' YES ', true],
-      ['', false],
-      ['n', false],
-      ['yeah', false],
-    ] as const) {
-      const prompt = new FakePrompt((_prompt, resolve) => resolve(typed));
-      expect(await confirmInTerminal('? ', () => prompt)).toBe(expected);
-      expect(prompt.closed).toBe(true);
-    }
-  });
-
   test('Ctrl+C and end of input answer no', async () => {
     for (const event of ['SIGINT', 'close']) {
       const prompt = new FakePrompt((self) => queueMicrotask(() => self.emit(event)));

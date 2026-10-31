@@ -6,7 +6,7 @@ interface MacosStatusFacts {
   warning?: string;
 }
 
-export function applyHostedMacosProbe(record: MacosAppRecord, probe: HostedMacosProbe): MacosStatusFacts {
+function applyHostedMacosProbe(record: MacosAppRecord, probe: HostedMacosProbe): MacosStatusFacts {
   if (!record.host || probe.state === 'ready') return { record };
   const { machine, session } = record.host;
   if (probe.state === 'stopped') {

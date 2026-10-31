@@ -2,7 +2,7 @@ import { isJsonObject, readHostedAppMetadata, readHostedSessions } from '@stim-c
 import type { Finding } from '../diagnostics/doctor.ts';
 import { loadConfig } from '../workspace/config.ts';
 
-export function hostedAgentDriverFinding(driver: unknown, apps: number): Finding | null {
+function hostedAgentDriverFinding(driver: unknown, apps: number): Finding | null {
   if (apps === 0 || (driver !== undefined && driver !== 'none')) return null;
   return {
     code: 'hosted-agent-driver',

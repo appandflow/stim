@@ -112,7 +112,7 @@ export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean, wrong?:
   };
 }
 
-export function ago(iso: string | undefined, now: number): string | null {
+function ago(iso: string | undefined, now: number): string | null {
   const then = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(then) || then <= 0) return null;
   const minutes = Math.max(0, Math.round((now - then) / 60_000));

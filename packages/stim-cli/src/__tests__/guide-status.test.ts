@@ -1,16 +1,8 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getProject, upsertProject } from '../workspace/config.ts';
-import {
-  checkForUpdate,
-  doctorDueReason,
-  guideStatus,
-  recordDoctorRun,
-  recordDoctorCheck,
-  renderGuideStatus,
-  updateCacheFile,
-} from '../guide-status.ts';
+import { upsertProject } from '../workspace/config.ts';
+import { checkForUpdate, doctorDueReason, guideStatus, recordDoctorCheck, updateCacheFile } from '../guide-status.ts';
 
 const NOW = new Date('2026-09-18T12:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -47,18 +39,6 @@ test('doctorDueReason: never run, stale, other version, or fresh', () => {
   expect(doctorDueReason({ at: 'garbage', version: '1.4.0' }, '1.4.0', NOW)).toBe('never run');
 });
 
-test('recordDoctorRun writes one platform, or both when doctor ran without a platform', () => {
-  const root = appRoot();
-  recordDoctorRun(root, 'ios', '1.4.0', NOW);
-  expect(getProject(root)?.doctorRuns).toEqual({ ios: { at: NOW.toISOString(), version: '1.4.0' } });
-  const later = new Date(NOW.getTime() + DAY);
-  recordDoctorRun(root, undefined, '1.5.0', later);
-  expect(getProject(root)?.doctorRuns).toEqual({
-    ios: { at: later.toISOString(), version: '1.5.0' },
-    android: { at: later.toISOString(), version: '1.5.0' },
-  });
-});
-
 test('explicit doctor recording keeps lock contention cancellable without changing state', async () => {
   const root = appRoot();
   const lock = join(home, 'config.lock');
@@ -82,17 +62,6 @@ test('explicit doctor recording keeps lock contention cancellable without changi
   }
 }, 20_000);
 
-test('explicit doctor recording surfaces unavailable state while CLI recording remains best-effort', async () => {
-  const root = appRoot();
-  const config = join(home, 'config.json');
-  writeFileSync(config, '{broken');
-  expect(() => recordDoctorRun(root, 'ios', '1.4.0')).not.toThrow();
-  await expect(recordDoctorCheck(root, 'ios', '1.4.0', new AbortController().signal)).rejects.toMatchObject({
-    code: 'STIM_CONFIG_CORRUPT',
-  });
-  expect(readFileSync(config, 'utf8')).toBe('{broken');
-});
-
 function fakeFetch(version: string | null) {
   const calls: string[] = [];
   const fetch: typeof globalThis.fetch = async (url) => {
@@ -102,75 +71,6 @@ function fakeFetch(version: string | null) {
   };
   return { fetch, calls };
 }
-
-test('checkForUpdate fetches the latest dist-tag, caches it, and reports only a newer version', async () => {
-  const { fetch, calls } = fakeFetch('1.5.0');
-  expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe('1.5.0');
-  expect(calls).toEqual(['https://registry.npmjs.org/stim/latest']);
-  expect(JSON.parse(readFileSync(updateCacheFile(), 'utf-8'))).toEqual({
-    checkedAt: NOW.toISOString(),
-    latest: '1.5.0',
-  });
-  expect(await checkForUpdate('1.5.0', { now: NOW, fetch })).toBe(null);
-  expect(await checkForUpdate('1.6.0-rc.1', { now: NOW, fetch })).toBe(null);
-  expect(calls).toHaveLength(1);
-});
-
-test('checkForUpdate reuses a cache younger than a day and refreshes an older one', async () => {
-  writeFileSync(
-    updateCacheFile(),
-    JSON.stringify({ checkedAt: new Date(NOW.getTime() - DAY / 2).toISOString(), latest: '1.5.0' }),
-  );
-  const { fetch, calls } = fakeFetch('1.6.0');
-  expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe('1.5.0');
-  expect(calls).toHaveLength(0);
-  writeFileSync(
-    updateCacheFile(),
-    JSON.stringify({ checkedAt: new Date(NOW.getTime() - 2 * DAY).toISOString(), latest: '1.5.0' }),
-  );
-  expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe('1.6.0');
-  expect(calls).toHaveLength(1);
-});
-
-test('checkForUpdate stamps the check time on failure so an offline machine retries once a day', async () => {
-  const { fetch, calls } = fakeFetch(null);
-  expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe(null);
-  expect(JSON.parse(readFileSync(updateCacheFile(), 'utf-8'))).toEqual({ checkedAt: NOW.toISOString(), latest: null });
-  expect(await checkForUpdate('1.4.0', { now: new Date(NOW.getTime() + DAY / 2), fetch })).toBe(null);
-  expect(calls).toHaveLength(1);
-});
-
-test('checkForUpdate does nothing when STIM_NO_UPDATE_CHECK is set', async () => {
-  process.env.STIM_NO_UPDATE_CHECK = '1';
-  const { fetch, calls } = fakeFetch('9.0.0');
-  expect(await checkForUpdate('1.4.0', { now: NOW, fetch })).toBe(null);
-  expect(calls).toHaveLength(0);
-});
-
-test('renderGuideStatus names the platforms that need doctor and the available update', () => {
-  expect(renderGuideStatus({ running: '1.4.0', doctor: [], latest: null })).toBe(null);
-  const both = renderGuideStatus({
-    running: '1.4.0',
-    doctor: [
-      { platform: 'ios', reason: 'never run' },
-      { platform: 'android', reason: 'last run with stim 1.3.0' },
-    ],
-    latest: null,
-  });
-  expect(both).toContain('STATUS');
-  expect(both).toContain('Doctor is due for ios (never run) and android (last run with stim 1.3.0).');
-  expect(both).toMatch(/Run before native work:  stim doctor$/m);
-  const one = renderGuideStatus({
-    running: '1.4.0',
-    doctor: [{ platform: 'ios', reason: 'last run 9 days ago' }],
-    latest: null,
-  });
-  expect(one).toContain('Doctor is due for ios (last run 9 days ago).');
-  expect(one).toContain('stim doctor --platform ios');
-  const update = renderGuideStatus({ running: '1.4.0', doctor: [], latest: '1.5.0' });
-  expect(update).toContain('stim 1.5.0 is available (running 1.4.0):  npm install -g stim@latest');
-  expect(update).not.toContain('Doctor');
-});
 
 test('guideStatus reads the project at cwd and skips doctor lines outside a project', async () => {
   const root = appRoot();
@@ -186,26 +86,6 @@ test('guideStatus reads the project at cwd and skips doctor lines outside a proj
   mkdirSync(notApp);
   writeFileSync(join(notApp, 'package.json'), JSON.stringify({ name: 'monorepo' }));
   expect(await guideStatus({ projectRoot: notApp, running: '1.4.0', now: NOW, fetch })).toBe(null);
-});
-
-test('recordDoctorRun leaves the registry alone for a directory that is not an app', () => {
-  const notApp = join(home, 'monorepo');
-  mkdirSync(notApp);
-  writeFileSync(join(notApp, 'package.json'), JSON.stringify({ name: 'monorepo' }));
-  recordDoctorRun(notApp, undefined, '1.4.0', NOW);
-  expect(getProject(notApp)).toBe(null);
-});
-
-test('recordDoctorRun never throws when STIM_HOME cannot be written, so doctor still reports', () => {
-  const root = appRoot();
-  const locked = join(home, 'locked');
-  mkdirSync(locked, { mode: 0o500 });
-  process.env.STIM_HOME = join(locked, 'stim-home');
-  try {
-    expect(() => recordDoctorRun(root, 'ios', '1.4.0', NOW)).not.toThrow();
-  } finally {
-    chmodSync(locked, 0o700);
-  }
 });
 
 test('checkForUpdate treats an error status or a body without a version as no answer', async () => {

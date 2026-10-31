@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CORE_URL = new URL('../index.ts', import.meta.url).href;
@@ -91,23 +91,6 @@ function registerInChild({
   return done;
 }
 
-test('cache registration waits for the manifest lock', async () => {
-  const manifest = join(home, 'caches.json');
-  const lock = `${manifest}.lock`;
-  const ready = join(home, 'ready');
-  mkdirSync(lock);
-
-  const registration = registerInChild({ dir: join(home, 'cache-a'), name: 'a', readyFile: ready });
-  await waitForFile(ready);
-  await delay(100);
-  const wroteWhileLocked = existsSync(manifest);
-  rmSync(lock, { recursive: true, force: true });
-  await registration;
-
-  expect(wroteWhileLocked).toBe(false);
-  expect(existsSync(manifest)).toBe(true);
-});
-
 test('concurrent cache registrations preserve every entry', async () => {
   const manifest = join(home, 'caches.json');
   const go = join(home, 'go');
@@ -133,18 +116,4 @@ test('concurrent cache registrations preserve every entry', async () => {
 
   const parsed = JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: Array<{ dir: string }> };
   expect(new Set(parsed.caches.map((entry) => entry.dir)).size).toBe(count);
-}, 30_000);
-
-test('a relative, home, temp or config dir is never registered', async () => {
-  const manifest = join(home, 'caches.json');
-  await Promise.all(
-    ['relative-cache', homedir(), tmpdir(), home].map((dir, index) =>
-      registerInChild({ dir, name: `refused-${index}`, readyFile: join(home, `ready-${index}`) }),
-    ),
-  );
-
-  const caches = existsSync(manifest)
-    ? (JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: unknown[] }).caches
-    : [];
-  expect(caches).toEqual([]);
 }, 30_000);

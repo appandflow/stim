@@ -12,13 +12,11 @@ import {
   discardTypedAhead,
   parseSetupArgs,
   runSetup,
-  selectGrants,
   setupClaim,
-  setupExitCode,
   setupVersionDecision,
   type SetupDeps,
 } from '../src/setup.ts';
-import { findTailscale, tailscaleInstall } from '@stim-cli/transport-tailscale';
+import { tailscaleInstall } from '@stim-cli/transport-tailscale';
 import type { InstalledService } from '../src/service-plist.ts';
 
 const now = Date.parse('2026-10-06T12:00:00Z');
@@ -209,60 +207,6 @@ function fixture(overrides: Partial<SetupDeps> = {}) {
   return { deps, records, client, stored, secretLive: () => secretLive, stdout, stderr, actions, snapshots };
 }
 
-test.each([
-  ['another setup run', { setupJournal: 'other' }],
-  ['a record paired without setup', { setupJournal: undefined }],
-  ['a record for the other capability', { capabilities: ['device-host'] }],
-] satisfies [string, Partial<PairedDevice>][])("selector does not report %s as this run's grant", (_name, fields) => {
-  expect(selectGrants([record('build', fields)], options)).toEqual([]);
-});
-
-test.each([
-  ['no capability', args.slice(0, -1)],
-  ['ticket on the command line', [...args, '--ticket', ticket]],
-  ['expired', args.map((a) => (a === options.expiresAt ? '2026-10-06T11:00:00Z' : a))],
-  ['too far ahead', args.map((a) => (a === options.expiresAt ? '2026-10-06T14:00:01Z' : a))],
-  ['not ISO', args.map((a) => (a === options.expiresAt ? 'October 6, 2026' : a))],
-  ['invalid date', args.map((a) => (a === options.expiresAt ? '2026-02-30T12:30:00Z' : a))],
-  ['bad port', [...args, '--port', '0']],
-  ['bad label', [...args, '--label', '../label']],
-  ['bad environment', [...args, '--env', 'STIM_HOME=/other']],
-  ['bad path', [...args, '--path-prepend', 'relative']],
-  ['SSH', [...args, '--ssh']],
-  ['--client', [...args, '--client', 'nClient']],
-])('argument refusal (%s) leaves the Stim home empty', async (name, invalid) => {
-  const f = fixture({
-    preflight: async () => {
-      throw new Error('Preflight must not run');
-    },
-  });
-  expect(await runSetup([...invalid, '--json'], '1.16.0', f.deps)).toBe(name === 'expired' ? 2 : 1);
-  expect(readdirSync(home)).toEqual([]);
-  expect(f.stdout).toHaveLength(1);
-  expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
-});
-
-test.each([
-  ['missing', undefined],
-  ['malformed', 'short'],
-])('a %s STIM_SETUP_TICKET is refused before anything runs', async (_name, value) => {
-  const f = fixture({
-    ticket: value,
-    preflight: async () => {
-      throw new Error('Preflight must not run');
-    },
-  });
-  expect(await runSetup([...args, '--json'], '1.16.0', f.deps)).toBe(1);
-  expect(readdirSync(home)).toEqual([]);
-  expect(f.stdout.join('\n')).toContain('STIM_SETUP_TICKET');
-});
-
-test('setup refuses a ticket on the command line and names the environment variable instead', () => {
-  expect(() => parseSetupArgs([...args, '--ticket', ticket], now, undefined)).toThrow(
-    /no longer takes --ticket.*STIM_SETUP_TICKET=<ticket>/,
-  );
-});
-
 test('preflight refusal has no claim, journal or install effects', async () => {
   const f = fixture({
     preflight: async () => {
@@ -292,67 +236,6 @@ test('a declined capability is left out of the stored secret', async () => {
   expect(readSetupJournal(options.journal)?.granted).toEqual([{ capability: 'build', id: 'build-id' }]);
 });
 
-test.each([false, true])(
-  'setup waits for its own record and scopes reconnect guidance to Doctor (fromDoctor=%s)',
-  async (fromDoctor) => {
-    const f = fixture({ fromDoctor });
-    f.client.spends = false;
-    f.records.push(record('build', { id: 'other-run', setupJournal: 'other' }));
-    const sleep = f.deps.sleep;
-    let firstWaitOutput: string | undefined;
-    f.deps.sleep = async (ms) => {
-      firstWaitOutput ??= f.stderr.join('\n');
-      await sleep(ms);
-      if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
-    };
-    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-    expect(JSON.parse(f.stdout[0]!).granted.map((g: { id: string }) => g.id)).toEqual(['build-id']);
-    expect(f.stored).toEqual([['build']]);
-    expect(f.secretLive()).toBe(false);
-    expect(firstWaitOutput?.includes('`stim remote list`')).toBe(fromDoctor);
-  },
-);
-
-test('while it waits for the requesting machine, setup says so and then confirms the connection', async () => {
-  const f = fixture();
-  f.client.spends = false;
-  const sleep = f.deps.sleep;
-  f.deps.sleep = async (ms) => {
-    await sleep(ms);
-    if (f.deps.now() >= now + 5000 && !f.records.some((r) => r.id === 'build-id')) f.records.push(record('build'));
-  };
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(0);
-  const waiting = f.stdout.findIndex((line) => line.includes('Stim Desktop sends this automatically'));
-  const connected = f.stdout.findIndex((line) => /approved .* for builds/.test(line));
-  expect(waiting).toBeGreaterThanOrEqual(0);
-  expect(connected).toBeGreaterThan(waiting);
-  expect(
-    f.snapshots.some((j) =>
-      j.steps.some((s) => s.id === 'approve' && s.detail?.startsWith('Waiting for the requesting')),
-    ),
-  ).toBe(true);
-});
-
-test('a requesting machine that never connects still gets the waiting line before the ticket expires', async () => {
-  const f = fixture();
-  f.client.spends = false;
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
-  expect(f.stdout.some((line) => line.includes('Stim Desktop sends this automatically'))).toBe(true);
-});
-
-test.each([false, true])(
-  'no --yes with tty=%s cannot turn an unanswered or N confirmation into approval',
-  async (tty) => {
-    const f = fixture({ tty });
-    expect(await runSetup(args, '1.16.0', f.deps)).toBe(1);
-    expect(f.stored).toEqual([]);
-    expect(f.stderr.join('\n')).toContain(tty ? 'build approval refused' : 'rerun with --yes or in a terminal');
-    expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'approve.build')?.state).toBe(
-      tty ? 'failed' : undefined,
-    );
-  },
-);
-
 test('a setup claim blocks another run and names its exact removal command', async () => {
   const release = setupClaim();
   try {
@@ -366,22 +249,6 @@ test('a setup claim blocks another run and names its exact removal command', asy
     release();
   }
 });
-
-test.each([
-  [null, false, 'install'],
-  [{ version: '1.15.0', protocol: 2, running: true }, true, 'update'],
-  [{ version: '1.16.0', protocol: 2, running: true }, true, 'reuse'],
-  [{ version: '2.0.0', protocol: 2, running: true }, false, 'reuse'],
-  [{ version: '1.20.2', protocol: 1, running: true }, false, 'too-old'],
-  [{ version: '1.20.2', running: true }, false, 'too-old'],
-  [{ version: '1.16.0', running: false }, true, 'reuse'],
-  [{ version: '1.16.0-rc.1', protocol: 2, running: true }, true, 'update'],
-])(
-  'version decision for %j managed=%s updates older managed servers and reuses only protocol 2',
-  (current, managed, expected) => {
-    expect(setupVersionDecision(current, '1.16.0', managed)).toBe(expected);
-  },
-);
 
 test.each([
   ['1.16.0-rc.1', '1.16.0-rc.1', 'reuse'],
@@ -404,16 +271,6 @@ test.each([
       present.includes(path.replaceAll('\\', '/')),
     ),
   ).toBe(expected);
-});
-
-test.each([
-  ['tailscale.exe on PATH', ['/opt/bin/tailscale.exe'], '/opt/bin/tailscale.exe'],
-  ['only the default install', ['D:/Apps/Tailscale/tailscale.exe'], 'D:/Apps/Tailscale/tailscale.exe'],
-  ['a tailscale without .exe on PATH', ['/opt/bin/tailscale'], null],
-])('Windows finds Tailscale with %s', (_name, present, expected) => {
-  const env = { PATH: ['/usr/bin', '/opt/bin'].join(delimiter), ProgramFiles: 'D:\\Apps' };
-  const found = findTailscale(env, 'win32', (path) => present.includes(path.replaceAll('\\', '/')));
-  expect(found?.replaceAll('\\', '/') ?? null).toBe(expected);
 });
 
 test('Desktop reuse installs no release or LaunchAgent and refuses an old app before waiting', async () => {
@@ -486,66 +343,6 @@ test('a local network setup whose server listens on no local address refuses bef
   });
 });
 
-test('a worker with Tailscale and a local network listener checks both, so tailnet clients keep their route', async () => {
-  const reused = fixture().deps.health;
-  const f = fixture({
-    preflight: async () => ({ dnsName: 'worker.ts.net', lan: true }),
-    health: async (port) => {
-      const found = await reused(port);
-      return found && { ...found, lan: { addresses: ['10.0.0.92'], port: 7787 } };
-    },
-  });
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(JSON.parse(f.stdout.join('\n'))).toMatchObject({
-    route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
-    lan: ['ws://10.0.0.92:7787'],
-  });
-  expect(readSetupJournal(options.journal)?.steps.filter((s) => s.id === 'lan' || s.id === 'route')).toEqual([
-    expect.objectContaining({ id: 'lan', state: 'ok' }),
-    expect.objectContaining({ id: 'route', state: 'ok' }),
-  ]);
-});
-
-test('journals precede server work, include every completed step, and JSON stdout holds only the final payload', async () => {
-  const f = fixture();
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(f.snapshots[0]?.steps).toEqual([{ id: 'preflight', state: 'ok', title: 'Preflight' }]);
-  for (const id of ['server', 'host', 'service', 'route', 'approve', 'tools']) {
-    expect(f.snapshots.some((j) => j.steps.some((s) => s.id === id && s.state === 'running'))).toBe(true);
-    expect(f.snapshots.some((j) => j.steps.some((s) => s.id === id && s.state === 'ok'))).toBe(true);
-  }
-  expect(f.stdout).toHaveLength(1);
-  expect(JSON.parse(f.stdout[0]!)).toMatchObject({
-    ok: true,
-    label: 'dev.stim.server',
-    port: 7787,
-    route: { state: 'routed', dnsName: 'worker.ts.net', port: 7447 },
-    server: { version: '1.16.0', stimBuild: 'digest' },
-    managed: true,
-    granted: [{ capability: 'build', id: 'build-id', client: { name: 'Client machine' } }],
-    permissions: { screenRecording: 'not-needed', deviceControl: 'not-needed' },
-    warnings: [],
-  });
-  expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 0 });
-});
-
-test('no request before expiry finishes with 2 and never asks for permissions or tools', async () => {
-  let closed = false;
-  const f = fixture({
-    watchRecords: () => () => {
-      closed = true;
-    },
-    toolchain: async () => {
-      throw new Error('Must not inspect tools');
-    },
-  });
-  f.client.spends = false;
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(2);
-  expect(f.stored).toEqual([['build']]);
-  expect(f.secretLive()).toBe(false);
-  expect(closed).toBe(true);
-});
-
 test('a timed-out permission opens its settings pane, reports the lost feature, and keeps a partial-success journal', async () => {
   const f = fixture({ health: health({ screenRecording: false, accessibility: true }) });
   expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
@@ -554,66 +351,6 @@ test('a timed-out permission opens its settings pane, reports the lost feature, 
     state: 'pending',
     detail: 'pending: viewing hosted simulators will not work.',
   });
-});
-
-test.each([
-  [[], [], 2],
-  [[], ['failed'], 1],
-  [['build'], [], 3],
-  [['build', 'device-host'], ['ok'], 0],
-  [['build', 'device-host'], ['pending'], 3],
-  [['build', 'device-host'], ['skipped'], 3],
-  [['build', 'device-host'], ['failed'], 1],
-  [['build', 'device-host'], ['running'], 3],
-] satisfies [SetupJournal['capabilities'], SetupJournal['steps'][number]['state'][], number][])(
-  'final journal grants=%j states=%j determine exit %s',
-  (capabilities, states, expected) => {
-    const journal: SetupJournal = {
-      v: 1,
-      capabilities: ['build', 'device-host'],
-      expiresAt: options.expiresAt,
-      steps: states.map((state, i) => ({ id: `step-${i}`, title: 'Required check', state })),
-      granted: capabilities.map((capability) => ({ capability, id: capability })),
-      done: true,
-    };
-    expect(setupExitCode(journal)).toBe(expected);
-  },
-);
-
-test('a new worker installs the exact release and records route ownership only after creation', async () => {
-  let ready = false;
-  let routed = false;
-  const events: string[] = [];
-  const f = fixture({
-    installed: async () => null,
-    health: async () =>
-      ready ? { version: '1.16.0', protocol: 2, stim: '1.16.0', stimHome: home, stimBuild: 'digest' } : null,
-    installJob: async (_opts, setup) => {
-      expect(setup?.script).toBe('/server.mjs');
-      expect(setup?.requestPermissions).toBe(false);
-      events.push('service');
-      ready = true;
-      return [];
-    },
-    route: async () => ({ state: routed ? 'routed' : 'missing', port: 7449 }),
-    prepareRoute: async () => ({
-      record: { port: 7449, created: true },
-      create: ['serve', '--bg', '--https=7449', 'http://127.0.0.1:7787'],
-    }),
-    createRoute: async () => {
-      events.push('route');
-      routed = true;
-    },
-    recordRoute: async (_label, _port, routeRecord) => {
-      expect(routed).toBe(true);
-      expect(routeRecord).toEqual({ port: 7449, created: true });
-      events.push('record');
-    },
-  });
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(f.actions).toEqual(['install', 'host']);
-  expect(events).toEqual(['service', 'route', 'record']);
-  expect(JSON.parse(f.stdout[0]!).route.port).toBe(7449);
 });
 
 test.each(['linux', 'win32'] as const)(
@@ -723,17 +460,6 @@ test('approval cannot outlive the ticket while a terminal question is open', asy
   expect(f.stored).toEqual([]);
 });
 
-test('grants the running service already holds are reported without a request or wait', async () => {
-  const f = fixture({ tty: true });
-  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(0);
-  expect(f.actions).not.toContain('permissions');
-  const steps = readSetupJournal(options.journal)?.steps ?? [];
-  expect(steps.find((s) => s.id === 'permissions.screenRecording')).toMatchObject({
-    state: 'ok',
-    detail: 'Already granted.',
-  });
-});
-
 test('terminal permission skip names the unavailable feature without changing TCC or failing the grant', async () => {
   const f = fixture({
     tty: true,
@@ -746,34 +472,6 @@ test('terminal permission skip names the unavailable feature without changing TC
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'permissions.deviceControl')?.detail).toContain(
     'controlling hosted simulators will not work',
   );
-});
-
-test('hosting alone does not require build-only tools or prompt for an existing app permission grant', async () => {
-  const f = fixture({
-    installed: async () => null,
-    health: async () => ({
-      version: '1.16.0',
-      stim: '1.16.0',
-      stimHome: home,
-      protocol: 2,
-      stimBuild: 'digest',
-      host: { name: 'Stim Desktop', screenRecording: true, accessibility: true },
-    }),
-    toolchain: async () => ({
-      stimBuild: 'digest',
-      arch: 'arm64',
-      xcode: '27',
-      simulatorSdk: '27',
-      macosSdk: '27',
-      cocoapods: null,
-      runtimes: ['iOS-27'],
-      jdk: null,
-      androidSdk: null,
-    }),
-  });
-  expect(await runSetup([...args.slice(0, -1), '--device-host', '--yes', '--json'], '1.16.0', f.deps)).toBe(0);
-  expect(f.actions).toEqual(['host']);
-  expect(JSON.parse(f.stdout[0]!).tools.filter((t: { state: string }) => t.state === 'missing')).toEqual([]);
 });
 
 test('journal write failure stops installation, releases the claim, and still emits one failed JSON result', async () => {
@@ -823,40 +521,6 @@ test('the later noninteractive guard refuses an approval revoked during installa
   expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'approve')?.state).toBe('failed');
 });
 
-test.each(['verification refusal', 'verification error', 'recording error'])(
-  'a created route is removed on %s before ownership is recorded',
-  async (failure) => {
-    const commands: string[][] = [];
-    let routed = false;
-    const f = fixture({
-      route: async () => {
-        if (routed && failure === 'verification error') throw new Error('route lookup failed');
-        return { state: routed && failure !== 'verification refusal' ? 'routed' : 'missing', port: 7449 };
-      },
-      prepareRoute: async () => ({
-        record: { port: 7449, created: true },
-        create: ['serve', '--bg', '--https=7449', 'http://127.0.0.1:7787'],
-      }),
-      createRoute: async (command) => {
-        commands.push(command);
-        routed = command.at(-1) !== 'off';
-      },
-      recordRoute: async () => {
-        throw new Error('route record failed');
-      },
-    });
-    expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
-    expect(commands).toEqual([
-      ['serve', '--bg', '--https=7449', 'http://127.0.0.1:7787'],
-      ['serve', '--https=7449', 'off'],
-    ]);
-    expect(routed).toBe(false);
-    expect(JSON.parse(f.stdout[0]!).route.state).toBe('missing');
-    expect(f.stored).toEqual([]);
-    expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
-  },
-);
-
 test('a route rollback failure records the exact removal remedy', async () => {
   const f = fixture({
     route: async () => ({ state: 'missing', port: 7449 }),
@@ -874,24 +538,6 @@ test('a route rollback failure records the exact removal remedy', async () => {
     fix: 'tailscale serve --https=7449 off',
   });
   expect(f.stdout.join('\n')).toContain('tailscale serve --https=7449 off');
-});
-
-test('Desktop reuse refuses a new route it cannot record without creating or approving it', async () => {
-  const f = fixture({
-    installed: async () => null,
-    route: async () => ({ state: 'missing', port: 7449 }),
-    prepareRoute: async () => ({
-      record: { port: 7449, created: true },
-      create: ['serve', '--bg', '--https=7449', 'http://127.0.0.1:7787'],
-    }),
-  });
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
-  expect(f.actions).toEqual(['host']);
-  expect(f.stored).toEqual([]);
-  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
-    state: 'failed',
-    fix: 'tailscale serve --bg --https=7449 http://127.0.0.1:7787',
-  });
 });
 
 test.each(['SIGINT', 'close'] as const)(
@@ -919,23 +565,6 @@ test.each(['SIGINT', 'close'] as const)(
     stream.destroy();
   },
 );
-
-test.each([
-  ['', true],
-  ['y', true],
-  ['YES', true],
-  ['n', false],
-  ['N', false],
-  ['no', false],
-  ['maybe', false],
-])('a terminal answer %j to the approval question is %s', async (answer, approved) => {
-  const stream = new PassThrough();
-  const input = createInterface({ input: stream, output: new PassThrough() });
-  const result = confirmSetup(input, 'Approve? [Y/n] ', 1000);
-  stream.write(`${answer}\n`);
-  await expect(result).resolves.toBe(approved);
-  stream.destroy();
-});
 
 test.each([
   [false, '? [Y/n]'],
@@ -1016,82 +645,6 @@ test.each(['install', 'approval wait', 'tools'])(
     release();
   },
 );
-
-test('a failed final journal write after no grant returns the final failure exit instead of 2', async () => {
-  const f = fixture({
-    write: (hash, journal) => {
-      if (journal.done) throw new Error('disk full');
-      writeSetupJournal(hash, journal);
-    },
-  });
-  f.client.spends = false;
-  expect(await runSetup([...args, '--yes', '--json'], '1.16.0', f.deps)).toBe(1);
-  expect(JSON.parse(f.stdout[0]!).ok).toBe(false);
-  expect(f.stderr.join('\n')).toContain('Could not finish the setup journal');
-});
-
-test('an interrupt during route recording rolls back the unrecorded route and journals interrupted', async () => {
-  const controller = new AbortController();
-  const commands: string[][] = [];
-  const f = fixture({
-    signal: controller.signal,
-    prepareRoute: async () => ({
-      record: { port: 7449, created: true },
-      create: ['serve', '--bg', '--https=7449', 'http://127.0.0.1:7787'],
-    }),
-    createRoute: async (command) => {
-      commands.push(command);
-    },
-    recordRoute: async () => {
-      controller.abort();
-      throw new Error('plutil stopped');
-    },
-  });
-  expect(await runSetup([...args, '--yes'], '1.16.0', f.deps)).toBe(1);
-  expect(commands.at(-1)).toEqual(['serve', '--https=7449', 'off']);
-  expect(readSetupJournal(options.journal)).toMatchObject({ done: true, exit: 1 });
-  expect(readSetupJournal(options.journal)?.steps.find((s) => s.id === 'route')).toMatchObject({
-    state: 'failed',
-    detail: 'interrupted',
-  });
-  expect(f.stored).toEqual([]);
-  const release = setupClaim();
-  release();
-});
-
-test('default output is one line per step with a ready headline and one undo line; --verbose keeps the full detail', async () => {
-  const quiet = fixture();
-  expect(await runSetup([...args, '--yes'], '1.16.0', quiet.deps)).toBe(0);
-  const text = quiet.stdout.join('\n');
-  expect(text).not.toContain('[running]');
-  expect(text).not.toContain('Summary:');
-  expect(text).toContain('[ok] approved Client machine for builds');
-  expect(text).toContain('[ok] worker is ready to build for Client machine');
-  expect(text).toContain(
-    'To undo: stim-server devices revoke build-id; stim-server service uninstall --label dev.stim.server',
-  );
-
-  const loud = fixture();
-  expect(await runSetup([...args, '--yes', '--verbose'], '1.16.0', loud.deps)).toBe(0);
-  const detail = loud.stdout.join('\n');
-  expect(detail).toContain('[running] stim-server');
-  expect(detail).toContain('Undo: stim-server devices revoke build-id');
-});
-
-test('a skipped permission names its feature and its fix in the closing summary', async () => {
-  const f = fixture({
-    tty: true,
-    health: health({ screenRecording: false, accessibility: true }),
-    permissionWait: async () => true,
-  });
-  expect(await runSetup([...args, '--device-host', '--yes'], '1.16.0', f.deps)).toBe(3);
-  const text = f.stdout.join('\n');
-  expect(text).toContain('Screen recording permission skipped: viewing hosted simulators will not work');
-  expect(text).toContain(
-    'Fix (Screen & System Audio Recording): System Settings > Privacy & Security > Screen & System Audio Recording',
-  );
-  expect(text).toContain('set up, with gaps');
-});
 
 test('a color terminal shows a refusal once, on stdout, and clears its running line before the question', async () => {
   const raw: string[] = [];

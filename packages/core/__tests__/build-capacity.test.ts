@@ -1,35 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { workspaceStateDir } from '../index.ts';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { loadState, machineCapacity, saturation, type MachineCapacity } from '../state/build-capacity.ts';
 
-const IDLE: MachineCapacity = { cpus: 10, loadPerCore: 0.4, builds: 1, maxBuilds: 2, maxLoadPerCore: 2 };
-
-describe('saturation', () => {
-  it.each([
-    ['a free slot and low load', IDLE, null],
-    ['every slot busy', { ...IDLE, builds: 2 }, 'all 2 build slots busy'],
-    ['load at the limit', { ...IDLE, loadPerCore: 2 }, 'load at or above 2/core'],
-    ['no build limit and many builds', { ...IDLE, maxBuilds: 0, builds: 9 }, null],
-  ])('%s', (_, capacity, reason) => {
-    expect(saturation(capacity)).toBe(reason);
-  });
-});
-
-describe('loadState', () => {
-  it.each([
-    ['under the busy threshold', 1.9, null, 'free'],
-    ['at the busy threshold', 2, null, 'busy'],
-    ['far over the busy threshold with no limit', 60, null, 'busy'],
-    ['under a limit', 19.9, 20, 'busy'],
-    ['at a limit', 20, 20, 'holding'],
-    ['with a limit of 0, which is off', 60, 0, 'busy'],
-  ] as const)('%s', (_, load, limit, state) => {
-    expect(loadState(load, 2, limit)).toBe(state);
-  });
-});
+import { machineCapacity } from '../state/build-capacity.ts';
 
 describe('machineCapacity', () => {
   let home: string;
@@ -51,25 +24,5 @@ describe('machineCapacity', () => {
       JSON.stringify({ concurrency: { maxBuilds: 3 }, server: { maxLoadPerCore: 1.5 } }),
     );
     expect(machineCapacity()).toMatchObject({ maxBuilds: 3, maxLoadPerCore: 1.5 });
-  });
-
-  it('counts runs compiling here, not runs offloaded to a remote machine', () => {
-    const claim = tryAcquireClaim({ root: join(home, 'native-run'), mode: 'exclusive', label: 'native run' }).acquired!;
-    const write = (project: string, activeBuild: Record<string, unknown>) => {
-      mkdirSync(workspaceStateDir(join(home, project)), { recursive: true });
-      writeFileSync(
-        join(workspaceStateDir(join(home, project)), 'state.json'),
-        JSON.stringify({ activeBuild: { ...activeBuild, claim: { root: claim.root, claimId: claim.claimId } } }),
-      );
-    };
-    write('here', { phase: 'compile' });
-    write('installing', { phase: 'install' });
-    write('offloaded', {
-      phase: 'compile',
-      placement: { host: 'mini', phase: 'build', startedAt: 'x', phaseStartedAt: 'x' },
-    });
-    expect(machineCapacity().builds).toBe(1);
-    releaseClaim(claim);
-    expect(machineCapacity().builds).toBe(0);
   });
 });

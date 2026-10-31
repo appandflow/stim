@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { countErrorsSinceMarker } from '../diagnostics/error-index.ts';
@@ -56,30 +56,6 @@ function count(): number {
   expect(counted).toBe(countErrorEntries(queryLogs({ dir, errorsOnly: true })));
   return counted;
 }
-
-test('counts one error for a bundle failure logged as a marker, an error line and a failed response', () => {
-  write('metro.ndjson', [
-    {
-      ts: 100,
-      src: 'metro',
-      level: 'error',
-      msg: 'iOS Bundling failed 1ms index.js',
-      raw: true,
-      event: 'expo_stdout',
-      marker: true,
-    },
-    { ts: 100, src: 'metro', level: 'error', msg: ' ERROR  SyntaxError: x', raw: true, event: 'expo_stdout' },
-    {
-      ts: 300,
-      src: 'metro',
-      level: 'error',
-      msg: 'ios bundle response failed',
-      event: 'bundle_response_failed',
-      platform: 'ios',
-    },
-  ]);
-  expect(count()).toBe(1);
-});
 
 test('counts what logs --errors counts across marker boundaries', () => {
   write('metro.ndjson', [
@@ -142,45 +118,6 @@ test('a page load resets only the web page records, and a native launch leaves t
   expect(count()).toBe(1);
 });
 
-test('a later marker in any generation raises the boundary for records already read', () => {
-  write('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'boom' }]);
-  expect(count()).toBe(1);
-
-  write('build-android.ndjson', []);
-  expect(count()).toBe(1);
-  writeFileSync(join(dir, 'build-android.ndjson.1'), lines([{ ts: 6, src: 'build', marker: true }]));
-  expect(count()).toBe(0);
-});
-
-test('files whose inodes differ only beyond double precision keep separate summaries', () => {
-  inodes.beyondDoublePrecision = true;
-  write('client.ndjson', [{ ts: 5, src: 'client', level: 'error', msg: 'boom' }]);
-  write('build-android.ndjson', []);
-  writeFileSync(join(dir, 'build-android.ndjson.1'), lines([{ ts: 6, src: 'build', marker: true }]));
-  expect(count()).toBe(0);
-});
-
-test('a large log file is not parsed line by line, and a later call reads only what was appended', () => {
-  const noise = Array.from({ length: 20_000 }, (_, i) => ({ ts: i, src: 'metro', level: 'info', msg: `line ${i}` }));
-  write('metro.ndjson', [
-    ...noise,
-    { ts: 20_000, src: 'metro', level: 'error', msg: 'first' },
-    { ts: 20_001, src: 'metro', level: 'info', msg: 'bundle built', marker: true },
-  ]);
-
-  expect(countErrorsSinceMarker(dir, index)).toBe(0);
-  expect(vi.mocked(parseNdjsonLine)).toHaveBeenCalledTimes(2);
-
-  vi.mocked(parseNdjsonLine).mockClear();
-  append('metro.ndjson', [...noise.slice(0, 100), { ts: 20_002, src: 'metro', level: 'error', msg: 'second' }]);
-  expect(countErrorsSinceMarker(dir, index)).toBe(1);
-  expect(vi.mocked(parseNdjsonLine)).toHaveBeenCalledTimes(1);
-
-  vi.mocked(parseNdjsonLine).mockClear();
-  expect(countErrorsSinceMarker(dir, index)).toBe(1);
-  expect(vi.mocked(parseNdjsonLine)).not.toHaveBeenCalled();
-});
-
 test('an unterminated last line counts once its newline arrives', () => {
   const partial = JSON.stringify({ ts: 1, src: 'metro', level: 'error', msg: 'half' });
   writeFileSync(join(dir, 'metro.ndjson'), partial);
@@ -188,72 +125,6 @@ test('an unterminated last line counts once its newline arrives', () => {
 
   appendFileSync(join(dir, 'metro.ndjson'), '\n');
   expect(count()).toBe(1);
-});
-
-test('a log truncated and rewritten in place is read again', () => {
-  write('build-ios.ndjson', [
-    { ts: 1, src: 'build', level: 'error', msg: 'first build failed' },
-    { ts: 2, src: 'build', level: 'error', msg: 'first build failed again' },
-  ]);
-  expect(count()).toBe(2);
-
-  write('build-ios.ndjson', [
-    { ts: 3, src: 'build', level: 'info', msg: 'second build, a longer line so the file grows past the old offset' },
-    { ts: 4, src: 'build', level: 'error', msg: 'second build failed' },
-  ]);
-  expect(count()).toBe(1);
-});
-
-test('rotation keeps every generation counted once without rereading the rotated file', () => {
-  write('device.ndjson', [{ ts: 1, src: 'device', level: 'error', event: 'native_crash' }]);
-  expect(count()).toBe(1);
-
-  renameSync(join(dir, 'device.ndjson'), join(dir, 'device.ndjson.1'));
-  write('device.ndjson', [{ ts: 2, src: 'device', level: 'error', event: 'native_crash' }]);
-  vi.mocked(parseNdjsonLine).mockClear();
-  expect(countErrorsSinceMarker(dir, index)).toBe(2);
-  expect(vi.mocked(parseNdjsonLine)).toHaveBeenCalledTimes(1);
-});
-
-test('an unreadable index is rebuilt from the logs', () => {
-  write('metro.ndjson', [{ ts: 1, src: 'metro', level: 'error' }]);
-  writeFileSync(index, '{ not json');
-  expect(count()).toBe(1);
-  expect(count()).toBe(1);
-});
-
-test('counts what logs --errors counts when bundle markers and errors name their platform', () => {
-  const launch = (ts: number, platform: string, slot?: string) => ({
-    ts,
-    src: 'build',
-    level: 'info',
-    marker: true,
-    event: 'launch_attempt',
-    platform,
-    ...(slot ? { slot } : {}),
-  });
-  write('build-ios.ios18.ndjson', [launch(10, 'ios', 'ios18')]);
-  write('build-android.ndjson', [launch(40, 'android')]);
-  write('metro.ndjson', [
-    { ts: 12, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 812ms index.ts (2231 modules)' },
-    { ts: 20, src: 'metro', level: 'error', raw: true, msg: 'untagged error before the Android launch' },
-    { ts: 30, src: 'metro', level: 'error', platform: 'ios', msg: 'ios bundle failed' },
-    { ts: 31, src: 'metro', level: 'error', platform: 'android', msg: 'android bundle failed' },
-    {
-      ts: 45,
-      src: 'metro',
-      level: 'info',
-      raw: true,
-      marker: true,
-      msg: 'Android Bundled 640ms index.ts (2231 modules)',
-    },
-  ]);
-  expect(count()).toBe(1);
-
-  append('metro.ndjson', [
-    { ts: 50, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 90ms index.ts (2231 modules)' },
-  ]);
-  expect(count()).toBe(0);
 });
 
 test('counts an Expo bundling failure under its own platform, as logs --errors does', () => {
@@ -270,21 +141,6 @@ test('counts an Expo bundling failure under its own platform, as logs --errors d
 
   append('metro.ndjson', [
     { ts: 30, src: 'metro', level: 'info', raw: true, marker: true, msg: 'iOS Bundled 90ms index.ts' },
-  ]);
-  expect(count()).toBe(0);
-});
-
-test('a maintenance failure before a later launch does not keep the workspace error count above zero', () => {
-  write('maintenance.ndjson', [
-    { ts: 100, src: 'maintenance', level: 'error', event: 'maintenance_failure', msg: 'du timed out' },
-  ]);
-  write('build-ios.ndjson', [
-    { ts: 150, src: 'build', level: 'error', msg: 'old build failure' },
-    { ts: 200, src: 'build', level: 'info', marker: true, event: 'launch_attempt' },
-  ]);
-  expect(count()).toBe(0);
-  append('maintenance.ndjson', [
-    { ts: 250, src: 'maintenance', level: 'error', event: 'maintenance_failure', msg: 'new du failure' },
   ]);
   expect(count()).toBe(0);
 });

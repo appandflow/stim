@@ -116,7 +116,7 @@ export function parseGradleDaemonCommand(command: string): GradleDaemonCommand |
   return { version, javaHome: java, distribution: jar ? dirname(dirname(jar)) : null };
 }
 
-export function isKotlinDaemonCommand(command: string): boolean {
+function isKotlinDaemonCommand(command: string): boolean {
   return KOTLIN_DAEMON_CLASS.test(command) && !GRADLE_DAEMON_CLASS.test(command);
 }
 
@@ -455,8 +455,7 @@ export function runningBuild(locks: readonly BuildLockInfo[], slots: readonly Bu
   return null;
 }
 
-/** A watchman client's pid resolved to the Stim workspace whose supervisor it is or descends from. */
-export function stimWorkspaceOf(
+function stimWorkspaceOf(
   pid: number,
   parentOf: ReadonlyMap<number, number>,
   supervisors: ReadonlyMap<number, string>,

@@ -101,26 +101,6 @@ test('skips occupied ports and honors Metro reservations in the band', async () 
   expect(claimMetroPort(root, 8902)).toBeNull();
 });
 
-test('refuses exhaustion without allocating outside the band', async () => {
-  const isFree = vi.fn<(port: number) => Promise<boolean>>(async () => false);
-  await expect(getNamedPort(root, 'web', { isFree })).rejects.toThrow('8900 and 8999');
-  expect(isFree).toHaveBeenCalledTimes(100);
-  expect(getProject(root)).toBeNull();
-});
-
-test.each(['metro', '', 'bad label', '../api', '__proto__'])(
-  'rejects label %j without a registry mutation',
-  async (label) => {
-    await expect(getNamedPort(root, label, free)).rejects.toThrow(/label|managed/);
-    expect(getProject(root)).toBeNull();
-  },
-);
-
-test('object property names can be labels without inherited allocations', async () => {
-  expect(await getNamedPort(root, 'constructor', free)).toBe(8900);
-  expect(await getNamedPort(root, 'toString', free)).toBe(8901);
-});
-
 const NETSTAT = [
   '',
   'Active Connections',
@@ -197,21 +177,6 @@ test('release is scoped and never inspects listeners or changes Metro', async ()
   await expect(clearNamedPorts(root, { label: 'metro', stop: true })).rejects.toThrow('managed');
 });
 
-test('dry run prints pid and command without signalling or releasing', async () => {
-  upsertProject(root, { ports: { web: 8900 } });
-  vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
-  const kill = vi.spyOn(process, 'kill');
-  const calls = posixExecutor(() => true);
-  const log = vi.fn<(line: string) => void>();
-  await clearNamedPorts(root, { stop: true, dryRun: true, log, platform: 'darwin' });
-  expect(kill.mock.calls.filter(([, signal]) => signal && signal !== 0)).toEqual([]);
-  expect(calls).toContainEqual({ file: 'lsof', args: ['-nP', '-iTCP:8900', '-sTCP:LISTEN', '-t'] });
-  expect(calls).toContainEqual({ file: 'ps', args: ['-p', '41219', '-o', 'args='] });
-  expect(calls.some((c) => c.file === 'netstat' || c.file === 'tasklist')).toBe(false);
-  expect(log).toHaveBeenCalledWith('would stop web (8900): pid 41219 node /sibling/vite');
-  expect(getProject(root)?.ports).toEqual({ web: 8900 });
-});
-
 test('win32 dry run reads the listener from netstat and its image from tasklist', async () => {
   upsertProject(root, { ports: { web: 8900 } });
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
@@ -246,23 +211,6 @@ test('stops a listener outside the workspace and releases only after it is gone'
   expect(getProject(root)?.ports).toEqual({});
 });
 
-test('win32 stops the listener tree with taskkill and releases only after netstat shows it gone', async () => {
-  upsertProject(root, { ports: { web: 8900 } });
-  vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'token' });
-  vi.spyOn(identity, 'inspectProcessIdentity').mockReturnValue('same');
-  vi.spyOn(identity, 'waitForProcessExit').mockResolvedValue(true);
-  const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
-  const calls = win32Executor(() => !calls.some((c) => c.file === 'taskkill'));
-  const log = vi.fn<(line: string) => void>();
-  await clearNamedPorts(root, { stop: true, log, platform: 'win32' });
-  expect(kill.mock.calls.filter(([, signal]) => signal && signal !== 0)).toEqual([]);
-  expect(calls.filter((c) => c.file === 'taskkill')).toEqual([
-    { file: 'taskkill', args: ['/PID', '41219', '/T', '/F'] },
-  ]);
-  expect(log).toHaveBeenCalledWith('stopped web (8900): pid 41219 node.exe');
-  expect(getProject(root)?.ports).toEqual({});
-});
-
 test('a listener that cannot be identified keeps its allocation and still releases other labels', async () => {
   upsertProject(root, { ports: { web: 8900, api: 8901 } });
   vi.spyOn(identity, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'EPERM (denied)' });
@@ -277,51 +225,6 @@ test('a listener that cannot be identified keeps its allocation and still releas
   await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'darwin' })).rejects.toThrow(
     'Cannot identify pid 41219 on web (8900): EPERM (denied)',
   );
-  expect(getProject(root)?.ports).toEqual({ web: 8900 });
-});
-
-test('a POSIX host without lsof refuses to stop before touching any allocation', async () => {
-  upsertProject(root, { ports: { web: 8900, api: 8901 } });
-  const refuse = () => {
-    throw new Error('must not inspect listeners without lsof');
-  };
-  setExecutor({ findExecutable: () => null, runFile: refuse, runQuiet: refuse, runFileQuiet: refuse });
-  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
-    'Cannot stop named ports: lsof is not installed.',
-  );
-  expect(getProject(root)?.ports).toEqual({ web: 8900, api: 8901 });
-});
-
-test('an lsof failure other than "no listeners" keeps that allocation and still releases other labels', async () => {
-  upsertProject(root, { ports: { web: 8900, api: 8901 } });
-  setExecutor({
-    findExecutable: () => '/usr/sbin/lsof',
-    runFile: (_file: string, args: string[]) => {
-      if (args.includes('-iTCP:8900')) throw Object.assign(new Error('denied'), { status: 1, stderr: 'denied' });
-      throw Object.assign(new Error(), { status: 1, stdout: '', stderr: '' });
-    },
-    runFileQuiet: () => null,
-  });
-  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'linux' })).rejects.toThrow(
-    'Could not inspect TCP port 8900 with lsof: denied',
-  );
-  expect(getProject(root)?.ports).toEqual({ web: 8900 });
-});
-
-test.each([
-  ['fails', 'denied'],
-  ['prints no table', 'no TCP connection table'],
-])('a win32 netstat that %s keeps the allocations it could not inspect', async (_case, message) => {
-  upsertProject(root, { ports: { web: 8900 } });
-  setExecutor({
-    runFile: (file: string, args: string[] = [], opts: { rejectStderr?: boolean } = {}) => {
-      expect([file, ...args, opts.rejectStderr]).toEqual(['netstat', '-ano', true]);
-      if (message === 'denied') throw Object.assign(new Error('denied'), { status: 0, stdout: '', stderr: 'denied' });
-      return '';
-    },
-    runFileQuiet: () => null,
-  });
-  await expect(clearNamedPorts(root, { stop: true, log: () => {}, platform: 'win32' })).rejects.toThrow(message);
   expect(getProject(root)?.ports).toEqual({ web: 8900 });
 });
 

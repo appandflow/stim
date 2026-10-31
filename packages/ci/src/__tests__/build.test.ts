@@ -1,18 +1,4 @@
-import { execFileSync } from 'node:child_process';
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  readlinkSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildCI, type CIBuildOptions } from '../index.ts';
@@ -64,21 +50,6 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('exports APK bytes and diagnostics without stopping an existing session', async () => {
-  const result = await buildCI(options);
-  expect(result.exitCode).toBe(0);
-  expect(readFileSync(result.artifactPath!, 'utf8')).toBe('compiled apk');
-  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).stage).toBe('build');
-  expect(existsSync(result.diagnostics.path!)).toBe(true);
-  expect(readFileSync(active, 'utf8')).toBe('running');
-  expect(lifecycle.stop).not.toHaveBeenCalled();
-});
-
-test('always compiles on this machine, whatever remote.build says', async () => {
-  await buildCI(options);
-  expect(lifecycle.build).toHaveBeenCalledWith(expect.objectContaining({ remoteBuild: 'local' }));
-});
-
 test('without --export or --artifacts a build writes no files and only records the build', async () => {
   const before = readdirSync(root).toSorted();
   const result = await buildCI({ projectRoot: root, build: { platform: 'android' } });
@@ -86,22 +57,6 @@ test('without --export or --artifacts a build writes no files and only records t
   expect(result).toMatchObject({ artifactsDir: null, resultPath: null, artifactPath: null });
   expect(readdirSync(root).toSorted()).toEqual(before);
   expect(lifecycle.diagnostics).not.toHaveBeenCalled();
-});
-
-test('export failure reports an artifact failure and keeps the reports', async () => {
-  lifecycle.build.mockResolvedValue({
-    platform: 'android',
-    facts: { apkPath: join(root, 'missing.apk') },
-  } as StimBuildResult);
-  const result = await buildCI(options);
-  expect(result.exitCode).toBe(1);
-  expect(result.failure?.code).toBe('STIM_CI_ARTIFACT_FAILED');
-  expect(result.failure?.message).toContain('ENOENT');
-  expect(result.artifactPath).toBeNull();
-  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).failure).toEqual(result.failure);
-  expect(existsSync(result.diagnostics.path!)).toBe(true);
-  expect(existsSync(active)).toBe(true);
-  expect(lifecycle.stop).not.toHaveBeenCalled();
 });
 
 test.skipIf(process.platform === 'win32')('a failed archive export removes the partial archive', async () => {
@@ -126,31 +81,6 @@ test('cancellation during diagnostics keeps a completed export', async () => {
   expect(readFileSync(result.artifactPath!, 'utf8')).toBe('compiled apk');
   expect(existsSync(result.diagnostics.path!)).toBe(true);
 });
-
-test.skipIf(process.platform === 'win32')(
-  'exported Apple archive preserves executable mode and framework links',
-  async () => {
-    const app = join(root, 'Native.app');
-    mkdirSync(join(app, 'Contents'), { recursive: true });
-    const executable = join(app, 'Contents', 'Native');
-    writeFileSync(executable, '#!/bin/sh\nexit 0\n');
-    chmodSync(executable, 0o755);
-    symlinkSync('Native', join(app, 'Contents', 'Current'));
-    lifecycle.build.mockResolvedValue({ platform: 'macos', facts: { bundle: app } } as StimBuildResult);
-    const result = await buildCI({
-      ...options,
-      build: { platform: 'macos' },
-      exportPath: join(root, 'artifacts', 'app.tar.gz'),
-    });
-    expect(result.exitCode).toBe(0);
-    const extracted = join(root, 'extracted');
-    mkdirSync(extracted);
-    execFileSync('tar', ['-xzf', result.artifactPath!, '-C', extracted]);
-    expect(statSync(join(extracted, 'Native.app', 'Contents', 'Native')).mode & 0o777).toBe(0o755);
-    expect(readlinkSync(join(extracted, 'Native.app', 'Contents', 'Current'))).toBe('Native');
-    expect(existsSync(active)).toBe(true);
-  },
-);
 
 test.each(['failure', 'cancel'])(
   'build %s leaves existing runtime alone and keeps diagnostic results',

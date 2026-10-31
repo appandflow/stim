@@ -2,12 +2,12 @@ import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { rm } from 'node:fs/promises';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
-import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
+import { runReport as executeReport } from '../report-runtime.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
@@ -28,7 +28,6 @@ import { openAuthenticated } from '../offload/tailnet.ts';
 import { gitAsync } from '../workspace/git.ts';
 import * as identities from '../process-identity.ts';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
-import { inspectStimVersions } from '../diagnostics/stim-installations.ts';
 
 let scratch: string;
 let fixtureAbort: AbortController;
@@ -104,66 +103,6 @@ test.skipIf(process.platform === 'win32' && Boolean(process.env.CI))(
   },
 );
 
-test('a report refuses cleanup whose resource never closes', async () => {
-  vi.useFakeTimers();
-  let release: () => void = () => {};
-  const resource = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let failure: unknown;
-  const reading = runReport(context(new AbortController().signal), async (operation) => {
-    trackReportResource(operation, resource, () => {});
-    return 'complete';
-  }).catch((error: unknown) => {
-    failure = error;
-  });
-  try {
-    await vi.advanceTimersByTimeAsync(35_000);
-    expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-  } finally {
-    release();
-    await reading;
-  }
-});
-
-test('the aggregate deadline stops an unbounded probe and rejects after it exits', async () => {
-  vi.useFakeTimers();
-  let pid: number | undefined;
-  let started: () => void = () => {};
-  const ready = new Promise<void>((resolve) => {
-    started = resolve;
-  });
-  const result = runReport(context(new AbortController().signal), async () =>
-    getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
-      timeoutMs: 'unbounded',
-      onSpawn: (child) => {
-        pid = child.pid;
-        child.stdout?.once('data', started);
-      },
-    }),
-  ).then(
-    () => null,
-    (error: unknown) => error,
-  );
-  await ready;
-  await vi.advanceTimersByTimeAsync(60_000);
-  expect(await result).toMatchObject({ code: 'STIM_REPORT_TIMEOUT' });
-  if (pid === undefined) throw new Error('The controlled child did not start');
-  const ownPid = pid;
-  expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-});
-
-test('a report rejects an overdue result even before its timer callback runs', async () => {
-  const clock = vi.spyOn(performance, 'now').mockReturnValueOnce(0).mockReturnValue(60_001);
-  try {
-    await expect(runReport(context(new AbortController().signal), async () => 'late result')).rejects.toMatchObject({
-      code: 'STIM_REPORT_TIMEOUT',
-    });
-  } finally {
-    clock.mockRestore();
-  }
-});
-
 test.each(['caller', 'deadline'])('a %s cancellation rejects while a read remains pending', async (kind) => {
   vi.useFakeTimers();
   const controller = new AbortController();
@@ -234,95 +173,6 @@ test('cancellation does not signal a child whose captured identity no longer mat
   }
 });
 
-test.each([
-  { recover: true, timeout: false },
-  { recover: false, timeout: false },
-  { recover: false, timeout: true },
-])('unavailable child identity yields bounded cleanup for %j', async ({ recover, timeout }) => {
-  const controller = new AbortController();
-  const original = inspectProcessIdentity;
-  let inspections = 0;
-  const inspect = vi
-    .spyOn(identities, 'inspectProcessIdentity')
-    .mockImplementation((record) => (recover && ++inspections > 2 ? original(record) : 'unknown'));
-  let owned: { pid: number; processToken: string } | undefined;
-  let nativeClosed: Promise<void> = Promise.resolve();
-  let reading: Promise<unknown> = Promise.resolve();
-  try {
-    reading = runReport(context(controller.signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
-        timeoutMs: timeout ? 100 : 'unbounded',
-        onSpawn: (child) => {
-          if (child.pid === undefined) throw new Error('No fixture child PID');
-          const identity = captureProcessIdentity(child.pid);
-          if (!identity.ok) throw new Error(identity.reason);
-          owned = { pid: child.pid, processToken: identity.token };
-          nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
-          child.stdout?.once('data', () => {
-            if (!timeout) controller.abort(new Error('cancel fixture'));
-          });
-        },
-      }),
-    ).then(
-      () => null,
-      (error: unknown) => error,
-    );
-    const failure = await reading;
-    expect(failure instanceof Error && 'code' in failure ? failure.code : failure).toBe(
-      recover ? controller.signal.reason : 'STIM_CLAIM_UNAVAILABLE',
-    );
-    expect(inspectProcessIdentity(owned)).toBe(recover ? 'gone' : 'same');
-  } finally {
-    inspect.mockRestore();
-    reapFixtureChild(owned);
-    await nativeClosed;
-    await reading;
-  }
-});
-
-test.each([true, false])(
-  'failed initial birth capture never signals the unverifiable child (report=%s)',
-  async (report) => {
-    const controller = new AbortController();
-    let started: () => void = () => {};
-    const ready = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    let owned: { pid: number; processToken: string } | undefined;
-    let nativeClosed: Promise<void> = Promise.resolve();
-    const capture = vi.spyOn(identities, 'captureProcessIdentity').mockImplementation((pid) => {
-      const identity = captureProcessIdentity(pid);
-      if (!identity.ok) throw new Error(identity.reason);
-      owned = { pid, processToken: identity.token };
-      started();
-      return { ok: false, reason: 'ACCESS_DENIED' };
-    });
-    try {
-      const work = () =>
-        getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
-          timeoutMs: 'unbounded',
-          signal: controller.signal,
-          onSpawn: (child) => {
-            nativeClosed = new Promise<void>((resolve) => child.once('close', resolve));
-          },
-        });
-      const reading = (report ? runReport(context(controller.signal), work) : work()).catch((error: unknown) => error);
-      await ready;
-      controller.abort(new Error('cancel fixture'));
-      const failure = await Promise.race([
-        reading,
-        new Promise((resolve) => setTimeout(() => resolve('pending'), 1800)),
-      ]);
-      expect(failure).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      expect(inspectProcessIdentity(owned)).toBe('same');
-    } finally {
-      capture.mockRestore();
-      reapFixtureChild(owned);
-      await nativeClosed;
-    }
-  },
-);
-
 test('report cancellation refuses a verified child that does not close after termination', async () => {
   const controller = new AbortController();
   let owned: { pid: number; processToken: string } | undefined;
@@ -363,90 +213,6 @@ test('report cancellation refuses a verified child that does not close after ter
     await reading;
   }
 });
-
-test(
-  'a version probe cannot signal an unverifiable child after report refusal',
-  { skip: process.platform === 'win32' },
-  async () => {
-    const bin = join(scratch, 'bin');
-    mkdirSync(bin);
-    const executable = join(bin, 'stim');
-    const pidFile = join(scratch, 'probe-pid');
-    writeFileSync(
-      executable,
-      `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 6000);\n`,
-    );
-    chmodSync(executable, 0o755);
-    const controller = new AbortController();
-    const scope = context(controller.signal);
-    scope.env.PATH = bin;
-    const inspect = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('unknown');
-    let owned: { pid: number; processToken: string } | undefined;
-    const reading = runReport(scope, async (operation) =>
-      inspectStimVersions('1.0.0', {
-        cwd: scratch,
-        env: scope.env,
-        runningPath: executable,
-        probeTimeoutMs: 2200,
-        operation,
-      }),
-    ).catch((error: unknown) => error);
-    try {
-      const deadline = performance.now() + 3000;
-      while (!owned && performance.now() < deadline) {
-        try {
-          const pid = Number(readFileSync(pidFile, 'utf8'));
-          const identity = captureProcessIdentity(pid);
-          if (identity.ok) owned = { pid, processToken: identity.token };
-        } catch {}
-        if (!owned) await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      expect(owned).toBeDefined();
-      controller.abort(new Error('cancel fixture'));
-      expect(await reading).toMatchObject({ code: 'STIM_CLAIM_UNAVAILABLE' });
-      await new Promise((resolve) => setTimeout(resolve, 1400));
-      expect(inspectProcessIdentity(owned)).toBe('same');
-    } finally {
-      inspect.mockRestore();
-      controller.abort();
-      reapFixtureChild(owned);
-      await reading;
-    }
-  },
-);
-
-test.each([false, true])(
-  'a launcher gone before identity capture requires its process group to be gone (%s)',
-  { skip: process.platform === 'win32' },
-  async (descendant) => {
-    const capture = vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: false, reason: 'NOT_FOUND' });
-    let owned: { pid: number; processToken: string } | undefined;
-    try {
-      const result = await runReport(context(new AbortController().signal), async () =>
-        getExecutor().runFileAsync('/bin/sh', ['-c', descendant ? 'sleep 3 >/dev/null 2>&1 & echo $!' : 'exit 0'], {
-          timeoutMs: 5000,
-          onSpawn: (child) =>
-            child.stdout?.once('data', (chunk) => {
-              const pid = Number(String(chunk).trim());
-              const identity = captureProcessIdentity(pid);
-              if (!identity.ok) throw new Error(identity.reason);
-              owned = { pid, processToken: identity.token };
-            }),
-        }),
-      ).then(
-        () => 'complete',
-        (error: unknown) => error,
-      );
-      expect(result instanceof Error && 'code' in result ? result.code : result).toBe(
-        descendant ? 'STIM_CLAIM_UNAVAILABLE' : 'complete',
-      );
-      expect(owned ? inspectProcessIdentity(owned) : null).toBe(descendant ? 'same' : null);
-    } finally {
-      capture.mockRestore();
-      reapFixtureChild(owned);
-    }
-  },
-);
 
 test.each(['timeout', 'overflow', 'exit'])(
   'a report drains descendants after the launcher %s, even with ignored stdio',

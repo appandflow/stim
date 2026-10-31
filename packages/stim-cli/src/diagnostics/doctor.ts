@@ -908,7 +908,7 @@ export function checkRemoteDevice({
   );
 }
 
-export function checkEasBuildDownload({
+function checkEasBuildDownload({
   easJson = false,
   remoteEas = false,
   easCliResolvable = false,
@@ -1361,7 +1361,7 @@ export async function reactNativeDoctorFindings({
   ].filter((value): value is Finding => Boolean(value));
 }
 
-export function checkAndroidPathRoom(
+function checkAndroidPathRoom(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   host: NodeJS.Platform,
@@ -1386,7 +1386,7 @@ function hasAndroidProject(layout: AndroidLayout): boolean {
   return existsSync(layout.custom ? layout.moduleDir : layout.gradleRoot);
 }
 
-export function checkAndroidSdk(
+function checkAndroidSdk(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   layout: AndroidLayout = defaultAndroidLayout(projectRoot),

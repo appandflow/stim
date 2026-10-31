@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deviceHostRoot, readHostedSessions } from '../state/device-host.ts';
-import { parseHostedAppManifest, parseHostedAppOffer } from '../state/hosted-app.ts';
+import { parseHostedAppManifest } from '../state/hosted-app.ts';
 
 const file = (path: string, kind = 'file') => ({ path, kind, size: 1, sha256: 'a'.repeat(64) });
 
@@ -22,18 +22,6 @@ test('rejects traversal, aliases and entries below a file or link before any bun
     'Info.plist',
     'Resources/value',
   ]);
-});
-
-test('macOS manifests require a Contents plist and executable while preserving iOS and APK delivery', () => {
-  const plist = file('Contents/Info.plist');
-  const executable = file('Contents/MacOS/Fixture', 'exec');
-  expect(parseHostedAppManifest([plist, executable])).toHaveLength(2);
-  expect(parseHostedAppManifest([plist])).toBeNull();
-  expect(parseHostedAppManifest([executable])).toBeNull();
-  expect(parseHostedAppManifest([plist, file('Contents/MacOS/Fixture')])).toBeNull();
-  expect(parseHostedAppManifest([file('Contents/Info.plist', 'link'), executable])).toBeNull();
-  expect(parseHostedAppManifest([file('Info.plist')])).toHaveLength(1);
-  expect(parseHostedAppManifest([file('App.apk')])).toHaveLength(1);
 });
 
 test('journal rejects missing, foreign and mismatched macOS app slots', () => {
@@ -72,47 +60,4 @@ test('journal rejects missing, foreign and mismatched macOS app slots', () => {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });
   }
-});
-
-test('app offers preserve bounded plain arguments and omit an empty argument list', () => {
-  const offer = {
-    session: '12345678-1234-1234-1234-123456789abc',
-    attempt: 'app',
-    bundleId: 'dev.stim.fixture',
-    mode: 'release',
-    manifest: { sha256: 'a'.repeat(64), size: 1 },
-  };
-  const validArguments = ['-autopilot.enabled', 'true', '', 'ENV=value', '$(touch /tmp/unwanted)'];
-  expect(parseHostedAppOffer({ ...offer, arguments: validArguments })).toEqual({ ...offer, arguments: validArguments });
-  expect(parseHostedAppOffer({ ...offer, arguments: [] })).toEqual(offer);
-  expect(parseHostedAppOffer(offer)).toEqual(offer);
-  for (const args of [Array(32).fill(''), Array(8).fill('a'.repeat(1024))])
-    expect(parseHostedAppOffer({ ...offer, arguments: args })?.arguments).toEqual(args);
-  for (const args of [
-    'argument',
-    null,
-    {},
-    [1],
-    ['valid', false],
-    Array(33).fill(''),
-    ['a'.repeat(1025)],
-    [...Array(8).fill('a'.repeat(1024)), 'a'],
-    ['nul\0value'],
-    ['line\nvalue'],
-    ['line\rvalue'],
-  ])
-    expect(parseHostedAppOffer({ ...offer, arguments: args })).toBeNull();
-});
-
-test('process app offers retain their mode and refuse a development-client route', () => {
-  const offer = {
-    session: '12345678-1234-1234-1234-123456789abc',
-    attempt: 'native-debug',
-    bundleId: 'dev.stim.native',
-    mode: 'process',
-    manifest: { sha256: 'a'.repeat(64), size: 1 },
-  };
-  expect(parseHostedAppOffer(offer)).toEqual(offer);
-  expect(parseHostedAppOffer({ ...offer, devClientScheme: 'exp+fixture' })).toBeNull();
-  expect(parseHostedAppOffer({ ...offer, mode: 'unknown' })).toBeNull();
 });

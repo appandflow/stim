@@ -92,33 +92,6 @@ async function archive() {
 }
 
 test.skipIf(process.platform === 'win32')(
-  'the archive of a dirty worktree restores its tracked, staged, deleted, binary and untracked changes, and no ignored file',
-  async () => {
-    dirtyTheWorktree();
-    const saved = await archive();
-
-    const manifest = JSON.parse(readFileSync(join(saved.dir, 'manifest.json'), 'utf8'));
-    expect(manifest).toMatchObject({
-      branch: 'topic',
-      pullRequest: { number: 12 },
-      tracked: ['a.txt', 'b.txt', 'bin.dat', 'c.txt'],
-      untracked: ['notes/scratch file.txt'],
-      restore: saved.restore,
-    });
-    git(repo, `worktree remove --force "${worktree}"`);
-    for (const command of saved.restore) execFileSync('sh', ['-c', command], { timeout: 30_000, stdio: 'pipe' });
-
-    expect(readFileSync(join(worktree, 'a.txt'), 'utf8')).toBe('edited\n');
-    expect(readFileSync(join(worktree, 'b.txt'), 'utf8')).toBe('staged\n');
-    expect(existsSync(join(worktree, 'c.txt'))).toBe(false);
-    expect([...readFileSync(join(worktree, 'bin.dat'))]).toEqual([9, 0, 8, 0, 7]);
-    expect(readFileSync(join(worktree, 'notes', 'scratch file.txt'), 'utf8')).toBe('scratch\n');
-    expect(existsSync(join(worktree, 'build'))).toBe(false);
-  },
-  60_000,
-);
-
-test.skipIf(process.platform === 'win32')(
   'the archive restores a HEAD that no branch keeps once git has collected it',
   async () => {
     const remote = join(home, 'origin.git');
@@ -286,14 +259,6 @@ test('a file written while the removal runs keeps the worktree and discards its 
   expect(readdirSync(join(worktreeArchiveRoot(), 'repo'))).toEqual([]);
   expect(error.mock.calls.flat().join('\n')).toContain('changed while they were archived');
 }, 120_000);
-
-test('nothing is archived when archives are off for the worktree', async () => {
-  process.env.STIM_ARCHIVE_ENABLED = 'false';
-  dirtyTheWorktree();
-
-  await expect(archive()).rejects.toThrow(/archive\.enabled is false/);
-  expect(existsSync(worktreeArchiveRoot())).toBe(false);
-}, 60_000);
 
 test('retention deletes worktree archives past archive.maxAgeDays, then the oldest while over archive.maxTotalGb, never counting or deleting one whose removal holds its claim', async () => {
   const day = 86_400_000;

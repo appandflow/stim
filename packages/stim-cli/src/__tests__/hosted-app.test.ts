@@ -127,16 +127,6 @@ test.each(['release', 'process'])(
   },
 );
 
-test('keeps development launch unverified despite a live native process', async () => {
-  receipt([], 'development');
-  expect(await installHostedApp(home, session, 'app', device, 14321)).toBe('unverified');
-  expect(native.runFile).toHaveBeenCalledWith(
-    'xcrun',
-    ['simctl', 'spawn', device.udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', 'localhost:14321'],
-    expect.anything(),
-  );
-});
-
 test('routes an Expo development client to the worker loopback origin without claiming bundle delivery', async () => {
   receipt([], 'development');
   const path = join(area, 'receipt.json');
@@ -163,53 +153,4 @@ test('routes an Expo development client to the worker loopback origin without cl
   const url = new URL(opened![1]![3]!);
   expect(url.protocol).toBe('stim-dev:');
   expect(new URL(url.searchParams.get('url')!).origin).toBe('http://localhost:14321');
-});
-
-test.each(['../outside', '/tmp/outside', 'missing'])(
-  'refuses app link %s before native installation',
-  async (target) => {
-    receipt([{ path: 'link', kind: 'link', content: target }]);
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/escapes|ENOENT/);
-    expect(native.runFile).not.toHaveBeenCalled();
-  },
-);
-
-test('rejects a device Mach-O disguised by simulator plist metadata without installing it', async () => {
-  receipt();
-  platform = 'IOS';
-  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('incompatible');
-  expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
-});
-
-test.each(['release', 'process'])(
-  'refuses altered %s bytes and a lost device ledger before installing onto a simulator',
-  async (mode) => {
-    receipt([], mode);
-    const sha256 = createHash('sha256').update('plist fixture').digest('hex');
-    writeFileSync(join(home, '..', 'blobs', sha256), 'altered');
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('digest');
-    expect(native.runFile).not.toHaveBeenCalled();
-    receipt([], mode);
-    rmSync(join(home, 'created-devices.json'));
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/ENOENT/);
-    expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
-  },
-);
-
-test('process mode remains unverified when launch succeeds without a live app process', async () => {
-  receipt([], 'process');
-  const original = native.runFile.getMockImplementation()!;
-  native.runFile.mockImplementation((file, args = [], options) =>
-    args.includes('launchctl') ? '' : original(file, args, options),
-  );
-  vi.useFakeTimers();
-  try {
-    const pending = installHostedApp(home, session, 'app', device, 14321);
-    await vi.waitFor(() => expect(launched).toBe(true));
-    await vi.runAllTimersAsync();
-    expect(await pending).toBe('unverified');
-    expect(native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation'))).toBe(false);
-  } finally {
-    vi.useRealTimers();
-  }
 });

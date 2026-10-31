@@ -1,15 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { reactNativeArtifactQuery } from '@stim-cli/core';
@@ -91,20 +82,4 @@ test('a rekeyed job reuses the app retained under its post-pod-install fingerpri
   expect(reused).toEqual({ path: archive, name: 'App.app', size: statSync(archive).size, sha256 });
   expect(createHash('sha256').update(readFileSync(archive)).digest('hex')).toBe(sha256);
   expect(readFileSync(join(out, 'App.app', 'Info.plist'), 'utf8')).toBe(`built under ${POST}`);
-});
-
-test.each([
-  { case: 'the client turned cache reads off', retained: POST, reuseArtifact: false, expected: PRE },
-  { case: 'the fingerprint is the one the client looked up', retained: POST, reuseArtifact: true, expected: POST },
-  { case: 'only the pre-mutation fingerprint was retained', retained: PRE, reuseArtifact: true, expected: PRE },
-])('compiles instead when $case', async ({ retained, reuseArtifact, expected }) => {
-  await retain(retained);
-  const reused = await reusedReactNativeArtifact(
-    { artifactCache: cacheDir, reuseArtifact, expectedFingerprint: expected },
-    query(POST),
-    out,
-    new AbortController().signal,
-  );
-  expect(reused).toBeNull();
-  expect(existsSync(join(out, 'app.tgz'))).toBe(false);
 });

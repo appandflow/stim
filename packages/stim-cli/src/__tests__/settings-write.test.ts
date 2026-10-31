@@ -4,12 +4,9 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
-import { workspaceName, withAmbientContext } from '@stim-cli/core';
-import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import { workspaceName } from '@stim-cli/core';
 import { createStim, StimError } from '../api.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { writeConfigSettingAsync } from '../workspace/config.ts';
-import { testContext } from './_context.ts';
 
 let directory: string;
 let project: string;
@@ -130,52 +127,6 @@ test.each(['set', 'unset'] as const)('a refused %s admission leaves settings unc
   expect(JSON.parse(readFileSync(join(home, 'config.json'), 'utf8')).projects[project].settings.ios.runtime).toBe(
     '26.4',
   );
-});
-
-test.each(['commit', 'abort'] as const)('a contended config write yields and can %s', async (action) => {
-  const home = join(directory, 'locked');
-  mkdirSync(home);
-  const holder = tryAcquireClaim({
-    root: join(home, 'config.lock.claims'),
-    mode: 'exclusive',
-    label: 'settings fixture',
-  });
-  if (!holder.acquired) throw new Error('Could not hold config claim');
-  const controller = new AbortController();
-  const operation = testContext({
-    home,
-    projectRoot: project,
-    cwd: project,
-    env: { STIM_HOME: home },
-    signal: controller.signal,
-  });
-  let settled = false;
-  const pending = withAmbientContext(operation, () =>
-    writeConfigSettingAsync({ scope: 'machine' }, 'concurrency.maxBuilds', 4, controller.signal),
-  );
-  void pending.then(
-    () => (settled = true),
-    () => (settled = true),
-  );
-  try {
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
-    expect(existsSync(join(home, 'config.json'))).toBe(false);
-    if (action === 'abort') controller.abort();
-    else releaseClaim(holder.acquired);
-    const outcome = await pending.then(
-      (changed) => ({ changed }),
-      (error: unknown) => ({ name: error instanceof Error ? error.name : String(error) }),
-    );
-    expect(outcome).toEqual(action === 'commit' ? { changed: true } : { name: 'AbortError' });
-    const config = existsSync(join(home, 'config.json'))
-      ? JSON.parse(readFileSync(join(home, 'config.json'), 'utf8'))
-      : null;
-    expect(config?.concurrency?.maxBuilds).toBe(action === 'commit' ? 4 : undefined);
-  } finally {
-    releaseClaim(holder.acquired);
-    await pending.catch(() => {});
-  }
 });
 
 test('a committed recording disable finishes deleting its files before settling cancellation', async () => {

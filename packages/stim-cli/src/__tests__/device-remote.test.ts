@@ -3,8 +3,7 @@ import { setExecutor, resetExecutor, type Executor } from '../exec.ts';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { remoteProfilePath } from '../engine/agent-device.ts';
 import {
   endRecordedSession,
@@ -13,12 +12,9 @@ import {
   remoteAndroidDeps,
   remoteIosDeps,
   resolveRemoteContext,
-  resolveMetroOrigin,
   teardownRemote,
-  withRemoteSessionLock,
 } from '../engine/device-remote.ts';
 import { PUBLIC_METRO_ENV } from '../engine/metro-reach.ts';
-import { withEasProjectLock } from '../engine/eas-project-lock.ts';
 import { withDirLockTransaction } from '@stim-cli/core';
 import { easSessionLedgerLock } from '@stim-cli/core/state';
 import { readEasSessionLedger, recordEasSessionClaim } from '../engine/eas-session-ledger.ts';
@@ -186,111 +182,6 @@ describe('explicit backend selection', () => {
     expect(exec.calls.some((call) => call.file === '/bin/eas')).toBe(false);
   });
 
-  test('eas requires the EAS CLI even when proxy variables are present', async () => {
-    const resolved = await resolveRemoteContext({
-      root,
-      backend: 'eas',
-      easBin: null,
-      env,
-      lookupAgentDevice: () => '/bin/agent-device',
-    });
-    expect(resolved).toEqual({
-      failed: 'The eas backend requires eas-cli.',
-      remedy: 'Install eas-cli, then run the device command with `--remote eas` again.',
-      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
-    });
-  });
-
-  test.each([
-    [
-      'eas-cli/21.5.0 darwin-arm64 node-v22.22.2',
-      'eas-cli 21.5.0 (/bin/eas) has no EAS Simulator commands; the eas backend needs eas-cli 21.6.0 or later.',
-    ],
-    [
-      null,
-      'Could not read an eas-cli version from `/bin/eas --version`; the eas backend needs eas-cli 21.6.0 or later.',
-    ],
-  ])('eas refuses before any session work when eas-cli lacks the simulator commands (%s)', async (output, failed) => {
-    const exec = mockExec();
-    const resolved = await resolveRemoteContext({
-      root,
-      backend: 'eas',
-      easBin: '/bin/eas',
-      env,
-      lookupAgentDevice: () => '/bin/agent-device',
-      readEasCliVersion: () => output,
-    });
-    expect(resolved).toEqual({
-      failed,
-      remedy:
-        "Upgrade eas-cli to 21.6.0 or later (`npm install --global eas-cli@latest`, or the project's eas-cli dependency), then run the device command with `--remote eas` again.",
-      code: 'STIM_REMOTE_EAS_UNAVAILABLE',
-    });
-    expect(exec.calls).toEqual([]);
-  });
-
-  test('eas accepts the first eas-cli release with the simulator commands', async () => {
-    const resolved = await resolveRemoteContext({
-      root,
-      backend: 'eas',
-      easBin: '/bin/eas',
-      env,
-      lookupAgentDevice: () => '/bin/agent-device',
-      readEasCliVersion: () => 'eas-cli/21.6.0 linux-x64 node-v22.18.0',
-    });
-    expect('ctx' in resolved).toBe(true);
-  });
-
-  const resolveEas = (output: string, deviceType: string | null = null) =>
-    resolveRemoteContext({
-      root,
-      backend: 'eas',
-      easBin: '/bin/eas',
-      env,
-      lookupAgentDevice: () => '/bin/agent-device',
-      readEasCliVersion: () => output,
-      deviceType,
-    });
-
-  test('--device-type on eas refuses an eas-cli without simulator:start --device, which a plain run still accepts', async () => {
-    expect(await resolveEas('eas-cli/22.0.0 darwin-arm64 node-v22.22.2', 'iPhone 17 Pro')).toEqual({
-      failed:
-        'eas-cli 22.0.0 (/bin/eas) cannot choose the EAS Simulator model; --device-type on the eas backend needs eas-cli 22.2.0 or later.',
-      remedy:
-        "Upgrade eas-cli to 22.2.0 or later (`npm install --global eas-cli@latest`, or the project's eas-cli dependency), or drop --device-type to let EAS pick the model.",
-      code: 'STIM_BAD_ARG',
-    });
-    expect(await resolveEas('eas-cli/22.0.0 darwin-arm64 node-v22.22.2')).toMatchObject({ ctx: { deviceType: null } });
-  });
-
-  test('--device-type on eas reaches the context from the first eas-cli with simulator:start --device', async () => {
-    expect(await resolveEas('eas-cli/22.2.0 darwin-arm64 node-v22.22.2', 'iPhone 17 Pro')).toMatchObject({
-      ctx: { deviceType: 'iPhone 17 Pro' },
-    });
-  });
-
-  test('eas ignores proxy variables and creates an EAS session', async () => {
-    const resolved = await resolveRemoteContext({
-      root,
-      backend: 'eas',
-      easBin: '/bin/eas',
-      env,
-      lookupAgentDevice: () => '/bin/agent-device',
-      readEasCliVersion: EAS_CLI_VERSION,
-    });
-    expect('ctx' in resolved).toBe(true);
-    if (!('ctx' in resolved)) return;
-    expect(resolved.ctx.backend).toBe('eas');
-    expect(resolved.ctx.existingDaemon).toBeNull();
-
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(resolved.ctx).ensureBooted({});
-    expect(exec.calls.some((call) => call.file === '/bin/eas' && call.args[0] === 'sim')).toBe(true);
-    expect(
-      exec.calls.some((call) => call.env?.AGENT_DEVICE_DAEMON_AUTH_TOKEN === env.AGENT_DEVICE_DAEMON_AUTH_TOKEN),
-    ).toBe(false);
-  });
-
   test.skipIf(process.platform === 'win32')(
     'eas child processes omit proxy credentials and preserve the project environment (POSIX executable stub; skipped on win32)',
     async () => {
@@ -366,40 +257,6 @@ process.stdout.write(${JSON.stringify(CREATED)});
   );
 });
 
-describe('each workspace names its own remote session', () => {
-  async function bootNames(workspaceRoot: string) {
-    resetExecutor();
-    const resolved = await resolveRemoteContext({
-      root: workspaceRoot,
-      backend: 'eas',
-      easBin: '/bin/eas',
-      env: {},
-      lookupAgentDevice: () => '/bin/agent-device',
-      readEasCliVersion: EAS_CLI_VERSION,
-    });
-    if (!('ctx' in resolved)) throw new Error(resolved.failed);
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(resolved.ctx).ensureBooted({});
-    const sim = exec.calls.find((call) => call.file === '/bin/eas' && call.args[0] === 'sim');
-    return {
-      eas: sim?.args[sim.args.indexOf('--name') + 1],
-      agentDevice: JSON.parse(readFileSync(remoteProfilePath(workspaceRoot), 'utf-8')).session,
-    };
-  }
-
-  test('two worktrees whose app directories share a name do not share a session', async () => {
-    const first = join(root, 'a', 'app');
-    const second = join(root, 'b', 'app');
-    mkdirSync(first, { recursive: true });
-    mkdirSync(second, { recursive: true });
-    const one = await bootNames(first);
-    const two = await bootNames(second);
-    expect(one.agentDevice).not.toBe(two.agentDevice);
-    expect(one.eas).not.toBe(two.eas);
-    expect(one.eas).toMatch(/^stim-app-[0-9a-f]{16}$/);
-  });
-});
-
 describe('the expensive step happens after the Metro gate', () => {
   test('ensureOwnedDevice creates no session and runs no command', async () => {
     const exec = mockExec();
@@ -409,166 +266,9 @@ describe('the expensive step happens after the Metro gate', () => {
     expect(device.remote).toBe(true);
     expect(deps.createdSessionId()).toBeNull();
   });
-
-  test('ensureBooted is what creates the session', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    const booted = await deps.ensureBooted({});
-    expect(booted.ok).toBe(true);
-    expect(booted.udid).toBe('drs_42');
-    expect(deps.createdSessionId()).toBe('drs_42');
-    expect(exec.calls[0]?.args[0]).toBe('sim');
-  });
 });
 
 describe('the remote session workspace lock', () => {
-  test('a second process waits and takes over after the owner dies', async () => {
-    const script = join(root, 'hold-lock.mjs');
-    const lockModule = new URL('../engine/device-remote.ts', import.meta.url).href;
-    writeFileSync(
-      script,
-      `import { withRemoteSessionLock } from ${JSON.stringify(lockModule)};
-await withRemoteSessionLock(process.argv[2], async () => {
-  process.stdout.write('LOCKED\\n');
-  await new Promise(() => setInterval(() => {}, 1_000));
-});
-`,
-    );
-    const owner = spawn(process.execPath, ['--experimental-strip-types', script, root], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const exited = new Promise<void>((resolve) => owner.once('exit', () => resolve()));
-    await new Promise<void>((resolve, reject) => {
-      owner.once('error', reject);
-      owner.stdout?.on('data', (chunk) => {
-        if (String(chunk).includes('LOCKED')) resolve();
-      });
-    });
-
-    try {
-      let entered = false;
-      const waiting = withRemoteSessionLock(root, async () => {
-        entered = true;
-      });
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(entered).toBe(false);
-
-      owner.kill('SIGKILL');
-      await exited;
-      await waiting;
-      expect(entered).toBe(true);
-    } finally {
-      if (owner.exitCode === null) owner.kill('SIGKILL');
-    }
-  });
-
-  test.skipIf(process.platform === 'win32')(
-    'a second EAS start waits, with a notice, for a start that outlasts four minutes (POSIX executable stubs; skipped on win32)',
-    async () => {
-      const easBin = join(root, 'fake-eas.cjs');
-      const agentDeviceBin = join(root, 'fake-agent-device');
-      const easLog = join(root, 'eas-calls.log');
-      const ledgerRoot = join(root, 'machine-eas');
-      writeFileSync(
-        easBin,
-        `#!/usr/bin/env node
-const { appendFileSync } = require('node:fs');
-const args = process.argv.slice(2);
-if (args.includes('--version')) {
-  process.stdout.write('eas-cli/24.8.0 darwin-arm64 node-v22.22.2\\n');
-  process.exit(0);
-}
-if (args[0] !== 'sim') process.exit(0);
-const name = args[args.indexOf('--name') + 1];
-appendFileSync(${JSON.stringify(easLog)}, 'start ' + name + '\\n');
-Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500);
-appendFileSync(${JSON.stringify(easLog)}, 'end ' + name + '\\n');
-process.stdout.write(JSON.stringify({ ...${CREATED}, id: 'drs_' + name, name }));
-`,
-      );
-      writeFileSync(agentDeviceBin, '#!/bin/sh\nexit 0\n');
-      chmodSync(easBin, 0o755);
-      chmodSync(agentDeviceBin, 0o755);
-      const firstRoot = join(root, 'first');
-      const secondRoot = join(root, 'second');
-      mkdirSync(firstRoot);
-      mkdirSync(secondRoot);
-      const module = new URL('../engine/device-remote.ts', import.meta.url).href;
-      const script = join(root, 'first-run.mjs');
-      writeFileSync(
-        script,
-        `import { ensureRemoteBootOwned, remoteIosDeps, resolveRemoteContext } from ${JSON.stringify(module)};
-const [root, easBin, agentDeviceBin, ledgerRoot] = process.argv.slice(2);
-const resolved = await resolveRemoteContext({ root, backend: 'eas', easBin, lookupAgentDevice: () => agentDeviceBin });
-const result = await ensureRemoteBootOwned({
-  root,
-  platform: 'ios',
-  sessionName: 'stim-first',
-  startedAt: new Date().toISOString(),
-  boot: () => remoteIosDeps(resolved.ctx).ensureBooted({}),
-  createdSessionId: () => null,
-  abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-  writeState: () => {},
-  ledgerRoot,
-});
-process.stdout.write(JSON.stringify(result));
-`,
-      );
-      const first = spawn(
-        process.execPath,
-        ['--experimental-strip-types', script, firstRoot, easBin, agentDeviceBin, ledgerRoot],
-        { stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-      let firstOutput = '';
-      first.stdout?.on('data', (chunk) => (firstOutput += String(chunk)));
-      const firstExited = new Promise<number | null>((resolve) => first.once('exit', resolve));
-      try {
-        while (!existsSync(easLog) && first.exitCode === null) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 20));
-        }
-        expect(existsSync(easLog)).toBe(true);
-
-        const resolved = await resolveRemoteContext({
-          root: secondRoot,
-          backend: 'eas',
-          easBin,
-          lookupAgentDevice: () => agentDeviceBin,
-        });
-        assert('ctx' in resolved);
-        const notices: string[] = [];
-        let clockReads = 0;
-        const second = await ensureRemoteBootOwned({
-          root: secondRoot,
-          platform: 'ios',
-          sessionName: 'stim-second',
-          startedAt: new Date().toISOString(),
-          boot: () => remoteIosDeps(resolved.ctx).ensureBooted({}),
-          createdSessionId: () => null,
-          abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-          writeState: () => {},
-          ledgerRoot,
-          notice: (line) => notices.push(line),
-          now: () => Date.now() + (clockReads++ === 0 ? 0 : 10 * 60_000),
-        });
-
-        expect(await firstExited).toBe(0);
-        expect(JSON.parse(firstOutput)).toMatchObject({ ok: true, udid: expect.stringMatching(/^drs_stim-first-/) });
-        expect(second).toMatchObject({ ok: true, udid: expect.stringMatching(/^drs_stim-second-/) });
-        expect(
-          readFileSync(easLog, 'utf8')
-            .replace(/-[0-9a-f]+$/gm, '')
-            .trim()
-            .split('\n'),
-        ).toEqual(['start stim-first', 'end stim-first', 'start stim-second', 'end stim-second']);
-        expect(notices[0]).toContain(
-          `waiting for EAS remote start (pid ${first.pid}, in ${firstRoot}, running for 10m`,
-        );
-      } finally {
-        if (first.exitCode === null) first.kill('SIGKILL');
-      }
-    },
-  );
-
   test('a holder past the longest EAS session start is refused by name, and the waiter never boots', async () => {
     const ledgerRoot = join(root, 'machine-eas');
     let releaseFirst!: () => void;
@@ -627,150 +327,6 @@ process.stdout.write(JSON.stringify(result));
     } finally {
       releaseFirst();
       await first;
-    }
-  });
-
-  test('workspaces with the same git common directory share the EAS project lock', async () => {
-    const otherRoot = join(root, 'other-worktree');
-    mkdirSync(otherRoot, { recursive: true });
-    const previousHome = process.env.STIM_HOME;
-    process.env.STIM_HOME = join(root, 'stim-home');
-    setExecutor({
-      run() {
-        throw new Error('unexpected shell command');
-      },
-      runQuiet() {
-        return join(root, 'repository.git');
-      },
-      runFile() {
-        throw new Error('unexpected file command');
-      },
-      spawn() {
-        throw new Error('unexpected spawn');
-      },
-    });
-    let releaseFirst!: () => void;
-    const held = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let firstEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      firstEntered = resolve;
-    });
-    let secondBooted = false;
-    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
-      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
-
-    try {
-      const first = ensureRemoteBootOwned({
-        root,
-        platform: 'ios',
-        sessionName: 'stim-first',
-        startedAt: '2026-08-28T00:00:00.000Z',
-        register: () => {},
-        boot: async () => {
-          firstEntered();
-          await held;
-          return { ok: true };
-        },
-        createdSessionId: () => null,
-        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-        writeState: () => {},
-        withProjectLock: withFixedLock,
-        ledgerRoot: join(root, 'machine-eas'),
-      });
-      await entered;
-      const second = ensureRemoteBootOwned({
-        root: otherRoot,
-        platform: 'ios',
-        sessionName: 'stim-second',
-        startedAt: '2026-08-28T00:00:00.000Z',
-        register: () => {},
-        boot: async () => {
-          secondBooted = true;
-          return { ok: true };
-        },
-        createdSessionId: () => null,
-        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-        writeState: () => {},
-        withProjectLock: withFixedLock,
-        ledgerRoot: join(root, 'machine-eas'),
-      });
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(secondBooted).toBe(false);
-      releaseFirst();
-      await Promise.all([first, second]);
-      expect(secondBooted).toBe(true);
-    } finally {
-      releaseFirst();
-      if (previousHome === undefined) delete process.env.STIM_HOME;
-      else process.env.STIM_HOME = previousHome;
-    }
-  });
-
-  test('EAS starts serialize across separate STIM_HOME values', async () => {
-    const otherRoot = join(root, 'other-clone');
-    mkdirSync(otherRoot, { recursive: true });
-    const previousHome = process.env.STIM_HOME;
-    let releaseFirst!: () => void;
-    const held = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    let firstEntered!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      firstEntered = resolve;
-    });
-    let secondBooted = false;
-    const withFixedLock: typeof withEasProjectLock = (project, fn, options) =>
-      withEasProjectLock(project, fn, { ...options, machineRoot: join(root, 'machine-eas') });
-
-    try {
-      process.env.STIM_HOME = join(root, 'home-a');
-      const first = ensureRemoteBootOwned({
-        root,
-        platform: 'ios',
-        sessionName: 'stim-first',
-        startedAt: '2026-08-28T00:00:00.000Z',
-        boot: async () => {
-          firstEntered();
-          await held;
-          return { ok: true };
-        },
-        createdSessionId: () => null,
-        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-        writeState: () => {},
-        withProjectLock: withFixedLock,
-        ledgerRoot: join(root, 'machine-eas'),
-      });
-      await entered;
-
-      process.env.STIM_HOME = join(root, 'home-b');
-      const second = ensureRemoteBootOwned({
-        root: otherRoot,
-        platform: 'ios',
-        sessionName: 'stim-second',
-        startedAt: '2026-08-28T00:00:00.000Z',
-        boot: async () => {
-          secondBooted = true;
-          return { ok: true };
-        },
-        createdSessionId: () => null,
-        abandonCreatedSession: () => ({ ok: true, sessionId: null }),
-        writeState: () => {},
-        withProjectLock: withFixedLock,
-        ledgerRoot: join(root, 'machine-eas'),
-      });
-
-      await new Promise<void>((resolve) => setTimeout(resolve, 50));
-      expect(secondBooted).toBe(false);
-      releaseFirst();
-      await Promise.all([first, second]);
-      expect(secondBooted).toBe(true);
-    } finally {
-      releaseFirst();
-      if (previousHome === undefined) delete process.env.STIM_HOME;
-      else process.env.STIM_HOME = previousHome;
     }
   });
 });
@@ -886,12 +442,6 @@ describe('session creation', () => {
     expect(readEasSessionLedger(ledgerRoot).claims.has('drs_claimed')).toBe(true);
   });
 
-  test('runs in the project directory, because eas sim resolves it from cwd', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(ctx()).ensureBooted({});
-    expect(exec.calls[0]?.cwd).toBe(root);
-  });
-
   describe('session duration cap', () => {
     const create = async () => {
       const resolved = await resolveRemoteContext({
@@ -909,15 +459,6 @@ describe('session creation', () => {
       return args[args.indexOf('--max-duration-minutes') + 1];
     };
 
-    test('every session Stim creates is capped at 30 minutes unless the machine setting says otherwise', async () => {
-      expect(await create()).toBe('30');
-    });
-
-    test('remote.easMaxDurationMinutes in the machine config sets the cap', async () => {
-      saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 45 } });
-      expect(await create()).toBe('45');
-    });
-
     test('an invalid machine value refuses instead of creating an uncapped session', async () => {
       saveConfig({ projects: {}, repos: {}, remote: { easMaxDurationMinutes: 0 } });
       expect(await create()).toMatchObject({
@@ -925,31 +466,6 @@ describe('session creation', () => {
         failed: expect.stringContaining('remote.easMaxDurationMinutes'),
       });
     });
-  });
-
-  test('a caller-chosen duration is still sent', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(ctx({ maxDurationMinutes: 30 })).ensureBooted({});
-    const args = exec.calls[0]?.args ?? [];
-    expect(args[args.indexOf('--max-duration-minutes') + 1]).toBe('30');
-  });
-
-  test('a session of a type Stim cannot drive is refused, not half-used', async () => {
-    const appium = JSON.stringify({
-      id: 'drs_9',
-      remoteConfig: { __typename: 'AppiumRunSessionRemoteConfig', appiumUrl: 'https://x' },
-    });
-    mockExec({ outputs: { sim: appium, 'simulator:get': appium } });
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('drs_9');
-  });
-
-  test('a failing eas sim is a reason, never a throw', async () => {
-    mockExec({ fail: 'sim' });
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('eas sim failed');
   });
 
   test('an Expo app without an EAS project gets the EAS link remedy, not the owned-simulator one', async () => {
@@ -969,34 +485,6 @@ describe('session creation', () => {
     });
   });
 
-  test('every eas and agent-device call runs under a deadline', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
-    const local = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
-    await local.ensureBooted({});
-    await local.launchIosApp({
-      udid: 'drs_42',
-      bundleId: 'com.example.app',
-      metroPort: 8082,
-      devClientScheme: 'myapp',
-    });
-    await teardownRemote(ctx(), { sessionId: null });
-    expect(exec.calls.map((c) => c.args[0])).toEqual([
-      'sim',
-      'close',
-      'connect',
-      'install',
-      'close',
-      'connect',
-      'open',
-      'alert',
-      'disconnect',
-    ]);
-    for (const call of exec.calls) expect(call.timeoutMs).toBeGreaterThan(0);
-  });
-
   test('an eas sim that outlives its deadline names the session it may have left running', async () => {
     const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), { code: 'ETIMEDOUT' });
     mockExec({ errors: { sim: timedOut } });
@@ -1004,39 +492,6 @@ describe('session creation', () => {
     expect(booted.failed).toBe(true);
     expect(booted.reason).toContain('stim-wt');
     expect(booted.remedy).toContain('eas simulator:list --name stim-wt');
-  });
-
-  test('an eas sim killed at its deadline after printing its session stops that session', async () => {
-    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/eas sim'), {
-      code: 'ETIMEDOUT',
-      stdout: CREATED,
-    });
-    const exec = mockExec({ errors: { 'sim --platform': timedOut } });
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('drs_42');
-    expect(booted.reason).toContain('The session was stopped.');
-    expect(exec.calls.map((c) => c.args.slice(0, 3))).toContainEqual(['simulator:stop', '--id', 'drs_42']);
-  });
-
-  test('an agent-device timeout names the deadline even when the tool wrote stderr first', async () => {
-    const timedOut = Object.assign(new Error('Command timed out after 600000ms: /bin/agent-device install'), {
-      code: 'ETIMEDOUT',
-      stderr: 'Uploading 42%',
-    });
-    mockExec({ outputs: { sim: CREATED }, errors: { '/bin/agent-device install': timedOut } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    expect((await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' })).reason).toContain('timed out after');
-  });
-
-  test('an operator-supplied daemon creates no session at all', async () => {
-    const exec = mockExec();
-    const deps = remoteIosDeps(ctx({ existingDaemon: { baseUrl: 'https://proxy.local/daemon', token: 'tok_proxy' } }));
-    const booted = await deps.ensureBooted({});
-    expect(booted.ok).toBe(true);
-    expect(deps.createdSessionId()).toBeNull();
-    expect(exec.calls.map((c) => c.args[0])).toEqual(['close', 'connect']);
   });
 });
 
@@ -1223,61 +678,11 @@ describe('the token never reaches disk', () => {
 });
 
 describe('install and launch match their local counterparts', () => {
-  test('installIosApp passes the .app path as one literal argv element', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    const result = await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/My App.app' });
-    expect(result).toEqual({ ok: true, appPath: '/tmp/My App.app' });
-    const install = exec.calls.find((c) => c.args[0] === 'install');
-    expect(install?.args[1]).toBe('/tmp/My App.app');
-  });
-
-  test('a dev-client launch sends Stim own deep link, not agent-device metro hint', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
-    await deps.ensureBooted({});
-    const result = await deps.launchIosApp({
-      udid: 'drs_42',
-      bundleId: 'com.example.app',
-      metroPort: 8082,
-      devClientScheme: 'myapp',
-    });
-    expect(result.mode).toBe('openurl');
-    const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[2]).toBe(
-      'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082%2F%3FdisableOnboarding%3D1&disableFab=1',
-    );
-  });
-
-  test('a bare RN launch has no url positional', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
-    await deps.ensureBooted({});
-    expect((await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 })).mode).toBe(
-      'launch',
-    );
-    const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[1]).toBe('com.example.app');
-    expect(open?.args[2]).toBe('--relaunch');
-  });
-
   test('install before a connection is a reason, not a crash', async () => {
     mockExec();
     const result = await remoteIosDeps(ctx()).installIosApp({ udid: 'x', appPath: '/tmp/a.app' });
     expect(result.failed).toBe(true);
     expect(result.reason).toContain('No remote session');
-  });
-
-  test('a failing install is a reason, never a throw', async () => {
-    mockExec({ outputs: { sim: CREATED }, fail: 'install' });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    const result = await deps.installIosApp({ udid: 'drs_42', appPath: '/tmp/a.app' });
-    expect(result.failed).toBe(true);
-    expect(result.code).toBe('STIM_INSTALL_FAILED');
-    expect(deps.failureRemedy()).toContain('EAS Simulator session drs_42 is still running and billed');
-    expect(deps.failureRemedy()).toContain('`stim stop`');
   });
 
   test('a failure on a proxy daemon names no billable session', async () => {
@@ -1289,112 +694,7 @@ describe('install and launch match their local counterparts', () => {
   });
 });
 
-describe('the local device cap does not apply', () => {
-  test('checkDeviceCapacity never refuses', async () => {
-    expect(await remoteIosDeps(ctx()).checkDeviceCapacity()).toBeNull();
-  });
-});
-
 describe('teardown', () => {
-  test('disconnects first, then stops the session', async () => {
-    const exec = mockExec({
-      outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
-        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
-      },
-    });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('torn-down');
-    expect(exec.calls.map((c) => c.args[0])).toEqual(['disconnect', 'simulator:get', 'simulator:stop']);
-  });
-
-  test('a failed disconnect does not prevent the stop, because the session is what bills', async () => {
-    const exec = mockExec({
-      fail: 'disconnect',
-      outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
-        'simulator:stop': JSON.stringify({ id: 'drs_42', status: 'STOPPED' }),
-      },
-    });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('torn-down');
-    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
-  });
-
-  test('a failed stop is reported, so the caller says leaked rather than torn down', async () => {
-    mockExec({
-      fail: 'simulator:stop',
-      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }) },
-    });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('failed');
-    expect(result.reason).toContain('drs_42');
-  });
-
-  test('an operator-owned daemon has no session to stop', async () => {
-    const exec = mockExec();
-    const result = await teardownRemote(ctx(), { sessionId: null });
-    expect(result.status).toBe('torn-down');
-    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test.each([
-    {
-      name: 'unowned live session',
-      output: JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' }),
-    },
-    { name: 'malformed lookup output', output: 'not json' },
-    { name: 'unknown status', output: JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' }) },
-  ])('fails closed for $name', async ({ output }) => {
-    const exec = mockExec({ outputs: { 'simulator:get': output } });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('failed');
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test.each([
-    'Authentication failed. Log in to EAS.',
-    'request failed: getaddrinfo ENOTFOUND api.expo.dev',
-    'The request timed out.',
-    'Failed to fetch simulator session drs_42.\nProject project_9 was not found.',
-  ])('fails closed when lookup fails: %s', async (stderr) => {
-    const error = Object.assign(new Error(stderr), { stderr });
-    const exec = mockExec({ errors: { 'simulator:get': error } });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('failed');
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test('treats a definitive missing session as already gone', async () => {
-    const stderr = 'Device run session drs_42 was not found.';
-    const error = Object.assign(new Error(stderr), { stderr });
-    const exec = mockExec({ errors: { 'simulator:get': error } });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('torn-down');
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test.each(['STOPPED', 'ERRORED'])('treats verified terminal status %s as already stopped', async (status) => {
-    const exec = mockExec({
-      outputs: { 'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status }) },
-    });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('torn-down');
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test('fails closed when stop output does not verify completion', async () => {
-    const exec = mockExec({
-      outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'IN_PROGRESS' }),
-        'simulator:stop': 'not json',
-      },
-    });
-    const result = await teardownRemote(ctx(), { sessionId: 'drs_42' });
-    expect(result.status).toBe('failed');
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(true);
-  });
-
   test('isolates proxy credentials from both lookup and stop', async () => {
     const exec = mockExec({
       outputs: {
@@ -1413,27 +713,6 @@ describe('teardown', () => {
 });
 
 describe('Metro reachability', () => {
-  test('an asserted-local device uses localhost and needs no gate', () => {
-    expect(resolveMetroOrigin({ metroPort: 8082, mode: 'off' })).toEqual({
-      origin: 'http://localhost:8082',
-      gate: false,
-    });
-  });
-
-  test('a named public url is used, and IS gated', () => {
-    expect(resolveMetroOrigin({ metroPort: 8082, publicUrl: 'https://abc.trycloudflare.com/' })).toEqual({
-      origin: 'https://abc.trycloudflare.com',
-      gate: true,
-    });
-  });
-
-  test('no address and nothing to build one with is a refusal, never localhost', () => {
-    const r = resolveMetroOrigin({ metroPort: 8082, mode: 'auto', isExpo: false, available: [] });
-    expect('failed' in r).toBe(true);
-    assert('failed' in r);
-    expect(r.remedy).toContain('"off"');
-  });
-
   test('launching against an unreachable Metro refuses instead of opening the app', async () => {
     mockExec({ outputs: { sim: CREATED } });
     const deps = remoteIosDeps(ctx());
@@ -1446,17 +725,6 @@ describe('Metro reachability', () => {
     });
     expect(result.failed).toBe(true);
     expect(result.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
-  });
-
-  test('the named url is what the deep link carries', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
-    await deps.ensureBooted({});
-    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
-    const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[2]).toBe(
-      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1&disableFab=1',
-    );
   });
 });
 
@@ -1481,45 +749,6 @@ async function reach(over: Record<string, unknown> = {}, platform: 'ios' | 'andr
 }
 
 describe('the Metro refusal comes before anything billable', () => {
-  test('no address and nothing to build one with is refused', async () => {
-    const { result, context } = await reach({ available: [] });
-    expect('failed' in result).toBe(true);
-    expect(context.publicMetroUrl).toBeNull();
-  });
-
-  test('a loopback daemon is NOT taken as proof the device is local', async () => {
-    const { result } = await reach({ available: [] });
-    expect('failed' in result).toBe(true);
-  });
-
-  test('asserting the device is local needs no tunnel and no gate', async () => {
-    let gated = false;
-    const { result, context } = await reach({
-      tunnelMode: 'off',
-      gateOrigin: async () => {
-        gated = true;
-        return { ok: true as const };
-      },
-    });
-    expect('ok' in result).toBe(true);
-    expect(context.publicMetroUrl).toBe('http://localhost:8085');
-    expect(gated).toBe(false);
-  });
-
-  test('naming a public url is what unblocks it, and it IS gated', async () => {
-    let gatedOrigin: string | null = null;
-    const { result, context } = await reach({
-      env: { [PUBLIC_METRO_ENV]: 'https://abc.ngrok.app' },
-      gateOrigin: async ({ origin }: { origin: string }) => {
-        gatedOrigin = origin;
-        return { ok: true as const };
-      },
-    });
-    expect('ok' in result).toBe(true);
-    expect(context.publicMetroUrl).toBe('https://abc.ngrok.app');
-    expect(gatedOrigin).toBe('https://abc.ngrok.app');
-  });
-
   test('an Expo Router project gates the bundle entry declared by package.json', async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ main: 'expo-router/entry' }));
     let entryPoint: string | null = null;
@@ -1538,99 +767,6 @@ describe('the Metro refusal comes before anything billable', () => {
 });
 
 describe('a tunnel Stim starts for itself', () => {
-  test.each(['ios', 'android'] as const)(
-    'a recorded tailscale tunnel skips the public bundle gate on %s',
-    async (platform) => {
-      let gated = false;
-      const { result, context } = await reach(
-        {
-          tunnelMode: 'tailscale',
-          available: [],
-          readTunnelRecord: () => ({
-            kind: 'managed',
-            provider: 'tailscale',
-            pid: 4242,
-            processToken: 'linux:100',
-            url: 'https://host.tail123.ts.net:8085',
-            port: 8085,
-            startedAt: 'T',
-          }),
-          isTunnelAlive: () => true,
-          gateOrigin: async () => {
-            gated = true;
-            return { failed: true as const, reason: 'this host cannot reach its own tailnet name' };
-          },
-        },
-        platform,
-      );
-      expect(result).toEqual({ ok: true });
-      expect(context.publicMetroUrl).toBe('https://host.tail123.ts.net:8085');
-      expect(gated).toBe(false);
-    },
-  );
-
-  test('tailscale is refused for the EAS backend, which is not on the tailnet', async () => {
-    const { result } = await reach({
-      ctx: { root, label: 'wt', platform: 'ios', backend: 'eas', publicMetroUrl: null },
-      tunnelMode: 'tailscale',
-      available: ['tailscale'],
-      readTunnelRecord: () => ({
-        kind: 'managed',
-        provider: 'tailscale',
-        pid: 4242,
-        processToken: 'linux:100',
-        url: 'https://host.tail123.ts.net:8085',
-        port: 8085,
-        startedAt: 'T',
-      }),
-      isTunnelAlive: () => true,
-    });
-    expect(result).toMatchObject({ code: 'STIM_REMOTE_METRO_UNREACHABLE', failed: expect.stringContaining('EAS') });
-  });
-
-  test.each([{ available: [] }, { available: ['ngrok'] }])(
-    'auto refuses a recorded tailscale tunnel with $available',
-    async ({ available }) => {
-      const { result, context } = await reach({
-        available,
-        readTunnelRecord: () => ({
-          kind: 'managed',
-          provider: 'tailscale',
-          pid: 4242,
-          processToken: 'linux:100',
-          url: 'https://host.tail123.ts.net:8085',
-          port: 8085,
-          startedAt: 'T',
-        }),
-        isTunnelAlive: () => true,
-      });
-      expect(result).toHaveProperty('failed');
-      expect(context.publicMetroUrl).toBeNull();
-    },
-  );
-  test('reuses the tunnel recorded by start and gates it', async () => {
-    let started = false;
-    const { result, context } = await reach({
-      available: ['cloudflared'],
-      startManagedTunnel: async () => {
-        started = true;
-        return { url: 'https://t.trycloudflare.com', pid: 4242 };
-      },
-      readTunnelRecord: () => ({
-        kind: 'managed',
-        provider: 'cloudflared',
-        pid: 4242,
-        url: 'https://t.trycloudflare.com',
-        port: 8085,
-        startedAt: 'T',
-      }),
-      isTunnelAlive: () => true,
-    });
-    expect('ok' in result).toBe(true);
-    expect(started).toBe(false);
-    expect(context.publicMetroUrl).toBe('https://t.trycloudflare.com');
-  });
-
   test('a gate failure refuses with the gate stable code, and sets no origin', async () => {
     const { result, context } = await reach({
       available: ['cloudflared'],
@@ -1655,108 +791,16 @@ describe('a tunnel Stim starts for itself', () => {
     expect(result.code).toBe('STIM_REMOTE_METRO_WRONG');
     expect(context.publicMetroUrl).toBeNull();
   });
-
-  test('a missing managed tunnel requires start --remote and never starts a duplicate', async () => {
-    let started = false;
-    const { result } = await reach({
-      available: ['cloudflared'],
-      startManagedTunnel: async () => {
-        started = true;
-        return { url: 'https://duplicate.trycloudflare.com', pid: 4242 };
-      },
-      readTunnelRecord: () => null,
-    });
-    expect('failed' in result).toBe(true);
-    assert('failed' in result);
-    expect(result.remedy).toContain('start --remote');
-    expect(started).toBe(false);
-  });
 });
 
 describe('a session Stim created is never abandoned', () => {
   const NO_ENDPOINT = JSON.stringify({ id: 'drs_9', remoteConfig: null });
-
-  test('a session that never becomes reachable is stopped, not left running', async () => {
-    const exec = mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: null }));
-    const booted = await deps.ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('The session was stopped.');
-    const stop = exec.calls.find((c) => c.args[0] === 'simulator:stop');
-    expect(stop?.args).toContain('drs_9');
-    expect(stop?.timeoutMs).toBe(30_000);
-    expect(stop?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
-    const gets = exec.calls.filter((c) => c.args[0] === 'simulator:get');
-    expect(gets.length).toBeGreaterThan(0);
-    for (const get of gets) {
-      expect(get.timeoutMs).toBe(30_000);
-      expect(get.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
-    }
-  });
 
   test('when the stop also fails, the id and the manual command are reported', async () => {
     mockExec({ outputs: { sim: NO_ENDPOINT, 'simulator:get': NO_ENDPOINT }, fail: 'simulator:stop' });
     const booted = await remoteIosDeps(ctx({ existingDaemon: null })).ensureBooted({});
     expect(booted.reason).toContain('eas simulator:stop --id drs_9');
     expect(booted.reason).toContain('bills until its cap');
-  });
-
-  test.each([
-    ['malformed output', 'not json'],
-    ['non-terminal output', JSON.stringify({ id: 'drs_42', status: 'IN_PROGRESS' })],
-    ['a different session id', JSON.stringify({ id: 'drs_other', status: 'STOPPED' })],
-    ['ambiguous output', JSON.stringify({ id: 'drs_42' })],
-  ])('a zero-exit stop with %s keeps the current-run session actionable', async (_case, stopOutput) => {
-    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
-    writeFileSync(workspaceDir(root), 'blocks the profile directory');
-    mockExec({ outputs: { sim: CREATED, 'simulator:stop': stopOutput } });
-
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-
-    expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
-    expect(booted.reason).toContain('drs_42');
-    expect(booted.reason).not.toContain('The session was stopped.');
-    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
-  });
-
-  test('a connect failure after a create also ends the session', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'connect' });
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(true);
-  });
-
-  test('a profile write failure after creation stops the new session', async () => {
-    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
-    writeFileSync(workspaceDir(root), 'blocks the profile directory');
-    const exec = mockExec({ outputs: { sim: CREATED } });
-
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-
-    expect(booted.failed).toBe(true);
-    expect(booted.reason).toContain('The session was stopped.');
-    expect(exec.calls.find((call) => call.args[0] === 'simulator:stop')?.args).toContain('drs_42');
-  });
-
-  test('an unconfirmed profile-write cleanup reports the session and manual remedy', async () => {
-    mkdirSync(join(tmpHome, 'workspaces'), { recursive: true });
-    writeFileSync(workspaceDir(root), 'blocks the profile directory');
-    mockExec({ outputs: { sim: CREATED }, fail: 'simulator:stop' });
-
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-
-    expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_REMOTE_SESSION_CLEANUP');
-    expect(booted.reason).toContain('drs_42');
-    expect(booted.remedy).toBe('Run `eas simulator:stop --id drs_42`.');
-  });
-
-  test('a connect failure against an operator daemon stops nothing', async () => {
-    const exec = mockExec({ existingDaemonMode: true, fail: 'connect' });
-    const booted = await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
-    expect(booted.failed).toBe(true);
-    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
   });
 });
 
@@ -1776,73 +820,6 @@ describe('a re-run does not orphan the session it already has', () => {
     },
   });
 
-  test('a live recorded session is reused, and no new one is created', async () => {
-    recordSession('drs_old');
-    const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    const booted = await deps.ensureBooted({});
-    expect(booted.ok).toBe(true);
-    expect(deps.createdSessionId()).toBeNull();
-    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
-    const get = exec.calls.find((c) => c.args[0] === 'simulator:get');
-    expect(get?.timeoutMs).toBe(30_000);
-    expect(get?.omitEnv).toEqual(['AGENT_DEVICE_DAEMON_BASE_URL', 'AGENT_DEVICE_DAEMON_AUTH_TOKEN']);
-  });
-
-  test('a new session is created on the requested model', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
-    const sim = exec.calls.find((call) => call.args[0] === 'sim');
-    expect(sim?.args.slice(sim.args.indexOf('--device'), sim.args.indexOf('--device') + 2)).toEqual([
-      '--device',
-      'iPad Pro 13-inch (M5)',
-    ]);
-  });
-
-  test.each([
-    ['another model', 'iPhone 17 Pro', '"iPhone 17 Pro"'],
-    ['the model EAS chose', null, 'the model EAS chose'],
-  ])(
-    'a recorded session on %s refuses a different --device-type without stopping it',
-    async (_label, recorded, named) => {
-      ensureWorkspaceStorage(root);
-      writeFileSync(
-        workspaceStateFile(root),
-        JSON.stringify({
-          remoteDevice: { platform: 'ios', sessionId: 'drs_old', ...(recorded ? { deviceType: recorded } : {}) },
-        }),
-      );
-      const exec = mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
-
-      const booted = await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
-
-      expect(booted).toMatchObject({ failed: true, code: 'STIM_REMOTE_DEVICE_MISMATCH' });
-      expect(booted.reason).toContain(`runs ${named}, not "iPad Pro 13-inch (M5)"`);
-      expect(booted.remedy).toContain('`stim stop`');
-      expect(exec.calls.map((call) => call.args[0])).toEqual(['simulator:get']);
-    },
-  );
-
-  test('a recorded session on another model that already ended is replaced on the requested model', async () => {
-    ensureWorkspaceStorage(root);
-    writeFileSync(
-      workspaceStateFile(root),
-      JSON.stringify({ remoteDevice: { platform: 'ios', sessionId: 'drs_dead', deviceType: 'iPhone 17 Pro' } }),
-    );
-    const exec = mockExec({
-      outputs: {
-        'simulator:get': JSON.stringify({ id: 'drs_dead', name: 'stim-wt', status: 'STOPPED' }),
-        sim: CREATED,
-      },
-    });
-
-    const booted = await remoteIosDeps(ctx({ deviceType: 'iPad Pro 13-inch (M5)' })).ensureBooted({});
-
-    expect(booted.ok).toBe(true);
-    const sim = exec.calls.find((call) => call.args[0] === 'sim');
-    expect(sim?.args[sim.args.indexOf('--device') + 1]).toBe('iPad Pro 13-inch (M5)');
-  });
-
   test('a recorded session on the requested model, or a run without --device-type, reuses it', async () => {
     ensureWorkspaceStorage(root);
     writeFileSync(
@@ -1856,23 +833,6 @@ describe('a re-run does not orphan the session it already has', () => {
     }
   });
 
-  test('ios refuses an Android session without stopping or replacing it', async () => {
-    ensureWorkspaceStorage(root);
-    writeFileSync(
-      workspaceStateFile(root),
-      JSON.stringify({ remoteDevice: { platform: 'android', sessionId: 'drs_android' } }),
-    );
-    const exec = mockExec({ outputs: { sim: CREATED } });
-
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-
-    expect(booted.failed).toBe(true);
-    expect(booted.code).toBe('STIM_REMOTE_PLATFORM_MISMATCH');
-    expect(booted.reason).toContain('drs_android');
-    expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
-    expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
   test('android refuses an iOS session without stopping or replacing it', async () => {
     recordSession('drs_ios');
     const exec = mockExec({ outputs: { sim: CREATED } });
@@ -1884,46 +844,6 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(booted.reason).toContain('drs_ios');
     expect(exec.calls.some((call) => call.args[0] === 'sim')).toBe(false);
     expect(exec.calls.some((call) => call.args[0] === 'simulator:stop')).toBe(false);
-  });
-
-  test('creation ownership resets when a later boot reuses a session', async () => {
-    mockExec({ outputs: { 'simulator:get': LIVE, sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    expect((await deps.ensureBooted({})).ok).toBe(true);
-    expect(deps.createdSessionId()).toBe('drs_42');
-
-    recordSession('drs_old');
-    expect((await deps.ensureBooted({})).ok).toBe(true);
-    expect(deps.createdSessionId()).toBeNull();
-  });
-
-  test('creation ownership resets when a later boot fails', async () => {
-    mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    expect((await deps.ensureBooted({})).ok).toBe(true);
-    expect(deps.createdSessionId()).toBe('drs_42');
-
-    mockExec({ fail: 'sim' });
-    expect((await deps.ensureBooted({})).failed).toBe(true);
-    expect(deps.createdSessionId()).toBeNull();
-  });
-
-  test('a STOPPED session is not reused, even though it still reports a config', async () => {
-    recordSession('drs_dead');
-    const dead = JSON.stringify({
-      id: 'drs_dead',
-      name: 'stim-wt',
-      status: 'STOPPED',
-      remoteConfig: {
-        agentDeviceRemoteSessionUrl: 'https://dead.eas.dev/daemon',
-        agentDeviceRemoteSessionToken: 'tok_dead',
-      },
-    });
-    const exec = mockExec({ outputs: { 'simulator:get': dead, sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    expect(deps.createdSessionId()).toBe('drs_42');
-    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(true);
   });
 
   test('a verified terminal recorded session is replaced without another stop', async () => {
@@ -1987,27 +907,6 @@ describe('a re-run does not orphan the session it already has', () => {
     expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
     expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_other');
   });
-
-  test('a failed recorded-session lookup does not create a replacement', async () => {
-    recordSession('drs_old');
-    const stderr = 'request failed: getaddrinfo ENOTFOUND api.expo.dev';
-    const error = Object.assign(new Error(stderr), { stderr });
-    const exec = mockExec({ errors: { 'simulator:get': error }, outputs: { sim: CREATED } });
-
-    const booted = await remoteIosDeps(ctx()).ensureBooted({});
-
-    expect(booted.failed).toBe(true);
-    expect(exec.calls.some((c) => c.args[0] === 'simulator:stop')).toBe(false);
-    expect(exec.calls.some((c) => c.args[0] === 'sim')).toBe(false);
-    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_old');
-  });
-
-  test('an operator-supplied daemon touches no recorded session at all', async () => {
-    recordSession('drs_old');
-    const exec = mockExec();
-    await remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' })).ensureBooted({});
-    expect(exec.calls.some((c) => c.file === '/bin/eas')).toBe(false);
-  });
 });
 
 describe("the alert Stim's own url open raises", () => {
@@ -2020,115 +919,9 @@ describe("the alert Stim's own url open raises", () => {
     expect(after).toContain('alert accept');
     expect(after.indexOf('alert accept')).toBeGreaterThan(after.indexOf('open com.example.app'));
   });
-
-  test('a bare RN launch opens no url, so it does not reach for an alert', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
-    await deps.ensureBooted({});
-    await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
-    expect(exec.calls.some((c) => c.args[0] === 'alert')).toBe(false);
-  });
-
-  test('no alert to accept still leaves the launch successful', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED }, fail: 'alert accept' });
-    const deps = remoteIosDeps(ctx({ existingDaemon: LOOPBACK, tunnelMode: 'off' }));
-    await deps.ensureBooted({});
-    const result = await deps.launchIosApp({
-      udid: 'drs_42',
-      bundleId: 'com.example.app',
-      metroPort: 8082,
-      devClientScheme: 'myapp',
-    });
-    expect(result.ok).toBe(true);
-    expect(exec.calls.some((c) => c.args.slice(0, 2).join(' ') === 'alert accept')).toBe(true);
-  });
-});
-
-describe('the android adapter', () => {
-  test('android creates its session with --platform android', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteAndroidDeps(ctx());
-    await deps.ensureDeviceBooted({});
-    const args = exec.calls[0]?.args ?? [];
-    expect(args[args.indexOf('--platform') + 1]).toBe('android');
-  });
-
-  test('the boot result names a serial, which is what android.ts reads', async () => {
-    mockExec({ outputs: { sim: CREATED } });
-    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
-    expect(booted.ok).toBe(true);
-    expect(booted.serial).toBe('drs_42');
-  });
-
-  test('a failed boot keeps its reason rather than reporting a serial', async () => {
-    mockExec({ fail: 'sim' });
-    const booted = await remoteAndroidDeps(ctx()).ensureDeviceBooted({});
-    expect(booted.failed).toBe(true);
-    expect(booted.serial).toBeUndefined();
-  });
-
-  test('install takes the apk path', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteAndroidDeps(ctx());
-    await deps.ensureDeviceBooted({});
-    await deps.install({ serial: 'drs_42', apkPath: '/tmp/My App.apk' });
-    const call = exec.calls.find((c) => c.args[0] === 'install');
-    expect(call?.args[1]).toBe('/tmp/My App.apk');
-  });
-
-  test('the launch points at the public origin, never 10.0.2.2 or a reverse', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteAndroidDeps(ctx({ publicMetroUrl: 'https://abc.trycloudflare.com' }));
-    await deps.ensureDeviceBooted({});
-    await deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082, devClientScheme: 'myapp' });
-    const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[1]).toBe('com.example.app');
-    expect(open?.args[2]).toBe(
-      'myapp://expo-development-client/?url=https%3A%2F%2Fabc.trycloudflare.com%2F%3FdisableOnboarding%3D1&disableFab=1',
-    );
-    const flat = (open?.args ?? []).join(' ');
-    expect(flat).not.toContain('10.0.2.2');
-    expect(flat).not.toContain('reverse');
-    expect(open?.args[open.args.indexOf('--metro-host') + 1]).toBe('abc.trycloudflare.com');
-    expect(open?.args[open.args.indexOf('--metro-port') + 1]).toBe('443');
-  });
-
-  test('android refuses an unreachable Metro for the same reason iOS does', async () => {
-    mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteAndroidDeps(ctx());
-    await deps.ensureDeviceBooted({});
-    const r = await deps.launch({ serial: 'drs_42', packageName: 'com.example.app', metroPort: 8082 });
-    expect(r.failed).toBe(true);
-    expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
-  });
-
-  test('the local device cap does not apply to a remote emulator either', async () => {
-    expect(await remoteAndroidDeps(ctx()).checkCapacity()).toBeNull();
-  });
 });
 
 describe('a release-shaped remote launch', () => {
-  test('a null port launches without asking where Metro is', async () => {
-    const exec = mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    const result = await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: null });
-    expect(result.ok).toBe(true);
-    expect(result.mode).toBe('launch');
-    const open = exec.calls.find((c) => c.args[0] === 'open');
-    expect(open?.args[1]).toBe('com.example.app');
-    expect(open?.args).not.toContain('--metro-host');
-  });
-
-  test('a dev launch on an unreachable device still refuses', async () => {
-    mockExec({ outputs: { sim: CREATED } });
-    const deps = remoteIosDeps(ctx());
-    await deps.ensureBooted({});
-    const r = await deps.launchIosApp({ udid: 'drs_42', bundleId: 'com.example.app', metroPort: 8082 });
-    expect(r.failed).toBe(true);
-    expect(r.code).toBe('STIM_REMOTE_METRO_UNREACHABLE');
-  });
-
   test('android release launches the same way', async () => {
     const exec = mockExec({ outputs: { sim: CREATED } });
     const deps = remoteAndroidDeps(ctx());

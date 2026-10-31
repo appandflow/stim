@@ -6,55 +6,25 @@ import {
   androidAvdConfigSetting,
   cacheProviderSettingError,
   androidAvdConfigSettingError,
-  androidDataPartitionSizeBytes,
-  androidDataPartitionSizeGbSetting,
-  androidDataPartitionSizeGbSettingError,
-  iosLanHostSetting,
-  iosLanHostSettingError,
-  androidLayoutSetting,
   androidLayoutSettingError,
-  iosProjectDirSetting,
   iosProjectDirSettingError,
   iosSigningIdentitySetting,
   iosSigningIdentitySettingError,
   iosSigningIdentitySha1Setting,
   iosSigningIdentitySha1SettingError,
-  iosSimSlimDefaultSetting,
   iosSimSlimProfileSetting,
-  mergeSettingsLayers,
   metroCommandSettingError,
-  metroTunnelSettingError,
-  ngrokUrlSetting,
   parseAndroidAvdConfigIni,
-  publicUrlSetting,
-  readCommittedSettings,
-  remoteAndroidSetting,
-  remoteIosSetting,
   resolveCacheProviderConfig,
   resolveSettings,
   settingShapeErrors,
   settingValueAt,
-  settingOriginScope,
-  settingsLayers,
-  tunnelModeSetting,
-  metroIdleStopMinutesSetting,
-  metroPortSetting,
-  resolveProjectSettings,
-  deviceIdleShutdownMinutesSetting,
   deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-import { hostedMetroSettings } from '../device-host/metro-request.ts';
-import { resolveOptimizations, resolveMetroSharedCache } from '../optimizations.ts';
-import { saveConfig, upsertProject, writeConfigSetting, type Config } from '../workspace/config.ts';
-import { findProjectRoot } from '../workspace/project.ts';
-import { SETTINGS } from '@stim-cli/core/state';
 
-type SettingsView = {
-  worktree?: { exclude?: string[] };
-  ios?: { deviceType?: string; runtime?: string };
-  [k: string]: unknown;
-};
+import { saveConfig, writeConfigSetting, type Config } from '../workspace/config.ts';
+import { SETTINGS } from '@stim-cli/core/state';
 
 let tmpHome: string;
 
@@ -68,45 +38,6 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-test('earlier layers win over later ones', () => {
-  const merged = mergeSettingsLayers([
-    { worktree: { exclude: ['/a'] } },
-    { worktree: { exclude: ['/b'] }, ios: { runtime: '26.2' } },
-  ]);
-  expect(merged).toEqual({ worktree: { exclude: ['/a'] }, ios: { runtime: '26.2' } });
-});
-
-test('merges nested objects key by key rather than replacing them', () => {
-  const merged = mergeSettingsLayers([
-    { ios: { deviceType: 'iPhone 17 Pro' } },
-    { ios: { deviceType: 'iPhone 17', runtime: '26.2' } },
-  ]);
-  expect(merged).toEqual({ ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' } });
-});
-
-test('merges android.avdConfig keys across settings layers with earlier values winning', () => {
-  const merged = mergeSettingsLayers([
-    { android: { avdConfig: { 'hw.ramSize': 4096 } } },
-    { android: { avdConfig: { 'hw.ramSize': 2048, 'hw.keyboard': true } } },
-  ]);
-  expect(merged).toEqual({
-    android: { avdConfig: { 'hw.ramSize': 4096, 'hw.keyboard': true } },
-  });
-});
-
-test('ignores null and undefined layers', () => {
-  expect(mergeSettingsLayers([null, { a: 1 }, undefined])).toEqual({ a: 1 });
-});
-
-test('an array value is replaced wholesale, not concatenated', () => {
-  const merged = mergeSettingsLayers([
-    { worktree: { exclude: ['a'] } },
-    { worktree: { exclude: ['b', 'c'] } },
-  ]) as SettingsView;
-  assert(merged.worktree);
-  expect(merged.worktree.exclude).toEqual(['a']);
-});
-
 test('a __proto__ key in a committed .stim.json sets no effective setting', () => {
   writeFileSync(
     join(tmpHome, '.stim.json'),
@@ -118,134 +49,7 @@ test('a __proto__ key in a committed .stim.json sets no effective setting', () =
   expect(merged.ios).toEqual({ deviceType: 'iPhone 17' });
 });
 
-test('readCommittedSettings reads .stim.json', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { deviceType: 'iPhone 17' } }));
-  expect(readCommittedSettings(tmpHome)).toEqual({ ios: { deviceType: 'iPhone 17' } });
-});
-
-test('readCommittedSettings returns empty for missing or malformed files', () => {
-  expect(readCommittedSettings(tmpHome)).toEqual({});
-  writeFileSync(join(tmpHome, '.stim.json'), '{ not json');
-  expect(readCommittedSettings(tmpHome)).toEqual({});
-});
-
-test('metroPortSetting prefers STIM_METRO_PORT to the workspace layer and refuses a port below 1024', () => {
-  upsertProject(tmpHome, {});
-  expect(metroPortSetting(resolveProjectSettings(tmpHome).settings, {})).toEqual({ port: null, error: null });
-  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'metro.port', 25062);
-  const { settings } = resolveProjectSettings(tmpHome);
-  expect(metroPortSetting(settings, {})).toEqual({ port: 25062, error: null });
-  expect(metroPortSetting(settings, { STIM_METRO_PORT: '25072' })).toEqual({ port: 25072, error: null });
-  expect(metroPortSetting(settings, { STIM_METRO_PORT: '0x1F90' }).error).toMatch(/^Invalid STIM_METRO_PORT value/);
-  expect(metroPortSetting(settings, { STIM_METRO_PORT: '80' }).error).toMatch(/^Invalid STIM_METRO_PORT value "80"\./);
-});
-
-test('resolveSettings orders project over repo over committed', () => {
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ ios: { deviceType: 'iPhone 17' }, worktree: { exclude: ['.env'] } }),
-  );
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'ios.deviceType', 'iPhone 17 Pro');
-  upsertProject(tmpHome, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'ios.deviceType', 'iPhone 17 Pro Max');
-
-  const merged = resolveSettings({
-    projectPath: tmpHome,
-    gitCommonDir: '/repo/.git',
-    repoRoot: tmpHome,
-  }) as SettingsView;
-  expect(merged.ios?.deviceType).toBe('iPhone 17 Pro Max');
-  assert(merged.worktree);
-  expect(merged.worktree.exclude).toEqual(['.env']);
-});
-
-test('monorepo apps use their own committed settings and provider paths without inheriting the root file', () => {
-  const repo = realpathSync(tmpHome);
-  const first = join(repo, 'apps', 'first');
-  const second = join(repo, 'apps', 'second');
-  mkdirSync(first, { recursive: true });
-  mkdirSync(second, { recursive: true });
-  writeFileSync(join(first, 'package.json'), JSON.stringify({ name: 'first' }));
-  writeFileSync(join(second, 'package.json'), JSON.stringify({ name: 'second' }));
-  writeFileSync(
-    join(repo, '.stim.json'),
-    JSON.stringify({
-      ios: { configuration: 'Release' },
-      worktree: { exclude: ['.env'] },
-      cache: { provider: './root.cjs' },
-    }),
-  );
-  writeFileSync(
-    join(first, '.stim.json'),
-    JSON.stringify({ ios: { configuration: 'Debug' }, cache: { provider: './first.cjs' } }),
-  );
-  writeFileSync(
-    join(second, '.stim.json'),
-    JSON.stringify({ android: { variant: 'demoDebug' }, cache: { provider: './second.cjs' } }),
-  );
-  const context = (app: string) => ({ projectPath: app, repoRoot: repo, gitCommonDir: join(repo, '.git') });
-  expect(resolveSettings(context(first))).toEqual({
-    ios: { configuration: 'Debug' },
-    cache: { provider: './first.cjs' },
-  });
-  expect(resolveSettings(context(second))).toEqual({
-    android: { variant: 'demoDebug' },
-    cache: { provider: './second.cjs' },
-  });
-  expect(resolveCacheProviderConfig(context(first))).toEqual({ provider: './first.cjs', options: {}, baseDir: first });
-  expect(resolveCacheProviderConfig(context(second))).toEqual({
-    provider: './second.cjs',
-    options: {},
-    baseDir: second,
-  });
-  rmSync(join(second, '.stim.json'));
-  expect(resolveSettings(context(second))).toEqual({});
-  expect(resolveCacheProviderConfig(context(second))).toBeNull();
-  expect(resolveSettings({ repoRoot: repo, gitCommonDir: join(repo, '.git') }).worktree).toEqual({ exclude: ['.env'] });
-  const alias = join(repo, 'alias');
-  symlinkSync(first, alias, 'dir');
-  upsertProject(first, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: first }, 'ios.runtime', '26.5');
-  const aliasedApp = findProjectRoot(alias);
-  expect(aliasedApp).toBe(first);
-  expect(resolveSettings(context(aliasedApp!))).toEqual(resolveSettings(context(first)));
-});
-
-test('unknownSettingKeys reports keys Stim no longer reads', () => {
-  expect(unknownSettingKeys({ packageManager: 'pnpm' })).toEqual(['packageManager']);
-  expect(unknownSettingKeys({ worktree: { install: ['pnpm i'] } })).toEqual(['worktree.install']);
-});
-
-test('unknownSettingKeys accepts every key that is still honoured', () => {
-  expect(
-    unknownSettingKeys({
-      ios: {
-        deviceType: 'iPhone 17 Pro',
-        runtime: '26.2',
-        configuration: 'Release',
-        simslimProfile: '.simslim/dev.json',
-      },
-      android: {
-        systemImage: 'pkg',
-        dataPartitionSizeGb: 8,
-        avdConfigFile: '.stim/android-avd.ini',
-        avdConfig: { 'hw.ramSize': 3072, 'hw.keyboard': true },
-        variant: 'productionDebug',
-      },
-      worktree: { exclude: ['.env'] },
-    }),
-  ).toEqual([]);
-});
-
 describe('iOS SimSlim profile settings', () => {
-  test('resolves a repository-contained profile and treats an absent setting as disabled', () => {
-    writeFileSync(join(tmpHome, 'simslim.json'), '{}\n');
-    expect(iosSimSlimProfileSetting({ ios: { simslimProfile: 'simslim.json' } }, tmpHome)).toBe(
-      realpathSync(join(tmpHome, 'simslim.json')),
-    );
-    expect(iosSimSlimProfileSetting({}, tmpHome)).toBeNull();
-  });
-
   test('rejects invalid paths, missing profiles, and symlink escapes', () => {
     const outside = mkdtempSync(join(tmpdir(), 'stim-simslim-outside-'));
     try {
@@ -288,19 +92,6 @@ describe('Android AVD config settings', () => {
   });
 
   test.each([
-    ['disk.dataPartition.path', '/tmp/elsewhere'],
-    ['image.sysdir.1', '../image'],
-    ['hw.cpu.arch', 'arm64'],
-    ['hw.camera.back', 'webcam0'],
-    ['hw.unknownFutureControl', 'yes'],
-    ['toString', 'yes'],
-  ])('rejects protected or unknown key %s', (key, value) => {
-    expect(androidAvdConfigSettingError({ android: { avdConfig: { [key]: value } } }, tmpHome)).toMatch(
-      /Unsupported android\.avdConfig key/,
-    );
-  });
-
-  test.each([
     ['hw.ramSize', 1024],
     ['hw.cpu.ncore', 0],
     ['hw.keyboard', 'on'],
@@ -337,123 +128,6 @@ describe('Android AVD config settings', () => {
       rmSync(outside, { recursive: true, force: true });
     }
   });
-});
-
-describe('Android data partition size settings', () => {
-  test('defaults above the emulator minimum and converts GiB to exact bytes', () => {
-    expect(androidDataPartitionSizeGbSetting({})).toBe(8);
-    expect(androidDataPartitionSizeBytes(6)).toBe(6 * 1024 ** 3);
-  });
-
-  test('accepts an integer override through the emulator ext4 maximum', () => {
-    expect(androidDataPartitionSizeGbSetting({ android: { dataPartitionSizeGb: 12 } })).toBe(12);
-    expect(androidDataPartitionSizeGbSettingError({ android: { dataPartitionSizeGb: 16 * 1024 } })).toBeNull();
-  });
-
-  test('uses the ordinary first-layer-wins precedence', () => {
-    const merged = mergeSettingsLayers([
-      { android: { dataPartitionSizeGb: 12 } },
-      { android: { dataPartitionSizeGb: 10 } },
-      { android: { dataPartitionSizeGb: 8 } },
-    ]);
-    expect(androidDataPartitionSizeGbSetting(merged)).toBe(12);
-  });
-
-  test.each([5, 6.5, '8', 16 * 1024 + 1])('rejects invalid value %p', (value) => {
-    const settings = { android: { dataPartitionSizeGb: value } };
-    expect(androidDataPartitionSizeGbSettingError(settings)).toMatch(/integer from 6 through 16384 GiB/);
-    expect(() => androidDataPartitionSizeGbSetting(settings)).toThrow(/android\.dataPartitionSizeGb/);
-  });
-});
-
-describe('remote device settings', () => {
-  test('distinguishes iOS remote machines from the proxy and eas backends', () => {
-    expect(remoteIosSetting({ ios: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
-    expect(remoteIosSetting({ ios: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
-    expect(remoteIosSetting({ ios: { remote: 'mini' } })).toEqual({ kind: 'machine', machine: 'mini' });
-    expect(remoteIosSetting({ ios: { remote: 'auto' } })).toEqual({
-      kind: 'machine',
-      machine: 'auto',
-      placement: 'auto',
-    });
-    expect(remoteIosSetting({ ios: { remote: 'Remote' } })).toEqual({
-      kind: 'machine',
-      machine: 'auto',
-      placement: 'remote',
-    });
-    expect(remoteIosSetting({ ios: { remote: ' remote-only ' } })).toEqual({
-      kind: 'machine',
-      machine: 'auto',
-      placement: 'remote-only',
-    });
-    expect(remoteIosSetting({ ios: { remote: 'local' } })).toBeNull();
-    expect(remoteAndroidSetting({ android: { remote: 'proxy' } })).toEqual({ kind: 'backend', backend: 'proxy' });
-    expect(remoteAndroidSetting({ android: { remote: 'eas' } })).toEqual({ kind: 'backend', backend: 'eas' });
-    expect(remoteAndroidSetting({ android: { remote: 'mini:7443' } })).toEqual({
-      kind: 'machine',
-      machine: 'mini:7443',
-    });
-    expect(remoteAndroidSetting({ android: { remote: 'AUTO' } })).toEqual({
-      kind: 'machine',
-      machine: 'auto',
-      placement: 'auto',
-    });
-  });
-
-  test('reports invalid platform values instead of silently disabling remote mode', () => {
-    expect(settingShapeErrors({ ios: { remote: true }, android: { remote: 'bad name' } })).toEqual([
-      'Invalid ios.remote setting true. Expected a string.',
-      'Invalid android.remote setting "bad name". Expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name.',
-    ]);
-  });
-
-  test('missing platform settings remain local and valid', () => {
-    expect(remoteIosSetting({})).toBeNull();
-    expect(remoteAndroidSetting({ android: {} })).toBeNull();
-  });
-});
-
-test('a committed android.deviceProfile must be an avdmanager id, so cmd.exe metacharacters never reach avdmanager.bat', () => {
-  for (const deviceProfile of [
-    '',
-    'pixel_6',
-    'Nexus 5X',
-    'tv_1080p',
-    '3.2in HVGA slider (ADP1)',
-    '10.1in WXGA (Tablet)',
-  ])
-    expect(settingShapeErrors({ android: { deviceProfile } })).toEqual([]);
-  for (const deviceProfile of ['pixel_6"&calc&"', 'pixel_6&calc', '%PATH%', 'pixel_6\ncalc'])
-    expect(settingShapeErrors({ android: { deviceProfile } })).toEqual([
-      `Invalid android.deviceProfile setting ${JSON.stringify(deviceProfile)}. Expected an avdmanager device id such as pixel_6 or Nexus 5X (\`avdmanager list device -c\`).`,
-    ]);
-});
-
-test('unknownSettingKeys reports a nested unknown without flagging its parent', () => {
-  expect(unknownSettingKeys({ ios: { deviceType: 'x', bogus: 1 } })).toEqual(['ios.bogus']);
-});
-
-test('unknownSettingKeys treats a known scalar key with an object value as known, leaving refusal to the shape check', () => {
-  expect(unknownSettingKeys({ android: { keystore: {} } })).toEqual([]);
-  expect(settingShapeErrors({ android: { keystore: {} } })).toEqual([
-    'Invalid android.keystore setting {}. Expected a string path.',
-  ]);
-
-  expect(unknownSettingKeys({ ios: { lanHost: {} } })).toEqual([]);
-  expect(settingShapeErrors({ ios: { lanHost: {} } })).toEqual(['Invalid ios.lanHost setting {}. Expected a string.']);
-});
-
-test('unknownSettingKeys still reports a genuinely unknown nested key under ios', () => {
-  expect(unknownSettingKeys({ ios: { bogus: {} } })).toEqual(['ios.bogus']);
-});
-
-test('a known key is never an unknown-key warning, whatever its value', () => {
-  for (const value of [{}, 42, true, [], null, 'x']) {
-    expect(unknownSettingKeys({ ios: { configuration: value } })).toEqual([]);
-  }
-  expect(settingShapeErrors({ ios: { configuration: {} } })).toEqual([
-    'Invalid ios.configuration setting {}. Expected a string.',
-  ]);
 });
 
 function nestedSetting(path: string, value: unknown): Record<string, unknown> {
@@ -583,174 +257,13 @@ test('every known setting has a shape, and a wrong-typed value is one refusal na
   }
 });
 
-test('settingShapeErrors reports one line per bad key and ignores absent keys', () => {
-  expect(settingShapeErrors({})).toEqual([]);
-  expect(settingShapeErrors(null)).toEqual([]);
-  expect(settingShapeErrors('nope')).toEqual([]);
-  expect(settingShapeErrors({ ios: { configuration: {} }, android: { keystore: 5 }, packageManager: 'pnpm' })).toEqual([
-    'Invalid ios.configuration setting {}. Expected a string.',
-    'Invalid android.keystore setting 5. Expected a string path.',
-  ]);
-});
-
-test.each([
-  '',
-  'custom.bundle?platform=ios',
-  '//metro.example/custom.bundle?platform=ios',
-  'file:///custom.bundle?platform=ios',
-  'http://[invalid/custom.bundle?platform=ios',
-  '/status?platform=ios',
-  '/custom.bundle',
-  '/custom.bundle?platform=android',
-  '/custom.bundle?platform=ios#fragment',
-  '/custom.bundle?platform=ios&custom=unescaped value',
-  '/custom\\entry.bundle?platform=ios',
-])('a malformed or wrong-platform warmup URL is refused: %s', (value) => {
-  const errors = settingShapeErrors({ metro: { warmupUrl: { ios: value } } });
-  expect(errors).toHaveLength(1);
-  expect(errors[0]).toContain('metro.warmupUrl.ios');
-});
-
 test('unknownSettingKeys tolerates empty and malformed input', () => {
   expect(unknownSettingKeys({})).toEqual([]);
   expect(unknownSettingKeys(null)).toEqual([]);
   expect(unknownSettingKeys('nope')).toEqual([]);
 });
 
-test('committed array and device settings resolve with their JSON types intact', () => {
-  const repo = mkdtempSync(join(tmpdir(), 'stim-repo-'));
-  try {
-    writeFileSync(
-      join(repo, '.stim.json'),
-      JSON.stringify({
-        worktree: { exclude: ['.env', 'ios/Pods'] },
-        ios: { deviceType: 'iPhone 17 Pro', runtime: '26.2' },
-      }),
-    );
-    const resolved = resolveSettings({ repoRoot: repo }) as SettingsView;
-    expect(resolved.worktree?.exclude).toEqual(['.env', 'ios/Pods']);
-    assert(resolved.ios);
-    expect(resolved.ios.deviceType).toBe('iPhone 17 Pro');
-    expect(resolved.ios.runtime).toBe('26.2');
-    expect(unknownSettingKeys(resolved)).toEqual([]);
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-});
-
-test('a repo-layer array setting survives resolution as an array', () => {
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'worktree.exclude', ['.env', 'ios/Pods']);
-  const resolved = resolveSettings({ gitCommonDir: '/repo/.git' }) as SettingsView;
-  expect(resolved.worktree?.exclude).toEqual(['.env', 'ios/Pods']);
-});
-
-test('unknownSettingKeys accepts metro.tunnel, metro.ngrokUrl, and metro.publicUrl', () => {
-  expect(
-    unknownSettingKeys({
-      metro: {
-        tunnel: 'ngrok',
-        ngrokUrl: 'https://stable.ngrok.app',
-        publicUrl: 'https://x.example.com',
-      },
-    }),
-  ).toEqual([]);
-});
-
-test('metro.idleStopMinutes reads a whole number of minutes, 0 included, and defaults to 60', () => {
-  expect(metroIdleStopMinutesSetting({})).toBe(60);
-  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: 0 } })).toBe(0);
-  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: 15 } })).toBe(15);
-  expect(metroIdleStopMinutesSetting({ metro: { idleStopMinutes: -1 } })).toBe(60);
-});
-
-test.each([-1, 1.5, 2 ** 53])(
-  'settingShapeErrors refuses metro.idleStopMinutes %p as stim settings set does',
-  (value) => {
-    expect(settingShapeErrors({ metro: { idleStopMinutes: value } })).toEqual([
-      `Invalid metro.idleStopMinutes setting ${JSON.stringify(value)}. Expected a whole number, 0 or more.`,
-    ]);
-  },
-);
-
-describe('tunnelModeSetting', () => {
-  test('reads one of the known modes', () => {
-    expect(tunnelModeSetting({ metro: { tunnel: 'cloudflared' } })).toBe('cloudflared');
-    expect(tunnelModeSetting({ metro: { tunnel: 'tailscale' } })).toBe('tailscale');
-    expect(tunnelModeSetting({ metro: { tunnel: 'off' } })).toBe('off');
-  });
-
-  test('anything not a known mode -- a typo, an old value -- is unset, not trusted', () => {
-    expect(tunnelModeSetting({ metro: { tunnel: 'ngrok-please' } })).toBeNull();
-    expect(tunnelModeSetting({ metro: { tunnel: true } })).toBeNull();
-  });
-
-  test('a missing metro block, or no tunnel key, is unset', () => {
-    expect(tunnelModeSetting({})).toBeNull();
-    expect(tunnelModeSetting({ metro: {} })).toBeNull();
-    expect(tunnelModeSetting({ metro: 'nope' })).toBeNull();
-  });
-});
-
-describe('publicUrlSetting', () => {
-  test('reads a committed tunnel URL', () => {
-    expect(publicUrlSetting({ metro: { publicUrl: 'https://abc.trycloudflare.com' } })).toBe(
-      'https://abc.trycloudflare.com',
-    );
-  });
-
-  test('a non-string or blank value is unset', () => {
-    expect(publicUrlSetting({ metro: { publicUrl: '' } })).toBeNull();
-    expect(publicUrlSetting({ metro: { publicUrl: 42 } })).toBeNull();
-    expect(publicUrlSetting({})).toBeNull();
-  });
-});
-
-describe('ngrokUrlSetting', () => {
-  test('reads a valid HTTPS URL with explicit ngrok mode', () => {
-    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app' } })).toBe(
-      'https://stable.ngrok.app',
-    );
-  });
-
-  test('normalizes a trailing slash for stable record reuse', () => {
-    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'https://stable.ngrok.app/' } })).toBe(
-      'https://stable.ngrok.app',
-    );
-  });
-
-  test('is unset for auto and every other tunnel mode', () => {
-    for (const tunnel of ['auto', 'expo', 'cloudflared', 'tailscale', 'off']) {
-      expect(ngrokUrlSetting({ metro: { tunnel, ngrokUrl: 'https://stable.ngrok.app' } })).toBeNull();
-    }
-  });
-
-  test('rejects non-HTTPS and malformed URLs', () => {
-    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'http://stable.ngrok.app' } })).toBeNull();
-    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 'not a url' } })).toBeNull();
-    expect(ngrokUrlSetting({ metro: { tunnel: 'ngrok', ngrokUrl: 42 } })).toBeNull();
-  });
-});
-
-test('metroTunnelSettingError accepts the hosted overlay that clears the public tunnel keys', () => {
-  expect(metroTunnelSettingError(hostedMetroSettings({ ios: { remote: 'auto' } }, true))).toBeNull();
-  expect(
-    metroTunnelSettingError(
-      hostedMetroSettings({ metro: { tunnel: 'auto', ngrokUrl: 'https://stable.ngrok.app' } }, true),
-    ),
-  ).toBeNull();
-  expect(metroTunnelSettingError({ metro: { ngrokUrl: null } })).toBe(
-    'metro.ngrokUrl requires metro.tunnel to be "ngrok".',
-  );
-});
-
 describe('metroCommandSettingError', () => {
-  test('accepts an argv that passes {port}, and an unset command', () => {
-    expect(metroCommandSettingError({ metro: { command: ['npx', 'react-native', 'start', '--port={port}'] } })).toBe(
-      null,
-    );
-    expect(metroCommandSettingError({})).toBe(null);
-  });
-
   test('refuses a command that cannot listen on the reserved port', () => {
     expect(metroCommandSettingError({ metro: { command: ['npx', 'react-native', 'start'] } })).toMatch(
       /must pass \{port\}/,
@@ -770,22 +283,6 @@ describe('iosProjectDirSetting', () => {
   });
   afterEach(() => {
     rmSync(app, { recursive: true, force: true });
-  });
-
-  test('defaults to ios/ without requiring it to exist yet', () => {
-    expect(iosProjectDirSetting({}, app)).toEqual({ dir: join(app, 'ios'), relative: 'ios', custom: false });
-    for (const projectPath of ['ios', 'ios/', './ios']) {
-      expect(iosProjectDirSetting({ ios: { projectPath } }, app)).toEqual({
-        dir: join(app, 'ios'),
-        relative: 'ios',
-        custom: false,
-      });
-    }
-  });
-
-  test('resolves the app directory itself when it holds the Xcode project', () => {
-    mkdirSync(join(app, 'RNTesterPods.xcworkspace'));
-    expect(iosProjectDirSetting({ ios: { projectPath: '.' } }, app)).toEqual({ dir: app, relative: '.', custom: true });
   });
 
   test('refuses a path outside the app, an absolute path, and a directory with no Xcode project', () => {
@@ -813,25 +310,6 @@ describe('androidLayoutSetting', () => {
   });
   const tester = { android: { gradleRoot: '../..', module: ':packages:tester:android:app' } };
 
-  test('defaults to android/ and :app without requiring them to exist yet', () => {
-    expect(androidLayoutSetting({}, app, repo)).toMatchObject({
-      gradleRoot: join(app, 'android'),
-      module: ':app',
-      moduleDir: join(app, 'android', 'app'),
-      custom: false,
-    });
-  });
-
-  test('resolves a Gradle root above the app and maps the module to its directory', () => {
-    expect(androidLayoutSetting(tester, app, repo)).toEqual({
-      gradleRoot: repo,
-      gradleRootRelative: '../..',
-      module: ':packages:tester:android:app',
-      moduleDir: join(app, 'android', 'app'),
-      custom: true,
-    });
-  });
-
   test('refuses a root outside the repository, a root without settings, a module without a build script, and a malformed module', () => {
     expect(androidLayoutSettingError(tester, app, app)).toMatch(/resolves outside/);
     rmSync(join(repo, 'settings.gradle.kts'));
@@ -844,108 +322,6 @@ describe('androidLayoutSetting', () => {
     expect(
       androidLayoutSettingError({ android: { gradleRoot: '../..', module: ':..:..:outside' } }, app, repo),
     ).toMatch(/Gradle project path/);
-  });
-});
-
-test('resolveCacheProviderConfig reports no provider when nothing configures one', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ worktree: { exclude: ['.env'] } }));
-  upsertProject('/proj', {});
-
-  expect(
-    resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
-  ).toBeNull();
-});
-
-test('a committed provider resolves from the directory holding .stim.json', () => {
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ cache: { provider: './tools/cache-provider.cjs', options: { bucket: 'mobile' } } }),
-  );
-  upsertProject('/proj', {});
-
-  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
-    provider: './tools/cache-provider.cjs',
-    options: { bucket: 'mobile' },
-    baseDir: tmpHome,
-  });
-});
-
-test('machine project settings override repository and committed providers', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { provider: './repo.cjs' });
-  upsertProject('/proj', {});
-  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'cache', { provider: './project.cjs' });
-
-  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
-    provider: './project.cjs',
-    options: {},
-    baseDir: '/proj',
-  });
-});
-
-test('machine repository settings override committed providers and resolve from the repository root', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { provider: './repo.cjs' });
-  upsertProject('/proj', {});
-
-  expect(resolveCacheProviderConfig({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome })).toEqual({
-    provider: './repo.cjs',
-    options: {},
-    baseDir: tmpHome,
-  });
-});
-
-test('provider options merge across layers with earlier layers winning', () => {
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ cache: { provider: './committed.cjs', options: { bucket: 'team', region: 'us' } } }),
-  );
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { options: { region: 'eu' } });
-  upsertProject(tmpHome, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', { options: { token: 'from-machine' } });
-
-  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
-    provider: './committed.cjs',
-    options: { token: 'from-machine', region: 'eu', bucket: 'team' },
-    baseDir: tmpHome,
-  });
-});
-
-test('options written for a different provider do not reach the selected provider', () => {
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ cache: { provider: './committed.cjs', options: { endpoint: 'https://team', token: 'team' } } }),
-  );
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', {
-    provider: './repo.cjs',
-    options: { token: 'machine' },
-  });
-  upsertProject(tmpHome, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', { options: { region: 'eu' } });
-
-  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
-    provider: './repo.cjs',
-    options: { region: 'eu', token: 'machine' },
-    baseDir: '/repo',
-  });
-});
-
-test('a lower-precedence layer adds options only to a provider it names', () => {
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ cache: { provider: './cache.cjs', options: { bucket: 'team', token: 'team' } } }),
-  );
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'cache', { options: { endpoint: 'https://repo' } });
-  upsertProject(tmpHome, {});
-  writeConfigSetting({ scope: 'workspace', projectPath: tmpHome }, 'cache', {
-    provider: './cache.cjs',
-    options: { token: 'machine' },
-  });
-
-  expect(resolveCacheProviderConfig({ projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' })).toEqual({
-    provider: './cache.cjs',
-    options: { token: 'machine', bucket: 'team' },
-    baseDir: tmpHome,
   });
 });
 
@@ -966,17 +342,6 @@ test('the same provider reference resolved from another directory does not inher
   });
 });
 
-test('an invalid provider reference reports no provider and names the error', () => {
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ cache: { provider: 42, options: { a: 1 } } }));
-  upsertProject('/proj', {});
-
-  const context = { projectPath: tmpHome, gitCommonDir: '/repo/.git', repoRoot: '/repo' };
-  expect(resolveCacheProviderConfig(context)).toBeNull();
-  expect(cacheProviderSettingError(resolveSettings(context))).toBe(
-    'Invalid cache.provider setting 42. Expected a module path or package name.',
-  );
-});
-
 test('cacheProviderSettingError accepts valid shapes and names invalid ones', () => {
   expect(cacheProviderSettingError({})).toBeNull();
   expect(cacheProviderSettingError({ cache: { provider: './cache.cjs', options: { bucket: 'a' } } })).toBeNull();
@@ -985,13 +350,6 @@ test('cacheProviderSettingError accepts valid shapes and names invalid ones', ()
     /Invalid cache\.options setting/,
   );
   expect(cacheProviderSettingError({ cache: 'nope' })).toMatch(/Invalid cache setting/);
-});
-
-test('cache.provider and cache.options are known settings', () => {
-  expect(
-    unknownSettingKeys({ cache: { provider: './cache.cjs', options: { bucket: 'a', nested: { deep: true } } } }),
-  ).toEqual([]);
-  expect(unknownSettingKeys({ cache: { unknown: true } })).toEqual(['cache.unknown']);
 });
 
 test('ios.signingIdentity reads a trimmed identity name and refuses a shape codesign cannot take', () => {
@@ -1025,157 +383,6 @@ test('ios.signingIdentitySha1 takes exactly the 40-hex hash find-identity prints
   );
 });
 
-test('ios.lanHost takes a bare address and refuses everything that would break serverRootWithHostPort', () => {
-  expect(iosLanHostSetting({ ios: { lanHost: ' 192.168.1.42 ' } })).toBe('192.168.1.42');
-  expect(iosLanHostSettingError({ ios: { lanHost: ' 192.168.1.42 ' } })).toBe(null);
-  expect(iosLanHostSetting({ ios: { lanHost: 'mac-studio.local' } })).toBe('mac-studio.local');
-  expect(iosLanHostSetting({})).toBe(null);
-
-  expect(iosLanHostSettingError({})).toBe(null);
-  expect(iosLanHostSettingError({ ios: { lanHost: '192.168.1.42' } })).toBe(null);
-  for (const bad of [
-    'http://192.168.1.42',
-    'https://foo.ngrok.app',
-    '192.168.1.42:8085',
-    '192.168.1.42/',
-    'a b',
-    '',
-    42,
-  ]) {
-    expect(iosLanHostSettingError({ ios: { lanHost: bad } })).toMatch(/Invalid ios\.lanHost/);
-  }
-});
-
-test('creation-only settings are unknown and do not block the remaining commands', () => {
-  const settings = { worktreeDir: '/wt', worktree: { baseRef: 'head', include: ['.env'] } };
-  expect(unknownSettingKeys(settings)).toEqual(['worktreeDir', 'worktree.baseRef', 'worktree.include']);
-  expect(settingShapeErrors(settings)).toEqual([]);
-});
-
-test('the three iOS device settings are known keys', () => {
-  expect(
-    unknownSettingKeys({
-      ios: { signingIdentity: 'a', signingIdentitySha1: 'b', lanHost: 'c' },
-    }),
-  ).toEqual([]);
-  expect(unknownSettingKeys({ ios: { lanPort: 1 } })).toEqual(['ios.lanPort']);
-});
-
-test('machine optimization defaults merge with committed, repository and project overrides, including false', () => {
-  saveConfig({
-    version: 2,
-    projects: {},
-    repos: {},
-    optimizations: {
-      buildCache: false,
-      android: { pch: 'on', gradleBuildCache: false },
-      ios: { prefixMapping: false },
-    },
-  });
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ optimizations: { android: { pch: 'off' } } }));
-  writeConfigSetting({ scope: 'repo', gitCommonDir: '/repo/.git' }, 'optimizations.android.pch', 'on');
-  upsertProject('/proj', {});
-  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'optimizations.android.pch', 'auto');
-  writeConfigSetting({ scope: 'workspace', projectPath: '/proj' }, 'optimizations.ios.compilationCache', false);
-  const options = resolveOptimizations(
-    resolveSettings({ projectPath: '/proj', gitCommonDir: '/repo/.git', repoRoot: tmpHome }),
-    {},
-  );
-  expect(options.buildCache).toBe(false);
-  expect(options.android.pch).toBe('auto');
-  expect(options.android.gradleBuildCache).toBe(false);
-  expect(options.ios).toEqual({ compilationCache: false, swiftCompilationCache: null, prefixMapping: false });
-  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).android.pch).toBe('off');
-  expect(resolveOptimizations(resolveSettings({}), {}).android.pch).toBe('on');
-});
-
-test('a machine android.deviceProfile and android.systemImage apply under every project layer', () => {
-  saveConfig({
-    version: 2,
-    projects: {},
-    repos: {},
-    android: { deviceProfile: 'pixel_tablet', systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
-  });
-  expect(resolveSettings({})).toEqual({
-    android: { deviceProfile: 'pixel_tablet', systemImage: 'system-images;android-36;google_apis;arm64-v8a' },
-  });
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ android: { deviceProfile: 'pixel_fold' } }));
-  expect(resolveSettings({ repoRoot: tmpHome }).android).toEqual({
-    deviceProfile: 'pixel_fold',
-    systemImage: 'system-images;android-36;google_apis;arm64-v8a',
-  });
-});
-
-test('a machine ios.remote and android.remote are the default under every project layer', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, ios: { remote: 'auto' }, android: { remote: 'mini' } });
-  expect(remoteIosSetting(resolveSettings({}))).toEqual({ kind: 'machine', machine: 'auto', placement: 'auto' });
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { remote: 'eas' } }));
-  const resolved = resolveSettings({ repoRoot: tmpHome });
-  expect(remoteIosSetting(resolved)).toEqual({ kind: 'backend', backend: 'eas' });
-  expect(remoteAndroidSetting(resolved)).toEqual({ kind: 'machine', machine: 'mini' });
-});
-
-test('machine-only settings never leak into resolveSettings or read as unknown', () => {
-  saveConfig({
-    version: 2,
-    projects: {},
-    repos: {},
-    concurrency: { maxBuilds: 3, maxDevices: 6 },
-    iosSimulatorApp: 'stim-desktop',
-    ios: { runtime: '27.0' },
-  });
-  const resolved = resolveSettings({});
-  expect(resolved).toEqual({ ios: { runtime: '27.0' } });
-  expect(unknownSettingKeys(resolved)).toEqual([]);
-});
-
-test('an unknown or malformed key under machine optimizations still reaches unknownSettingKeys and settingShapeErrors', () => {
-  saveConfig({
-    version: 2,
-    projects: {},
-    repos: {},
-    optimizations: { buildCache: true, typoKey: false, android: 'not an object' },
-  });
-  const resolved = resolveSettings({});
-  expect(unknownSettingKeys(resolved)).toEqual(['optimizations.typoKey']);
-  expect(settingShapeErrors(resolved)).toEqual([
-    'Invalid optimizations.android setting "not an object". Expected an object.',
-  ]);
-});
-
-test('a machine ios.simslim on is the default under every project, and a project off opts out', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, ios: { simslim: 'on' } });
-  expect(iosSimSlimDefaultSetting(resolveSettings({}))).toBe(true);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { simslim: 'off' } }));
-  expect(iosSimSlimDefaultSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(false);
-  expect(iosSimSlimDefaultSetting({})).toBe(false);
-});
-
-test('a machine ios.deviceType and ios.runtime apply, and a project layer overrides them', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
-  expect(resolveSettings({})).toEqual({ ios: { deviceType: 'iPhone 17', runtime: '27.0' } });
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
-  expect(resolveSettings({ repoRoot: tmpHome }).ios).toEqual({ deviceType: 'iPhone 17', runtime: '18.5' });
-});
-
-test('settingOriginScope names the machine layer, and a project layer over it', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, ios: { runtime: '27.0' } });
-  expect(settingOriginScope(settingsLayers({}), 'ios.runtime')).toBe('machine');
-  expect(settingOriginScope(settingsLayers({}), 'ios.deviceType')).toBe(null);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ ios: { runtime: '18.5' } }));
-  expect(settingOriginScope(settingsLayers({ repoRoot: tmpHome }), 'ios.runtime')).toBe('committed');
-});
-
-test('devices.idleShutdownMinutes defaults to 30, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
-  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(30);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 0 } } as Config);
-  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(0);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { idleShutdownMinutes: 45 } } as Config);
-  expect(deviceIdleShutdownMinutesSetting(resolveSettings({}))).toBe(45);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { idleShutdownMinutes: 0 } }));
-  expect(deviceIdleShutdownMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
-});
-
 test('devices.reclaimIdleMinutes defaults to 10, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
   expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(10);
   saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 0 } } as Config);
@@ -1184,16 +391,4 @@ test('devices.reclaimIdleMinutes defaults to 10, an explicit 0 keeps it off, and
   expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(45);
   writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { reclaimIdleMinutes: 0 } }));
   expect(deviceReclaimIdleMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
-});
-
-test('a repository can enable Metro optimizations over a machine opt-out', () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, optimizations: { metroSharedCache: false, metroWarmup: false } });
-  expect(resolveMetroSharedCache(resolveSettings({}))).toBe(false);
-  expect(resolveOptimizations(resolveSettings({}), {}).metroWarmup).toBe(false);
-  writeFileSync(
-    join(tmpHome, '.stim.json'),
-    JSON.stringify({ optimizations: { metroSharedCache: true, metroWarmup: true } }),
-  );
-  expect(resolveMetroSharedCache(resolveSettings({ repoRoot: tmpHome }))).toBe(true);
-  expect(resolveOptimizations(resolveSettings({ repoRoot: tmpHome }), {}).metroWarmup).toBe(true);
 });

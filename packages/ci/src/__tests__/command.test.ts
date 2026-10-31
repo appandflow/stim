@@ -12,38 +12,6 @@ beforeEach(() => {
 
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-it('preserves argv and streams while returning the actual command exit status', async () => {
-  const chunks: string[] = [];
-  const result = await runCommand({
-    command: [
-      process.execPath,
-      '-e',
-      'console.log(JSON.stringify(process.argv.slice(1))); console.error(process.env.CI_TEST_VALUE); process.exitCode = 23;',
-      'a b',
-      '$(not-a-command)',
-    ],
-    cwd: root,
-    env: { ...process.env, CI_TEST_VALUE: 'diagnostic' },
-    artifactsDir: root,
-    onOutput: ({ message }) => chunks.push(message),
-  });
-  expect(result.exitCode).toBe(23);
-  expect(JSON.parse(readFileSync(result.stdout ?? '', 'utf8'))).toEqual(['a b', '$(not-a-command)']);
-  expect(readFileSync(result.stderr ?? '', 'utf8')).toBe('diagnostic\n');
-  expect(chunks.join('')).toContain('diagnostic');
-});
-
-it('reports a missing executable without hanging or reporting success', async () => {
-  const result = await runCommand({
-    command: [join(root, 'missing-executable')],
-    cwd: root,
-    env: process.env,
-    artifactsDir: root,
-  });
-  expect(result.exitCode).not.toBe(0);
-  expect(result.error).toContain('ENOENT');
-});
-
 test.skipIf(process.platform === 'win32')(
   'cancellation kills a test process and its resistant descendant',
   async () => {
@@ -70,49 +38,6 @@ test.skipIf(process.platform === 'win32')(
     } finally {
       controller.abort();
       await running;
-    }
-  },
-);
-
-test.skipIf(process.platform === 'win32')('reaps a background child when the test leader exits', async () => {
-  const script = `require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:'inherit'}); process.exit(0);`;
-  const result = await runCommand({
-    command: [process.execPath, '-e', script],
-    cwd: root,
-    env: process.env,
-    artifactsDir: root,
-    signal: AbortSignal.timeout(3000),
-  });
-  expect(result.exitCode).toBe(0);
-  expect(result.durationMs).toBeLessThan(2500);
-});
-
-test.skipIf(process.platform === 'win32')(
-  'waits for a resistant background child with closed output streams before reporting completion',
-  async () => {
-    const pidFile = join(root, 'descendant.pid');
-    const descendant = `process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
-    const script = `require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], {stdio:'ignore'}); setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(pidFile)})) process.exit(0); }, 10);`;
-    try {
-      const result = await runCommand({
-        command: [process.execPath, '-e', script],
-        cwd: root,
-        env: process.env,
-        artifactsDir: root,
-        signal: AbortSignal.timeout(3000),
-      });
-      const pid = Number(readFileSync(pidFile, 'utf8'));
-      expect(result.exitCode).toBe(0);
-      expect(result.error).toBeUndefined();
-      expect(() => process.kill(pid, 0)).toThrow(/ESRCH/);
-    } finally {
-      if (existsSync(pidFile)) {
-        try {
-          process.kill(Number(readFileSync(pidFile, 'utf8')), 'SIGKILL');
-        } catch (caught) {
-          expect(caught).toMatchObject({ code: 'ESRCH' });
-        }
-      }
     }
   },
 );

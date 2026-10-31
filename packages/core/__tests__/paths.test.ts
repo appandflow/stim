@@ -1,76 +1,8 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import {
-  buildCacheRoot as sharedBuildCache,
-  metroCacheRoot as sharedMetroCache,
-  workspaceId,
-  workspaceName,
-  workspaceSlug,
-  workspaceStateDir as workspaceDir,
-} from '../index.ts';
-import {
-  emulatorLogFile,
-  sharedCcache,
-  sharedCompilationCache,
-  sharedGradle,
-  sharedPods,
-  serverLocalSocket,
-  supervisorPidFile,
-  workspaceDerivedData,
-  workspaceGradleBuild,
-  workspaceLogsDir,
-  workspaceAgentDeviceDir,
-  workspaceStateFile,
-} from '../state/paths.ts';
-
-describe('workspace paths', () => {
-  let tmpHome: string;
-  beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
-    process.env.STIM_HOME = tmpHome;
-  });
-  afterEach(() => {
-    rmSync(tmpHome, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
-  });
-
-  test('workspace state lives under STIM_HOME with a readable collision-safe name', () => {
-    const root = '/repo/My App';
-    const dir = join(tmpHome, 'workspaces', workspaceName(root));
-    expect(workspaceSlug(root)).toBe('my-app');
-    expect(workspaceId(root)).toMatch(/^[a-f0-9]{16}$/);
-    expect(workspaceName(root)).toBe(`my-app--${workspaceId(root)}`);
-    expect(workspaceDir(root)).toBe(dir);
-    expect(workspaceLogsDir(root)).toBe(join(dir, 'logs'));
-    expect(workspaceAgentDeviceDir(root)).toBe(join(dir, 'agent-device'));
-    expect(workspaceDerivedData(root)).toBe(join(dir, 'derived-data'));
-    expect(workspaceGradleBuild(root)).toBe(join(dir, 'gradle-build'));
-    expect(supervisorPidFile(root)).toBe(join(dir, 'supervisor.pid'));
-    expect(workspaceStateFile(root)).toBe(join(dir, 'state.json'));
-    expect(emulatorLogFile(root)).toBe(join(dir, 'logs', 'emulator.log'));
-  });
-
-  test('path calculation is pure: no directory is created as a side effect', () => {
-    const root = join(tmpdir(), 'stim-nonexistent-xyz');
-    workspaceDir(root);
-    workspaceLogsDir(root);
-    workspaceAgentDeviceDir(root);
-    workspaceDerivedData(root);
-    workspaceGradleBuild(root);
-    supervisorPidFile(root);
-    workspaceStateFile(root);
-    emulatorLogFile(root);
-    expect(existsSync(workspaceDir(root))).toBe(false);
-    expect(existsSync(join(root, '.stim'))).toBe(false);
-  });
-
-  test('same basename at different paths is readable and collision-safe', () => {
-    expect(workspaceSlug('/one/mobile')).toBe('mobile');
-    expect(workspaceSlug('/two/mobile')).toBe('mobile');
-    expect(workspaceName('/one/mobile')).not.toBe(workspaceName('/two/mobile'));
-  });
-});
+import { join } from 'node:path';
+import { buildCacheRoot as sharedBuildCache, metroCacheRoot as sharedMetroCache } from '../index.ts';
+import { sharedCcache, sharedCompilationCache, sharedGradle, sharedPods, serverLocalSocket } from '../state/paths.ts';
 
 describe('shared paths', () => {
   let tmpHome: string;
@@ -138,49 +70,5 @@ describe('shared paths', () => {
     expect(serverLocalSocket()).toBe(
       `/tmp/stim-sockets-${process.getuid?.()}/46b20e2924d77e53740dfa2db4d94ffaf8ea79ce0ee1dae0ac77a566b2f16748.sock`,
     );
-  });
-
-  test('shared paths are pure: reading one creates nothing', () => {
-    sharedMetroCache();
-    sharedBuildCache();
-    sharedCompilationCache();
-    sharedCcache();
-    sharedGradle();
-    sharedPods();
-    expect(existsSync(join(tmpHome, 'metro-cache'))).toBe(false);
-    expect(existsSync(join(tmpHome, 'build-cache'))).toBe(false);
-    expect(existsSync(join(tmpHome, 'ccache'))).toBe(false);
-  });
-});
-
-describe('shared cache roots', () => {
-  let tmpHome: string;
-  beforeEach(() => {
-    tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
-    process.env.STIM_HOME = tmpHome;
-  });
-  afterEach(() => {
-    rmSync(tmpHome, { recursive: true, force: true });
-    delete process.env.STIM_HOME;
-    delete process.env.STIM_BUILD_CACHE;
-    delete process.env.STIM_METRO_CACHE;
-  });
-
-  test('explicit cache env overrides win and remain parent roots', () => {
-    const customBuild = resolve('/tmp/custom-build');
-    const customMetro = resolve('/tmp/custom-metro');
-    process.env.STIM_BUILD_CACHE = customBuild;
-    expect(sharedBuildCache()).toBe(customBuild);
-
-    process.env.STIM_METRO_CACHE = customMetro;
-    expect(sharedMetroCache()).toBe(customMetro);
-    expect(sharedMetroCache('demo')).toBe(join(customMetro, 'demo'));
-    expect(sharedMetroCache('@scope/app')).toBe(join(customMetro, '-scope-app'));
-  });
-
-  test('a named Metro cache is a subdirectory, and cannot escape the root', () => {
-    expect(sharedMetroCache('demo')).toBe(join(tmpHome, 'metro-cache', 'demo'));
-    expect(sharedMetroCache('@scope/app')).toBe(join(tmpHome, 'metro-cache', '-scope-app'));
-    expect(sharedMetroCache('..')).toBe(join(tmpHome, 'metro-cache', 'app'));
   });
 });

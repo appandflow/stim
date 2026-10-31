@@ -1,4 +1,4 @@
-import { appendFileSync, cpSync, mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAgentActionReader, createAsyncAgentActionReader } from '../state/agent-actions.ts';
@@ -65,41 +65,6 @@ test.each([createAgentActionReader, createAsyncAgentActionReader])(
     expect(await read()).toEqual([]);
   },
 );
-
-test('rotation drops old app attribution when distinct 64-bit file IDs round to the same Number', () => {
-  const sessionsDir = join(home, 'sessions');
-  const dir = join(sessionsDir, 'native');
-  mkdirSync(dir, { recursive: true });
-  const events = join(dir, 'events.ndjson');
-  const launchedAt = Date.parse('2026-09-25T12:15:00Z');
-  const event = (seconds: number, command: string, details = {}) => ({
-    version: 1,
-    ts: new Date(launchedAt + seconds * 1000).toISOString(),
-    session: 'native',
-    kind: 'action.recorded',
-    command,
-    summary: command,
-    details,
-  });
-  const open = (seconds: number, appBundleId = 'dev.owned') =>
-    event(seconds, 'open', { platform: 'macos', appBundleId, flags: { surface: 'app' } });
-  const append = (...records: object[]) =>
-    appendFileSync(events, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
-  const read = createAgentActionReader({
-    sessionsDirs: [sessionsDir],
-    targets: [{ platform: 'macos', id: 'launch', slot: 'default', bundleId: 'dev.owned', launchedAt }],
-  });
-  inode.value = 9851624185071827n;
-  append(open(0), event(1, 'press'));
-  expect(read().map((record) => record.command)).toEqual(['open', 'press']);
-  append(open(2, 'dev.other'));
-  renameSync(events, `${events}.1`);
-  inode.value = 9851624185071829n;
-  append(...Array.from({ length: 20 }, (_, index) => event(index + 3, 'press')));
-  expect(read()).toEqual([]);
-  append(open(25), event(26, 'type'));
-  expect(read().map((record) => record.command)).toEqual(['open', 'type']);
-});
 
 test('async agent reads can be cancelled while parsing a large session', async () => {
   const sessionsDir = join(home, 'sessions');

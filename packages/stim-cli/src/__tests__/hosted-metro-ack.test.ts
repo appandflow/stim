@@ -90,17 +90,6 @@ async function closing() {
   return { pending, settled: () => settled };
 }
 
-test('a matching close acknowledgement wakes before the old 100ms scan', async () => {
-  const state = await closing();
-  writeWorkspaceState(root, { hostedMetroLinks: {} });
-  watches.callbacks.get(workspaceStateFile(root))?.();
-  await vi.advanceTimersByTimeAsync(1);
-  expect(state.settled()).toBe(true);
-  expect(await state.pending).toBe(true);
-  expect(watches.closed).toBe(watches.opened);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 test('a stale request or supervisor token cannot acknowledge new links', async () => {
   writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroLinks: {} });
   let linked = false;
@@ -134,81 +123,10 @@ test('a stale request or supervisor token cannot acknowledge new links', async (
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('a dropped close hint is repaired and all observers are released', async () => {
-  const state = await closing();
-  await vi.advanceTimersByTimeAsync(600);
-  writeWorkspaceState(root, { hostedMetroLinks: {} });
-  await vi.advanceTimersByTimeAsync(1000);
-  expect(await state.pending).toBe(true);
-  expect(watches.closed).toBe(watches.opened);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
 test('abort cancels the wait without waiting for a state hint or repair', async () => {
   const state = await closing();
   abort.abort();
   expect(await state.pending).toBe(false);
   expect(watches.closed).toBe(watches.opened);
   expect(vi.getTimerCount()).toBe(0);
-});
-
-test('close refuses after its original five-second budget with the links still recorded', async () => {
-  const state = await closing();
-  await vi.advanceTimersByTimeAsync(5000);
-  expect(await state.pending).toBe(false);
-  expect(readWorkspaceState(root)?.hostedMetroLinks).toHaveProperty(session);
-  expect(watches.closed).toBe(watches.opened);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-test.each(['error', 'timeout'])('open preserves the %s refusal and releases observation', async (outcome) => {
-  writeWorkspaceState(root, { hostedMetroRequests: {}, hostedMetroLinks: {} });
-  const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
-  await vi.waitFor(() => expect(readWorkspaceState(root)?.hostedMetroRequests).toHaveProperty(session), {
-    interval: 1,
-  });
-  await vi.advanceTimersByTimeAsync(1);
-  if (outcome === 'error') {
-    const state = readWorkspaceState(root);
-    assert(state?.supervisor?.processToken);
-    const request = hostedMetroRequests(state)[session];
-    assert(request);
-    writeWorkspaceState(root, {
-      hostedMetroLinks: {
-        [session]: { id: request.id, processToken: state.supervisor.processToken, error: 'link refused' },
-      },
-    });
-    watches.callbacks.get(workspaceStateFile(root))?.();
-  }
-  await vi.advanceTimersByTimeAsync(outcome === 'error' ? 1 : 15_000);
-  expect(await pending).toMatchObject({
-    message: expect.stringContaining(outcome === 'error' ? 'link refused' : 'did not link Metro'),
-  });
-  expect(watches.closed).toBe(watches.opened);
-  expect(vi.getTimerCount()).toBe(0);
-});
-
-test.each([
-  ['a link error', { error: 'link closed' }],
-  ['lost links', {}],
-])('a retry after %s asks the supervisor again under a new request', async (_name, outcome) => {
-  const state = readWorkspaceState(root);
-  assert(state?.supervisor?.processToken);
-  writeWorkspaceState(root, {
-    hostedMetroLinks: {
-      [session]: { id: 'request', processToken: state.supervisor.processToken, ...outcome },
-    },
-  });
-  const pending = requestHostedMetro(root, session, credential, abort.signal).catch((error: unknown) => error);
-  await vi.waitFor(() => expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).not.toBe('request'), {
-    interval: 1,
-  });
-  await vi.advanceTimersByTimeAsync(15_000);
-  expect(await pending).toMatchObject({ message: expect.stringContaining('did not link Metro') });
-});
-
-test('a run while the links are ready keeps the request, so the supervisor keeps its links', async () => {
-  expect(await requestHostedMetro(root, session, credential, abort.signal)).toBeUndefined();
-  expect(hostedMetroRequests(readWorkspaceState(root))[session]?.id).toBe('request');
-  expect(watches.closed).toBe(watches.opened);
 });

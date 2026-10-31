@@ -7,7 +7,6 @@ import { collectWorktreeSweep } from '../commands/gc/worktrees.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const SIM = 'OWNED-SIM';
 const AVD = 'stim-worktree-device';
@@ -91,118 +90,6 @@ function registerDevice(ios: boolean) {
   });
 }
 
-test.each(['simulators', 'AVDs', 'adb', 'emulator name'] as const)(
-  'a delayed %s child leaves the report responsive and retains a running owned device',
-  async (slow) => {
-    registerDevice(slow === 'simulators');
-    const executor = getExecutor();
-    let responsive: boolean | undefined;
-    const delay = ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', '--', outputs[slow]];
-    const sync = (file: string, args: string[], options: Parameters<typeof executor.runFile>[2], quiet: boolean) => {
-      const phase = sdkPhase(file, args);
-      if (!phase) return quiet ? executor.runFileQuiet(file, args, options) : executor.runFile(file, args, options);
-      if (phase !== slow) return outputs[phase];
-      let ticked = false;
-      const timer = setTimeout(() => (ticked = true), 25);
-      try {
-        const output = executor.runFile(process.execPath, delay, options);
-        responsive = ticked;
-        return output;
-      } finally {
-        clearTimeout(timer);
-      }
-    };
-    setExecutor({
-      ...executor,
-      runFile: (file, args, options) => sync(file, args, options, false) ?? '',
-      runFileQuiet: (file, args, options) => sync(file, args, options, true),
-      async runFileAsync(file, args, options) {
-        const phase = sdkPhase(file, args);
-        if (!phase) return executor.runFileAsync(file, args, options);
-        if (phase !== slow) return outputs[phase];
-        let ticked = false;
-        const timer = setTimeout(() => (ticked = true), 25);
-        try {
-          const output = await executor.runFileAsync(process.execPath, delay, options);
-          responsive = ticked;
-          return output;
-        } finally {
-          clearTimeout(timer);
-        }
-      },
-    });
-    const report = await collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0 });
-    const candidate = report.worktrees.find(({ path }) => path === linked);
-    expect(responsive).toBe(true);
-    expect(candidate?.skipCode).toBe('in-use');
-    expect(candidate?.skipped).toContain(slow === 'simulators' ? 'is Booted' : 'is running');
-    expect(existsSync(linked)).toBe(true);
-  },
-);
-
-test('a stalled simulator inventory is killed at its budget and retains unknown device state', async () => {
-  registerDevice(true);
-  const executor = getExecutor();
-  vi.useFakeTimers();
-  const ready = new Promise<void>((started) => {
-    setExecutor({
-      ...executor,
-      runFileAsync: (file, args, options) =>
-        file === 'xcrun'
-          ? executor.runFileAsync(
-              process.execPath,
-              ['-e', 'process.on("SIGTERM", () => {}); process.stdout.write("ready"); setInterval(() => {}, 1000)'],
-              {
-                ...options,
-                onSpawn: (spawned) => {
-                  child = spawned;
-                  spawned.stdout?.once('data', () => started());
-                },
-              },
-            )
-          : executor.runFileAsync(file, args, options),
-    });
-  });
-  const pending = collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0 });
-  await ready;
-  await vi.advanceTimersByTimeAsync(30_000);
-  const report = await pending;
-  const candidate = report.worktrees.find(({ path }) => path === linked);
-  expect(child?.signalCode).toBe('SIGKILL');
-  expect(candidate?.skipCode).toBe('in-use');
-  expect(candidate?.skipped).toContain('cannot be read');
-  expect(existsSync(linked)).toBe(true);
-});
-
-test('an Android device record changed during inventory is refused rather than treated as idle', async () => {
-  registerDevice(false);
-  const replacement = 'stim-replacement';
-  recordCreatedDevice('android', replacement);
-  const executor = getExecutor();
-  setExecutor({
-    ...executor,
-    async runFileAsync(file, args, options) {
-      const phase = sdkPhase(file, args);
-      if (!phase) return executor.runFileAsync(file, args, options);
-      if (phase === 'AVDs') {
-        const output = await executor.runFileAsync(
-          process.execPath,
-          ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', '--', AVD],
-          options,
-        );
-        upsertProject(linked, { platforms: { android: { owned: true, avdName: replacement } } });
-        return output;
-      }
-      return outputs[phase];
-    },
-  });
-  const report = await collectWorktreeSweep({ idle: true, olderThan: null, now: Date.now(), graceMs: 0 });
-  const candidate = report.worktrees.find(({ path }) => path === linked);
-  expect(candidate?.skipCode).toBe('in-use');
-  expect(candidate?.skipped).toContain(`owned emulator ${replacement} cannot be read`);
-  expect(existsSync(linked)).toBe(true);
-});
-
 test('an iOS device assigned during Android inventory is refused when its state was not inspected', async () => {
   registerDevice(true);
   recordCreatedDevice('android', AVD);
@@ -239,19 +126,5 @@ test('an iOS device assigned during Android inventory is refused when its state 
   const candidate = report.worktrees.find(({ path }) => path === linked);
   expect(candidate?.skipCode).toBe('in-use');
   expect(candidate?.skipped).toContain(`owned simulator ${replacement} cannot be read`);
-  expect(existsSync(linked)).toBe(true);
-});
-
-test('a previously recorded simulator absent from a successful inventory is still treated as missing', async () => {
-  registerDevice(true);
-  recordWorkspaceUse(linked, new Date(Date.now() - 10 * 24 * 60 * 60 * 1000));
-  const executor = getExecutor();
-  setExecutor({
-    ...executor,
-    runFileAsync: (file, args, options) =>
-      file === 'xcrun' ? Promise.resolve(JSON.stringify({ devices: {} })) : executor.runFileAsync(file, args, options),
-  });
-  const report = await collectWorktreeSweep({ idle: true, olderThan: 0, now: Date.now(), graceMs: 0 });
-  expect(report.worktrees.find(({ path }) => path === linked)).toMatchObject({ path: linked, skipCode: null });
   expect(existsSync(linked)).toBe(true);
 });

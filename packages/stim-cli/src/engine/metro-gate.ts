@@ -27,7 +27,7 @@ export interface GateOptions {
   timeoutMs?: number;
 }
 
-export function probeBundleUrl(origin: string, platform: 'ios' | 'android', entryPoint = 'index'): string {
+function probeBundleUrl(origin: string, platform: 'ios' | 'android', entryPoint = 'index'): string {
   const entry = entryPoint.replace(/^\/+/, '').replace(/\.(?:[cm]?[jt]sx?)$/, '');
   return `${origin.replace(/\/+$/, '')}/${entry}.bundle?platform=${platform}&dev=true`;
 }
@@ -89,7 +89,7 @@ export async function gateMetroOrigin({
   };
 }
 
-export function describeMiss(origin: string, metroPort: number | string, status: number | null): string {
+function describeMiss(origin: string, metroPort: number | string, status: number | null): string {
   if (status === null) {
     return `${origin} did not answer, so it cannot be this workspace's Metro (port ${metroPort}).`;
   }

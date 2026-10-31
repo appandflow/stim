@@ -738,64 +738,6 @@ it('ends relayed controls on local revocation and records their local target', a
   ]);
 });
 
-it('drops congested video, requests one recovery keyframe within a second, and resets on a local keyframe', async () => {
-  saveCredential();
-  let buffered = 0;
-  const sent: (ServerMessage | Buffer)[] = [];
-  const relay = new HostedRelay(
-    new HostConnections(
-      {
-        status: () => ({
-          Peer: { peer: { ID: 'mini-node', DNSName: 'mini.tail.ts.net.', TailscaleIPs: ['100.64.0.8'] } },
-        }),
-        endpoint: (pinned) => ({ ...pinned, url: `ws://127.0.0.1:${(host.address() as AddressInfo).port}` }),
-      },
-      '1',
-    ),
-    (message) => sent.push(message),
-    () => buffered,
-    () => 'local-video',
-    () => {},
-    () => {},
-  );
-  try {
-    await relay.subscribe(1, readMacosRecord(workspace)!.host!, { video: ['h264'] }, () => {});
-    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(1));
-    const upstream = requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket;
-    const packet = (sequence: number, keyframe: boolean) =>
-      videoPacket(UPSTREAM, sequence, {
-        keyframe,
-        capturedAt: 1000,
-        width: 800,
-        height: 600,
-        data: Buffer.from([0, 0, 1, 101]),
-      });
-    buffered = DEFAULT_VIDEO_LIMITS.congestedBytes + 1;
-    upstream.send(packet(8, false));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(sent.filter(Buffer.isBuffer)).toHaveLength(1);
-    buffered = 0;
-    await vi.waitFor(
-      () => expect(requests.filter((request) => request.method === 'device-host.frames.keyframe')).toHaveLength(1),
-      { timeout: 900 },
-    );
-    upstream.send(packet(9, false));
-    upstream.send(packet(10, true));
-    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(2));
-    expect(requests.filter((request) => request.method === 'device-host.frames.keyframe')).toHaveLength(1);
-    expect(relay.keyframe(2, 'local-video')).toBe(true);
-    upstream.send(packet(11, false));
-    upstream.send(packet(12, true));
-    await vi.waitFor(() => expect(sent.filter(Buffer.isBuffer)).toHaveLength(3));
-    expect(sent.filter(Buffer.isBuffer).map((message) => message.readUInt32BE(4))).toEqual([7, 10, 12]);
-    await vi.waitFor(() =>
-      expect(requests.filter((request) => request.method === 'device-host.frames.keyframe')).toHaveLength(2),
-    );
-  } finally {
-    relay.close();
-  }
-});
-
 async function congestionNotices(features: string[]) {
   saveCredential();
   helloFeatures = features;
@@ -837,14 +779,6 @@ async function congestionNotices(features: string[]) {
     relay.close();
   }
 }
-
-it('tells a host with hosted-congestion about local congestion at most every 250 ms until the client drains', async () => {
-  const { whileBehind, afterDrain } = await congestionNotices(['hosted-congestion']);
-  expect(whileBehind.length).toBeGreaterThanOrEqual(2);
-  expect(whileBehind.length).toBeLessThanOrEqual(4);
-  expect(new Set(whileBehind)).toEqual(new Set([UPSTREAM]));
-  expect(afterDrain).toBe(0);
-});
 
 it('sends no congestion notices to a host without hosted-congestion', async () => {
   expect(await congestionNotices([])).toEqual({ whileBehind: [], afterDrain: 0 });

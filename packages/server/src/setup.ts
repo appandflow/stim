@@ -161,8 +161,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   };
 }
 
-/** The record a client made for each capability by spending this run's ticket. */
-export function selectGrants(
+function selectGrants(
   records: PairedDevice[],
   match: { journal: string; capabilities: SetupCapability[] },
 ): { capability: SetupCapability; record: PairedDevice }[] {
@@ -195,7 +194,7 @@ function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platfo
   return `Run tailscale up on this ${platform === 'darwin' ? 'Mac' : 'machine'}, then run this again.`;
 }
 
-export function setupExitCode(journal: SetupJournal): number {
+function setupExitCode(journal: SetupJournal): number {
   if (journal.steps.some((s) => s.state === 'failed')) return 1;
   if (journal.granted.length === 0) return 2;
   if (

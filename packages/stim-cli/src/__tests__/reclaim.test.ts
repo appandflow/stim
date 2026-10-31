@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
-import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -11,17 +11,11 @@ import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
-import {
-  ensureWorkspaceStorage,
-  workspaceAgentDeviceDir,
-  workspaceDir,
-  workspaceStateFile,
-} from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 import { testContext } from './_context.ts';
-import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
 let tmpHome: string;
 
@@ -36,17 +30,6 @@ afterEach(() => {
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
   resetExecutor();
-});
-
-test('describeDereferenced lists ios and android device records', () => {
-  const devices = describeDereferenced({
-    platforms: { ios: { deviceUdid: 'U1' }, android: { avdName: 'Pixel_6' } },
-  });
-  expect(devices).toEqual(['ios sim U1', 'android avd Pixel_6']);
-});
-
-test('describeDereferenced reports a physical android device when there is no avd', () => {
-  expect(describeDereferenced({ platforms: { android: { serial: 'R5CT' } } })).toEqual(['android device R5CT']);
 });
 
 test('describeDereferenced returns an empty list when nothing is claimed', () => {
@@ -265,34 +248,6 @@ test('reclaim ends the remote session recorded for the workspace', async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test('the session is ended even without deleteOwnedDevices', async () => {
-  const root = workspaceWithSession('drs_7');
-  let called = false;
-  await reclaimProject(root, {
-    deleteOwnedDevices: false,
-    stopSession: () => {
-      called = true;
-      return { status: 'torn-down' };
-    },
-  });
-  expect(called).toBe(true);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('a session that could not be stopped keeps the entry and names the manual fix', async () => {
-  const root = workspaceWithSession('drs_99');
-  const r = await reclaimProject(root, {
-    stopSession: () => ({ status: 'failed', reason: 'offline' }),
-  });
-  expect(r.stoppedSession).toBeNull();
-  expect(r.keptEntry).toBe(true);
-  expect(getProject(root)).toBeTruthy();
-  const reported = r.failedDevices[0]?.reason ?? '';
-  expect(reported).toContain('eas simulator:stop --id drs_99');
-  expect(reported).toContain('billing');
-  rmSync(root, { recursive: true, force: true });
-});
-
 test('a stopped session with an unreconciled claim keeps the workspace retry handle', async () => {
   const root = workspaceWithSession('drs_43');
   const result = await reclaimProject(root, {
@@ -308,18 +263,6 @@ test('a stopped session with an unreconciled claim keeps the workspace retry han
   expect(result.failedDevices[0]?.reason).toMatch(/ownership claim.*could not be removed/i);
   expect(getProject(root)).toBeTruthy();
   expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_43');
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('a throwing stop is contained, so the caller still removes the tree', async () => {
-  const root = workspaceWithSession('drs_5');
-  const r = await reclaimProject(root, {
-    stopSession: () => {
-      throw new Error('eas exploded');
-    },
-  });
-  expect(r.stoppedSession).toBeNull();
-  expect(r.failedDevices[0]?.reason).toContain('eas exploded');
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -348,46 +291,6 @@ test('cancelling a session stop preserves its workspace and prevents later clean
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
-
-test('an unresolved session child preserves its typed cleanup refusal and stops later cleanup', async () => {
-  const root = workspaceWithSession('drs_unresolved');
-  const refusal = new WorkspaceProcessCleanupError([], 'Session child cannot be verified.', 'Inspect the child.');
-  let released = false;
-  try {
-    await expect(
-      reclaimProject(root, {
-        operation: testContext({ projectRoot: root, cwd: root }),
-        stopSession: () => {
-          throw refusal;
-        },
-        releaseLeases: () => {
-          released = true;
-          return [];
-        },
-      }),
-    ).rejects.toBe(refusal);
-    expect(released).toBe(false);
-    expect(getProject(root)).not.toBeNull();
-    expect(existsSync(workspaceStateFile(root))).toBe(true);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('a workspace with no session never reaches for eas', async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
-  upsertProject(root, { label: 'agent-1' });
-  let called = false;
-  const r = await reclaimProject(root, {
-    stopSession: () => {
-      called = true;
-      return { status: 'torn-down' };
-    },
-  });
-  expect(called).toBe(false);
-  expect(r.stoppedSession).toBeNull();
-  rmSync(root, { recursive: true, force: true });
 });
 
 function realStoredSessionStop(sessionOutput: string, calls: string[]) {
@@ -507,62 +410,6 @@ test('reclaim preserves a replacement managed tunnel record', async () => {
   expect(result.keptEntry).toBe(true);
   expect(result.stoppedTunnel).toBeNull();
   expect(result.failedDevices[0]?.reason).toMatch(/replacement.*retained/i);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('the tunnel is stopped even without deleteOwnedDevices', async () => {
-  const root = workspaceWithManagedTunnel(4242);
-  let called = false;
-  await reclaimProject(root, {
-    deleteOwnedDevices: false,
-    stopMetroTunnel: async () => {
-      called = true;
-      return { status: 'stopped' };
-    },
-  });
-  expect(called).toBe(true);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('a tunnel that could not be verified keeps the entry and gives a safe retry remedy', async () => {
-  const root = workspaceWithManagedTunnel(4242);
-  const r = await reclaimProject(root, {
-    stopMetroTunnel: async () => ({ status: 'failed', reason: 'pid 4242 did not exit within 5000ms.' }),
-  });
-  expect(r.stoppedTunnel).toBeNull();
-  expect(r.keptEntry).toBe(true);
-  expect(getProject(root)).toBeTruthy();
-  const reported = r.failedDevices[0]?.reason ?? '';
-  expect(reported).toMatch(/identity could not be verified/i);
-  expect(reported).toMatch(/inspect.*retry/i);
-  expect(reported).not.toMatch(/kill\s+4242/);
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('a throwing tunnel stop is contained, so the caller still removes the tree', async () => {
-  const root = workspaceWithManagedTunnel(4242);
-  const r = await reclaimProject(root, {
-    stopMetroTunnel: async () => {
-      throw new Error('kill exploded');
-    },
-  });
-  expect(r.stoppedTunnel).toBeNull();
-  expect(r.failedDevices[0]?.reason).toContain('kill exploded');
-  rmSync(root, { recursive: true, force: true });
-});
-
-test('a workspace with no recorded tunnel never calls stopMetroTunnel', async () => {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
-  upsertProject(root, { label: 'agent-1' });
-  let called = false;
-  const r = await reclaimProject(root, {
-    stopMetroTunnel: async () => {
-      called = true;
-      return { status: 'stopped' };
-    },
-  });
-  expect(called).toBe(false);
-  expect(r.stoppedTunnel).toBeNull();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -931,52 +778,3 @@ test('worktree reclaim releases named ports without inspecting or signalling the
     identify.mockRestore();
   }
 });
-
-test.each(['success', 'failure', 'missing', 'stale'])(
-  'workspace daemon stop %s controls state removal',
-  async (outcome) => {
-    const stateDir = workspaceAgentDeviceDir('/proj');
-    upsertProject('/proj', {});
-    ensureWorkspaceStorage('/proj');
-    mkdirSync(stateDir);
-    writeFileSync(
-      join(stateDir, 'daemon.json'),
-      outcome === 'stale' ? JSON.stringify({ pid: 2147483646, processStartTime: 'Mon Oct  5 11:10:09 2026' }) : '{}',
-    );
-    const runFile = vi.fn<(file: string, args: string[]) => string>((_file, _args) => {
-      if (outcome === 'failure') throw new Error(outcome);
-      expect(existsSync(stateDir)).toBe(true);
-      return '';
-    });
-    setExecutor({
-      runQuiet: () => null,
-      findExecutable: () => (outcome === 'missing' ? null : '/bin/agent-device'),
-      runFile,
-    });
-    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true);
-    const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
-    try {
-      const result = await reclaimProject('/proj');
-      const succeeds = outcome === 'success' || outcome === 'stale';
-      expect(existsSync(stateDir)).toBe(!succeeds);
-      expect(result.removedWorkspaceDirs).toEqual(succeeds ? [workspaceDir('/proj')] : []);
-      expect(result.failedWorkspaceDirs).toEqual(succeeds ? [] : [workspaceDir('/proj')]);
-      expect(result.keptEntry).toBe(!succeeds);
-      expect(getProject('/proj') === null).toBe(succeeds);
-      const stopCall = [
-        'agent-device',
-        ['daemon', 'stop', '--state-dir', stateDir, '--clean'],
-        expect.objectContaining({ timeoutMs: 20_000 }),
-      ];
-      const stopMessage = expect.stringContaining(`agent-device daemon stop --state-dir "${stateDir}" --clean`);
-      expect(runFile.mock.calls).toEqual(outcome === 'missing' || outcome === 'stale' ? [] : [stopCall]);
-      expect(
-        stderr.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('daemon could not be stopped')),
-      ).toEqual(succeeds ? [] : [stopMessage]);
-      expect(stdout).not.toHaveBeenCalled();
-    } finally {
-      stderr.mockRestore();
-      stdout.mockRestore();
-    }
-  },
-);

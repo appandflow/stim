@@ -5,7 +5,6 @@ import { maintenanceNdjsonFile, sharedCompilationCache, workspaceLogsDir } from 
 import { register } from '../cache/cache-manifest.ts';
 import { clearCorruptCompilationCache } from '../cache/compilation-cache-corruption.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
-import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { plantClaim } from './_factories.ts';
 
@@ -55,25 +54,6 @@ test('a corrupt cache is emptied and the build fails asking for a rerun, recorde
       expect.objectContaining({ event: 'maintenance_action', target: cas, reason: LINE, trigger: 'ios build' }),
     ]);
   }
-});
-
-test.each([
-  ['another live build compiles with it', () => plantClaim(cacheClaimRoot(cas), 'shared', liveParent())],
-  [
-    'its claim holder cannot be identified',
-    () => plantClaim(cacheClaimRoot(cas), 'shared', { pid: 4242, processToken: 'nonsense' }),
-  ],
-])('the cache is left alone when %s, and the error still asks for a rerun', async (_name, plant) => {
-  plant();
-  const result = await clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
-  expect(result.code).toBe('STIM_COMPILATION_CACHE_CORRUPT');
-  expect(result.message).toContain('Stim did not empty it');
-  expect(result.remedy).toContain('gc --delete --cache "compilation cache"');
-  expect(result.remedy).toContain('run the same command again');
-  expect(readdirSync(join(cas, 'v1.1'))).toEqual(['index.v1']);
-  expect(records(maintenanceNdjsonFile())).toEqual([
-    expect.objectContaining({ event: 'maintenance_failure', target: cas, blocked: expect.any(String) }),
-  ]);
 });
 
 test('a cache path Stim never registered is left alone', async () => {

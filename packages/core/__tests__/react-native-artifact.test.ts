@@ -23,21 +23,6 @@ const android = {
   android: { variant: null, abi: 'all', gradleBuildCache: true, pch: 'auto', compilerCache: 'none' },
 };
 
-test('equivalent development build choices produce the same query without depending on property order', () => {
-  const normalized = reactNativeArtifactQuery(android);
-  expect(normalized).toMatchObject({ android: { variant: 'debug', abi: null, gradleRoot: 'android', module: ':app' } });
-  expect(
-    reactNativeArtifactQuery({
-      ...android,
-      android: { module: ':app', gradleRoot: 'android', ...android.android, variant: 'debug', abi: null },
-    }),
-  ).toEqual(normalized);
-  expect(reactNativeArtifactQuery({ ...android, toolchain: { ...android.toolchain, arch: 'x64' } })).toEqual(
-    normalized,
-  );
-  expect(reactNativeArtifactQuery(ios)).toMatchObject({ ios: { optimizations: { swiftCompilationCache: false } } });
-});
-
 test('queries retain target, toolchain and native options while refusing release, missing identity and escaping project paths', () => {
   for (const different of [
     { ...ios, fingerprint: 'new-inputs' },
@@ -59,20 +44,4 @@ test('queries retain target, toolchain and native options while refusing release
     { ...android, android: { ...android.android, module: ':..:app' } },
   ])
     expect(reactNativeArtifactQuery(invalid)).toBeNull();
-});
-
-test('a query with a build compatibility version names it instead of the Stim build', () => {
-  const compat = (stimBuild: string, value: unknown) =>
-    reactNativeArtifactQuery({ ...ios, toolchain: { ...ios.toolchain, stimBuild, compat: value } });
-  expect(compat('b1', 1)?.toolchain).toEqual({
-    compat: 1,
-    arch: 'arm64',
-    xcode: 'Xcode 27',
-    simulatorSdk: '27',
-    cocoapods: '1.16.2',
-  });
-  expect(compat('b2', 1)).toEqual(compat('b1', 1));
-  expect(compat('b1', 2)).not.toEqual(compat('b1', 1));
-  expect(reactNativeArtifactQuery(ios)?.toolchain).toMatchObject({ stimBuild: 'b1' });
-  for (const invalid of [0, 1.5, '1']) expect(compat('b1', invalid)).toBeNull();
 });

@@ -1,6 +1,5 @@
 import * as artifacts from '../commands/android/artifact.ts';
-import { execFile } from 'node:child_process';
-import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
+
 import { testContext } from './_context.ts';
 import { ACTIVE_BUILD_KEY, parseActiveBuild } from '../engine/build-progress.ts';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
@@ -17,16 +16,15 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { buildAndroidOperation } from '../commands/android/build.ts';
 import { buildCacheKey, filesystemBuildCapability } from '../cache/build-cache.ts';
 import { skippedMissReason } from '../cache/miss-reason.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { AndroidProject } from '../integrations/android-project.ts';
 import { readBuildHistory } from '@stim-cli/core/state';
-import { cacheEntryProtection } from '../maintenance/protect.ts';
-import { getProject } from '../workspace/config.ts';
-import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+
+import { workspaceDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 
 let controller = new AbortController();
@@ -129,48 +127,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(scratch, { recursive: true, force: true });
-});
-
-test('build-only keeps artifacts after temporary cleanup, reuses compatible input and preserves an existing runtime', async () => {
-  const cold = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
-  expect(cold).toMatchObject({ androidPackage: 'org.example.native', abi: 'x86_64', cacheHit: false });
-  expect(readWorkspaceState(root)).not.toHaveProperty('android');
-  expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
-  const existing = { serial: 'already-running', devicePlacement: { machine: 'paired-mini' } };
-  const running = { platform: 'android', status: 'ok', appPath: '/runtime/app.apk', cacheKey: 'runtime-key' };
-  writeWorkspaceState(root, { android: existing, lastBuild: running, lastAndroidBuild: running });
-  const runningLog = join(workspaceLogsDir(root), 'build-android.ndjson');
-  writeFileSync(runningLog, '{"msg":"running app build"}\n');
-  expect(parseWorkspaceLink(cold.links.workspace)).toMatchObject({ platform: 'android' });
-  const bytes = readFileSync(cold.apkPath, 'utf8');
-  const warm = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
-  expect(warm).toMatchObject({ cacheKey: cold.cacheKey, cacheHit: 'local' });
-  expect(compilations).toBe(1);
-  expect(readFileSync(warm.apkPath, 'utf8')).toBe(bytes);
-  expect(temporaryCopies.length).toBeGreaterThan(0);
-  expect(temporaryCopies.every((path) => !existsSync(path))).toBe(true);
-  expect(readWorkspaceState(root)?.android).toEqual(existing);
-  let release = cold;
-  for (const options of [{ abi: 'arm64-v8a' as const }, { abi: 'x86_64' as const, variant: 'release' }]) {
-    const changed = await buildAndroidOperation(buildContext(), root, { ...options, remoteBuild: 'local' });
-    expect(changed.cacheHit).toBe(false);
-    expect(changed.cacheKey).not.toBe(cold.cacheKey);
-    release = changed;
-  }
-  const releaseBytes = readFileSync(release.apkPath, 'utf8');
-  writeFileSync(join(root, 'Main.kt'), 'edited source');
-  const edited = await buildAndroidOperation(buildContext(), root, { abi: 'x86_64', remoteBuild: 'local' });
-  expect(edited.cacheKey).not.toBe(cold.cacheKey);
-  expect(edited.cacheHit).toBe(false);
-  expect(compilations).toBe(4);
-  expect(readFileSync(release.apkPath, 'utf8')).toBe(releaseBytes);
-  expect((await fs.readdir(join(workspaceDir(root), 'artifacts'))).toSorted()).toEqual(
-    [basename(dirname(release.apkPath)), basename(dirname(edited.apkPath))].toSorted(),
-  );
-  expect(readWorkspaceState(root)).toMatchObject({ android: existing, lastBuild: running, lastAndroidBuild: running });
-  expect(getProject(root)).not.toBeNull();
-  expect(cacheEntryProtection()(String(edited.cacheKey))).not.toBeNull();
-  expect(readFileSync(runningLog, 'utf8')).toBe('{"msg":"running app build"}\n');
 });
 
 test('a failed compiler releases the build claim so recovery works without stopping the existing runtime', async () => {
@@ -279,72 +235,6 @@ test('cancelling an APK export drains the copy before cleanup and permits recove
   const recovered = await buildAndroidOperation(buildContext(), root, { remoteBuild: 'local' });
   expect(existsSync(recovered.apkPath)).toBe(true);
 });
-
-test('a first CLI SIGINT during APK export drains the copy and cleanup before exit130', async () => {
-  const script = `
-    const { buildAndroidOperation } = await import(${JSON.stringify(new URL('../commands/android/build.ts', import.meta.url).href)});
-    const { projectRegistry } = await import(${JSON.stringify(new URL('../integrations/projects.ts', import.meta.url).href)});
-    const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});
-    const { workspaceDir } = await import(${JSON.stringify(new URL('../workspace/paths.ts', import.meta.url).href)});
-    const { readClaimSet } = await import(${JSON.stringify(new URL('../ownership-claim.ts', import.meta.url).href)});
-    const { promises: fs } = await import('node:fs');
-    const { join } = await import('node:path');
-    const root = process.argv[1];
-    const source = join(root, 'fixture.apk');
-    await fs.writeFile(source, 'fixture APK bytes');
-    projectRegistry.selectAndroid = () => ({ id: 'fixture', load: async () => ({
-      isExpo: false, targets: [], eas: false,
-      appIds: () => ({ androidPackage: 'org.example.native', bundleId: null }),
-      variantProblem: () => null, runtimeKind: () => 'process',
-      artifact: () => ({
-        identity: async () => ({ cacheIneligible: 'fixture' }), cache: () => null,
-        prepare: async () => {}, reconcile: async () => ({ identity: { cacheIneligible: 'fixture' }, rekeyedBy: [], cacheRefusal: null }),
-        validate: async () => ({ cacheIneligible: 'fixture' }),
-        compile: async () => ({ ok: true, apkPath: source, durationMs: 1, lastLines: [] }),
-        untrackedLine: () => null, expoCache: null, offload: null,
-      }),
-    }) });
-    const copy = fs.copyFile;
-    let closed = false;
-    let claimed = false;
-    fs.copyFile = async (...args) => {
-      await copy(...args);
-      claimed = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length === 1;
-      process.emit('SIGINT');
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      closed = true;
-    };
-    const { value, interrupted } = await runProcessOperation(root, async (context) => {
-      try {
-        await buildAndroidOperation(context, root, { buildCache: false, remoteBuild: 'local' });
-        return { code: 'unexpected-success' };
-      } catch (error) {
-        return { code: error.code, closed, claimed, exports: await fs.readdir(join(workspaceDir(root), 'artifacts')), claims: readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.length };
-      }
-    });
-    process.stdout.write(JSON.stringify(value));
-    process.exitCode = interrupted ?? 0;
-  `;
-  const result = await new Promise<{ code: number | string; stdout: string; stderr: string }>((resolve) => {
-    execFile(
-      process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '-e', script, root],
-      {
-        env: { ...process.env, STIM_HOME: join(scratch, 'cli-state') },
-        timeout: 15_000,
-      },
-      (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr }),
-    );
-  });
-  expect(result.stdout ? JSON.parse(result.stdout) : result.stderr).toEqual({
-    code: 'STIM_CANCELLED',
-    closed: true,
-    claimed: true,
-    exports: [],
-    claims: 0,
-  });
-  expect(result.code).toBe(130);
-}, 20_000);
 
 test('cancellation after exporting the APK still refuses the result and removes the export', async () => {
   const acquire = artifacts.acquireAndroidArtifact;

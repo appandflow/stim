@@ -63,7 +63,7 @@ export type { RemoteDeviceBackend } from '@stim-cli/core/state';
 export const REMOTE_SESSION_ERROR = 'STIM_NO_REMOTE_SESSION';
 const REMOTE_METRO_ERROR = 'STIM_REMOTE_METRO_UNREACHABLE';
 
-export function resolveMetroOrigin({
+function resolveMetroOrigin({
   metroPort,
   publicUrl = null,
   mode = 'auto',

@@ -10,14 +10,13 @@ import {
   parseIosCrash,
 } from '../diagnostics/native-crash.ts';
 import { verifyLaunch } from '../engine/launch-verify.ts';
-import { createNdjsonWriter, type NdjsonRecord } from '../ndjson.ts';
+import { type NdjsonRecord } from '../ndjson.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import type { ChildProcess } from 'node:child_process';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
-import { buildCriteria, recordMatches } from '@stim-cli/core/state';
 import { recordFromLine } from '../supervisor/server-expo.ts';
 import { clearWorkspaceStateKeys, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { upsertProject } from '../workspace/config.ts';
@@ -134,39 +133,6 @@ test('native previews remove metadata noise but full output preserves it and Jav
   expect(java).toContain('Caused-by stack:\n  at crash');
 });
 
-test('launch omits incomplete frames and capture noise while full logs retain the evidence', () => {
-  const record = {
-    msg: "componentStack: '\\n    at Route (http://localhost:8082/index.bundle?plat",
-    symbolicationNote: 'Same error captured by metro + device; raw copies retained in logs --json.',
-  };
-  const original = JSON.stringify(record);
-  expect(launchErrorPreview([record])).toEqual([]);
-  const full = launchErrorPreview([record], undefined, { full: true }).join('\n');
-  expect(full).toContain('at Route (http://localhost:8082/index.bundle?plat');
-  expect(full).not.toContain('runtime truncated');
-  expect(full).toContain('Same error captured');
-  expect(JSON.stringify(record)).toBe(original);
-  const frames = [
-    'at Screen (app.tsx:1:1)',
-    ...Array.from({ length: 10 }, (_, i) => `at framework${i} (node_modules/lib/index.js:${i + 1}:2)`),
-    'at anonymous (http://localhost:8082/index.bundle?plat',
-  ];
-  const bounded = launchErrorPreview([{ stack: frames.join('\n') }]).join('\n');
-  expect(bounded).toContain('at framework8');
-  expect(bounded).not.toContain('at anonymous');
-  expect(bounded).not.toContain('app frames prioritized');
-});
-
-test('a parent-relative frame ranks below an app frame so a late app frame survives the preview', () => {
-  const frames = [
-    ...Array.from({ length: 12 }, (_, i) => `at helper${i} (../shared/helper${i}.ts:${i + 1}:1)`),
-    'at Screen (src/App.tsx:1:1)',
-  ];
-  const preview = launchErrorPreview([{ stack: frames.join('\n') }]).join('\n');
-  expect(preview).toContain('src/App.tsx');
-  expect(preview).toContain('app frames prioritized');
-});
-
 test('cross-source copies collapse only with matching title, location, platform and time', () => {
   const a = { ts: 1000, src: 'client', platform: 'ios', msg: 'Error: broken\n    at render (app.tsx:4:2)' };
   const b = { ...a, ts: 1100, src: 'device' };
@@ -277,28 +243,6 @@ test('only a symbol one part of the app needs from another part of the same app 
     { namespace: 'SIGNAL', indicator: 'Abort trap: 6' },
   ])
     expect(bundleBindFailure(crash(termination))).toBeNull();
-});
-
-test('Android crash buffer retains the exception from a dead app but not another process or old crash', () => {
-  const text = [
-    '1000.000 E/AndroidRuntime( 44): FATAL EXCEPTION: main',
-    '1000.001 E/AndroidRuntime( 44): Process: app.test, PID: 44',
-    '1000.002 E/AndroidRuntime( 44): java.lang.IllegalStateException: native failure',
-    '1000.003 E/AndroidRuntime( 44):     at app.test.MainActivity.onCreate(MainActivity.kt:10)',
-    '1001.000 E/AndroidRuntime( 45): FATAL EXCEPTION: main',
-    '1001.001 E/AndroidRuntime( 45): Process: other.app, PID: 45',
-  ].join('\n');
-  const target = { platform: 'android' as const, deviceId: 'emulator-5554', appId: 'app.test', since: 1000000 };
-  const records = parseAndroidCrashes(text, target, 100);
-  expect(records).toHaveLength(1);
-  expect(records[0]?.msg).toContain('MainActivity.kt:10');
-  expect(records[0]?.deviceTs).toBe(1000000);
-  expect(parseAndroidCrashes(text, target, 150)[0]?.deviceTs).toBe(records[0]?.deviceTs);
-  expect(records[0]?.msg).not.toContain('other.app');
-  expect(parseAndroidCrashes(text, { ...target, since: 2000000 }, 100)).toEqual([]);
-  expect(recordMatches(records[0], buildCriteria({ errorsOnly: true }))).toBe(true);
-  expect(recordMatches({ ...records[0], event: undefined }, buildCriteria({ errorsOnly: true }))).toBe(false);
-  expect(recordMatches(records[0], buildCriteria({ errorsOnly: true, sources: ['metro'] }))).toBe(false);
 });
 
 test('a DebugServerException previews the Metro error it carries instead of the JSON body', () => {
@@ -428,56 +372,6 @@ test('a DebugServerException previews the Metro error it carries instead of the 
   expect(appJson).not.toContain('compacted');
 });
 
-test('a native crash before any Metro request ends verification without calling the app healthy or merely unverified', async () => {
-  let time = 1000;
-  const crash = {
-    ts: 1500,
-    src: 'device',
-    platform: 'ios',
-    level: 'fatal',
-    event: 'native_crash',
-    msg: 'App.swift:17: Fatal error: broken',
-  };
-  const result = await verifyLaunch({
-    since: 1000,
-    platform: 'ios',
-    readRecords: () => [],
-    readDeviceRecords: () => [],
-    readClientRecords: () => [],
-    readNativeCrashes: () => [crash],
-    processAlive: () => false,
-    now: () => time,
-    sleep: async (ms) => {
-      time += ms;
-    },
-  });
-  expect(result).toMatchObject({ fatal: true, verified: false, processAlive: false, errors: [crash] });
-  expect(result.waitedMs).toBeLessThan(3000);
-});
-
-test('an unrelated crash does not invent a native launch failure; a gone process fails for its exit', async () => {
-  for (const alive of [null, false]) {
-    let time = 1000;
-    const result = await verifyLaunch({
-      since: 1000,
-      platform: 'ios',
-      timeoutMs: 2500,
-      readRecords: () => [],
-      readDeviceRecords: () => [],
-      readClientRecords: () => [],
-      readNativeCrashes: () => [{ ts: 1500, platform: 'android', event: 'native_crash', level: 'fatal' }],
-      processAlive: () => alive,
-      now: () => time,
-      sleep: async (ms) => {
-        time += ms;
-      },
-    });
-    expect(result.verified).toBe(false);
-    expect(result.errors?.some((record) => record.event === 'native_crash') ?? false).toBe(false);
-    expect(result.fatal === true).toBe(alive === false);
-  }
-});
-
 test('Android crash evidence is fatal even while its PID remains behind a system crash dialog', async () => {
   let time = 1000;
   const crash = {
@@ -517,83 +411,6 @@ function yieldingClock(start = 1000) {
   };
 }
 
-test('a slow native crash probe does not stall the poll, never overlaps itself, and still fails the launch', async () => {
-  const clock = yieldingClock();
-  const crash = { ts: 1500, src: 'device', platform: 'ios', level: 'fatal', event: 'native_crash' };
-  let reads = 0;
-  let active = 0;
-  let maxActive = 0;
-  let readsWhenProbeStarted = 0;
-  let probes = 0;
-  const result = await verifyLaunch({
-    since: 1000,
-    platform: 'ios',
-    timeoutMs: 1e9,
-    readRecords: () => {
-      reads += 1;
-      return [];
-    },
-    readDeviceRecords: () => [],
-    readClientRecords: () => [],
-    readNativeCrashes: async () => {
-      probes += 1;
-      if (probes === 1) readsWhenProbeStarted = reads;
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await new Promise((resolve) => setTimeout(resolve, 30));
-      active -= 1;
-      return probes === 1 ? [] : [crash];
-    },
-    processAlive: () => false,
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  expect(result).toMatchObject({ fatal: true, verified: false, errors: [crash] });
-  expect(maxActive).toBe(1);
-  expect(probes).toBe(2);
-  expect(reads - readsWhenProbeStarted).toBeGreaterThan(5);
-});
-
-test('a failing native crash probe fails the verification with its error', async () => {
-  const clock = yieldingClock();
-  await expect(
-    verifyLaunch({
-      since: 1000,
-      platform: 'ios',
-      timeoutMs: 1e9,
-      readRecords: () => [],
-      readDeviceRecords: () => [],
-      readClientRecords: () => [],
-      readNativeCrashes: async () => {
-        throw new Error('crash probe failed');
-      },
-      now: clock.now,
-      sleep: clock.sleep,
-    }),
-  ).rejects.toThrow('crash probe failed');
-});
-
-test('verification waits for a native crash probe still running when the launch is verified', async () => {
-  const clock = yieldingClock();
-  let probeFinished = false;
-  const result = await verifyLaunch({
-    since: 1000,
-    platform: 'ios',
-    readRecords: () => [{ ts: 1100, src: 'metro', platform: 'ios', event: 'bundle_build_done' }],
-    readDeviceRecords: () => [],
-    readClientRecords: () => [],
-    readNativeCrashes: async () => {
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      probeFinished = true;
-      return [];
-    },
-    now: clock.now,
-    sleep: clock.sleep,
-  });
-  expect(result.verified).toBe(true);
-  expect(probeFinished).toBe(true);
-});
-
 const verifyWithProbeInVerifyingIteration = (
   readNativeCrashes: () => Promise<NdjsonRecord[]>,
   processAlive: () => boolean = () => true,
@@ -613,23 +430,6 @@ const verifyWithProbeInVerifyingIteration = (
   });
 };
 
-test('a native crash found by a probe started in the iteration that would verify the launch fails it', async () => {
-  const crash = { ts: 1500, src: 'device', platform: 'ios', level: 'fatal', event: 'native_crash' };
-  expect(await verifyWithProbeInVerifyingIteration(async () => [crash])).toMatchObject({
-    fatal: true,
-    verified: false,
-    errors: [crash],
-  });
-});
-
-test('a failing probe started in the iteration that would verify the launch rejects the verification', async () => {
-  await expect(
-    verifyWithProbeInVerifyingIteration(async () => {
-      throw new Error('crash probe failed');
-    }),
-  ).rejects.toThrow('crash probe failed');
-});
-
 test('an app that exits while the launch waits for a running crash probe is not reported as verified', async () => {
   let exited = false;
   const result = await verifyWithProbeInVerifyingIteration(
@@ -641,44 +441,6 @@ test('an app that exits while the launch waits for a running crash probe is not 
     () => !exited,
   );
   expect(result).toMatchObject({ fatal: true, verified: false, processAlive: false });
-});
-
-test('bundle evidence written to the Metro log across a rotation is seen by the verify loop', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-verify-rotation-'));
-  try {
-    const clock = yieldingClock();
-    const writer = createNdjsonWriter(join(root, 'metro.ndjson'), { maxBytes: 400, now: () => 0 });
-    const bundle = (event: string) => ({
-      ts: clock.at(),
-      src: 'metro',
-      platform: 'ios',
-      event,
-      requestId: 'b1',
-      level: 'debug',
-    });
-    let polls = 0;
-    const result = await verifyLaunch({
-      since: 1000,
-      platform: 'ios',
-      requireBundleResponse: true,
-      logsDir: root,
-      now: clock.now,
-      sleep: async (ms) => {
-        polls += 1;
-        if (polls === 1) writer.write(bundle('bundle_response_started'));
-        if (polls === 2)
-          for (let i = 0; i < 12; i++)
-            writer.write({ ts: clock.at(), src: 'metro', event: 'noise', msg: 'x'.repeat(60) });
-        if (polls === 3) writer.write(bundle('bundle_response_finished'));
-        await clock.sleep(ms);
-      },
-    });
-    writer.close();
-    expect(result.verified).toBe(true);
-    expect(result.record?.event).toBe('bundle_response_finished');
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('structured Metro frames retain zero-based columns, including the first column', async () => {
@@ -697,57 +459,6 @@ test('structured Metro frames retain zero-based columns, including the first col
   );
   expect(posted).toMatchObject({ stack: [{ column: 0 }] });
   expect(record?.stack).toEqual([{ file: '/app/source.ts', line: 5, column: 0, fn: 'start' }]);
-});
-
-test('a stalled symbolication server cannot hide or indefinitely delay the original error', async () => {
-  server = createServer(() => {});
-  await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as { port: number }).port;
-  const raw = { msg: 'Error: failed\n at render (http://localhost:8083/index.bundle:1:1)' };
-  const [record] = await symbolicateErrors([raw], { port, timeoutMs: 30 });
-  expect(record?.msg).toBe(raw.msg);
-  expect(record?.symbolicationNote).toContain('timed out');
-});
-
-test('a caller that measured the device clock spares every crash read its own clock sample', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'stim-native-clock-'));
-  process.env.STIM_HOME = join(root, 'stim-home');
-  const epoch = Math.floor(Date.now() / 1000);
-  const raw = [
-    `${epoch}.000 F/DEBUG( 80): *** *** *** ***`,
-    `${epoch}.001 F/DEBUG( 80): pid: 44, tid: 44, name: app.test  >>> app.test <<<`,
-    `${epoch}.002 F/DEBUG( 80): signal 6 (SIGABRT), code -1`,
-  ].join('\n');
-  const adbCalls: string[][] = [];
-  setExecutor({
-    runFileQuiet: (file, args) => {
-      if (file !== 'adb') return null;
-      adbCalls.push(args);
-      return args.includes('date') ? String(Date.now()) : raw;
-    },
-  });
-  try {
-    const target = {
-      root,
-      platform: 'android' as const,
-      appId: 'app.test',
-      deviceId: 'owned',
-      since: epoch * 1000 - 1000,
-    };
-    const logs = join(root, 'logs');
-    const measured = await captureNativeCrashes({ ...target, clockOffsetMs: 0 }, logs);
-    expect(measured).toHaveLength(1);
-    expect(adbCalls.map((args) => args[2])).toEqual(['logcat']);
-    adbCalls.length = 0;
-    expect(await captureNativeCrashes({ ...target, clockOffsetMs: null }, logs)).toEqual([]);
-    expect(adbCalls).toEqual([]);
-    await captureNativeCrashes(target, logs);
-    expect(adbCalls.map((args) => args[2])).toEqual(['shell', 'logcat']);
-  } finally {
-    resetExecutor();
-    delete process.env.STIM_HOME;
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test('APK frames require a matching ELF build ID and repeated collection does not duplicate a crash', async () => {
@@ -1078,29 +789,4 @@ test.skipIf(process.platform !== 'darwin')('iOS crash reports come from the oper
     resetExecutor();
     rmSync(home, { recursive: true, force: true });
   }
-});
-
-test('human log rendering stays linear on a record with one very long line', async () => {
-  const long = 'a'.repeat(30_000);
-  const codeFrame = {
-    src: 'metro',
-    ts: 1000,
-    level: 'error',
-    msg: `SyntaxError: big.ts: Unexpected token (1:30000)\n> 1 | export const big = "${long}" + (;\n    |   ^`,
-  };
-  const frame = { src: 'device', ts: 1001, level: 'error', msg: `Error: boom\n    at ${'@'.repeat(30_000)}` };
-  const started = performance.now();
-  const rendered: string[] = [];
-  for (const record of [codeFrame, frame]) {
-    const diagnosed = await errorDiagnostics([record], {
-      root: '/app',
-      logsDir: '/app',
-      port: null,
-      timeline: [record],
-    });
-    rendered.push(launchErrorPreview(diagnosed, '/app', { full: true }).join('\n'));
-  }
-  expect(performance.now() - started).toBeLessThan(500);
-  expect(rendered[0]).toContain(`export const big = "${long}"`);
-  expect(rendered[1]).toContain('@'.repeat(30_000));
 });

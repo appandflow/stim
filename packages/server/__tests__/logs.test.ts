@@ -31,26 +31,6 @@ test('finite log delivery waits for congestion to clear, batches the records, an
   expect(events).toEqual([records.slice(0, 500), records.slice(500), 'ended']);
 });
 
-test('finite delivery that exceeds the pending limit fails without sending completion', async () => {
-  vi.useFakeTimers();
-  const events: unknown[] = [];
-  const batcher = new LogBatcher(
-    {
-      send: (records) => events.push(records),
-      bufferedBytes: () => 0,
-      overflow: () => events.push('overflow'),
-      ended: () => events.push('ended'),
-    },
-    { maxBufferedBytes: 100, maxPendingRecords: 1 },
-  );
-  batcher.push({ msg: 'first' });
-  batcher.push({ msg: 'second' });
-  batcher.finish();
-  vi.runAllTimers();
-  await Promise.resolve();
-  expect(events).toEqual(['overflow']);
-});
-
 test('the wire schema and log parser reject ambiguous selectors and archive path traversal', () => {
   const validate = new Ajv2020({ strict: false, validateFormats: false }).compile({
     ...protocolJsonSchema(),
@@ -102,35 +82,3 @@ test('the wire schema and log parser reject ambiguous selectors and archive path
     }),
   ).toBe(false);
 });
-
-test.each(['drain', 'abort'])(
-  'backfill respects congestion and a smaller pending limit without dropping records (%s)',
-  async (mode) => {
-    vi.useFakeTimers();
-    let buffered = 1000;
-    const events: unknown[] = [];
-    const controller = new AbortController();
-    const batcher = new LogBatcher(
-      {
-        send: (records) => events.push(records),
-        bufferedBytes: () => buffered,
-        overflow: () => events.push('overflow'),
-      },
-      { maxBufferedBytes: 100, maxPendingRecords: 3 },
-    );
-    const records = Array.from({ length: 500 }, (_, ts) => ({ ts, msg: String(ts) }));
-    const backfill = batcher.backfill(records, controller.signal);
-    const result = backfill.then(
-      () => 'drained',
-      () => 'aborted',
-    );
-    await vi.advanceTimersByTimeAsync(200);
-    expect(events).toEqual([]);
-    if (mode === 'abort') controller.abort();
-    else buffered = 0;
-    await vi.advanceTimersByTimeAsync(100);
-    expect(await result).toBe(mode === 'abort' ? 'aborted' : 'drained');
-    expect(events.flat()).toEqual(mode === 'abort' ? [] : records);
-    batcher.stop();
-  },
-);

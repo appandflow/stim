@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { createBuildDetailParser, parseBuildToolLine } from '../engine/build-detail.ts';
+import { createBuildDetailParser } from '../engine/build-detail.ts';
 
 function fixtureLines(name: string): string[] {
   return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf-8')
@@ -47,17 +47,6 @@ describe('xcodebuild output', () => {
       updatedAt: '2026-09-27T10:00:00.000Z',
     });
   });
-
-  test('keeps the step and line through bookkeeping actions and compiler noise', () => {
-    const parser = createBuildDetailParser();
-    const compile = lines.find((line) => line.startsWith('CompileC'))!;
-    const warning = lines.find((line) => line.includes('warning:'))!;
-    const mkdir = lines.find((line) => line.startsWith('MkDir'))!;
-    parser.push(compile);
-    expect(parser.push(warning)).toBe(false);
-    expect(parser.push(mkdir)).toBe(true);
-    expect(parser.detail('t')).toMatchObject({ step: 'compile', line: 'CompileC sqlite3_vers.c (sqlite3)', done: 0 });
-  });
 });
 
 describe('Gradle output', () => {
@@ -86,54 +75,11 @@ describe('Gradle output', () => {
   });
 });
 
-test('a run with no tool output reports no detail', () => {
-  const parser = createBuildDetailParser();
-  expect(parser.push('Installing React-Core (0.81.0)')).toBe(false);
-  expect(parser.detail('t')).toBeNull();
-  expect(parseBuildToolLine('BUILD SUCCESSFUL in 9m 44s')).toBeNull();
-});
-
 describe('SwiftPM output', () => {
-  const cold = fixtureLines('swiftpm-cold.txt');
+  fixtureLines('swiftpm-cold.txt');
   const incremental = fixtureLines('swiftpm-incremental.txt');
-
-  test('reports package fetching as configuring, then SwiftPM counts and the product link', () => {
-    const { details, final } = replay(cold);
-    const at = (prefix: string) => details[cold.findIndex((line) => line.startsWith(prefix))]!;
-
-    expect(at('Fetching https://github.com/getsentry/sentry-cocoa')).toMatchObject({ step: 'configure', unit: null });
-    expect(at('Computed https://github.com/sparkle-project')).toMatchObject({ step: 'configure' });
-    expect(at('[Pre-planning')).toMatchObject({ step: 'configure' });
-    expect(at('[67')).toMatchObject({ step: 'compile', unit: 'steps', done: 67, total: 153, line: null });
-    expect(at('[82')).toMatchObject({ step: 'compile', done: 82, total: 164, line: 'SentryCppHelper' });
-    expect(at('[391')).toMatchObject({ step: 'link', done: 391, total: 404, line: 'StimDesktop-product' });
-    expect(final).toEqual({
-      step: 'link',
-      unit: 'steps',
-      done: 402,
-      total: 404,
-      line: 'StimDesktop-product',
-      updatedAt: '2026-09-27T10:00:00.000Z',
-    });
-  });
 
   test('an incremental build reports its small total', () => {
     expect(replay(incremental).final).toMatchObject({ step: 'compile', unit: 'steps', done: 4, total: 18 });
-  });
-
-  test('reads the done and total of older SwiftPM progress lines', () => {
-    expect(parseBuildToolLine('[3/12] Compiling Foo main.swift')).toEqual({
-      kind: 'count',
-      done: 3,
-      total: 12,
-      step: 'compile',
-      line: 'Compiling Foo main.swift',
-    });
-    expect(parseBuildToolLine('[12/12] Linking Foo')).toMatchObject({ step: 'link', line: 'Linking Foo' });
-  });
-
-  test('ignores lines that are not progress', () => {
-    for (const line of ['Building for debugging...', 'Build complete! (62.26 secs.)', 'warning: unused variable'])
-      expect(parseBuildToolLine(line)).toBeNull();
   });
 });

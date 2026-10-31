@@ -97,11 +97,11 @@ export function androidHermescPath(
   return candidates.find(exists) ?? candidates[candidates.length - 1]!;
 }
 
-export function androidHermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
+function androidHermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
   return ['-emit-binary', '-O', '-w', '-out', out, bundle];
 }
 
-export function androidBundleCommand({
+function androidBundleCommand({
   isExpo,
   entryFile,
   bundleOutput,
@@ -148,7 +148,7 @@ export function androidBundleCommand({
   };
 }
 
-export function jarPath({
+function jarPath({
   javaHome = process.env.JAVA_HOME,
 }: {
   javaHome?: string | undefined;
@@ -156,7 +156,7 @@ export function jarPath({
   return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
 }
 
-export function zipalignArgs({
+function zipalignArgs({
   buildToolsMajor,
   input,
   output,
@@ -211,7 +211,7 @@ export function resolveKeystore(
   return { path, ...keystorePassArg(bag['keystorePassword']) };
 }
 
-export function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
+function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
   return ['sign', '--ks', keystore.path, '--ks-pass', keystore.pass, apkPath];
 }
 

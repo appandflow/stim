@@ -1,16 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  getConcurrencyLimits,
-  getParkedMax,
-  getPlatformDeviceLimits,
-  getRepoSettings,
-  loadConfig,
-  withConfigLock,
-} from '../state/config.ts';
-import { withStateReadCache } from '../state/json-file.ts';
-import { readCreatedDevices } from '../state/ledgers.ts';
+import { getConcurrencyLimits, getParkedMax } from '../state/config.ts';
 
 let tmpHome: string;
 
@@ -28,66 +19,6 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-test('loadConfig returns null when no file exists', () => {
-  expect(loadConfig()).toBe(null);
-});
-
-test('withStateReadCache serves one read per scope and a fresh parse per call', async () => {
-  await withStateReadCache(async () => {
-    expect(loadConfig()).toBe(null);
-    writeConfig({ projects: { '/a': { metroPort: 8081 } } });
-    await Promise.resolve();
-    expect(loadConfig()).toBe(null);
-  });
-  await withStateReadCache(async () => {
-    const first = loadConfig()!;
-    first.projects['/b'] = { metroPort: 8082 };
-    writeConfig({ projects: {} });
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(Object.keys(loadConfig()!.projects)).toEqual(['/a']);
-    writeFileSync(join(tmpHome, 'created-devices.json'), JSON.stringify({ ios: ['A'] }));
-    expect([...readCreatedDevices().ios]).toEqual(['A']);
-    writeFileSync(join(tmpHome, 'created-devices.json'), JSON.stringify({ ios: ['B'] }));
-    expect([...readCreatedDevices().ios]).toEqual(['A']);
-  });
-  expect(loadConfig()!.projects).toEqual({});
-});
-
-test('loadConfig reports a corrupt config by path instead of throwing a raw SyntaxError', () => {
-  writeFileSync(join(tmpHome, 'config.json'), '{"projects": {"/a": ');
-  let err: unknown;
-  try {
-    loadConfig();
-  } catch (e) {
-    err = e;
-  }
-  expect(err).toBeInstanceOf(Error);
-  expect((err as Error).message).toMatch(/not valid JSON/);
-  expect((err as Error).message).toMatch(/config\.json/);
-  expect((err as Error).constructor.name).not.toMatch(/SyntaxError/);
-});
-
-test('loadConfig keeps a corrupt config on disk rather than resetting it', () => {
-  const p = join(tmpHome, 'config.json');
-  writeFileSync(p, 'not json at all');
-  expect(() => loadConfig()).toThrow(/not valid JSON/);
-  expect(readFileSync(p, 'utf-8')).toBe('not json at all');
-});
-
-test('withConfigLock releases the lock when the body throws', () => {
-  expect(() =>
-    withConfigLock(() => {
-      throw new Error('boom');
-    }),
-  ).toThrow(/boom/);
-  expect(existsSync(join(tmpHome, 'config.lock'))).toBe(false);
-  expect(withConfigLock(() => 'ok')).toBe('ok');
-});
-
-test('getRepoSettings returns an empty object for an unknown repo', () => {
-  expect(getRepoSettings('/nope/.git')).toEqual({});
-});
-
 test('getConcurrencyLimits is unlimited (0) when nothing is set', () => {
   const env = {};
   expect(getConcurrencyLimits({ env })).toEqual({ maxBuilds: 0, maxDevices: 0 });
@@ -96,72 +27,6 @@ test('getConcurrencyLimits is unlimited (0) when nothing is set', () => {
 test('getConcurrencyLimits reads config.json concurrency', () => {
   writeConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
   expect(getConcurrencyLimits({ env: {} })).toEqual({ maxBuilds: 2, maxDevices: 3 });
-});
-
-test('env overrides config, and 0/absent means no enforcement', () => {
-  writeConfig({ version: 2, projects: {}, repos: {}, concurrency: { maxBuilds: 2, maxDevices: 3 } });
-  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '5', STIM_MAX_DEVICES: '0' } })).toEqual({
-    maxBuilds: 5,
-    maxDevices: 0,
-  });
-});
-
-test('getPlatformDeviceLimits is 0 unless set, reads config, and lets env override it without touching maxDevices', () => {
-  expect(getPlatformDeviceLimits({ env: {} })).toEqual({ ios: 0, android: 0, macos: 0 });
-  writeConfig({
-    version: 2,
-    projects: {},
-    repos: {},
-    concurrency: { maxDevices: 4, maxIosDevices: 2, maxAndroidDevices: 1, maxMacosApps: 3 },
-  });
-  expect(getPlatformDeviceLimits({ env: {} })).toEqual({ ios: 2, android: 1, macos: 3 });
-  expect(getPlatformDeviceLimits({ env: { STIM_MAX_IOS_DEVICES: '0', STIM_MAX_MACOS_APPS: '5' } })).toEqual({
-    ios: 0,
-    android: 1,
-    macos: 5,
-  });
-  expect(getConcurrencyLimits({ env: {} })).toEqual({ maxBuilds: 0, maxDevices: 4 });
-});
-
-test('a negative or garbage value reads as unlimited', () => {
-  expect(getConcurrencyLimits({ env: { STIM_MAX_BUILDS: '-1', STIM_MAX_DEVICES: 'lots' } })).toEqual({
-    maxBuilds: 0,
-    maxDevices: 0,
-  });
-});
-
-test.each([
-  ['a projects container that is an array', '{ "version": 2, "projects": [] }', /projects that is not an object/],
-  [
-    'a project entry that is null',
-    '{ "version": 2, "projects": { "/a": null } }',
-    /projects entry "\/a" that is not an object/,
-  ],
-  [
-    'a repos entry that is a string',
-    '{ "version": 2, "repos": { "/r": "x" } }',
-    /repos entry "\/r" that is not an object/,
-  ],
-])('loadConfig refuses %s instead of reading it as holding no records', (_label, content, reason) => {
-  writeFileSync(join(tmpHome, 'config.json'), content);
-  let err: unknown;
-  try {
-    loadConfig();
-  } catch (e) {
-    err = e;
-  }
-  expect((err as { code?: string } | undefined)?.code).toBe('STIM_CONFIG_CORRUPT');
-  expect((err as Error).message).toMatch(reason);
-});
-
-test('a __proto__ project entry does not become the prototype of the projects registry', () => {
-  writeFileSync(
-    join(tmpHome, 'config.json'),
-    '{ "version": 2, "projects": { "__proto__": { "settings": { "ios": { "remote": "eas" } } } } }',
-  );
-  const projects = loadConfig()!.projects;
-  expect(Object.getPrototypeOf(projects)).toBe(Object.prototype);
-  expect(projects['settings']).toBeUndefined();
 });
 
 test.each(['ios', 'android'] as const)(

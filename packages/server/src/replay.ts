@@ -31,8 +31,7 @@ export function recordingDir(
   );
 }
 
-/** The access units of one segment file, in order; a record cut short at the end of a file being written is left out. */
-export function readUnits(file: string): AccessUnit[] {
+function readUnits(file: string): AccessUnit[] {
   let bytes: Buffer;
   try {
     bytes = readFileSync(file);

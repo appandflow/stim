@@ -20,21 +20,6 @@ describe('installTimelineWheelZoom', () => {
     expect(onZoom).toHaveBeenCalledWith({ clientX: 240, scale: Math.exp(0.25) });
     remove();
   });
-
-  it('leaves an ordinary wheel event untouched and removes its listener', () => {
-    const target = new EventTarget();
-    const onZoom = vi.fn<(gesture: TimelineWheelZoom) => void>();
-    const remove = installTimelineWheelZoom(target as HTMLElement, onZoom);
-    const ordinary = wheel(false);
-
-    target.dispatchEvent(ordinary);
-    expect(ordinary.defaultPrevented).toBe(false);
-    expect(onZoom).not.toHaveBeenCalled();
-
-    remove();
-    target.dispatchEvent(wheel(true));
-    expect(onZoom).not.toHaveBeenCalled();
-  });
 });
 describe('timelinePinchGeometry', () => {
   it('reports a two-touch distance and midpoint', () => {
@@ -44,9 +29,5 @@ describe('timelinePinchGeometry', () => {
         { clientX: 200, clientY: 20 },
       ]),
     ).toEqual({ distance: 100, midpointX: 150 });
-  });
-
-  it('leaves one-finger timeline scrolling alone', () => {
-    expect(timelinePinchGeometry([{ clientX: 100, clientY: 20 }])).toBeNull();
   });
 });

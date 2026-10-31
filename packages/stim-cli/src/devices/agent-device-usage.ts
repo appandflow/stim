@@ -21,7 +21,7 @@ function contains(parent: string, path: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-export function parseRunnerMetadata(raw: string | null): {
+function parseRunnerMetadata(raw: string | null): {
   packageVersion: string | null;
   xcodeBuildVersion: string | null;
 } {
@@ -35,7 +35,7 @@ export function parseRunnerMetadata(raw: string | null): {
   };
 }
 
-export function runnerLastUsedAt(plist: string | null, mtimeMs: number | null): string | null {
+function runnerLastUsedAt(plist: string | null, mtimeMs: number | null): string | null {
   const match = plist?.match(/<key>LastAccessedDate<\/key>\s*<date>([^<]+)<\/date>/);
   const date = match ? Date.parse(match[1]!) : NaN;
   const at = Number.isFinite(date) ? date : mtimeMs;

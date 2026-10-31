@@ -34,7 +34,7 @@ export function hasDevClient(root: string): boolean {
  * Whether `version` of expo-dev-launcher reads the `disableFab=1` and `disableAutoLaunch=1` launch
  * URL params (expo/expo#49651, first published in 58.0.0; no 58.0.0 prerelease carries it).
  */
-export function devLauncherReadsDevMenuParams(version: string | null): boolean {
+function devLauncherReadsDevMenuParams(version: string | null): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(version?.trim() ?? '');
   if (!match) return false;
   const [major, minor, patch] = match.slice(1, 4).map(Number) as [number, number, number];

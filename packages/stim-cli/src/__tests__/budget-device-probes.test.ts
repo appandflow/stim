@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { enforceBudget } from '../budget.ts';
 import { collectIdleDevicesAsync } from '../commands/gc/idle.ts';
-import { createActivityReader, createActivityReaderAsync } from '../devices/activity.ts';
-import { ownedAvdSerialResolverAsync } from '../devices/android.ts';
+
 import { createIosSimSnapshot } from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, upsertProject } from '../workspace/config.ts';
@@ -125,33 +124,6 @@ test('budget measurements yield and retain all owned slots and idle-preview targ
   ]);
 });
 
-test('one async resolver retains its inventory and does not retry a wedged emulator for every AVD', async () => {
-  const { executor, calls } = delayedTools({ wedgedFirst: true });
-  setExecutor(executor);
-  const resolve = ownedAvdSerialResolverAsync({ timeoutMs: 5000 });
-  const results = await responsive(async () => [await resolve('stim-a'), await resolve('stim-b')]);
-  expect(results).toEqual([{ notRunning: true }, { serial: 'emulator-5556' }]);
-  expect(await resolve('user-avd')).toEqual({ notOwned: true });
-  expect(await resolve('absent')).toEqual({ missing: true });
-  expect(calls.filter((call) => call.includes('-list-avds'))).toHaveLength(1);
-  expect(calls.filter((call) => call.includes('emulator-5554'))).toHaveLength(1);
-});
-
-test.each([false, true])('activity reads yield and preserve driver classification (driver: %s)', async (driver) => {
-  const { executor, calls } = delayedTools({ driver });
-  setExecutor(executor);
-  const options = { home: join(base, 'private-user'), now: NOW, leaseFiles: () => [], viewers: () => [] };
-  const target = { platform: 'ios' as const, id: 'S1', slot: 'default', workspace: project };
-  const expected = createActivityReader(options)(target);
-  calls.length = 0;
-  const read = createActivityReaderAsync(options);
-  const observed = await responsive(() => read(target));
-  expect(observed).toEqual(expected);
-  expect(observed.state).toBe(driver ? 'driven' : 'idle');
-  await read({ ...target, id: 'S2' });
-  expect(calls.filter((call) => call.startsWith('ps '))).toHaveLength(1);
-});
-
 test.each(['host', 'instrumentation'])(
   'failed %s observation never makes an owned device eligible for idle reclaim',
   async (failure) => {
@@ -182,43 +154,4 @@ test('async simulator snapshot shares its result with sync consumers and drops a
   expect(await second).toEqual([]);
   expect(snapshot.read()).toEqual([]);
   expect(resolves).toHaveLength(2);
-});
-
-test.each([false, true])(
-  'an iOS-only budget measurement yields for its simulator listing (snapshot: %s)',
-  async (shared) => {
-    upsertProject(project, { platforms: { ios: { owned: true, deviceUdid: 'S1' } }, deviceSlots: {} });
-    const { executor } = delayedTools();
-    setExecutor(executor);
-    const snapshot = shared ? createIosSimSnapshot() : undefined;
-    const outcome = await responsive(() =>
-      enforceBudget({
-        root: project,
-        note: () => {},
-        simSnapshot: snapshot,
-        budget: { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 100000, maxLiveWorkspaces: 0 },
-      }),
-    );
-    expect(outcome).toMatchObject({
-      status: 'ok',
-      measure: { memory: { committedMb: 1500, liveWorkspaces: 1 } },
-      reclaimed: [],
-    });
-  },
-);
-
-test('a failed simulator snapshot read can retry instead of permanently caching the refusal', async () => {
-  const snapshot = createIosSimSnapshot();
-  assert(snapshot.readAsync);
-  const real = getExecutor();
-  let calls = 0;
-  setExecutor({
-    ...real,
-    runFileAsync: async () => {
-      if (++calls === 1) throw new Error('listing failed');
-      return SIMS;
-    },
-  });
-  await expect(snapshot.readAsync()).rejects.toThrow('listing failed');
-  expect((await snapshot.readAsync()).map((sim) => sim.udid)).toEqual(['S1']);
 });

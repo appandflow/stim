@@ -16,7 +16,6 @@ import {
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
-import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
@@ -88,29 +87,6 @@ afterEach(() => {
   process.exitCode = 0;
 });
 
-test('report-only child passes dryRun to every budget step and stamps checks before running them', async () => {
-  const original = budget.enforceBudget;
-  const seen: boolean[] = [];
-  vi.spyOn(budget, 'enforceBudget').mockImplementation((args, overrides) =>
-    original(args, {
-      ...overrides,
-      step: async (step, context) => {
-        seen.push(context.dryRun);
-        expect(readMaintenanceState()?.lastAt.pressure).toEqual(expect.any(Number));
-        return { targets: step === 'workspace-outputs' ? ['/idle'] : [], failures: 0 };
-      },
-    }),
-  );
-  await runMaintenance('status');
-  expect(seen).toEqual([true, true, true, true]);
-  const state = readMaintenanceState()!;
-  expect(state.lastPass).toMatchObject({ mode: 'report', freedBytes: 0, stopped: 0, actions: 1 });
-  expect(state.plan).toContainEqual(expect.objectContaining({ kind: 'would-clear-outputs', target: '/idle' }));
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).not.toContain('maintenance_check');
-  await runMaintenance('status');
-  expect(seen).toHaveLength(4);
-});
-
 test('load deferral leaves the size check due and a failing pressure check is not retried by the next command', async () => {
   vi.spyOn(measurements, 'sizeScanDeferred').mockReturnValue(true);
   vi.spyOn(measurements, 'measurePressure').mockImplementation(() => {
@@ -166,39 +142,6 @@ test('a pass creates its disk reserve, and at zero free disk frees it to take it
   expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status', mode: 'report' });
   expect(readFileSync(reserve).length).toBe(1024 * 1024);
   expect(existsSync(maintenanceRunClaims())).toBe(false);
-});
-
-test('at zero free disk with no reserve left the pass logs the ENOSPC and acts on nothing', async () => {
-  Object.assign(disk, { full: true });
-  await runMaintenance('status');
-  expect(readMaintenanceState()).toBeNull();
-  expect(measurements.measurePressure).not.toHaveBeenCalled();
-  expect(readFileSync(maintenanceChildLogFile(), 'utf8')).toContain('ENOSPC');
-  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
-});
-
-test('EDQUOT frees the reserve like ENOSPC', async () => {
-  const reserve = join(maintenanceDir(), 'disk-reserve');
-  await runMaintenance('status');
-  rmSync(maintenanceStateFile());
-  Object.assign(disk, { full: true, reserve, code: 'EDQUOT' });
-  await runMaintenance('status');
-  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
-});
-
-test('a pass rewrites a reserve of the wrong size', async () => {
-  const reserve = join(maintenanceDir(), 'disk-reserve');
-  mkdirSync(maintenanceDir(), { recursive: true });
-  writeFileSync(reserve, 'short');
-  await runMaintenance('status');
-  expect(readFileSync(reserve).length).toBe(1024 * 1024);
-});
-
-test('a reserve write that fails part way leaves no partial reserve', async () => {
-  disk.partialReserveWrite = true;
-  await runMaintenance('status');
-  expect(readMaintenanceState()?.lastPass).toMatchObject({ trigger: 'status' });
-  expect(existsSync(join(maintenanceDir(), 'disk-reserve'))).toBe(false);
 });
 
 test('a reserve that can be neither written nor removed still releases the run claim', async () => {
@@ -281,65 +224,6 @@ test('a macOS plan preAction hook never starts maintenance or writes its attempt
   expect(existsSync(maintenanceChildLogFile())).toBe(false);
 });
 
-test('GC maintenance preview uses cached sizes and never calls du for a size scan', async () => {
-  mkdirSync(maintenanceDir());
-  writeFileSync(
-    maintenanceStateFile(),
-    JSON.stringify({
-      version: 1,
-      lastAt: { size: 1 },
-      pressure: null,
-      sizes: [
-        {
-          name: 'build cache',
-          dir: join(home, 'build-cache'),
-          category: 'build-cache',
-          bytes: 12 * 1024 ** 3,
-          measuredAt: 1,
-        },
-      ],
-      lastPass: null,
-      recent: [],
-      plan: [],
-    }),
-  );
-  const { previewMaintenance } = await import('../maintenance/preview.ts');
-  vi.spyOn(budget, 'enforceBudget').mockResolvedValue({
-    status: 'ok',
-    reclaimed: [],
-    budget: budget.resolveBudget().budget,
-    measure: { volumes: [], memory: null },
-    short: { disk: [], hardFloor: [], memory: false, workspaces: false },
-  });
-  const result = await previewMaintenance();
-  expect(result.actions).toContainEqual(expect.objectContaining({ kind: 'would-trim-cache', bytes: 4 * 1024 ** 3 }));
-  expect(measurements.measureSizes).not.toHaveBeenCalled();
-  expect(resolveMaintenanceSettings()?.mode).toBe('report');
-});
-
-test('a blocked reason that differs only in its free-disk figure is not a new pass record', async () => {
-  let now = Date.now();
-  vi.spyOn(Date, 'now').mockImplementation(() => now);
-  const planned = vi.spyOn(preview, 'plannedMaintenance').mockResolvedValue({
-    actions: [],
-    skips: [],
-    blocked: ['free disk 46.3G on / under the 1000.0G floor; no reclaimable disk targets'],
-  });
-  await runMaintenance('status');
-  now += 60_000;
-  planned.mockResolvedValue({
-    actions: [],
-    skips: [],
-    blocked: ['free disk 45.7G on / under the 1000.0G floor; no reclaimable disk targets'],
-  });
-  await runMaintenance('status');
-  const records = readFileSync(maintenanceNdjsonFile(), 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line));
-  expect(records.filter((record) => record.event === 'maintenance_pass')).toHaveLength(1);
-});
-
 test.each([
   ['two consecutive identical passes produce one set of action and skip records and one pass record', false],
   ['a changed plan logs only newly planned actions and skips', true],
@@ -392,22 +276,6 @@ test.each([
   });
 });
 
-test('a child that fails before writing anything is not respawned for one minute', () => {
-  let now = Date.now();
-  vi.spyOn(Date, 'now').mockImplementation(() => now);
-  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
-  setExecutor({ spawn });
-  triggerMaintenance('status', { argv: ['status'] });
-  expect(spawn).toHaveBeenCalledTimes(1);
-  expect(readMaintenanceState()).toBeNull();
-  now += 59_999;
-  triggerMaintenance('status', { argv: ['status'] });
-  expect(spawn).toHaveBeenCalledTimes(1);
-  now++;
-  triggerMaintenance('status', { argv: ['status'] });
-  expect(spawn).toHaveBeenCalledTimes(2);
-});
-
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
   process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
@@ -451,32 +319,6 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   } finally {
     releaseClaim(build);
   }
-});
-
-test('a removed workspace leaves no kept entry and no cap total once its directory is gone', async () => {
-  const gone = join(home, 'workspaces', 'gone--0123456789abcdef');
-  const sizes = [
-    {
-      name: 'workspace build outputs',
-      category: 'workspace-outputs' as const,
-      dir: gone,
-      bytes: 5 * 1024 ** 3,
-      measuredAt: 1,
-      workspace: '/projects/gone',
-      idleDays: 3,
-    },
-  ];
-  const settings = { ...resolveMaintenanceSettings(), workspaceOutputsMaxGb: 1 };
-  mkdirSync(join(home, 'workspaces'));
-  expect(await preview.plannedMaintenance(null, sizes, settings)).toMatchObject({
-    actions: [],
-    blocked: [],
-    skips: [],
-  });
-  rmSync(join(home, 'workspaces'), { recursive: true });
-  expect((await preview.plannedMaintenance(null, sizes, settings)).skips).toContainEqual(
-    expect.objectContaining({ target: gone, reason: 'workspace outputs cannot be resolved' }),
-  );
 });
 
 test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {

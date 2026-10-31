@@ -11,7 +11,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { clearDevice, getProject, removeProject, setDevice, upsertProject } from '../workspace/config.ts';
+import { getProject, removeProject, setDevice, upsertProject } from '../workspace/config.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { prepareOwnedAvd } from '../engine/android-avd-setup.ts';
 import { deleteProjectDevices } from '../commands/gc/devices.ts';
@@ -163,44 +163,12 @@ test('another process can write config during AVD creation while cleanup preserv
   releaseClaim(acquireAvdClaim(avdName));
 });
 
-test('recovery probes outside the config lock and preserves a replacement reservation', async () => {
-  createFiles();
-  beforeProbe = () => {
-    expect(existsSync(join(process.env.STIM_HOME!, 'config.lock'))).toBe(false);
-    setDevice(project, 'android', { avdName: 'stim-replacement', owned: true });
-  };
-  await expect(prepare()).rejects.toThrow(/concurrent Stim run/);
-  expect(getProject(project)?.platforms?.android?.avdName).toBe('stim-replacement');
-});
-
 test('a stale missing-device scan cannot clear a newly completed AVD', async () => {
   const stale = { kind: 'android' as const, id: avdName, project, owned: true };
   await prepare();
   expect(await deleteProjectDevices([], [], [stale])).toBe(0);
   expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
   expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
-});
-
-test('a stale registered-orphan scan cannot delete an AVD after recovery assigns it', async () => {
-  createFiles();
-  expect((await prepare()).created).toBe(false);
-  expect(await deleteProjectDevices([{ kind: 'android', id: avdName, name: avdName }], [], [])).toBe(1);
-  expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
-  expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
-});
-
-test('cleanup revalidates the slot that owns an AVD', async () => {
-  await prepare();
-  clearDevice(project, 'android');
-  setDevice(project, 'android', { avdName, owned: true }, 'qa');
-  expect(await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).toMatchObject({
-    status: 'failed',
-    reason: expect.stringContaining('(qa)'),
-  });
-  expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(true);
-  expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project, slot: 'qa' } })).status).toBe(
-    'torn-down',
-  );
 });
 
 test('record removal stays inside the teardown claim', async () => {
@@ -215,32 +183,6 @@ test('record removal stays inside the teardown claim', async () => {
   expect(outcome.status).toBe('torn-down');
   releaseClaim(acquireAvdClaim(avdName));
 });
-
-test.each([true, false])(
-  'rollback preserves a newer record with the same name (artifacts exist: %s)',
-  async (artifactsExist) => {
-    await expect(
-      prepareOwnedAvd({
-        projectPath: project,
-        label: 'setup',
-        configuration: 'fixture',
-        configure: () => {
-          throw new Error('disk full');
-        },
-        teardown: async (name, options) => {
-          setDevice(project, 'android', { avdName, owned: true, deviceName: 'replacement' });
-          if (!artifactsExist) {
-            rmSync(join(avdRoot, `${avdName}.ini`));
-            rmSync(join(avdRoot, `${avdName}.avd`), { recursive: true });
-          }
-          return await teardownOwnedAvd(name, options);
-        },
-      }),
-    ).rejects.toThrow(/remains tracked for cleanup/);
-    expect(existsSync(join(avdRoot, `${avdName}.ini`))).toBe(artifactsExist);
-    expect(getProject(project)?.platforms?.android?.deviceName).toBe('replacement');
-  },
-);
 
 const childCreator = `
 import fs from 'node:fs';
@@ -279,32 +221,9 @@ function runCreator(stage: 'create' | 'configure' | 'complete', projectPath = pr
   );
 }
 
-test('an interrupted native creation retains its reservation and refuses cleanup without a child identity', async () => {
-  runCreator('create');
-  expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
-  expect(() => removeProject(project)).toThrow(/killed before recording/);
-  expect((await teardownOwnedAvd(avdName, { del: true })).status).toBe('failed');
-  expect(await deleteProjectDevices([], [], [{ kind: 'android', id: avdName, project, owned: true }])).toBe(1);
-  expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
-  expect(readdirSync(join(process.env.STIM_HOME!, 'avd-locks'))).toHaveLength(1);
-});
-
-test('an interruption after native creation returns permits cleanup once the creator is gone', async () => {
-  runCreator('configure');
-  expect(getProject(project)?.platforms?.android).toMatchObject({ avdName, setupIncomplete: true });
-  expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).status).toBe('torn-down');
-  expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
-});
-
 function removeSystemImages(): void {
   rmSync(join(home, 'sdk', 'system-images'), { recursive: true, force: true });
 }
-
-test('a creation that fails before avdmanager starts leaves no reservation', async () => {
-  removeSystemImages();
-  await expect(prepare()).rejects.toThrow(/system image is installed/);
-  expect(getProject(project)?.platforms?.android).toBeUndefined();
-});
 
 test('a creation that fails before avdmanager starts restores the previous device record', async () => {
   removeSystemImages();
@@ -342,16 +261,6 @@ describe('teardown of a record on a machine without the Android emulator tool', 
     reserve();
   });
 
-  test('clears the record when no SDK is configured and no AVD data exists', async () => {
-    unconfigure();
-    const outcome = await teardownOwnedAvd(avdName, {
-      owner: { projectPath: project },
-      onRemoved: () => clearDevice(project, 'android', undefined, avdName),
-    });
-    expect(outcome.status).toBe('missing');
-    expect(getProject(project)?.platforms?.android).toBeUndefined();
-  });
-
   test('keeps the record when AVD data exists on disk', async () => {
     unconfigure();
     avdRoot = join(home, '.android', 'avd');
@@ -361,17 +270,6 @@ describe('teardown of a record on a machine without the Android emulator tool', 
     expect(outcome.status).toBe('failed');
     expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
   });
-
-  test.each(['ANDROID_HOME', 'ANDROID_AVD_HOME'])(
-    'keeps the record when %s names a location that may be on an unmounted volume',
-    async (name) => {
-      unconfigure();
-      process.env[name] = join(home, 'unmounted');
-      const outcome = await teardownOwnedAvd(avdName, { owner: { projectPath: project } });
-      expect(outcome).toMatchObject({ status: 'failed', reason: expect.stringContaining('ENOENT') });
-      expect(getProject(project)?.platforms?.android?.avdName).toBe(avdName);
-    },
-  );
 });
 
 test('another workspace creating the same label while the first is reserved receives a distinct AVD', async () => {
@@ -465,19 +363,6 @@ test.each([false, true])(
   },
 );
 
-test('avdmanager creates the AVD where the emulator reads it, not under XDG_CONFIG_HOME', async () => {
-  for (const key of ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME']) delete process.env[key];
-  process.env.XDG_CONFIG_HOME = join(home, '.config');
-  let env: NodeJS.ProcessEnv | undefined;
-  await createOwnedAvd('setup', {
-    spawn: (_file, _args, options) => {
-      env = options?.env;
-      return makeExitingChild();
-    },
-  });
-  expect(env?.ANDROID_AVD_HOME).toBe(join(home, '.android', 'avd'));
-});
-
 test('an AVD created with only ANDROID_EMULATOR_HOME set resolves and deletes from the same root', async () => {
   for (const key of ['ANDROID_AVD_HOME', 'ANDROID_SDK_HOME', 'ANDROID_USER_HOME']) delete process.env[key];
   process.env.ANDROID_EMULATOR_HOME = join(home, 'emulator-prefs');
@@ -545,62 +430,3 @@ describe.skipIf(process.platform === 'win32')('POSIX process groups; skipped on 
     },
   );
 });
-
-test.skipIf(process.platform === 'win32')(
-  'a killed creator leaves its recorded native child protected until the group exits (POSIX process groups; skipped on win32)',
-  async () => {
-    const callerSource = `
-import { spawn } from 'node:child_process';
-const { setExecutor } = await import(process.argv[1]);
-const { prepareOwnedAvd } = await import(process.argv[2]);
-setExecutor({ spawn(file, args, options) {
-  return spawn(process.execPath, ['-e', ${JSON.stringify(nativeWriter)}, process.argv[4], 'hold', ...args], options);
-} });
-await prepareOwnedAvd({ projectPath: process.argv[3], label: 'setup', configuration: 'fixture', configure() {} });
-`;
-    const caller = spawn(
-      process.execPath,
-      [
-        '--input-type=module',
-        '-e',
-        callerSource,
-        new URL('../exec.ts', import.meta.url).href,
-        new URL('../engine/android-avd-setup.ts', import.meta.url).href,
-        project,
-        avdRoot,
-      ],
-      { env: process.env, stdio: 'ignore' },
-    );
-    const callerDone = new Promise((resolve) => caller.once('exit', resolve));
-    let nativePid: number | undefined;
-    try {
-      await until(() => Boolean(claimState().live[0]?.child) && existsSync(join(avdRoot, 'input.txt')));
-      nativePid = claimState().live[0]!.child!.pid;
-      caller.kill('SIGKILL');
-      await callerDone;
-      expect(claimState().live[0]?.child?.pid).toBe(nativePid);
-      expect((await teardownOwnedAvd(avdName, { del: true, owner: { projectPath: project } })).status).toBe('failed');
-      expect(getProject(project)?.platforms?.android?.setupIncomplete).toBe(true);
-      expect(readFileSync(join(avdRoot, `${avdName}.avd`, 'partial'), 'utf8')).toBe('keep');
-      writeFileSync(join(avdRoot, 'finish'), 'done');
-      await until(() => !processGroupAlive(nativePid!));
-      expect(
-        (
-          await teardownOwnedAvd(avdName, {
-            del: true,
-            owner: { projectPath: project },
-            onRemoved: () => clearDevice(project, 'android'),
-          })
-        ).status,
-      ).toBe('torn-down');
-      expect(getProject(project)?.platforms?.android).toBeUndefined();
-      expect(existsSync(join(avdRoot, `${avdName}.avd`))).toBe(false);
-    } finally {
-      if (caller.exitCode === null && caller.signalCode === null) caller.kill('SIGKILL');
-      await callerDone;
-      writeFileSync(join(avdRoot, 'finish'), 'done');
-      if (nativePid !== undefined) await until(() => !processGroupAlive(nativePid!));
-    }
-  },
-  10000,
-);

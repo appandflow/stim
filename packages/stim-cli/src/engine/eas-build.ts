@@ -29,7 +29,7 @@ export function isEasBuildFailure(result: EasBuildResult | null): result is { ok
   return result?.ok === false;
 }
 
-export function easOptionRefusal({
+function easOptionRefusal({
   profile,
   isExpo,
   buildSelector,
@@ -72,7 +72,7 @@ class EasFailure extends Error {
   }
 }
 
-export function selectEasBuild(
+function selectEasBuild(
   builds: unknown,
   {
     platform,

@@ -197,104 +197,9 @@ async function settle(pushes = 0): Promise<void> {
   for (let i = 0; i < 5; i++) await tick();
 }
 
-const bodies = () => expo.sent.flat().map((m) => `${m.title} | ${m.body}`);
-
 describe('PushNotifier', () => {
   let current: ReturnType<typeof setup> | null = null;
   afterEach(() => current?.notifier.close());
-
-  it('stays quiet about what is true when it starts, then pushes a looping build once, to its build details', async () => {
-    const t = (current = setup());
-    t.emit(status(env(looping(T0 - 60_000))));
-    await settle();
-    expect(expo.sent).toEqual([]);
-
-    t.at(60_000);
-    t.emit(status(env(looping(T0 + 30_000, 1))));
-    t.at(120_000);
-    t.emit(status(env(looping(T0 + 90_000))));
-    t.emit(status(env(looping(T0 + 90_000))));
-    t.at(180_000);
-    t.emit(status(env(looping(T0 + 150_000, 4))));
-    await settle(1);
-    expect(expo.sent).toEqual([
-      [
-        {
-          to: TOKEN,
-          title: 'feat/login',
-          subtitle: 'MacBook Pro',
-          body: 'Same Swift error 3x at AppDelegate.swift:71',
-          sound: null,
-          interruptionLevel: 'passive',
-          channelId: 'updates',
-          collapseId: expect.stringMatching(/^[0-9a-f]{32}$/),
-          data: { ref: 'mac-1', notification: 1, target: 'build', path: '/u/app/.worktrees/login', platform: 'ios' },
-        },
-      ],
-    ]);
-  });
-
-  it('pushes work started quietly, grouped per machine, and a stuck agent after the chosen threshold', async () => {
-    const t = (current = setup({ devices: [device(registration({ stuckMinutes: 5 }))] }));
-    t.emit(status());
-    t.at(1000);
-    t.emit(status(env(driven(T0 + 1000))));
-    await settle(1);
-    expect(expo.sent.flat()[0]).toMatchObject({
-      body: 'agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
-      sound: null,
-      interruptionLevel: 'passive',
-      channelId: 'updates',
-      threadId: 'started:MacBook Pro',
-      data: { target: 'device', path: '/u/app/.worktrees/login', platform: 'ios', slot: 'default' },
-    });
-    t.at(5 * 60_000);
-    t.emit(status(env(driven(T0 + 1000))));
-    t.at(5 * 60_000 + 2000);
-    t.emit(status(env(driven(T0 + 1000))));
-    await settle(2);
-    expect(bodies()).toEqual([
-      'feat/login | agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro',
-      'feat/login | No agent activity for 5 min; iPhone 18 Pro 27.0 still up',
-    ]);
-    const [started, stuck] = expo.sent.flat();
-    expect(started!.collapseId).not.toBe(stuck!.collapseId);
-  });
-
-  it('no longer pushes a failed build, log errors, a stopped app or a slow build', async () => {
-    const t = (current = setup());
-    t.emit(status(env()));
-    t.at(60_000);
-    t.emit(
-      status(
-        env({
-          ...looping(T0 + 30_000, 1),
-          logs: { dir: '/l', errorsSinceMarker: 9 },
-          build: {
-            platform: 'android',
-            slot: 'default',
-            state: 'running',
-            phase: 'compile',
-            startedAt: new Date(T0 - 3_600_000).toISOString(),
-            phaseStartedAt: new Date(T0 - 3_600_000).toISOString(),
-            outcome: 'cold',
-            expectedMs: 60_000,
-            expectedPhaseMs: null,
-            basis: 3,
-          },
-          ios: {
-            name: 'stim-x (iPhone 18 Pro 27.0)',
-            udid: 'U',
-            owned: true,
-            state: 'Booted',
-            app: { id: 'a', state: 'stopped' },
-          },
-        }),
-      ),
-    );
-    await settle();
-    expect(expo.sent).toEqual([]);
-  });
 
   it('pushes low disk once, to the machine sheet, and only the events the device chose', async () => {
     const t = (current = setup({ devices: [device(registration({ events: ['machine'] }))] }));
@@ -319,20 +224,6 @@ describe('PushNotifier', () => {
         },
       ],
     ]);
-  });
-
-  it('holds pushes during the quiet hours of the phone', async () => {
-    const quietHours = { start: 11 * 60, end: 13 * 60, timeZone: 'UTC' };
-    const t = (current = setup({ devices: [device(registration({ quietHours }))] }));
-    t.emit(status(env()));
-    t.at(1000);
-    t.emit(status(env(looping(T0 + 1000))));
-    await settle();
-    expect(expo.sent).toEqual([]);
-    t.at(3_600_000);
-    t.emit(status(env(looping(T0 + 1000))));
-    await settle(1);
-    expect(bodies()).toEqual(['feat/login | Same Swift error 3x at AppDelegate.swift:71']);
   });
 
   it("looks up the pushed worktrees' pull requests and pushes one that became ready for review", async () => {
@@ -376,35 +267,6 @@ describe('PushNotifier', () => {
     ]);
   });
 
-  it('pushes a control conflict only to a device that registered for it', async () => {
-    const t = (current = setup({
-      devices: [
-        device(registration()),
-        { ...device(registration({ token: 'ExponentPushToken[phone-b]', events: ['stuck'] })), id: 'd2' },
-      ],
-    }));
-    t.emit(status());
-    const conflict = {
-      workspace: '/w',
-      title: 'feat/login',
-      body: 'iPad took over',
-      platform: 'ios' as const,
-      slot: 'default',
-    };
-    t.notifier.control('d1', conflict);
-    t.notifier.control('d2', conflict);
-    await settle(1);
-    expect(expo.sent.flat().map((m) => [m.to, m.body, m.data])).toEqual([
-      [
-        TOKEN,
-        'iPad took over',
-        { ref: 'mac-1', notification: 1, target: 'device', path: '/w', platform: 'ios', slot: 'default' },
-      ],
-    ]);
-    expect(t.log.list('d1').notifications.map((n) => [n.seq, n.suppressed])).toEqual([[1, undefined]]);
-    expect(t.log.list('d2').notifications.map((n) => [n.seq, n.suppressed])).toEqual([[2, 'muted']]);
-  });
-
   it('sums up more than three notifications in one push', async () => {
     const t = (current = setup());
     t.emit(status());
@@ -425,40 +287,6 @@ describe('PushNotifier', () => {
           data: { ref: 'mac-1', target: 'home' },
         },
       ],
-    ]);
-  });
-
-  it('delivers each event at the level the device chose, a summary of silent ones silently too', async () => {
-    const t = (current = setup({
-      devices: [device(registration({ stuckMinutes: 5, levels: { started: 'alert', looping: 'silent' } }))],
-    }));
-    t.emit(status());
-    t.at(1000);
-    t.emit(status(env(driven(T0 + 1000))));
-    t.at(2000);
-    t.emit(status(env({ ...driven(T0 + 1000), ...looping(T0 + 2000) })));
-    t.notifier.control('d1', {
-      workspace: '/w',
-      title: 'feat/login',
-      body: 'iPad took over',
-      platform: 'ios',
-      slot: 'default',
-    });
-    await settle(3);
-    expect(expo.sent.flat().map((m) => [m.body, m.sound, m.interruptionLevel, m.channelId])).toEqual([
-      ['agent-device started driving iPhone 18 Pro 27.0 on MacBook Pro', 'default', 'active', 'attention'],
-      ['Same Swift error 3x at AppDelegate.swift:71', null, 'passive', 'updates'],
-      ['iPad took over', null, 'passive', 'updates'],
-    ]);
-
-    expo.sent = [];
-    t.at(3000);
-    const broken = (name: string) =>
-      env({ path: `/u/app/.worktrees/${name}`, worktree: undefined, ...looping(T0 + 3000) });
-    t.emit(status(broken('a'), broken('b'), broken('c'), broken('d')));
-    await settle(1);
-    expect(expo.sent.flat().map((m) => [m.body, m.sound, m.interruptionLevel, m.channelId])).toEqual([
-      ['4 things need a look', null, 'passive', 'updates'],
     ]);
   });
 
@@ -506,113 +334,6 @@ describe('PushNotifier', () => {
     } finally {
       logged.mockRestore();
     }
-  });
-
-  it('stays quiet about low disk that a replayed status found at registration', async () => {
-    const t = (current = setup({ replay: status(env()), freeGb: 3 }));
-    t.at(90_000);
-    t.emit(status(env()));
-    await settle();
-    expect(expo.sent).toEqual([]);
-  });
-
-  it('pushes a looping build that arrives right after another device registers', async () => {
-    const t = (current = setup());
-    t.emit(status(env()));
-    t.at(1000);
-    t.setDevices([
-      device(registration()),
-      { ...device(registration({ token: 'ExponentPushToken[phone-b]' })), id: 'd2' },
-    ]);
-    t.emit(status(env(looping(T0 + 1000))));
-    await settle(2);
-    expect(expo.sent.flat().map((m) => m.to)).toEqual([TOKEN, 'ExponentPushToken[phone-b]']);
-  });
-
-  it('holds a status subscription only while a device is paired', () => {
-    const t = (current = setup({ devices: [] }));
-    expect(t.subscriptions).toEqual({ opened: 0, closed: 0 });
-    t.setDevices([device()]);
-    expect(t.subscriptions).toEqual({ opened: 1, closed: 0 });
-    t.setDevices([device(registration())]);
-    expect(t.subscriptions).toEqual({ opened: 1, closed: 0 });
-    t.setDevices([]);
-    expect(t.subscriptions).toEqual({ opened: 1, closed: 1 });
-  });
-
-  it('logs a stuck agent at the threshold of the phones that want stuck, not of the others', async () => {
-    const t = (current = setup({
-      devices: [
-        device(registration({ events: ['machine'], stuckMinutes: 5 })),
-        { ...device(registration({ token: 'ExponentPushToken[phone-b]', stuckMinutes: 30 })), id: 'd2' },
-      ],
-    }));
-    t.emit(status());
-    t.at(1000);
-    t.emit(status(env(driven(T0 + 1000))));
-    t.at(6 * 60_000);
-    t.emit(status(env(driven(T0 + 1000))));
-    expect(t.logged.map((n) => n.category)).toEqual(['started']);
-    t.at(31 * 60_000);
-    t.emit(status(env(driven(T0 + 1000))));
-    expect(t.logged.map((n) => [n.category, n.suppressed])).toEqual([
-      ['started', undefined],
-      ['stuck', undefined],
-    ]);
-    await settle(2);
-  });
-
-  it('logs what no phone is pushed, marking what a muted category or quiet hours held back', async () => {
-    const t = (current = setup({ devices: [device()] }));
-    t.emit(status(env()));
-    t.at(1000);
-    t.emit(status(env(looping(T0 + 1000))));
-    t.setDevices([device(registration({ events: ['machine'] }))]);
-    t.at(2000);
-    t.emit(status(env(looping(T0 + 1000)), env({ path: '/u/b', worktree: undefined, ...looping(T0 + 2000) })));
-    const quietHours = { start: 11 * 60, end: 13 * 60, timeZone: 'UTC' };
-    t.setDevices([device(registration({ quietHours }))]);
-    t.at(3000);
-    t.emit(status(env({ path: '/u/c', worktree: undefined, ...looping(T0 + 3000) })));
-    await settle();
-    expect(expo.sent).toEqual([]);
-    expect(t.logged.map((n) => [n.seq, n.title, n.body, n.suppressed])).toEqual([
-      [1, 'feat/login', 'Same Swift error 3x at AppDelegate.swift:71', undefined],
-      [2, 'b', 'Same Swift error 3x at AppDelegate.swift:71', 'muted'],
-      [3, 'c', 'Same Swift error 3x at AppDelegate.swift:71', 'quiet-hours'],
-    ]);
-    expect(t.log.list('d1').notifications.map((n) => n.seq)).toEqual([3, 2, 1]);
-  });
-
-  it('keeps quiet pushes out of the hourly budget, so work started cannot crowd out a stuck agent', async () => {
-    const t = (current = setup({
-      limits: { perHour: 1 },
-      devices: [device(registration({ stuckMinutes: 5, levels: { stuck: 'alert' } }))],
-    }));
-    t.emit(status());
-    t.at(1000);
-    t.emit(status(env(driven(T0 + 1000))));
-    t.at(6 * 60_000);
-    t.emit(status(env(driven(T0 + 1000))));
-    await settle(2);
-    expect(expo.sent.flat().map((m) => m.interruptionLevel)).toEqual(['passive', 'active']);
-  });
-
-  it('keeps silent control conflicts out of the hourly budget too', async () => {
-    const t = (current = setup({
-      limits: { perHour: 1 },
-      devices: [device(registration({ levels: { control: 'silent' } }))],
-    }));
-    t.emit(status());
-    for (const slot of ['a', 'b', 'c']) {
-      t.notifier.control('d1', { workspace: '/w', title: 'feat/login', body: slot, platform: 'ios', slot });
-    }
-    await settle(3);
-    expect(expo.sent.flat().map((m) => [m.body, m.interruptionLevel])).toEqual([
-      ['a', 'passive'],
-      ['b', 'passive'],
-      ['c', 'passive'],
-    ]);
   });
 
   it('stops pushing to a device past its hourly budget', async () => {

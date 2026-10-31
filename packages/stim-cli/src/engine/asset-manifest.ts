@@ -111,10 +111,7 @@ export function pickGeneratedResDir(
   return null;
 }
 
-export function androidModuleDirs(
-  root: string,
-  { list = safeList }: { list?: (dir: string) => string[] } = {},
-): string[] {
+function androidModuleDirs(root: string, { list = safeList }: { list?: (dir: string) => string[] } = {}): string[] {
   const android = join(root, 'android');
   const others = list(android).filter(
     (name) => name !== 'app' && existsSync(join(android, name, 'build', 'generated', 'res')),

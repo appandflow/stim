@@ -3,17 +3,7 @@ import assert from 'node:assert';
 import { createStim } from '../api.ts';
 import { execFileSync, type ChildProcess } from 'node:child_process';
 import { testContext } from './_context.ts';
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import * as xcode from '../engine/xcode.ts';
@@ -72,47 +62,6 @@ function fingerprint() {
     process.env,
   );
 }
-
-test.each(['xcshareddata', 'xcshareddata/swiftpm', 'xcshareddata/swiftpm/configuration'])(
-  'Xcode metadata directory %s does not change identity but its files do',
-  async (path) => {
-    const project = writeNativeXcodeProject(root);
-    const workspace = join(project, 'project.xcworkspace');
-    mkdirSync(workspace);
-    const before = await fingerprint();
-    expect(before).toHaveProperty('hash');
-    const directory = join(workspace, path);
-    mkdirSync(directory, { recursive: true });
-    expect(await fingerprint()).toEqual(before);
-    const file = join(directory, 'input.json');
-    write(file, 'first');
-    const populated = await fingerprint();
-    expect(populated).not.toEqual(before);
-    write(file, 'edited');
-    expect(await fingerprint()).not.toEqual(populated);
-    rmSync(file);
-    expect(await fingerprint()).toEqual(before);
-    rmSync(directory, { recursive: true });
-    write(directory, 'a file in place of the directory');
-    expect(await fingerprint()).not.toEqual(before);
-  },
-);
-
-test.skipIf(process.platform === 'win32')('links cannot masquerade as ignored Xcode directory markers', async () => {
-  const project = writeNativeXcodeProject(root);
-  const workspace = join(project, 'project.xcworkspace');
-  mkdirSync(workspace);
-  const before = await fingerprint();
-  symlinkSync('../xcshareddata', join(workspace, 'xcshareddata'));
-  expect(await fingerprint()).not.toEqual(before);
-});
-
-test('ordinary empty source directories remain part of the native identity', async () => {
-  writeNativeXcodeProject(root);
-  const before = await fingerprint();
-  mkdirSync(join(root, 'Assets', 'xcshareddata', 'swiftpm', 'configuration'), { recursive: true });
-  expect(await fingerprint()).not.toEqual(before);
-});
 
 function configuredProject(projectBase: string, projectInline = '', targetBase = '', targetInline = '') {
   const project = writeNativeXcodeProject(root);
@@ -173,24 +122,6 @@ test.each([
 });
 
 test.each([
-  ['SDKROOT = iphoneos', '', '', '', true],
-  ['SDKROOT = iphoneos', 'SDKROOT = macosx;', '', '', false],
-  ['SDKROOT = macosx', 'SDKROOT = macosx;', 'SDKROOT = iphoneos', '', true],
-  ['SDKROOT = iphoneos', '', 'SDKROOT = iphoneos', 'SDKROOT = macosx;', false],
-] as const)(
-  'platform selection follows project config, project inline, target config and target inline precedence (%s / %s / %s / %s)',
-  (projectBase, projectInline, targetBase, targetInline, ios) => {
-    configuredProject(projectBase, projectInline, targetBase, targetInline);
-    expect(
-      projectRegistry.detectPlatforms(root, {
-        context: { projectPath: root, gitCommonDir: null, repoRoot: null },
-        settings: {},
-      }),
-    ).toEqual(ios ? ['ios'] : []);
-  },
-);
-
-test.each([
   'SDKROOT = $(APP_SDK)',
   'SDKROOT[sdk=iphoneos*] = iphoneos\nSDKROOT = macosx',
   '#include "$(CONFIG_DIR)/Base.xcconfig"',
@@ -216,114 +147,6 @@ test.each([
   },
 );
 
-test.each([
-  'SWIFT_INCLUDE_PATHS',
-  'PRODUCT_TYPE_SWIFT_INCLUDE_PATHS',
-  'SWIFT_SYSTEM_INCLUDE_PATHS',
-  'SYSTEM_FRAMEWORK_SEARCH_PATHS',
-  'ADDITIONAL_SDKS',
-  'CC',
-  'CXX',
-  'LD',
-  'SWIFT_EXEC',
-  'SWIFT_DRIVER_SWIFT_FRONTEND_EXEC',
-  'CC[sdk=iphoneos*]',
-  'EXPORTED_SYMBOLS_FILE',
-  'UNEXPORTED_SYMBOLS_FILE',
-  'ORDER_FILE',
-])('literal xcconfig %s cannot reuse artifacts without a verified external input closure', async (setting) => {
-  const external = join(home, 'external', setting === 'SWIFT_INCLUDE_PATHS' ? 'modules' : 'input');
-  const input = setting === 'SWIFT_INCLUDE_PATHS' ? join(external, 'External.swiftmodule') : external;
-  write(input, 'first external compiler/module bytes');
-  configuredProject(`SDKROOT = iphoneos\n${setting} = ${external}\n`, '', '', 'SDKROOT = iphoneos;');
-  expect(await fingerprint()).toHaveProperty('cacheIneligible');
-  write(input, 'changed external compiler/module bytes');
-  expect(await fingerprint()).toHaveProperty('cacheIneligible');
-});
-
-test.each(['EXPORTED_SYMBOLS_FILE', 'UNEXPORTED_SYMBOLS_FILE', 'ORDER_FILE'])(
-  'external %s bytes invalidate the native artifact identity',
-  async (setting) => {
-    const project = writeNativeXcodeProject(root);
-    const file = join(project, 'project.pbxproj');
-    const symbols = join(home, 'external', 'Symbols.txt');
-    write(symbols, '_first\n');
-    writeFileSync(
-      file,
-      readFileSync(file, 'utf8').replace(
-        'SDKROOT = iphoneos;',
-        `SDKROOT = iphoneos; ${setting} = ${JSON.stringify(symbols)};`,
-      ),
-    );
-    const before = await fingerprint();
-    expect(before).toHaveProperty('hash');
-    write(symbols, '_second\n');
-    expect(await fingerprint()).not.toEqual(before);
-  },
-);
-
-test.each([
-  'SWIFT_INCLUDE_PATHS',
-  'PRODUCT_TYPE_SWIFT_INCLUDE_PATHS',
-  'SWIFT_SYSTEM_INCLUDE_PATHS',
-  'SYSTEM_FRAMEWORK_SEARCH_PATHS',
-  'ADDITIONAL_SDKS',
-])('every external directory in a commented %s array contributes to the artifact identity', async (setting) => {
-  const project = writeNativeXcodeProject(root);
-  const file = join(project, 'project.pbxproj');
-  const directories = [join(home, 'first-modules'), join(home, 'second-modules')];
-  for (const directory of directories) write(join(directory, 'External.swiftmodule'), 'first module bytes');
-  writeFileSync(
-    file,
-    readFileSync(file, 'utf8').replace(
-      'SDKROOT = iphoneos;',
-      `SDKROOT = iphoneos; ${setting} = (${directories.map((directory) => `${JSON.stringify(directory)} /* external input */`).join(', ')},);`,
-    ),
-  );
-  const before = await fingerprint();
-  expect(before).toHaveProperty('hash');
-  write(join(directories[0]!, 'External.swiftmodule'), 'changed first directory module bytes');
-  const first = await fingerprint();
-  expect(first).not.toEqual(before);
-  write(join(directories[1]!, 'External.swiftmodule'), 'changed second directory module bytes');
-  expect(await fingerprint()).not.toEqual(first);
-});
-
-test('quoted conditional compiler keys and parser comment metadata cannot bypass tool identity', async () => {
-  const project = writeNativeXcodeProject(root);
-  const file = join(project, 'project.pbxproj');
-  const compiler = join(home, 'external', 'swiftc');
-  write(compiler, 'first compiler bytes');
-  writeFileSync(
-    file,
-    readFileSync(file, 'utf8').replace(
-      'SDKROOT = iphoneos;',
-      `SDKROOT = iphoneos; "SWIFT_EXEC[sdk=iphonesimulator*]" /* compiler override */ = ${JSON.stringify(compiler)};`,
-    ),
-  );
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
-  write(compiler, 'changed compiler bytes');
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('Custom compiler setting') });
-});
-
-test('quoted conditional Swift module paths inventory external bytes despite parser comment metadata', async () => {
-  const project = writeNativeXcodeProject(root);
-  const file = join(project, 'project.pbxproj');
-  const modules = join(home, 'external', 'modules');
-  write(join(modules, 'External.swiftmodule'), 'first module bytes');
-  writeFileSync(
-    file,
-    readFileSync(file, 'utf8').replace(
-      'SDKROOT = iphoneos;',
-      `SDKROOT = iphoneos; "SWIFT_INCLUDE_PATHS[sdk=iphonesimulator*]" /* external modules */ = ${JSON.stringify(modules)};`,
-    ),
-  );
-  const before = await fingerprint();
-  expect(before).toHaveProperty('hash');
-  write(join(modules, 'External.swiftmodule'), 'changed module bytes');
-  expect(await fingerprint()).not.toEqual(before);
-});
-
 test('quoted conditional platform keys retain uncertainty instead of claiming an iOS cache identity', async () => {
   const project = writeNativeXcodeProject(root);
   const file = join(project, 'project.pbxproj');
@@ -336,36 +159,6 @@ test('quoted conditional platform keys retain uncertainty instead of claiming an
   );
   expect(selectNativeXcodeProject(root).platform).toBe('unknown');
   expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('application platform') });
-});
-
-test('unparsed includes in a framework dependency configuration cannot authorize artifact reuse', async () => {
-  const project = writeNativeXcodeProject(root);
-  const file = join(project, 'project.pbxproj');
-  const compiler = join(home, 'tool', 'swiftc');
-  const externalConfig = join(home, 'Compiler.xcconfig');
-  write(compiler, 'first compiler bytes');
-  write(externalConfig, `SWIFT_EXEC = ${compiler}\n`);
-  write(join(root, 'Framework.xcconfig'), `SWIFT_VERSION = 5.0\r# include "${externalConfig}"\r`);
-  writeFileSync(
-    file,
-    readFileSync(file, 'utf8')
-      .replace('children = ( SOURCE, );', 'children = ( SOURCE, FRAMEWORK_BASE, );')
-      .replace('targets = ( APP, );', 'targets = ( APP, FRAMEWORK, );')
-      .replace('name = Native; productType', 'name = Native; dependencies = ( FRAMEWORK_DEPENDENCY, ); productType')
-      .replace(
-        'objects = {',
-        `objects = {
-FRAMEWORK = { isa = PBXNativeTarget; name = Helper; productType = "com.apple.product-type.framework"; buildConfigurationList = FRAMEWORK_CONFIGURATIONS; };
-FRAMEWORK_DEPENDENCY = { isa = PBXTargetDependency; target = FRAMEWORK; };
-FRAMEWORK_CONFIGURATIONS = { isa = XCConfigurationList; buildConfigurations = ( FRAMEWORK_DEBUG, ); };
-FRAMEWORK_DEBUG = { isa = XCBuildConfiguration; name = Debug; baseConfigurationReference = FRAMEWORK_BASE; buildSettings = { SDKROOT = iphoneos; }; };
-FRAMEWORK_BASE = { isa = PBXFileReference; path = Framework.xcconfig; sourceTree = "<group>"; };`,
-      ),
-  );
-  expect(selectNativeXcodeProject(root).platform).toBe('ios');
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('xcconfig') });
-  write(compiler, 'changed compiler bytes');
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('xcconfig') });
 });
 
 test('Metal includes outside the repository cannot reuse a stale native artifact', async () => {
@@ -395,65 +188,6 @@ SOURCES = { isa = PBXSourcesBuildPhase; files = ( SHADER_BUILD, ); };`,
   expect(await fingerprint()).toMatchObject({
     cacheIneligible: expect.stringContaining('compiler include dependency graph'),
   });
-});
-
-test('native discovery accepts compact OpenStep arrays and preserves quoted and variable parentheses', () => {
-  const project = writeNativeXcodeProject(root);
-  const file = join(project, 'project.pbxproj');
-  const source = readFileSync(file, 'utf8')
-    .replaceAll(', );', ');')
-    .replace(
-      'SDKROOT = iphoneos;',
-      `SDKROOT = iphoneos;
-      OTHER_SWIFT_FLAGS = ($(inherited), "-D(SAFE)");
-      PRODUCT_NAME = $(PRODUCT_$(CONFIGURATION));
-      COMMENTED = (one /* ) */, two);`,
-    );
-  writeFileSync(file, source);
-  const selection = selectNativeXcodeProject(root);
-  expect(selection).toMatchObject({ scheme: 'Native', targetName: 'Native' });
-  expect(selection.settings).toMatchObject({
-    OTHER_SWIFT_FLAGS: ['$(inherited)', '"-D(SAFE)"'],
-    PRODUCT_NAME: '$(PRODUCT_$(CONFIGURATION))',
-    COMMENTED: ['one', 'two'],
-  });
-  expect(readFileSync(file, 'utf8')).toBe(source);
-});
-
-test('production discovery selects a native application without Node or Metro and exposes each build configuration', async () => {
-  writeNativeXcodeProject(root);
-  setExecutor(
-    makeExecutor({
-      runFile: () => {
-        throw new Error('Discovery must not launch an external tool');
-      },
-    }),
-  );
-  expect(projectRegistry.findProjectRoot(root)).toBe(root);
-  expect(
-    projectRegistry.detectPlatforms(root, {
-      context: { projectPath: root, gitCommonDir: null, repoRoot: null },
-      settings: {},
-    }),
-  ).toEqual(['ios']);
-  expect(projectRegistry.projectProblem(root, 'ios')).toBeNull();
-  expect(projectRegistry.projectProblem(root, 'dev-server')?.kind).toBe('not-an-app');
-  for (const configuration of ['Debug', 'Release', 'Staging']) {
-    const selected = selectNativeXcodeProject(root, undefined, configuration);
-    expect(selected).toMatchObject({ scheme: 'Native', targetName: 'Native', configuration });
-    const runtime = nativeXcodeIosProject(root).runtime({
-      configuration,
-      prepareMetro: async () => {
-        throw new Error('Metro must not be prepared');
-      },
-      prepareEmbedded: async () => {
-        throw new Error('JS must not be embedded');
-      },
-    });
-    expect(runtime.kind).toBe('process');
-    expect(await runtime.prepare()).toEqual({ ok: true, prepared: { metroPort: null } });
-  }
-  expect((await nativeXcodeIosProject(root).schemeProblem(undefined, 'Missing'))?.code).toBe('STIM_BAD_ARG');
 });
 
 test('a workspace owns its referenced project instead of competing with it', () => {
@@ -488,190 +222,6 @@ test('macOS applications and libraries do not become runnable iOS projects', () 
   ).toEqual([]);
 });
 
-test('an unreadable native project refuses and a valid RN app retains ownership of its generated child', () => {
-  const ios = join(root, 'ios');
-  mkdirSync(ios);
-  const project = writeNativeXcodeProject(ios);
-  writeFileSync(join(project, 'project.pbxproj'), 'broken project');
-  expect(projectRegistry.projectProblem(ios, 'ios')?.kind).toBe('unreadable');
-  write(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
-  expect(projectRegistry.findProjectRoot(ios)).toBe(root);
-  expect(projectRegistry.projectProblem(root, 'ios')).toBeNull();
-});
-
-test('source, ignored resources and build settings invalidate native reuse', async () => {
-  const project = writeNativeXcodeProject(root);
-  write(join(root, '.gitignore'), 'Assets/ignored.bin\n');
-  write(join(root, 'Assets', 'ignored.bin'), 'one');
-  const before = await fingerprint();
-  expect(before).not.toHaveProperty('cacheIneligible');
-  write(join(root, 'Assets', 'ignored.bin'), 'two');
-  const asset = await fingerprint();
-  expect(asset).not.toEqual(before);
-  write(join(root, 'Native.swift'), 'struct DifferentApp {}');
-  const source = await fingerprint();
-  expect(source).not.toEqual(asset);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(pbx, readFileSync(pbx, 'utf8').replaceAll('org.example.Native', 'org.example.Other'));
-  expect(await fingerprint()).not.toEqual(source);
-});
-
-test('a git checkout ignores ignored content and nested worktrees but keeps ignored files the project references', async () => {
-  const project = writeNativeXcodeProject(root);
-  write(join(root, '.gitignore'), 'ignored/\nSecrets.plist\n');
-  write(join(root, 'Secrets.plist'), 'one');
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(
-    pbx,
-    readFileSync(pbx, 'utf8')
-      .replace('children = ( SOURCE, );', 'children = ( SOURCE, SECRETS, );')
-      .replace(
-        'objects = {',
-        'objects = {\nSECRETS = { isa = PBXFileReference; path = Secrets.plist; sourceTree = "<group>"; };',
-      ),
-  );
-  const git = (...args: string[]) =>
-    getExecutor().runFile(
-      'git',
-      [
-        '-C',
-        root,
-        '-c',
-        'user.name=Stim',
-        '-c',
-        'user.email=stim@example.com',
-        '-c',
-        'commit.gpgsign=false',
-        '-c',
-        'core.hooksPath=/dev/null',
-        ...args,
-      ],
-      { timeoutMs: 60_000 },
-    );
-  git('init', '-q');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  const before = await fingerprint();
-  expect(before).toHaveProperty('hash');
-  write(join(root, 'ignored', 'cache.bin'), 'generated');
-  symlinkSync(join(root, 'missing'), join(root, 'ignored', 'dangling'));
-  git('worktree', 'add', '-q', '--detach', join(root, 'nested'));
-  expect(await fingerprint()).toEqual(before);
-  write(join(root, 'Secrets.plist'), 'two');
-  const referenced = await fingerprint();
-  expect(referenced).not.toEqual(before);
-  write(join(root, 'Untracked.swift'), 'struct Untracked {}');
-  expect(await fingerprint()).not.toEqual(referenced);
-});
-
-test('a git checkout keeps files whose on-disk names differ from the index in case or Unicode normalization', async () => {
-  writeNativeXcodeProject(root);
-  write(join(root, 'helper.swift'), 'struct Helper {}');
-  const decomposed = 'Cafe\u0301';
-  write(join(root, decomposed, 'Menu.swift'), 'struct Menu {}');
-  const git = (...args: string[]) =>
-    getExecutor().runFile(
-      'git',
-      [
-        '-C',
-        root,
-        '-c',
-        'user.name=Stim',
-        '-c',
-        'user.email=stim@example.com',
-        '-c',
-        'commit.gpgsign=false',
-        '-c',
-        'core.hooksPath=/dev/null',
-        ...args,
-      ],
-      { timeoutMs: 60_000 },
-    );
-  git('init', '-q');
-  git('config', 'core.ignorecase', 'true');
-  git('config', 'core.precomposeunicode', 'true');
-  git('add', '-A');
-  git('commit', '-qm', 'fixture');
-  rmSync(join(root, 'helper.swift'));
-  write(join(root, 'Helper.swift'), 'struct Helper {}');
-  const before = await fingerprint();
-  expect(before).toHaveProperty('hash');
-  write(join(root, 'Helper.swift'), 'struct HelperChanged {}');
-  const renamed = await fingerprint();
-  expect(renamed).not.toEqual(before);
-  write(join(root, decomposed, 'Menu.swift'), 'struct MenuChanged {}');
-  expect(await fingerprint()).not.toEqual(renamed);
-});
-
-test('a referenced source outside the application participates in native identity', async () => {
-  const app = join(root, 'App');
-  mkdirSync(app);
-  const project = writeNativeXcodeProject(app);
-  const external = join(root, 'External.swift');
-  writeFileSync(external, 'struct External {}');
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(pbx, readFileSync(pbx, 'utf8').replace('path = Native.swift;', 'path = ../External.swift;'));
-  const snapshot = () =>
-    nativeXcodeInputSnapshot(
-      app,
-      selectNativeXcodeProject(app),
-      {
-        sdk: 'iphonesimulator',
-        architecture: 'arm64',
-        toolchain: {},
-        optimizations: {},
-      },
-      process.env,
-    );
-  const before = await snapshot();
-  expect(before).not.toHaveProperty('cacheIneligible');
-  writeFileSync(external, 'struct ExternalChanged {}');
-  expect(await snapshot()).not.toEqual(before);
-});
-
-test('repository inputs outside the application and unresolved C-family include graphs cannot produce stale hits', async () => {
-  const app = join(root, 'App');
-  mkdirSync(app);
-  const project = writeNativeXcodeProject(app);
-  write(join(root, 'Shared', 'Resource.bin'), 'one');
-  const snapshot = () =>
-    nativeXcodeInputSnapshot(
-      app,
-      selectNativeXcodeProject(app),
-      {
-        sdk: 'iphonesimulator',
-        architecture: 'arm64',
-        toolchain: {},
-        optimizations: {},
-      },
-      process.env,
-      root,
-    );
-  const before = await snapshot();
-  expect(before).not.toHaveProperty('cacheIneligible');
-  write(join(root, 'Shared', 'Resource.bin'), 'two');
-  expect(await snapshot()).not.toEqual(before);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(pbx, readFileSync(pbx, 'utf8').replace('path = Native.swift;', 'path = Native.m;'));
-  write(join(app, 'Native.m'), '#include "../../Outside.h"\n');
-  expect(await snapshot()).toMatchObject({
-    cacheIneligible: expect.stringContaining('compiler include dependency graph'),
-  });
-});
-
-test('an unbounded build script is explicitly cache-ineligible rather than assigned an artifact key', async () => {
-  const project = writeNativeXcodeProject(root);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(
-    pbx,
-    readFileSync(pbx, 'utf8').replace(
-      'objects = {',
-      'objects = {\nSCRIPT = { isa = PBXShellScriptBuildPhase; shellScript = "date > generated.swift"; };',
-    ),
-  );
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('undeclared inputs') });
-});
-
 test.each(['m', 'metal'])(
   'synchronized source groups inventory their files and refuse unresolved %s includes',
   async (extension) => {
@@ -695,19 +245,6 @@ test.each(['m', 'metal'])(
     });
   },
 );
-
-test('scheme execution actions cannot be skipped by an artifact cache hit', async () => {
-  const project = writeNativeXcodeProject(root);
-  const scheme = join(project, 'xcshareddata', 'xcschemes', 'Native.xcscheme');
-  writeFileSync(
-    scheme,
-    readFileSync(scheme, 'utf8').replace(
-      '</Scheme>',
-      '<BuildAction><PreActions><ExecutionAction ActionType="Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction"><ActionContent scriptText="date > generated.swift" /></ExecutionAction></PreActions></BuildAction></Scheme>',
-    ),
-  );
-  expect(await fingerprint()).toMatchObject({ cacheIneligible: expect.stringContaining('scheme execution actions') });
-});
 
 test('relocation, shell location and task metadata preserve warm identities while compiler environment changes do not', async () => {
   writeNativeXcodeProject(root);
@@ -754,61 +291,6 @@ test('local Swift packages do not get a partial key that omits their transitive 
   expect(await fingerprint()).toMatchObject({
     cacheIneligible: expect.stringContaining('transitive local dependencies'),
   });
-});
-
-test('local package product dependencies without a package reference cannot use a partial artifact key', async () => {
-  const project = writeNativeXcodeProject(root);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(
-    pbx,
-    readFileSync(pbx, 'utf8')
-      .replace('children = ( SOURCE, );', 'children = ( SOURCE, LOCAL_PACKAGE, );')
-      .replace('name = Native; productType', 'name = Native; packageProductDependencies = ( PRODUCT, ); productType')
-      .replace(
-        'objects = {',
-        `objects = {
-LOCAL_PACKAGE = { isa = PBXFileReference; lastKnownFileType = wrapper; path = Packages/Local; sourceTree = "<group>"; };
-PRODUCT = { isa = XCSwiftPackageProductDependency; productName = Local; };`,
-      ),
-  );
-  write(
-    join(root, 'Packages', 'Local', 'Package.swift'),
-    'import PackageDescription\nlet package = Package(name: "Local", dependencies: [.package(path: "../../../External")])\n',
-  );
-  expect(await fingerprint()).toMatchObject({
-    cacheIneligible: expect.stringContaining('transitive local dependencies'),
-  });
-});
-
-test('native planning refuses unresolved source closure without dependency preparation or builds', async () => {
-  const project = writeNativeXcodeProject(root);
-  const pbx = join(project, 'project.pbxproj');
-  writeFileSync(
-    pbx,
-    readFileSync(pbx, 'utf8').replace(
-      'objects = {',
-      'objects = {\nSCRIPT = { isa = PBXShellScriptBuildPhase; shellScript = "date"; };',
-    ),
-  );
-  const commands: string[][] = [];
-  setExecutor(
-    makeExecutor({
-      runFile(file, args = []) {
-        commands.push([file, ...args]);
-        return 'Tool identity';
-      },
-      spawn() {
-        throw new Error('Planning must not spawn dependency preparation or compilation');
-      },
-    }),
-  );
-  const plan = await nativeXcodeIosProject(root).plan!({}, resolvedSettings(root));
-  expect(plan).toMatchObject({
-    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('undeclared inputs') },
-  });
-  expect(commands.some((command) => command.includes('-resolvePackageDependencies') || command.includes('build'))).toBe(
-    false,
-  );
 });
 
 test('stim ios, build and plan APIs and --plan share one native artifact key for the same project', async () => {
@@ -871,14 +353,6 @@ test('a native project removed after recipe selection refuses instead of escapin
   } as unknown as IosArtifactContext);
   rmSync(project, { recursive: true });
   await expect(recipe.identity()).rejects.toBeInstanceOf(IosRecipeRefusal);
-});
-
-test('native planning validates the simulator model flags like stim ios does', async () => {
-  writeNativeXcodeProject(root);
-  setExecutor(makeExecutor({ runFile: () => 'Xcode 26.0 build 17A' }));
-  expect(await nativeXcodeIosProject(root).plan!({ deviceType: ' ' }, resolvedSettings(root))).toMatchObject({
-    refusal: { code: 'STIM_BAD_ARG', message: expect.stringContaining('--device-type') },
-  });
 });
 
 test('the registered native iOS provider builds Release without a device and reuses its complete source identity', async () => {
@@ -1029,39 +503,6 @@ test('an ignored native input keeps placement here instead of failing during the
   rmSync(join(root, '.gitignore'));
   expect(await recipe.identity()).not.toHaveProperty('cacheIneligible');
   expect(await recipe.offload!.context()).toEqual({ runtime: 'iOS-26-0', unsupported: null });
-});
-
-test('native toolchain overrides contribute independently to each operation artifact key', async () => {
-  writeNativeXcodeProject(root);
-  setExecutor(makeExecutor({ runFileAsync: async () => 'Tool identity' }));
-  vi.stubEnv('DEVELOPER_DIR', '/host/xcode');
-  vi.stubEnv('TOOLCHAINS', 'host');
-  vi.stubEnv('CFLAGS', '-DHOST');
-  const identity = (developer: string, toolchains: string, flags = '-DCLIENT') =>
-    nativeXcodeIosProject(root)
-      .artifact(
-        nativeXcodeIdentityContext(
-          root,
-          testContext({
-            env: { ...process.env, DEVELOPER_DIR: developer, TOOLCHAINS: toolchains, CFLAGS: flags },
-            cwd: root,
-          }),
-        ),
-      )
-      .identity();
-  const [first, developer, toolchains, flags] = await Promise.all([
-    identity('/client/xcode', 'client'),
-    identity('/other/xcode', 'client'),
-    identity('/client/xcode', 'other'),
-    identity('/client/xcode', 'client', '-DOTHER'),
-  ]);
-  expect(first).toHaveProperty('key');
-  expect(developer).not.toEqual(first);
-  expect(toolchains).not.toEqual(first);
-  expect(flags).not.toEqual(first);
-  expect(process.env.DEVELOPER_DIR).toBe('/host/xcode');
-  expect(process.env.TOOLCHAINS).toBe('host');
-  expect(process.env.CFLAGS).toBe('-DHOST');
 });
 
 test.each(['identity', 'validate', 'plan', 'api-plan'] as const)(

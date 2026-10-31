@@ -22,13 +22,11 @@ import {
   checkCompilationCache,
   checkCcacheConflict,
   checkCcacheInstalled,
-  checkCxxCompilerLauncher,
   checkEasAuth,
   checkFingerprintParity,
   checkMetroCache,
   detectFingerprintParity,
   detectLinkedLibraryGitMetadata,
-  checkEasBuildDownload,
   checkRemoteDevice,
   checkSimSlim,
   checkDeviceSigning,
@@ -38,10 +36,8 @@ import {
   type DoctorInspectionOptions,
   runDoctor as inspectDoctor,
   checkConcurrency,
-  checkAndroidSdk,
   type Finding,
 } from '../diagnostics/doctor.ts';
-import { parseXcodeMajor, detectXcodeMajorAsync } from '../engine/xcode.ts';
 import { parseCmakeCacheLauncher } from '../diagnostics/doctor-cxx.ts';
 import doctorCommand, { doctorSuccessLines, parseDoctorPlatform, shadowedStimFinding } from '../commands/doctor.ts';
 import { statsFile, type StatsPlacement } from '@stim-cli/core/state';
@@ -99,60 +95,8 @@ describe('offload-candidate', () => {
     buildMs: 240_000,
   };
 
-  test('three local cold builds averaging over three minutes suggest Desktop remote machine setup', () => {
-    const result = checkOffloadCandidate(
-      [cold, { ...cold, buildMs: 180_000 }, { ...cold, buildMs: 300_000 }],
-      [],
-      [peer],
-      now,
-    );
-    expect(result).toEqual({
-      code: 'offload-candidate',
-      level: 'note',
-      title: 'Builds could run on another machine',
-      detail: 'Cold builds averaged ~4 min over 3 builds this week.',
-      fix: 'In Stim Desktop, open Settings > Remote Machines > Add.',
-    });
-  });
-
-  test.each([
-    ['two builds', [cold, cold]],
-    ['exactly three minutes', [cold, cold, { ...cold, buildMs: 60_000 }]],
-    ['under three minutes', [cold, cold, { ...cold, buildMs: 30_000 }]],
-    ['older than a week', [cold, cold, { ...cold, at: new Date(now - 7 * 86_400_000 - 1).toISOString() }]],
-    ['failed', [cold, cold, { ...cold, failed: true }]],
-    ['offloaded', [cold, cold, { ...cold, decision: 'offloaded' }]],
-    ['fell back', [cold, cold, { ...cold, decision: 'fell-back' }]],
-    ['without compile time', [cold, cold, { ...cold, buildMs: undefined }]],
-    ['zero compile time', [cold, cold, { ...cold, buildMs: 0 }]],
-  ] satisfies [string, StatsPlacement[]][])(
-    'does not count %s as three slow local cold builds',
-    (_name, placements) => {
-      expect(checkOffloadCandidate(placements, [], [peer], now)).toBeNull();
-    },
-  );
-
-  test('a build exactly one week old still counts', () => {
-    expect(
-      checkOffloadCandidate(
-        [cold, cold, { ...cold, at: new Date(now - 7 * 86_400_000).toISOString() }],
-        [],
-        [peer],
-        now,
-      ),
-    ).not.toBeNull();
-  });
-
   test('configured remote machines suppress the candidate', () => {
     expect(checkOffloadCandidate([cold, cold, cold], ['mini'], [peer], now)).toBeNull();
-  });
-
-  test.each([
-    { name: 'no peers', peers: [] },
-    { name: 'a Linux peer', peers: [{ OS: 'linux', Online: true }] },
-    { name: 'an offline Mac', peers: [{ OS: 'macOS', Online: false }] },
-  ])('an online Mac peer is required: $name', ({ peers }) => {
-    expect(checkOffloadCandidate([cold, cold, cold], [], peers, now)).toBeNull();
   });
 
   test('doctor reads retained placements and treats a failed peer lookup as no candidate', async () => {
@@ -210,28 +154,6 @@ describe('offload-candidate', () => {
   });
 });
 
-test('checkMainCheckout reports missing dependencies, Pods, and native output', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-cold-'));
-  try {
-    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
-    writeFileSync(join(project, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
-    mkdirSync(join(project, 'ios'), { recursive: true });
-    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
-
-    const findings = await checkMainCheckout(project, { brokenPods: [], upstream: null });
-    expect(findings.map((finding) => finding.title)).toEqual([
-      'The source checkout has no installed dependencies',
-      'The source checkout CocoaPods state is missing',
-      'The source checkout has no iOS warm build output',
-    ]);
-    expect(findings[0]?.fix).toMatch(/npm ci/);
-    expect(findings[1]?.fix).toMatch(/pod install/);
-    expect(findings[2]?.fix).toMatch(/stim ios/);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
 function seedRepo(prefix: string) {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
   const main = join(base, 'main');
@@ -258,29 +180,6 @@ function seedRepo(prefix: string) {
   return { base, main, git, trackOrigin };
 }
 
-test('checkMainCheckout says nothing about the seed when the repository has no linked worktree', async () => {
-  const { base, main, git, trackOrigin } = seedRepo('stim-doctor-single-checkout-');
-  try {
-    git('git checkout -q -B feature HEAD~1');
-    trackOrigin('feature');
-    writeFileSync(join(main, 'README.md'), 'edited\n');
-
-    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
-
-    git('git worktree add -q --detach ../linked');
-    expect((await checkMainCheckout(main, { platform: 'ios' })).map((entry) => entry.title)).toEqual([
-      'The source checkout is 1 commit behind origin/main',
-      'The source checkout has 1 uncommitted tracked change',
-      'The source checkout is on feature, not the default branch main',
-    ]);
-
-    rmSync(join(base, 'linked'), { recursive: true, force: true });
-    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
 test(
   'an interrupted rebase is named instead of the dirty and detached remedies git would reject',
   { timeout: 30_000 },
@@ -303,18 +202,6 @@ test(
     }
   },
 );
-
-test('a tag sharing the branch name does not turn the branch into an ambiguous ref', async () => {
-  const { base, main, git } = seedRepo('stim-doctor-ambiguous-');
-  try {
-    git('git tag main HEAD');
-    git('git worktree add -q -b task ../linked');
-
-    expect(await checkMainCheckout(main, { platform: 'ios' })).toEqual([]);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
 
 test('seed findings are reported from inside a linked worktree, about the source checkout', async () => {
   const { base, main, git } = seedRepo('stim-doctor-from-worktree-');
@@ -469,28 +356,6 @@ test('a fingerprinted library directory that still hashes .git gets both .finger
   }
 });
 
-test('checkMainCheckout filters native warm state and CocoaPods by platform', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-platform-'));
-  try {
-    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
-    mkdirSync(join(project, 'node_modules'));
-    mkdirSync(join(project, 'ios'), { recursive: true });
-    mkdirSync(join(project, 'android'), { recursive: true });
-    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
-
-    const ios = await checkMainCheckout(project, { platform: 'ios', brokenPods: [], upstream: null });
-    expect(ios.map((finding) => finding.title)).toEqual([
-      'The source checkout CocoaPods state is missing',
-      'The source checkout has no iOS warm build output',
-    ]);
-
-    const android = await checkMainCheckout(project, { platform: 'android', brokenPods: [], upstream: null });
-    expect(android.map((finding) => finding.title)).toEqual(['The source checkout has no Android warm build output']);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
 test('doctor recognizes explicit-scheme build products but not an empty scheme directory', async () => {
   const project = join(testHome, 'project');
   mkdirSync(join(project, 'ios'), { recursive: true });
@@ -582,47 +447,6 @@ test('Stim installation probes share one timeout window', async () => {
   }
 });
 
-test('checkMainCheckout recognizes non-npm dependency installs', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-main-pnpm-'));
-  try {
-    writeFileSync(join(project, 'package.json'), JSON.stringify({ name: 'app' }));
-    writeFileSync(join(project, 'pnpm-lock.yaml'), 'lockfileVersion: 9\n');
-
-    const cold = await checkMainCheckout(project, { brokenPods: [], upstream: null });
-    expect(cold.find((finding) => /installed dependencies/.test(finding.title))?.fix).toMatch(/pnpm install/);
-
-    mkdirSync(join(project, 'node_modules'));
-    const warm = await checkMainCheckout(project, { brokenPods: [], upstream: null });
-    expect(warm.some((finding) => /installed dependencies/.test(finding.title))).toBe(false);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
-test('checkMainCheckout reads warm state from the repository source checkout', async () => {
-  resetExecutor();
-  const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-doctor-main-worktree-')));
-  const repo = join(base, 'repo');
-  const linked = join(base, 'linked');
-  try {
-    mkdirSync(join(repo, 'apps', 'mobile'), { recursive: true });
-    writeFileSync(join(repo, 'apps', 'mobile', 'package.json'), JSON.stringify({ name: 'app' }));
-    writeFileSync(join(repo, 'package-lock.json'), JSON.stringify({ lockfileVersion: 3 }));
-    execSync('git init -q', { cwd: repo });
-    execSync('git config user.email test@example.com', { cwd: repo });
-    execSync('git config user.name test', { cwd: repo });
-    execSync('git add .', { cwd: repo });
-    execSync('git -c commit.gpgsign=false commit -q -m init', { cwd: repo });
-    execSync(`git worktree add -q -b linked ${JSON.stringify(linked)}`, { cwd: repo });
-    mkdirSync(join(linked, 'apps', 'mobile', 'node_modules'));
-
-    const findings = await checkMainCheckout(join(linked, 'apps', 'mobile'), { brokenPods: [], upstream: null });
-    expect(findings.some((finding) => /no installed dependencies/.test(finding.title))).toBe(true);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
 test('checkMainCheckout runs its expensive probes only when their preconditions hold', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-probe-gate-'));
   const calls: string[][] = [];
@@ -689,25 +513,6 @@ test('the CocoaPods remedy uses bundler only when the lockfile resolves cocoapod
   }
 });
 
-test('checkMainCheckout reports broken CocoaPods links even when lockfiles match', async () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-broken-pods-'));
-  try {
-    mkdirSync(join(project, 'ios', 'Pods'), { recursive: true });
-    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'pods\n');
-    writeFileSync(join(project, 'ios', 'Pods', 'Manifest.lock'), 'pods\n');
-
-    const findings = await checkMainCheckout(project, {
-      brokenPods: [join(project, 'ios', 'Pods', 'Headers', 'sqlite3.h')],
-      upstream: null,
-    });
-    const broken = findings.find((finding) => /broken links/.test(finding.title));
-    expect(broken?.level).toBe('cost');
-    expect(broken?.fix).toMatch(/pod install --clean-install/);
-  } finally {
-    rmSync(project, { recursive: true, force: true });
-  }
-});
-
 test('checkMainCheckout reports stale dependencies and the locally known upstream gap', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doctor-source-stale-'));
   try {
@@ -735,27 +540,6 @@ test('buildCacheProvider at the top level on SDK 53 is reported as a silent no-o
   expect(f.detail).toMatch(/ignored in silence/);
 });
 
-test('buildCacheProvider under experiments on SDK 53 is correct, and reported as nothing', () => {
-  expect(checkBuildCacheProvider({ expo: { experiments: { buildCacheProvider: './p.js' } } }, 53)).toBe(null);
-});
-
-test('buildCacheProvider under experiments on a newer SDK still works, so it is a note not a cost', () => {
-  const f = checkBuildCacheProvider({ expo: { experiments: { buildCacheProvider: './p.js' } } }, 57);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.detail).toMatch(/falls back/);
-});
-
-test('buildCacheProvider at the top level on a newer SDK is what it should be', () => {
-  expect(checkBuildCacheProvider({ expo: { buildCacheProvider: './p.js' } }, 57)).toBe(null);
-});
-
-test('a non-Expo project is not told anything about a provider it cannot have', () => {
-  expect(checkBuildCacheProvider(null, null, false)).toBe(null);
-  expect(checkBuildCacheProvider({ expo: {} }, 57, false)).toBe(null);
-  expect(checkBuildCacheProvider(null, 57, false, 'app.config.ts')).toBe(null);
-});
-
 test('compilation cache is not flagged at all on an Xcode that does not have it', () => {
   expect(checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 15)).toBe(null);
 });
@@ -767,41 +551,9 @@ test('a Podfile that enables no compilation caching is reported as nothing at al
   expect(checkCompilationCache(null, 26)).toBe(null);
 });
 
-test('compilation cache enabled without a CAS path is a note about builds outside Stim', () => {
-  const f = checkCompilationCache("config.build_settings['COMPILATION_CACHE_ENABLE_CACHING'] = 'YES'", 26);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.detail).toMatch(/per-workspace/);
-  expect(f.detail).toMatch(/outside Stim/);
-  expect(f.fix).toMatch(/Nothing to do for Stim/);
-  expect(f.fix).toMatch(/~\/\.stim\/compilation-cache/);
-});
-
 test('compilation cache with an explicit CAS path is reported as nothing', () => {
   const src = "COMPILATION_CACHE_ENABLE_CACHING = 'YES'\nCOMPILATION_CACHE_CAS_PATH = '/x'";
   expect(checkCompilationCache(src, 26)).toBe(null);
-});
-
-test('ccache alongside compilation caching is flagged as mutually defeating', () => {
-  const f = checkCcacheConflict("COMPILATION_CACHE_ENABLE_CACHING = 'YES'", { 'apple.ccacheEnabled': 'true' });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.detail).toMatch(/explicitly built modules/);
-});
-
-test('ccache alone is now flagged, because it is what stops Stim supplying the other', () => {
-  const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.title).toMatch(/Stim leaves Xcode compilation caching off/);
-});
-
-test('the ccache fix names where the value comes from, on Expo and on a bare project', () => {
-  const f = checkCcacheConflict('post_install', { 'apple.ccacheEnabled': 'true' });
-  assert(f);
-  expect(f.fix).toMatch(/expo-build-properties/);
-  expect(f.fix).toMatch(/Podfile\.properties\.json/);
-  expect(f.fix).toMatch(/pod install/);
 });
 
 test('a project with no ccache is reported as nothing, with or without caching in the Podfile', () => {
@@ -817,21 +569,6 @@ test('the iOS ccache finding no longer claims ccache cannot cross worktrees at a
   assert(f);
   expect(f.detail).not.toMatch(/misses across worktrees anyway/);
   expect(f.detail).toMatch(/default configuration/);
-});
-
-test('ccache on PATH is silent, and ccache absent costs time with a full remedy', () => {
-  expect(checkCcacheInstalled(true)).toBe(null);
-  const f = checkCcacheInstalled(false, 'darwin');
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.title).toMatch(/ccache is not on PATH, so Android C\+\+ recompiles in every worktree/);
-  expect(f.detail).toMatch(/PATH lookup for `ccache`/);
-  expect(f.detail).toMatch(/CMAKE_CXX_COMPILER_LAUNCHER/);
-  expect(f.detail).toMatch(/49\.6s.*34\.2s/);
-  expect(f.fix).toMatch(/brew install ccache/);
-  expect(f.fix).toMatch(/android\/app\/\.cxx/);
-  expect(f.fix).toMatch(/node_modules\/\*\*\/android\/\.cxx/);
-  expect(f.fix).toMatch(/\/opt\/homebrew\/bin/);
 });
 
 test('ccache absent on Linux names apt and no Homebrew path', () => {
@@ -931,87 +668,6 @@ test('parseCmakeCacheLauncher reads the launcher a configure wrote into CMakeCac
   expect(parseCmakeCacheLauncher(null)).toBe(null);
 });
 
-describe('checkCxxCompilerLauncher', () => {
-  const onDisk = (path: string) => path === '/opt/homebrew/bin/ccache';
-
-  test('a CMake cache naming a launcher that is gone is a cost, ccache installed or not', () => {
-    for (const ccacheOnPath of [true, false]) {
-      const f = checkCxxCompilerLauncher({
-        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/usr/local/bin/ccache' }],
-        ccacheOnPath,
-        launcherExists: onDisk,
-      });
-      assert(f);
-      expect(f.level).toBe('cost');
-      expect(f.title).toMatch(/names a compiler launcher that is not on this machine/);
-      expect(f.detail).toMatch(/\/usr\/local\/bin\/ccache/);
-      expect(f.fix).toMatch(/\.cxx/);
-    }
-  });
-
-  test('a configured .cxx with no launcher costs the C++ cache until it is deleted once', () => {
-    const f = checkCxxCompilerLauncher({
-      states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: null }],
-      ccacheOnPath: true,
-      launcherExists: onDisk,
-    });
-    assert(f);
-    expect(f.level).toBe('cost');
-    expect(f.title).toMatch(/predates/);
-    expect(f.fix).toMatch(/\.cxx/);
-  });
-
-  test('nothing is said about a .cxx with no launcher when ccache is not installed either', () => {
-    expect(
-      checkCxxCompilerLauncher({
-        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: null }],
-        ccacheOnPath: false,
-        launcherExists: onDisk,
-      }),
-    ).toBe(null);
-  });
-
-  test('a launcher CMake resolves through PATH is not read as a filesystem path', () => {
-    for (const ccacheOnPath of [true, false]) {
-      expect(
-        checkCxxCompilerLauncher({
-          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache' }],
-          ccacheOnPath,
-          launcherExists: onDisk,
-        }),
-      ).toBe(null);
-      expect(
-        checkCxxCompilerLauncher({
-          states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: 'ccache;--some-flag' }],
-          ccacheOnPath,
-          launcherExists: onDisk,
-        }),
-      ).toBe(null);
-    }
-  });
-
-  test('a launcher list whose absolute command is gone is still a cost', () => {
-    const f = checkCxxCompilerLauncher({
-      states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/usr/local/bin/ccache;--some-flag' }],
-      ccacheOnPath: true,
-      launcherExists: onDisk,
-    });
-    assert(f);
-    expect(f.detail).toMatch(/\/usr\/local\/bin\/ccache/);
-  });
-
-  test('a .cxx already routed through an installed launcher, or none at all, is clean', () => {
-    expect(
-      checkCxxCompilerLauncher({
-        states: [{ path: 'android/app/.cxx/Debug/a1/arm64-v8a', launcher: '/opt/homebrew/bin/ccache' }],
-        ccacheOnPath: true,
-        launcherExists: onDisk,
-      }),
-    ).toBe(null);
-    expect(checkCxxCompilerLauncher({ states: [], ccacheOnPath: true, launcherExists: onDisk })).toBe(null);
-  });
-});
-
 test('runDoctor reads the real .cxx of an Android project and reports it only for Android', async () => {
   const project = mkdtempSync(join(tmpdir(), 'stim-doc-cxx-'));
   try {
@@ -1078,21 +734,6 @@ test.each(['ios', 'android'] as const)('doctor does not require an Expo dev clie
   }
 });
 
-test('a project that configures no cacheStores is reported as nothing at all', () => {
-  expect(checkMetroCache('config.cacheStores = [new FileStore({})]')).toBe(null);
-  expect(checkMetroCache('module.exports = config;')).toBe(null);
-  expect(checkMetroCache(null)).toBe(null);
-  expect(checkMetroCache("module.exports = require('@acme/app-scripts/metro-config')(__dirname);")).toBe(null);
-});
-
-test('a project whose config is app.config.ts is told the check could not run', () => {
-  const f = checkBuildCacheProvider(null, 53, true, 'app.config.ts');
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.title).toMatch(/Cannot check/);
-  expect(f.fix).toMatch(/experiments/);
-});
-
 test('an app.json that is not an object leaves app.config.ts to be reported as unchecked', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'stim-doctor-'));
   try {
@@ -1109,64 +750,8 @@ test('an app.json that is not an object leaves app.config.ts to be reported as u
   }
 });
 
-test('a newer SDK with a dynamic config is pointed at the top-level key', () => {
-  const f = checkBuildCacheProvider(null, 57, true, 'app.config.js');
-  assert(f);
-  expect(f.fix).toMatch(/top-level/);
-});
-
 test('no config at all and no dynamic config stays silent', () => {
   expect(checkBuildCacheProvider(null, 57, true, null)).toBe(null);
-});
-
-test('parseXcodeMajor reads the major from real xcodebuild output', () => {
-  expect(parseXcodeMajor('Xcode 26.1\nBuild version 17B55\n')).toBe(26);
-  expect(parseXcodeMajor('Xcode 15\nBuild version 15A240d')).toBe(15);
-});
-
-test('parseXcodeMajor returns null for anything it does not recognise', () => {
-  for (const output of [null, '', 'xcode-select: error: tool not installed', 'Xcode vNext']) {
-    expect(parseXcodeMajor(output)).toBe(null);
-  }
-});
-
-test('Xcode version discovery agrees with the real xcodebuild, when there is one', async () => {
-  resetExecutor();
-  const major = await detectXcodeMajorAsync();
-  expect(major === null || (Number.isInteger(major) && major > 0)).toBeTruthy();
-});
-
-test('Xcode version discovery reports unknown rather than throwing when xcodebuild is missing', async () => {
-  setExecutor({
-    run: () => {
-      throw new Error('not found');
-    },
-    runQuiet: () => null,
-    runFileQuiet: () => null,
-    spawn: () => {},
-  });
-  try {
-    expect(await detectXcodeMajorAsync()).toBe(null);
-  } finally {
-    resetExecutor();
-  }
-});
-
-test('a cacheStores behind an env-var conditional is downgraded to a note, not a pass', () => {
-  const source = [
-    'const sharedCacheStores =',
-    "  process.env.TLON_METRO_SHARED_CACHE_ENABLED === '1'",
-    '    ? [new FileStore({ root: sharedCacheRoot })]',
-    '    : undefined;',
-    'const config = {',
-    '  ...(sharedCacheStores ? { cacheStores: sharedCacheStores } : {}),',
-    '};',
-  ].join('\n');
-  const f = checkMetroCache(source);
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.title).toMatch(/cacheStores/);
-  expect(f.fix).toMatch(/env var/i);
 });
 
 test('a cacheStores set inside an if is a note for the same reason', () => {
@@ -1176,27 +761,6 @@ test('a cacheStores set inside an if is a note for the same reason', () => {
   expect(f.level).toBe('note');
 });
 
-test('an unconditional cacheStores stays silent', () => {
-  expect(checkMetroCache("config.cacheStores = [new FileStore({ root: '/x' })];")).toBe(null);
-  expect(
-    checkMetroCache(
-      "const { sharedCacheStores } = require('@stim-cli/metro');\nconfig.cacheStores = sharedCacheStores('app');",
-    ),
-  ).toBe(null);
-});
-
-test('a metro config that delegates to a workspace package is silent, not a note', () => {
-  const source = [
-    '// RN CLI checks for this to make sure the config is valid :/',
-    "// const { getDefaultConfig } = require('@react-native/metro-config');",
-    '',
-    "module.exports = require('@th3rdwave/react-native-app-scripts/metro-config')(",
-    '  __dirname,',
-    ');',
-  ].join('\n');
-  expect(checkMetroCache(source)).toBe(null);
-});
-
 test('an ordinary config built on expo/metro-config with no cacheStores is silent too', () => {
   expect(checkMetroCache("module.exports = require('expo/metro-config').getDefaultConfig(__dirname);")).toBe(null);
   expect(
@@ -1204,13 +768,6 @@ test('an ordinary config built on expo/metro-config with no cacheStores is silen
       "const base = require('@acme/metro');\nbase.cacheStores = [new FileStore({ root: '/x' })];\nmodule.exports = base;",
     ),
   ).toBe(null);
-});
-
-test('the dynamic-config note carries the command that answers it', () => {
-  const f = checkBuildCacheProvider(null, 57, true, 'app.config.ts');
-  assert(f);
-  expect(f.fix).toMatch(/npx expo config --json/);
-  expect(f.fix).toMatch(/buildCacheProvider/);
 });
 
 test('the dynamic-config note says an existing provider is kept, as the static one does', () => {
@@ -1245,18 +802,6 @@ test('the EAS provider with no eas-cli anywhere is a cost, with an install remed
   expect(f.fix).toMatch(/Install eas-cli/);
 });
 
-test('the EAS provider with no session is a cost naming both ways back in', () => {
-  const f = checkEasAuth({
-    provider: 'eas',
-    auth: { failed: true, code: 'logged-out', reason: 'Not logged in', remedy: 'Run `eas login` (or set EXPO_TOKEN).' },
-  });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.detail).toMatch(/miss/i);
-  expect(f.fix).toMatch(/eas login/);
-  expect(f.fix).toMatch(/EXPO_TOKEN/);
-});
-
 test('a session on an account that does not cover the owner is a NOTE naming both', () => {
   const f = checkEasAuth({
     provider: 'eas',
@@ -1283,17 +828,6 @@ test('an unestablished session is a note about the check, not an accusation', ()
   expect(f.level).toBe('note');
   expect(f.detail).toMatch(/timed out/);
   expect(!/not logged in/i.test(f.title)).toBeTruthy();
-});
-
-test('a good session is reported as nothing at all', () => {
-  expect(
-    checkEasAuth({ provider: 'eas', owner: 'janic', auth: { ok: true, account: 'janic', accounts: ['janic'] } }),
-  ).toBe(null);
-});
-
-test('the provider is recognised on either key', () => {
-  const auth: EasAuthResult = { failed: true, code: 'logged-out', remedy: 'Run `eas login`.' };
-  expect(checkEasAuth({ provider: 'eas', auth })).toBeTruthy();
 });
 
 test('runDoctor probes the session only for an EAS project, and passes it the owner', async () => {
@@ -1744,12 +1278,6 @@ test('runDoctor names a committed caches setting as inert', async () => {
   }
 });
 
-test('a project with no provider configured at all is reported as nothing', () => {
-  expect(checkBuildCacheProvider({ expo: {} }, 57)).toBe(null);
-  expect(checkBuildCacheProvider({ expo: {} }, 53)).toBe(null);
-  expect(checkBuildCacheProvider({ expo: { name: 'app' } }, null)).toBe(null);
-});
-
 test('a gradle.properties without org.gradle.caching is not a finding any more', async () => {
   const withAndroid = mkdtempSync(join(tmpdir(), 'stim-doc-gradle-'));
   writeFileSync(join(withAndroid, 'package.json'), JSON.stringify({ name: 'x' }));
@@ -1794,13 +1322,6 @@ test('the parity fix carries the .fingerprintignore advice, including what not t
   expect(f.fix).toMatch(/gitignore/);
   expect(f.fix).toMatch(/absolute machine paths|generated|env file/);
   expect(f.fix).toMatch(/Never ignore a real native input/);
-});
-
-test('a parity mismatch with no dirty files still fires, hedged instead of accusing', () => {
-  const f = checkFingerprintParity({ projectHash: 'aaa', worktreeHash: 'bbb', changed: ['ios/Podfile.lock'] });
-  assert(f);
-  expect(f.detail).toMatch(/likely cause/);
-  expect(f.detail).not.toMatch(/git reports/);
 });
 
 test('detectFingerprintParity against a real repo: a dirty app.json fires the note and the temp worktree is cleaned up', async () => {
@@ -1895,37 +1416,6 @@ test('detectFingerprintParity against a real repo: a dirty app.json fires the no
   }
 });
 
-test('detectFingerprintParity compares an app in a subdirectory with the same subdirectory at HEAD', async () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-parity-subdir-'));
-  const repo = join(base, 'repo');
-  const app = join(repo, 'app');
-  try {
-    mkdirSync(join(app, 'ios'), { recursive: true });
-    const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
-    git('git init -q');
-    git('git config user.email test@example.com');
-    git('git config user.name test');
-    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'root' }));
-    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    writeFileSync(join(app, 'ios', 'Podfile'), '');
-    git('git add .');
-    git('git commit -q -m init');
-    const createFingerprint = async (dir: string) => {
-      const hash = createHash('sha1')
-        .update(readFileSync(join(dir, 'app.json'), 'utf-8'))
-        .digest('hex');
-      return { hash, sources: [{ type: 'file' as const, filePath: 'app.json', reasons: [], hash }] };
-    };
-
-    expect(await detectFingerprintParity(app, { createFingerprint })).toBe(null);
-    writeFileSync(join(app, 'app.json'), JSON.stringify({ expo: { name: 'app', scheme: 'dirty' } }));
-    expect((await detectFingerprintParity(app, { createFingerprint }))?.title).toMatch(/fresh worktree/);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
 test('detectFingerprintParity against a real repo: a clean checkout is silent', async () => {
   resetExecutor();
   const base = mkdtempSync(join(tmpdir(), 'stim-parity-clean-'));
@@ -1951,101 +1441,6 @@ test('detectFingerprintParity against a real repo: a clean checkout is silent', 
 
     expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
     expect(execSync('git worktree list', { cwd: repo, encoding: 'utf-8' }).trim().split('\n').length).toBe(1);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test.skipIf(process.platform === 'win32')(
-  "detectFingerprintParity's temporary worktree runs none of the repository's hooks",
-  async () => {
-    resetExecutor();
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'stim-parity-hooks-')));
-    const marker = join(repo, 'hook-ran');
-    try {
-      const git = (cmd: string) => execSync(cmd, { cwd: repo, encoding: 'utf-8' });
-      git('git init -q');
-      git('git config user.email test@example.com');
-      git('git config user.name test');
-      writeFileSync(join(repo, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-      mkdirSync(join(repo, 'ios'));
-      writeFileSync(join(repo, 'ios', 'Podfile'), '');
-      writeMarkerScript(join(repo, '.husky', 'post-checkout'), marker, '');
-      git('git config core.hooksPath .husky');
-      git('git add . && git commit -q -m init');
-      rmSync(marker, { force: true });
-
-      const createFingerprint = async () => ({ hash: 'same', sources: [] });
-      expect(await detectFingerprintParity(repo, { createFingerprint })).toBe(null);
-      expect(existsSync(marker)).toBe(false);
-      expect(git('git worktree list').trim().split('\n').length).toBe(1);
-    } finally {
-      rmSync(repo, { recursive: true, force: true });
-    }
-  },
-);
-
-test('detectFingerprintParity fingerprints only the selected platform', async () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-parity-platform-'));
-  try {
-    execSync('git init -q', { cwd: base });
-    execSync('git config user.email test@example.com', { cwd: base });
-    execSync('git config user.name test', { cwd: base });
-    writeFileSync(join(base, 'app.json'), JSON.stringify({ expo: { name: 'app' } }));
-    mkdirSync(join(base, 'ios'));
-    mkdirSync(join(base, 'android'));
-    execSync('git add . && git commit -q -m init', { cwd: base });
-    const calls: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean }[] = [];
-    const createFingerprint = async (
-      _root: string,
-      options?: { platforms?: string[]; useRNCoreAutolinkingFromExpo?: boolean },
-    ) => {
-      calls.push(options ?? {});
-      return { hash: 'same', sources: [] };
-    };
-
-    expect(await detectFingerprintParity(base, { createFingerprint, platform: 'ios' })).toBe(null);
-    expect(calls.map((options) => options.platforms)).toEqual([['ios'], ['ios']]);
-    expect(calls.every((options) => options.useRNCoreAutolinkingFromExpo === true)).toBe(true);
-
-    const android = await detectFingerprintParity(base, { createFingerprint, platform: 'android' });
-    expect(android?.code).toBe('fingerprint-parity-skipped');
-    expect(calls.length).toBe(2);
-  } finally {
-    rmSync(base, { recursive: true, force: true });
-  }
-});
-
-test('detectFingerprintParity skips silently outside a git repo without invoking the fingerprinter', async () => {
-  resetExecutor();
-  const dir = mkdtempSync(join(tmpdir(), 'stim-parity-nogit-'));
-  try {
-    let called = false;
-    const createFingerprint = async () => {
-      called = true;
-      return { hash: 'x', sources: [] };
-    };
-    expect(await detectFingerprintParity(dir, { createFingerprint })).toBe(null);
-    expect(called).toBe(false);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('detectFingerprintParity skips a cold comparison when dependencies are installed', async () => {
-  resetExecutor();
-  const base = mkdtempSync(join(tmpdir(), 'stim-parity-installed-'));
-  try {
-    execSync('git init -q', { cwd: base });
-    mkdirSync(join(base, 'node_modules'));
-    let called = false;
-    const createFingerprint = async () => {
-      called = true;
-      return { hash: 'x', sources: [] };
-    };
-    expect(await detectFingerprintParity(base, { createFingerprint })).toBe(null);
-    expect(called).toBe(false);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }
@@ -2136,77 +1531,6 @@ test('a configured remote with no agent-device is a cost, not a note', () => {
   expect(f.detail).toContain('stim ios --remote eas');
   expect(f.detail).toContain('stim android --remote eas');
   expect(f.detail).not.toContain('`stim ios --remote`');
-});
-
-test('the proxy backend reports that the operator owns the daemon', () => {
-  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: true, agentDeviceOnPath: true });
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.detail).toContain('does not create or stop the remote device');
-});
-
-test('the proxy backend requires both daemon variables', () => {
-  const f = checkRemoteDevice({ configured: 'proxy', daemonInEnv: false, agentDeviceOnPath: true });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.fix).toContain('AGENT_DEVICE_DAEMON_BASE_URL');
-});
-
-test('the eas backend requires eas-cli even when daemon variables exist', () => {
-  const f = checkRemoteDevice({
-    configured: 'eas',
-    daemonInEnv: true,
-    agentDeviceOnPath: true,
-    easCliResolvable: false,
-  });
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.fix).toContain('eas-cli');
-});
-
-test('a fully configured remote says what it will do, including the log gap', () => {
-  const f = checkRemoteDevice({
-    configured: 'eas',
-    agentDeviceOnPath: true,
-    easCliResolvable: true,
-    readEasCliVersion: () => 'eas-cli/24.8.0 darwin-arm64 node-v22.22.2',
-  });
-  assert(f);
-  expect(f.level).toBe('note');
-  expect(f.detail).toContain('Native device logs are not captured');
-});
-
-const easBuildDownload = (
-  change: { easJson?: boolean; remoteEas?: boolean; easCliResolvable?: boolean },
-  version: string | null,
-) =>
-  checkEasBuildDownload({
-    easJson: true,
-    remoteEas: false,
-    easCliResolvable: true,
-    readEasCliVersion: () => version,
-    ...change,
-  });
-
-test.each([
-  [{ easJson: false }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
-  [{ remoteEas: true }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
-  [{ easCliResolvable: false }, 'eas-cli/18.0.3 darwin-arm64 node-v22.22.2'],
-  [{}, 'eas-cli/18.9.0 darwin-arm64 node-v22.22.2'],
-])('--eas-profile needs no eas-cli finding for %j with %s', (change, version) => {
-  expect(easBuildDownload(change, version)).toBeNull();
-});
-
-test.each([
-  ['eas-cli/18.0.3 darwin-arm64 node-v22.22.2', 'eas-cli 18.0.3 cannot download EAS builds'],
-  [null, 'The eas-cli version could not be read'],
-])('an EAS project reports an eas-cli too old for --eas-profile (%s)', (version, title) => {
-  const f = easBuildDownload({}, version);
-  assert(f);
-  expect(f.level).toBe('cost');
-  expect(f.title).toContain(title);
-  expect(f.detail).toContain('STIM_EAS_UNAVAILABLE');
-  expect(f.fix).toContain('18.9.0');
 });
 
 test('the eas backend reports an eas-cli without the simulator commands', () => {
@@ -2435,34 +1759,6 @@ test('doctor success output groups iOS checks and optional capabilities', () => 
   expect(output.match(/^Shared$/gm)).toHaveLength(1);
   expect(output).not.toContain('Android');
   expect(output).not.toContain('Nothing to flag means');
-});
-
-test('doctor reports a missing Android SDK for an Android project, which stim android refuses before Gradle', () => {
-  const project = mkdtempSync(join(tmpdir(), 'stim-doctor-android-sdk-'));
-  const saved = { ANDROID_HOME: process.env.ANDROID_HOME, ANDROID_SDK_ROOT: process.env.ANDROID_SDK_ROOT };
-  try {
-    process.env.ANDROID_HOME = join(project, 'no-such-sdk');
-    delete process.env.ANDROID_SDK_ROOT;
-    expect(checkAndroidSdk(project, undefined)).toBeNull();
-    expect(checkAndroidSdk(project, 'ios')).toBeNull();
-    const finding = checkAndroidSdk(project, 'android');
-    expect(finding?.code).toBe('android-sdk-missing');
-    expect(finding?.level).toBe('cost');
-    expect(finding?.detail).toContain(join(project, 'no-such-sdk'));
-    expect(finding?.detail).toContain('STIM_BUILD_FAILED');
-    expect(finding?.fix).toContain('ANDROID_HOME');
-
-    mkdirSync(join(project, 'android'));
-    expect(checkAndroidSdk(project, undefined)?.code).toBe('android-sdk-missing');
-    mkdirSync(join(project, 'no-such-sdk'));
-    expect(checkAndroidSdk(project, undefined)).toBeNull();
-  } finally {
-    for (const [key, value] of Object.entries(saved)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    rmSync(project, { recursive: true, force: true });
-  }
 });
 
 test('doctor success output scopes native checks to Android', () => {

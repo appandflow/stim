@@ -2,7 +2,6 @@ import assert from 'node:assert';
 import {
   parseLocationRequest,
   parseNetworkRequest,
-  parsePackagePermissions,
   parsePermissionRequest,
   parsePushRequest,
   runDeviceTool,
@@ -217,15 +216,6 @@ describe('iOS tool calls', () => {
 describe('Android read-back', () => {
   const fine = 'android.permission.ACCESS_FINE_LOCATION';
   const coarse = 'android.permission.ACCESS_COARSE_LOCATION';
-
-  test('parsePackagePermissions reads grant state and omits permissions the dump does not list', () => {
-    expect(
-      parsePackagePermissions(dump({ [fine]: true, [coarse]: false }), [fine, coarse, 'android.permission.CAMERA']),
-    ).toEqual([
-      { name: fine, granted: true, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
-      { name: coarse, granted: false, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
-    ]);
-  });
 
   test('a grant reads each declared permission back; one the app does not declare is skipped, not hidden', async () => {
     let granted = false;

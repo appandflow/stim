@@ -34,7 +34,7 @@ export function hermesEnabledFromProperties(text: unknown): boolean {
   return raw !== 'false' && raw !== false;
 }
 
-export function readHermesEnabled(iosDir: string): boolean {
+function readHermesEnabled(iosDir: string): boolean {
   try {
     return hermesEnabledFromProperties(readFileSync(join(iosDir, 'Podfile.properties.json'), 'utf-8'));
   } catch {
@@ -44,7 +44,7 @@ export function readHermesEnabled(iosDir: string): boolean {
 
 const ENTRY_CANDIDATES = ['index.js', 'index.ts', 'index.tsx', 'index.jsx'];
 
-export function pickEntryFile(entries: unknown): string {
+function pickEntryFile(entries: unknown): string {
   const names = new Set((Array.isArray(entries) ? entries : []).filter((e) => typeof e === 'string'));
   return ENTRY_CANDIDATES.find((c) => names.has(c)) ?? 'index.js';
 }
@@ -111,7 +111,7 @@ export function swapBundlerEnv(root: string, env: NodeJS.ProcessEnv): NodeJS.Pro
   return { ...env, ...expoTelemetryEnv(env), FORCE_COLOR: '0', TMPDIR: tmp, TEMP: tmp, TMP: tmp };
 }
 
-export function bundleCommand({
+function bundleCommand({
   isExpo,
   entryFile,
   bundleOutput,
@@ -300,7 +300,7 @@ export function hermescPath(
   return candidates.find(exists) ?? candidates[candidates.length - 1]!;
 }
 
-export function hermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
+function hermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
   return ['-emit-binary', '-out', out, bundle];
 }
 

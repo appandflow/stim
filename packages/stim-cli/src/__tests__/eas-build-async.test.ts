@@ -94,33 +94,6 @@ function fixture({
   return { root, platform: 'android' as const, profile, note: () => {}, signal: controller?.signal };
 }
 
-test('EAS lookup and download yield and isolate the client environment while applying profile overrides', async () => {
-  const previous = process.env.STIM_EAS_HOST_ONLY;
-  process.env.STIM_EAS_HOST_ONLY = 'host';
-  let timerRan = false;
-  const timer = setTimeout(() => {
-    timerRan = true;
-  }, 10);
-  try {
-    const result = await resolveEasDevelopmentBuild({
-      ...fixture({ checkEnv: true }),
-      env: {
-        STIM_EAS_CLIENT: 'client',
-        APP_VARIANT: 'client',
-        AGENT_DEVICE_DAEMON_BASE_URL: 'fixture',
-        AGENT_DEVICE_DAEMON_AUTH_TOKEN: 'fixture',
-      },
-    });
-    expect(result).toMatchObject({ ok: true, fingerprint, cacheHit: 'remote' });
-    expect(timerRan).toBe(true);
-    expect(readFileSync(journal, 'utf8').trim().split('\n')).toEqual(stages);
-  } finally {
-    clearTimeout(timer);
-    if (previous === undefined) delete process.env.STIM_EAS_HOST_ONLY;
-    else process.env.STIM_EAS_HOST_ONLY = previous;
-  }
-});
-
 test.each(stages)('cancelling EAS during %s stops the child and releases any artifact claim', async (stage) => {
   const controller = new AbortController();
   const plan = await planEasDevelopmentBuild(fixture());

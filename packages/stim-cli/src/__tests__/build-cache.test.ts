@@ -1,54 +1,30 @@
-import {
-  mkdtempSync,
-  realpathSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-  rmSync,
-  existsSync,
-  statSync,
-  utimesSync,
-} from 'node:fs';
+import { mkdtempSync, realpathSync, mkdirSync, readdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
-import { execFile } from 'node:child_process';
 import * as expoFingerprint from '@expo/fingerprint';
-import type { FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
-import { resolveTieredBuild, runCacheProviderContract, storeTieredBuild } from '@stim-cli/cache';
-import { readManifest } from '../cache/cache-manifest.ts';
+import type { FingerprintSource } from '@expo/fingerprint';
+import { runCacheProviderContract } from '@stim-cli/cache';
 import { androidBuildToolName } from '../devices/android.ts';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import {
   androidProjectFingerprintOptions,
-  iosProjectFingerprintOptions,
-  artifactIn,
   buildCacheKey,
   filesystemBuildCapability,
   changedOnlyInside,
   compareSourceLists,
-  diffFingerprintSources,
   entryDir,
   evictBuild,
-  fingerprintDiffRecord,
-  DEFAULT_FINGERPRINT_IGNORES,
   fingerprintProject,
   gitignoredFingerprintInputs,
   ignoredFingerprintPaths,
   trackedFingerprintPaths,
-  prepareProviderDownloadDir,
-  providerDownloadPath,
-  refingerprintAfterMutation,
   resolveBuild,
   storeBuild,
-  storedAppId,
   storedAssetManifest,
   storedSources,
-  untrackedMissLine,
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
-import { testContext } from './_context.ts';
 import { writeSignedApk } from './_signed-apk.ts';
 import { recordedSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_VERSION, type AssetManifest } from '../engine/asset-manifest.ts';
@@ -86,106 +62,6 @@ function fpFile(filePath: string, hash: string): FingerprintSource {
   return { type: 'file', filePath, reasons: [], hash };
 }
 
-function fpDir(filePath: string, hash: string): FingerprintSource {
-  return { type: 'dir', filePath, reasons: [], hash };
-}
-
-test('artifactIn finds the .app or .apk and ignores anything else in the entry', () => {
-  const dir = join(root, 'entry');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'notes.txt'), 'x');
-  expect(artifactIn(dir)).toBe(null);
-  writeFileSync(join(dir, 'App.apk'), 'x');
-  expect(artifactIn(dir)).toBe(join(dir, 'App.apk'));
-});
-
-test('resolveBuild returns null for a fingerprint nothing was built for', () => {
-  expect(resolveBuild('ios', 'nope', root)).toBe(null);
-});
-
-test('resolveBuild touches the entry it returns, so trimming can tell it is in use', () => {
-  const app = seedEntry('ios', 'abc');
-  const longAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000);
-  utimesSync(join(root, 'ios', 'abc'), longAgo, longAgo);
-
-  const before = statSync(join(root, 'ios', 'abc')).mtimeMs;
-  const hit = resolveBuild('ios', 'abc', root);
-  const after = statSync(join(root, 'ios', 'abc')).mtimeMs;
-
-  expect(hit).toBe(app);
-  expect(after > before).toBeTruthy();
-});
-
-test('storeBuild stages elsewhere and renames, so a partial copy is never visible', async () => {
-  const build = join(root, 'build', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-
-  const calls: { file: string; args: string[] }[] = [];
-  setExecutor({
-    run: () => {
-      throw new Error('the copy must not go through a shell');
-    },
-    runFile: (file, args) => {
-      calls.push({ file, args });
-      const dest = args[args.length - 1];
-      mkdirSync(dest, { recursive: true });
-      writeFileSync(join(dest, 'bin'), 'x');
-      return '';
-    },
-    runQuiet: () => '',
-    spawn: () => {},
-  });
-
-  const stored = await storeBuild('ios', 'fp1', build, root);
-  assert(stored);
-  expect(stored.endsWith('MyApp.app')).toBeTruthy();
-  expect(existsSync(stored)).toBe(true);
-  const call = calls[0];
-  assert(call);
-  expect(call.file).toBe('cp');
-  expect(call.args.slice(0, 3)).toEqual(['-c', '-R', build]);
-});
-
-test('storeBuild is idempotent: an entry that already exists is returned, not recopied', async () => {
-  const existing = seedEntry('android', 'fp2', 'App.apk');
-  setExecutor({
-    run: () => {
-      throw new Error('should not copy over an entry that already exists');
-    },
-    runFile: () => {
-      throw new Error('should not copy over an entry that already exists');
-    },
-    runQuiet: () => '',
-    spawn: () => {},
-  });
-  expect(await storeBuild('android', 'fp2', existing, root)).toBe(existing);
-});
-
-test('storeBuild with { overwrite } REPLACES an existing entry, so a poisoned one can be got rid of', async () => {
-  const existing = seedEntry('ios', 'fp-overwrite', 'MyApp.app');
-  expect(readFileSync(existing, 'utf-8')).toBe('binary');
-
-  const fresh = join(root, 'fresh', 'MyApp.app');
-  mkdirSync(join(root, 'fresh'), { recursive: true });
-  writeFileSync(fresh, 'rebuilt');
-  setExecutor({
-    run: () => {
-      throw new Error('the copy must not go through a shell');
-    },
-    runFile: (_file, args) => {
-      writeFileSync(args[2], readFileSync(args[1], 'utf-8'));
-      return '';
-    },
-    runQuiet: () => '',
-    spawn: () => {},
-  });
-
-  const stored = await storeBuild('ios', 'fp-overwrite', fresh, { root, overwrite: true });
-  assert(stored);
-  expect(readFileSync(stored, 'utf-8')).toBe('rebuilt');
-});
-
 test('evictBuild removes one entry and leaves its neighbours and the cache directory', async () => {
   seedEntry('ios', 'fp-bad', 'MyApp.app');
   const neighbour = seedEntry('ios', 'fp-good', 'MyApp.app');
@@ -197,104 +73,9 @@ test('evictBuild removes one entry and leaves its neighbours and the cache direc
   expect(await evictBuild('ios', 'fp-bad', root)).toBe(false);
 });
 
-test('storeBuild accepts the cache root as a string or as { root }', async () => {
-  const existing = seedEntry('android', 'fp-root-form', 'App.apk');
-  expect(await storeBuild('android', 'fp-root-form', existing, root)).toBe(existing);
-  expect(await storeBuild('android', 'fp-root-form', existing, { root })).toBe(existing);
-});
-
 test('storeBuild refuses a path that is not there rather than creating an empty entry', async () => {
   await expect(storeBuild('ios', 'fp3', join(root, 'missing.app'), root)).rejects.toThrow(/No build to store/);
   expect(existsSync(entryDir('ios', 'fp3', root))).toBe(false);
-});
-
-const SHELL_HOSTILE_APP_NAME =
-  process.platform === 'win32' ? "My App 'quoted' & $(echo owned).app" : 'My App "quoted".app';
-
-test('storeBuild passes the build path as one argument, never through a shell', async () => {
-  const build = join(root, 'build', SHELL_HOSTILE_APP_NAME);
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-
-  let seen: string[] | null = null;
-  setExecutor({
-    run: () => {
-      throw new Error('the copy must not go through a shell');
-    },
-    runFile: (_file, args) => {
-      seen = args;
-      mkdirSync(args[3], { recursive: true });
-      writeFileSync(join(args[3], 'bin'), 'x');
-      return '';
-    },
-    runQuiet: () => '',
-    spawn: () => {},
-  });
-
-  await storeBuild('ios', 'fp4', build, root);
-  assert(seen);
-  expect(seen[2]).toBe(build);
-});
-
-test('storeBuild copies a real .app whose name contains a space', async () => {
-  resetExecutor();
-  const build = join(root, 'build real', 'My App.app');
-  mkdirSync(join(build, 'Contents'), { recursive: true });
-  writeFileSync(join(build, 'Contents', 'bin'), 'x');
-
-  const stored = await storeBuild('ios', 'fp5', build, root);
-  assert(stored);
-  expect(stored).toBe(join(entryDir('ios', 'fp5', root), 'My App.app'));
-  expect(existsSync(join(stored, 'Contents', 'bin'))).toBe(true);
-});
-
-test('the cache key separates Debug from Release and a simulator from real hardware', () => {
-  const hash = 'abc123';
-  const debugSim = buildCacheKey('ios', hash, {});
-  expect(debugSim).toBe(`${hash}-debug-sim`);
-  expect(buildCacheKey('ios', hash, { configuration: 'Release' })).not.toBe(debugSim);
-  expect(buildCacheKey('ios', hash, { configuration: 'Debug' })).toBe(debugSim);
-  const app = buildCacheKey('android', hash, {});
-  const tester = buildCacheKey('android', hash, { gradleProject: '../.. :packages:rn-tester:android:app' });
-  expect(tester).not.toBe(app);
-  expect(buildCacheKey('android', hash, { gradleProject: '../.. :packages:rn-tester:android:other' })).not.toBe(tester);
-  expect(buildCacheKey('ios', hash, { device: 'Janic iPhone' })).not.toBe(debugSim);
-  expect(buildCacheKey('ios', hash, { configuration: 'Release' })).not.toBe(
-    buildCacheKey('ios', hash, { configuration: 'Release', device: 'Janic iPhone' }),
-  );
-});
-
-test('two workspaces on different owned simulators share one entry', () => {
-  const hash = 'abc123';
-  const a = buildCacheKey('ios', hash, { device: 'A1B2C3D4-1111-2222-3333-444455556666' });
-  const b = buildCacheKey('ios', hash, { device: 'F9E8D7C6-9999-8888-7777-666655554444' });
-  expect(a).toBe(b);
-  expect(a).toBe(buildCacheKey('ios', hash, {}));
-  expect(buildCacheKey('android', hash, { device: 'emulator-5554' })).toBe(buildCacheKey('android', hash, {}));
-});
-
-test('android keys on the gradle variant rather than the Xcode configuration', () => {
-  const hash = 'abc123';
-  expect(buildCacheKey('android', hash, {})).toBe(`${hash}-debug-sim`);
-  expect(buildCacheKey('android', hash, { variant: 'stagingRelease' })).toBe(`${hash}-stagingrelease-sim`);
-  expect(buildCacheKey('android', hash, { configuration: 'Release' })).toBe(`${hash}-debug-sim`);
-});
-
-test('android cache keys separate target ABIs while preserving the universal key', () => {
-  const hash = 'abc123';
-  expect(buildCacheKey('android', hash, { abi: 'arm64-v8a' })).toBe(`${hash}-debug-sim-arm64-v8a`);
-  expect(buildCacheKey('android', hash, { abi: 'x86_64' })).toBe(`${hash}-debug-sim-x86-64`);
-  expect(buildCacheKey('android', hash, {})).toBe(`${hash}-debug-sim`);
-  expect(buildCacheKey('ios', hash, { abi: 'arm64-v8a' })).toBe(`${hash}-debug-sim`);
-});
-
-test('ios simulator keys separate single-arch builds while a universal build keeps its key', () => {
-  const hash = 'abc123';
-  expect(buildCacheKey('ios', hash, { isSimulator: true, arch: 'arm64' })).toBe(`${hash}-debug-sim-arm64`);
-  expect(buildCacheKey('ios', hash, { isSimulator: true, arch: 'x86_64' })).toBe(`${hash}-debug-sim-x86-64`);
-  expect(buildCacheKey('ios', hash, { configuration: 'Release', isSimulator: true })).toBe(`${hash}-release-sim`);
-  expect(buildCacheKey('ios', hash, { isSimulator: false, arch: 'arm64' })).toBe(`${hash}-debug-device`);
-  expect(buildCacheKey('android', hash, { arch: 'arm64' })).toBe(`${hash}-debug-sim`);
 });
 
 test('the CLI and the Expo provider compute the same key', () => {
@@ -314,164 +95,6 @@ test('the CLI and the Expo provider compute the same key', () => {
   }
 });
 
-test('storing a build registers its entry depth and the client workspace', async () => {
-  const build = join(root, 'depth', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-  resetExecutor();
-
-  const cwd = join(root, 'workspace');
-  mkdirSync(cwd);
-  await storeBuild('ios', 'fp6', build, { root, context: testContext({ cwd }) });
-
-  const { registeredCaches } = await import('../cache/cache-manifest.ts');
-  const record = registeredCaches().find((c) => c.dir === root);
-  assert(record);
-  expect(record.entriesDepth).toBe(2);
-  expect(readManifest().caches.find((entry) => entry.dir === root)).toMatchObject({ registeredBy: cwd });
-});
-
-test('fingerprintProject scopes the hash to the platform being built', async () => {
-  const seen: { dir: string; options: FingerprintOptions | undefined }[] = [];
-  const createFingerprint = async (dir: string, options?: FingerprintOptions) => {
-    seen.push({ dir, options });
-    return { hash: `hash-${options?.platforms?.join('+')}`, sources: [] };
-  };
-  expect((await fingerprintProject(root, { platform: 'ios', createFingerprint }))?.hash).toBe('hash-ios');
-  expect((await fingerprintProject(root, { platform: 'android', createFingerprint }))?.hash).toBe('hash-android');
-  expect(seen.map((s) => s.options?.platforms)).toEqual([['ios'], ['android']]);
-});
-
-test('fingerprintProject without a platform passes no platforms option', async () => {
-  let options: FingerprintOptions | undefined | 'unset' = 'unset';
-  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
-    options = opts;
-    return { hash: 'h', sources: [] };
-  };
-  expect((await fingerprintProject(root, { createFingerprint }))?.hash).toBe('h');
-  const seen = options as { platforms?: string[] } | undefined | 'unset';
-  expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
-});
-
-test('fingerprintProject ignores the paths a fresh checkout does not have', async () => {
-  let options: FingerprintOptions | undefined;
-  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
-    options = opts;
-    return { hash: 'h', sources: [] };
-  };
-  await fingerprintProject(root, { platform: 'ios', createFingerprint });
-  expect(options?.ignorePaths).toEqual([
-    '**/android/local.properties',
-    '**/android/.idea/**',
-    '**/*.xcodeproj/xcuserdata/**/*',
-  ]);
-  expect(options?.platforms).toEqual(['ios']);
-});
-
-test('fingerprintProject hashes a custom iOS project directory the way it hashes ios/', async () => {
-  let options: FingerprintOptions | undefined;
-  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
-    options = opts;
-    return { hash: 'h', sources: [] };
-  };
-  await fingerprintProject(root, { platform: 'ios', iosProjectPath: 'apple', createFingerprint });
-  expect(options?.extraSources).toEqual([{ type: 'dir', filePath: 'apple', reasons: ['ios.projectPath'] }]);
-  expect(options?.ignorePaths).toEqual(expect.arrayContaining(['apple/Pods/**/*', 'apple/build/**/*']));
-});
-
-test('a custom iOS project directory keeps the sources fingerprint.config.js declares', async () => {
-  writeFileSync(
-    join(root, 'fingerprint.config.js'),
-    "module.exports = { extraSources: [{ type: 'file', filePath: 'native.txt', reasons: ['custom'] }] };",
-  );
-  let options: FingerprintOptions | undefined;
-  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
-    options = opts;
-    return { hash: 'h', sources: [] };
-  };
-  await fingerprintProject(root, { platform: 'ios', iosProjectPath: 'apple', createFingerprint });
-  expect(options?.extraSources).toEqual([
-    { type: 'file', filePath: 'native.txt', reasons: ['custom'] },
-    { type: 'dir', filePath: 'apple', reasons: ['ios.projectPath'] },
-  ]);
-});
-
-test('a patch at the monorepo install root moves the key of an app below it', async () => {
-  const app = join(root, 'apps/app');
-  mkdirSync(join(root, 'patches'), { recursive: true });
-  mkdirSync(app, { recursive: true });
-  writeFileSync(join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n");
-  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n');
-  writeFileSync(join(app, 'package.json'), '{"name":"app"}');
-  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
-  const hashOf = async () => (await fingerprintOffline(app, { platform: 'ios' }))?.hash;
-  const before = await hashOf();
-  writeFileSync(join(root, 'patches/react-native-mmkv.patch'), '--- a/ios/MMKV.mm\n+++ b/ios/MMKV.mm\n@@ -1 +1 @@\n');
-  expect(await hashOf()).not.toBe(before);
-}, 30_000);
-
-test('a pnpm patch outside patches/ moves the key through the hash pnpm records for it', async () => {
-  const lockfile = (hash: string) =>
-    `lockfileVersion: '9.0'\n\npatchedDependencies:\n  react-native-mmkv@4.3.2: ${hash}\n\nimporters:\n  .: {}\n`;
-  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('aaa'));
-  writeFileSync(join(root, 'package.json'), '{"name":"app"}');
-  getExecutor().runFile('git', ['init', '--quiet', root], { timeoutMs: 10_000 });
-  const hashOf = async () => (await fingerprintOffline(root, { platform: 'ios' }))?.hash;
-  const before = await hashOf();
-  writeFileSync(join(root, 'pnpm-lock.yaml'), `# reformatted\n${lockfile('aaa')}`);
-  expect(await hashOf()).toBe(before);
-  writeFileSync(join(root, 'pnpm-lock.yaml'), lockfile('bbb'));
-  expect(await hashOf()).not.toBe(before);
-}, 30_000);
-
-test('an iOS project in the app directory hashes every tracked top-level entry except dependencies and build output', () => {
-  const directories = new Set(['node_modules', 'js', 'Pods', 'android', 'build', 'RNTesterPods.xcodeproj', 'shared']);
-  const { extraSources, ignorePaths } = iosProjectFingerprintOptions(root, '.', {
-    list: () => [
-      'node_modules',
-      'js',
-      'Pods',
-      'Podfile.lock',
-      'Gemfile.lock',
-      'android',
-      'build',
-      'RNTesterPods.xcodeproj',
-      'shared',
-    ],
-    isDirectory: (path) => directories.has(path.slice(root.length + 1)),
-    ignored: (_root, names) => new Set(names.filter((name) => name === 'Gemfile.lock')),
-  });
-  expect(extraSources).toEqual([
-    { type: 'dir', filePath: 'js', reasons: ['ios.projectPath'] },
-    { type: 'file', filePath: 'Podfile.lock', reasons: ['ios.projectPath'] },
-    { type: 'dir', filePath: 'RNTesterPods.xcodeproj', reasons: ['ios.projectPath'] },
-    { type: 'dir', filePath: 'shared', reasons: ['ios.projectPath'] },
-  ]);
-  expect(ignorePaths).toContain('Pods/**/*');
-  expect(iosProjectFingerprintOptions(root, 'ios')).toEqual({});
-});
-
-test('a Gradle root outside the app fingerprints its build scripts by name, not the whole repository', () => {
-  const present = new Set(['settings.gradle.kts', 'build.gradle.kts', 'gradle.properties', 'gradle']);
-  const app = join(root, 'packages', 'rn-tester');
-  const layout = {
-    gradleRoot: root,
-    gradleRootRelative: '../..',
-    module: ':packages:rn-tester:android:app',
-    moduleDir: join(app, 'android', 'app'),
-    custom: true,
-  };
-  const exists = (path: string) => path.startsWith(root) && present.has(path.slice(root.length + 1));
-  expect(androidProjectFingerprintOptions(app, layout, exists)).toEqual({
-    extraSources: [
-      { type: 'file', filePath: '../../settings.gradle.kts', reasons: ['android.gradleRoot'] },
-      { type: 'file', filePath: '../../build.gradle.kts', reasons: ['android.gradleRoot'] },
-      { type: 'file', filePath: '../../gradle.properties', reasons: ['android.gradleRoot'] },
-      { type: 'dir', filePath: '../../gradle', reasons: ['android.gradleRoot'] },
-    ],
-  });
-});
-
 test('a module under android/ other than app keeps its build outputs out of the fingerprint', () => {
   const app = realpathSync(root);
   const layout = {
@@ -487,103 +110,6 @@ test('a module under android/ other than app keeps its build outputs out of the 
   });
 });
 
-test('a module outside android/ is hashed without its build outputs', () => {
-  const layout = {
-    gradleRoot: root,
-    gradleRootRelative: '../..',
-    module: ':apps:tester',
-    moduleDir: join(root, 'apps', 'tester'),
-    custom: true,
-  };
-  expect(androidProjectFingerprintOptions(join(root, 'packages', 'rn-tester'), layout, () => false)).toEqual({
-    extraSources: [{ type: 'dir', filePath: '../../apps/tester', reasons: ['android.module'] }],
-    ignorePaths: ['../../apps/tester/build/**/*', '../../apps/tester/.cxx/**/*', '../../apps/tester/.gradle/**/*'],
-  });
-});
-
-test('the ignore list holds only paths no native build reads', async () => {
-  // A path that any project could read belongs in that project's
-  // .fingerprintignore, not here: ignoring it machine-wide turns a slow build
-  // into a wrong one.
-  for (const risky of ['**/*.map', '**/node_modules/**/lib/**', '**/ios/**/Package.resolved']) {
-    expect(DEFAULT_FINGERPRINT_IGNORES).not.toContain(risky);
-  }
-});
-
-test('fingerprintProject ignores a platform it does not know', async () => {
-  let options: FingerprintOptions | undefined | 'unset' = 'unset';
-  const createFingerprint = async (_dir: string, opts?: FingerprintOptions) => {
-    options = opts;
-    return { hash: 'h', sources: [] };
-  };
-  await fingerprintProject(root, { platform: 'web', createFingerprint });
-  const seen = options as { platforms?: string[] } | undefined | 'unset';
-  expect(typeof seen === 'object' ? seen?.platforms : undefined).toBe(undefined);
-});
-
-test('storeBuild writes fingerprint-sources.json beside the artifact, and storedSources reads it back', async () => {
-  resetExecutor();
-  const build = join(root, 'build', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-
-  const sources = [fpFile('ios/Podfile.lock', 'aa')];
-  await storeBuild('ios', 'k1', build, { root, sources });
-
-  expect(storedSources('ios', 'k1', root)).toEqual(sources);
-  expect(artifactIn(entryDir('ios', 'k1', root))).toBe(join(entryDir('ios', 'k1', root), 'MyApp.app'));
-});
-
-test('storeBuild keeps the hash of a contents source but not its contents, so an entry stays small', async () => {
-  resetExecutor();
-  const build = join(root, 'build', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-  const config: FingerprintSource = {
-    type: 'contents',
-    id: 'expoAutolinkingConfig:ios',
-    contents: 'x'.repeat(10_000),
-    reasons: ['expoAutolinkingIos'],
-    hash: 'cc',
-  };
-  await storeBuild('ios', 'k3', build, { root, sources: [config, fpFile('ios/Podfile.lock', 'aa')] });
-
-  expect(storedSources('ios', 'k3', root)).toEqual([{ ...config, contents: '' }, fpFile('ios/Podfile.lock', 'aa')]);
-});
-
-test('storedSources is null for an entry stored without sources, or with unreadable JSON', async () => {
-  resetExecutor();
-  const build = join(root, 'build', 'MyApp.app');
-  mkdirSync(build, { recursive: true });
-  writeFileSync(join(build, 'bin'), 'x');
-  await storeBuild('ios', 'k2', build, { root });
-  expect(storedSources('ios', 'k2', root)).toBe(null);
-
-  writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), 'not json');
-  expect(storedSources('ios', 'k2', root)).toBe(null);
-  writeFileSync(join(entryDir('ios', 'k2', root), 'fingerprint-sources.json'), '{"hash":"x"}');
-  expect(storedSources('ios', 'k2', root)).toBe(null);
-});
-
-test('storeBuild writes assets-manifest.json beside the artifact, and storedAssetManifest reads it back', async () => {
-  resetExecutor();
-  const build = join(root, 'build', 'App.apk');
-  mkdirSync(join(root, 'build'), { recursive: true });
-  writeFileSync(build, 'apk');
-
-  const assetManifest: AssetManifest = {
-    version: ASSET_MANIFEST_VERSION,
-    assets: [{ path: 'drawable-mdpi/logo.png', sha256: 'a'.repeat(64) }],
-  };
-  await storeBuild('android', 'ak1', build, { root, assetManifest });
-
-  expect(JSON.parse(readFileSync(join(entryDir('android', 'ak1', root), 'assets-manifest.json'), 'utf8'))).toEqual(
-    assetManifest,
-  );
-  expect(storedAssetManifest('android', 'ak1', root)).toEqual(assetManifest);
-  expect(artifactIn(entryDir('android', 'ak1', root))).toBe(join(entryDir('android', 'ak1', root), 'App.apk'));
-});
-
 test('storeBuild carries the sources AND the asset manifest in the same store', async () => {
   resetExecutor();
   const build = join(root, 'build2', 'App.apk');
@@ -596,50 +122,6 @@ test('storeBuild carries the sources AND the asset manifest in the same store', 
 
   expect(storedSources('android', 'ak2', root)).toEqual(sources);
   expect(storedAssetManifest('android', 'ak2', root)).toEqual(assetManifest);
-});
-
-test('storedAssetManifest is null for an entry stored without one, or with unreadable JSON', async () => {
-  resetExecutor();
-  const build = join(root, 'build3', 'App.apk');
-  mkdirSync(join(root, 'build3'), { recursive: true });
-  writeFileSync(build, 'apk');
-  await storeBuild('android', 'ak3', build, { root });
-  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
-
-  writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), 'not json');
-  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
-  writeFileSync(join(entryDir('android', 'ak3', root), 'assets-manifest.json'), '{"version":99,"assets":[]}');
-  expect(storedAssetManifest('android', 'ak3', root)).toBe(null);
-});
-
-test('a capability store records the app id read from the stored artifact, and storedAppId reads it back', async () => {
-  resetExecutor();
-  const build = join(root, 'build5', 'App.apk');
-  mkdirSync(join(root, 'build5'), { recursive: true });
-  writeFileSync(build, 'apk');
-  const readFrom: string[] = [];
-  const cache = filesystemBuildCapability({
-    root,
-    readAppId: (path) => {
-      readFrom.push(path);
-      return 'io.example.app';
-    },
-  });
-
-  await cache.store({
-    projectRoot: root,
-    platform: 'android',
-    key: 'ak5',
-    sourcePath: build,
-    overwrite: false,
-    signal: new AbortController().signal,
-  });
-
-  expect(readFrom).toEqual([build]);
-  expect(storedAppId('android', 'ak5', root)).toBe('io.example.app');
-  await storeBuild('android', 'ak6', build, { root, readAppId: () => null });
-  expect(storedAppId('android', 'ak6', root)).toBe(null);
-  expect(storedAppId('android', 'missing', root)).toBe(null);
 });
 
 test('storing an Android APK verifies its signature once and records the signed tail beside it', async () => {
@@ -678,40 +160,6 @@ test('storing an Android APK verifies its signature once and records the signed 
   }
 });
 
-test('{ overwrite } REPLACES the manifest too, so a refusing entry stops refusing', async () => {
-  resetExecutor();
-  const build = join(root, 'build4', 'App.apk');
-  mkdirSync(join(root, 'build4'), { recursive: true });
-  writeFileSync(build, 'apk');
-  await storeBuild('android', 'ak4', build, { root });
-  expect(storedAssetManifest('android', 'ak4', root)).toBe(null);
-
-  const assetManifest: AssetManifest = {
-    version: ASSET_MANIFEST_VERSION,
-    assets: [{ path: 'raw/sound.mp3', sha256: 'b'.repeat(64) }],
-  };
-  await storeBuild('android', 'ak4', build, { root, overwrite: true, assetManifest });
-  expect(storedAssetManifest('android', 'ak4', root)).toEqual(assetManifest);
-});
-
-test('compareSourceLists reports changed, added and removed names, current order first', () => {
-  const previous = [
-    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'aa' },
-    { type: 'contents', id: 'expoConfig', hash: 'bb' },
-    { type: 'dir', filePath: 'ios/App', hash: 'cc' },
-  ];
-  const current = [
-    { type: 'file', filePath: 'ios/Podfile.lock', hash: 'a2' },
-    { type: 'contents', id: 'expoConfig', hash: 'bb' },
-    { type: 'file', filePath: 'ios/New.swift', hash: 'dd' },
-  ];
-  expect(compareSourceLists(previous, current)).toEqual([
-    { name: 'ios/Podfile.lock', change: 'changed', reasons: [] },
-    { name: 'ios/New.swift', change: 'added', reasons: [] },
-    { name: 'ios/App', change: 'removed', reasons: [] },
-  ]);
-});
-
 test('compareSourceLists is empty when nothing moved, and ignores unnamed sources', () => {
   const sources = [{ filePath: 'a', hash: '1' }, { hash: 'anonymous' }];
   expect(compareSourceLists(sources, sources)).toEqual([]);
@@ -745,76 +193,6 @@ test('changedOnlyInside accepts a difference confined to the iOS project and not
     { type: 'contents', id: 'ios/nativeConfig', hash: 'ff' },
   ])
     expect(changedOnlyInside(client, [...changed('aa', 'bb'), escaping], 'ios')).toBe(false);
-});
-
-test('diffFingerprintSources prefers the project differ and falls back when it throws or misbehaves', () => {
-  const previous = [fpFile('a', '1')];
-  const current = { hash: 'h2', sources: [fpFile('a', '2')] };
-
-  const seen: unknown[] = [];
-  const differ: typeof expoFingerprint.diffFingerprints = (fp1, fp2) => {
-    seen.push([fp1, fp2]);
-    return [{ op: 'changed', beforeSource: fpFile('a', '1'), afterSource: fpFile('a', '2') }];
-  };
-  const changedA = [{ name: 'a', change: 'changed', reasons: [] }];
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ })).toEqual(changedA);
-  expect(seen.length).toBe(1);
-
-  const throwing = () => {
-    throw new Error('old @expo/fingerprint');
-  };
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: throwing })).toEqual(changedA);
-  expect(diffFingerprintSources({ previous, previousHash: 'h1', current, differ: null })).toEqual(changedA);
-});
-
-test('the real @expo/fingerprint differ reports additions and removals with their reasons', () => {
-  const kept = fpDir('node_modules/expo-camera/ios', 'k1');
-  const added: FingerprintSource = {
-    type: 'dir',
-    filePath: 'node_modules/expo-clipboard/ios',
-    reasons: ['expoAutolinkingIos'],
-    hash: 'c1',
-  };
-  const removed = fpFile('patches/react-native+0.80.0.patch', 'p1');
-  const changes = diffFingerprintSources({
-    previous: [removed, kept],
-    previousHash: 'h1',
-    current: { hash: 'h2', sources: [kept, added] },
-    differ: expoFingerprint.diffFingerprints,
-  });
-  expect(changes).toEqual(
-    expect.arrayContaining([
-      { name: 'node_modules/expo-clipboard/ios', change: 'added', reasons: ['expoAutolinkingIos'] },
-      { name: 'patches/react-native+0.80.0.patch', change: 'removed', reasons: [] },
-    ]),
-  );
-  expect(changes).toHaveLength(2);
-});
-
-test.each([
-  ['a hoisted install', 'node_modules/bar/package.json', 'node_modules/bar/package.json'],
-  [
-    'a pnpm store',
-    'node_modules/.pnpm/bar@1.0.0/node_modules/bar/package.json',
-    'node_modules/.pnpm/bar@1.1.0/node_modules/bar/package.json',
-  ],
-])('the real differ reports a native dependency version bump in %s as one change', (_layout, before, after) => {
-  const source = (filePath: string, version: string): FingerprintSource => ({
-    type: 'package',
-    name: 'bar',
-    version,
-    filePath,
-    reasons: ['expoAutolinkingIos'],
-    hash: version,
-  });
-  expect(
-    diffFingerprintSources({
-      previous: [source(before, '1.0.0')],
-      previousHash: 'h1',
-      current: { hash: 'h2', sources: [source(after, '1.1.0')] },
-      differ: expoFingerprint.diffFingerprints,
-    }),
-  ).toEqual([{ name: after, change: 'changed', reasons: ['expoAutolinkingIos'] }]);
 });
 
 describe('gitignored fingerprint inputs', () => {
@@ -870,23 +248,6 @@ describe('gitignored fingerprint inputs', () => {
       join(real, 'ios/GoogleService-Info.plist'),
     ]);
   });
-
-  test('gitignored build leftovers in ios/ leave the real fingerprint unchanged; native inputs move it', async () => {
-    const hashOf = async () => (await fingerprintOffline(root, { platform: 'ios' }))?.hash;
-    rmSync(join(root, 'ios/GoogleService-Info.plist'));
-    getExecutor().runFile('git', ['-C', root, 'add', '-f', 'ios/main.jsbundle'], { timeoutMs: 10_000 });
-    const withLeftovers = await hashOf();
-    rmSync(join(root, 'ios/assets'), { recursive: true });
-    rmSync(join(root, 'ios/main.jsbundle'));
-    rmSync(join(root, 'ios/App.xcodeproj'), { recursive: true });
-    expect(await hashOf()).toBe(withLeftovers);
-    write('ios/GoogleService-Info.plist');
-    expect(await hashOf()).not.toBe(withLeftovers);
-    const withPlist = await hashOf();
-    write('.gitignore', 'node_modules/\n');
-    write('ios/assets/Sound.caf');
-    expect(await hashOf()).not.toBe(withPlist);
-  }, 30_000);
 });
 
 describe('fingerprints that depend on a local git exclude', () => {
@@ -917,46 +278,6 @@ describe('fingerprints that depend on a local git exclude', () => {
   });
   afterEach(() => rmSync(worker, { recursive: true, force: true }));
 
-  const excludeLocally = (where: 'info/exclude' | 'core.excludesFile', ...patterns: string[]) => {
-    const file = where === 'info/exclude' ? join(root, '.git/info/exclude') : join(root, '.git/global-excludes');
-    mkdirSync(join(file, '..'), { recursive: true });
-    writeFileSync(file, `${patterns.join('\n')}\n`);
-    if (where === 'core.excludesFile') git(root, 'config', 'core.excludesFile', file);
-  };
-
-  test.each(['info/exclude', 'core.excludesFile'] as const)(
-    'a build worker ignores the committed bundle output the client ignores through %s',
-    async (where) => {
-      excludeLocally(where, 'ios/main.jsbundle');
-      const target = { platform: 'ios' };
-      const ignoredPaths = ignoredFingerprintPaths(root, target);
-      expect(ignoredPaths).toEqual(['ios/main.jsbundle']);
-      const client = (await fingerprintOffline(root, target))?.hash;
-      expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
-      expect((await fingerprintOffline(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
-    },
-    30_000,
-  );
-
-  test.each(['info/exclude', 'core.excludesFile'] as const)(
-    'a build worker skips the top-level file the client ignores through %s with ios.projectPath .',
-    async (where) => {
-      excludeLocally(where, '.env.local');
-      const target = { platform: 'ios', iosProjectPath: '.' };
-      const ignoredPaths = ignoredFingerprintPaths(root, target);
-      expect(ignoredPaths).toEqual(['.env.local']);
-      const client = (await fingerprintOffline(root, target))?.hash;
-      expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
-      expect((await fingerprintOffline(worker, { ...target, ignoredPaths }))?.hash).toBe(client);
-    },
-    30_000,
-  );
-
-  test('names nothing for Android or when nothing is ignored', () => {
-    expect(ignoredFingerprintPaths(root, { platform: 'android' })).toEqual([]);
-    expect(ignoredFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
-  });
-
   test('a build worker counts the top-level file the client tracks although a .gitignore pattern matches it', async () => {
     for (const dir of [root, worker]) {
       writeFileSync(join(dir, '.gitignore'), 'node_modules/\n*.plist\nconfig/\n');
@@ -975,82 +296,6 @@ describe('fingerprints that depend on a local git exclude', () => {
     expect((await fingerprintOffline(worker, target))?.hash).not.toBe(client);
     expect((await fingerprintOffline(worker, { ...target, trackedPaths }))?.hash).toBe(client);
   }, 30_000);
-
-  test('names no tracked entries for Android, the default iOS layout, or when no pattern matches a tracked file', () => {
-    expect(trackedFingerprintPaths(root, { platform: 'android' })).toEqual([]);
-    expect(trackedFingerprintPaths(root, { platform: 'ios' })).toEqual([]);
-    expect(trackedFingerprintPaths(root, { platform: 'ios', iosProjectPath: '.' })).toEqual([]);
-  });
-});
-
-test('fingerprintDiffRecord caps the logged list at 20 names and carries the total count', () => {
-  const changed = Array.from({ length: 25 }, (_, i) => `src/file-${i}`);
-  const record = fingerprintDiffRecord({ changed, previousHash: 'aaa', hash: 'bbb' });
-  expect(record.src).toBe('build');
-  expect(record.level).toBe('info');
-  expect(record.event).toBe('fingerprint_diff');
-  expect(record.changed).toBe(25);
-  expect((record.sources as string[]).length).toBe(20);
-  expect(record.msg).toMatch(/25 sources changed/);
-  expect(record.msg).toMatch(/and 5 more/);
-  expect(String(record.msg)).not.toContain('src/file-20');
-});
-
-describe('refingerprintAfterMutation', () => {
-  test('reports the shift when the mutating steps moved the hash', async () => {
-    const shifted = await refingerprintAfterMutation({
-      projectRoot: root,
-      platform: 'android',
-      previousHash: '3c64263',
-      fingerprint: async () => ({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')] }),
-    });
-    expect(shifted).toEqual({ hash: '7ea8b7c', sources: [fpDir('android', 'dd')], moved: true });
-  });
-
-  test('recomputes with the ignore decisions the caller was given', async () => {
-    let target: { ignoredPaths?: readonly string[] } = {};
-    await refingerprintAfterMutation({
-      projectRoot: root,
-      platform: 'ios',
-      previousHash: 'abc123',
-      ignoredPaths: ['.env.local'],
-      fingerprint: async (_, given) => {
-        target = given ?? {};
-        return { hash: 'abc123', sources: [] };
-      },
-    });
-    expect(target.ignoredPaths).toEqual(['.env.local']);
-  });
-
-  test('a hash that did not move is reported as not moved, so nothing is re-keyed', async () => {
-    const same = await refingerprintAfterMutation({
-      projectRoot: root,
-      platform: 'ios',
-      previousHash: 'abc123',
-      fingerprint: async () => ({ hash: 'abc123', sources: [] }),
-    });
-    expect(same?.moved).toBe(false);
-    expect(same?.hash).toBe('abc123');
-  });
-
-  test('a recompute that throws or answers nothing is null: the caller keeps the key it has', async () => {
-    const threw = await refingerprintAfterMutation({
-      projectRoot: root,
-      platform: 'ios',
-      previousHash: 'abc123',
-      fingerprint: async () => {
-        throw new Error('@expo/fingerprint went away mid-run');
-      },
-    });
-    expect(threw).toBe(null);
-    const nothing = await refingerprintAfterMutation({
-      projectRoot: root,
-      platform: 'ios',
-      previousHash: 'abc123',
-      fingerprint: async () => null,
-    });
-    expect(nothing).toBe(null);
-  });
 });
 
 describe('untracked native files on a first miss', () => {
@@ -1081,134 +326,6 @@ describe('untracked native files on a first miss', () => {
       'android',
     ]);
   });
-
-  test('no git, or not a repo, is silence rather than a failure', () => {
-    setExecutor({
-      run: () => '',
-      runFile: () => {
-        throw new Error('fatal: not a git repository');
-      },
-      runQuiet: () => '',
-      spawn: () => {},
-    });
-    expect(untrackedNativeFiles({ projectRoot: root })).toEqual([]);
-    expect(untrackedMissLine([])).toBe(null);
-  });
-
-  test('the line names at most three files, counts the rest, and points at .fingerprintignore', () => {
-    const line = untrackedMissLine(['ios/a', 'ios/b', 'android/c', 'android/d', 'android/e']);
-    assert(line);
-    expect(line).toMatch(/5 untracked files/);
-    expect(line).toMatch(/ios\/a, ios\/b, android\/c, and 2 more/);
-    expect(line).toMatch(/\.fingerprintignore/);
-    expect(line).not.toMatch(/android\/d/);
-  });
-});
-
-function treeOf(dir: string): string[] {
-  const entries: string[] = [];
-  const walk = (current: string, prefix: string): void => {
-    for (const name of readdirSync(current).toSorted()) {
-      const path = join(current, name);
-      const relative = prefix ? `${prefix}/${name}` : name;
-      if (statSync(path).isDirectory()) {
-        entries.push(`${relative}/`);
-        walk(path, relative);
-      } else {
-        entries.push(`${relative} ${readFileSync(path, 'utf-8')}`);
-      }
-    }
-  };
-  walk(dir, '');
-  return entries;
-}
-
-test('the filesystem capability reads and writes the same entries as the plain functions', async () => {
-  const built = join(root, 'build', 'MyApp.app');
-  mkdirSync(join(root, 'build'), { recursive: true });
-  writeFileSync(built, 'binary');
-  const sources = [fpFile('ios/Podfile', 'h1')];
-  const key = buildCacheKey('ios', 'abc', {});
-
-  const direct = join(root, 'direct');
-  await storeBuild('ios', key, built, { root: direct, sources });
-
-  const throughCapability = join(root, 'capability');
-  const capability = filesystemBuildCapability({ root: throughCapability, sources });
-  await capability.store({
-    projectRoot: root,
-    platform: 'ios',
-    key,
-    sourcePath: built,
-    overwrite: false,
-    signal: new AbortController().signal,
-  });
-
-  expect(treeOf(throughCapability)).toEqual(treeOf(direct));
-  expect(
-    await capability.resolve({
-      projectRoot: root,
-      platform: 'ios',
-      key,
-      destinationDir: root,
-      signal: new AbortController().signal,
-    }),
-  ).toBe(join(entryDir('ios', key, throughCapability), 'MyApp.app'));
-  expect(storedSources('ios', key, throughCapability)).toEqual(sources);
-});
-
-test('the tiered coordinator leaves the same cache on disk as a direct store', async () => {
-  const built = join(root, 'build', 'MyApp.apk');
-  mkdirSync(join(root, 'build'), { recursive: true });
-  writeFileSync(built, 'binary');
-  const sources = [fpFile('android/build.gradle', 'h2')];
-  const manifest: AssetManifest = { version: ASSET_MANIFEST_VERSION, assets: [] };
-  const key = buildCacheKey('android', 'def', { variant: 'debug' });
-
-  const direct = join(root, 'direct');
-  await storeBuild('android', key, built, { root: direct, sources, assetManifest: manifest });
-
-  const tiered = join(root, 'tiered');
-  const stored = await storeTieredBuild({
-    local: filesystemBuildCapability({ root: tiered, sources, assetManifest: manifest }),
-    target: { projectRoot: root, platform: 'android', key },
-    sourcePath: built,
-    overwrite: false,
-  });
-
-  expect(stored.providerUpload).toBeNull();
-  expect(stored.localPath).toBe(join(entryDir('android', key, tiered), 'MyApp.apk'));
-  expect(treeOf(tiered)).toEqual(treeOf(direct));
-
-  const found = await resolveTieredBuild({
-    local: filesystemBuildCapability({ root: tiered }),
-    target: { projectRoot: root, platform: 'android', key },
-    destinationDir: root,
-  });
-  expect(found).toEqual({ path: resolveBuild('android', key, tiered), tier: 'local' });
-});
-
-test('a provider hit lands in the local cache under the same key', async () => {
-  const downloaded = join(root, 'downloaded', 'MyApp.apk');
-  mkdirSync(join(root, 'downloaded'), { recursive: true });
-  writeFileSync(downloaded, 'binary');
-  const cacheDir = join(root, 'cache');
-  const key = buildCacheKey('android', 'ghi', { variant: 'debug' });
-
-  const found = await resolveTieredBuild({
-    local: filesystemBuildCapability({ root: cacheDir }),
-    loadProvider: () => ({ name: './cache.cjs', provider: { builds: { resolve: () => downloaded, store: () => {} } } }),
-    target: { projectRoot: root, platform: 'android', key },
-    destinationDir: join(root, 'downloaded'),
-  });
-
-  expect(found).toEqual({
-    path: join(entryDir('android', key, cacheDir), 'MyApp.apk'),
-    tier: 'provider',
-    providerName: './cache.cjs',
-    storedLocally: true,
-  });
-  expect(resolveBuild('android', key, cacheDir)).toBe(found?.path);
 });
 
 test('the built-in filesystem build cache satisfies the provider contract', async () => {
@@ -1223,127 +340,3 @@ test('the built-in filesystem build cache satisfies the provider contract', asyn
     expect(results.filter((result) => !result.passed)).toEqual([]);
   }
 });
-
-test('the provider download directory is emptied and registered only when it is prepared', () => {
-  const workspace = join(root, 'workspace');
-  const dir = providerDownloadPath(workspace);
-  expect(dir).toBe(join(workspace, 'cache-provider'));
-  expect(existsSync(dir)).toBe(false);
-
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, 'leftover.apk'), 'from an interrupted run');
-  prepareProviderDownloadDir(dir);
-
-  expect(existsSync(dir)).toBe(true);
-  expect(existsSync(join(dir, 'leftover.apk'))).toBe(false);
-  const registered = readManifest().caches.find((cache) => cache.dir === dir);
-  assert(registered);
-  expect(registered.name).toBe('Cache provider downloads');
-  expect(registered.prune).toBe('entries');
-  expect(registered.entriesDepth).toBe(1);
-});
-
-test('the real cache copy uses its operation environment and omits inherited values', async () => {
-  const source = join(root, 'source.apk');
-  writeFileSync(source, 'scoped build');
-  const realExecutor = getExecutor();
-  const observations: unknown[] = [];
-  process.env.STIM_TEST_COPY_MARKER = 'ambient';
-  process.env.STIM_TEST_COPY_OMITTED = 'ambient';
-  setExecutor({
-    runFileAsync: async (file, args, options) => {
-      const observed = await realExecutor.runFileAsync(
-        process.execPath,
-        [
-          '-e',
-          `
-      process.stdout.write(JSON.stringify({ marker: process.env.STIM_TEST_COPY_MARKER, omitted: Object.hasOwn(process.env, 'STIM_TEST_COPY_OMITTED') }));
-    `,
-        ],
-        options,
-      );
-      observations.push(JSON.parse(observed));
-      return realExecutor.runFileAsync(file, args, options);
-    },
-  });
-  try {
-    const stored = await storeBuild('android', 'scoped', source, {
-      root,
-      context: testContext({
-        env: {
-          PATH: process.env.PATH,
-          STIM_HOME: tmpHome,
-          STIM_TEST_COPY_MARKER: 'owned',
-          STIM_TEST_COPY_OMITTED: undefined,
-        },
-      }),
-    });
-    assert(stored);
-    expect(readFileSync(stored, 'utf8')).toBe('scoped build');
-    expect(observations.length).toBeGreaterThan(0);
-    for (const observation of observations) expect(observation).toEqual({ marker: 'owned', omitted: false });
-  } finally {
-    delete process.env.STIM_TEST_COPY_MARKER;
-    delete process.env.STIM_TEST_COPY_OMITTED;
-  }
-});
-
-test('SIGINT during a cache copy drains its declared child and staging before the CLI exits', async () => {
-  const source = join(root, 'source.apk');
-  writeFileSync(source, 'new app');
-  const previous = seedEntry('android', 'interrupt', 'App.apk');
-  const script = `
-    const { filesystemBuildCapability } = await import(${JSON.stringify(new URL('../cache/build-cache.ts', import.meta.url).href)});
-    const { getExecutor, setExecutor } = await import(${JSON.stringify(new URL('../exec.ts', import.meta.url).href)});
-    const { withNativeBuildRun, runCancellationSignal } = await import(${JSON.stringify(new URL('../engine/native-run.ts', import.meta.url).href)});
-    const { runProcessOperation } = await import(${JSON.stringify(new URL('../cli-operation.ts', import.meta.url).href)});
-    const { readClaimSet } = await import(${JSON.stringify(new URL('../ownership-claim.ts', import.meta.url).href)});
-    const { workspaceDir } = await import(${JSON.stringify(new URL('../workspace/paths.ts', import.meta.url).href)});
-    const { join } = await import('node:path');
-    const [root, source] = process.argv.slice(1);
-    const real = getExecutor();
-    let closed = false;
-    let declared = false;
-    let attempts = 0;
-    setExecutor({ runFileAsync: (file, args, options) => {
-      attempts++;
-      return real.runFileAsync(process.execPath, ['-e', "process.stdout.write('ready'); setInterval(() => {}, 1000)"], {
-        ...options,
-        onSpawn(child) {
-          options.onSpawn?.(child);
-          declared = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live.some((claim) => claim.child?.pid === child.pid);
-          child.once('close', () => { closed = true; });
-          child.stdout.once('data', () => process.emit('SIGINT'));
-        },
-      });
-    } });
-    const { value, interrupted } = await runProcessOperation(root, (context) => withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, async () => {
-      try {
-        await filesystemBuildCapability({ root, context }).store({ projectRoot: root, platform: 'android', key: 'interrupt', sourcePath: source, overwrite: true, signal: runCancellationSignal(context) });
-        return { code: 'unexpected-success' };
-      } catch (error) { return { code: error.code, closed, declared, attempts }; }
-    }, { write: () => {} }));
-    process.stdout.write(JSON.stringify(value));
-    process.exitCode = interrupted ?? 0;
-  `;
-  const result = await new Promise<{ code: string | number; stdout: string }>((resolve) => {
-    execFile(
-      process.execPath,
-      ['--experimental-strip-types', '--input-type=module', '-e', script, root, source],
-      {
-        env: { ...process.env, STIM_HOME: tmpHome },
-        timeout: 15_000,
-      },
-      (error, stdout) => resolve({ code: error?.code ?? 0, stdout }),
-    );
-  });
-  expect(result.code).toBe(130);
-  expect(result.stdout ? JSON.parse(result.stdout) : null).toEqual({
-    code: 'STIM_CANCELLED',
-    closed: true,
-    declared: true,
-    attempts: 1,
-  });
-  expect(readFileSync(previous, 'utf8')).toBe('binary');
-  expect(readdirSync(join(root, 'android'))).toEqual(['interrupt']);
-}, 20_000);

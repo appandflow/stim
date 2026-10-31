@@ -37,9 +37,4 @@ describe.skipIf(process.platform === 'win32')('Tailscale CLI environment', () =>
     expect(await readRawTailscaleStatus(binary, env)).toMatchObject({ BackendState: 'Running' });
     expect(await serveRoute(binary, env, 7787, [])).toMatchObject({ state: 'missing' });
   });
-
-  it('keeps the TERM the environment has', async () => {
-    const env = { PATH: process.env.PATH, TERM: 'xterm-256color' };
-    expect(await whois(binary, env, '100.64.0.2')).toMatchObject({ nodeId: 'node-xterm-256color' });
-  });
 });

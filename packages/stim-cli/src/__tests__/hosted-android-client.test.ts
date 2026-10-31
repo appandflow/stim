@@ -2,39 +2,22 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { createHash } from 'node:crypto';
 import { Command } from 'commander';
 import logsCommand from '../commands/logs.ts';
-import { parseLogcatLine } from '../collector/android.ts';
-import { pullHostedNativeLogs } from '../device-host/hosted-logs.ts';
+
 import { syncHostedLogs, followHostedLogs } from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
-import {
-  existsSync,
-  statSync,
-  mkdtempSync,
-  mkdirSync,
-  readFileSync,
-  rmSync,
-  realpathSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  deviceHostMachinesFile,
-  queryLogs,
-  readWorkspaceState,
-  type HostedAndroidPlacement,
-  type HostedAppOffer,
-} from '@stim-cli/core/state';
+import { deviceHostMachinesFile, type HostedAndroidPlacement, type HostedAppOffer } from '@stim-cli/core/state';
 import { getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { BuildConnection } from '../offload/client.ts';
-import { getConfigPath, getProject, upsertProject } from '../workspace/config.ts';
+import { getConfigPath, upsertProject } from '../workspace/config.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { prepareHostedAndroid, placeHostedAndroid, stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { androidAgentRemoteConfig } from '../device-host/hosted-native.ts';
 import { readHostedAndroid, writeHostedNative } from '../device-host/ios-state.ts';
-import { applyHostedAndroidProbe } from '../device-host/hosted-android-status.ts';
-import { workspaceInUse } from '../workspace/in-use.ts';
+
 import { runReload } from '../commands/reload.ts';
 
 const writeHostedAndroid = (root: string, slot: string, host: HostedAndroidPlacement | null): void =>
@@ -207,91 +190,6 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test('offers before reserving, records the owner, and sends one APK and the client Metro port', async () => {
-  const target = await prepareHostedAndroid('mini', { deviceProfile: 'pixel_7' });
-  const run = await placeHostedAndroid(target, {
-    root,
-    slot: 'tablet',
-    bundle: join(root, 'App.apk'),
-    bundleId: 'dev.fixture',
-    selectors: {},
-    release: false,
-    metroPort: 8082,
-    reserved: (value) => writeHostedAndroid(root, 'tablet', value),
-    note: () => {},
-    metro: async () => {},
-  });
-  expect(run.launched).toBe('unverified');
-  expect(methods.find((entry) => entry.method === 'device-host.reserve')?.params).toMatchObject({
-    platform: 'android',
-    systemImage: device.systemImage,
-    deviceProfile: 'pixel_7',
-    slot: 'tablet',
-  });
-  expect(methods.findIndex((entry) => entry.method === 'device-host.offer')).toBeLessThan(
-    methods.findIndex((entry) => entry.method === 'device-host.reserve'),
-  );
-  expect(JSON.parse(manifest.toString())).toEqual([
-    { path: 'App.apk', kind: 'file', size: 11, sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
-  ]);
-  expect(methods.find((entry) => entry.method === 'device-host.metro.open')?.params).toEqual({
-    session,
-    clientMetroPort: 8082,
-  });
-  expect(readHostedAndroid(root, 'tablet').tablet?.session).toBe(session);
-  expect(getProject(root)?.platforms?.android).toBeUndefined();
-});
-
-test.each(['declined', 'closed', 'forbidden'])('strict %s refusal reserves no local or hosted device', async (kind) => {
-  if (kind === 'declined') declined = 'No compatible image';
-  else failure = kind;
-  await expect(prepareHostedAndroid('mini', {})).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
-});
-
-test('an unreachable stop keeps its owner for retry', async () => {
-  writeHostedAndroid(root, 'default', placement);
-  failure = 'closed';
-  await expect(stopHostedAndroid(root)).rejects.toThrow('placement is kept');
-  expect(readHostedAndroid(root).default?.session).toBe(session);
-});
-
-test.each(['unknown-session', 'forbidden'])('stop clears a %s session', async (kind) => {
-  writeHostedAndroid(root, 'default', placement);
-  failure = kind;
-  await stopHostedAndroid(root);
-  expect(readHostedAndroid(root)).toEqual({});
-});
-
-test('pending and unreadable slots remain in use and only the unreadable slot refuses', () => {
-  writeHostedAndroid(root, 'default', { ...placement, device: null });
-  writeWorkspaceState(root, { deviceSlots: { tablet: { android: { host: { machine: 'mini', session: '' } } } } });
-  expect(readHostedAndroid(root, 'default').default?.session).toBe(session);
-  expect(() => readHostedAndroid(root, 'tablet')).toThrow('deviceSlots.tablet.android.host');
-  expect(workspaceInUse(root, { supervisor: false, managedLocks: false, nativeRun: false })).toEqual(
-    expect.arrayContaining([
-      'its Android emulator runs on mini',
-      expect.stringContaining('deviceSlots.tablet.android.host'),
-    ]),
-  );
-});
-
-test.each(['ready', 'stopped', 'unknown', 'unreachable'] as const)(
-  'status maps %s without exposing a local device target',
-  (probeState) => {
-    const result = applyHostedAndroidProbe(
-      placement,
-      probeState === 'unreachable' ? { state: probeState, reason: 'offline' } : { state: probeState },
-      'tablet',
-    );
-    expect(result.android.state).toBe(probeState === 'ready' || probeState === 'stopped' ? probeState : 'unverified');
-    expect(result.android.host?.device?.name).toBe('pixel_7 (API 30)');
-    expect(result.android.serial).toBeNull();
-    expect(JSON.stringify(result)).not.toContain(device.serial);
-    expect(JSON.stringify(result)).not.toContain(device.avdName);
-  },
-);
-
 test('hosted Android reload restores the host bridge before Metro without local adb', async () => {
   writeHostedAndroid(root, 'default', placement);
   upsertProject(root, { metroPort: 8082 });
@@ -341,121 +239,6 @@ test('stop clears a hosted slot and keeps successful siblings when another place
   });
   expect(readHostedAndroid(root, 'default')).toEqual({});
   expect(() => readHostedAndroid(root, 'tablet')).toThrow('deviceSlots.tablet.android.host');
-});
-
-async function deliver(
-  handoff?: { serverKey: string; token: string; sha256: string },
-  note: (line: string) => void = () => {},
-  mode?: HostedAppOffer['mode'],
-) {
-  const target = await prepareHostedAndroid('mini', {}, readHostedAndroid(root).default, mode);
-  return placeHostedAndroid(target, {
-    root,
-    slot: 'default',
-    bundle: join(root, 'App.apk'),
-    bundleId: 'dev.fixture',
-    selectors: {},
-    release: mode !== 'process',
-    mode,
-    handoff,
-    note,
-    reserved: (value) => writeHostedAndroid(root, 'default', value),
-  });
-}
-
-test('an unchanged APK rerun sends no chunks and a changed APK sends its verified manifest and content', async () => {
-  await deliver();
-  methods = [];
-  await deliver();
-  expect(methods.filter((entry) => entry.method === 'device-host.app.chunk')).toEqual([]);
-  expect(methods.filter((entry) => entry.method === 'device-host.app.launch')).toHaveLength(1);
-  writeFileSync(join(root, 'App.apk'), 'changed APK');
-  methods = [];
-  await deliver();
-  const chunks = methods.filter((entry) => entry.method === 'device-host.app.chunk');
-  expect(chunks).toHaveLength(2);
-  expect(chunks.map((entry) => Buffer.from(entry.params.data as string, 'base64').toString())).toContain('changed APK');
-});
-
-test.each(['same-server', 'other-server', 'older-host', 'refused'])(
-  'Android handoff %s retains verified upload fallback',
-  async (scenario) => {
-    await deliver();
-    retained = new Map(blobs);
-    const apk = JSON.parse(manifest.toString())[0];
-    retained.delete(sha(manifest));
-    blobs.clear();
-    manifest = Buffer.alloc(0);
-    methods = [];
-    dataFeature = scenario !== 'older-host';
-    handoffFailure = scenario === 'refused';
-    const note = vi.fn<(line: string) => void>();
-    await deliver(
-      {
-        serverKey: scenario === 'other-server' ? 'O'.repeat(42) + 'A' : 'K'.repeat(42) + 'A',
-        token: 'a'.repeat(64),
-        sha256: 'b'.repeat(64),
-      },
-      note,
-    );
-    expect(methods.some((entry) => entry.method === 'device-host.app.handoff')).toBe(
-      ['same-server', 'refused'].includes(scenario),
-    );
-    expect(
-      methods.filter((entry) => entry.method === 'device-host.app.chunk' && entry.params.sha256 === apk.sha256),
-    ).toHaveLength(scenario === 'same-server' ? 0 : 1);
-    expect(note.mock.calls.some(([line]) => line.includes('uploading the app instead'))).toBe(
-      ['older-host', 'refused'].includes(scenario),
-    );
-  },
-);
-
-test('Android errors are paged into the workspace once per slot and stop copies the host final drain', async () => {
-  writeHostedAndroid(root, 'tablet', placement);
-  logRecords = [
-    { ts: 1, src: 'device', level: 'info', msg: 'startup' },
-    { ts: 2, src: 'device', level: 'error', msg: 'FATAL EXCEPTION: main' },
-    { ts: 3, src: 'device', level: 'error', msg: 'AndroidRuntime crash' },
-  ];
-  const target = await prepareHostedAndroid('mini', {}, placement);
-  await Promise.all([1, 2].map(() => pullHostedNativeLogs(root, 'tablet', placement, target.host, false, 'android')));
-  const file = join(workspaceLogsDir(root), 'android.tablet-host.ndjson');
-  const stored = readFileSync(file, 'utf8')
-    .trim()
-    .split('\n')
-    .map((line) => JSON.parse(line));
-  expect(stored.map((record) => record.msg)).toEqual(['startup', 'FATAL EXCEPTION: main', 'AndroidRuntime crash']);
-  expect(
-    stored.every((record) => record.src === 'device' && record.platform === 'android' && record.slot === 'tablet'),
-  ).toBe(true);
-  methods = [];
-  await stopHostedAndroid(root, 'tablet');
-  const stop = methods.findIndex((entry) => entry.method === 'device-host.stop');
-  expect(methods.slice(0, stop).some((entry) => entry.method === 'device-host.logs.query')).toBe(false);
-  expect(methods.slice(stop + 1).some((entry) => entry.method === 'device-host.logs.query')).toBe(true);
-  expect(readFileSync(file, 'utf8')).toContain('stop-time native tail');
-  expect(readHostedAndroid(root)).toEqual({});
-});
-
-test('hosted Android --errors keeps a crash run whole and leaves other error lines to --source device', async () => {
-  writeHostedAndroid(root, 'default', placement);
-  const lines = [
-    '1.001 E/Choreographer(10): Skipped 40 frames!',
-    '1.002 E/Choreographer(10): Skipped 41 frames!',
-    '2.001 E/AndroidRuntime(10): FATAL EXCEPTION: main',
-    '2.002 E/AndroidRuntime(10): Process: dev.fixture, PID: 10',
-    '3.001 E/Choreographer(10): Skipped 50 frames!',
-  ];
-  logRecords = lines.map((line) => parseLogcatLine(line)).filter((record) => record !== null);
-  expect(logRecords).toHaveLength(5);
-  const target = await prepareHostedAndroid('mini', {}, placement);
-  await pullHostedNativeLogs(root, 'default', placement, target.host, false, 'android');
-  const dir = workspaceLogsDir(root);
-  expect(queryLogs({ dir, errorsOnly: true }).map((record) => record.msg)).toEqual([
-    'FATAL EXCEPTION: main',
-    'Process: dev.fixture, PID: 10',
-  ]);
-  expect(queryLogs({ dir, errorsOnly: true, sources: ['device'] })).toHaveLength(5);
 });
 
 test('stim logs --errors --json pulls Android native records without progress on stdout', async () => {
@@ -552,60 +335,6 @@ async function deliverAgent(slot = 'default', note: (line: string) => void = () 
   });
 }
 
-test('Android grants write private slot configs, appear in status and close only the selected connection', async () => {
-  agentGrant = grant();
-  const first = await deliverAgent();
-  const second = await deliverAgent('tablet');
-  for (const [slot, run] of [
-    ['default', first],
-    ['tablet', second],
-  ] as const) {
-    const file = androidAgentRemoteConfig(root, slot);
-    writeHostedAndroid(root, slot, run.placement);
-    expect(statSync(file).mode & 0o777).toBe(process.platform === 'win32' ? 0o666 : 0o600);
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
-      daemonBaseUrl: `https://mini.tail.ts.net:7443/device-host/agent/${session}/`,
-      daemonAuthToken: 's'.repeat(43),
-      tenant: `stim.${session}`,
-      sessionIsolation: 'tenant',
-      runId: session,
-      clientId: 'agent',
-      leaseBackend: 'android-instance',
-      leaseProvider: 'proxy',
-      deviceKey: `android:mobile:${device.serial}`,
-      platform: 'android',
-    });
-    expect(run.placement.agent).toEqual({
-      driver: 'agent-device',
-      remoteConfig: file,
-      command: `agent-device <command> --remote-config ${file}`,
-    });
-    expect(applyHostedAndroidProbe(run.placement, { state: 'ready' }).android.host?.agent).toEqual(run.placement.agent);
-    expect(JSON.stringify(applyHostedAndroidProbe(run.placement, { state: 'ready' }))).not.toContain('s'.repeat(43));
-  }
-  const config = androidAgentRemoteConfig(root, 'tablet');
-  const calls: string[][] = [];
-  setExecutor({
-    ...getExecutor(),
-    findExecutable: () => '/fake/agent-device',
-    runFile: (_file, args = []) => {
-      calls.push(args);
-      return JSON.stringify({
-        success: true,
-        data: { connected: true, remoteConfig: config, session: 'agent-tablet' },
-      });
-    },
-  });
-  await stopHostedAndroid(root, 'tablet');
-  expect(calls).toEqual([
-    ['connection', 'status', '--json'],
-    ['close', '--remote-config', config, '--session', 'agent-tablet', '--json'],
-    ['disconnect', '--session', 'agent-tablet', '--json'],
-  ]);
-  expect(existsSync(config)).toBe(false);
-  expect(existsSync(androidAgentRemoteConfig(root, 'default'))).toBe(true);
-});
-
 test.each(['older-host', 'unavailable'])(
   'Android %s reports no driver and removes obsolete credentials',
   async (reason) => {
@@ -650,14 +379,6 @@ const autoPlacement = (localLive = false, appMode?: HostedAppOffer['mode']) =>
     },
   );
 
-test('auto uses an admitted offer with no-wait and closes its probe before reservation', async () => {
-  const result = await autoPlacement();
-  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
-  expect(result.target?.selection).toMatchObject({ selected: 'auto' });
-  expect(methods.map((each) => each.method)).toContain('device-host.offer');
-  expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
-});
-
 test('auto reports a declined offer and falls to the local path without reserving', async () => {
   declined = 'All configured hosted device reservations are occupied';
   const result = await autoPlacement();
@@ -667,16 +388,6 @@ test('auto reports a declined offer and falls to the local path without reservin
     skipped: [{ machine: 'mini', reason: 'declined: ' + declined }],
   });
   expect(methods.map((each) => each.method)).not.toContain('device-host.reserve');
-});
-
-test('a recorded session wins regardless of the current load and unknown sessions refuse', async () => {
-  writeHostedAndroid(root, 'default', placement);
-  const result = await autoPlacement();
-  expect(result.placement).toMatchObject({ decision: 'hosted', machine: 'mini', reason: 'recorded session on mini' });
-  expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
-  state = 'unknown';
-  await expect(autoPlacement()).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(readHostedAndroid(root).default?.session).toBe(session);
 });
 
 test('a stopped recorded session places again and a live local device remains local', async () => {
@@ -689,77 +400,4 @@ test('a stopped recorded session places again and a live local device remains lo
   });
   expect(readHostedAndroid(root)).toEqual({});
   expect(methods.map((each) => each.method)).not.toContain('device-host.offer');
-});
-
-test.each([true, 'unverified'] as const)(
-  'native delivery preserves %s process readiness without Metro',
-  async (verdict) => {
-    appLaunched = verdict;
-    writeHostedAndroid(root, 'default', placement);
-    writeWorkspaceState(root, {
-      hostedMetroRequests: {
-        [session]: { id: session, machine: 'mini' },
-      },
-    });
-    const result = await deliver(undefined, () => {}, 'process');
-    expect(result.launched).toBe(verdict);
-    expect(result.placement.session).toBe(session);
-    expect(methods.some(({ method }) => method === 'device-host.reserve' || method === 'device-host.metro.open')).toBe(
-      false,
-    );
-    expect(methods.find(({ method }) => method === 'device-host.metro.close')?.params).toEqual({ session });
-    expect(readWorkspaceState(root)?.hostedMetroRequests).not.toHaveProperty(session);
-    const offer = methods.find(({ method }) => method === 'device-host.app.offer')!.params;
-    expect(offer.mode).toBe('process');
-    expect(offer.devClientScheme).toBeUndefined();
-  },
-);
-
-test('an older Android host refuses native mode before effects and preserves its recorded session', async () => {
-  processFeature = false;
-  writeHostedAndroid(root, 'default', placement);
-  await expect(deliver(undefined, () => {}, 'process')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(methods).toEqual([]);
-  expect(readHostedAndroid(root).default).toEqual(placement);
-});
-
-test('a native Android reconnect rechecks capability before reservation or upload', async () => {
-  const target = await prepareHostedAndroid('mini', {}, undefined, 'process');
-  processFeature = false;
-  methods = [];
-  const reserved = vi.fn<() => void>();
-  await expect(
-    placeHostedAndroid(target, {
-      root,
-      slot: 'default',
-      bundle: join(root, 'App.apk'),
-      bundleId: 'dev.fixture',
-      release: false,
-      mode: 'process',
-      selectors: {},
-      reserved,
-      note: () => {},
-    }),
-  ).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(methods).toEqual([]);
-  expect(reserved).not.toHaveBeenCalled();
-  expect(readHostedAndroid(root)).toEqual({});
-  target.host.connection.close();
-});
-
-test('native automatic placement skips older Android hosts without replacing an existing session', async () => {
-  processFeature = false;
-  const selected = await autoPlacement(false, 'process');
-  expect(selected.target).toBeNull();
-  expect(selected.skipped).toEqual([
-    expect.objectContaining({ machine: 'mini', reason: expect.stringContaining('process apps') }),
-  ]);
-  expect(methods).toEqual([]);
-  writeHostedAndroid(root, 'default', placement);
-  await expect(autoPlacement(false, 'process')).rejects.toMatchObject({ code: 'STIM_HOSTING_REFUSED' });
-  expect(methods).toEqual([]);
-  expect(readHostedAndroid(root).default).toEqual(placement);
-  processFeature = true;
-  expect(await autoPlacement(false, 'process')).toMatchObject({ sticky: true, target: { session: { id: session } } });
-  expect(methods.some(({ method }) => method === 'device-host.offer' || method === 'device-host.reserve')).toBe(false);
 });

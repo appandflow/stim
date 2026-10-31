@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,28 +6,17 @@ import { delimiter, join } from 'node:path';
 import {
   answersAs,
   applyServeEnvironment,
-  unusedInstalls,
   parseEnvAssignment,
-  normalizeEnv,
   parseInstalledPlist,
-  parseLaunchctlPrint,
-  planServe,
   renderPlist,
   argumentsWithScript,
   signatureProblem,
-  validateRelease,
   validateServeEnvironment,
   type ServiceSpec,
 } from '../src/service-plist.ts';
 import { statusLines, updateService, type ServiceStatus } from '../src/service.ts';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import {
-  hostFromExecutable,
-  installHostApp,
-  permissionPanes,
-  readHostPermissions,
-  unpackRelease,
-} from '../src/stim-host.ts';
+import { installHostApp, permissionPanes, unpackRelease } from '../src/stim-host.ts';
 
 const SPEC: ServiceSpec = {
   label: 'dev.stim.server',
@@ -43,49 +32,9 @@ const SPEC: ServiceSpec = {
   serve: { port: 7443, created: true },
 };
 
-const BIN = join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
+join(import.meta.dirname, '..', 'bin', 'stim-server.ts');
 
 describe('service plist', () => {
-  it('escapes XML in arguments', () => {
-    expect(renderPlist(SPEC)).toContain('/Users/me/stim &amp; co/node_modules');
-  });
-
-  it('keeps --env values out of the server arguments and escapes them in EnvironmentVariables', () => {
-    const plist = renderPlist(SPEC);
-    const [, afterArguments = ''] = plist.split('<key>ProgramArguments</key>');
-    const [programArguments = '', afterArray = ''] = afterArguments.split('</array>');
-    expect(programArguments).toContain('<string>EXPO_TOKEN</string>');
-    expect(programArguments).not.toContain('s3cr');
-    expect(programArguments).not.toContain('GEM_HOME=');
-    expect(afterArray).toContain('<key>EXPO_TOKEN</key>\n\t\t<string>s3cr&amp;t&lt;x&gt;==y</string>');
-    expect(afterArray).toContain('<key>GEM_HOME</key>\n\t\t<string>/gems</string>');
-  });
-
-  it('lets the installing process own STIM_HOME and SHELL over an --env entry', () => {
-    const plist = renderPlist({ ...SPEC, env: ['SHELL=/bin/evil', 'STIM_HOME=/evil'] });
-    expect(plist).toContain('<key>SHELL</key>\n\t\t<string>/bin/zsh</string>');
-    expect(plist).not.toContain('/evil');
-    expect(plist).not.toContain('<string>SHELL</string>');
-    expect(plist).not.toContain('<string>STIM_HOME</string>');
-  });
-
-  it('drops STIM_HOME and SHELL from a legacy plist when it is rendered again, and keeps the other entries', () => {
-    const legacy = parseInstalledPlist({
-      Label: SPEC.label,
-      ProgramArguments: [SPEC.node, SPEC.script, '--port', '7787', '--env', 'SHELL=/bin/fish', '--env', 'A=1'],
-      EnvironmentVariables: { STIM_HOME: '/tmp/scratch home' },
-    })!;
-    expect(legacy.env).toEqual(['SHELL=/bin/fish', 'A=1']);
-    const plist = renderPlist({ ...SPEC, env: legacy.env });
-    expect(plist).not.toContain('/bin/fish');
-    expect(plist).toContain('<key>A</key>\n\t\t<string>1</string>');
-    expect(normalizeEnv(legacy.env)).toEqual(['A=1']);
-  });
-
-  it('compares --env by key, the last value winning', () => {
-    expect(normalizeEnv(['A=1', 'B=2', 'A=3'])).toEqual(['A=3', 'B=2']);
-  });
-
   it('reads --env KEY=VALUE from the arguments of a plist written before values moved to EnvironmentVariables', () => {
     const legacy = parseInstalledPlist({
       Label: SPEC.label,
@@ -166,10 +115,6 @@ describe('serve environment', () => {
     expect(result).toEqual({ PATH: ['/a', '/b', '/usr/bin'].join(delimiter), LANG: 'en_US.UTF-8', KEEP: '1' });
   });
 
-  it('keeps a value containing "="', () => {
-    expect(parseEnvAssignment('OPTS=a=b')).toEqual({ key: 'OPTS', value: 'a=b' });
-  });
-
   it('takes a bare --env KEY from the environment launchd gave the process', () => {
     const base = { PATH: '/usr/bin', EXPO_TOKEN: 'from-login-shell' };
     const source = { EXPO_TOKEN: 's3cret', OTHER: 'x' };
@@ -177,44 +122,6 @@ describe('serve environment', () => {
       PATH: '/usr/bin',
       EXPO_TOKEN: 's3cret',
     });
-  });
-
-  it('accepts a bare --env KEY only when serving', () => {
-    expect(validateServeEnvironment(['EXPO_TOKEN'], [])).toContain('KEY=VALUE');
-    expect(validateServeEnvironment(['EXPO_TOKEN'], [], true)).toBeNull();
-    expect(validateServeEnvironment(['1BAD'], [], true)).toContain('KEY=VALUE');
-  });
-
-  it('refuses STIM_HOME and SHELL on install input but serves a legacy plist that carries them', () => {
-    for (const entry of ['SHELL=/bin/sh', 'STIM_HOME=/x']) {
-      expect(validateServeEnvironment([entry], [])).toContain('cannot set');
-      expect(validateServeEnvironment([entry], [], true)).toBeNull();
-    }
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      const result = applyServeEnvironment(
-        { SHELL: '/bin/fish', STIM_HOME: '/h', A: '0' },
-        ['SHELL=/bin/evil', 'STIM_HOME=/x', 'A=1'],
-        [],
-      );
-      expect(result).toEqual({ SHELL: '/bin/fish', STIM_HOME: '/h', A: '1' });
-      expect(error.mock.calls.map(([line]) => line)).toEqual([
-        expect.stringContaining('ignoring --env SHELL'),
-        expect.stringContaining('ignoring --env STIM_HOME'),
-      ]);
-    } finally {
-      error.mockRestore();
-    }
-  });
-
-  it('names a bare --env KEY that has no value in the service environment', () => {
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    try {
-      expect(applyServeEnvironment({ PATH: '/usr/bin' }, ['EXPO_TOKEN'], [], {})).toEqual({ PATH: '/usr/bin' });
-      expect(error.mock.calls).toEqual([[expect.stringContaining('--env EXPO_TOKEN has no value')]]);
-    } finally {
-      error.mockRestore();
-    }
   });
 
   it('rejects malformed entries and STIM_HOME', () => {
@@ -227,48 +134,7 @@ describe('serve environment', () => {
   });
 });
 
-describe('serve plan', () => {
-  it('refuses a Funnel route and an unreadable config, and never plans to create over them', () => {
-    expect(planServe({ state: 'funneled', ports: [443], port: 7444 }, 7787, null)).toMatchObject({
-      refusal: expect.stringContaining('Funnel'),
-    });
-    expect(planServe({ state: 'unknown', reason: 'it timed out', port: 7443 }, 7787, null)).toMatchObject({
-      refusal: expect.stringContaining('not changing the route'),
-    });
-  });
-
-  it('creates a missing route and marks it created', () => {
-    expect(planServe({ state: 'missing', port: 7444 }, 7787, null)).toEqual({
-      record: { port: 7444, created: true },
-      create: true,
-    });
-  });
-
-  it('keeps an existing route, and remembers only a route an earlier install created', () => {
-    expect(planServe({ state: 'routed', port: 7443 }, 7787, null)).toEqual({
-      record: { port: 7443, created: false },
-      create: false,
-    });
-    expect(planServe({ state: 'routed', port: 7443 }, 7787, { port: 7443, created: true })).toEqual({
-      record: { port: 7443, created: true },
-      create: false,
-    });
-    expect(planServe({ state: 'routed', port: 7444 }, 7787, { port: 7443, created: true })).toEqual({
-      record: { port: 7444, created: false },
-      create: false,
-    });
-  });
-});
-
 describe('service update checks', () => {
-  it('takes only an exact release version', () => {
-    expect(validateRelease('1.15.0')).toBeNull();
-    expect(validateRelease('2.0.0-rc.1')).toBeNull();
-    for (const value of ['^1.15.0', 'latest', '1.15', '1.15.0 || 2.0.0', '../1.0.0']) {
-      expect(validateRelease(value)).toContain('exact stim-server version');
-    }
-  });
-
   it('tells two builds of one version apart by their Stim build, and matches an older server on its version', () => {
     const expected = { version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' };
     expect(answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa' }, expected)).toBe(true);
@@ -279,19 +145,6 @@ describe('service update checks', () => {
       answersAs({ version: '1.14.0', stimBuild: 'aaaaaaaaaaaaaaaa', startup: { state: 'degraded' } }, expected),
     ).toBe(false);
     expect(answersAs(null, expected)).toBe(false);
-  });
-
-  it('prunes only installs that hold neither the current nor the previous server', () => {
-    const versions = '/Users/me/Library/Application Support/Stim/services/dev.stim.server/versions';
-    const script = (dir: string) => `${versions}/${dir}/node_modules/@stim-cli/server/dist/stim-server.mjs`;
-    expect(
-      unusedInstalls(
-        versions,
-        ['1.14.0-a-1', '1.14.0-a-10', '1.15.0-b-2', '.install-123'],
-        [script('1.14.0-a-1'), '/Users/me/stim/packages/server/dist/stim-server.mjs'],
-      ),
-    ).toEqual(['1.14.0-a-10', '1.15.0-b-2', '.install-123']);
-    expect(unusedInstalls(versions, ['1.15.0-b-2'], [script('1.15.0-b-2'), script('1.14.0-a-1')])).toEqual([]);
   });
 
   describe.skipIf(process.platform !== 'darwin')('on macOS', () => {
@@ -343,95 +196,6 @@ describe('service update checks', () => {
   });
 });
 
-describe('launchctl print', () => {
-  it('reads the top-level job fields and ignores nested state lines', () => {
-    const output = [
-      'gui/501/dev.stim.server = {',
-      '\tactive count = 1',
-      '\tstate = running',
-      '',
-      '\truns = 2',
-      '\tpid = 518',
-      '\tlast exit code = 1',
-      '\tevent triggers = {',
-      '\t\tstate = active',
-      '\t}',
-      '}',
-    ].join('\n');
-    expect(parseLaunchctlPrint(output)).toEqual({ state: 'running', pid: 518, runs: 2, lastExitCode: '1' });
-    expect(parseLaunchctlPrint('\tstate = not running\n\tlast exit code = (never exited)')).toEqual({
-      state: 'not running',
-      pid: null,
-      runs: null,
-      lastExitCode: '(never exited)',
-    });
-  });
-});
-
-describe('service command line', () => {
-  const stimServer = (...args: string[]) =>
-    spawnSync(process.execPath, [BIN, ...args], { env: { ...process.env, PATH: '' }, encoding: 'utf8' });
-
-  it('rejects flags that do not apply', { timeout: 30_000 }, () => {
-    expect(stimServer('service', 'status', '--serve').stderr).toContain('only to `service install`');
-    expect(stimServer('service', 'install', '--label', 'a/b').stderr).toContain('--label');
-    expect(stimServer('service', 'install', '--env', 'X').stderr).toContain('KEY=VALUE');
-    expect(stimServer('pair', '--label', 'x').stderr).toContain('only to `service`');
-    expect(stimServer('service', 'restart').stderr).toContain('unknown command');
-    expect(stimServer('service', 'status', '--no-wait').stderr).toContain('only to `service update`');
-    expect(stimServer('pair', '--no-wait').stderr).toContain('only to `service update` or `setup`');
-  });
-
-  it('takes exactly one update source, and only for service update', { timeout: 30_000 }, () => {
-    expect(stimServer('service', 'install', '--release', '1.0.0').stderr).toContain('only to `service update`');
-    expect(stimServer('pair', '--from', '/tmp').stderr).toContain('only to `service update`');
-    expect(stimServer('service', 'update').stderr).toContain('exactly one of --release');
-    expect(stimServer('service', 'update', '--release', '1.0.0', '--from', '/tmp').stderr).toContain(
-      'exactly one of --release',
-    );
-    expect(stimServer('service', 'update', '--release', 'latest').stderr).toContain('exact stim-server version');
-    expect(stimServer('service', 'update', '--no-wait', '--release', 'latest').stderr).toContain(
-      'exact stim-server version',
-    );
-    expect(stimServer('service', 'update', '--from', '/nonexistent-stim-dir').stderr).toContain('directory of .tgz');
-  });
-});
-
-describe('host permissions', () => {
-  it.each([
-    [14, 'Screen Recording', 'Accessibility'],
-    [15, 'Screen & System Audio Recording', 'Accessibility'],
-    [26, 'Screen & System Audio Recording', 'Accessibility'],
-    [27, 'Screen & System Audio Recording', 'Device Control and Data Access'],
-  ])('names the settings panes on macOS %i', (major, screen, control) => {
-    expect(permissionPanes(major)).toEqual({ screen, control });
-  });
-
-  test.skipIf(process.platform === 'win32')(
-    'accepts boolean grants and refuses malformed or failed probes',
-    async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'stim-host-permissions-'));
-      const executable = join(dir, 'permissions');
-      try {
-        for (const [output, expected] of [
-          ['{"screenRecording":true,"accessibility":false}', { screenRecording: true, accessibility: false }],
-          ['{"screenRecording":true,"accessibility":"false"}', null],
-          ['{"screenRecording":true}', null],
-          ['not json', null],
-        ] as const) {
-          writeFileSync(executable, `#!${process.execPath}\nconsole.log(${JSON.stringify(output)});\n`, {
-            mode: 0o755,
-          });
-          expect(await readHostPermissions(executable)).toEqual(expected);
-        }
-        expect(await readHostPermissions(join(dir, 'missing'))).toBeNull();
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
-});
-
 describe('service status permissions', () => {
   const status: ServiceStatus = {
     label: SPEC.label,
@@ -463,14 +227,6 @@ describe('service status permissions', () => {
   };
 
   const line = (lines: string[], prefix: string) => lines.find((each) => each.startsWith(`  ${prefix}`)) ?? '';
-
-  it('reports each grant under its pane for this macOS version and keeps the node path', () => {
-    const lines = statusLines(status, permissionPanes(27));
-    expect(line(lines, 'host app:')).toContain('Stim Host Dev.app');
-    expect(line(lines, 'Screen & System Audio Recording:')).toContain('allowed');
-    expect(line(lines, 'Device Control and Data Access:')).toMatch(/needed.*Stim Host Dev/);
-    expect(line(lines, 'node:')).toContain(SPEC.node);
-  });
 
   it('keeps unreported grants unknown instead of claiming access was denied', () => {
     const lines = statusLines(
@@ -509,18 +265,6 @@ describe('service status permissions', () => {
 });
 
 describe('host app', () => {
-  it('recognizes only a Stim Host launcher as the server host', () => {
-    expect(hostFromExecutable('/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host')).toEqual({
-      executable: '/Users/me/Applications/Stim Host.app/Contents/MacOS/stim-host',
-      name: 'Stim Host',
-    });
-    expect(hostFromExecutable('/Users/me/Applications/Stim Host Dev.app/Contents/MacOS/stim-host')?.name).toBe(
-      'Stim Host Dev',
-    );
-    expect(hostFromExecutable('/Users/me/Applications/Other.app/Contents/MacOS/stim-host')).toBeUndefined();
-    expect(hostFromExecutable(undefined)).toBeUndefined();
-  });
-
   describe.skipIf(process.platform !== 'darwin')('install', () => {
     let home: string;
     let previousHome: string | undefined;

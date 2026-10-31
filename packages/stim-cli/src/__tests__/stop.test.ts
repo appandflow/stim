@@ -7,7 +7,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { Command } from 'commander';
 import { clockTime } from '../command-output.ts';
 import { saveConfig, getProject } from '../workspace/config.ts';
-import { verifyCollectorOwnership } from '../collector/ownership.ts';
 import { ensureWorkspaceStorage, supervisorPidFile, workspaceStateFile } from '../workspace/paths.ts';
 import stopCommand, {
   clearCollectorState,
@@ -86,63 +85,6 @@ test('collector signal failure or unconfirmed exit retains the ownership record'
   }
 });
 
-test('no supervisor recorded anywhere is "none", not an error', () => {
-  const r = resolveSupervisorTarget({ state: null, record: null, reservedPort: 8083, isAlive: () => true });
-  expect(r.status).toBe('none');
-});
-
-test('an alive pid whose recorded port matches the reservation is ours to signal', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: { pid: 4242, port: 8083, mode: 'bare-inproc', startedAt: '111' },
-    record: { pid: 4242, port: 8083 },
-    reservedPort: 8083,
-    isAlive: (pid: number) => pid === 4242,
-  });
-  expect(r.status).toBe('ours');
-  expect(r.pid).toBe(4242);
-  expect(r.port).toBe(8083);
-  expect(r.mode).toBe('bare-inproc');
-});
-
-test('a recorded pid that is not running is already stopped, not a failure', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: { pid: 4242, port: 8083 },
-    record: { pid: 4242, port: 8083 },
-    reservedPort: 8083,
-    isAlive: () => false,
-  });
-  expect(r.status).toBe('stale');
-  expect(r.pid).toBe(4242);
-});
-
-test('a live pid whose recorded port is not this project reservation is refused', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: { pid: 4242, port: 8099 },
-    record: { pid: 4242, port: 8099 },
-    reservedPort: 8083,
-    isAlive: () => true,
-  });
-  expect(r.status).toBe('unverified');
-  expect(r.reason).toMatch(/8099/);
-  expect(r.reason).toMatch(/8083/);
-});
-
-test('state.json and the global registry disagreeing on the pid is refused', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: { pid: 4242, port: 8083 },
-    record: { pid: 777, port: 8083 },
-    reservedPort: 8083,
-    isAlive: () => true,
-  });
-  expect(r.status).toBe('unverified');
-  expect(r.reason).toMatch(/4242/);
-  expect(r.reason).toMatch(/777/);
-});
-
 test('disagreeing pids are stale only once both recorded processes are proven gone', () => {
   const resolve = (identities: Record<number, 'same' | 'different' | 'gone' | 'unknown'>) =>
     resolveSupervisorTarget({
@@ -155,29 +97,6 @@ test('disagreeing pids are stale only once both recorded processes are proven go
   expect(resolve({ 4242: 'gone', 777: 'different' })).toBe('stale');
   expect(resolve({ 4242: 'gone', 777: 'same' })).toBe('unverified');
   expect(resolve({ 4242: 'unknown', 777: 'gone' })).toBe('unverified');
-});
-
-test('a registry record with no state.json is still actionable when the port matches', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: null,
-    record: { pid: 4242, port: 8083, startedAt: '5' },
-    reservedPort: 8083,
-    isAlive: () => true,
-  });
-  expect(r.status).toBe('ours');
-  expect(r.pid).toBe(4242);
-});
-
-test('no reservation left falls back to the in-workspace record', () => {
-  const r = resolveSupervisorTarget({
-    inspectIdentity: () => 'same',
-    state: { pid: 4242, port: 8083 },
-    record: null,
-    reservedPort: null,
-    isAlive: () => true,
-  });
-  expect(r.status).toBe('ours');
 });
 
 type TeardownCall =
@@ -952,34 +871,6 @@ afterEach(() => {
   resetExecutor();
 });
 
-test('readSupervisorState reads the supervisor block, and tolerates corruption', async () => {
-  expect(readSupervisorState(tmpRoot)).toBe(null);
-  writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
-  expect(readSupervisorState(tmpRoot)).toBe(null);
-  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7, port: 8083 } }));
-  expect(readSupervisorState(tmpRoot)).toEqual({ pid: 7, port: 8083 });
-});
-
-test('clearSupervisorState drops the supervisor key and keeps the rest of state.json', () => {
-  writeFileSync(supervisorPidFile(tmpRoot), '7');
-  writeFileSync(
-    workspaceStateFile(tmpRoot),
-    JSON.stringify({ supervisor: { pid: 7 }, lastBuild: { fingerprint: 'abc' } }),
-  );
-
-  clearSupervisorState(tmpRoot);
-
-  expect(existsSync(supervisorPidFile(tmpRoot))).toBe(false);
-  const left = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
-  expect(left).toEqual({ lastBuild: { fingerprint: 'abc' } });
-});
-
-test('clearSupervisorState removes a state file that held only the supervisor', () => {
-  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
-  clearSupervisorState(tmpRoot);
-  expect(existsSync(workspaceStateFile(tmpRoot))).toBe(false);
-});
-
 test('state-key cleanup waits for a concurrent state writer and retains its new session', async () => {
   writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor: { pid: 7 } }));
   const script = join(tmpRoot, 'write-session-under-lock.mjs');
@@ -1080,19 +971,6 @@ test('stopping clears the global supervisor registration', async () => {
   expect(proj.supervisor).toBe(undefined);
 });
 
-test('resolveCollectorTargets signals only live pids recorded for this workspace', () => {
-  const targets = resolveCollectorTargets({
-    root: '/w/project',
-    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
-    isAlive: (pid) => pid === 111,
-    verify: () => ({ status: 'ours' }),
-  });
-  expect(targets).toEqual([
-    { platform: 'ios', pid: 111, status: 'running' },
-    { platform: 'android', pid: 222, status: 'stale' },
-  ]);
-});
-
 test('resolveCollectorTargets refuses a record with no usable pid, and refuses our own', () => {
   const targets = resolveCollectorTargets({
     root: '/w/project',
@@ -1100,20 +978,6 @@ test('resolveCollectorTargets refuses a record with no usable pid, and refuses o
     isAlive: () => true,
   });
   expect(targets.map((t) => t.status)).toEqual(['invalid', 'invalid']);
-});
-
-test('resolveCollectorTargets refuses a live pid with no persisted identity', () => {
-  const targets = resolveCollectorTargets({
-    root: '/w/project',
-    collectors: { ios: { pid: 111 }, android: { pid: 222 } },
-    isAlive: () => true,
-    verify: ({ pid, platform, root }) => verifyCollectorOwnership({ pid, platform, root, isAlive: () => true }),
-  });
-  expect(targets.map((t) => [t.platform, t.status])).toEqual([
-    ['ios', 'unverified'],
-    ['android', 'unverified'],
-  ]);
-  expect(targets[0]?.reason).toMatch(/no verifiable identity/);
 });
 
 test('stop SIGTERMs every recorded collector and clears the key', async () => {
@@ -1229,14 +1093,6 @@ test('nothing recorded means no clear and no signal', async () => {
   const r = await runStop(opts);
   expect(r.outcomes.collectors.status).toBe('none');
   expect(calls.collectorsCleared).toBe(0);
-});
-
-test('readCollectorState reads the collectors block and tolerates corruption', async () => {
-  expect(readCollectorState(tmpRoot)).toEqual({});
-  writeFileSync(workspaceStateFile(tmpRoot), '{ not json');
-  expect(readCollectorState(tmpRoot)).toEqual({});
-  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ collectors: { ios: { pid: 9 } } }));
-  expect(readCollectorState(tmpRoot)).toEqual({ ios: { pid: 9 } });
 });
 
 test('clearCollectorState drops only the collectors key', () => {

@@ -11,7 +11,7 @@ import {
 
 type FileStoreCtor = new (options: { root: string }) => object;
 
-export function metroStoreName(root: string): string {
+function metroStoreName(root: string): string {
   try {
     const pkg: unknown = JSON.parse(readFileSync(join(root, 'package.json'), 'utf-8'));
     const name = (pkg as { name?: unknown } | null)?.name;

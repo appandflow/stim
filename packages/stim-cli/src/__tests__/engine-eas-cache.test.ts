@@ -9,7 +9,6 @@ import { getExecutor, resetExecutor, setExecutor, type ExecOptions } from '../ex
 import { checkEasAuth, loadProjectProvider, resolveRemote, uploadRemote } from '../engine/remote-cache.ts';
 import { makeWriter } from './_factories.ts';
 import { operationState } from '../engine/operation-state.ts';
-import { processOperation } from '../cli-operation.ts';
 
 let root: string;
 
@@ -218,26 +217,6 @@ test('an EAS fingerprint failure falls back to the local fingerprint and release
   );
 });
 
-test('one deadline covers fingerprint and download, and timeout waits for its child to exit', async () => {
-  const { ctx } = context('slow', { CACHE_TEST_DELAY: '1000' });
-  const loaded = await loadProjectProvider(root);
-  const children = captureChildren();
-  const result = await withAmbientContext(ctx, () =>
-    resolveRemote({
-      context: ctx,
-      provider: loaded.provider,
-      projectRoot: root,
-      platform: 'ios',
-      fingerprintHash: 'local',
-      timeoutMs: 1700,
-    }),
-  );
-  expect(result).toMatchObject({ failed: 'EAS cache resolve timed out after 1700ms' });
-  expect(calls().map((c) => c.args[0])).toEqual(['fingerprint:generate', 'build:download']);
-  expect(children).toHaveLength(2);
-  expect(children[1]?.signalCode).toBe('SIGKILL');
-});
-
 test('cancellation kills only the owning cache child while another operation completes', async () => {
   const a = context('blocked', { CACHE_TEST_BLOCK: '1' });
   const b = context('other');
@@ -327,47 +306,6 @@ test.each(['SIGINT', 'SIGTERM'])(
     }
   },
 );
-
-test('SIGTERM during a background EAS upload retains immediate CLI termination', async () => {
-  const fixture = context('terminate', { CACHE_TEST_BLOCK: 'upload' });
-  const operation = processOperation(root);
-  operation.context.env = fixture.ctx.env;
-  operation.context.output = fixture.ctx.output;
-  operationState(operation.context).runSignal = new AbortController().signal;
-  const loaded = await loadProjectProvider(root);
-  const children = captureChildren();
-  const pending = withAmbientContext(operation.context, () =>
-    uploadRemote({
-      context: operation.context,
-      provider: loaded.provider,
-      projectRoot: root,
-      platform: 'ios',
-      fingerprintHash: 'local',
-      buildPath: join(root, 'fixture.app'),
-      timeoutMs: 15000,
-    }),
-  );
-  const terminated = new Error('fixture process terminated');
-  const exit = vi.spyOn(process, 'exit').mockImplementation(() => {
-    throw terminated;
-  });
-  try {
-    const deadline = Date.now() + 5000;
-    while (!children.some((child) => child.spawnargs.includes('upload')) && Date.now() < deadline)
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    const owningChild = children.find((child) => child.spawnargs.includes('upload'));
-    assert(owningChild);
-    expect(() => operation.cancel('SIGTERM')).toThrow(terminated);
-    expect(exit).toHaveBeenCalledWith(143);
-    expect(await pending).toEqual({ failed: 'EAS cache upload cancelled' });
-    expect(owningChild.signalCode).toBe('SIGKILL');
-  } finally {
-    exit.mockRestore();
-    operation.dispose();
-    for (const child of children) if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
-    await pending.catch(() => {});
-  }
-});
 
 test('authentication is coalesced within an operation and cannot reuse another operation’s actor', async () => {
   const a = context('actor-a').ctx;

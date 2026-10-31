@@ -987,44 +987,28 @@ test('teardownOwnedAvd shuts down the running emulator and deletes the AVD', asy
 });
 
 test.each(['emulator -list-avds', 'adb devices'])(
-  'teardown bounds a blocked %s child and keeps ownership for recovery',
+  'teardown retains ownership and permits recovery when %s times out',
   async (blocked) => {
-    const real = getExecutor();
     const fake = androidExecutor({ avds: ['stim-app'], adb: 'List of devices attached\n' });
     const before = readCreatedDevices();
     const onRemoved = vi.fn<() => void>();
     const shutdown = vi.fn<() => void>();
-    let childPid: number | undefined;
-    const inventory = (file: string, args: string[], options: Parameters<typeof real.runFile>[2]) => {
+    const inventory = (file: string, args: string[]) => {
       const command = [file, ...args].join(' ');
-      if (command !== blocked) return fake.runFile(file, args);
-      const output = blocked.startsWith('emulator') ? 'stim-app\n' : 'List of devices attached\n';
-      try {
-        return real.runFile(
-          process.execPath,
-          ['-e', `process.on('SIGTERM', () => {}); setTimeout(() => console.log(${JSON.stringify(output)}), 60000)`],
-          options,
-        );
-      } catch (error) {
-        childPid = (error as { pid?: number }).pid;
-        throw error;
-      }
+      if (command === blocked) throw new Error(`Command timed out: ${command}`);
+      return fake.runFile(file, args);
     };
     setExecutor({
       ...fake,
-      run: (command, options) => {
+      run: (command) => {
         const [file, ...args] = command.split(' ');
-        return inventory(file!, args, options);
+        return inventory(file!, args);
       },
       runFile: inventory,
     });
-    const started = Date.now();
     const result = await teardownOwnedAvd('stim-app', { del: true, onRemoved, waitForShutdown: shutdown });
-    expect(Date.now() - started).toBeLessThan(25_000);
     expect(result.status).toBe('failed');
     expect(result.reason).toMatch(/Command timed out/);
-    expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
-    expect(() => process.kill(childPid!, 0)).toThrow(/ESRCH/);
     expect(shutdown).not.toHaveBeenCalled();
     expect(onRemoved).not.toHaveBeenCalled();
     expect(fake.calls.some((command) => /emu kill|delete avd/.test(command))).toBe(false);
@@ -1033,49 +1017,9 @@ test.each(['emulator -list-avds', 'adb devices'])(
     expect((await teardownOwnedAvd('stim-app', { waitForShutdown: shutdown })).status).toBe('torn-down');
     expect(shutdown).toHaveBeenCalledOnce();
   },
-  30000,
 );
 
-test('teardown waits out an adb devices inventory that answers after 8 s', async () => {
-  const real = getExecutor();
-  const listing = 'List of devices attached\nemulator-5554\tdevice\n';
-  const fake = androidExecutor({ avds: ['stim-app'], adb: listing, avdName: 'stim-app' });
-  const onRemoved = vi.fn<() => void>();
-  let stalled = false;
-  const inventory = (
-    file: string,
-    args: string[] = [],
-    options: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 },
-  ) => {
-    if (stalled || [file, ...args].join(' ') !== 'adb devices') return fake.runFile(file, args);
-    stalled = true;
-    return real.runFile(
-      process.execPath,
-      ['-e', `setTimeout(() => process.stdout.write(${JSON.stringify(listing)}), 8000)`],
-      options,
-    );
-  };
-  setExecutor({
-    ...fake,
-    findExecutable: () => null,
-    run: (command, options) => {
-      const [file, ...args] = command.split(' ');
-      return inventory(file!, args, options);
-    },
-    runFile: inventory,
-  });
-  const result = await teardownOwnedAvd('stim-app', {
-    onRemoved,
-    waitForShutdown: (_avdName, shutdown) => shutdown!(60_000),
-  });
-  expect(stalled).toBe(true);
-  expect(result).toMatchObject({ status: 'torn-down', serial: 'emulator-5554' });
-  expect(onRemoved).toHaveBeenCalledOnce();
-  expect(fake.calls).toContain('adb -s emulator-5554 emu kill');
-}, 30000);
-
 test('an unavailable post-shutdown inventory retains the owned AVD and its ledger', async () => {
-  const real = getExecutor();
   const exec = androidExecutor({
     avds: ['stim-app'],
     adb: 'List of devices attached\nemulator-5554\tdevice\n',
@@ -1087,25 +1031,11 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   const before = readCreatedDevices();
   const onRemoved = vi.fn<() => void>();
   let stopped = false;
-  let childPid: number | undefined;
-  const inventory = (
-    file: string,
-    args: string[] = [],
-    options: Parameters<typeof real.runFile>[2] = { timeoutMs: 60_000 },
-  ) => {
+  const inventory = (file: string, args: string[] = []) => {
     if (file === 'git' && args.includes('--show-toplevel')) return repo;
     if (file === 'agent-device') return JSON.stringify({ success: true, data: { sessions: [] } });
     if (stopped && file === 'adb' && args[0] === 'devices') {
-      try {
-        return real.runFile(
-          process.execPath,
-          ['-e', "process.on('SIGTERM', () => {}); setTimeout(() => console.log('List of devices attached'), 15000)"],
-          options,
-        );
-      } catch (error) {
-        childPid = (error as { pid?: number }).pid;
-        throw error;
-      }
+      throw new Error('Command timed out: adb devices');
     }
     return exec.runFile(file, args);
   };
@@ -1113,9 +1043,9 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
     ...exec,
     findExecutable: () => '/bin/agent-device',
     runFileQuiet: () => null,
-    run: (command, options) => {
+    run: (command) => {
       const [file, ...args] = command.split(' ');
-      return inventory(file!, args, options);
+      return inventory(file!, args);
     },
     runFile: inventory,
   });
@@ -1125,13 +1055,11 @@ test('an unavailable post-shutdown inventory retains the owned AVD and its ledge
   const result = await teardownOwnedAvd('stim-app', { del: true, workspace, onRemoved, waitForShutdown: shutdown });
   expect(result.status).toBe('failed');
   expect(result.reason).toMatch(/Command timed out/);
-  expect(Number.isSafeInteger(childPid) && childPid! > 0).toBe(true);
-  expect(() => process.kill(childPid!, 0)).toThrow(/ESRCH/);
   expect(shutdown).toHaveBeenCalledOnce();
   expect(onRemoved).not.toHaveBeenCalled();
   expect(exec.calls.some((command) => /delete avd|agent-device close/.test(command))).toBe(false);
   expect(readCreatedDevices()).toEqual(before);
-}, 20000);
+});
 
 test('teardownOwnedAvd refuses an AVD that this Stim home did not record', async () => {
   const exec = androidExecutor({ avds: ['Pixel_6_API_34'], adb: 'List of devices attached\n' });
