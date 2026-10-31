@@ -2750,6 +2750,31 @@ test.each(['CLI', 'obsolete internal option'])(
   },
 );
 
+test("under a scoped STIM_HOME, --delete tears down a pruned dead project's owned device and leaves other stim devices alone", async () => {
+  const localDeadPath = join(fakeHome, 'no-longer-here');
+  saveConfig({
+    version: 2,
+    projects: {
+      [localDeadPath]: { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-DEAD', owned: true } } },
+    },
+    repos: {},
+  });
+  const execCalls: string[] = [];
+  installDeviceExecutor({
+    devices: [
+      { udid: 'UDID-DEAD', name: 'stim-dead-owner', state: 'Booted' },
+      { udid: 'UDID-REAL-1', name: 'stim-real-env-1', state: 'Booted' },
+    ],
+    execCalls,
+  });
+
+  await cli(['--delete']);
+
+  expect(currentConfig().projects[localDeadPath]).toBe(undefined);
+  expect(execCalls.some((c) => c.startsWith('xcrun simctl delete UDID-DEAD'))).toBe(true);
+  expect(execCalls.filter((cmd) => cmd.includes('UDID-REAL-'))).toEqual([]);
+});
+
 test('the STIM_HOME guard does not disable dead-entry pruning', async () => {
   const localDeadPath = join(fakeHome, 'no-longer-here');
   saveConfig({ version: 2, projects: { [localDeadPath]: { metroPort: 8100 } }, repos: {} });

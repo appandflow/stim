@@ -870,6 +870,7 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     }
     const result = await reclaimProject(path, {
       archive: { removedBy: 'gc' },
+      deleteOwnedDevices: deviceSweepIsScoped(operation?.env ?? process.env),
       stopRequester: { by: 'stim gc --delete' },
       operation,
     }).catch((error: unknown) => {
@@ -906,7 +907,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     if (result.stoppedTunnel) {
       output.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
     }
-    for (const name of result.deletedDevices) output.record('device', 'done', name);
+    for (const name of result.deletedDevices) {
+      output.log(chalk.dim(`  deleted owned device ${name}`));
+      output.record('device', 'done', name);
+    }
     for (const s of result.skippedDevices) {
       output.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
       output.record('device', result.failedDevices.includes(s) ? 'failed' : 'kept', s.name, {
