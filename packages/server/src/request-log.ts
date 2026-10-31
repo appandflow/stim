@@ -99,7 +99,6 @@ export function createRequestLog({
             code !== undefined && LOGGED_REASONS.has(code) && typeof error?.message === 'string' && error.message
               ? error.message.slice(0, MAX_REASON)
               : undefined;
-          // JSON quoting escapes quotes and control characters, so the reason cannot end its token or the line.
           const line = reason === undefined ? text(fields) : `${text(fields)} reason=${JSON.stringify(reason)}`;
           if (debug.enabled()) {
             write(`stim-server: debug request ${line}`);

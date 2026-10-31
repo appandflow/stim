@@ -145,10 +145,9 @@ const validRepo = (repo: unknown): repo is string =>
 
 const gb = (bytes: number): string => (bytes / 1024 ** 3).toFixed(1);
 
-/** The numbers a build decline was decided on, for the refusal message. */
-function capacityLine(capacity: BuildCapacity): string {
-  const disk = capacity.diskFreeBytes === null ? 'free disk unknown' : `${gb(capacity.diskFreeBytes)} GB free`;
-  return `load ${capacity.loadPerCore}/core, ${capacity.running} offloaded build(s) running, ${disk}`;
+function capacityLine(loadPerCore: number | null | undefined, running: number, diskFreeBytes: number | null): string {
+  const disk = diskFreeBytes === null ? 'free disk unknown' : `${gb(diskFreeBytes)} GB free`;
+  return `load ${loadPerCore}/core, ${running} offloaded build(s) running, ${disk}`;
 }
 
 const optional = (value: unknown): string | null => (typeof value === 'string' ? value : null);
@@ -857,14 +856,16 @@ export class BuildHost {
     const max = maxOffloadedBuilds();
     const diskFreeBytes = workerFreeBytes(this.root());
     const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
+    const numbers = (reason: string | null) =>
+      reason && `${reason} (${capacityLine(machine.loadPerCore, running, diskFreeBytes)})`;
     const declined =
       this.draining ??
       (loadConfig()?.server?.buildsPaused === true
         ? 'Incoming builds are paused; resume with stim settings set server.buildsPaused false'
         : null) ??
       (max > 0 && running >= max
-        ? `already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`
-        : (this.lowDisk() ?? saturation({ ...machine, builds })));
+        ? numbers(`already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`)
+        : (this.lowDisk() ?? numbers(saturation({ ...machine, builds }))));
     return {
       running,
       max,
@@ -1013,11 +1014,7 @@ export class BuildHost {
     if (this.closed || this.removals.has(client))
       return refusal('build-refused', 'This machine is shutting down or removing this build client.');
     const capacity = this.capacity();
-    if (capacity.declined)
-      return refusal(
-        'build-busy',
-        `This machine declines the build: ${capacity.declined} (${capacityLine(capacity)}).`,
-      );
+    if (capacity.declined) return refusal('build-busy', `This machine declines the build: ${capacity.declined}.`);
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
@@ -1053,7 +1050,7 @@ export class BuildHost {
         releaseClaim(claim);
         return refusal(
           'build-busy',
-          `This machine declines the build: all ${maxBuilds} build slots busy (${capacityLine(this.capacity())}).`,
+          `This machine declines the build: all ${maxBuilds} build slots busy (${capacityLine(capacity.loadPerCore, capacity.running, capacity.diskFreeBytes)}).`,
         );
       }
       slot = taken?.claim ?? null;
