@@ -151,6 +151,7 @@ actions use typed local-server operations for the selected workspace. The comman
   its tile, workspace page, viewer toolbar and sidebar row show the machine's name
   with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
   with the placement reason as hover text. Local devices show no placement label. The
+  same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
@@ -2375,6 +2376,7 @@ When the app has more than one window, a **Window** menu above the preview offer
 front window** or one window by title; picking a window raises it among the app's windows
 and pins the preview to it until it closes or the menu follows the front window again. The
 hosted viewer has the same menu during Control, sent as `input.window`.
+Hosted macOS previews use the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the encoded frame's pixel limit.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Device Control and
 Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;
@@ -2416,3 +2418,8 @@ then use `node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local`
 from `apps/desktop` after the same staging and resource setup. This leaves the
 installed app's preferences unchanged. See [the macOS guide](../../website/docs/macos.md)
 for settings and limits.
+
+For `--remote-build <mac>`, copy the staged runtime to `Support/ServerRuntime`
+and put `!**/` and `!**` on separate lines in that copy's `.gitignore`. Use
+`Support/ServerRuntime` as the resource path so the remote inputs include its
+nested `node_modules`. Remove the copy after stopping the test app.

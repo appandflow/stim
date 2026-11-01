@@ -39,6 +39,9 @@ public enum DeviceRef: Hashable, Identifiable, Sendable {
   }
 
   public var placement: DevicePlacementLabel? {
+    if case .remote(let device) = self, device.backend == "eas" {
+      return DevicePlacementLabel(machine: "EAS", reason: nil)
+    }
     guard let machine = hostedMachine else { return nil }
     let reason: String?
     let selected: String?

@@ -515,6 +515,8 @@ test.each([true, false])(
   async (boundedReport) => {
     let owned: { pid: number; processToken: string } | undefined;
     let declaredAtExit: boolean | undefined;
+    let ready = Promise.resolve();
+    const releaseLauncher = join(scratch, 'release-launcher');
     const scope = context(new AbortController().signal);
     try {
       const work = async (operation: StimContext) =>
@@ -527,9 +529,12 @@ test.each([true, false])(
               [
                 '-e',
                 `
+          const fs = require('node:fs');
+          fs.watch(${JSON.stringify(scratch)}, () => {
+            if (fs.existsSync(${JSON.stringify(releaseLauncher)})) process.exit(0);
+          });
           const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
           console.log(c.pid);
-          setTimeout(() => process.exit(0), 100);
         `,
               ],
               {
@@ -537,18 +542,29 @@ test.each([true, false])(
                 declareFor: operation,
                 signal: operation.signal,
                 onSpawn: (child) => {
-                  child.stdout?.once('data', (chunk) => {
-                    const pid = Number(String(chunk).trim());
-                    const identity = captureProcessIdentity(pid);
-                    if (!identity.ok) throw new Error(identity.reason);
-                    owned = { pid, processToken: identity.token };
+                  ready = new Promise<void>((resolve, reject) => {
+                    child.stdout?.once('data', (chunk) => {
+                      try {
+                        const pid = Number(String(chunk).trim());
+                        const identity = captureProcessIdentity(pid);
+                        if (!identity.ok) throw new Error(identity.reason);
+                        owned = { pid, processToken: identity.token };
+                        writeFileSync(releaseLauncher, '');
+                        resolve();
+                      } catch (error) {
+                        reject(error);
+                      }
+                    });
+                    child.once('exit', () => {
+                      declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
+                      if (!owned) reject(new Error('The controlled descendant did not start'));
+                    });
                   });
-                  child.once('exit', () => {
-                    declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
-                  });
+                  void ready.catch((error: unknown) => fixtureAbort.abort(error));
                 },
               },
             );
+            await ready;
             expect(declaredAtExit).toBe(true);
             if (!owned) throw new Error('The controlled descendant did not start');
             expect(inspectProcessIdentity(owned)).toBe('gone');

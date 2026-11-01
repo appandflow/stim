@@ -694,6 +694,12 @@ describe('an Expo app whose native directories git ignores', () => {
     write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf-8')}app/ios/\napp/android/\n`);
     write(root, 'app/package.json', '{"name":"cng","dependencies":{"expo":"57.0.0"}}\n');
     write(root, 'app/app.json', '{"expo":{"name":"cng","slug":"cng"}}\n');
+    write(root, 'app/fingerprint.config.js', 'module.exports = { useRNCoreAutolinkingFromExpo: false };\n');
+    // @expo/fingerprint falls back to `npx react-native config` without Expo autolinking.
+    const cli = 'app/node_modules/.bin/react-native';
+    write(root, cli, '#!/usr/bin/env node\nconsole.log(JSON.stringify({ root: process.cwd(), dependencies: {} }));\n');
+    chmodSync(join(root, cli), 0o755);
+    write(root, `${cli}.cmd`, '@node "%~dp0react-native" %*\r\n');
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'cng app');
     git(target, 'merge', '-q', '--ff-only', 'main');

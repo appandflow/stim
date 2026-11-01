@@ -10,7 +10,7 @@ import Testing
     return payload.environments[0]
   }()
 
-  @Test func placementLabelsDescribeOnlyHostedDevices() throws {
+  @Test func placementLabelsDescribeHostedAndEasDevices() throws {
     let url = try #require(Bundle.module.url(forResource: "status-placement", withExtension: "json", subdirectory: "Fixtures"))
     let payload = try JSONDecoder().decode(StatusPayload.self, from: Data(contentsOf: url))
     let hosted = payload.environments[0]
@@ -27,7 +27,7 @@ import Testing
     #expect(local.ios?.devicePlacement?.decision == "local")
     #expect(local.android?.devicePlacement?.decision == "waited-locally")
     #expect(local.devices.allSatisfy { $0.placement == nil })
-    #expect(workspace.devices.allSatisfy { $0.placement == nil })
+    #expect(workspace.devices.map(\.placement) == [nil, nil, nil, DevicePlacementLabel(machine: "EAS", reason: nil)])
     #expect(workspace.ios?.host?.selected == nil)
     #expect(workspace.ios?.devicePlacement == nil)
   }

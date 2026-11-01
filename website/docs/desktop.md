@@ -61,6 +61,7 @@ Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
 sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
+EAS Simulator sessions show an **EAS** placement label in those views.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop runs no login shell. It finds Node, the `stim` CLI, Homebrew, the
