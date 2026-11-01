@@ -117,7 +117,7 @@ In on mode a pass runs, cheapest to rebuild first:
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
   4. the Swift compilation cache, emptied whole once it is over
-     caches.swiftCompilationCacheMaxGb (15; 0 means no cap), whatever the free
+     caches.swiftCompilationCacheMaxGb (default 0, no cap), whatever the free
      disk, and kept while an iOS build holds its shared
      claim (taken for each xcodebuild run that compiles with it) or that
      claim is unresolved; the emptying holds the exclusive claim
@@ -1329,7 +1329,7 @@ SHARED BUILD CACHES
   The caches that make a second workspace fast are alive by design and, with
   one exception, not touched by a plain \`gc --delete\`. The exception is the
   Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache):
-  once it is over caches.swiftCompilationCacheMaxGb (15; 0 means no cap), a
+  once it is over caches.swiftCompilationCacheMaxGb (default 0, no cap), a
   plain \`gc --delete\` empties it whole, since age trimming would corrupt its
   index. It is kept, with the build named, while an iOS build holds its shared
   claim or that claim is unresolved. Every \`gc\` run reports them anyway,
