@@ -421,9 +421,7 @@ outside it moves to its own issue and pull request.
   stays warm for Gradle's own idle timeout. stim-server stops the workers'
   idle daemons only while the machine's available memory runs low and no
   offloaded build runs, and on Windows before it deletes a removed client's
-  area. A cancelled Android build stops its client's daemons before the
-  worker exits, because the daemon keeps working in the checkout until it
-  finishes cancelling. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,
+  area. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is
   Stim's supervisor because Task Scheduler does not restart an exited process,
