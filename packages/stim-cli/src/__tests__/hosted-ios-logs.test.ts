@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
@@ -162,7 +162,7 @@ test('final collection shrinks toward the recent tail instead of spending its bo
   ]);
 });
 
-test('hosted iOS retains one bounded exact-device crash when symbolication times out and leaves raw reports host-side', async () => {
+test('hosted iOS keeps bounded exact-device crashes across log rotation without waiting for host symbols', async () => {
   const directory = join(root, 'Library', 'Logs', 'DiagnosticReports');
   mkdirSync(directory, { recursive: true });
   const report = {
@@ -187,6 +187,7 @@ test('hosted iOS retains one bounded exact-device crash when symbolication times
   };
   for (const [name, value] of [
     ['owned', report],
+    ['older-owned', { ...report, incident: 'older-owned', captureTime: new Date(start + 500).toISOString() }],
     [
       'foreign-device',
       { ...report, incident: 'foreign-device', coalitionName: 'com.apple.CoreSimulator.SimDevice.OTHER' },
@@ -200,25 +201,32 @@ test('hosted iOS retains one bounded exact-device crash when symbolication times
     vi.setSystemTime(start + 20_000);
     throw new DOMException('symbolication deadline expired', 'TimeoutError');
   });
-  for (let i = 0; i < 2; i++) {
-    vi.setSystemTime(start + 10_000);
-    await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
-  }
-  const page = readLogsSince(hostedNativeLogsDir(home, 'ios'), {});
+  vi.setSystemTime(start + 10_000);
+  await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  const logs = hostedNativeLogsDir(home, 'ios');
+  const page = readLogsSince(logs, {});
   expect(page.more).toBe(false);
-  expect(page.records).toHaveLength(1);
-  expect(page.records[0]).toMatchObject({
+  expect(page.records.map((record) => record.incident).toSorted()).toEqual(['older-owned', 'owned-incident']);
+  const captured = page.records.find((record) => record.incident === 'owned-incident');
+  expect(captured).toMatchObject({
     ts: start + 1000,
     event: 'native_crash',
     incident: 'owned-incident',
     appId: 'dev.fixture',
     level: 'fatal',
   });
-  expect(page.records[0]).not.toHaveProperty('deviceId');
-  expect(page.records[0]).not.toHaveProperty('rawReport');
-  const serialized = JSON.stringify(page.records[0]);
+  expect(captured).not.toHaveProperty('deviceId');
+  expect(captured).not.toHaveProperty('rawReport');
+  const serialized = JSON.stringify(captured);
   expect(serialized).not.toContain(udid);
   expect(serialized).not.toContain(root);
   expect(Buffer.byteLength(serialized)).toBeLessThan(256 * 1024);
+  const crashLog = join(logs, 'native-crashes.ndjson');
+  renameSync(crashLog, `${crashLog}.1`);
+  writeFileSync(crashLog, '');
+  for (const name of ['device.ndjson', 'device.ndjson.1'])
+    writeFileSync(join(logs, name), JSON.stringify({ ts: start + 2000, msg: 'console churn' }) + '\n');
+  await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  expect(readLogsSince(logs, {}).records.filter((record) => record.event === 'native_crash')).toEqual([]);
   expect(readFileSync(join(directory, 'owned.ips'), 'utf8')).toBe('{}\n' + JSON.stringify(report));
 });

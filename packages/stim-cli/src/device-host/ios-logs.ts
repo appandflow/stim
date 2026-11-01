@@ -80,6 +80,10 @@ export function collectHostedIosLogs(
   });
 }
 
+/**
+ * Stores captured iOS crash summaries in a dedicated rotating log. Incident deduplication covers its retained
+ * generations; an evicted incident can reappear if the OS report remains discoverable.
+ */
 export async function collectHostedIosCrashes(
   home: string,
   session: string,
@@ -99,7 +103,6 @@ export async function collectHostedIosCrashes(
       deviceId: device.udid,
       appId: app.bundleId,
       since,
-      appPath: join(hostedAppArea(session, attempt, home), 'App.app'),
     },
     deadline,
     signal,
@@ -112,7 +115,7 @@ export async function collectHostedIosCrashes(
       .replaceAll(new RegExp(device.udid, 'gi'), '<hosted-simulator>')
       .replaceAll(hostHome, '<host-home>')
       .slice(0, limit);
-  const file = join(hostedNativeLogsDir(home, 'ios'), 'device.ndjson');
+  const file = join(hostedNativeLogsDir(home, 'ios'), 'native-crashes.ndjson');
   mkdirSync(hostedNativeLogsDir(home, 'ios'), { recursive: true });
   withDirLock(join(hostedNativeLogsDir(home, 'ios'), 'query.lock'), () => {
     const seen = new Set(
