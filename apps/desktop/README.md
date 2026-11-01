@@ -323,7 +323,7 @@ a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide
 Provisioned local apps use the shared `workspace.hidden` setting, so the CLI and phone see the same state.
 A multi-app row writes one setting per represented app. Mixed checkouts omit hidden apps from ordinary
 filters; Hidden shows those apps, and selecting both keeps one checkout row. Starting, reloading or warming
-a workspace clears its shared hidden setting in the CLI. A workspace in use cannot be hidden.
+a workspace clears its shared hidden setting in the CLI. Hide is disabled for workspaces in use.
 
 Desktop migrates matching old preference paths through the same local server setting writes. Progress and
 refusals appear in Activity; the old entry stays until every app reports the intended shared state, including
