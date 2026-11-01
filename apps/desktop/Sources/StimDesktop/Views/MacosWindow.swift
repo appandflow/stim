@@ -9,6 +9,7 @@ import SwiftUI
 @MainActor final class MacosWindowChoice: ObservableObject {
   @Published var windows: [MacosWindows.Window] = []
   @Published var current: Int?
+  @Published var currentPointSize: CGSize?
   @Published var pinned = false
   /// Whether the menu may change the window: always for a local app, only under control for a hosted one.
   @Published var canSelect = false

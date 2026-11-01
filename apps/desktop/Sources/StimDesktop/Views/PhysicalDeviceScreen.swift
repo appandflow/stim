@@ -74,6 +74,7 @@ struct PhysicalDeviceScreen: View {
     .onDisappear {
       stream.stop()
       windowChoice?.windows = []
+      windowChoice?.currentPointSize = nil
       windowChoice?.canSelect = false
     }
   }
@@ -82,6 +83,7 @@ struct PhysicalDeviceScreen: View {
     guard let windowChoice else { return }
     windowChoice.windows = windows?.windows ?? []
     windowChoice.current = windows?.current
+    windowChoice.currentPointSize = windows?.currentPointSize
     windowChoice.pinned = windows?.pinned ?? false
     windowChoice.canSelect = isControlling
     windowChoice.select = { [stream] id in stream.selectWindow(id) }

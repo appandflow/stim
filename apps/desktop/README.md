@@ -2392,6 +2392,7 @@ When the app has more than one window, a **Window** menu above the preview offer
 front window** or one window by title; picking a window raises it among the app's windows
 and pins the preview to it until it closes or the menu follows the front window again. The
 hosted viewer has the same menu during Control, sent as `input.window`.
+Hosted macOS previews use the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the encoded frame's pixel limit.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Device Control and
 Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;

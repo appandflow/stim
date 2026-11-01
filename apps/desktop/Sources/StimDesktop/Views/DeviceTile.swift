@@ -1086,6 +1086,9 @@ struct DeviceTile: View {
         .id([device.id, owned.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
         .padding(screenPadding)
+        .onReceive(choice.$currentPointSize) { size in
+          if case .macos = device, let size { pixelSizes[1] = size }
+        }
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
@@ -1194,7 +1197,7 @@ struct DeviceTile: View {
   /// A macOS window is sized in points, so its tile fits it at native size; other screens only use the aspect.
   private func pointSize(_ pixels: CGSize) -> CGSize {
     guard case .macos = device else { return pixels }
-    return CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
+    return choice.currentPointSize ?? CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
   }
 
   private func placeholder(_ text: String) -> some View {
