@@ -116,8 +116,9 @@ In on mode a pass runs, cheapest to rebuild first:
   3. build-cache and Metro entries, least recently used first, down to
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
-  4. the Swift compilation cache, emptied whole, only below
-     budget.hardFloorDiskGb, and kept while an iOS build holds its shared
+  4. the Swift compilation cache, emptied whole once it is over
+     caches.swiftCompilationCacheMaxGb (15; 0 means no cap), whatever the free
+     disk, and kept while an iOS build holds its shared
      claim (taken for each xcodebuild run that compiles with it) or that
      claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
@@ -1314,8 +1315,13 @@ DEVICE RECORDINGS
   stays.
 
 SHARED BUILD CACHES
-  The caches that make a second workspace fast are alive by design and never
-  included in a plain \`gc --delete\`. Every \`gc\` run reports them anyway,
+  The caches that make a second workspace fast are alive by design and, with
+  one exception, not touched by a plain \`gc --delete\`. The exception is the
+  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache):
+  once it is over caches.swiftCompilationCacheMaxGb (15; 0 means no cap), a
+  plain \`gc --delete\` empties it whole, since age trimming would corrupt its
+  index. It is kept, with the build named, while an iOS build holds its shared
+  claim or that claim is unresolved. Every \`gc\` run reports them anyway,
   each row tagged (registered) or (detected), with its size:
     stim gc                            # report, caches included
     stim gc --delete --older-than 30   # trim entries nothing has used

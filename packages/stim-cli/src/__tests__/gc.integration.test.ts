@@ -3146,6 +3146,63 @@ test('--delete --cache all empties an index-backed cache that --older-than canno
   expect(existsSync(index)).toBe(false);
 });
 
+describe('plain --delete and the Swift compilation cache cap', () => {
+  const casDir = () => join(tmpHome, 'compilation-cache');
+  const leaf = () => join(casDir(), 'v9.data.leaf');
+  const OVER_CAP_GB = '0.000001';
+  beforeEach(() => {
+    mkdirSync(casDir(), { recursive: true });
+    writeFileSync(leaf(), 'x'.repeat(4000));
+    writeFileSync(join(casDir(), 'v4.actions'), 'index');
+    register({ dir: casDir(), name: 'Xcode compilation cache', prune: 'atomic' });
+    saveConfig({ version: 2, projects: {}, repos: {} });
+    installExecutor();
+    const base = getExecutor();
+    setExecutor({
+      ...base,
+      runFileAsync: async (file, args, options) =>
+        file === 'du' ? `5\t${args?.[1] ?? ''}` : base.runFileAsync(file, args, options),
+    });
+  });
+  afterEach(() => {
+    delete process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB;
+  });
+
+  test('empties the cache whole when it exceeds the cap and no build holds it', async () => {
+    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
+    const dryRun = await captureLog(() => cli([]));
+    expect(dryRun).toContain('would be EMPTIED');
+    expect(existsSync(leaf())).toBe(true);
+
+    await captureLog(() => cli(['--delete']));
+    expect(existsSync(leaf())).toBe(false);
+    expect(existsSync(join(casDir(), 'v4.actions'))).toBe(false);
+  });
+
+  test('keeps it, naming the build, while a build holds the cache', async () => {
+    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
+    const build = plantClaim(cacheClaimRoot(casDir()), 'shared', liveClaimOwner(), {
+      details: { platform: 'ios', projectRoot: '/w/app' },
+    });
+    const output = await captureLog(() => cli(['--delete']));
+    expect(output).toContain(`the ios build (pid ${process.pid} in /w/app) may be using it`);
+    expect(existsSync(leaf())).toBe(true);
+    rmSync(build);
+  });
+
+  test('keeps it under the cap', async () => {
+    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '1';
+    await captureLog(() => cli(['--delete']));
+    expect(existsSync(leaf())).toBe(true);
+  });
+
+  test('keeps it when the cap is 0', async () => {
+    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = '0';
+    await captureLog(() => cli(['--delete']));
+    expect(existsSync(leaf())).toBe(true);
+  });
+});
+
 test('--delete --cache all empties an entries-style cache including entries used today', async () => {
   const cacheDir = join(tmpHome, 'my-cache');
   const freshEntry = join(cacheDir, 'entry-fresh');

@@ -2,6 +2,8 @@ import { readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { cacheDirRefusal, type StimContext } from '@stim-cli/core';
+import { sharedCompilationCache } from '@stim-cli/core/state';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
@@ -118,6 +120,21 @@ export function planCacheEmptying(
 /** What `gc --delete --cache <name>` would do to each cache, for a report that does not run that scope. */
 export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
   return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
+}
+
+/**
+ * Plain `gc --delete` empties the shared Swift compilation cache once it exceeds `caches.swiftCompilationCacheMaxGb`
+ * (0 means no cap); the claim taken for emptying still refuses while a build holds the cache.
+ */
+export function markOverCapCompilationCache(caches: GcCache[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  const capGb = resolveMaintenanceSettings(undefined, env).swiftCompilationCacheMaxGb;
+  if (capGb === 0) return caches;
+  const dir = canonicalPath(sharedCompilationCache());
+  return caches.map((cache) =>
+    cache.prune === 'atomic' && canonicalPath(cache.dir) === dir && (cache.bytes ?? 0) > capGb * 1024 ** 3
+      ? { ...cache, ...cache.scopedEmpty }
+      : cache,
+  );
 }
 
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.
