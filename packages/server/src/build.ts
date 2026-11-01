@@ -391,7 +391,7 @@ export function workerGradleDaemons(
   return daemons;
 }
 
-function assertKnownGradleProcesses(home: string, known: ReadonlySet<number>): void {
+function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
   const homes = [home];
   if (existsSync(home))
     homes.push(
@@ -406,17 +406,18 @@ function assertKnownGradleProcesses(home: string, known: ReadonlySet<number>): v
       for (const log of readdirSync(join(logs, version.name))) {
         const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
         if (!pid || known.has(pid)) continue;
-        if (processGroupAlive(pid)) throw new Error(`Gradle process ${pid} may still use ${directory}.`);
+        if (processGroupAlive(pid)) return new Error(`Gradle process ${pid} may still use ${directory}.`);
         try {
           process.kill(pid, 0);
         } catch (error) {
           if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
           throw error;
         }
-        throw new Error(`Gradle process ${pid} may still use ${directory}.`);
+        return new Error(`Gradle process ${pid} may still use ${directory}.`);
       }
     }
   }
+  return null;
 }
 
 /**
@@ -593,10 +594,8 @@ export class BuildHost {
         if (!captured.ok) throw new Error(`Cannot identify Gradle daemon ${pid}.`);
         return { pid, processToken: captured.token };
       });
-      assertKnownGradleProcesses(
-        gradleUserHome(join(this.clientDir(client), 'repos', repo)),
-        new Set(identities.map(({ pid }) => pid)),
-      );
+      const home = gradleUserHome(join(this.clientDir(client), 'repos', repo));
+      const known = new Set(identities.map(({ pid }) => pid));
       for (const identity of identities) {
         const state = inspectProcessIdentity(identity);
         if (state === 'gone') continue;
@@ -611,11 +610,19 @@ export class BuildHost {
         }
       }
       const deadline = Date.now() + this.limits.killGraceMs;
-      while (
-        identities.some((identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid))
-      ) {
-        if (Date.now() >= deadline + 5000) return false;
-        if (Date.now() >= deadline) {
+      let forced = false;
+      for (;;) {
+        const unknown = unknownGradleProcess(home, known);
+        const pending = identities.some(
+          (identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid),
+        );
+        if (!unknown && !pending) break;
+        if (unknown && !pending && !forced && Date.now() >= deadline) throw unknown;
+        if (Date.now() >= deadline + 5000) {
+          if (unknown) throw unknown;
+          return false;
+        }
+        if (!forced && Date.now() >= deadline) {
           for (const identity of identities) {
             const state = inspectProcessIdentity(identity);
             if (state === 'unknown' || state === 'different') return false;
@@ -627,6 +634,7 @@ export class BuildHost {
               }
             }
           }
+          forced = true;
         }
         await new Promise((resolve) => setTimeout(resolve, GROUP_POLL_MS));
       }
@@ -1167,7 +1175,8 @@ export class BuildHost {
     const area = join(clientDir, 'repos', repo);
     if (job.platform === 'android') {
       try {
-        assertKnownGradleProcesses(gradleUserHome(clientDir), new Set());
+        const unknown = unknownGradleProcess(gradleUserHome(clientDir), new Set());
+        if (unknown) throw unknown;
       } catch (error) {
         return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
       }

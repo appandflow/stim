@@ -3832,7 +3832,7 @@ describe('offloaded builds', () => {
         'gradle',
         ...(repo ? [node] : []),
       );
-    const daemonOf = (client: string, repo?: string, node?: string) => {
+    const daemonOf = (client: string, repo?: string, node?: string, ignoresTerm = false) => {
       const jar = join(
         gradleHome(client, repo, node),
         'wrapper',
@@ -3844,8 +3844,13 @@ describe('offloaded builds', () => {
       mkdirSync(gradleHome(client, repo, node), { recursive: true });
       const daemon = spawn(
         process.execPath,
-        ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
-        { stdio: 'ignore' },
+        [
+          '-e',
+          `${ignoresTerm ? "process.on('SIGTERM', () => {}); process.stdout.write('ready');" : ''} setInterval(() => {}, 1000)`,
+          jar,
+          'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
+        ],
+        { stdio: ignoresTerm ? ['ignore', 'pipe', 'ignore'] : 'ignore' },
       );
       daemons.push(daemon);
       return daemon;
@@ -3919,10 +3924,24 @@ describe('offloaded builds', () => {
         });
         const { client, id } = await buildClient(port);
         const job = await launch(client);
-        const daemon = daemonOf(id, 'app-1');
+        const daemon = daemonOf(id, 'app-1', undefined, reason === 'cancelled');
         const priorNode = daemonOf(id, 'app-1', 'nfedcba987654');
         const sibling = daemonOf(id, 'another-repo');
+        let settling: ChildProcess | undefined;
         if (reason === 'cancelled') {
+          assert(daemon.stdout);
+          await once(daemon.stdout, 'data');
+          settling = spawn(process.execPath, ['-e', "process.stdin.resume(); process.stdout.write('ready')"], {
+            stdio: ['pipe', 'pipe', 'ignore'],
+          });
+          daemons.push(settling);
+          assert(settling.stdout);
+          await once(settling.stdout, 'data');
+          assert(settling.pid);
+          const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
+          mkdirSync(logs, { recursive: true });
+          writeFileSync(join(logs, `daemon-${settling.pid}.out.log`), '');
+          daemon.once('exit', () => settling?.stdin?.end());
           const response = await client.request('build.cancel', { job });
           assert('result' in response);
           assert.deepStrictEqual(response.result, {});
@@ -3930,6 +3949,7 @@ describe('offloaded builds', () => {
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
         await eventually(() => !running(daemon));
         expect(running(priorNode)).toBe(false);
+        assert(!settling || (settling.exitCode === 0 && settling.signalCode === null));
         expect(running(sibling)).toBe(true);
         if (reason === 'worker-crashed') {
           const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
