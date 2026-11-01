@@ -1,0 +1,15 @@
+{
+  "commit": "432912bf373aedd594d97b50f26ac3344de08f72",
+  "files": {
+    "packages/server/README.md": "a8a6fa2a96959bb5361aa2835e0158931fddc5eb37c44aabb238f927e92fec4c",
+    "packages/server/__tests__/build-daemons.test.ts": "95d48ab7e59ae5562322a3d2033b8f722eecc9da19328e8ccfbd6540a71a7437",
+    "packages/server/__tests__/server.integration.test.ts": "84b22200b50ac8ddd8f6547a447f5540638ddf7ab93cd6a0fbf0e7ef31e5378d",
+    "packages/server/src/build.ts": "0f468772d6f4f15e5ac078cd750bfb0525b9babc1ea4f10f44741d2bafb21d7b",
+    "packages/stim-cli/src/__tests__/exec.integration.test.ts": "d8fabcce4cdac8eb957ba81bc75b1620f457ad9ed823fc58a6da53afdeeae059",
+    "packages/stim-cli/src/guide/settings.ts": "266a8ac2d3c070a54f4677ff3d0ecc2213fdaa684bb7710a1b956751c365864e",
+    "packages/stim-cli/src/offload/toolchain.ts": "5330d45035be00052f8bf6c02e067fbdd1971e8a54b3e378791fe115e26e2e3a",
+    "packages/stim-cli/src/offload/worker.ts": "65fdbd596241edbf5b271d58240666b647fd3f041365b7bc6f9c7cb657514eed",
+    "scripts/build-compat.json": "b7abd0bf5ff073f9ec37fa49f5165c6a98d01e91821c9f4b1d5af37133afcd5f",
+    "website/docs/remote-machines.md": "22badad9862d4ca5d40ebe8ab5267a22d147d8bee395bb84c2215eec7ef699d7"
+  }
+}
