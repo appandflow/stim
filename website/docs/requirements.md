@@ -68,7 +68,8 @@ version. The tools Stim starts inherit the override.
   `ANDROID_HOME` when neither variable is set.
   With no SDK there and no `android/local.properties`, `stim doctor --platform
 android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
-  before Gradle runs.
+  before Gradle runs. A local React Native or Expo emulator run checks this
+  before starting Metro or preparing a device.
 - For an emulator, an Android system image matching the host: `arm64-v8a` on
   ARM64 or `x86_64` on x64. When none is installed, `stim android` installs
   `system-images;android-36;google_apis;<host ABI>` with the SDK's
