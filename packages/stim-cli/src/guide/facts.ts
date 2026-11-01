@@ -1147,12 +1147,14 @@ RULES
                               "busy" | "unknown", reclaimable, reason,
                               detail }  without --cache, or with --cache
                               watchman or gradle-daemons; reclaimable marks
-                              the ones gc --delete --cache <cacheKind>
-                              would stop (\`guide cleanup memory\`)
+                              the ones gc --delete would stop (watchman) or
+                              gc --delete --cache gradle-daemons would
+                              (\`guide cleanup memory\`)
     watchmanRoots           { path, stale: "missing" | "pruned-worktree" |
                               null, subscriptions, triggers, removable,
                               detail }  removable marks the stale roots
-                              --cache watchman would watch-del
+                              gc --delete (or --cache watchman) would
+                              watch-del
     memoryNotices           { message }  why the memory sweep was skipped
   bytes is null when the size is unknown: not measured, or the measurement
   failed. idleDays is null when the last use is unknown. listed is false for
