@@ -387,7 +387,9 @@ struct RootView: View {
     .onReceive(tutorialClock) { _ in
       updateTutorial(store.payload)
     }
-    .onReceive(TutorialViewerEvents.shared.$events) { events in updateTutorial(store.payload, events: events) }
+    .onReceive(TutorialViewerEvents.shared.$events.receive(on: DispatchQueue.main)) { events in
+      updateTutorial(store.payload, events: events)
+    }
     .onReceive(store.$projects) { _ in restoreLastProject() }
     .onReceive(openRequests.$showsMachine) { shows in
       guard shows else { return }
