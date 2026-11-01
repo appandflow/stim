@@ -116,14 +116,17 @@ final class MetricsStore {
     Task.detached {
       let cores = ProcessInfo.processInfo.activeProcessorCount
       var processes: [ProcessEntry] = []
-      do {
-        processes = try ProcessTable.snapshot()
-        DebugLog.gap("process table", processes.isEmpty ? "ps listed no parsable processes" : nil)
-      } catch {
-        DebugLog.gap("process table", "ps could not run: \(error)")
+      if !workspaces.isEmpty {
+        do {
+          processes = try ProcessTable.snapshot()
+          DebugLog.gap("process table", processes.isEmpty ? "ps listed no parsable processes" : nil)
+        } catch {
+          DebugLog.gap("process table", "ps could not run: \(error)")
+        }
       }
       var sampler = base
-      let result = processes.isEmpty ? [:] : sampler.sample(workspaces, processes: processes, at: Date())
+      let canSample = workspaces.isEmpty || !processes.isEmpty
+      let result = canSample ? sampler.sample(workspaces, processes: processes, at: Date()) : [:]
       let volumes = await disks.volumes(maxAge: 1)
       let memory = MachineMemory.read()
       DebugLog.gap("memory", memory == nil ? "host_statistics64 or hw.memsize failed" : nil)
@@ -133,7 +136,7 @@ final class MetricsStore {
         "workspace cpu",
         processes.isEmpty || unmatched.isEmpty
           ? nil : "no process matched the roots of live workspaces \(unmatched.joined(separator: ", "))")
-      let updated = processes.isEmpty ? nil : sampler
+      let updated = canSample ? sampler : nil
       await MainActor.run {
         self.sampling = false
         if let updated { self.sampler = updated }
