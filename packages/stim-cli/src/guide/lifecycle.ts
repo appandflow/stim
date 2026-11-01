@@ -2565,6 +2565,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   cannot (stale node_modules, a leftover path, an error), warm deletes
   ios/Pods/Manifest.lock so \`stim ios\` runs \`pod install\`.
 
+  In an Expo project whose ios/ or android/ Git ignores, warm copies that
+  directory only when the source's last Stim prebuild of it ran on the app's
+  current native fingerprint, and records the same prebuild in the worktree.
+  Otherwise it leaves the directory out and prints
+  "carry       left out <app>/<platform>: <reason>"; the first
+  \`stim <platform>\` there generates it fresh. A directory generated outside
+  Stim has no record and is left out. To make it eligible, delete it in the
+  source checkout and run \`stim <platform>\` there so Stim generates it
+  fresh; running Stim over the existing directory records it as current even
+  when it came from an older template.
+
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about
   regeneration. Native intermediates can record the source checkout's paths;
