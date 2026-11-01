@@ -282,6 +282,32 @@ function cacheLine(plan: BuildPlanPayload): string {
   return `${why}: compiles${prebuild}`;
 }
 
+export function plannedBuildPlacement(
+  plan: BuildPlanPayload,
+  preference: string,
+  easProfile: boolean,
+): BuildPlanPayload {
+  const reason = plan.cacheHit
+    ? 'cache hit; no compilation expected'
+    : easProfile
+      ? 'uses a completed EAS build; no compilation is started'
+      : preference === 'local'
+        ? 'builds on this machine'
+        : preference === 'auto'
+          ? 'chooses among enabled build machines at run time, after capacity and compatibility checks'
+          : preference === 'remote'
+            ? 'prefers an approved worker at run time; local fallback applies only when enabled'
+            : preference === 'remote-only'
+              ? 'requires an approved worker at run time; never builds on this machine'
+              : 'requires this worker; availability and compatibility are checked at run time';
+  return {
+    ...plan,
+    placement:
+      plan.placement ?? (easProfile ? 'unknown; device placement is selected when the command runs' : 'this machine'),
+    buildPlacement: { preference, reason },
+  };
+}
+
 export function printPlan(plan: BuildPlanPayload, json: boolean): void {
   if (json) {
     console.log(JSON.stringify(plan));
@@ -289,7 +315,9 @@ export function printPlan(plan: BuildPlanPayload, json: boolean): void {
   }
   const slot = plan.slot ? ` [${plan.slot}]` : '';
   console.log(phaseLine('plan', `${plan.platform}${slot} ${shortHash(plan.fingerprint)} -> ${cacheLine(plan)}`));
-  if (plan.placement) console.log(phaseLine('placement', plan.placement));
+  if (plan.placement) console.log(phaseLine('device', plan.placement));
+  if (plan.buildPlacement)
+    console.log(phaseLine('build', `${plan.buildPlacement.preference}: ${plan.buildPlacement.reason}`));
   if (plan.missReason) console.log(phaseLine('cache', `miss: ${plan.missReason.summary}`));
   if (plan.refusal) {
     console.log(phaseLine('error', plan.refusal.message));
@@ -321,7 +349,7 @@ const PLAN_ONLY_REMEDY =
 export function planFlagRefusal(flag: string): Refusal {
   return {
     code: 'STIM_BAD_ARG',
-    message: `${flag} does not apply to --plan, which predicts the next local build without choosing a device.`,
+    message: `${flag} does not apply to --plan, which predicts the next build without starting a device or compilation.`,
     remedy: PLAN_ONLY_REMEDY,
   };
 }

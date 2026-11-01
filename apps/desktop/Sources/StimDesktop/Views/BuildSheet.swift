@@ -10,7 +10,7 @@ struct BuildSheetSelection: Identifiable, Equatable {
 }
 
 struct BuildSheet: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var selection: BuildSheetSelection
   var archive: ArchivedWorkspace?
@@ -32,14 +32,14 @@ struct BuildSheet: View {
   @State private var selectedRun: String?
 
   init(
-    cli: Task<StimCLI, Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
+    environment: Task<[String: String], Never>, env: Workspace, selection: BuildSheetSelection, page: WorktreePage? = nil,
     openLogs: @escaping (LogQuery) -> Void, openAppLogs: ((Workspace, LogQuery) -> Void)? = nil,
     archive: ArchivedWorkspace? = nil, logsExpired: Bool = false, readsServer: Bool = true
   ) {
     self.archive = archive
     self.logsExpired = logsExpired
     self.readsServer = readsServer
-    self.cli = cli
+    self.environment = environment
     self.env = env
     self.selection = selection
     self.page = page
@@ -84,7 +84,7 @@ struct BuildSheet: View {
         ScrollView {
           if let run {
             BuildRunDetail(
-              cli: cli, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
+              environment: environment, env: app, run: run, archive: archive, logsExpired: logsExpired, readsServer: readsServer,
               dismiss: { dismiss() }
             )
             .id(page == nil ? run.id : "\(app.path)|\(run.id)")
@@ -273,7 +273,7 @@ struct BuildSheet: View {
 }
 
 private struct BuildRunDetail: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var run: BuildRun
   var archive: ArchivedWorkspace?
@@ -283,10 +283,11 @@ private struct BuildRunDetail: View {
   @State private var query: LogQuery?
 
   init(
-    cli: Task<StimCLI, Never>, env: Workspace, run: BuildRun, archive: ArchivedWorkspace?, logsExpired: Bool, readsServer: Bool,
+    environment: Task<[String: String], Never>, env: Workspace, run: BuildRun, archive: ArchivedWorkspace?, logsExpired: Bool,
+    readsServer: Bool,
     dismiss: @escaping () -> Void
   ) {
-    self.cli = cli
+    self.environment = environment
     self.env = env
     self.run = run
     self.archive = archive
@@ -301,11 +302,27 @@ private struct BuildRunDetail: View {
     VStack(alignment: .leading, spacing: Space.xxl) {
       title
       section("Where it ran") {
-        TimelineView(run.running.map { .buildSeconds($0) } ?? .periodic(from: .now, by: 30)) { context in
-          let remote = run.running?.remote(at: context.date)
-          Label(
-            remote.map { "Building on \($0.host), \($0.phase)" }
-              ?? run.offloadedTo.map { "Built on \(machineName($0))" } ?? "This Mac", systemImage: "desktopcomputer")
+        if let machine = run.last?.buildMachine {
+          let selected =
+            switch machine {
+            case "auto": "Automatic"
+            case "local": "This Mac"
+            case "remote": "Prefer remote"
+            case "remote-only": "Remote only"
+            default: machineName(machine)
+            }
+          Text("Selected: \(selected)").foregroundStyle(Palette.secondary)
+        }
+        if let build = run.running {
+          TimelineView(.buildSeconds(build)) { context in
+            let remote = build.remote(at: context.date)
+            Label(
+              remote.map { "Building on \($0.host), \($0.phase)" } ?? "This Mac", systemImage: "desktopcomputer")
+          }
+        } else if run.last?.cacheHit == CacheSource.none, let machine = run.last?.builtOn ?? run.offloadedTo {
+          Label("Compiled on \(machine == "here" ? "This Mac" : machineName(machine))", systemImage: "desktopcomputer")
+        } else {
+          Text("Compilation destination not recorded").foregroundStyle(Palette.secondary)
         }
         if let reason = run.last?.offloadFallback, !reason.isEmpty {
           Text(reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
@@ -350,6 +367,7 @@ private struct BuildRunDetail: View {
       if ["failed", "cancelled", "interrupted"].contains(run.result) {
         section("Failure") {
           if let code = run.errorCode {
+            if code == "STIM_OFFLOAD_REFUSED" { Text("Build destination refused").foregroundStyle(Palette.error) }
             Text(code).font(.stim(.callout, mono: true)).foregroundStyle(Palette.error).textSelection(.enabled)
           }
           if run.isMacos, let build = env.macos?.build, build.startedAt == run.startedAt, let message = build.error {
@@ -380,7 +398,7 @@ private struct BuildRunDetail: View {
             InlineEmpty("Archived logs are read through stim-server.")
           } else {
             LogsView(
-              cli: cli, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
+              environment: environment, env: archive == nil ? env : nil, query: Binding(get: { query! }, set: { query = $0 }),
               moment: .constant(nil), archive: archive,
               availableSources: LogSource.allCases.filter { !run.isMacos || $0 != .metro }
             )

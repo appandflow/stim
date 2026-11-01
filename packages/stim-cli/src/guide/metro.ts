@@ -207,6 +207,30 @@ WHAT THE SUPERVISOR IS
   the device-log collectors, shuts the owned device down (never deletes it)
   and frees the port.
 
+LINUX RUNNERS THAT REAP BACKGROUND PROCESSES
+
+Some command runners kill every descendant when a call ends, including Stim's
+detached Metro supervisor. If this happens on Linux and a user systemd manager
+is available, start Metro from the worktree in a transient user service. Choose
+a distinct unit name for each workspace:
+
+  systemd-run --user --collect --property=RemainAfterExit=yes \\
+    --working-directory="$PWD" --unit=stim-metro-my-worktree \\
+    bash -lc 'stim start'
+  journalctl --user --unit=stim-metro-my-worktree.service --no-pager
+
+Wait for the service's stim start to report ready before running stim ios or
+stim android. RemainAfterExit keeps systemd from stopping Metro when stim start
+returns; --scope and setsid do not escape a runner that reaps descendants.
+The service uses the user's login-shell environment. Check its journal if it
+cannot find stim or the project's Node version.
+
+Stim does not detect these runners or manage the transient unit. At the end of
+the workflow, stop the workspace and the specific unit you created:
+
+  stim stop
+  systemctl --user stop stim-metro-my-worktree.service
+
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
   (default 60; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo or metro.command, any stdout line of the

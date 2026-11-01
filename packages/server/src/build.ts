@@ -30,7 +30,7 @@ import {
   tryAcquireClaim,
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
-import { captureProcessIdentity } from '@stim-cli/core/process-identity';
+import { captureProcessIdentity, inspectProcessIdentity } from '@stim-cli/core/process-identity';
 import {
   buildWorkerRoot,
   isJsonObject,
@@ -38,6 +38,8 @@ import {
   machineCapacity,
   maxOffloadedBuilds,
   saturation,
+  settingDefinition,
+  settingValueError,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
   windowsShortDirKey,
@@ -88,12 +90,6 @@ export interface BuildLimits {
   minFreeMemoryBytes: number;
   /** How often the idle Gradle daemons of offloaded builds are checked. */
   daemonSweepMs: number;
-  /**
-   * How long a repository stays claimed after its Android build is cancelled or its worker dies. A Gradle daemon
-   * leaves the build's process group and keeps running the cancelled build in the checkout; Gradle waits up to
-   * 10 seconds for it to stop, then stops the daemon (DaemonStateCoordinator's cancelTimeoutMs).
-   */
-  gradleCancelDrainMs: number;
   /** How long a fetched macOS bundle stays here for a hosted session on this machine to take. */
   handoffMs: number;
 }
@@ -107,7 +103,6 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   toolchainTtlMs: 60_000,
   minFreeMemoryBytes: 2 * 1024 ** 3,
   daemonSweepMs: 60_000,
-  gradleCancelDrainMs: 15_000,
   handoffMs: 10 * 60_000,
 };
 
@@ -335,45 +330,84 @@ function workerFreeBytes(root: string): number | null {
   return free.length ? Math.min(...free) : null;
 }
 
+function gradleDaemonIdleMs(): number {
+  const definition = settingDefinition('server.gradleDaemonIdleMinutes')!;
+  const value = loadConfig()?.server?.gradleDaemonIdleMinutes;
+  const valid = typeof value === 'number' && settingValueError(definition, value) === null;
+  return (valid ? value : (definition.default as number)) * 60_000;
+}
+
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
-/** A client's Gradle user home: under its area, or on Windows a `windowsShortDir` that keeps cache paths short. */
-function gradleUserHome(clientDir: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === 'win32'
-    ? windowsShortDir(win32.join(clientDir, 'cache', 'gradle'))
-    : join(clientDir, 'cache', 'gradle');
+/** An area's Gradle home, shortened on Windows for the NDK's path limit. */
+function gradleUserHome(area: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === 'win32' ? windowsShortDir(win32.join(area, 'cache', 'gradle')) : join(area, 'cache', 'gradle');
+}
+
+function ownsWindowsGradleHome(area: string): boolean {
+  try {
+    return readFileSync(`${gradleUserHome(area, 'win32')}.owner`, 'utf8') === windowsShortDirKey('gradle', area);
+  } catch {
+    return false;
+  }
+}
+
+interface GradleScope {
+  client: string;
+  repo?: string;
 }
 
 /**
- * The Gradle daemons in `listCommandLines` output that run from the Gradle home of a client under `root`, which the
- * wrapper distribution on their classpath names. On Windows, where a client's home is not under `root`, `clients`
- * names the clients to look for, and every process running from a client's home counts, which includes the Kotlin
- * daemon: Windows cannot delete a jar a running process opened, so it would keep the home from deletion.
+ * Identifies worker Gradle homes on daemon classpaths. Windows also includes Kotlin processes whose open jars
+ * prevent home deletion, and needs the known areas because short homes are outside the worker root.
  */
 export function workerGradleDaemons(
   ps: string,
   root: string,
   platform: NodeJS.Platform = process.platform,
-  clients: readonly string[] = [],
-): Array<{ pid: number; client: string }> {
-  const home = new RegExp(`${posix.resolve(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/cache/gradle/`);
-  const windowsHomes = clients.map((client) => ({
-    client,
-    home: `${gradleUserHome(win32.join(root, client), platform).toLowerCase()}\\`,
+  areas: readonly GradleScope[] = [],
+): Array<GradleScope & { pid: number }> {
+  const home = new RegExp(
+    `${posix.resolve(root).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/([^/\\s]+)/(?:repos/([^/\\s]+)/)?cache/gradle/`,
+  );
+  const windowsHomes = areas.map((scope) => ({
+    ...scope,
+    home: `${gradleUserHome(win32.join(root, scope.client, ...(scope.repo ? ['repos', scope.repo] : [])), platform).toLowerCase()}\\`,
   }));
-  const daemons: Array<{ pid: number; client: string }> = [];
+  const daemons: Array<GradleScope & { pid: number }> = [];
   for (const line of ps.split(/\r?\n/)) {
     const [, pid, command] = /^\s*(\d+)\s+(.*)$/.exec(line) ?? [];
     if (!pid || !command) continue;
-    const client =
-      platform === 'win32'
-        ? windowsHomes.find((each) => command.toLowerCase().includes(each.home))?.client
-        : command.includes(GRADLE_DAEMON)
-          ? home.exec(command)?.[1]
-          : undefined;
-    if (client) daemons.push({ pid: Number(pid), client });
+    let scope: GradleScope | undefined;
+    if (platform === 'win32') {
+      const matched = windowsHomes.find((each) => command.toLowerCase().includes(each.home));
+      if (matched) scope = { client: matched.client, ...(matched.repo ? { repo: matched.repo } : {}) };
+    } else if (command.includes(GRADLE_DAEMON) || command.includes('KotlinCompileDaemon')) {
+      const matched = home.exec(command);
+      if (matched?.[1]) scope = { client: matched[1], ...(matched[2] ? { repo: matched[2] } : {}) };
+    }
+    if (scope) daemons.push({ pid: Number(pid), ...scope });
   }
   return daemons;
+}
+
+function assertKnownGradleProcesses(home: string, known: ReadonlySet<number>): void {
+  const logs = join(home, 'daemon');
+  if (!existsSync(logs)) return;
+  for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+    for (const log of readdirSync(join(logs, version.name))) {
+      const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
+      if (!pid || known.has(pid)) continue;
+      if (processGroupAlive(pid)) throw new Error(`Gradle process ${pid} may still use ${home}.`);
+      try {
+        process.kill(pid, 0);
+      } catch (error) {
+        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
+        throw error;
+      }
+      throw new Error(`Gradle process ${pid} may still use ${home}.`);
+    }
+  }
 }
 
 /**
@@ -423,7 +457,7 @@ export interface BuildHostOptions {
   limits?: Partial<BuildLimits>;
   /** Called once a job ends, for the action log. */
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
-  /** Whether a client still holds `build`. */
+  /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
   allowed?: (client: string) => boolean;
   /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
   ready?: () => boolean;
@@ -433,7 +467,6 @@ export interface BuildHostOptions {
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
-  private readonly holds = new Map<string, Set<Promise<void>>>();
   private readonly owned = new Map<string, Job>();
   private readonly sessions = new Map<BuildSession, string>();
   private readonly served = new Set<string>();
@@ -466,10 +499,10 @@ export class BuildHost {
   }
 
   /**
-   * Stops the Gradle daemons that offloaded Android builds left warm: every one while available memory is under
-   * `minFreeMemoryBytes` and no offloaded build runs, and those of `client` unless one of its builds runs. Calls made
-   * while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A
-   * daemon whose Gradle home is deleted stops itself: Gradle expires a daemon once its registry file is gone.
+   * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
+   * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
+   * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
+   * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
   sweepDaemons(client: string | null = null): Promise<void> {
     if (client !== null) this.forced.add(client);
@@ -488,8 +521,9 @@ export class BuildHost {
   }
 
   private async sweep(forced: ReadonlySet<string>): Promise<void> {
-    if (this.closed || (forced.size === 0 && this.jobs.size > 0)) return;
+    if (this.closed) return;
     const available = await readAvailableMemory();
+    const low = available !== null && available < this.limits.minFreeMemoryBytes;
     let clients: string[] = [];
     if (process.platform === 'win32') {
       try {
@@ -500,13 +534,12 @@ export class BuildHost {
       await listCommandLines().catch(() => ''),
       this.root(),
       process.platform,
-      clients,
+      clients.flatMap((client) => this.gradleScopes(client)),
     );
     const busy = new Set([...this.jobs].map((job) => job.client));
-    const low = available !== null && available < this.limits.minFreeMemoryBytes && busy.size === 0;
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
-      if (!low && !forced.has(daemon.client)) continue;
+      if (!low && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true)) continue;
       try {
         process.kill(daemon.pid, 'SIGTERM');
       } catch {}
@@ -515,6 +548,89 @@ export class BuildHost {
 
   private environment(): NodeJS.ProcessEnv {
     return this.options.currentEnv?.() ?? this.options.env;
+  }
+
+  private gradleScopes(client: string): GradleScope[] {
+    const scopes: GradleScope[] = [{ client }];
+    try {
+      for (const entry of readdirSync(join(this.clientDir(client), 'repos'), { withFileTypes: true })) {
+        if (entry.isDirectory() && new RegExp(BUILD_REPO_PATTERN).test(entry.name))
+          scopes.push({ client, repo: entry.name });
+      }
+    } catch {}
+    return process.platform === 'win32'
+      ? scopes.filter((scope) =>
+          ownsWindowsGradleHome(
+            scope.repo ? join(this.clientDir(client), 'repos', scope.repo) : this.clientDir(client),
+          ),
+        )
+      : scopes;
+  }
+
+  private async drainCancelledAndroid(client: string, repo: string): Promise<boolean> {
+    try {
+      const daemons = workerGradleDaemons(await listCommandLines(), this.root(), process.platform, [
+        { client, repo },
+      ]).filter((daemon) => daemon.client === client && daemon.repo === repo);
+      if (
+        process.platform === 'win32' &&
+        daemons.length > 0 &&
+        !ownsWindowsGradleHome(join(this.clientDir(client), 'repos', repo))
+      ) {
+        throw new Error('The repository Gradle home has no matching owner key.');
+      }
+      const identities = daemons.map(({ pid }) => {
+        const captured = captureProcessIdentity(pid);
+        if (!captured.ok) throw new Error(`Cannot identify Gradle daemon ${pid}.`);
+        return { pid, processToken: captured.token };
+      });
+      assertKnownGradleProcesses(
+        gradleUserHome(join(this.clientDir(client), 'repos', repo)),
+        new Set(identities.map(({ pid }) => pid)),
+      );
+      for (const identity of identities) {
+        const state = inspectProcessIdentity(identity);
+        if (state === 'gone') continue;
+        if (state !== 'same') throw new Error('Gradle daemon identity changed.');
+        if (process.platform === 'win32') await killTree(identity.pid);
+        else {
+          try {
+            process.kill(-identity.pid, 'SIGTERM');
+          } catch {
+            process.kill(identity.pid, 'SIGTERM');
+          }
+        }
+      }
+      const deadline = Date.now() + this.limits.killGraceMs;
+      while (
+        identities.some((identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid))
+      ) {
+        if (Date.now() >= deadline + 5000) return false;
+        if (Date.now() >= deadline) {
+          for (const identity of identities) {
+            const state = inspectProcessIdentity(identity);
+            if (state === 'unknown' || state === 'different') return false;
+            if (process.platform !== 'win32') {
+              try {
+                process.kill(-identity.pid, 'SIGKILL');
+              } catch {
+                if (state === 'same') process.kill(identity.pid, 'SIGKILL');
+              }
+            }
+          }
+        }
+        await new Promise((resolve) => setTimeout(resolve, GROUP_POLL_MS));
+      }
+      return (
+        identities.every((identity) => ['gone', 'different'].includes(inspectProcessIdentity(identity))) &&
+        !workerGradleDaemons(await listCommandLines(), this.root(), process.platform, [{ client, repo }]).some(
+          (daemon) => daemon.client === client && daemon.repo === repo,
+        )
+      );
+    } catch (error) {
+      console.error(`stim-server: retaining cancelled Android claims for ${client}/${repo}: ${String(error)}`);
+      return false;
+    }
   }
 
   root(): string {
@@ -670,7 +786,7 @@ export class BuildHost {
       CP_HOME_DIR: join(clientDir, 'cache', 'cocoapods-home'),
       CP_CACHE_DIR: join(clientDir, 'cache', 'cocoapods'),
       npm_config_store_dir: join(clientDir, 'cache', 'pnpm-store'),
-      GRADLE_USER_HOME: gradleUserHome(clientDir),
+      GRADLE_USER_HOME: gradleUserHome(area),
     };
   }
 
@@ -954,7 +1070,6 @@ export class BuildHost {
     for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
     await Promise.all(jobs.map((job) => job.done));
-    await Promise.all(this.holds.get(client) ?? []);
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
@@ -983,8 +1098,10 @@ export class BuildHost {
     const removeDir = async (dir: string) => {
       try {
         await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+        return true;
       } catch (error) {
         console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+        return false;
       }
     };
     if (process.platform === 'win32') {
@@ -995,18 +1112,21 @@ export class BuildHost {
           if (!lstatSync(join(area, 'src')).isSymbolicLink()) continue;
           const checkout = windowsShortDir(realpathSync(area));
           if (realpathSync(join(area, 'src')).toLowerCase() !== checkout.toLowerCase()) continue;
-          await removeDir(checkout);
+          if (!(await removeDir(checkout))) return;
           await rm(`${checkout}.owner`, { force: true });
         } catch {}
       }
-      const home = gradleUserHome(this.clientDir(client));
-      let marker: string | null = null;
-      try {
-        marker = readFileSync(`${home}.owner`, 'utf8');
-      } catch {}
-      if (marker === null || marker === windowsShortDirKey('gradle', this.clientDir(client))) {
-        await removeDir(home);
-        await rm(`${home}.owner`, { force: true }).catch(() => {});
+      for (const scope of this.gradleScopes(client)) {
+        const area = scope.repo ? join(this.clientDir(client), 'repos', scope.repo) : this.clientDir(client);
+        const home = gradleUserHome(area);
+        let marker: string | null = null;
+        try {
+          marker = readFileSync(`${home}.owner`, 'utf8');
+        } catch {}
+        if (marker === windowsShortDirKey('gradle', area)) {
+          if (!(await removeDir(home))) return;
+          await rm(`${home}.owner`, { force: true }).catch(() => {});
+        }
       }
     }
     await removeDir(this.clientDir(client));
@@ -1036,6 +1156,13 @@ export class BuildHost {
       );
     const clientDir = this.clientDir(client);
     const area = join(clientDir, 'repos', repo);
+    if (job.platform === 'android') {
+      try {
+        assertKnownGradleProcesses(gradleUserHome(clientDir), new Set());
+      } catch (error) {
+        return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
+      }
+    }
     mkdirSync(join(area, 'home'), { recursive: true, mode: 0o700 });
     let claim: ClaimHandle;
     try {
@@ -1047,10 +1174,7 @@ export class BuildHost {
       });
       if (!attempt.acquired) {
         if (attempt.pending) releaseClaim(attempt.pending);
-        return refusal(
-          'build-busy',
-          'Another build of this repository is running on this machine, or an ended one is still stopping.',
-        );
+        return refusal('build-busy', 'Another build of this repository is running on this machine.');
       }
       claim = attempt.acquired;
     } catch (error) {
@@ -1123,10 +1247,11 @@ export class BuildHost {
     };
     try {
       const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-      if (captured?.ok) {
+      // Gradle daemons detach from worker groups; Android claims must survive a server crash.
+      if (captured?.ok && job.platform !== 'android') {
         setClaimChild(claim, { pid: child.pid, processToken: captured.token });
         if (slot) setClaimChild(slot, { pid: child.pid, processToken: captured.token });
-      } else cancel();
+      } else if (!captured?.ok) cancel();
     } catch {
       cancel();
     }
@@ -1139,6 +1264,7 @@ export class BuildHost {
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         artifactCache: this.artifactCacheDir(client, repo),
+        gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
     const timeout = setTimeout(cancel, this.limits.timeoutMs);
@@ -1193,9 +1319,10 @@ export class BuildHost {
           (killTimer
             ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
+        const abnormal = !entry.outcome;
         entry.outcome = outcome;
-        const cancelled = killTimer !== null;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
+        const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
             setTimeout(settle, GROUP_POLL_MS).unref();
@@ -1204,21 +1331,14 @@ export class BuildHost {
           await treeKilled;
           if (killTimer) clearTimeout(killTimer);
           finished = true;
-          const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
-          if (gradle && (cancelled || (!outcome.ok && outcome.code === 'worker-exited'))) {
-            releaseClaim(slot);
-            const holds = this.holds.get(client) ?? new Set<Promise<void>>();
-            this.holds.set(client, holds);
-            const hold = new Promise<void>((released) =>
-              setTimeout(() => {
-                releaseClaim(claim);
-                holds.delete(hold);
-                if (holds.size === 0 && this.holds.get(client) === holds) this.holds.delete(client);
-                released();
-              }, this.limits.gradleCancelDrainMs).unref(),
-            );
-            holds.add(hold);
-          } else releaseClaims();
+          const drained = !drainAndroid || (await this.drainCancelledAndroid(client, repo));
+          if (drained) releaseClaims();
+          else
+            entry.outcome = {
+              ok: false,
+              code: 'cleanup-unresolved',
+              message: `Android cleanup is unresolved. Inspect ${claim.root} and this repository's Gradle processes, then recover its repository and build-slot claims before retrying.`,
+            };
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&

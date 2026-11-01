@@ -144,7 +144,14 @@ export function processMatches(entry: PidStart, startOf: (pid: number) => Proces
   if (start.status === 'unknown') return 'unknown';
   const recorded = Date.parse(entry.startTime);
   if (!Number.isFinite(recorded)) return 'unknown';
-  return Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000) ? 'live' : 'dead';
+  if (Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000)) return 'live';
+  // agent-device's zone-less ps lstart cannot distinguish repeated local seconds: https://github.com/appandflow/stim/issues/4729
+  if (
+    /^\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(entry.startTime) &&
+    new Date(start.startedAtMs).toLocaleString('en-US') === new Date(recorded).toLocaleString('en-US')
+  )
+    return 'unknown';
+  return 'dead';
 }
 
 export function agentDeviceDaemon(

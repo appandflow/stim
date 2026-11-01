@@ -311,14 +311,16 @@ struct WorktreeActionsMenuContent: View {
             || page.apps.contains { actions.active(for: $0.path) != nil })
       )
       .help(!isHidden && page.apps.contains(where: \.isActive) ? "A workspace in use cannot be hidden." : "")
-      Button("Remove Worktree\u{2026}", systemImage: "trash", role: .destructive) {
-        resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
+      if firstApp.worktree != nil {
+        Button("Remove Worktree\u{2026}", systemImage: "trash", role: .destructive) {
+          resolveRemovalBranch(at: firstApp.path) { removal = WorktreeRemoval(branch: $0) }
+        }
+        .disabled(
+          !removalAllowed || actions.active(for: page.actionKey) != nil
+            || page.apps.contains { actions.active(for: $0.path) != nil }
+        )
+        .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
       }
-      .disabled(
-        !removalAllowed || actions.active(for: page.actionKey) != nil
-          || page.apps.contains { actions.active(for: $0.path) != nil }
-      )
-      .help(removalAllowed ? "" : "Stim refuses to remove a worktree with uncommitted or unpushed work.")
     }
   }
 

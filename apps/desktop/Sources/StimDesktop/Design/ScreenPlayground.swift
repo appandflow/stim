@@ -37,6 +37,7 @@
     case buildSheet = "Build sheet"
     case archivedBuildSheet = "Archived build sheet"
     case simulator = "Simulator controls"
+    case deviceTools = "Device tools"
     case hostedIos = "Hosted iOS"
     case hostedAndroid = "Hosted Android"
     case settings = "Settings"
@@ -62,7 +63,8 @@
       case .pairedMachines: return [.ready, .empty, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
-      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards: return [.ready]
+      case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
+        return [.ready]
       }
     }
   }
@@ -111,10 +113,10 @@
     }
 
     private func workspacePage(_ fixtures: PlaygroundFixtures) -> WorkspaceDetail {
-      let cli = Task { StimCLI(environment: [:]) }
-      let reader = StatsReader(cli: cli, server: { nil })
+      let environment = Task { [String: String]() }
+      let reader = StatsReader(environment: environment, server: { nil })
       var view = WorkspaceDetail.archived(
-        fixtures.archive, cli: cli, statsReader: reader, environments: [fixtures.environment])
+        fixtures.archive, environment: environment, statsReader: reader, environments: [fixtures.environment])
       view.fixtureDate = fixtureDate
       view.fixtureDetail = scenario == .empty ? nil : fixtures.archiveDetail
       view.readsServer = false
@@ -238,7 +240,7 @@
       case .builds:
         ScrollView {
           BuildSection(
-            cli: Task { StimCLI(environment: [:]) }, env: fixtures.environment,
+            environment: Task { [String: String]() }, env: fixtures.environment,
             openLogs: { _ in action = "Selected build logs (fixture only)." },
             openBuild: { _ in action = "Selected build details (fixture only)." }
           )
@@ -246,13 +248,13 @@
         }
       case .buildSheet:
         BuildSheet(
-          cli: Task { StimCLI(environment: ProcessInfo.processInfo.environment) }, env: fixtures.environment,
+          environment: Task { ProcessInfo.processInfo.environment }, env: fixtures.environment,
           selection: BuildSheetSelection(workspace: fixtures.environment.path, platform: "ios"),
           openLogs: { _ in action = "Selected build logs panel (fixture only)." }, readsServer: false)
       case .archivedBuildSheet, .realArchiveBuildSheet:
         let adapted = ArchivedPage(archive: fixtures.archive, detail: fixtures.archiveDetail, now: fixtureDate)
         BuildSheet(
-          cli: Task { StimCLI(environment: [:]) }, env: adapted.workspace,
+          environment: Task { [String: String]() }, env: adapted.workspace,
           selection: BuildSheetSelection(workspace: adapted.workspace.path, platform: "ios"),
           openLogs: { _ in action = "Selected archived build logs (fixture only)." }, archive: fixtures.archive,
           logsExpired: adapted.logsExpired, readsServer: false)
@@ -264,6 +266,15 @@
         ScrollView {
           SimulatorOptionsView(fixture: PlaygroundSimulator(scenario: scenario))
             .padding(Space.xl)
+        }
+      case .deviceTools:
+        ScrollView {
+          HStack(alignment: .top, spacing: Space.xl) {
+            EmulatorOptionsView(
+              title: "Simulator Options", tools: DeviceToolsView(platform: "ios", run: playgroundDeviceTool("ios")))
+            EmulatorOptionsView(tools: DeviceToolsView(platform: "android", run: playgroundDeviceTool("android")))
+          }
+          .padding(Space.xl)
         }
       case .settings:
         TabView(selection: $scope) {

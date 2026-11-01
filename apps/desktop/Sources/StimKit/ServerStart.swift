@@ -10,11 +10,11 @@ public struct ServerStartResult: Sendable {
 /// Requests start through the same-home bundled server. Cancellation unsubscribes; a dropped connection
 /// never retries a start whose dispatch may already have happened.
 @MainActor public func runServerStart(
-  _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+  _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerStartResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to start this workspace for this Stim home.")
   }

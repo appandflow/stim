@@ -13,13 +13,13 @@ private let warning = PressurePlan(
   deletesDevices: 0, reclaimableBytes: 0)
 
 @Suite struct SidebarFooterStatusTests {
-  @Test func stimUnavailableOutranksEverythingElse() {
+  @Test func optionalCLIDoesNotHideMachineProblems() {
     #expect(
       SidebarFooterStatus.decide(stim: outdated, pressure: critical, desktopUpdateAvailable: true)
-        == .stimUnavailable(outdated))
+        == .diskCritical(freeBytes: critical.freeBytes))
     #expect(
       SidebarFooterStatus.decide(stim: .missing, pressure: nil, desktopUpdateAvailable: false)
-        == .stimUnavailable(.missing))
+        == .normal(nil))
   }
 
   @Test func criticalDiskOutranksADesktopUpdate() {
@@ -53,7 +53,7 @@ private let warning = PressurePlan(
         == .diskWarning(freeBytes: warning.freeBytes))
     #expect(
       SidebarFooterStatus.decide(stim: outdated, pressure: nil, desktopUpdateAvailable: false, stimUpdate: newer)
-        == .stimUnavailable(outdated))
+        == .normal(nil))
   }
 
   @Test func normalShowsTheCheckedCLIVersion() {

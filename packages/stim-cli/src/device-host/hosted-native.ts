@@ -501,7 +501,13 @@ async function placeHostedNativeOnce(
               `The Metro supervisor has no agent relay ready for ${host.machine}. Rerun this command; if it persists, run stim stop; stim start, then retry.`),
       ),
     };
-    return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };
+    const verifiesProcess = host.connection.supports('hosted-app-state');
+    if (mode !== 'development' && !verifiesProcess)
+      note(`Update stim-server on ${host.machine} to verify hosted app process liveness.`);
+    return {
+      placement,
+      launched: mode !== 'development' && verifiesProcess && delivery.launched === true ? true : 'unverified',
+    };
   } catch (error) {
     throw hostingRefusal(host.machine, error);
   } finally {

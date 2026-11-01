@@ -3,6 +3,7 @@ import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferReq
 import { collectHostedAndroidLogs } from './android-logs.ts';
 import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
+import { hostedAppState } from './app-state.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
@@ -25,6 +26,7 @@ async function main(): Promise<void> {
       'prepare',
       'stop',
       'install',
+      'app-state',
       'offer',
       'runtime',
       'count',
@@ -88,11 +90,17 @@ async function main(): Promise<void> {
     );
     return;
   }
-  if (
-    (input.mode === 'install' || input.mode === 'logs' || input.mode === 'reverse') &&
-    (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
-  )
-    throw new Error('Invalid hosted app request.');
+  if (['install', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
+    if (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
+      throw new Error('Invalid hosted app request.');
+    if (input.mode === 'app-state') {
+      if ((input.platform !== 'ios' && input.platform !== 'android') || !process.env.STIM_HOME)
+        throw new Error('App state requires a hosted iOS or Android session.');
+      const result = await hostedAppState(process.env.STIM_HOME, input.session, input.attempt, input.platform);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return;
+    }
+  }
   for (const port of [input.metroPort, input.clientMetroPort]) {
     if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535))
       throw new Error('Invalid hosted Metro port.');
@@ -110,13 +118,19 @@ async function main(): Promise<void> {
       !Number.isFinite(input.since)
     )
       throw new Error('Invalid hosted native log request.');
-    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
-      process.env.STIM_HOME,
-      input.session as string,
-      input.attempt as string,
-      input.since,
-      input.final === true,
-    );
+    const session = input.session as string;
+    const attempt = input.attempt as string;
+    const more =
+      input.platform === 'ios'
+        ? await collectHostedIosLogs(
+            process.env.STIM_HOME,
+            session,
+            attempt,
+            input.since,
+            process.env,
+            input.final === true,
+          )
+        : await collectHostedAndroidLogs(process.env.STIM_HOME, session, attempt, input.since, input.final === true);
     process.stdout.write(`${JSON.stringify({ more })}\n`);
     return;
   }

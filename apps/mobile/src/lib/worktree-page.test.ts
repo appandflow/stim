@@ -94,8 +94,12 @@ it('counts shared disk once and sums independently measured app resources', () =
     owners: [owner('/w/a', 130, 50), owner('/w/b', 20, 40), owner('/other', 900, 900)],
   };
   expect(worktreeUsage(apps, machine)).toEqual({ cpuPercent: 150, memoryMb: 90, diskBytes: 1500 });
-  expect(worktreeDisk(apps)).toMatchObject({ worktreeBytes: 1200, nodeModulesBytes: 700, buildBytes: 300 });
+  expect(worktreeDisk(apps)).toMatchObject({ worktreeBytes: 1200, nodeModulesBytes: null, buildBytes: 300 });
   expect(worktreeUsage([apps[2]], null)).toEqual({ cpuPercent: null, memoryMb: null, diskBytes: null });
+  const primary = apps.slice(0, 2).map((app) => ({ ...app, checkout: '/w' }));
+  const grouped = worktreeApps('/w/a', primary);
+  expect(worktreeDisk(grouped)?.nodeModulesBytes).toBeNull();
+  expect(grouped.map((app) => app.disk?.nodeModulesBytes)).toEqual([600, 700]);
 });
 
 it('keeps device ownership after ordering and applies stopped filtering to each app', () => {

@@ -82,9 +82,9 @@
       let key = WorkspaceKey(owner: .paired(pairing.id), path: "/home/bot/work/app/.worktrees/fix-login")
       VStack(spacing: 0) {
         if let workspace = payload?.environments.first {
-          let cli = Task { StimCLI(environment: [:]) }
+          let environment = Task { [String: String]() }
           WorkspaceDetail(
-            cli: cli, statsReader: StatsReader(cli: cli, server: { nil }), env: workspace,
+            environment: environment, statsReader: StatsReader(environment: environment, server: { nil }), env: workspace,
             page: WorktreePage.groups(environments: [workspace])[0], selectedPath: workspace.path, sampled: [:],
             usage: nil, machine: nil, reportsBundles: false, history: OwnerHistory(), inspector: .column,
             inspectorWidth: .constant(320), focusedID: .constant(nil), logQuery: .constant(LogQuery()),

@@ -58,7 +58,7 @@ import gcCommand, {
   findStaleDeviceRecords,
   findStaleProjectDevices,
   formatGcReport,
-  runGc,
+  runGc as runGcCommand,
 } from '../commands/gc.ts';
 import { adoptParked, parkSim, readParked } from '../devices/sim-pool.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
@@ -805,6 +805,7 @@ test('findStaleProjectDevices skips projects the dead-entry sweep already claime
 
 let tmpHome: string;
 let fakeHome: string;
+let testSignal: AbortSignal;
 let originalHomeRoots: Record<string, string | undefined>;
 let originalTmpRoots: Record<string, string | undefined>;
 let originalAvdRoots: Record<string, string | undefined>;
@@ -833,6 +834,11 @@ function installExecutor() {
       throw new Error(`unexpected spawn: ${cmd}`);
     },
   });
+}
+
+function runGc(opts: Parameters<typeof runGcCommand>[0] = {}, deps: Parameters<typeof runGcCommand>[1] = {}) {
+  const operation = deps.operation ?? testContext({ env: { ...process.env }, signal: testSignal });
+  return withAmbientContext(operation, () => runGcCommand(opts, deps));
 }
 
 async function cli(args: string[] = []) {
@@ -903,6 +909,7 @@ function easGcHarness({
   return {
     calls,
     deps: {
+      operation: testContext({ env: { ...process.env }, signal: testSignal }),
       easLedgerRoot: join(fakeHome, 'machine-eas'),
       findProjectRoot: () => project,
       detectIsExpo: () => true,
@@ -994,7 +1001,8 @@ function claimEasSessions(
   );
 }
 
-beforeEach(() => {
+beforeEach(({ signal }) => {
+  testSignal = signal;
   tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = tmpHome;
   vi.stubEnv('AGENT_DEVICE_STATE_DIR', '');
@@ -1276,42 +1284,61 @@ describe('EAS orphan session sweep', () => {
     },
   );
 
-  test('local delete work runs after the fixed EAS lock is released', async () => {
-    const project = join(fakeHome, 'expo-app');
-    registerExpoProject(project);
-    installExecutor();
-    writeLock({ pid: 999999 });
-    const harness = easGcHarness({ project, list: easList() });
-    let held = false;
-    let localDeleteHeld: boolean | null = null;
-    const originalLog = console.log;
-    const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-      if (String(args[0]).includes('Cleared the ios build lock')) localDeleteHeld = held;
-    });
+  test.each([false, true])(
+    'local delete stays in its starting home after EAS lock release (cancelled %s)',
+    async (cancelled) => {
+      const project = join(fakeHome, 'expo-app');
+      registerExpoProject(project);
+      installExecutor();
+      const originalLock = writeLock({ pid: 999999 });
+      const startingHome = tmpHome;
+      const nextHome = join(fakeHome, 'next-test-home');
+      process.env.STIM_HOME = nextHome;
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      const nextLock = join(nextHome, 'build-locks', 'ios-next-debug-sim.lock');
+      plantClaim(nextLock, 'exclusive', goneClaimOwner(999999), { details: { projectRoot: project } });
+      process.env.STIM_HOME = startingHome;
+      const harness = easGcHarness({ project, list: easList() });
+      const cancellation = new AbortController();
+      harness.deps.operation.signal = AbortSignal.any([testSignal, cancellation.signal]);
+      const exitCode = process.exitCode;
+      let held = false;
+      let localDeleteHeld: boolean | null = null;
+      const originalLog = console.log;
+      const log = vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        if (String(args[0]).includes('Cleared the ios build lock')) localDeleteHeld = held;
+      });
 
-    try {
-      await runGc(
-        { delete: true },
-        {
-          ...harness.deps,
-          easLedgerRoot: join(fakeHome, 'machine-eas'),
-          withEasProjectLock: async (_root, fn) => {
-            held = true;
-            try {
-              return await fn();
-            } finally {
-              held = false;
-            }
+      try {
+        await runGc(
+          { delete: true },
+          {
+            ...harness.deps,
+            easLedgerRoot: join(fakeHome, 'machine-eas'),
+            withEasProjectLock: async (_root, fn) => {
+              held = true;
+              try {
+                return await fn();
+              } finally {
+                held = false;
+                if (cancelled) cancellation.abort();
+                process.env.STIM_HOME = nextHome;
+              }
+            },
           },
-        },
-      );
-    } finally {
-      log.mockRestore();
-      console.log = originalLog;
-    }
+        );
+      } finally {
+        log.mockRestore();
+        console.log = originalLog;
+        process.env.STIM_HOME = startingHome;
+        process.exitCode = exitCode;
+      }
 
-    expect(localDeleteHeld).toBe(false);
-  });
+      expect(localDeleteHeld).toBe(cancelled ? null : false);
+      expect(existsSync(originalLock)).toBe(cancelled);
+      expect(existsSync(nextLock)).toBe(true);
+    },
+  );
 
   test('dry run reports a project-scoped orphan and performs no lookup or stop', async () => {
     const project = join(fakeHome, 'expo-app');
@@ -1686,86 +1713,98 @@ describe('EAS orphan session sweep', () => {
     expect(harness.calls.map((call) => call.args[0])).toEqual(['simulator:list']);
   });
 
-  test('the EAS sweep lock covers separate clones with asymmetric static and dynamic config through the final stop', async () => {
-    const project = join(fakeHome, 'expo-app');
-    const otherWorkspace = join(fakeHome, 'expo-app-clone');
-    const projectGitCommon = join(fakeHome, 'project.git');
-    const otherGitCommon = join(fakeHome, 'other.git');
-    registerExpoProject(project);
-    mkdirSync(otherWorkspace, { recursive: true });
-    mkdirSync(projectGitCommon, { recursive: true });
-    mkdirSync(otherGitCommon, { recursive: true });
-    const appConfig = JSON.stringify({ expo: { extra: { eas: { projectId: 'shared-eas-project' } } } });
-    writeFileSync(join(project, 'app.json'), appConfig);
-    writeFileSync(
-      join(otherWorkspace, 'app.config.js'),
-      "module.exports = { extra: { eas: { projectId: 'shared-eas-project' } } };\n",
-    );
-    claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
-    setExecutor({
-      run(cmd) {
-        throw new Error(`unexpected run: ${cmd}`);
-      },
-      runQuiet() {
-        return null;
-      },
-      runFileQuiet(_file: string, args: string[]) {
-        if (!args.includes('--git-common-dir')) return null;
-        return args.some((arg) => arg.includes(otherWorkspace)) ? otherGitCommon : projectGitCommon;
-      },
-      spawn(cmd) {
-        throw new Error(`unexpected spawn: ${cmd}`);
-      },
-    });
-    const order: string[] = [];
-    let startPromise: Promise<unknown> | null = null;
-    const harness = easGcHarness({
-      project,
-      list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
-      get: {
-        drs_old: () => {
-          order.push('get');
-          startPromise = ensureRemoteBootOwned({
-            root: otherWorkspace,
-            platform: 'ios',
-            sessionName: 'stim-new',
-            startedAt: '2026-08-28T00:00:00.000Z',
-            register: () => {
-              order.push('register');
-              const config = loadConfig();
-              saveConfig({
-                version: 2,
-                projects: { ...config?.projects, [otherWorkspace]: { isExpo: true } },
-                repos: config?.repos ?? {},
-              });
-            },
-            boot: async () => {
-              order.push('create');
-              return { ok: true, udid: 'drs_new' };
-            },
-            createdSessionId: () => 'drs_new',
-            abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_new' }),
-            writeState: () => {
-              order.push('publish');
-            },
-            ledgerRoot: join(fakeHome, 'machine-eas'),
-          });
-          return JSON.stringify({ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS' });
+  test.each([false, true])(
+    'the EAS sweep lock covers separate clones through the final stop (cancelled %s)',
+    async (cancelled) => {
+      const project = join(fakeHome, 'expo-app');
+      const otherWorkspace = join(fakeHome, 'expo-app-clone');
+      const projectGitCommon = join(fakeHome, 'project.git');
+      const otherGitCommon = join(fakeHome, 'other.git');
+      registerExpoProject(project);
+      mkdirSync(otherWorkspace, { recursive: true });
+      mkdirSync(projectGitCommon, { recursive: true });
+      mkdirSync(otherGitCommon, { recursive: true });
+      const appConfig = JSON.stringify({ expo: { extra: { eas: { projectId: 'shared-eas-project' } } } });
+      writeFileSync(join(project, 'app.json'), appConfig);
+      writeFileSync(
+        join(otherWorkspace, 'app.config.js'),
+        "module.exports = { extra: { eas: { projectId: 'shared-eas-project' } } };\n",
+      );
+      claimEasSessions(project, [{ id: 'drs_old', name: 'stim-old', platform: 'ios' }]);
+      setExecutor({
+        run(cmd) {
+          throw new Error(`unexpected run: ${cmd}`);
         },
-      },
-      stop: {
-        drs_old: () => {
-          order.push('stop');
-          return JSON.stringify({ id: 'drs_old', status: 'STOPPED' });
+        runQuiet() {
+          return null;
         },
-      },
-    });
+        runFileQuiet(_file: string, args: string[]) {
+          if (!args.includes('--git-common-dir')) return null;
+          return args.some((arg) => arg.includes(otherWorkspace)) ? otherGitCommon : projectGitCommon;
+        },
+        spawn(cmd) {
+          throw new Error(`unexpected spawn: ${cmd}`);
+        },
+      });
+      const cancellation = new AbortController();
+      const order: string[] = [];
+      let startPromise: Promise<unknown> | null = null;
+      const harness = easGcHarness({
+        project,
+        list: easList([{ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS', platform: 'IOS' }]),
+        get: {
+          drs_old: () => {
+            order.push('get');
+            startPromise = ensureRemoteBootOwned({
+              root: otherWorkspace,
+              platform: 'ios',
+              operation: harness.deps.operation,
+              sessionName: 'stim-new',
+              startedAt: '2026-08-28T00:00:00.000Z',
+              register: () => {
+                order.push('register');
+                const config = loadConfig();
+                saveConfig({
+                  version: 2,
+                  projects: { ...config?.projects, [otherWorkspace]: { isExpo: true } },
+                  repos: config?.repos ?? {},
+                });
+              },
+              boot: async () => {
+                order.push('create');
+                return { ok: true, udid: 'drs_new' };
+              },
+              createdSessionId: () => 'drs_new',
+              abandonCreatedSession: () => ({ ok: true, sessionId: 'drs_new' }),
+              writeState: () => {
+                order.push('publish');
+              },
+              ledgerRoot: join(fakeHome, 'machine-eas'),
+            });
+            return JSON.stringify({ id: 'drs_old', name: 'stim-old', status: 'IN_PROGRESS' });
+          },
+        },
+        stop: {
+          drs_old: () => {
+            order.push('stop');
+            if (cancelled) cancellation.abort();
+            return JSON.stringify({ id: 'drs_old', status: 'STOPPED' });
+          },
+        },
+      });
 
-    await captureLog(() => runGc({ delete: true }, harness.deps));
-    await startPromise;
+      harness.deps.operation.signal = AbortSignal.any([testSignal, cancellation.signal]);
+      const exitCode = process.exitCode;
+      try {
+        await captureLog(() => runGc({ delete: true }, harness.deps));
+        await startPromise;
+      } finally {
+        process.exitCode = exitCode;
+      }
 
-    expect(order).toEqual(['get', 'stop', 'register', 'create', 'publish']);
-  });
+      expect(order).toEqual(cancelled ? ['get', 'stop'] : ['get', 'stop', 'register', 'create', 'publish']);
+    },
+  );
 
   test('collects every page before comparing current-project sessions', async () => {
     const project = join(fakeHome, 'expo-app');
@@ -3410,6 +3449,7 @@ describe('gc --json', () => {
       'parkedSimulators',
       'parkedEmulators',
       'parkedHostedDevices',
+      'hostedAppStorage',
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',
@@ -4639,8 +4679,55 @@ describe('parked hosted device GC', () => {
     expect(stderr).toContain('Parked hosted devices (1)');
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
     expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
+    const active = session({ state: 'ready', parked: undefined });
+    journal([active]);
+    const apps = join(deviceHostArea(sessionId), 'apps');
+    const blobs = join(deviceHostArea(sessionId), 'blobs');
+    mkdirSync(apps);
+    mkdirSync(blobs);
+    writeFileSync(join(apps, 'current'), 'app');
+    writeFileSync(join(blobs, 'content'), 'blob');
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync: (file, args, options) =>
+        file === 'du' && [apps, blobs].includes(String(args.at(-1)))
+          ? Promise.resolve(`4\t${args.at(-1)}`)
+          : executor.runFileAsync(file, args, options),
+    });
+    const usage = await captureJson(() => cli(['--json']));
+    const onlyStorage = JSON.parse(usage.stdout[0]!);
+    expect(onlyStorage.actionable).toBe(false);
+    expect(onlyStorage.sections.hostedAppStorage).toEqual([
+      {
+        session: sessionId,
+        client: active.client,
+        platform: 'ios',
+        state: 'ready',
+        path: deviceHostArea(sessionId),
+        appsBytes: 4096,
+        blobsBytes: 4096,
+        willDelete: false,
+        detail: 'reported only',
+      },
+    ]);
+    expect(usage.stderr).toContain('Hosted app storage (report only)');
+    expect(readFileSync(join(apps, 'current'), 'utf8')).toBe('app');
+    expect(readFileSync(join(blobs, 'content'), 'utf8')).toBe('blob');
     const scoped = await collectGcReport({ cache: 'parked' });
     expect(scoped.parkedHostedDevices).toEqual([]);
+    expect(scoped.hostedAppStorage ?? []).toEqual([]);
+    const outside = join(tmpHome, 'outside-app-storage');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'keep'), 'outside');
+    rmSync(apps, { recursive: true });
+    symlinkSync(outside, apps, process.platform === 'win32' ? 'junction' : 'dir');
+    const linked = await collectGcReport({});
+    expect(linked.hostedAppStorage).toEqual([]);
+    expect(linked.deviceSweepNotices).toContain(
+      `Hosted app storage ${sessionId} unavailable: Hosted app storage is not an owned directory.`,
+    );
+    expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('outside');
   });
 });
 

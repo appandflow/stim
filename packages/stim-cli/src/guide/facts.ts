@@ -1170,7 +1170,7 @@ RULES
     workspaceLogs           unresolved | in-use | collector
     recordings              unresolved | retained | recently-recorded
     memory                  in-use | busy | unknown | build-running |
-                            stim-server | memory-ok
+                            stim-server
     linkedWorktrees         not-a-worktree | bare-repository |
                             source-checkout-unknown | source-checkout |
                             locked | nested-worktree | in-use |

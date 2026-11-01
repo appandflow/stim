@@ -125,6 +125,7 @@ import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
+import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
 import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
@@ -378,7 +379,8 @@ export async function collectGcReport(
   skipped.push(...statusCaches.skipped);
 
   const hosted = collectParkedHostedDevices({ olderThanDays: olderThan, now });
-  const deviceSweepNotices: string[] = [...hosted.notices];
+  const hostedApps = await collectHostedAppStorage(operation);
+  const deviceSweepNotices: string[] = [...hosted.notices, ...hostedApps.notices];
   let orphanedDevices: OrphanedDevice[] = [];
   let unverifiedDevices: UnverifiedDevice[] = [];
   let staleDevices: StaleProjectDevice[] = [];
@@ -582,6 +584,7 @@ export async function collectGcReport(
     parkedSims,
     parkedAvds,
     parkedHostedDevices: hosted.devices,
+    hostedAppStorage: hostedApps.areas,
     orphanedDevices,
     unverifiedDevices,
     staleDevices,
@@ -714,6 +717,7 @@ export async function withGcMaintenanceClaim<T>(
           [...new Set([claim, ...(cause instanceof WorkspaceProcessCleanupError ? cause.claims : [])])],
           cause.message,
           'Verify GC and its owned children have stopped.',
+          cause,
         ),
         { reportCleanup: true },
       );

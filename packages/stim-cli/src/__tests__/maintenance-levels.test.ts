@@ -387,7 +387,6 @@ function daemonPlan(status: { state: string } | { unknown: string }, buildRunnin
       ],
       kotlin: [],
       buildRunning,
-      memoryOk: null,
       stimServerRunning: false,
     }),
     watchmanRoots: [],

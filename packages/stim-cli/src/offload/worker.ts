@@ -38,7 +38,7 @@ import {
   fingerprintProject,
   refingerprintAfterMutation,
 } from '../cache/build-cache.ts';
-import { buildIos, buildAndroid } from '../integrations/react-native-build.ts';
+import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
@@ -47,7 +47,7 @@ import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitQuiet } from '../workspace/git.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
@@ -152,6 +152,8 @@ export interface WorkerJob {
   jdk?: string;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
+  /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
+  gradleDaemonIdleMs?: number;
 }
 
 export interface WorkerTimings {
@@ -287,7 +289,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
 
 /**
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
- * client's Gradle home is made private too; an area whose `src` is a directory keeps it.
+ * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
@@ -298,7 +300,7 @@ function ensureCheckout(area: string, src: string): void {
     const gradleHome = process.env.GRADLE_USER_HOME;
     const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
     if (linked) dirs.push([target, windowsShortDirKey('checkout', realArea)]);
-    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', dirname(dirname(area)))]);
+    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', area)]);
     makePrivateWindowsDirs(dirs);
     if (!linked) return;
     let current: string | null = null;
@@ -331,6 +333,34 @@ async function materialize(
     git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
   }
   git(src, ['read-tree', '--empty'], { write: true, timeoutMs: 30_000 });
+  if (gitQuiet(src, ['rev-parse', '--verify', 'HEAD']) === null) {
+    // React Native development podspecs resolve HEAD even for local path pods.
+    git(
+      src,
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '--allow-empty',
+        '--no-gpg-sign',
+        '-m',
+        'Initialize build mirror',
+      ],
+      {
+        write: true,
+        env: {
+          GIT_AUTHOR_NAME: 'Stim',
+          GIT_AUTHOR_EMAIL: 'build@stim.invalid',
+          GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+          GIT_COMMITTER_NAME: 'Stim',
+          GIT_COMMITTER_EMAIL: 'build@stim.invalid',
+          GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+        },
+        timeoutMs: 30_000,
+      },
+    );
+  }
   let retained: string[] = [];
   if (job.native) {
     if (job.native.provider === 'gradle') {
@@ -1046,7 +1076,14 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   if (!options) return { ok: false, code: 'bad-request', message: 'The native Gradle job has no build options.' };
   for (const key of ['compilerCache', 'pch', 'gradleBuildCache'] as const)
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
-  removeLegacyDaemonIdleLimit();
+  const idleMs = job.gradleDaemonIdleMs ?? 0;
+  limitDaemonIdle(idleMs > 0 ? idleMs : 60_000);
+  const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
+  const stop = () => {
+    stopGradleDaemons(gradlew, 4000);
+    process.exit(143);
+  };
+  process.once('SIGTERM', stop);
   const logFile = join(workspaceLogsDir(root), 'build-android.ndjson');
   let cacheArtifact: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt } | undefined;
   note('build', `native Gradle ${options.variant ?? 'debug'}`);
@@ -1107,6 +1144,8 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       message: (error as Error).message,
     };
   } finally {
+    process.off('SIGTERM', stop);
+    if (idleMs <= 0) stopGradleDaemons(gradlew, 60_000);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -1247,13 +1286,29 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   return { ok: true, path: built.appPath, cache: built.compilationCache };
 }
 
-function removeLegacyDaemonIdleLimit(): void {
+/**
+ * Stops the Gradle daemons of this repository's Gradle home. A daemon calls setsid, so it leaves the build's
+ * process group and would outlive the job and its claim.
+ */
+function stopGradleDaemons(gradlew: string, timeoutMs: number): void {
+  if (!existsSync(gradlew)) return;
+  getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs });
+}
+
+/**
+ * Gradle reads `org.gradle.daemon.idletimeout` from the user home's gradle.properties, which overrides the
+ * project's, so the daemon exits after that idle time instead of Gradle's three hours.
+ */
+function limitDaemonIdle(idleMs: number): void {
   const home = process.env.GRADLE_USER_HOME;
   if (!home) return;
   const file = join(home, 'gradle.properties');
+  const wanted = `org.gradle.daemon.idletimeout=${idleMs}\n`;
   try {
-    if (/^org\.gradle\.daemon\.idletimeout=\d+\n$/.test(readFileSync(file, 'utf8'))) rmSync(file, { force: true });
+    if (readFileSync(file, 'utf8') === wanted) return;
   } catch {}
+  mkdirSync(home, { recursive: true });
+  writeFileSync(file, wanted);
 }
 
 async function compileAndroid(
@@ -1265,36 +1320,48 @@ async function compileAndroid(
 ): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
-  removeLegacyDaemonIdleLimit();
+  const idleMs = job.gradleDaemonIdleMs ?? 0;
+  const keepDaemon = idleMs > 0;
+  limitDaemonIdle(keepDaemon ? idleMs : 60_000);
   const onNote = (line: string) => note('build', line);
+  const stop = () => {
+    stopGradleDaemons(gradlewPath(layout), 4000);
+    process.exit(143);
+  };
+  process.once('SIGTERM', stop);
   note(
     'build',
     `gradle ${layout.custom ? `${layout.module}:` : ''}${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`,
   );
-  const built = await time('buildMs', () =>
-    buildAndroid(
-      { root, logWriter: log, variant: options.variant, abi: options.abi, layout },
-      {
-        buildCache: options.gradleBuildCache,
-        pch: options.pch,
-        compilerCacheDisabled: options.compilerCache === 'none',
-        ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
-        onHeartbeat: onNote,
-        onNote,
-      },
-    ),
-  );
-  if (!built.ok) {
-    const first = built.diagnostics[0]?.message;
-    return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
+  try {
+    const built = await time('buildMs', () =>
+      buildAndroid(
+        { root, logWriter: log, variant: options.variant, abi: options.abi, layout },
+        {
+          buildCache: options.gradleBuildCache,
+          pch: options.pch,
+          compilerCacheDisabled: options.compilerCache === 'none',
+          ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
+          onHeartbeat: onNote,
+          onNote,
+        },
+      ),
+    );
+    if (!built.ok) {
+      const first = built.diagnostics[0]?.message;
+      return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
+    }
+    const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
+    return {
+      ok: true,
+      path: built.apkPath,
+      cache: built.ccache ?? CCACHE_UNAVAILABLE,
+      ...(androidPackage ? { androidPackage } : {}),
+    };
+  } finally {
+    process.off('SIGTERM', stop);
+    if (!keepDaemon) stopGradleDaemons(gradlewPath(layout), 60_000);
   }
-  const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
-  return {
-    ok: true,
-    path: built.apkPath,
-    cache: built.ccache ?? CCACHE_UNAVAILABLE,
-    ...(androidPackage ? { androidPackage } : {}),
-  };
 }
 
 async function main(): Promise<void> {

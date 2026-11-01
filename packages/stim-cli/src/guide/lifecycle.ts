@@ -401,7 +401,12 @@ but an existing session stays on its recorded host until stim stop. Debug,
 Release and custom configurations use the offered simulator architecture,
 report metroPort: null, and close any previous session Metro bridge. Logs,
 view/control, agent access and scoped stop use the existing hosted-ios services.
-Verify UI and interaction separately from the host's live process evidence.
+A host advertising hosted-app-state checks the current installed app attempt's
+process when Debug verifies its bundle. Release and native process launches
+wait three seconds before requiring a live process. Older hosts print an update
+hint and their release/process result stays unverified. A failed process query
+is unknown; it does not establish a crash. Verify UI and interaction separately
+from the host's live process evidence.
 
 Unbounded native build offload, hosted --plan, eas/proxy devices and EAS artifact
 profiles remain unsupported for native Xcode apps. These limits do not change React Native or
@@ -609,6 +614,9 @@ hosted-android-process; older hosts refuse before admission or APK upload.
 Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
+Hosted Android uses the same hosted-app-state liveness check and three-second
+release/process wait as hosted iOS. Update older hosts to verify process state;
+an unknown query does not establish a crash.
 Native EAS/proxy targets remain unsupported. Build offload requires the complete
 android.offloadInputs declaration; see stim guide lifecycle native-android.
 
@@ -855,7 +863,9 @@ Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent, state } per slot. A shutdown local simulator is replaced in status; a
 booted or unknown local simulator stays visible alongside ios.host with a warning.
 The default slot appears only in ios, never in slots[]. No host UDID enters local device state or
-status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
+status. Hosted ios --json results use udid: null and the actual simulator name as
+deviceName; host.agent.command addresses the hosted app. Ready is normal;
+stopped has a rerun hint; unknown or unreachable is
 unverified. A clean host server restart stops its sessions and retains eligible
 parked devices. A running session left by a crash stays unknown until explicit
 stop; the restarted server never re-attaches to a booted device.
@@ -3082,6 +3092,16 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   when an EXPO_PUBLIC_ value, EXPO_NO_DOTENV, NODE_ENV or a .env* file in the
   project root differs from the previous swap's. A metro.config.js that sets
   its own cacheStores keeps its own cache location.
+
+  Native Release bundling on Expo SDK 54-57 replaces ALL transform stores with
+  a fresh build-private store and removes it when the build ends. Project
+  Metro config, including an existing EXPO_OVERRIDE_METRO_CONFIG, still loads;
+  native tools keep ambient TMPDIR. This prevents stale EXPO_PUBLIC_ transforms
+  in CI when the native bundle task runs. SDK <=53 lacks the config override
+  and is not isolated; SDK >=58 includes Expo's transform-cache fix. This does
+  not fix Gradle skipping its bundle task after environment-only changes
+  (https://github.com/expo/expo/pull/49839). The same isolation applies to
+  non-Debug iOS configurations.
 
   AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
   update with the newest commitTime for the binary's runtime version, and the

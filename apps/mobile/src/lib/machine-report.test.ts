@@ -139,6 +139,19 @@ describe('machineReport', () => {
     expect(byPath.get(FEATURE_WEB)?.total).toEqual({ bytes: 1 * GB, complete: true });
     expect(byPath.get(MAIN)?.total).toEqual({ bytes: 11.1 * GB, complete: true });
     expect(repository!.total?.bytes).toBeCloseTo(21.3 * GB);
+    const primary = machineReport(
+      status([
+        env(`${REPO}/apps/a`, { checkout: REPO, disk: { ...disk(GB), buildBytes: 0 } }),
+        env(`${REPO}/apps/b`, { checkout: REPO, disk: { ...disk(2 * GB), buildBytes: 0 } }),
+      ]),
+      null,
+      NOW,
+    );
+    expect(primary.repositories[0]?.total).toEqual({ bytes: 3 * GB, complete: true });
+    expect(primary.categories.find((category) => category.key === 'nodeModules')?.total).toEqual({
+      bytes: 3 * GB,
+      complete: true,
+    });
   });
 
   it('lists every device with its owner, taking an AVD size the gc inventory lacks from status', () => {

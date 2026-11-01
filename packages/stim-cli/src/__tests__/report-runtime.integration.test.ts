@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -7,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { getExecutor } from '../exec.ts';
-import { runReport as executeReport } from '../report-runtime.ts';
+import { runReport as executeReport, trackReportResource } from '../report-runtime.ts';
 
 vi.mock('../process-group-exit.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../process-group-exit.ts')>()),
@@ -67,41 +68,59 @@ function reapFixtureChild(record: { pid: number; processToken: string } | undefi
   }
 }
 
-// https://github.com/appandflow/stim/issues/3865
-test.skipIf(process.platform === 'win32' && Boolean(process.env.CI))(
-  'cancelling a report reaps its child and leaves another client running',
-  async () => {
-    const controller = new AbortController();
-    let pid: number | undefined;
-    const one = runReport(context(controller.signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
-        timeoutMs: 10_000,
-        onSpawn: (child) => {
-          pid = child.pid;
-          child.stdout?.once('data', () => controller.abort());
-        },
-      }),
-    );
-    const failure = one.then(
-      () => null,
-      (error: unknown) => error,
-    );
-    const other = runReport(context(new AbortController().signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
-        timeoutMs: 10_000,
-      }),
-    );
-    const otherResult = other.then(
-      (value) => value,
-      (error: unknown) => error,
-    );
-    expect(await failure).toBe(controller.signal.reason);
-    if (pid === undefined) throw new Error('The controlled child did not start');
-    const ownPid = pid;
-    expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-    expect(await otherResult).toBe('other client');
-  },
-);
+test('cancelling a report reaps its child and leaves another client running', async () => {
+  const controller = new AbortController();
+  let pid: number | undefined;
+  const one = runReport(context(controller.signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+      timeoutMs: 10_000,
+      onSpawn: (child) => {
+        pid = child.pid;
+        child.stdout?.once('data', () => controller.abort());
+      },
+    }),
+  );
+  const failure = one.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const other = runReport(context(new AbortController().signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
+      timeoutMs: 10_000,
+    }),
+  );
+  const otherResult = other.then(
+    (value) => value,
+    (error: unknown) => error,
+  );
+  expect(await failure).toBe(controller.signal.reason);
+  if (pid === undefined) throw new Error('The controlled child did not start');
+  const ownPid = pid;
+  expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+  expect(await otherResult).toBe('other client');
+});
+
+test('settled cleanup does not become unresolved when its completion crosses the budget', async () => {
+  let clock = 0;
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  let release: () => void = () => {};
+  const resource = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    const result = await runReport(context(new AbortController().signal), async (operation) => {
+      trackReportResource(operation, resource, () => {
+        clock = 35_001;
+        release();
+      });
+      return 'complete';
+    });
+    expect(result).toBe('complete');
+  } finally {
+    release();
+    now.mockRestore();
+  }
+});
 
 test.each(['caller', 'deadline'])('a %s cancellation rejects while a read remains pending', async (kind) => {
   vi.useFakeTimers();
@@ -492,6 +511,8 @@ test.each([true, false])(
   async (boundedReport) => {
     let owned: { pid: number; processToken: string } | undefined;
     let declaredAtExit: boolean | undefined;
+    let ready = Promise.resolve();
+    const releaseLauncher = join(scratch, 'release-launcher');
     const scope = context(new AbortController().signal);
     try {
       const work = async (operation: StimContext) =>
@@ -504,9 +525,12 @@ test.each([true, false])(
               [
                 '-e',
                 `
+          const fs = require('node:fs');
+          fs.watch(${JSON.stringify(scratch)}, () => {
+            if (fs.existsSync(${JSON.stringify(releaseLauncher)})) process.exit(0);
+          });
           const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
           console.log(c.pid);
-          setTimeout(() => process.exit(0), 100);
         `,
               ],
               {
@@ -514,18 +538,29 @@ test.each([true, false])(
                 declareFor: operation,
                 signal: operation.signal,
                 onSpawn: (child) => {
-                  child.stdout?.once('data', (chunk) => {
-                    const pid = Number(String(chunk).trim());
-                    const identity = captureProcessIdentity(pid);
-                    if (!identity.ok) throw new Error(identity.reason);
-                    owned = { pid, processToken: identity.token };
+                  ready = new Promise<void>((resolve, reject) => {
+                    child.stdout?.once('data', (chunk) => {
+                      try {
+                        const pid = Number(String(chunk).trim());
+                        const identity = captureProcessIdentity(pid);
+                        if (!identity.ok) throw new Error(identity.reason);
+                        owned = { pid, processToken: identity.token };
+                        writeFileSync(releaseLauncher, '');
+                        resolve();
+                      } catch (error) {
+                        reject(error);
+                      }
+                    });
+                    child.once('exit', () => {
+                      declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
+                      if (!owned) reject(new Error('The controlled descendant did not start'));
+                    });
                   });
-                  child.once('exit', () => {
-                    declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
-                  });
+                  void ready.catch((error: unknown) => fixtureAbort.abort(error));
                 },
               },
             );
+            await ready;
             expect(declaredAtExit).toBe(true);
             if (!owned) throw new Error('The controlled descendant did not start');
             expect(inspectProcessIdentity(owned)).toBe('gone');
@@ -591,6 +626,13 @@ test.each(['file', 'spawn'] as const)(
       });
       expect(readClaimSet(claim.root).live).toMatchObject([{ path: claim.path, childDeclared: true, child: owned }]);
       expect(owned ? inspectProcessIdentity(owned) : null).toBe('same');
+      assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+      const settled = failure.cleanupSettled;
+      expect(settled()).toBe(false);
+      reapFixtureChild(owned);
+      if (!owned) throw new Error('The controlled child did not start');
+      expect(await waitForProcessExit(owned, 2000)).toBe(true);
+      await vi.waitFor(() => expect(settled()).toBe(true));
     } finally {
       inspect.mockRestore();
       controller.abort();
@@ -630,4 +672,69 @@ test('a cleanup refusal aborts its operation before a failed probe can continue 
     reapFixtureChild(owned);
     if (owned) await waitForProcessExit(owned, 2000);
   }
+});
+
+test('a report stays unresolved until every failed cleanup resource is verified closed', async () => {
+  let firstClosed = false;
+  let secondClosed = false;
+  const first = Object.assign(new Error('first cleanup failed'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const second = Object.assign(new Error('second cleanup failed'), {
+    code: 'STIM_CLAIM_UNAVAILABLE',
+    reportCleanup: true,
+  });
+  const failure = await runReport(context(new AbortController().signal), async (operation) => {
+    trackReportResource(
+      operation,
+      Promise.reject(first),
+      () => {},
+      undefined,
+      undefined,
+      () => firstClosed,
+    );
+    trackReportResource(
+      operation,
+      Promise.reject(second),
+      () => {},
+      undefined,
+      undefined,
+      () => secondClosed,
+    );
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
+  }).catch((error: unknown) => error);
+  assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+  expect(failure.cleanupSettled()).toBe(false);
+  firstClosed = true;
+  expect(failure.cleanupSettled()).toBe(false);
+  secondClosed = true;
+  expect(failure.cleanupSettled()).toBe(true);
+});
+
+test('a late task rejection retains its leaf proof after the aggregate cleanup deadline', async () => {
+  vi.useFakeTimers();
+  let closed = false;
+  const settled = () => closed;
+  const childFailure = Object.assign(new Error('child cleanup failed'), {
+    reportCleanup: true,
+    reportResourceSettled: settled,
+  });
+  let rejectTask: (error: Error) => void = () => {};
+  const task = new Promise<void>((_, reject) => {
+    rejectTask = reject;
+  });
+  const reading = runReport(context(new AbortController().signal), async (operation) => {
+    trackReportResource(operation, Promise.reject(childFailure), () => {}, undefined, undefined, settled);
+    trackReportResource(operation, task, () => {});
+    await new Promise<void>((resolve) => operation.signal.addEventListener('abort', () => resolve(), { once: true }));
+  }).catch((error: unknown) => error);
+  await vi.advanceTimersByTimeAsync(35_000);
+  const failure = await reading;
+  assert(failure instanceof Error && 'cleanupSettled' in failure && typeof failure.cleanupSettled === 'function');
+  rejectTask(childFailure);
+  await Promise.allSettled([task]);
+  expect(failure.cleanupSettled()).toBe(false);
+  closed = true;
+  expect(failure.cleanupSettled()).toBe(true);
 });

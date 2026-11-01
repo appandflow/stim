@@ -1,7 +1,7 @@
 import Foundation
 
 extension Workspace {
-  public var worktreeActionKey: String { "worktree:\(worktree?.path ?? path)" }
+  public var worktreeActionKey: String { "worktree:\(checkoutPath ?? path)" }
 }
 
 public struct HiddenWorkspaces: Codable, Equatable, Sendable {
