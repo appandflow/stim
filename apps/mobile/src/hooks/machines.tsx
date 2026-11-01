@@ -128,14 +128,6 @@ function followViews(macId: string, connection: StimConnection): () => void {
   };
 }
 
-function followStatus(macId: string, connection: StimConnection): () => void {
-  return connection.subscribe('status.subscribe', {}, (event) => {
-    if (event.event !== 'status') return;
-    machines.receiveStatus(macId, event.ownLeases ? { ...event.payload, ownLeases: event.ownLeases } : event.payload);
-    machines.setHistory(macId, event.usage);
-  });
-}
-
 function useMachines<T>(selector: (state: MachinesState) => T): T {
   return useStore(machines.store, selector);
 }
@@ -187,7 +179,6 @@ function MacLink({ mac }: { mac: PairedMac }) {
                 archivesRead: null,
                 home: state.server.home ?? null,
                 disconnectedAt: null,
-                statusViews: state.features.includes('status-views'),
               }
             : wasOpen
               ? { state, disconnectedAt: Date.now(), archiveSummary: null, archivesRead: null }
@@ -214,11 +205,10 @@ function MacLink({ mac }: { mac: PairedMac }) {
     return () => listener.remove();
   }, [connection]);
 
-  const statusViews = useMachines((state) => state.links[mac.id]?.statusViews ?? null);
   useEffect(() => {
-    if (!connection || statusViews === null) return;
-    return statusViews ? followViews(mac.id, connection) : followStatus(mac.id, connection);
-  }, [connection, mac.id, statusViews]);
+    if (!connection) return;
+    return followViews(mac.id, connection);
+  }, [connection, mac.id]);
 
   usePolledRequest(
     connection,
@@ -313,7 +303,7 @@ export function useMachineStatus(macId: string | undefined): StatusPayload | nul
 export function useStatus(): StatusPayload | null {
   const { id, path, archive } = useLocalSearchParams<{ id?: string; path?: string; archive?: string }>();
   const link = useMachines((state) => (id ? state.links[id] : undefined));
-  const connection = link?.statusViews ? link.connection : null;
+  const connection = link?.connection ?? null;
   useEffect(() => {
     if (!id || !path || archive || !connection) return;
     return follow(id, path, connection);
@@ -397,14 +387,7 @@ export function useArchives(active: boolean, macId?: string): boolean {
     if (!wanted) return;
     for (const [id, link] of Object.entries(links)) {
       const { connection, state, archiveSummary: summary } = link;
-      if (
-        (macId !== undefined && id !== macId) ||
-        !connection ||
-        state.kind !== 'open' ||
-        !link.statusViews ||
-        !summary
-      )
-        continue;
+      if ((macId !== undefined && id !== macId) || !connection || state.kind !== 'open' || !summary) continue;
       if (entries.has(id) || link.archivesRead === summary) continue;
       let stopped = false;
       let retry: ReturnType<typeof setTimeout> | null = null;
@@ -442,7 +425,6 @@ export function useArchivesPending(macId?: string): boolean {
       ([id, link]) =>
         (macId === undefined || id === macId) &&
         link.state.kind === 'open' &&
-        link.statusViews &&
         (state.snapshots[id]?.source !== link.state ||
           !link.archiveSummary ||
           link.archivesRead !== link.archiveSummary),

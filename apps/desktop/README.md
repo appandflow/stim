@@ -607,25 +607,12 @@ item (in the toolbar while the sidebar is hidden) shows a spinner and a count
 while commands run and a red dot when a finished one failed and was not
 opened. Its popover lists the running commands and the last 20 finished ones of
 the session, and each row reopens its sheet.
-Status follows from the status watch. A finished command triggers a one-shot
-`stim status --json` only while the watch is not running, or after a
-`stim worktree` command, which can change git worktrees the watch does not
-observe. The Machine page,
+The Machine page,
 the toolbar and the disk pressure check share one `stim gc --json` report. It is marked
 stale when an action that can change it finishes (a cleanup, a run, start or
 stop, a worktree, port, device lease or setting change), and runs again 2
 seconds after the last such action unless a run started since. A reload or a
 cleanup preview leaves it alone. Each workspace runs one action at a time.
-
-Status stays current through one long-running `stim status --watch --json`,
-which prints a payload each time the state changes, and the toolbar shows
-`live` while it runs. When the loopback server session is open, allows reads and
-serves the same canonical Stim home as Desktop, the app subscribes to the server's
-`status.subscribe` feed instead, which carries the payloads of the server's own
-`status --watch`. The app ends its own watcher with the feed's first payload, so one
-`status --watch` runs per Stim home, and starts it again when the server session
-closes, errors or stops reading. At launch the watcher runs until the server delivers. If the watcher exits, the app restarts it after a delay that
-doubles from 1 to 30 seconds.
 
 A running build's progress bar carries its resolved cache outcome: "Cache hit"
 or "Cold build" / "Cache miss". Historical outcome estimates do not appear as

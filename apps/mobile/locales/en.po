@@ -4334,6 +4334,10 @@ msgid "Update stim-server on the Mac to view this app window."
 msgstr "Update stim-server on the Mac to view this app window."
 
 #: src/lib/connection.ts
+msgid "Update stim-server on this Mac to load its live status."
+msgstr "Update stim-server on this Mac to load its live status."
+
+#: src/lib/connection.ts
 msgid "Update stim-server on this Mac. It speaks an older protocol than this app."
 msgstr "Update stim-server on this Mac. It speaks an older protocol than this app."
 

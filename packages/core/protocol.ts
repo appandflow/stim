@@ -14,7 +14,6 @@ import type {
   HostedLogsCursor,
   HostedLogsPage,
   NdjsonRecord,
-  StatusPayload,
   ArchivedSummary,
   ArchivedUsage,
   ArchivedWorkspace,
@@ -87,8 +86,6 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
- * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
- * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
  * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
@@ -146,7 +143,6 @@ export const FEATURES = [
   'build-compat',
   'build-jdk',
   'build-reuse-artifact',
-  'status-views',
   'desktop-reports',
   'desktop-machine-history',
   'desktop-report-platform',
@@ -196,7 +192,6 @@ export const METHODS = [
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
-  'status.subscribe',
   'workspaces.subscribe',
   'workspace.subscribe',
   'machine.subscribe',
@@ -1750,7 +1745,6 @@ export interface Methods {
     params: { cwd: string; target?: string; force?: boolean };
     result: SubscribeResult;
   };
-  'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
   'machine.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -1845,16 +1839,6 @@ export interface UsageHistory {
   endAt: number;
   environments: (UsageSeries & { workspace: string })[];
   devices: DeviceUsageSeries[];
-}
-
-/** A full status payload, as `stim status --watch --json` prints it, and the server's usage history, when it has one. */
-export interface StatusEvent {
-  event: 'status';
-  subscription: string;
-  payload: StatusPayload;
-  usage?: UsageHistory;
-  /** `grantedAt` of the device leases this server holds for phones; absent when it holds none. */
-  ownLeases?: string[];
 }
 
 /**
@@ -2255,7 +2239,6 @@ export type ServerEvent =
   | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
-  | StatusEvent
   | WorkspacesEvent
   | WorkspaceEvent
   | MachineEvent
