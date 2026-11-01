@@ -4668,6 +4668,8 @@ describe('parked hosted device GC', () => {
         path: deviceHostArea(sessionId),
         appsBytes: 4096,
         blobsBytes: 4096,
+        willDelete: false,
+        detail: 'reported only',
       },
     ]);
     expect(usage.stderr).toContain('Hosted app storage (report only)');
