@@ -11,6 +11,7 @@ const { bundleResponseMiddleware } = require('./bundle-response.cjs');
 
 const projectRoot = process.env.STIM_PROJECT_ROOT;
 const storeRoot = process.env.STIM_METRO_STORE;
+const isolated = process.env.STIM_METRO_ISOLATED === '1';
 const priorOverride = process.env.STIM_EXPO_METRO_CONFIG;
 const adapterPath = __filename;
 const STORE_ROOT_TAG = 'stimStoreRoot';
@@ -149,6 +150,17 @@ function armManifestObserver() {
 function appendStore(config, defaultConfig) {
   const output = config && typeof config === 'object' ? config : {};
   const configuredStores = output.cacheStores != null ? output.cacheStores : defaultConfig.cacheStores;
+  if (isolated) {
+    return {
+      ...output,
+      cacheStores(MetroCache) {
+        if (!storeRoot || !MetroCache || typeof MetroCache.FileStore !== 'function') {
+          throw new Error('Stim cannot isolate the Release Metro transform cache.');
+        }
+        return [new MetroCache.FileStore({ root: storeRoot })];
+      },
+    };
+  }
   const server = { ...defaultConfig.server, ...output.server };
   const enhanceMiddleware = server.enhanceMiddleware;
 

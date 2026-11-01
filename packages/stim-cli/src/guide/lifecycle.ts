@@ -3093,6 +3093,16 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   project root differs from the previous swap's. A metro.config.js that sets
   its own cacheStores keeps its own cache location.
 
+  Native Release bundling on Expo SDK 54-57 replaces ALL transform stores with
+  a fresh build-private store and removes it when the build ends. Project
+  Metro config, including an existing EXPO_OVERRIDE_METRO_CONFIG, still loads;
+  native tools keep ambient TMPDIR. This prevents stale EXPO_PUBLIC_ transforms
+  in CI when the native bundle task runs. SDK <=53 lacks the config override
+  and is not isolated; SDK >=58 includes Expo's transform-cache fix. This does
+  not fix Gradle skipping its bundle task after environment-only changes
+  (https://github.com/expo/expo/pull/49839). The same isolation applies to
+  non-Debug iOS configurations.
+
   AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
   update with the newest commitTime for the binary's runtime version, and the
   embedded bundle is one of those updates. The cached artifact's embedded
