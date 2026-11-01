@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process';
 import * as identity from '../process-identity.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { once } from 'node:events';
-import { realpathSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -11,7 +11,12 @@ import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
 import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
 import { endRecordedSession } from '../engine/device-remote.ts';
 import { recordPhoneReverse } from '../devices/phone-reverses.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceAgentDeviceDir,
+  workspaceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
 import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
 import { writeWebRecord } from '../web/state.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
@@ -38,15 +43,47 @@ test('describeDereferenced returns an empty list when nothing is claimed', () =>
   expect(describeDereferenced({})).toEqual([]);
 });
 
-test('reclaimProject removes the config entry', async () => {
-  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+test('reclaimProject retains daemon state after a refusal and removes it after a successful stop', async () => {
   upsertProject('/proj', { metroPort: 8082 });
   setDevice('/proj', 'ios', { deviceUdid: 'U1' });
+  ensureWorkspaceStorage('/proj');
+  const stateDir = workspaceAgentDeviceDir('/proj');
+  mkdirSync(stateDir);
+  const record = join(stateDir, 'daemon.json');
+  writeFileSync(record, JSON.stringify({ pid: process.pid, processStartTime: '2026-11-01T05:50:03Z' }));
+  const start = vi.spyOn(identity, 'inspectProcessStart').mockReturnValue({
+    status: 'running',
+    startedAtMs: Date.parse('2026-11-01T06:50:03Z'),
+  });
+  let refuse = true;
+  setExecutor(
+    makeExecutor({
+      findExecutable: () => '/bin/agent-device',
+      runFileAsync: async (file) => {
+        if (file === 'agent-device') {
+          if (refuse) throw new Error('agent-device could not prove daemon ownership');
+        }
+        return '';
+      },
+    }),
+  );
 
-  const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
-  expect(result.path).toBe('/proj');
-  expect(result.dereferenced).toEqual(['ios sim U1']);
-  expect(getProject('/proj')).toBe(null);
+  try {
+    const kept = await reclaimProject('/proj', { deleteOwnedDevices: false });
+    expect(kept.keptEntry).toBe(true);
+    expect(kept.failedWorkspaceDirs).toEqual([workspaceDir('/proj')]);
+    expect(existsSync(record)).toBe(true);
+    expect(getProject('/proj')?.platforms?.ios?.deviceUdid).toBe('U1');
+
+    refuse = false;
+    const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
+    expect(result.path).toBe('/proj');
+    expect(result.dereferenced).toEqual(['ios sim U1']);
+    expect(getProject('/proj')).toBe(null);
+    expect(existsSync(workspaceDir('/proj'))).toBe(false);
+  } finally {
+    start.mockRestore();
+  }
 });
 
 test('reclaimProject keeps the workspace, its devices and its entry while a native run or a build uses it', async () => {
