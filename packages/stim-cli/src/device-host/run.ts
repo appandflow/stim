@@ -1,3 +1,4 @@
+import { ensureIosRuntime } from '../devices/ios-runtime.ts';
 import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { collectHostedAndroidLogs } from './android-logs.ts';
 import { collectHostedIosLogs } from './ios-logs.ts';
@@ -20,9 +21,20 @@ async function main(): Promise<void> {
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   if (
     !isJsonObject(input) ||
-    !['prepare', 'stop', 'install', 'offer', 'count', 'image', 'logs', 'reverse', 'park', 'inspect', 'adopt'].includes(
-      String(input.mode),
-    )
+    ![
+      'prepare',
+      'stop',
+      'install',
+      'offer',
+      'runtime',
+      'count',
+      'image',
+      'logs',
+      'reverse',
+      'park',
+      'inspect',
+      'adopt',
+    ].includes(String(input.mode))
   )
     throw new Error('Invalid hosted worker request.');
   let exclude: DeviceCountExclusion[] | undefined;
@@ -38,6 +50,13 @@ async function main(): Promise<void> {
     )
       throw new Error('Invalid hosted device exclusions.');
     exclude = input.exclude as DeviceCountExclusion[];
+  }
+  if (input.mode === 'runtime') {
+    if (typeof input.runtime !== 'string' || !/^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(input.runtime))
+      throw new Error('Invalid iOS runtime version.');
+    const result = await ensureIosRuntime({ requested: input.runtime, workerProcessGroup: true, note: () => {} });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
   }
   if (input.mode === 'count') {
     process.stdout.write(`${JSON.stringify(countLiveOwnedDevicesByPlatform({}, { exclude }))}\n`);

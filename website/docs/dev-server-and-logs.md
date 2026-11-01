@@ -29,6 +29,11 @@ If Expo cannot be resolved in a linked worktree, run `stim worktree warm`
 there before retrying. The refusal includes this command alongside dependency
 installation guidance.
 
+For Expo and custom Metro commands, Stim looks for a Node pin from the app
+directory up to the repository or worktree root. The nearest `.nvmrc`,
+`.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
+When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+
 ## Start Metro with your own command
 
 Some apps only start Metro through their own command, for example an app

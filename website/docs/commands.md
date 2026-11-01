@@ -325,7 +325,7 @@ same way when it is not running, so running `start` first is optional.
 ## `ios`
 
 ```text
-stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
+stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>] [--install-runtime]
          [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
@@ -359,6 +359,22 @@ can compile on a paired remote machine instead: see `remote.build` in
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
+- `--install-runtime` opts in to installing the explicitly requested missing
+  runtime with Xcode before continuing. Use `--remote local` or one named
+  approved Mac; automatic placement, EAS, proxy and physical phones do not
+  install runtimes. The `ios.autoInstallRuntime` setting enables the same policy
+  and defaults to `false`. Downloads are typically 8–10 GB, with a 20 GB free-space
+  requirement for download and unpacking. Stim serializes installs in the Mac's
+  Stim home, uses a build slot, and verifies the installed version with `simctl`.
+  Xcode progress appears locally; remote installs print periodic waiting messages
+  and `stim status` shows the install phase. Xcode Settings > Components lists
+  available versions and removes shared runtimes when no workspace needs them.
+  Stim does not prune runtimes or replace Xcode's availability checks.
+
+  To try it with an agent: “Run this app on iOS 26.5 on my approved Mac. Use
+  `stim ios --remote <mac> --runtime 26.5 --install-runtime` and report any Xcode
+  or disk-space refusal.”
+
 - On an eas/proxy run (`--remote` or `ios.remote`), `--runtime` refuses
   with `STIM_BAD_ARG` because the remote backend chooses the iOS version, and so
   does `--device-type` on the proxy backend. `--remote eas` honors

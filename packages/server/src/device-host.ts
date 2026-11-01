@@ -305,6 +305,47 @@ export class DeviceHost {
     return owned;
   }
 
+  async installRuntime(client: string, params: unknown, signal?: AbortSignal): Promise<AppAnswer<{ ok: true }>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      typeof params.runtime !== 'string' ||
+      params.runtime.length > 64 ||
+      !/^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(params.runtime)
+    )
+      return refused('bad-request', 'Runtime installation requires an exact iOS version.');
+    const run = this.runWorker({
+      cwd: dirname(this.options.worker),
+      env: this.options.env,
+      input: { mode: 'runtime', runtime: params.runtime },
+      timeoutMs: this.limits.imageInstallMs,
+      maxOutputBytes: 16_384,
+    });
+    this.probes.set(run, client);
+    const cancel = () => run.cancel();
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      const result = await run.done;
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
+      const value = result.value;
+      if (!result.settled || result.notice || !isJsonObject(value) || value.ok !== true)
+        return refused(
+          'action-failed',
+          result.notice ??
+            (isJsonObject(value) && typeof value.message === 'string'
+              ? `${value.message} ${typeof value.remedy === 'string' ? value.remedy : ''}`
+              : 'Xcode runtime installation did not finish.'),
+        );
+      return { result: { ok: true } };
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      this.probes.delete(run);
+    }
+  }
+
   async offer(client: string, params: unknown): Promise<AppAnswer<HostedDeviceOffer>> {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');

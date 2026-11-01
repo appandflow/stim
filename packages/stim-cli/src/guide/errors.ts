@@ -175,7 +175,8 @@ Branch on the code, never on the message.`,
   the first diagnostics are the phase names and the last error lines the
   script printed, ahead of the compiler diagnostics.
   Three Android refusals share this code without gradle itself failing:
-  - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
+  - NO ANDROID SDK, before gradle starts: local React Native emulator runs
+    refuse before Metro or device setup. Nothing exists at the SDK path
     Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
     location), and there is no android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
     into android/local.properties; \`stim doctor --platform android\` reports
