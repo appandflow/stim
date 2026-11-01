@@ -40,7 +40,15 @@ import {
   type ResolvedAvdSerial,
 } from './devices/android.ts';
 import type { IosSimRecord } from './devices/ios.ts';
-import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from './workspace/worktree.ts';
+import {
+  gitCommonDir,
+  gitCommonDirOnDisk,
+  gitLocationOnDisk,
+  linkedWorktreesOnDisk,
+  nativeCanonicalPath,
+  repoRoot,
+  repoRootAsync,
+} from './workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from './workspace/git-summary.ts';
 import { readWorkspaceState, type WorkspaceState } from './workspace/workspace-state.ts';
 import { readStats, statsProjectKey, type RunHistory } from './engine/stats.ts';
@@ -270,7 +278,14 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   );
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(cwd)?.root ?? null;
-  const { worktrees, commonDirs } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
+  const { worktrees, commonDirs, checkouts } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
+  const checkoutRead = Promise.all(
+    [...new Set(checkouts.values())].map(async (path) => {
+      const root = await repoRootAsync(path);
+      return root && nativeCanonicalPath(root) === path ? path : null;
+    }),
+  );
+  checkoutRead.catch(() => {});
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
     projects.map(([p]) => p),
@@ -328,6 +343,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   }));
   await gitRead;
 
+  const verifiedCheckouts = new Set(await checkoutRead);
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
   let mountedVolumes: string[] | undefined;
@@ -399,6 +415,10 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     );
     const state = states[states.length - 1];
     if (state) {
+      const checkout = checkouts.get(path);
+      state.checkout = checkout && verifiedCheckouts.has(checkout) ? checkout : null;
+      if (state.checkout && state.worktree && nativeCanonicalPath(state.worktree.path) !== state.checkout)
+        state.worktree = null;
       for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
         if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
       }
@@ -719,13 +739,21 @@ function readMetroReverses(
   }
 }
 
-function linkedWorktrees(paths: string[]): { worktrees: WorktreeFacts[]; commonDirs: string[] } {
-  const commonDirs = [...new Set(paths.flatMap((path) => gitCommonDirOnDisk(path) ?? []))];
+function linkedWorktrees(paths: string[]): {
+  worktrees: WorktreeFacts[];
+  commonDirs: string[];
+  checkouts: Map<string, string>;
+} {
+  const locations = paths.map((path) => ({ path, location: gitLocationOnDisk(path) }));
+  const commonDirs = [...new Set(locations.flatMap(({ location }) => location?.commonDir ?? []))];
+  const checkouts = new Map(
+    locations.flatMap(({ path, location }) => (location ? [[path, location.path] as const] : [])),
+  );
   const worktrees = commonDirs.flatMap((common) => {
     const repository = basename(common) === '.git' ? dirname(common) : common;
     return linkedWorktreesOnDisk(common).map((entry) => Object.assign(entry, { repository }));
   });
-  return { worktrees, commonDirs };
+  return { worktrees, commonDirs, checkouts };
 }
 
 function workspaceBuilds(
