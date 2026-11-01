@@ -32,7 +32,7 @@ struct SidebarPreferences: DynamicProperty {
 
   @MainActor @discardableResult
   func setHidden(
-    _ hidden: Bool, apps: [Workspace], actions: ActionCenter, completion: ((ActionRun) -> Void)? = nil
+    _ hidden: Bool, apps: [Workspace], actions: ActionCenter, migrating: Bool = false
   ) -> ActionRun? {
     guard let first = apps.first,
       !apps.contains(where: { actions.active(for: $0.path) != nil || actions.active(for: $0.worktreeActionKey) != nil })
@@ -50,12 +50,11 @@ struct SidebarPreferences: DynamicProperty {
       },
       key: apps.count > 1 ? first.worktreeActionKey : first.path, present: false
     ) { run in
-      if run.exitStatus == 0 {
+      if run.exitStatus == 0 && !migrating {
         var local = self.hiddenWorkspaces
         local.paths.subtract(apps.map(\.path))
         self.hiddenWorkspacesRaw = HiddenWorkspaces.encode(local)
       }
-      completion?(run)
     }
   }
 

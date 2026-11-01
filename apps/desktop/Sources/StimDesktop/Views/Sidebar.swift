@@ -12,7 +12,7 @@ struct Sidebar: View {
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @ObservedObject private var pairedState = PairedViewState.shared
-  @State private var migratedHidden: Set<String> = []
+  @State private var migratedHidden: [String: Bool] = [:]
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -152,15 +152,13 @@ struct Sidebar: View {
   }
 
   private func migrateHidden(_ payload: StatusPayload?) {
-    migratedHidden.formIntersection(prefs.hiddenWorkspaces.paths)
+    let legacyPaths = prefs.hiddenWorkspaces.paths
+    migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
     guard let payload, ServerSession.shared.localActionConnection?.home == store.stimHome else { return }
     for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
-      guard !migratedHidden.contains(item.path) else { continue }
-      let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions) { run in
-        guard run.exitStatus == 0 else { return }
-        prefs.setHidden(false, path: item.path)
-      }
-      if run != nil { migratedHidden.insert(item.path) }
+      guard migratedHidden[item.path] != item.hidden else { continue }
+      let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions, migrating: true)
+      if run != nil { migratedHidden[item.path] = item.hidden }
     }
   }
 
