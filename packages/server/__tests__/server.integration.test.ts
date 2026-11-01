@@ -315,6 +315,10 @@ if (process.argv[2].startsWith('offer')) {
       const { existsSync } = await import('node:fs');
       while (!existsSync(process.env.FAKE_WORKER_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (process.env.FAKE_WORKER_CRASH) {
+      print({ type: 'result', ok: false, code: 'worker-crashed', message: 'The worker crashed.' });
+      process.exit(1);
+    }
     mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
     writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
@@ -3436,20 +3440,27 @@ describe('offloaded builds', () => {
       },
     );
 
-    test.skipIf(!fakeTailscale)("stops only the cancelled repository's daemon", async () => {
-      const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
-      });
-      const { client, id } = await buildClient(port);
-      const job = await launch(client);
-      const daemon = daemonOf(id, 'app-1');
-      const sibling = daemonOf(id, 'another-repo');
-      expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
-      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
-      await eventually(() => !running(daemon));
-      expect(running(sibling)).toBe(true);
-    });
+    test.each(['cancelled', 'worker-crashed'] as const)(
+      'stops only the failed repository daemon after %s',
+      { skip: !fakeTailscale },
+      async (reason) => {
+        const gate = join(root, 'crash-gate');
+        const port = await start({
+          env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
+          buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+        });
+        const { client, id } = await buildClient(port);
+        const job = await launch(client);
+        const daemon = daemonOf(id, 'app-1');
+        const sibling = daemonOf(id, 'another-repo');
+        if (reason === 'cancelled') {
+          assert.deepStrictEqual(await client.request('build.cancel', { job }), { result: {} });
+        } else writeFileSync(gate, '');
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
+        await eventually(() => !running(daemon));
+        expect(running(sibling)).toBe(true);
+      },
+    );
   });
 });
 

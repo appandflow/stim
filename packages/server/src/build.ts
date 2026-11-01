@@ -1062,8 +1062,10 @@ export class BuildHost {
     const removeDir = async (dir: string) => {
       try {
         await rm(dir, { recursive: true, force: true, maxRetries: 10 });
+        return true;
       } catch (error) {
         console.error(`stim-server: could not delete the build area of ${client}: ${String(error)}`);
+        return false;
       }
     };
     if (process.platform === 'win32') {
@@ -1074,7 +1076,7 @@ export class BuildHost {
           if (!lstatSync(join(area, 'src')).isSymbolicLink()) continue;
           const checkout = windowsShortDir(realpathSync(area));
           if (realpathSync(join(area, 'src')).toLowerCase() !== checkout.toLowerCase()) continue;
-          await removeDir(checkout);
+          if (!(await removeDir(checkout))) return;
           await rm(`${checkout}.owner`, { force: true });
         } catch {}
       }
@@ -1086,7 +1088,7 @@ export class BuildHost {
           marker = readFileSync(`${home}.owner`, 'utf8');
         } catch {}
         if (marker === windowsShortDirKey('gradle', area)) {
-          await removeDir(home);
+          if (!(await removeDir(home))) return;
           await rm(`${home}.owner`, { force: true }).catch(() => {});
         }
       }
@@ -1275,7 +1277,7 @@ export class BuildHost {
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         const abnormal = !entry.outcome;
         entry.outcome = outcome;
-        if (job.platform === 'android' && abnormal) cancel();
+        if (job.platform === 'android' && (abnormal || !outcome.ok)) cancel();
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
