@@ -47,7 +47,7 @@ import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitQuiet } from '../workspace/git.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
@@ -333,6 +333,34 @@ async function materialize(
     git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
   }
   git(src, ['read-tree', '--empty'], { write: true, timeoutMs: 30_000 });
+  if (gitQuiet(src, ['rev-parse', '--verify', 'HEAD']) === null) {
+    // React Native development podspecs resolve HEAD even for local path pods.
+    git(
+      src,
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '--allow-empty',
+        '--no-gpg-sign',
+        '-m',
+        'Initialize build mirror',
+      ],
+      {
+        write: true,
+        env: {
+          GIT_AUTHOR_NAME: 'Stim',
+          GIT_AUTHOR_EMAIL: 'build@stim.invalid',
+          GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+          GIT_COMMITTER_NAME: 'Stim',
+          GIT_COMMITTER_EMAIL: 'build@stim.invalid',
+          GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+        },
+        timeoutMs: 30_000,
+      },
+    );
+  }
   let retained: string[] = [];
   if (job.native) {
     if (job.native.provider === 'gradle') {
