@@ -6,7 +6,8 @@ import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import { unsupportedPlan } from '../../integrations/project-plan.ts';
-import { planFlagRefusal, printPlan, refusePlan } from '../build-plan.ts';
+import { planFlagRefusal, plannedBuildPlacement, printPlan, refusePlan } from '../build-plan.ts';
+import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 
 export interface AndroidPlanOptions {
@@ -19,6 +20,7 @@ export interface AndroidPlanOptions {
   deviceProfile?: string;
   device?: string | boolean;
   remote?: string;
+  remoteBuild?: string;
   wait?: string | boolean;
   metroCheck?: boolean;
 }
@@ -30,7 +32,6 @@ export interface AndroidPlanDeps {
 
 function runOnlyFlag(opts: AndroidPlanOptions): string | null {
   if (isPhysicalDeviceRequest(opts.device)) return '--device';
-  if (opts.remote) return '--remote';
   if (opts.wait !== undefined) return opts.wait === false ? '--no-wait' : '--wait';
   if (opts.metroCheck === false) return '--no-metro-check';
   return null;
@@ -53,7 +54,10 @@ export async function readAndroidBuildPlan(
   const planner = project.plan;
   if (!planner) return { refusal: unsupportedPlan('android') };
   operation.signal.throwIfAborted();
-  return planner(opts, resolved, operation);
+  const build = resolveBuildPlacement(opts.remoteBuild);
+  if (build.failure) return { refusal: build.failure };
+  const plan = await planner({ ...opts, remoteBuild: build.selected }, resolved, operation);
+  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected) : plan;
 }
 
 export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<AndroidPlanDeps> = {}): Promise<void> {

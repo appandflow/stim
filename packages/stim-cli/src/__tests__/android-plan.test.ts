@@ -15,7 +15,7 @@ import type { AndroidPlanDeps } from '../integrations/react-native-android-plan.
 import { reactNativeAndroidProject } from '../integrations/react-native-android.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { buildCacheKey } from '../cache/build-cache.ts';
-import { getProject, upsertProject } from '../workspace/config.ts';
+import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { hostSystemImageArch } from '../devices/android.ts';
 import { readProductFlavors } from '../integrations/react-native-build.ts';
 
@@ -182,6 +182,19 @@ describe('planAndroid', () => {
     assert.equal(logs.length, 1);
     return { payload: JSON.parse(logs[0]!), exitCode };
   }
+
+  test('plan honors explicit local device and build flags over remote settings without starting a runtime', async () => {
+    saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: 'remote-only' } });
+    writeFileSync(join(app, '.stim.json'), JSON.stringify({ android: { remote: 'unreachable-mini' } }));
+    const { payload, exitCode } = await plan({ remote: 'local', remoteBuild: 'local' });
+    expect(exitCode).toBeUndefined();
+    expect(payload).toMatchObject({
+      placement: 'this machine',
+      buildPlacement: { preference: 'local', reason: 'builds on this machine' },
+      cacheKey: buildCacheKey('android', HASH, { variant: 'debug', abi: ARM.arch }),
+    });
+    expect(getProject(app)?.platforms).toBeUndefined();
+  });
 
   test('a recorded AVD that no longer exists keys by the image a new emulator would use', async () => {
     upsertProject(app, { platforms: { android: { avdName: 'stim-fixture', owned: true } } });

@@ -166,7 +166,12 @@ its config, workspace-state, and lease lock waits are asynchronous.
 `plan({ platform: 'ios' | 'android' | 'macos', signal? })` predicts the next
 configured native build, as the CLI's `--plan --json` reports it, without building
 or launching. iOS and Android also accept `slot`; build and device selectors
-come from the project's settings. Plans use the report execution and cleanup
+come from the project's settings. iOS and Android plans report device `placement` separately
+from `buildPlacement`, whose `preference` follows `--remote-build`, `STIM_REMOTE_BUILD`,
+and `remote.build` in that order. Its `reason` distinguishes cache reuse from compilation.
+Automatic build preferences remain policies: the run checks worker availability and
+compatibility and applies its normal fallback. CLI plans accept `--remote` to override
+the device setting without reserving or starting a device. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
 Cache providers must settle after cancellation. If cleanup cannot finish within

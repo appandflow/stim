@@ -169,7 +169,8 @@ export async function planReactNativeAndroid(
       device: null,
       wait: undefined,
       waitConflict: false,
-      remote: null,
+      remote: opts.remote ?? null,
+      buildMachine: opts.remoteBuild,
       buildCache: opts.buildCache !== false,
     },
     {
@@ -258,6 +259,7 @@ export async function planReactNativeAndroid(
       slot,
       platform: 'android',
       machine: target.machine,
+      buildMachine: opts.remoteBuild,
       ...(target.placement ? { placement: target.placement } : {}),
       selectors: {
         ...(target.systemImage ? { systemImage: target.systemImage } : {}),
