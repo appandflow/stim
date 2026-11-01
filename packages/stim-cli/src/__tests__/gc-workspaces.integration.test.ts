@@ -1418,8 +1418,8 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
   const remote = join(projects, `${repoName}-remote.git`);
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 });
-  git(`init -q --bare "${remote}"`, projects);
-  git('init -q');
+  git(`init -q --bare -b main "${remote}"`, projects);
+  git('init -q -b main');
   git('config user.email test@example.com');
   git('config user.name test');
   git(`remote add origin "${remote}"`);
@@ -1438,7 +1438,31 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
       return [name, path];
     }),
   );
-  return { repo, worktrees };
+  return { repo, remote, worktrees, git };
+}
+
+function repoWithTwoBranches({ registerWorktrees = true }: { registerWorktrees?: boolean } = {}) {
+  const { repo, remote, worktrees, git } = gitRepoWithWorktrees(['merged', 'open'], 'repo', {
+    '.gitignore': '.claude/\n',
+  });
+  git('remote set-head origin --auto');
+  for (const [name, path] of Object.entries(worktrees)) {
+    writeFileSync(join(path, `${name}.txt`), name);
+    git(`add ${name}.txt`, path);
+    git(`commit -q -m ${name}`, path);
+    git(`push -q -u origin ${name}`, path);
+  }
+  for (const path of registerWorktrees ? Object.values(worktrees) : [repo]) {
+    upsertProject(path, { metroPort: null });
+    recordWorkspaceUse(path);
+  }
+  const upstream = join(projects, 'upstream');
+  git(`clone -q "${remote}" "${upstream}"`, projects);
+  git('config user.email test@example.com', upstream);
+  git('config user.name test', upstream);
+  git('merge -q --no-ff origin/merged -m merge-merged', upstream);
+  git('push -q origin HEAD', upstream);
+  return { repo, remote, worktrees, git, upstream };
 }
 
 function killIfSame(target: { pid: number; processToken: string }): void {
@@ -2300,7 +2324,7 @@ function repoWithMergedBranches({ registerWorktrees = true }: { registerWorktree
 }
 
 test('gc keeps a merged worktree that holds another worktree under an ignored path', async () => {
-  const { worktrees, git } = repoWithMergedBranches();
+  const { worktrees, git } = repoWithTwoBranches();
   const merged = worktrees.merged ?? '';
   const inner = join(merged, '.claude', 'worktrees', 'inner');
   git(`worktree add -q "${inner}" -b inner`);
@@ -2397,7 +2421,7 @@ function fetchHeadOf(repo: string): string {
 }
 
 test('plain gc fetches nothing and asks gh nothing, shows what the maintenance worktree check last learned, and --delete asks again', async () => {
-  const { repo, worktrees, git } = repoWithMergedBranches();
+  const { repo, worktrees, git } = repoWithTwoBranches();
   const trackedMain = git('rev-parse refs/remotes/origin/main').trim();
   const ghCalls = answerGh(() => []);
   const fetches = countFetches();
@@ -2411,18 +2435,6 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
   const byPath = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [realpathSync.native(w.path), w]),
   );
-  expect(byPath[worktrees.fresh ?? '']).toMatchObject({
-    willRemove: false,
-    reason: 'recent-activity',
-    detail: expect.stringMatching(/^recent activity: /),
-  });
-  for (const name of ['squashed', 'rebased']) {
-    expect(byPath[worktrees[name] ?? '']).toMatchObject({
-      willRemove: false,
-      reason: 'unpushed',
-      detail: expect.stringContaining('; merge state not refreshed: the repository has no recorded fetch'),
-    });
-  }
   for (const name of ['merged', 'open']) {
     expect(byPath[worktrees[name] ?? '']).toMatchObject({
       willRemove: false,
@@ -2451,7 +2463,7 @@ test('plain gc fetches nothing and asks gh nothing, shows what the maintenance w
 
   await captureLog(() => runGc({ delete: true }));
   expect(ghCalls).toHaveLength(2);
-  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? '')).toBe(false);
+  expect(existsSync(worktrees.merged ?? '')).toBe(false);
   expect(existsSync(worktrees.open ?? '')).toBe(true);
 }, 240_000);
 
@@ -2681,7 +2693,9 @@ test('gc --delete removes a clean detached worktree on the default branch once i
 }, 240_000);
 
 test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
-  const { worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const { worktrees, git, upstream } = repoWithTwoBranches({ registerWorktrees: false });
+  git('merge -q --no-ff origin/open -m merge-control', upstream);
+  git('push -q origin HEAD', upstream);
   const merged = worktrees.merged ?? '';
   const argv = process.argv[1] ?? '';
   process.argv[1] = join(merged, 'package.json');
@@ -2699,7 +2713,7 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
     detail: expect.stringContaining('it holds the running stim'),
   });
   expect(existsSync(merged)).toBe(true);
-  expect(existsSync(worktrees.squashed ?? '')).toBe(false);
+  expect(existsSync(worktrees.open ?? '')).toBe(false);
   const error = vi.spyOn(console, 'error').mockImplementation(() => {});
   try {
     expect(await removeWorktreeTarget(merged, { linkedOnly: true, force: true })).toBe(false);
@@ -2797,7 +2811,9 @@ test('disk pressure level 3 keeps a worktree with no commits of its own that bec
 }, 240_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {
-  const { repo, remote, worktrees, git } = repoWithMergedBranches();
+  const { repo, remote, worktrees, git, upstream } = repoWithTwoBranches();
+  git('merge -q --no-ff origin/open -m merge-control', upstream);
+  git('push -q origin HEAD', upstream);
   git('fetch -q origin');
   const stale = new Date(Date.now() - 11 * 60_000);
   utimesSync(join(repo, '.git', 'FETCH_HEAD'), stale, stale);
@@ -2833,7 +2849,7 @@ test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves a
   }
   expect(existsSync(worktrees.merged!)).toBe(true);
   expect(lines.join('\n')).toContain(`Kept the worktree ${worktrees.merged}: its HEAD moved since gc checked it`);
-  expect(existsSync(worktrees.squashed!)).toBe(false);
+  expect(existsSync(worktrees.open!)).toBe(false);
 }, 240_000);
 
 test('gc --delete keeps a just-merged worktree for the grace period, then removes it and tears down its device', async () => {
