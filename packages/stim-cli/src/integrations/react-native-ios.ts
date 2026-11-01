@@ -1,10 +1,12 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
   changedDuringBuildLine,
   configInputsChanged,
+  expoProductionEnvFiles,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   gitignoredFingerprintInputs,
@@ -14,6 +16,7 @@ import {
   refingerprintAfterMutation,
   untrackedMissLine,
 } from '../cache/build-cache.ts';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 import { DEFAULT_DEPS, type IosDeps } from '../commands/ios/dependencies.ts';
@@ -25,7 +28,7 @@ import { easDeviceBuildRemedy } from '../engine/eas-build.ts';
 import { copyAppAside, writeIpTxt } from '../engine/ios-lan.ts';
 import { staleNativeDirRefusal, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { bundlerPin } from '../engine/bundler.ts';
-import { iosToolchainAsync } from '../offload/toolchain.ts';
+import { buildsOnlyOnWorker, iosToolchainAsync } from '../offload/toolchain.ts';
 import { resolveIosProjectDir, type IosProjectDir, type SettingsObject } from '../workspace/settings.ts';
 import { IosRecipeRefusal, type IosProject, type IosArtifactContext, type IosArtifactRecipe } from './ios-project.ts';
 
@@ -40,9 +43,11 @@ type ReactNativeIosDependencies = Pick<
   | 'discoverXcodeProject'
   | 'resolveScheme'
   | 'fingerprintProject'
+  | 'memoizedFingerprint'
   | 'untrackedNativeFiles'
   | 'resolveBuild'
   | 'storeBuild'
+  | 'readBundleId'
   | 'readWorkspaceState'
   | 'loadProjectProvider'
   | 'planPrebuild'
@@ -50,6 +55,7 @@ type ReactNativeIosDependencies = Pick<
   | 'readPodState'
   | 'podsAreStale'
   | 'runPodInstall'
+  | 'iosToolchain'
   | 'buildIos'
   | 'gateProfileForDevice'
   | 'sealAppForDevice'
@@ -156,6 +162,7 @@ function reactNativeIosArtifact(
   let storeHash: string | null = null;
   let storeSources: FingerprintSource[] = [];
   let mutatingSteps: string[] = [];
+  let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => (storeHash ? { hash: storeHash, key: buildCacheKey(PLATFORM, storeHash, keyOptions) } : null);
   const materialize: IosArtifactRecipe['materialize'] = async (artifactPath, { fresh: isFresh, ownTemporary }) => {
     const lanAddress = device?.lanAddress ?? null;
@@ -240,6 +247,17 @@ function reactNativeIosArtifact(
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
       if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
+      if (buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
+        note(
+          chalk.yellow(
+            phaseLine(
+              'swap',
+              `a cached ${configuration} app carries its builder's JS, and only a Mac with Xcode can replace it -- building fresh instead`,
+            ),
+          ),
+        );
+        return null;
+      }
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
         context: operation,
@@ -280,7 +298,18 @@ function reactNativeIosArtifact(
       let computedFingerprint: string | null;
       let fingerprintError = 'no hash';
       try {
-        const computed = await d.fingerprintProject(root, { platform: PLATFORM, iosProjectPath: iosProject.relative });
+        const memo = await d.memoizedFingerprint(
+          root,
+          { platform: PLATFORM, iosProjectPath: iosProject.relative },
+          { consult: cachePolicy.read, record: true, operation, fingerprint: d.fingerprintProject },
+        );
+        const computed = memo.fingerprint;
+        fingerprintCheck = memo.check;
+        if (memo.memoHit)
+          phase(
+            'fingerprint',
+            chalk.dim('matches a recorded fingerprint of this tree; confirming it in the background'),
+          );
         computedFingerprint = computed?.hash ?? null;
         fingerprintSources = computed?.sources ?? [];
       } catch (error) {
@@ -299,12 +328,14 @@ function reactNativeIosArtifact(
       storeSources = fingerprintSources;
       return identity()!;
     },
+    fingerprintCheck: () => fingerprintCheck,
     cache: () =>
       filesystemBuildCapability({
         context: operation,
         resolve: d.resolveBuild,
         store: d.storeBuild,
         sources: storeSources,
+        readAppId: (path) => d.readBundleId(path),
       }),
     async validateExternal(path) {
       if (device) {
@@ -372,7 +403,9 @@ function reactNativeIosArtifact(
       const podState = d.readPodState(root, iosProject.dir);
       const verdict = d.podsAreStale(podState.lockText, podState.manifestText, podState.dir);
       const action = podAction(podState, verdict, { prebuildRan: mutatingSteps.includes('prebuild') });
-      if (action.install) {
+      if (action.install && buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
+        phase('pods', `${action.reason} -> no Xcode here; the Mac that builds runs pod install`);
+      } else if (action.install) {
         step('pods');
         const result = await d.runPodInstall(root, logWriter(), {
           onHeartbeat: note,
@@ -526,18 +559,16 @@ function reactNativeIosArtifact(
           },
     offload: {
       context: () => {
-        const runtime = physical || release ? null : target.offloadRuntime();
+        const runtime = physical ? null : target.offloadRuntime();
         const unsupported =
           target.offloadRefusal ??
-          (release
-            ? `${configuration} builds build here`
-            : !cachePolicy.write
-              ? 'the build cache is off'
-              : !runtime
-                ? udid
-                  ? `the runtime of simulator ${udid} is unknown`
-                  : 'no simulator runtime is available for worker selection'
-                : null);
+          (!cachePolicy.write
+            ? 'the build cache is off'
+            : !runtime
+              ? udid
+                ? `the runtime of simulator ${udid} is unknown`
+                : 'no simulator runtime is available for worker selection'
+              : null);
         return { runtime, unsupported };
       },
       target: async (runtime) => ({
@@ -551,7 +582,8 @@ function reactNativeIosArtifact(
       }),
       request: (runtime) => ({
         platform: 'ios',
-        cacheArtifact: cachePolicy.write && cachePolicy.remote,
+        cacheArtifact: cachePolicy.write && cachePolicy.remote && !release,
+        reuseArtifact: cachePolicy.read && cachePolicy.remote,
         runtime,
         configuration,
         scheme: buildScheme ?? null,
@@ -561,12 +593,19 @@ function reactNativeIosArtifact(
       }),
       fingerprintInputs: async () => ({
         sources: storeSources,
-        ignored: await gitignoredFingerprintInputs(
-          root,
-          storeSources,
-          { platform: PLATFORM, iosProjectPath: iosProject.relative },
-          { env: operation?.env },
-        ),
+        ignored: [
+          ...(await gitignoredFingerprintInputs(
+            root,
+            storeSources,
+            { platform: PLATFORM, iosProjectPath: iosProject.relative },
+            { env: operation?.env },
+          )),
+          ...(release && isExpo
+            ? expoProductionEnvFiles(operation?.env)
+                .map((name) => join(root, name))
+                .filter((path) => existsSync(path))
+            : []),
+        ],
         ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
         trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
@@ -580,6 +619,7 @@ function reactNativeIosArtifact(
         });
         return Boolean(after && !after.moved);
       },
+      rekeyed: (hash) => ({ hash, key: buildCacheKey(PLATFORM, hash, keyOptions) }),
     },
   };
 }

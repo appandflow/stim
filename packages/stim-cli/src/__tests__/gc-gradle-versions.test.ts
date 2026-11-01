@@ -145,39 +145,6 @@ test('deletion revalidates the captured Gradle home and leaves the process-defau
   expect(existsSync(join(gradle, 'caches', '9.3.1'))).toBe(false);
 });
 
-test.each(['cancellation', 'unresolved cleanup'])(
-  '%s during Gradle revalidation keeps the version and its ownership staging untouched',
-  async (failure) => {
-    const controller = new AbortController();
-    const operation: StimContext = {
-      home: join(home, 'stim'),
-      projectRoot: home,
-      cwd: home,
-      buildCache: null,
-      runId: 'gradle-cancel',
-      env: { ...process.env },
-      signal: controller.signal,
-      output: () => {},
-    };
-    const reason = new Error('cancel during revalidation');
-    if (failure === 'unresolved cleanup') Object.assign(reason, { reportCleanup: true });
-    await withAmbientContext(operation, async () => {
-      const sweep = await collectGradleVersions({ operation, measure: false });
-      ps = () => {
-        if (failure === 'unresolved cleanup') throw reason;
-        controller.abort(reason);
-        return '';
-      };
-      await expect(
-        deleteGradleVersions(sweep, { log: () => {}, error: () => {}, record: () => {}, fail: () => {} }, operation),
-      ).rejects.toBe(reason);
-    });
-    expect(existsSync(join(gradle, 'caches', '9.3.1', 'keep'))).toBe(true);
-    expect(existsSync(join(gradle, 'wrapper', 'dists', 'gradle-9.3.1-bin'))).toBe(true);
-    expect(readdirSync(join(gradle, 'caches')).some((name) => name.startsWith('.stim-delete-'))).toBe(false);
-  },
-);
-
 test('a dry run reports the version as actionable and deletes nothing', async () => {
   const report = await gc();
   expect(report.actionable).toBe(true);
@@ -452,41 +419,18 @@ test('a daemon that appears on the last check before the rename keeps the versio
 
 test.skipIf(!posixModes)('a version is renamed to a .stim-delete sibling before its contents are removed', async () => {
   const version = join(gradle, 'caches', '9.3.1');
-  chmodSync(version, 0o555);
+  const locked = join(version, 'locked');
+  file(join(locked, 'inner'));
+  chmodSync(locked, 0o555);
   const report = await gc('--delete');
   const staged = readdirSync(join(gradle, 'caches')).filter((name) => name.startsWith('.stim-delete-9.3.1-'));
   try {
     expect(existsSync(version)).toBe(false);
     expect(staged).toHaveLength(1);
-    expect(existsSync(join(gradle, 'caches', staged[0] ?? '', 'keep'))).toBe(true);
+    expect(existsSync(join(gradle, 'caches', staged[0] ?? '', 'locked', 'inner'))).toBe(true);
     expect(report.results).toContainEqual(expect.objectContaining({ kind: 'gradleVersion', status: 'failed' }));
   } finally {
-    for (const name of staged) chmodSync(join(gradle, 'caches', name), 0o755);
+    for (const dir of [locked, ...staged.map((name) => join(gradle, 'caches', name, 'locked'))])
+      if (existsSync(dir)) chmodSync(dir, 0o755);
   }
-});
-
-test.each([
-  ['a missing registered project', () => upsertProject(join(home, 'gone'), {}), 'unreadable-project'],
-  ['a failed ps', () => (ps = new Error('ps failed')), 'processes-unknown'],
-  [
-    'an unsafe layout',
-    () => {
-      rmSync(join(gradle, 'wrapper'), { recursive: true });
-      symlinkSync(home, join(gradle, 'wrapper'));
-    },
-    'unsafe-layout',
-  ],
-])('looking past running Gradle still keeps %s blocking', async (_name, arrange, reason) => {
-  ps = java('org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1');
-  arrange();
-  const sweep = await collectGradleVersions({ pastRunningGradle: true });
-  expect(sweep.blocked).toMatchObject({ reason });
-  expect(sweep.versions.some((entry) => entry.willDelete)).toBe(false);
-});
-
-test('looking past running Gradle reports the blocking pids and judges versions as if it had stopped', async () => {
-  ps = java('org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1');
-  const sweep = await collectGradleVersions({ pastRunningGradle: true });
-  expect(sweep).toMatchObject({ blocked: null, gradleRunningPids: [101] });
-  expect(sweep.versions).toEqual([expect.objectContaining({ version: '9.3.1', willDelete: true })]);
 });

@@ -60,13 +60,13 @@ configuration, and direct builds outside Stim keep their own settings.
 
 All keys below are inside `optimizations`.
 
-| Option              | Default | What it does                                                                                                                                                                                                                                     |
-| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `buildCache`        | `true`  | Reads and stores complete native build artifacts. Set to `false` to skip both local and remote artifact reads and writes. Compiler caches remain independent.                                                                                    |
-| `remoteBuildCache`  | `true`  | Allows configured artifact providers, including `@stim-cli/cache-s3` for S3-compatible storage. Set to `false` to skip remote lookup, upload, provider discovery, loading, and authentication while keeping the local artifact cache.            |
-| `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored. |
-| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                      |
-| `metroWarmup`       | `true`  | Prefetches the development bundle during `ios` and `android` while native work runs, using [`metro.warmupUrl`](./settings.md#committed-settings) when set. Set to `false` to skip the prefetch; Metro verification and native builds still run.  |
+| Option              | Default | What it does                                                                                                                                                                                                                                                                               |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `buildCache`        | `true`  | Reads and stores complete native build artifacts. Set to `false` to skip both local and remote artifact reads and writes. Compiler caches remain independent.                                                                                                                              |
+| `remoteBuildCache`  | `true`  | Allows configured artifact providers, including `@stim-cli/cache-s3` for S3-compatible storage. Set to `false` to skip remote lookup, upload, provider discovery, loading, and authentication while keeping the local artifact cache.                                                      |
+| `releaseBundleSwap` | `true`  | Allows supported Release artifact hits to reuse native code with the current JavaScript and assets inserted into a copy. If swapping fails, Stim builds fresh. Set to `false` to build Release from source; fresh artifacts can still be stored.                                           |
+| `metroSharedCache`  | `true`  | Adds Stim's shared Metro transform store for Expo SDK 54+ and bare React Native. Set to `false` to stop adding it; stores configured by the project remain.                                                                                                                                |
+| `metroWarmup`       | `true`  | Prefetches the development bundle during `ios` and `android` while native work runs, using [`metro.warmupUrl`](./settings.md#committed-settings) when set, else the app's most recent bundle request. Set to `false` to skip the prefetch; Metro verification and native builds still run. |
 
 Remote artifact reuse is available through [optional cache providers](./build-caches.md#optional-artifact-providers).
 It does not synchronize compiler caches between machines.
@@ -88,6 +88,16 @@ not detected by this guard.
 | `compilationCache`      | `true`  | Enables Xcode's compilation cache so unchanged native compilation can be reused across builds and worktrees. Set to `false` to disable the compilation cache, including Swift caching.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `swiftCompilationCache` | unset   | Unset turns Swift caching on, with Swift prefix mapping, when `xcrun swift` reports Swift 6.4 or newer (Xcode 27), where swift-frontend no longer crashes on prefix-mapped batches, and the project's `react-native` is 0.87 or newer. Earlier React Native sets `SWIFT_ENABLE_EXPLICIT_MODULES=NO` on every target for its prebuilt core, and Xcode refuses Swift caching without explicit modules, so those projects stay off; the cache line names which gate applied. `true` forces it on regardless, unmapped below Swift 6.4, so entries hit only within one checkout. `false` keeps it off. Requires `compilationCache: true`. The post-build cache line reports how many Swift targets Xcode still excluded. |
 | `prefixMapping`         | `true`  | Maps checkout and DerivedData paths to stable Clang paths for reuse across worktrees. Set to `false` to disable Stim's prefix mapping and clear its mappings.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+
+### Debug simulator builds
+
+Debug builds for the iOS simulator also pass `DEBUG_INFORMATION_FORMAT=dwarf`,
+so Xcode skips the dSYM bundle and the `dsymutil` step at the end of every link.
+The debug information stays in the object files under the workspace's
+DerivedData, where lldb and Xcode find it while those files exist. After
+`stim gc --delete` clears DerivedData, a rebuild restores it. Release builds and
+device builds keep the project's own setting, so Release still produces dSYMs
+for crash reporting. This has no option.
 
 ## Android options
 

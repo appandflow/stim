@@ -10,7 +10,7 @@ const MESSAGE_TYPE_LEVEL: Record<string, string> = {
   Fault: 'fatal',
 };
 
-export function levelFromMessageType(messageType: unknown): string {
+function levelFromMessageType(messageType: unknown): string {
   return MESSAGE_TYPE_LEVEL[messageType as string] ?? 'info';
 }
 
@@ -60,6 +60,12 @@ const NOISE_RULES: NoiseRule[] = [
     category: 'CFNetwork Performance Diagnostic',
     level: 'warn',
   },
+  {
+    id: 'swiftui-invalid-configuration',
+    exactSubsystem: 'com.apple.SwiftUI',
+    category: 'Invalid Configuration',
+    level: 'warn',
+  },
 ];
 
 interface NoiseRule {
@@ -103,7 +109,7 @@ export function levelForEvent(event: LogStreamEvent): string {
   return rule ? (rule.level ?? 'info') : level;
 }
 
-export function procFromImagePath(path: unknown): string | null {
+function procFromImagePath(path: unknown): string | null {
   if (typeof path !== 'string' || !path) return null;
   const parts = path.split('/');
   return parts[parts.length - 1] || null;

@@ -2,7 +2,7 @@ import { lstatSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { lstat, readdir, stat as pathStat } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
-import type { MaintenanceAction } from '@stim-cli/core/state';
+import { lastNativeUseFrom, type MaintenanceAction } from '@stim-cli/core/state';
 import {
   candidateRoots,
   candidateRootsAsync,
@@ -10,27 +10,33 @@ import {
   worktreeActivityOfAsync,
 } from '../commands/gc/worktrees.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { matchWorktreeEntry, reclaimKeys } from '../commands/worktree.ts';
+import { recentNativeUseReason, workspaceBuildReasons } from '../commands/gc/workspaces.ts';
+import { reclaimKeys } from '../commands/worktree.ts';
 import { gitQuiet, gitQuietAsync } from '../workspace/git.ts';
 import { childEnvironment } from '../workspace/git-read.ts';
 import { withIdleWorkspace, workspaceInUse } from '../workspace/in-use.ts';
+import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { ARTIFACT_DIRS, type ArtifactKind } from '../workspace/regenerable-dirs.ts';
+import {
+  readRunningProcesses,
+  readRunningProcessesAsync,
+  runningFromReason,
+  type RunningProcesses,
+} from '../workspace/running-from.ts';
+import { finishLightened, recordLightened, restoreProblem } from '../workspace/lightened.ts';
 import {
   listWorktrees,
+  LOCKED_REASON,
+  lockReason,
+  matchWorktreeEntry,
   resolveSourceCheckoutAsync,
   sourceCheckoutOf,
+  worktreeLockAsync,
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
 import { measureDisk } from './measure.ts';
 import { lowestFree } from './pressure.ts';
-
-export type ArtifactKind = 'build' | 'dependencies';
-
-/** Directories that hold only what a build or an install regenerates, relative to an app or package root. */
-export const ARTIFACT_DIRS: Record<ArtifactKind, readonly string[]> = {
-  build: ['ios/build', 'android/app/build', 'android/build', 'android/.gradle', '.build'],
-  dependencies: ['node_modules', 'ios/Pods'],
-};
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
@@ -39,6 +45,7 @@ const SCAN_LIMIT = 20_000;
 export interface ArtifactWorktree {
   path: string;
   linked: boolean;
+  locked: boolean;
   keys: string[];
 }
 
@@ -46,11 +53,21 @@ export interface ArtifactCandidate {
   worktree: string;
   path: string;
   keys: string[];
+  locked: boolean;
 }
 
 function isDirectory(path: string): boolean {
   try {
     return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function pathExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
   } catch {
     return false;
   }
@@ -73,7 +90,7 @@ function artifactWorktree(
   const entry = matchWorktreeEntry(entries, root);
   if (!entry || entry.bare || 'refusal' in source) return null;
   const keys = reclaimKeys(entry.path).filter((key) => matchWorktreeEntry(entries, key)?.path === entry.path);
-  return { path: entry.path, linked: entry.path !== source.path, keys };
+  return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
 async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
@@ -156,15 +173,23 @@ function keptReason(
     windowMs,
     pinned,
     locked,
-  }: { now: number; windowMs: number; pinned: (workspace: string) => boolean; locked?: string },
+    running,
+  }: {
+    now: number;
+    windowMs: number;
+    pinned: (workspace: string) => boolean;
+    locked?: string;
+    running?: RunningProcesses | null;
+  },
   reads?: { tracked: string | null; activity: ReturnType<typeof worktreeActivityOf>; written: number | null },
 ): string | null {
-  const guarded = artifactGuard(candidate, kind, pinned, locked);
+  const guarded = artifactGuard(candidate, kind, pinned, locked, running);
   if (guarded) return guarded;
   const { worktree, path, keys } = candidate;
   const tracked = reads ? reads.tracked : gitQuiet(worktree, ['ls-files', '--', relative(worktree, path)]);
   if (tracked === null) return 'git cannot tell whether it holds tracked files';
   if (tracked.trim()) return 'it holds files git tracks';
+  if (kind === 'build') return buildNativeUseReason(keys, now);
   const activity = reads ? reads.activity : worktreeActivityOf(worktree, keys);
   const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
@@ -173,14 +198,26 @@ function keptReason(
   return null;
 }
 
+function buildNativeUseReason(keys: readonly string[], now: number): string | null {
+  const states = keys.map((key) => readWorkspaceState(key)).filter((state) => state !== null);
+  if (!states.length) return 'no Stim workspace records when it last ran ios, android or macos';
+  return recentNativeUseReason(
+    Math.max(...states.map((state) => lastNativeUseFrom(state)).filter(Number.isFinite)),
+    now,
+  );
+}
+
 function artifactGuard(
   candidate: ArtifactCandidate,
   kind: ArtifactKind,
   pinned: (workspace: string) => boolean,
   locked?: string,
+  running?: RunningProcesses | null,
 ): string | null {
   const { worktree, path, keys } = candidate;
   if (keys.some(pinned)) return 'pinned by maintenance.keep';
+  if (candidate.locked) return LOCKED_REASON;
+  if (!pathExists(path)) return 'it is already gone';
   let real: string;
   try {
     real = canonicalPath(path);
@@ -190,9 +227,13 @@ function artifactGuard(
   if (!isDirectory(path) || real !== join(canonicalPath(worktree), relative(worktree, path)))
     return 'it or a directory above it is a link, or it lies outside its worktree';
   const inUse = keys.flatMap((key) =>
-    workspaceInUse(key, { supervisor: kind === 'dependencies', nativeRun: key !== locked }),
+    kind === 'build'
+      ? workspaceBuildReasons(key, { nativeRun: key !== locked })
+      : workspaceInUse(key, { nativeRun: key !== locked }),
   );
   if (inUse.length) return `in use: ${inUse.join('; ')}`;
+  if (kind === 'dependencies')
+    return runningFromReason(worktree, running === undefined ? readRunningProcesses() : running);
   return null;
 }
 
@@ -204,6 +245,7 @@ export async function collectArtifactsAsync(
 ): Promise<ReturnType<typeof collectArtifacts>> {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
+  const running = kind === 'dependencies' ? await readRunningProcessesAsync(signal) : null;
   for (const worktree of await artifactWorktreesAsync(signal, operation)) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
@@ -231,10 +273,10 @@ export async function collectArtifactsAsync(
           signal.throwIfAborted();
           continue;
         }
-        const candidate = { worktree: worktree.path, path, keys: worktree.keys };
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
         let reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
-          : artifactGuard(candidate, kind, options.pinned);
+          : artifactGuard(candidate, kind, options.pinned, undefined, running);
         if (!reason) {
           const tracked = await gitQuietAsync(worktree.path, ['ls-files', '--', relative(worktree.path, path)], {
             ...(operation ? childEnvironment(operation.env) : {}),
@@ -244,9 +286,10 @@ export async function collectArtifactsAsync(
             killSignal: 'SIGKILL',
           });
           const untracked = tracked !== null && !tracked.trim();
-          const activity = untracked ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
-          const written = untracked ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
-          reason = keptReason(candidate, kind, options, { tracked, activity, written });
+          const windowed = untracked && kind === 'dependencies';
+          const activity = windowed ? await worktreeActivityOfAsync(worktree.path, worktree.keys, operation) : null;
+          const written = windowed ? await newestWriteAsync(path, SCAN_DEPTH[kind], signal) : null;
+          reason = keptReason(candidate, kind, { ...options, running }, { tracked, activity, written });
         }
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
@@ -262,6 +305,7 @@ export function collectArtifacts(
 ): { candidates: ArtifactCandidate[]; skips: { target: string; reason: string }[] } {
   const candidates: ArtifactCandidate[] = [];
   const skips: { target: string; reason: string }[] = [];
+  const running = kind === 'dependencies' ? readRunningProcesses() : null;
   for (const worktree of artifactWorktrees()) {
     if (kind === 'dependencies' && !worktree.linked) continue;
     const root = canonicalPath(worktree.path);
@@ -274,10 +318,10 @@ export function collectArtifacts(
         } catch {
           continue;
         }
-        const candidate = { worktree: worktree.path, path, keys: worktree.keys };
+        const candidate = { worktree: worktree.path, path, keys: worktree.keys, locked: worktree.locked };
         const reason = protectedHere
           ? 'the command that started this pass runs inside its worktree'
-          : keptReason(candidate, kind, options);
+          : keptReason(candidate, kind, { ...options, running });
         if (reason) skips.push({ target: path, reason });
         else candidates.push(candidate);
       }
@@ -293,6 +337,9 @@ export async function clearArtifact(
     protectedRoot: string;
     pinned: (workspace: string) => boolean;
     worktrees: readonly ArtifactWorktree[];
+    /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
+    requireRestorable?: boolean;
+    restoreCache?: Parameters<typeof restoreProblem>[1];
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const worktree = options.worktrees
@@ -308,22 +355,37 @@ export async function clearArtifact(
   const root = canonicalPath(worktree.path);
   if (options.protectedRoot === root || options.protectedRoot.startsWith(`${root}${sep}`))
     return { status: 'kept', bytes: 0, detail: 'the command that started this pass runs inside its worktree' };
-  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys };
-  const early = keptReason(candidate, kind, { ...options, now: Date.now() });
+  const candidate = { worktree: worktree.path, path: action.target, keys: worktree.keys, locked: worktree.locked };
+  const running = kind === 'dependencies' ? await readRunningProcessesAsync() : null;
+  const early = keptReason(candidate, kind, { ...options, now: Date.now(), running });
   if (early) return { status: 'kept', bytes: 0, detail: early };
+  const unrestorable = kind === 'dependencies' ? await restoreProblem(candidate, options.restoreCache) : null;
+  if (unrestorable && options.requireRestorable) return { status: 'kept', bytes: 0, detail: unrestorable };
   const before = lowestFree(measureDisk());
   const [key] = candidate.keys;
-  const remove = () => {
-    const reason = keptReason(candidate, kind, { ...options, now: Date.now(), ...(key ? { locked: key } : {}) });
+  const remove = async () => {
+    const lock = candidate.locked ? 'locked' : await worktreeLockAsync(candidate.worktree);
+    if (lock) return lockReason(lock);
+    const reason = keptReason(candidate, kind, {
+      ...options,
+      now: Date.now(),
+      running: kind === 'dependencies' ? await readRunningProcessesAsync() : null,
+      ...(key ? { locked: key } : {}),
+    });
     if (reason) return reason;
+    const record = kind === 'dependencies' && !unrestorable;
+    if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });
+    if (record) finishLightened(candidate.keys, candidate.path);
     return null;
   };
   const kept = key
-    ? await withIdleWorkspace(key, remove, { purpose: 'maintenance', supervisor: kind === 'dependencies' }).then(
-        (run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`),
-      )
-    : remove();
+    ? await withIdleWorkspace(key, remove, {
+        purpose: 'maintenance',
+        supervisor: kind === 'dependencies',
+        ...(kind === 'build' ? { hosted: false, managedLocks: false } : {}),
+      }).then((run) => (run.ran ? run.value : `in use: ${run.reasons.join('; ')}`))
+    : await remove();
   if (kept) return { status: 'kept', bytes: 0, detail: kept };
   const freed = Math.max(0, lowestFree(measureDisk()) - before);
   return {

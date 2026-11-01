@@ -208,6 +208,13 @@ import Testing
     #expect(build.progress(at: started.addingTimeInterval(90)).fraction == 0.1)
   }
 
+  @Test func anEstimatePastIntsRangeDoesNotTrap() throws {
+    var build = try #require(workspace.build)
+    build.slot = "estimate"
+    build.expectedMs = 1e300
+    #expect(build.progress(at: Date()).remaining == "about 9223372036854775807 min left")
+  }
+
   @Test func leavesABuildWithoutHistoryIndeterminate() throws {
     var build = try #require(workspace.build)
     build.expectedMs = nil
@@ -234,6 +241,14 @@ import Testing
     #expect(names.title == "stim")
     #expect(names.inCheckout == "apps/mobile")
     #expect(PathNames(path: "/Users/dev/stim/apps/mobile").title == "mobile")
+  }
+
+  @Test func doesNotTitleAWorkspaceOutsideItsProjectByTheProject() {
+    let outside = PathNames(
+      path: "/private/tmp/scratch/recipes-71/apps/mobile", project: Project(root: "/Users/dev/appandflow-template"))
+    #expect(outside.title == "mobile")
+    #expect(outside.inCheckout == nil)
+    #expect(PathNames(path: "/Users/dev/stim-two", project: Project(root: "/Users/dev/stim")).title == "stim-two")
   }
 
   @Test func abbreviatesOnlyPathsThatStartAtHome() {

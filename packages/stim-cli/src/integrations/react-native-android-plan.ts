@@ -1,6 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { processContext } from '../cli-operation.ts';
 import { readDoctorFingerprint } from '../doctor-fingerprint.ts';
+import { memoizedFingerprint } from '../cache/fingerprint-memo.ts';
 import { reportSignal } from '../report-runtime.ts';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
@@ -8,13 +9,16 @@ import { buildCacheKey, fingerprintProject } from '../cache/build-cache.ts';
 import { phaseLine } from '../command-output.ts';
 import {
   androidSystemImageAbi,
-  hostSystemImageArch,
   listAvdsAsync,
   listInstalledSystemImages,
   ownedAvdDirectory,
   ownedAvdSystemImage,
-  pickDefaultSystemImage,
 } from '../devices/android.ts';
+import {
+  androidImageInstallPolicy,
+  decideSystemImage,
+  type AndroidImageInstallPolicy,
+} from '../devices/android-image.ts';
 import { deviceSlotPlatforms, validateDeviceSlot } from '../devices/device-slots.ts';
 import { planEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { planPrebuildAsync, type PrebuildAction } from '../engine/prebuild.ts';
@@ -104,6 +108,7 @@ async function emulatorImage(
   slot: string,
   requested: string | null,
   replaces: boolean,
+  policy: AndroidImageInstallPolicy,
   deps: Pick<AndroidPlanDeps, 'listSystemImages' | 'avdSystemImage' | 'avdDirectory' | 'listAvds'>,
   signal?: AbortSignal,
 ): Promise<EmulatorImage> {
@@ -124,16 +129,9 @@ async function emulatorImage(
       },
     };
   }
-  const picked = pickDefaultSystemImage(images, requested ? { systemImage: requested } : {});
-  if (picked) return { systemImage: picked.pkg };
-  const arch = hostSystemImageArch();
-  return {
-    refusal: {
-      code: NO_DEVICE,
-      message: `No ${arch} Android system image is installed, so the emulator build's ABI and cache key are unknown.`,
-      remedy: `Install one, e.g.: sdkmanager "system-images;android-36;google_apis;${arch}", then try again.`,
-    },
-  };
+  const decided = decideSystemImage({ requested, installed: images, policy });
+  if (decided.kind !== 'refuse') return { systemImage: decided.pkg };
+  return { refusal: { code: decided.code, message: decided.message, remedy: decided.remedy } };
 }
 
 async function avdListed(avdName: string, list: AndroidPlanDeps['listAvds'], signal?: AbortSignal): Promise<boolean> {
@@ -240,7 +238,15 @@ export async function planReactNativeAndroid(
   let localImageRead: Promise<EmulatorImage> | undefined;
   const localImage = () =>
     (localImageRead ??= abiKeyed
-      ? emulatorImage(root, slot, target.systemImage, replacement.replaces, deps, operation.signal)
+      ? emulatorImage(
+          root,
+          slot,
+          target.systemImage,
+          replacement.replaces,
+          androidImageInstallPolicy(settings),
+          deps,
+          operation.signal,
+        )
       : Promise.resolve({ systemImage: null }));
   let image: EmulatorImage;
   let hostedAbi: string | null = null;
@@ -252,6 +258,7 @@ export async function planReactNativeAndroid(
       slot,
       platform: 'android',
       machine: target.machine,
+      ...(target.placement ? { placement: target.placement } : {}),
       selectors: {
         ...(target.systemImage ? { systemImage: target.systemImage } : {}),
         ...(target.deviceProfile ? { deviceProfile: target.deviceProfile } : {}),
@@ -281,10 +288,16 @@ export async function planReactNativeAndroid(
           }
         : {}),
     });
+    if (hostedPlan.kind === 'refused')
+      return refuse({
+        code: hostedPlan.code,
+        message: hostedPlan.message,
+        remedy: hostedPlan.remedy,
+      });
     if (hostedPlan.kind === 'unknown') {
       return refuse({
         code: 'STIM_BAD_ARG',
-        message: `android.remote is ${target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
+        message: `android.remote is ${target.placement ?? target.machine}, and its emulator ABI is unknown here: ${hostedPlan.reason}.`,
         remedy:
           'Run `stim android` to build for the remote device, or unset android.remote to plan the owned emulator.',
       });
@@ -299,12 +312,12 @@ export async function planReactNativeAndroid(
         : await localImage();
   } else image = await localImage();
   if ('refusal' in image) return refuse(image.refusal);
-  const { abi, runOptions, remoteRunOptions } = androidBuildOptions({
+  const { abi, runOptions, remoteRunOptions } = await androidBuildOptions({
     release: build.release,
     physical: false,
     device: { systemImage: image.systemImage },
     variant: build.variant,
-    deviceAbi: () => null,
+    deviceAbi: async () => null,
     gradleProject: androidGradleProject(layout),
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,
@@ -313,10 +326,21 @@ export async function planReactNativeAndroid(
 
   let fingerprint;
   try {
-    fingerprint =
-      operation && reportSignal(operation)
-        ? await readDoctorFingerprint(operation, { root, platform: PLATFORM, androidLayout: layout })
-        : await deps.fingerprint(root, { platform: PLATFORM, androidLayout: layout });
+    fingerprint = (
+      await memoizedFingerprint(
+        root,
+        { platform: PLATFORM, androidLayout: layout },
+        {
+          consult: build.cache.read,
+          operation: operation && reportSignal(operation) ? undefined : operation,
+          record: false,
+          fingerprint: (projectRoot, fingerprintTarget) =>
+            operation && reportSignal(operation)
+              ? readDoctorFingerprint(operation, { root: projectRoot, platform: PLATFORM, androidLayout: layout })
+              : deps.fingerprint(projectRoot, fingerprintTarget),
+        },
+      )
+    ).fingerprint;
   } catch (error) {
     operation?.signal.throwIfAborted();
     return refuse({

@@ -19,6 +19,7 @@ import type { ReclaimedStep } from '../../budget.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
+import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 
 export function androidFacts({
   root,
@@ -142,7 +143,13 @@ export function lastBuildRecord({
   builtOn,
   offloadedTo = null,
   offloadFallback = null,
+  message = null,
+  remedy = null,
+  deviceSerial = null,
 }: {
+  deviceSerial?: string | null;
+  message?: string | null;
+  remedy?: string | null;
   devicePlacement?: import('@stim-cli/core/state').DevicePlacement;
   buildMachine?: string;
   builtOn?: string;
@@ -188,6 +195,13 @@ export function lastBuildRecord({
   if (missReason && !cacheLevel(cacheHit)) record.missReason = missReason;
   const recorded = status === 'failed' ? buildDiagnostics(diagnostics) : [];
   if (recorded.length) record.diagnostics = recorded;
+  const device = deviceName ?? avdName;
+  const ledger: BuildLedgerExtras = {
+    ...(device && device !== deviceSerial ? { device: { name: device } } : {}),
+    ...(message ? { message } : {}),
+    ...(remedy ? { remedy } : {}),
+  };
+  if (Object.keys(ledger).length) record.ledger = ledger;
   return record;
 }
 
@@ -387,8 +401,12 @@ export function persistLastBuild({
   status,
   errorCode = null,
   diagnostics = null,
+  message = null,
+  remedy = null,
   out,
 }: {
+  message?: string | null;
+  remedy?: string | null;
   recordBuild?: typeof recordFinishedBuild;
   root: string;
   record: AndroidRecord;
@@ -399,7 +417,16 @@ export function persistLastBuild({
   diagnostics?: readonly unknown[] | null;
   out: (line: string) => void;
 }): Record<string, unknown> {
-  const lastBuild = lastBuildRecord({ ...record, startedAt, durationMs, status, errorCode, diagnostics });
+  const lastBuild = lastBuildRecord({
+    ...record,
+    startedAt,
+    durationMs,
+    status,
+    errorCode,
+    diagnostics,
+    message,
+    remedy,
+  });
   try {
     recordBuild(root, lastBuild);
   } catch (err) {
@@ -416,11 +443,16 @@ export function persistThrownBuild({
   acquired,
   error,
   ...args
-}: Omit<Parameters<typeof persistLastBuild>[0], 'status' | 'errorCode' | 'diagnostics'> & {
+}: Omit<Parameters<typeof persistLastBuild>[0], 'status' | 'errorCode' | 'diagnostics' | 'message' | 'remedy'> & {
   acquired: boolean;
   error: unknown;
 }): void {
   if (!acquired) return;
   const { code } = error as { code?: unknown };
-  persistLastBuild({ ...args, status: 'failed', errorCode: typeof code === 'string' ? code : undefined });
+  persistLastBuild({
+    ...args,
+    status: 'failed',
+    errorCode: typeof code === 'string' ? code : undefined,
+    message: error instanceof Error ? error.message : String(error),
+  });
 }

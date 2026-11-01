@@ -10,16 +10,23 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
+  gcLogFile,
+  maintenanceDir,
   maintenanceNdjsonFile,
+  maintenanceStateFile,
+  readGcLog,
   readMaintenanceState,
   sharedCompilationCache,
   type MaintenanceAction,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
+import * as ios from '../devices/ios.ts';
+import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { register, readManifest } from '../cache/cache-manifest.ts';
 import { pruneCache } from '../cache/caches.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
@@ -31,12 +38,13 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import * as inUse from '../workspace/in-use.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse, workspaceLastUsed, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MB = 1024 * 1024;
 
+const initialCwd = process.cwd();
 let home: string;
 let projects: string;
 
@@ -72,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
+  process.chdir(initialCwd);
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   rmSync(projects, { recursive: true, force: true });
@@ -191,6 +200,14 @@ test('on mode trims over-cap caches oldest first and clears only idle, unpinned,
   expect(readFileSync(join(workspaceDir(spaces.old.root), 'logs', 'maintenance.ndjson'), 'utf8')).toContain(
     'Cleared build outputs',
   );
+
+  const cleared = readGcLog().filter((record) => record.status === 'done');
+  expect(cleared.map((record) => record.kind).toSorted()).toEqual(['cache', 'workspaceOutputs']);
+  expect(cleared.every((record) => record.trigger === 'maintenance' && record.via === 'test')).toBe(true);
+  expect(new Set(cleared.map((record) => record.runId))).toEqual(new Set([records()[0]?.pass]));
+  const outputs = cleared.find((record) => record.kind === 'workspaceOutputs');
+  expect(outputs).toMatchObject({ label: spaces.old.root, id: spaces.old.root, path: spaces.old.root });
+  expect(outputs?.bytes).toBeGreaterThan(0);
 });
 
 test('report mode plans the same actions and deletes nothing', async () => {
@@ -208,6 +225,7 @@ test('report mode plans the same actions and deletes nothing', async () => {
   );
   expect(actionKinds()).toEqual(expect.arrayContaining(['would-trim-cache', 'would-clear-outputs']));
   expect(records().every((record) => record.mode === 'report')).toBe(true);
+  expect(existsSync(gcLogFile())).toBe(false);
 });
 
 test('the age sweep removes only what is provably stale', async () => {
@@ -250,12 +268,6 @@ test('the age sweep removes only what is provably stale', async () => {
   expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'remove-orphan', 'trim-cache', 'unregister-cache']);
 });
 
-test('maintenance records in a workspace log do not make the workspace look used', () => {
-  const old = workspace('written-by-maintenance', { usedDaysAgo: 30 });
-  writeFileSync(join(old.dir, 'logs', 'maintenance.ndjson'), '{}\n');
-  expect(Date.now() - workspaceLastUsed(old.root)).toBeGreaterThan(29 * DAY_MS);
-});
-
 describe('executing single actions', () => {
   const context = (overrides: Partial<ActContext> = {}): ActContext => ({
     settings: resolveMaintenanceSettings(),
@@ -281,28 +293,36 @@ describe('executing single actions', () => {
     expect(hasOutputs(own.dir)).toBe(true);
   });
 
-  test('the compilation cache is emptied whole only below the hard floor and never beside a live build', async () => {
+  test('the compilation cache is emptied whole above the hard floor, but never beside a live build', async () => {
     const dir = sharedCompilationCache();
     mkdirSync(join(dir, 'objects'), { recursive: true });
     writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
     register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
     const empty = action({ kind: 'would-empty-cache', target: dir, bytes: 4096 });
 
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 10 * 1024 }]);
-    const above = await executeAction(empty, context({ budget: { ...context().budget, hardFloorDiskMb: 5 * 1024 } }));
-    expect(above.status).toBe('kept');
-    expect(existsSync(join(dir, 'objects'))).toBe(true);
-
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 1024 }]);
-    const hardFloor = { ...context().budget, hardFloorDiskMb: 5 * 1024 };
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
     const build = plantClaim(cacheClaimRoot(dir), 'shared', liveClaimOwner());
-    expect((await executeAction(empty, context({ budget: hardFloor }))).status).toBe('kept');
+    expect((await executeAction(empty, context())).status).toBe('kept');
     expect(existsSync(join(dir, 'objects'))).toBe(true);
 
     rmSync(build);
-    const emptied = await executeAction(empty, context({ budget: hardFloor }));
+    const emptied = await executeAction(empty, context());
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);
+  });
+
+  test('a level 3 compilation cache emptying is kept once free disk is back above the level 3 floor', async () => {
+    const dir = sharedCompilationCache();
+    mkdirSync(join(dir, 'objects'), { recursive: true });
+    writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
+    register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
+    const outcome = await executeAction(
+      action({ kind: 'would-empty-cache', target: dir, bytes: 4096, level: 3 }),
+      context(),
+    );
+    expect(outcome.status).toBe('kept');
+    expect(existsSync(join(dir, 'objects'))).toBe(true);
   });
 
   test('a stale registration is kept when its directory exists again', async () => {
@@ -338,27 +358,6 @@ describe('executing single actions', () => {
 });
 
 describe('pruneCache protection and LRU order', () => {
-  test('evictBytes removes the least recently used unprotected entries and stops at the target', () => {
-    const root = join(home, 'lru');
-    const names = ['a', 'b', 'c', 'd'];
-    names.forEach((name, i) => {
-      mkdirSync(join(root, name), { recursive: true });
-      writeFileSync(join(root, name, 'blob'), 'x'.repeat(1024));
-      utimesSync(join(root, name), ago(10 - i), ago(10 - i));
-    });
-    const result = pruneCache(
-      { name: 'lru', dir: root, prune: 'entries', note: '' },
-      {
-        olderThanDays: 0.01,
-        evictBytes: 1,
-        protect: (entry) => (basename(entry) === 'a' ? 'in use' : null),
-      },
-    );
-    expect(result.removed).toBe(1);
-    expect(result.protectedEntries).toBe(1);
-    expect(names.filter((name) => existsSync(join(root, name)))).toEqual(['a', 'c', 'd']);
-  });
-
   test('the newest succeeded build-only artifact of each platform is protected', () => {
     const root = buildCacheRoot();
     const entries = ['k-build-only', 'k-older', 'k-failed'].map((key) => cacheEntry(root, 'ios', key, 9));
@@ -386,20 +385,6 @@ describe('pruneCache protection and LRU order', () => {
       { olderThanDays: 1, byMtime: true, protect: cacheEntryProtection() },
     );
     expect(entries.map((entry) => existsSync(entry))).toEqual([true, false, false]);
-  });
-
-  test('without a size target the age cutoff behaves as before', () => {
-    const root = join(home, 'age');
-    for (const [name, days] of [
-      ['old', 9],
-      ['new', 1],
-    ] as const) {
-      mkdirSync(join(root, name), { recursive: true });
-      utimesSync(join(root, name), ago(days), ago(days));
-    }
-    const result = pruneCache({ name: 'age', dir: root, prune: 'entries', note: '' }, { olderThanDays: 7 });
-    expect(result.removed).toBe(1);
-    expect(existsSync(join(root, 'new'))).toBe(true);
   });
 });
 
@@ -485,4 +470,142 @@ test('finished worktrees are removed, except a pinned one and the one the pass s
   ).toEqual(
     expect.arrayContaining(['pinned by maintenance.keep', 'the command that started this pass runs inside it']),
   );
+}, 60_000);
+
+function ageWorktrees(worktrees: Record<string, string>, days: Record<string, number>) {
+  for (const [name, path] of Object.entries(worktrees)) {
+    ensureWorkspaceStorage(path);
+    recordWorkspaceUse(path, ago(days[name] ?? 0));
+  }
+}
+
+test('the age sweep keeps an idle unmerged worktree unless maintenance.removeIdleWorktrees is on', async () => {
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
+  ageWorktrees(worktrees, { idle: 30 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(worktrees.idle ?? '')).toBe(true);
+  expect(actionKinds()).not.toContain('remove-worktree');
+}, 60_000);
+
+test('the age sweep removes a clean pushed worktree unused for olderThanDays, and keeps dirty, unpushed and recent ones', async () => {
+  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
+  const { repo, worktrees } = gitRepoWithWorktrees(['idle', 'dirty', 'unpushed', 'recent']);
+  const at = (name: string) => worktrees[name] ?? '';
+  const [idle, dirty, unpushed, recent] = [at('idle'), at('dirty'), at('unpushed'), at('recent')] as const;
+  writeFileSync(join(dirty, 'notes.txt'), 'uncommitted');
+  writeFileSync(join(unpushed, 'local.txt'), 'local');
+  execSync('git add -A && git commit -q -m local', { cwd: unpushed, timeout: 15_000 });
+  ageWorktrees(worktrees, { idle: 10, dirty: 10, unpushed: 10, recent: 2 });
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(existsSync(idle)).toBe(false);
+  expect(existsSync(dirty)).toBe(true);
+  expect(existsSync(unpushed)).toBe(true);
+  expect(existsSync(recent)).toBe(true);
+  expect(actionKinds()).toEqual(['remove-worktree']);
+}, 60_000);
+
+test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {
+  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+  const real = getExecutor();
+  setExecutor({
+    ...getExecutor(),
+    findExecutable: (name) => (name === 'git' ? real.findExecutable(name) : null),
+    runFileAsync: async (file, args: string[], opts) =>
+      file === 'git' || file === 'du' ? real.runFileAsync(file, args, opts) : '',
+  });
+  const park = (udid: string, daysAgo: number) => {
+    const source = join(projects, `source-${udid}`);
+    mkdirSync(source, { recursive: true });
+    upsertProject(source, { platforms: { ios: { deviceUdid: udid, deviceName: `stim-${udid}`, owned: true } } });
+    parkSim({
+      platform: 'ios',
+      projectPath: source,
+      max: 3,
+      record: {
+        udid,
+        name: `stim-${udid}`,
+        runtimeIdentifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+        deviceTypeIdentifier: 'iphone',
+        simslimManaged: false,
+        parkedAt: ago(daysAgo).toISOString(),
+      },
+    });
+  };
+  park('OLD-PARKED', 10);
+  park('NEW-PARKED', 2);
+  const listed = (udid: string): ios.IosSimRecord => ({
+    udid,
+    name: `stim-${udid}`,
+    state: 'Shutdown',
+    runtime: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+    deviceTypeIdentifier: 'iphone',
+    available: true,
+  });
+  vi.spyOn(ios, 'listAllIosSimsAsync').mockResolvedValue([listed('OLD-PARKED'), listed('NEW-PARKED')]);
+  vi.spyOn(ios, 'listIosDeviceTypesAsync').mockResolvedValue([]);
+  const deleted: string[] = [];
+  vi.spyOn(ios, 'deleteParkedIosSim').mockImplementation(async (udid) => {
+    deleted.push(udid);
+  });
+  process.env.STIM_MAINTENANCE_DEVICE_IDLE_DAYS = '0';
+  process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
+
+  await runMaintenance('test');
+
+  expect(deleted).toEqual(['OLD-PARKED']);
+  expect(readParked('ios').map((record) => record.udid)).toEqual(['NEW-PARKED']);
+  expect(actionKinds()).toContain('delete-parked-device');
+});
+
+test('report mode lists a worktree once when the worktree check plans one the last sweep already planned', async () => {
+  process.env.STIM_MAINTENANCE = 'report';
+  const { repo, worktrees, heads } = gitRepoWithWorktrees(['shipped']);
+  const shipped = worktrees.shipped ?? '';
+  const merged = {
+    number: 1,
+    url: 'https://github.com/o/r/pull/1',
+    state: 'MERGED',
+    headRefOid: heads.shipped,
+    mergedAt: '2026-09-01T00:00:00Z',
+  };
+  const real = getExecutor();
+  setExecutor({
+    ...real,
+    findExecutable: (name) => (name === 'gh' ? '/usr/bin/gh' : real.findExecutable(name)),
+    runFileAsync: async (file, args: string[], opts) => {
+      if (file !== 'gh') return real.runFileAsync(file, args, opts);
+      const fields = args.flatMap((arg) => {
+        const variable = /^(b\d+)=(.*)$/s.exec(arg);
+        return variable ? [[variable[1], { nodes: variable[2] === 'shipped' ? [merged] : [] }]] : [];
+      });
+      return JSON.stringify({ data: { repository: Object.fromEntries(fields) } });
+    },
+  });
+  process.env.STIM_MAINTENANCE_PROTECT_RECENT_HOURS = '0';
+  const now = Date.now();
+  mkdirSync(maintenanceDir(), { recursive: true });
+  writeFileSync(
+    maintenanceStateFile(),
+    JSON.stringify({
+      version: 1,
+      lastAt: { pressure: now, size: now, sweep: now },
+      pressure: null,
+      sizes: [],
+      lastPass: null,
+      recent: [],
+      plan: [{ kind: 'would-remove-worktree', target: shipped, bytes: 0, reason: 'idle 9d', check: 'sweep' }],
+    }),
+  );
+  vi.spyOn(process, 'cwd').mockReturnValue(repo);
+
+  await runMaintenance('test');
+
+  expect(readMaintenanceState()?.plan.filter((action) => action.target === shipped)).toHaveLength(1);
+  expect(existsSync(shipped)).toBe(true);
 }, 60_000);

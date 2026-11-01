@@ -235,3 +235,29 @@ import Testing
     #expect(summary.apps.map { $0.platforms.map(\.platform) } == [["macos"], ["ios"], [], ["ios"]])
   }
 }
+
+@Suite struct WorkspaceMissingFolderTests {
+  static let now = parseTimestamp("2026-09-30T12:00:00.000Z")!
+
+  static func workspace(missing: Bool) throws -> Workspace {
+    let flag = missing ? #","pathMissing":true"# : ""
+    let json = #"{"path":"/w","live":false,"phase":"ready","memoryMb":0,"warnings":[]\#(flag)}"#
+    return try JSONDecoder().decode(Workspace.self, from: Data(json.utf8))
+  }
+
+  @Test func aWorkspaceWithoutItsFolderIsNeitherReadyNorLive() throws {
+    let missing = try Self.workspace(missing: true)
+    #expect(!missing.isSettingUp)
+    #expect(!missing.isActive)
+    #expect(missing.rowStatus(now: Self.now).kind == .missing)
+    #expect(missing.rowStatus(now: Self.now).text == "Folder missing")
+    #expect(missing.removalCommand == "stim worktree remove '/w'")
+  }
+
+  @Test func aReadyWorkspaceWithItsFolderStaysReady() throws {
+    let ready = try Self.workspace(missing: false)
+    #expect(ready.isSettingUp)
+    #expect(ready.isActive)
+    #expect(ready.rowStatus(now: Self.now).kind == .ready)
+  }
+}

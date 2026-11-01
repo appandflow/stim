@@ -78,7 +78,7 @@ struct AddMachineSheet: View {
       Button("Keep Setting Up", role: .cancel) {}
     } message: {
       Text(
-        "Removes the entry added to remote.machines, restores remote.buildMode only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
+        "Removes the entry added to remote.machines, restores remote.build only if this wizard changed it, and runs stim doctor --json --platform ios --fix to forget the pairing. That also asks other listed machines with no credential. Grants on the remote machine must be revoked there with the commands shown next."
       )
     }
     .interactiveDismissDisabled(wizard.phase != .pick && wizard.phase != .choose)
@@ -203,38 +203,94 @@ struct AddMachineSheet: View {
     } else {
       VStack(spacing: Space.xs) {
         ForEach(model.peers) { peer in
-          Button {
-            model.selectedId = peer.id
-          } label: {
-            HStack(spacing: Space.md) {
-              Image(systemName: model.selectedId == peer.id ? "largecircle.fill.circle" : "circle")
-                .foregroundStyle(model.selectedId == peer.id ? Palette.accent : Palette.tertiary)
-              VStack(alignment: .leading, spacing: Space.xxs) {
-                Text(peer.mac.hostName).font(.stim(.body, weight: .semibold))
-                Text(peer.mac.dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
-                if peer.mac.buildsAndroidOnly {
-                  Text("\(peer.mac.os.title) \u{00B7} Android builds only").font(.stim(.caption)).foregroundStyle(
-                    Palette.secondary)
-                }
-              }
-              Spacer()
-              HStack(spacing: Space.xs) {
-                Circle().fill(peer.online ? Palette.success : Palette.tertiary).frame(width: 7, height: 7)
-                Text(peer.online ? "Reachable" : "Offline")
-              }
-              .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-            }
-            .padding(Space.md).contentShape(Rectangle())
+          if let added = model.added(peer) {
+            addedRow(peer, added)
+          } else {
+            peerRow(peer)
           }
-          .buttonStyle(.hoverRow(radius: Radius.control, selected: model.selectedId == peer.id))
-          .disabled(!peer.online)
-          .accessibilityLabel(
-            "\(peer.mac.hostName)\(peer.mac.buildsAndroidOnly ? ", \(peer.mac.os.title), Android builds only" : ""), \(peer.online ? "reachable over Tailscale" : "offline")"
-          )
         }
       }
       .padding(Space.sm).background(Palette.surface, in: RoundedRectangle(cornerRadius: Radius.card))
       .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
+      if let existing = model.existingPeer {
+        VStack(alignment: .leading, spacing: Space.sm) {
+          Text("\(existing.mac.hostName) is already added. Its state and settings are in Remote Machines.")
+            .foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+          Button("Show in Remote Machines") { dismiss() }.buttonStyle(.stim(.secondary, .regular))
+        }
+      }
+      if model.macList == .empty {
+        Text(
+          "Every machine on your tailnet is already added. To add another, install Tailscale on it and sign in with the same account."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary).fixedSize(horizontal: false, vertical: true)
+      }
+    }
+  }
+
+  private func peerRow(_ peer: Tailnet.Peer) -> some View {
+    Button {
+      model.choose(peer)
+    } label: {
+      HStack(spacing: Space.md) {
+        Image(systemName: model.selectedId == peer.id ? "largecircle.fill.circle" : "circle")
+          .foregroundStyle(model.selectedId == peer.id ? Palette.accent : Palette.tertiary)
+        peerName(peer)
+        Spacer()
+        HStack(spacing: Space.xs) {
+          Circle().fill(peer.online ? Palette.success : Palette.tertiary).frame(width: 7, height: 7)
+          Text(peer.online ? "Reachable" : "Offline")
+        }
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+      }
+      .padding(Space.md).contentShape(Rectangle())
+    }
+    .buttonStyle(.hoverRow(radius: Radius.control, selected: model.selectedId == peer.id))
+    .disabled(!peer.online)
+    .accessibilityLabel(
+      "\(peer.mac.hostName)\(peer.mac.buildsAndroidOnly ? ", \(peer.mac.os.title), Android builds only" : ""), \(peer.online ? "reachable over Tailscale" : "offline")"
+    )
+  }
+
+  private func addedRow(_ peer: Tailnet.Peer, _ added: AddedMachine) -> some View {
+    Button {
+      model.choose(peer)
+    } label: {
+      HStack(alignment: .top, spacing: Space.md) {
+        Image(systemName: "checkmark.circle.fill").foregroundStyle(Palette.tertiary)
+        VStack(alignment: .leading, spacing: Space.xxs) {
+          peerName(peer)
+          if let detail = added.detail {
+            Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
+        }
+        Spacer()
+        HStack(spacing: Space.xs) {
+          Pill(tone: .neutral, size: .small, outlined: true) { Text("Added") }
+          if let status = added.status {
+            Pill(status.title, tone: status.tone, size: .small)
+          } else if model.checkingAdded {
+            Pill("Checking\u{2026}", size: .small)
+          }
+        }
+      }
+      .padding(Space.md).contentShape(Rectangle())
+    }
+    .buttonStyle(.hoverRow(radius: Radius.control, selected: model.existingId == peer.id))
+    .accessibilityLabel(
+      "\(peer.mac.hostName), already added\(added.status.map { ", \($0.title)" } ?? "")\(added.detail.map { ". \($0)" } ?? "")"
+    )
+    .accessibilityHint("Shows that it is set up in Remote Machines")
+  }
+
+  private func peerName(_ peer: Tailnet.Peer) -> some View {
+    VStack(alignment: .leading, spacing: Space.xxs) {
+      Text(peer.mac.hostName).font(.stim(.body, weight: .semibold))
+      Text(peer.mac.dnsName).font(.stim(.caption, mono: true)).foregroundStyle(Palette.secondary)
+      if peer.mac.buildsAndroidOnly {
+        Text("\(peer.mac.os.title) \u{00B7} Android builds only").font(.stim(.caption)).foregroundStyle(Palette.secondary)
+      }
     }
   }
 
@@ -380,7 +436,7 @@ struct AddMachineSheet: View {
       return "The wizard's settings have been removed. Approval on the remote machine stays until you revoke it there."
     }
     if wizard.phase == .approved {
-      return "Approved. \(name) is finishing its checks; Next checks its tools."
+      return wizard.journal?.done == false ? "Approved. Waiting for \(name) to finish setup\u{2026}" : "Approved."
     }
     if wizard.failure(now: model.now) == .noWorkspace {
       return "Preparing the sample app for setup requests. If preparation fails, retry from the test below."
@@ -388,6 +444,9 @@ struct AddMachineSheet: View {
     if wizard.journal == nil {
       return model.serverNotReady
         ? "stim-server on \(name) is not ready. Waiting for it to start." : "Waiting for \(name) to start stim-server"
+    }
+    if wizard.journal?.waitsForConnection == true {
+      return "\(name) approved this Mac. Stim is connecting to it\u{2026}"
     }
     if wizard.journal?.steps.contains(where: { $0.id.hasPrefix("permissions.") && $0.state == .running }) == true {
       return
@@ -422,7 +481,7 @@ struct AddMachineSheet: View {
         .overlay(RoundedRectangle(cornerRadius: Radius.small).strokeBorder(Palette.tertiary.opacity(0.4)))
         Button("Use Port") { Task { await model.useManualPort() } }.disabled(model.busy)
       }
-    case .expired: Text("The ticket expired before approval. Generate a New command.")
+    case .expired: Text("The ticket expired before approval, so Stim stopped asking. Generate a New command.")
     case .stepFailed(let step, let detail, let fix):
       Text([step, detail].compactMap { $0 }.joined(separator: ": ")).foregroundStyle(Palette.error)
       if let fix { CopyableCommand(command: fix) }
@@ -513,7 +572,7 @@ struct AddMachineSheet: View {
         .keyboardShortcut(.cancelAction)
         .disabled((model.busy && !model.preparingSample) || model.cancelling)
         if step == 3 {
-          forward("Next", disabled: model.busy || model.toolsBlock) { Task { await model.openSummary() } }
+          forward("Next", disabled: model.busy) { Task { await model.openSummary() } }
         } else if model.page == .test {
           forward("Back to Summary", disabled: model.sample?.running == true) { Task { await model.closeTest() } }
         } else if step == 4 {

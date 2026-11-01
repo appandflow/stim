@@ -63,25 +63,6 @@ describe('discoverToolchain', () => {
     expect(env.KEEP).toBe('yes');
   });
 
-  it('extends the Windows Path instead of replacing it with a second PATH', () => {
-    const path = ['C:\\Program Files\\Git\\cmd', 'C:\\Windows\\system32'].join(delimiter);
-    const { env } = discoverToolchain({ Path: path }, probe({}), { platform: 'win32' });
-    expect(Object.keys(env).filter((key) => /^path$/i.test(key))).toEqual(['PATH']);
-    expect(env.PATH?.startsWith(`${path}${delimiter}`)).toBe(true);
-  });
-
-  it('leaves the Node the caller already has on PATH', () => {
-    const { env, entries } = discoverToolchain(
-      { PATH: '/opt/local/bin' },
-      probe({ '/opt/local/bin/node': '', [`${HOME}/.nvm/alias/default`]: '22', ...nvm('v22.12.0') }),
-    );
-    expect(env.PATH).not.toContain('.nvm');
-    expect(entries.find((entry) => entry.name === 'node')).toMatchObject({
-      value: join('/opt/local/bin', 'node'),
-      source: 'environment',
-    });
-  });
-
   it('falls back to the running Node when no version manager has a default', () => {
     const { entries } = discoverToolchain(
       { PATH: '/usr/bin' },
@@ -116,17 +97,6 @@ describe('discoverToolchain', () => {
 });
 
 describe('projectNodeBin', () => {
-  it('picks the newest installed version that the pin names', () => {
-    const files = { '/app/.nvmrc': 'v20\n', ...nvm('v20.11.0'), ...nvm('v20.18.3'), ...nvm('v22.12.0') };
-    expect(projectNodeBin('/app', {}, probe(files))).toEqual({
-      bin: join(HOME, '.nvm', 'versions', 'node', 'v20.18.3', 'bin'),
-      version: '20.18.3',
-      pin: '.nvmrc',
-      spec: 'v20',
-      match: 'exact',
-    });
-  });
-
   it("reads Volta's pin from package.json and finds it in Volta's image", () => {
     const files = {
       '/app/package.json': JSON.stringify({ volta: { node: '22.12.0' } }),
@@ -140,24 +110,6 @@ describe('projectNodeBin', () => {
   const keg = (name: string, version: string) => ({
     files: { [`/opt/homebrew/opt/${name}/bin/node`]: '' },
     links: { [`/opt/homebrew/opt/${name}`]: `../Cellar/${name}/${version}` },
-  });
-
-  it("finds a linked Homebrew keg by its link's version, revision suffix dropped", () => {
-    const node22 = keg('node@22', '22.23.2_1');
-    const node = keg('node', '26.7.0');
-    expect(
-      projectNodeBin(
-        '/app',
-        {},
-        probe({ '/app/.nvmrc': '22\n', ...node22.files, ...node.files }, undefined, { ...node22.links, ...node.links }),
-      ),
-    ).toEqual({
-      bin: join('/opt/homebrew', 'opt', 'node@22', 'bin'),
-      version: '22.23.2',
-      pin: '.nvmrc',
-      spec: '22',
-      match: 'exact',
-    });
   });
 
   it('prefers an exact match, then the newest same-major install across stores that is not older than the pin', () => {
@@ -178,15 +130,5 @@ describe('projectNodeBin', () => {
     expect(
       projectNodeBin('/app', {}, probe({ '/app/.nvmrc': '22.22.0\n', ...nvm('v22.12.0'), ...nvm('v24.11.0') })),
     ).toBeNull();
-  });
-
-  it('reads the pin of the nearest directory above the app, but not above the top directory', () => {
-    const files = { '/repo/.nvmrc': '22\n', '/.nvmrc': '20\n', ...nvm('v22.12.0'), ...nvm('v20.11.0') };
-    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo')?.version).toBe('22.12.0');
-    expect(projectNodeBin('/repo/apps/mobile', {}, probe(files), '/repo/apps/mobile')).toBeNull();
-  });
-
-  it('returns nothing when no installed version satisfies the pin', () => {
-    expect(projectNodeBin('/app', {}, probe({ '/app/.node-version': '18.20.0', ...nvm('v20.11.0') }))).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, posix, resolve } from 'node:path';
-import { gitMergeCacheDir, type WorktreeFacts, type WorktreeGit } from '@stim-cli/core/state';
+import { gitMergeCacheDir, gitMergeCacheFile, type WorktreeFacts, type WorktreeGit } from '@stim-cli/core/state';
 import { gitAsync } from './git.ts';
 import { mergeState, type DefaultBranch } from './merge-state.ts';
 
@@ -10,12 +10,12 @@ const MERGE_BUDGET_MS = 250;
 const MERGE_TIMEOUT_BACKOFF_MS = 5 * 60_000;
 const ORIGIN_PREFIX = 'refs/remotes/origin/';
 
-export interface GitStatusSummary extends Omit<WorktreeGit, 'mergedInto'> {
+interface GitStatusSummary extends Omit<WorktreeGit, 'mergedInto'> {
   head: string | null;
 }
 
 /** Counts the entries of `git status --porcelain=v2 --branch` output. `head` is null on an unborn branch. */
-export function parseGitStatus(text: string): GitStatusSummary {
+function parseGitStatus(text: string): GitStatusSummary {
   const summary: GitStatusSummary = { head: null, changed: 0, untracked: 0, upstream: null, ahead: null, behind: null };
   for (const line of text.split('\n')) {
     if (line.startsWith('# branch.oid ')) {
@@ -60,10 +60,6 @@ async function defaultBranchOf(repository: string): Promise<(DefaultBranch & { s
   return { ref, name: `origin/${ref.slice(ORIGIN_PREFIX.length)}`, sha };
 }
 
-function mergeCacheFile(path: string): string {
-  return join(gitMergeCacheDir(), `${createHash('sha256').update(path).digest('hex').slice(0, 32)}.json`);
-}
-
 interface MergeCacheEntry {
   path: string;
   head: string;
@@ -73,7 +69,7 @@ interface MergeCacheEntry {
 
 function readMergeCache(path: string): MergeCacheEntry | null {
   try {
-    const entry = JSON.parse(readFileSync(mergeCacheFile(path), 'utf-8')) as Partial<MergeCacheEntry>;
+    const entry = JSON.parse(readFileSync(gitMergeCacheFile(path), 'utf-8')) as Partial<MergeCacheEntry>;
     if (entry.path !== path || typeof entry.head !== 'string' || typeof entry.target !== 'string') return null;
     return { path, head: entry.head, target: entry.target, mergedInto: entry.mergedInto ?? null };
   } catch {
@@ -82,7 +78,7 @@ function readMergeCache(path: string): MergeCacheEntry | null {
 }
 
 function writeMergeCache(entry: MergeCacheEntry): void {
-  const file = mergeCacheFile(entry.path);
+  const file = gitMergeCacheFile(entry.path);
   const temporary = `${file}.${randomUUID()}.tmp`;
   try {
     mkdirSync(gitMergeCacheDir(), { recursive: true });

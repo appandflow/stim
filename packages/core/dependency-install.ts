@@ -11,11 +11,13 @@ const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json'] as const;
  */
 export function dependencyLockfile(root: string, project = '.'): { dir: string; file: string } | null {
   let dir = normalize(project);
+  if (isAbsolute(dir)) return null;
   while (true) {
     const file = LOCKFILES.find((name) => existsSync(join(root, dir, name)));
     if (file) return { dir, file };
-    if (dir === '.') return null;
-    dir = dirname(dir);
+    const parent = dirname(dir);
+    if (dir === '.' || parent === dir) return null;
+    dir = parent;
   }
 }
 

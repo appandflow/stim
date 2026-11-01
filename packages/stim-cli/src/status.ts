@@ -18,6 +18,7 @@ import type {
   MetroLastStop,
   RemoteDeviceState,
   StatusCapacity,
+  StatusCapacityLoad,
   StatusIssue,
   StatusIssueCode,
   WebBrowserState,
@@ -26,7 +27,7 @@ import type {
 } from '@stim-cli/core/state';
 import { workspaceAgentDeviceDir } from './workspace/paths.ts';
 import { getExecutor } from './exec.ts';
-import { ACTIVITY_RECENCY_BASES } from '@stim-cli/core/state';
+import { ACTIVITY_RECENCY_BASES, loadState } from '@stim-cli/core/state';
 
 export type {
   AndroidRuntimeFacts,
@@ -552,6 +553,68 @@ export function capacity(states: EnvironmentState[], totalMemoryMb: number): Sta
   };
 }
 
+/** `capacity.load` from a load reading, the `server.maxLoadPerCore` it is busy at, and the configured limit. */
+export function capacityLoad(
+  { cpus, loadPerCore }: { cpus: number; loadPerCore: number },
+  busyAt: number,
+  limit: number | null,
+): StatusCapacityLoad {
+  return { cpus, loadPerCore, busyAt, limit, state: loadState(loadPerCore, busyAt, limit) };
+}
+
+export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): string {
+  return `load ${loadPerCore}/core (busy at ${busyAt}${limit === null ? '' : `, holding at ${limit}`})`;
+}
+
+/** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */
+export function slotUsageLines({
+  builds,
+  devices,
+  platformDevices,
+}: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>): string[] {
+  const lines: string[] = [];
+  if (builds) {
+    const holders = builds.holders.map((holder) =>
+      holder.unresolved
+        ? `slot ${holder.slot} unresolved`
+        : holder.client
+          ? `offloaded for ${holder.client}`
+          : holder.workspace
+            ? basename(holder.workspace)
+            : `slot ${holder.slot}`,
+    );
+    lines.push(
+      `builds ${builds.inUse}/${builds.max} (concurrency.maxBuilds)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+    );
+  }
+  if (devices) {
+    if (devices.inUse === null) {
+      lines.push(`devices ?/${devices.max} (concurrency.maxDevices): ${devices.unknown ?? 'not counted'}`);
+    } else {
+      const holders = devices.holders.map(
+        (holder) =>
+          `${holder.label} ${holder.platform}${holder.slot && holder.slot !== 'default' ? ` [${holder.slot}]` : ''}${holder.booting ? ' (booting)' : ''}`,
+      );
+      lines.push(
+        `devices ${devices.inUse}/${devices.max} (concurrency.maxDevices)${holders.length ? `: ${holders.join(', ')}` : ''}`,
+      );
+    }
+  }
+  for (const [platform, setting, noun] of [
+    ['ios', 'concurrency.maxIosDevices', 'iOS simulators'],
+    ['android', 'concurrency.maxAndroidDevices', 'Android emulators'],
+  ] as const) {
+    const slots = platformDevices?.[platform];
+    if (!slots) continue;
+    lines.push(
+      slots.inUse === null
+        ? `${noun} ?/${slots.max} (${setting}): ${slots.unknown ?? 'not counted'}`
+        : `${noun} ${slots.inUse}/${slots.max} (${setting})`,
+    );
+  }
+  return lines;
+}
+
 export function parseDfFree(output: unknown): DiskInfo | null {
   const lines = String(output || '')
     .trim()
@@ -567,7 +630,7 @@ export function parseDfFree(output: unknown): DiskInfo | null {
   return { availableMb: Math.round(availableKb / 1024), totalMb: Math.round(totalKb / 1024) };
 }
 
-export function diskIsTight(disk: DiskInfo | null | undefined): boolean {
+function diskIsTight(disk: DiskInfo | null | undefined): boolean {
   return Boolean(disk && disk.availableMb < 25 * 1024);
 }
 

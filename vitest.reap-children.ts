@@ -1,9 +1,11 @@
 import { ChildProcess, spawnSync } from 'node:child_process';
 import { afterAll } from 'vitest';
+import { killRunProcesses } from './vitest.kill-run-processes.ts';
 
 type Tracked = { pid: number; detached: boolean; exited: boolean };
 
 const installed = Symbol.for('stim.test.reapChildren');
+const runRoot = process.env.TMPDIR;
 const live = new Map<ChildProcess, Tracked>();
 
 function descendants(roots: readonly number[]): number[] {
@@ -36,14 +38,14 @@ function kill(pid: number, group: boolean): void {
 
 export function reapChildren(): void {
   if (live.size === 0) return;
-  const tracked = [...live.values()];
+  const tracked = [...live];
   live.clear();
   if (process.platform === 'win32') {
-    for (const { pid, exited } of tracked) if (!exited) kill(pid, false);
+    for (const [child, { exited }] of tracked) if (!exited) child.kill('SIGKILL');
     return;
   }
-  const below = descendants(tracked.filter(({ exited }) => !exited).map(({ pid }) => pid));
-  for (const { pid, detached } of tracked) kill(pid, detached);
+  const below = descendants(tracked.filter(([, { exited }]) => !exited).map(([, { pid }]) => pid));
+  for (const [, { pid, detached }] of tracked) kill(pid, detached);
   for (const pid of below) kill(pid, false);
 }
 
@@ -65,6 +67,15 @@ if (!proto[installed]) {
     return result;
   };
   process.on('exit', reapChildren);
+  if (process.platform !== 'win32') {
+    // Vitest forks the worker with an IPC channel and does not stop it when the
+    // main process dies.
+    process.once('disconnect', () => {
+      reapChildren();
+      killRunProcesses(runRoot);
+      process.exit(1);
+    });
+  }
 }
 
 afterAll(reapChildren);

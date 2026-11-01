@@ -29,6 +29,7 @@ const packageDirs = [
   'ci',
   'transport',
   'transport-tailscale',
+  'transport-local',
   'server',
 ];
 
@@ -62,6 +63,7 @@ const entrypoints = [
   ['@stim-cli/metro', 'sharedCacheStores'],
   ['@stim-cli/transport', 'loadTransport', 'server'],
   ['@stim-cli/transport-tailscale', 'createTransport', 'server'],
+  ['@stim-cli/transport-local', 'createTransport', 'server'],
   ['stim/cache-manifest', 'readManifest'],
 ];
 

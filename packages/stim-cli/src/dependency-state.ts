@@ -1,14 +1,21 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { getExecutor } from './exec.ts';
 import { repoRoot } from './workspace/worktree.ts';
 
-export function installedNpmTreeIsValid(projectRoot: string): boolean {
+export function installedNpmTreeProblems(projectRoot: string): string {
   try {
     getExecutor().runFile('npm', ['ls', '--all', '--json', '--silent'], { cwd: projectRoot, timeoutMs: 30_000 });
-    return true;
-  } catch {
-    return false;
+    return '';
+  } catch (error) {
+    const stdout = error instanceof Error && 'stdout' in error ? error.stdout : '';
+    let problems: unknown;
+    try {
+      problems = JSON.parse(String(stdout ?? ''))?.problems;
+    } catch {}
+    if (!Array.isArray(problems)) return randomUUID();
+    return createHash('sha256').update(problems.map(String).toSorted().join('\n')).digest('hex');
   }
 }
 

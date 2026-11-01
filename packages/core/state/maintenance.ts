@@ -3,7 +3,7 @@ import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
-export type MaintenanceCheck = 'pressure' | 'size' | 'worktree' | 'sweep';
+export type MaintenanceCheck = 'pressure' | 'size' | 'worktree' | 'sweep' | 'idle';
 export type MaintenanceActionKind =
   | 'would-clear-outputs'
   | 'would-trim-cache'
@@ -32,7 +32,7 @@ export interface MaintenanceAction {
   workspace?: string;
   dir?: string;
   olderThanDays?: number;
-  check?: 'worktree' | 'sweep' | 'disk';
+  check?: 'worktree' | 'sweep' | 'disk' | 'idle';
   /** The disk pressure level that planned the action; it runs only while free disk stays under that level's floor. */
   level?: 2 | 3;
 }
@@ -194,7 +194,7 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
         (action.workspace === undefined || typeof action.workspace === 'string') &&
         (action.dir === undefined || typeof action.dir === 'string') &&
         (action.olderThanDays === undefined || finite(action.olderThanDays)) &&
-        (action.check === undefined || ['worktree', 'sweep', 'disk'].includes(String(action.check))) &&
+        (action.check === undefined || ['worktree', 'sweep', 'disk', 'idle'].includes(String(action.check))) &&
         (action.level === undefined || action.level === 2 || action.level === 3),
     )
   )

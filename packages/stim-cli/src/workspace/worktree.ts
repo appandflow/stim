@@ -1,10 +1,12 @@
 import type { StimContext } from '@stim-cli/core';
+import { isPathPrefix } from '@stim-cli/core/state';
 import { chmod, lstat, mkdir, readdir, realpath, utimes } from 'node:fs/promises';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from 'path';
 import { getExecutor, isTimeoutError } from '../exec.ts';
 import { git, gitAsync, gitQuiet, gitQuietAsync } from './git.ts';
 import { removeTemporaryEntryAsync } from '../temporary.ts';
+import { warmTrash } from './worktree-trash.ts';
 import { childEnvironment } from './git-read.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { clonefileHelper } from '../clonefile.ts';
@@ -14,6 +16,7 @@ const CARRY_SKIP_BASENAMES = new Set(['.DerivedData', '.DS_Store', '.idea', '.jj
 export function isCarrySkipped(rel: string): boolean {
   return (
     /(^|\/)android\/build\/generated\/autolinking(\/|$)/.test(rel) ||
+    /(^|\/)\.expo\/types(\/|$)/.test(rel) ||
     String(rel)
       .split('/')
       .some((seg) => CARRY_SKIP_BASENAMES.has(seg))
@@ -258,6 +261,7 @@ interface CarryResult {
   copied: string[];
   skipped: SkippedEntry[];
   failed: FailedEntry[];
+  withheld: SkippedEntry[];
 }
 
 export async function listGitignoredEntries(root: string, options: AsyncReadOptions = {}): Promise<string[]> {
@@ -310,6 +314,7 @@ function knownCopiedPaths(rel: string): string[] {
   const segments = rel.split('/');
   const paths: string[] = [];
   if (segments.at(-1) === 'node_modules') paths.push('.pnpm-store', 'expo-modules-jsi/apple/.DerivedData');
+  if (segments.at(-1) === '.expo') paths.push('types');
   for (let covered = 1; covered < AUTOLINKING_PATH.length; covered++) {
     if (AUTOLINKING_PATH.slice(0, covered).every((segment, i) => segments.at(i - covered) === segment)) {
       paths.push(AUTOLINKING_PATH.slice(covered).join('/'));
@@ -322,7 +327,9 @@ function isMissingError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 }
 
-async function removeCopiedPath(root: string, rel: string, signal: AbortSignal): Promise<void> {
+type WarmTrash = ReturnType<typeof warmTrash>;
+
+async function removeCopiedPath(root: string, rel: string, signal: AbortSignal, trash: WarmTrash): Promise<void> {
   signal.throwIfAborted();
   const path = join(root, rel);
   let parent: string;
@@ -336,22 +343,23 @@ async function removeCopiedPath(root: string, rel: string, signal: AbortSignal):
   if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return;
   const stat = await lstat(parent);
   const target = join(parent, basename(path));
+  let targetStat;
   try {
-    await lstat(target);
+    targetStat = await lstat(target);
   } catch (error) {
     if (isMissingError(error)) return;
     throw error;
   }
   await chmod(parent, stat.mode | 0o700);
   try {
-    await removeTemporaryEntryAsync(target, signal);
+    if (!(targetStat.isDirectory() && (await trash.take(target)))) await removeTemporaryEntryAsync(target, signal);
   } finally {
     await utimes(parent, stat.atime, stat.mtime);
     await chmod(parent, stat.mode);
   }
 }
 
-async function removeKnownCopiedPaths(path: string, rel: string, signal: AbortSignal): Promise<void> {
+async function removeKnownCopiedPaths(path: string, rel: string, signal: AbortSignal, trash: WarmTrash): Promise<void> {
   const paths = knownCopiedPaths(rel);
   if (basename(rel) === 'node_modules') {
     const virtualStore = await readdir(join(path, '.pnpm')).catch((error: unknown) => {
@@ -365,7 +373,7 @@ async function removeKnownCopiedPaths(path: string, rel: string, signal: AbortSi
     }
   }
   const root = await realpath(path);
-  for (const known of paths) await removeCopiedPath(root, known, signal);
+  for (const known of paths) await removeCopiedPath(root, known, signal, trash);
 }
 
 export async function cloneIgnoredEntries({
@@ -373,11 +381,14 @@ export async function cloneIgnoredEntries({
   target,
   patterns,
   operation,
+  withhold = () => null,
 }: {
   root: string;
   target: string;
   patterns: string[] | null | undefined;
   operation: StimContext;
+  /** For an entry that needs a check before it is carried, a promise of the reason to leave it out, or of null to carry it. */
+  withhold?: (rel: string) => Promise<string | null> | null;
 }): Promise<CloneResult> {
   const options = {
     ...childEnvironment(operation.env),
@@ -390,61 +401,88 @@ export async function cloneIgnoredEntries({
   const guard = trackedPathsGuard(await listTrackedPaths(target, reads));
   if (!guard.known) throw new Error("Could not list the destination's tracked files.");
   const nested = await nestedWorktreePaths(target, reads);
-  const entries = await listCarryableIgnoredEntries(root, patterns, reads);
+  const carryable = await listCarryableIgnoredEntries(root, patterns, reads);
+  const keptReason = (rel: string): string | null =>
+    guard.covers(rel)
+      ? 'tracked'
+      : overlapsNestedWorktree(rel, nested)
+        ? 'nested worktree'
+        : missingDestinationReason(target, rel);
+  const checks = new Map<string, Promise<string | null>>();
+  for (const rel of carryable) {
+    let copies: boolean;
+    try {
+      copies = keptReason(rel) === null;
+    } catch {
+      copies = true;
+    }
+    const check = copies ? withhold(rel) : null;
+    if (check) checks.set(rel, check);
+  }
+  const entries = [...carryable.filter((rel) => !checks.has(rel)), ...checks.keys()];
   const copied: string[] = [];
   const skipped: SkippedEntry[] = [];
   const failed: FailedEntry[] = [];
+  const withheld: SkippedEntry[] = [];
   let cloned = true;
   let helper: Promise<string | null> | undefined;
   const clonefile = () => (helper ??= clonefileHelper(operation));
-  for (const rel of entries) {
-    operation.signal.throwIfAborted();
-    const from = join(root, rel);
-    const to = join(target, rel);
-    let copying = false;
-    try {
-      const reason = guard.covers(rel)
-        ? 'tracked'
-        : overlapsNestedWorktree(rel, nested)
-          ? 'nested worktree'
-          : missingDestinationReason(target, rel);
-      if (reason) {
-        skipped.push({ file: rel, reason });
-        continue;
-      }
-      await mkdir(dirname(to), { recursive: true });
-      copying = true;
-      const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
-        try {
-          await getExecutor().runFileAsync(file, args, options);
-          return true;
-        } catch (cause) {
-          if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-            throw cause;
-          operation.signal.throwIfAborted();
-          await removeTemporaryEntryAsync(to);
-          return false;
-        }
-      };
-      const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
-      if (
-        !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
-        !(await copiedWith('cp', ['-Rc', from, to]))
-      ) {
-        await getExecutor().runFileAsync('cp', ['-R', from, to], options);
-        cloned = false;
-      }
-      if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal);
-      copied.push(rel);
-    } catch (cause) {
-      if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
-        throw cause;
-      if (copying) await removeTemporaryEntryAsync(to);
+  const trash = warmTrash(target, { signal: operation.signal });
+  try {
+    for (const rel of entries) {
       operation.signal.throwIfAborted();
-      failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
+      const from = join(root, rel);
+      const to = join(target, rel);
+      let copying = false;
+      try {
+        const reason = keptReason(rel);
+        if (reason) {
+          skipped.push({ file: rel, reason });
+          continue;
+        }
+        const withholding = await checks.get(rel);
+        if (withholding) {
+          withheld.push({ file: rel, reason: withholding });
+          continue;
+        }
+        await mkdir(dirname(to), { recursive: true });
+        copying = true;
+        const copiedWith = async (file: string, args: string[]): Promise<boolean> => {
+          try {
+            await getExecutor().runFileAsync(file, args, options);
+            return true;
+          } catch (cause) {
+            if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+              throw cause;
+            operation.signal.throwIfAborted();
+            await removeTemporaryEntryAsync(to);
+            return false;
+          }
+        };
+        const directoryClone = (await lstat(from)).isDirectory() ? await clonefile() : null;
+        if (
+          !(directoryClone && (await copiedWith(directoryClone, [from, to]))) &&
+          !(await copiedWith('cp', ['-Rc', from, to]))
+        ) {
+          await getExecutor().runFileAsync('cp', ['-R', from, to], options);
+          cloned = false;
+        }
+        if ((await lstat(to)).isDirectory()) await removeKnownCopiedPaths(to, rel, operation.signal, trash);
+        copied.push(rel);
+      } catch (cause) {
+        if (cause instanceof WorkspaceProcessCleanupError || (cause instanceof Error && 'reportCleanup' in cause))
+          throw cause;
+        if (copying) await removeTemporaryEntryAsync(to);
+        operation.signal.throwIfAborted();
+        failed.push({ file: rel, error: String((cause as Error)?.message || cause) });
+      }
     }
+  } catch (error) {
+    await trash.dispose(operation).catch(() => {});
+    throw error;
   }
-  return { copied, skipped, failed, cloned };
+  await trash.dispose(operation);
+  return { copied, skipped, failed, withheld, cloned };
 }
 
 export function podsOutOfSync(
@@ -565,6 +603,15 @@ export interface StaleDependencies {
   reason: 'installed' | 'lockfile';
 }
 
+function nearestLockfile(target: string, dir: string): { dir: string; name: string } | null {
+  for (let current = dir; ; current = posix.dirname(current)) {
+    const at = current === '.' ? '' : current;
+    const name = LOCKFILE_NAMES.find((candidate) => existsSync(join(target, at, candidate)));
+    if (name) return { dir: at, name };
+    if (at === '') return null;
+  }
+}
+
 export function depsOutOfSync(
   root: string,
   target: string,
@@ -572,12 +619,16 @@ export function depsOutOfSync(
   { read = readFileSync }: { read?: typeof readFileSync } = {},
 ): StaleDependencies[] {
   const problems: StaleDependencies[] = [];
+  const checked = new Set<string>();
   for (const rel of copiedEntries || []) {
     if (rel !== 'node_modules' && !rel.endsWith('/node_modules')) continue;
-    const dir = rel === 'node_modules' ? '' : rel.slice(0, -'/node_modules'.length);
-    const name = LOCKFILE_NAMES.find((candidate) => existsSync(join(target, dir, candidate)));
-    if (!name) continue;
-    const installed = installedMatchesLockfile(join(target, dir), name, { read });
+    const found = nearestLockfile(target, rel === 'node_modules' ? '' : rel.slice(0, -'/node_modules'.length));
+    if (!found || checked.has(found.dir)) continue;
+    checked.add(found.dir);
+    const { dir, name } = found;
+    const installed = copiedEntries?.includes(dir ? `${dir}/node_modules` : 'node_modules')
+      ? installedMatchesLockfile(join(target, dir), name, { read })
+      : null;
     if (installed === false) {
       problems.push({ dir: dir || '.', lockfile: name, reason: 'installed' });
       continue;
@@ -791,6 +842,47 @@ export interface WorktreeEntry {
   bare?: boolean;
 }
 
+interface MatchedWorktreeEntry extends WorktreeEntry {
+  index: number;
+}
+
+// On Windows, Node's JS realpath keeps 8.3 short names (C:\Users\RUNNER~1) and
+// the caller's letter case, while git reports long names; the native realpath
+// resolves both.
+export function nativeCanonicalPath(path: string): string {
+  const missing: string[] = [];
+  for (let existing = resolve(path); ; existing = dirname(existing)) {
+    try {
+      return resolve(realpathSync.native(existing), ...missing);
+    } catch {
+      if (dirname(existing) === existing) return resolve(path);
+      missing.unshift(basename(existing));
+    }
+  }
+}
+
+export function matchWorktreeEntry(
+  entries: WorktreeEntry[] | null | undefined,
+  path: string,
+): MatchedWorktreeEntry | null {
+  let best: MatchedWorktreeEntry | null = null;
+  const target = nativeCanonicalPath(path);
+  (entries || []).forEach((entry, index) => {
+    if (!entry?.path || !isPathPrefix(nativeCanonicalPath(entry.path), target)) return;
+    if (!best || entry.path.length > best.path.length) best = { ...entry, index };
+  });
+  return best;
+}
+
+export const LOCKED_REASON = 'locked with git worktree lock';
+export const LOCK_UNKNOWN_REASON = 'git could not tell whether its worktree is locked';
+
+export type WorktreeLock = 'locked' | 'unknown';
+
+export function lockReason(lock: WorktreeLock): string {
+  return lock === 'locked' ? LOCKED_REASON : LOCK_UNKNOWN_REASON;
+}
+
 function parseWorktrees(out: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
   let current: Partial<WorktreeEntry> = {};
@@ -837,6 +929,28 @@ export function listWorktrees(cwd: string, opts: ReadOptions = {}): WorktreeEntr
 export async function listWorktreesAsync(cwd: string, options: AsyncReadOptions = {}): Promise<WorktreeEntry[]> {
   const out = await gitReadAsync(cwd, ['worktree', 'list', '--porcelain'], options);
   return out ? parseWorktrees(out) : [];
+}
+
+function insideGitCheckout(root: string): boolean {
+  for (let dir = resolve(root); ; dir = dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return true;
+    if (dirname(dir) === dir) return false;
+  }
+}
+
+function lockOf(entries: WorktreeEntry[], root: string): WorktreeLock | null {
+  const entry = matchWorktreeEntry(entries, root);
+  if (entry) return entry.locked ? 'locked' : null;
+  return existsSync(root) && insideGitCheckout(root) ? 'unknown' : null;
+}
+
+/** Null when `root` is not in a locked worktree; 'unknown' when git lists nothing for a path inside a git checkout. */
+export function worktreeLock(root: string): WorktreeLock | null {
+  return lockOf(listWorktrees(root), root);
+}
+
+export async function worktreeLockAsync(root: string, options: AsyncReadOptions = {}): Promise<WorktreeLock | null> {
+  return lockOf(await listWorktreesAsync(root, options), root);
 }
 
 function branchOf(head: string): string | undefined {

@@ -48,7 +48,7 @@ When you share or copy a log, or open a link from the app, the app or website yo
 ## Control and deletion
 
 - To disconnect a Mac, remove it from the app's machine list. This deletes its token and cached status from the phone and asks the Mac to remove the phone's push registration when the Mac is reachable.
-- Removing a Mac in the app does not revoke the phone on that Mac. To remove the phone's access and its push registration, revoke the phone in Stim Desktop's Phones settings. If you removed a Mac while it was offline, its push registration stays until you revoke the phone there.
+- Removing a Mac in the app does not revoke the phone on that Mac. To remove the phone's access and its push registration, revoke the phone in Stim Desktop's Paired Devices settings. If you removed a Mac while it was offline, its push registration stays until you revoke the phone there.
 - Device screen recording is on by default on the Mac and keeps the last 15 minutes per device. To stop it, run `stim settings set recording.enabled false --scope machine` on that Mac. This also deletes the saved recordings.
 - Deleting the app removes its app storage and the update client ID. iOS can keep Keychain items after an app is deleted, including the settings and recent workspaces listed above. Removing a Mac in the app deletes its token but not its entries in the recent workspaces list, which is replaced as you use other workspaces. Remove each Mac in the app before deleting it if you want its token gone.
 - You can turn off notifications in the app and in iOS Settings, and camera access in iOS Settings.

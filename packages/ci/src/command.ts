@@ -7,8 +7,8 @@ export interface CommandResult {
   exitCode: number | null;
   signal: NodeJS.Signals | null;
   durationMs: number;
-  stdout: string;
-  stderr: string;
+  stdout: string | null;
+  stderr: string | null;
   error?: string;
 }
 
@@ -24,19 +24,19 @@ export async function runCommand({
   command: readonly [string, ...string[]];
   cwd: string;
   env: NodeJS.ProcessEnv;
-  artifactsDir: string;
+  artifactsDir: string | null;
   logName?: 'test' | 'artifact';
   signal?: AbortSignal;
   onOutput?: (event: { stream: 'stdout' | 'stderr'; message: string }) => void;
 }): Promise<CommandResult> {
   signal?.throwIfAborted();
   const started = Date.now();
-  const stdout = join(artifactsDir, `${logName}.stdout.log`);
-  const stderr = join(artifactsDir, `${logName}.stderr.log`);
-  const out = openSync(stdout, 'w');
+  const stdout = artifactsDir ? join(artifactsDir, `${logName}.stdout.log`) : null;
+  const stderr = artifactsDir ? join(artifactsDir, `${logName}.stderr.log`) : null;
+  const out = stdout ? openSync(stdout, 'w') : undefined;
   let err: number | undefined;
   try {
-    err = openSync(stderr, 'w');
+    if (stderr) err = openSync(stderr, 'w');
     const child = spawn(command[0], command.slice(1), {
       cwd,
       env,
@@ -68,9 +68,9 @@ export async function runCommand({
       kill(false);
       killTimer = setTimeout(() => kill(true), 1000);
     };
-    const output = (stream: 'stdout' | 'stderr', fd: number, chunk: Buffer) => {
+    const output = (stream: 'stdout' | 'stderr', fd: number | undefined, chunk: Buffer) => {
       try {
-        writeSync(fd, chunk);
+        if (fd !== undefined) writeSync(fd, chunk);
         onOutput?.({ stream, message: chunk.toString('utf8') });
       } catch (caught) {
         error ??= String(caught);
@@ -78,7 +78,7 @@ export async function runCommand({
       }
     };
     child.stdout!.on('data', (chunk: Buffer) => output('stdout', out, chunk));
-    child.stderr!.on('data', (chunk: Buffer) => output('stderr', err!, chunk));
+    child.stderr!.on('data', (chunk: Buffer) => output('stderr', err, chunk));
     child.on('error', (caught) => {
       error ??= caught.message;
     });
@@ -128,7 +128,7 @@ export async function runCommand({
       clearTimeout(killTimer);
     }
   } finally {
-    closeSync(out);
+    if (out !== undefined) closeSync(out);
     if (err !== undefined) closeSync(err);
   }
 }

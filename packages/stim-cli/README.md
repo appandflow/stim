@@ -104,7 +104,9 @@ Build-only preserves existing sessions and uses the same cache and build locks.
 Successful builds include `result.facts.links.workspace`, an HTTPS workspace link
 agents can share with an already-paired phone or Desktop, including when the
 build machine has no Desktop app installed.
-Each result is a separate copy kept in the workspace until `stim worktree remove`.
+Each result is a separate copy in the workspace. It lasts until a build replaces
+its recorded build (for macOS, until the next macOS build) or `stim worktree remove`;
+copy or export a result you need to keep before the next build.
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
@@ -171,7 +173,7 @@ Cache providers must settle after cancellation. If cleanup cannot finish within
 35 seconds, the plan refuses with `STIM_CLAIM_UNAVAILABLE` and retains the download
 directory; it does not delete files a broken provider may still be writing.
 
-`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees? })` read their CLI
+`doctor({ platform?, record? })` and `gc({ cache?, olderThan?, worktrees?, measureBuildState? })` read their CLI
 JSON reports with a 60 second execution budget and optional `signal`. Doctor
 never repairs; its `stim.runningPath` is null. By default it does not record a
 check. Pass `record: true` to register the supported iOS/Android project and record

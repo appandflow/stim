@@ -1,5 +1,6 @@
-import { existsSync, realpathSync } from 'node:fs';
-import type { MacosProcess } from '@stim-cli/core/state';
+import { existsSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { hostedAppAttempt, type MacosProcess } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
 import { inspectProcessIdentity, processStartMicros, captureProcessToken } from '../process-identity.ts';
 import { macosDir } from './state.ts';
@@ -20,7 +21,7 @@ function isBundleExecutable(path: string, dirs: readonly string[]): boolean {
 }
 
 /** Pids from `ps -axww -o pid=,comm=` output whose command names a bundle executable inside `dirs`. */
-export function bundleCandidates(psOutput: string, dirs: readonly string[]): number[] {
+function bundleCandidates(psOutput: string, dirs: readonly string[]): number[] {
   const pids: number[] = [];
   for (const line of psOutput.split('\n')) {
     const match = /^\s*(\d+)\s+(.+)$/.exec(line);
@@ -30,7 +31,7 @@ export function bundleCandidates(psOutput: string, dirs: readonly string[]): num
 }
 
 /** Whether `lsof -Fn -d txt` output for one process names a bundle executable inside `dirs`. */
-export function lsofNamesBundleExecutable(lsofOutput: string, dirs: readonly string[]): boolean {
+function lsofNamesBundleExecutable(lsofOutput: string, dirs: readonly string[]): boolean {
   return lsofOutput.split('\n').some((line) => line.startsWith('n') && isBundleExecutable(line.slice(1), dirs));
 }
 
@@ -85,10 +86,28 @@ function failedBundleListing(record: MacosProcess, error: unknown): string | nul
   return open;
 }
 
+/** The attempt directories under a hosted session's `apps`, each of which holds one `App.app`. */
+export function hostedBundleDirs(area: string): string[] {
+  const apps = join(area, 'apps');
+  if (process.platform !== 'darwin' || !existsSync(apps)) return [];
+  if (realpathSync(apps) !== apps) throw new Error('Hosted app data resolves outside its private area.');
+  return readdirSync(apps)
+    .filter((attempt) => hostedAppAttempt(attempt))
+    .map((attempt) => join(apps, attempt))
+    .filter((dir) => lstatSync(dir, { throwIfNoEntry: false })?.isDirectory());
+}
+
 /** Verifies owned bundle instances without blocking on process and executable probes. */
-export async function runningBundleInstancesAsync(root: string, operation?: StimContext): Promise<MacosProcess[]> {
+export function runningBundleInstancesAsync(root: string, operation?: StimContext): Promise<MacosProcess[]> {
+  return runningInstancesInAsync(bundleDirs(root), operation);
+}
+
+/** Verifies the running copies of app bundles directly inside `dirs`. */
+export async function runningInstancesInAsync(
+  dirs: readonly string[],
+  operation?: StimContext,
+): Promise<MacosProcess[]> {
   operation?.signal.throwIfAborted();
-  const dirs = bundleDirs(root);
   if (!dirs.length) return [];
   const listing = await runOperationFile(operation, getExecutor(), 'ps', ['-axww', '-o', 'pid=,comm='], {
     cwd: operation?.cwd,

@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Finding } from './doctor.ts';
 import { getExecutor } from '../exec.ts';
@@ -12,6 +12,35 @@ interface ArchitectureTarget {
 interface ArchitectureReport {
   affected: ArchitectureTarget[];
   unknown: boolean;
+}
+
+const INSPECTION_TTL_MS = 10 * 60_000;
+const inspections = new Map<string, { inputs: string; at: number; findings: Promise<Finding[]> }>();
+
+function inspectionInputs(iosRoot: string): string {
+  let names: string[];
+  try {
+    names = readdirSync(iosRoot).toSorted();
+  } catch {
+    names = [];
+  }
+  return JSON.stringify(
+    [
+      ...names.filter((name) => name.endsWith('.xcodeproj')).map((name) => join(iosRoot, name, 'project.pbxproj')),
+      ...names.filter((name) => name.endsWith('.xcconfig')).map((name) => join(iosRoot, name)),
+      join(iosRoot, 'Podfile'),
+      join(iosRoot, 'Podfile.lock'),
+      join(iosRoot, 'Pods', 'Manifest.lock'),
+      join(iosRoot, 'Pods', 'Pods.xcodeproj', 'project.pbxproj'),
+    ].map((path) => {
+      try {
+        const stat = statSync(path);
+        return [path, stat.mtimeMs, stat.size];
+      } catch {
+        return [path, null];
+      }
+    }),
+  );
 }
 
 const COMPILED_PRODUCTS = new Set([
@@ -83,6 +112,17 @@ export async function inspectIosDebugArchitectures(
   iosProjectPath: string = DEFAULT_IOS_PROJECT_PATH,
 ): Promise<Finding[]> {
   const iosRoot = join(projectRoot, iosProjectPath);
+  const key = `${projectRoot}\0${iosRoot}`;
+  const inputs = inspectionInputs(iosRoot);
+  const cached = inspections.get(key);
+  if (cached && cached.inputs === inputs && Date.now() - cached.at < INSPECTION_TTL_MS)
+    return [...(await cached.findings)];
+  const findings = inspect(projectRoot, iosRoot);
+  inspections.set(key, { inputs, at: Date.now(), findings });
+  return [...(await findings)];
+}
+
+async function inspect(projectRoot: string, iosRoot: string): Promise<Finding[]> {
   if (!existsSync(iosRoot)) return [];
   const findings: Finding[] = [];
   const unknown: string[] = [];

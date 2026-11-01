@@ -12,7 +12,7 @@ import {
 } from '@stim-cli/core/state';
 import { stopMacosApp } from '../macos/stop.ts';
 import { macosAppPresent } from '../macos/state.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { WorkspaceProcessCleanupError, withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import {
   NATIVE_RUN_LOCK,
   NATIVE_RUN_WAIT_MS,
@@ -51,7 +51,12 @@ import {
   type MetroResolution,
 } from '../metro.ts';
 import { isMetroRunning } from '../ports.ts';
-import { logVanishedSupervisor, requestDevServerStop, withdrawDevServerStopRequest } from '../supervisor/stop-cause.ts';
+import {
+  logVanishedSupervisor,
+  requestDevServerStop,
+  withdrawDevServerStopRequest,
+  type StopRequester,
+} from '../supervisor/stop-cause.ts';
 import {
   MODE_COMMAND,
   clearManagedMetroTunnel,
@@ -386,7 +391,9 @@ async function stopWorkspaceHostedNative(
   slot: string | undefined,
   report: (line: string) => void,
   failed: () => void,
+  operation: StimContext | undefined,
 ): Promise<{ devices: Record<string, DeviceOutcomeEntry>; failed: boolean }> {
+  const signal = operation?.signal;
   const devices: Record<string, DeviceOutcomeEntry> = {};
   let anyFailed = false;
   for (const platform of ['ios', 'android'] as const) {
@@ -397,10 +404,11 @@ async function stopWorkspaceHostedNative(
         ? `${placement.device ? ('udid' in placement.device ? placement.device.name : hostedAndroidDeviceName(placement.device)) : `${platform} device`} on ${placement.machine}`
         : `hosted ${platform === 'ios' ? 'iOS simulator' : 'Android emulator'} for slot ${name}`;
       try {
-        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name);
+        await (platform === 'ios' ? stopHostedIos : stopHostedAndroid)(root, name, signal);
         devices[`${platform}:host:${name}`] = { status: 'shut-down', label };
         report(chalk.dim(phaseLine('device', `stopped ${label}`)));
       } catch (error) {
+        signal?.throwIfAborted();
         const reason = (error as Error).message;
         devices[`${platform}:host:${name}`] = { status: 'failed', label, reason };
         report(chalk.red(phaseLine('device', reason)));
@@ -464,6 +472,7 @@ async function stopWorkspace({
   clearState = (projectRoot, expected) =>
     withWorkspaceStateLockAsync(projectRoot, () => clearSupervisorState(projectRoot, expected)),
   report = (line: string) => console.error(line),
+  requester,
 }: {
   root: string;
   operation?: StimContext;
@@ -499,6 +508,7 @@ async function stopWorkspace({
   clearRegistration?: (root: string, expected?: ProcessRecord | null) => Promise<RegistrationCleanup>;
   clearState?: (root: string, expected?: ProcessRecord | null) => boolean | void | Promise<boolean | void>;
   report?: (line: string) => void;
+  requester?: StopRequester;
 }): Promise<StopResult> {
   const proj = project === undefined ? getProject(root) : project;
   const sup = state === undefined ? readSupervisorState(root) : state;
@@ -566,7 +576,7 @@ async function stopWorkspace({
     ok = false;
     stillHolding = `supervisor pid ${target.pid} could not be verified`;
   } else {
-    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses });
+    outcomes.supervisor = await stopSupervisor(target, { root, killGroup, waiter, report, releaseReverses, requester });
     if (outcomes.supervisor.status !== 'stopped') {
       ok = false;
       stillHolding = outcomes.supervisor.reason;
@@ -688,9 +698,15 @@ async function stopWorkspace({
     stopMacos,
   );
 
-  const hosted = await stopWorkspaceHostedNative(root, hostedSlot, report, () => {
-    ok = false;
-  });
+  const hosted = await stopWorkspaceHostedNative(
+    root,
+    hostedSlot,
+    report,
+    () => {
+      ok = false;
+    },
+    operation,
+  );
   Object.assign(outcomes.device, hosted.devices);
   await updateWorkspaceStateAsync(root, (workspace) => {
     const slots = isJsonObject(workspace.deviceSlots) ? workspace.deviceSlots : {};
@@ -870,18 +886,22 @@ async function stopSupervisor(
     waiter,
     report,
     releaseReverses,
+    requester,
   }: {
     root: string;
     killGroup: typeof killMetroTree | typeof killMetroTreeAsync;
     waiter: (pid: number, processToken?: string) => Promise<boolean>;
     report: (line: string) => void;
     releaseReverses: () => Promise<void>;
+    requester: StopRequester | undefined;
   },
 ): Promise<SupervisorOutcome> {
   await releaseReverses();
   report(chalk.dim(phaseLine('stop', `sending SIGTERM to supervisor process group ${target.pid}`)));
   try {
-    await withWorkspaceStateLockAsync(root, () => requestDevServerStop(root, target.processToken, { by: 'stim stop' }));
+    await withWorkspaceStateLockAsync(root, () =>
+      requestDevServerStop(root, target.processToken, requester ?? { by: 'stim stop' }),
+    );
   } catch {}
   let signalled = false;
   try {
@@ -1026,6 +1046,12 @@ async function shutDownDevices(
   },
 ): Promise<DeviceOutcome> {
   const device: DeviceOutcome = { ios: null, android: null };
+  const entries: Array<{
+    key: string;
+    kind: 'ios' | 'android';
+    label: string;
+    result: Promise<TeardownResult> | null;
+  }> = [];
 
   for (const { slot, platforms } of projectDeviceSlots(project)) {
     const iosKey = slot === 'default' ? 'ios' : `ios:${slot}`;
@@ -1034,45 +1060,61 @@ async function shutDownDevices(
     const iosUdid = ios?.deviceUdid as string | undefined;
     const iosName = ios?.deviceName as string | undefined;
     if (iosUdid) {
-      if (!ios?.owned) {
-        device[iosKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: iosUdid,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${iosUdid} is not Stim-owned, leaving it running`)));
-      } else {
+      let result: Promise<TeardownResult> | null = null;
+      if (ios?.owned) {
         debugLog.log('stop.device.start', { platform: 'ios', slot, deviceId: iosUdid });
-        const result = await teardownIos(iosUdid, { del: false, label: iosName, workspace });
-        debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: result.status });
-        device[iosKey] = reportDevice(iosUdid, result, report, 'ios');
+        result = teardownIos(iosUdid, { del: false, label: iosName, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'ios', slot, deviceId: iosUdid, status: outcome.status });
+          return outcome;
+        });
       }
+      entries.push({ key: iosKey, kind: 'ios', label: iosUdid, result });
     }
 
     const android = platforms.android;
     if (android?.avdName) {
-      if (!android.owned) {
-        device[androidKey] = {
-          status: 'skipped',
-          kind: 'not-owned',
-          label: android.avdName,
-          reason: 'Stim does not own this device',
-        };
-        report(chalk.dim(phaseLine('device', `${android.avdName} is not Stim-owned, leaving it running`)));
-      } else {
-        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: android.avdName });
-        const result = await teardownAvd(android.avdName, { del: false, workspace });
-        debugLog.log('stop.device.end', {
-          platform: 'android',
-          slot,
-          deviceId: android.avdName,
-          status: result.status,
+      const avdName = android.avdName;
+      let result: Promise<TeardownResult> | null = null;
+      if (android.owned) {
+        debugLog.log('stop.device.start', { platform: 'android', slot, deviceId: avdName });
+        result = teardownAvd(avdName, { del: false, workspace }).then((outcome) => {
+          debugLog.log('stop.device.end', { platform: 'android', slot, deviceId: avdName, status: outcome.status });
+          return outcome;
         });
-        device[androidKey] = reportDevice(android.avdName, result, report, 'android');
       }
+      entries.push({ key: androidKey, kind: 'android', label: avdName, result });
     }
   }
+
+  const settled = await Promise.allSettled(entries.map((entry) => entry.result));
+  entries.forEach(({ key, kind, label }, index) => {
+    const outcome = settled[index];
+    if (outcome?.status === 'rejected') return;
+    if (!outcome?.value) {
+      device[key] = {
+        status: 'skipped',
+        kind: 'not-owned',
+        label,
+        reason: 'Stim does not own this device',
+      };
+      report(chalk.dim(phaseLine('device', `${label} is not Stim-owned, leaving it running`)));
+      return;
+    }
+    device[key] = reportDevice(label, outcome.value, report, kind);
+  });
+  const rejected = settled.flatMap((outcome) => (outcome.status === 'rejected' ? [outcome.reason] : []));
+  const cleanup = rejected.filter((reason) => reason instanceof WorkspaceProcessCleanupError);
+  if (cleanup.length > 1) {
+    throw Object.assign(
+      new WorkspaceProcessCleanupError(
+        [...new Set(cleanup.flatMap((error) => error.claims))],
+        cleanup.map((error) => error.message).join(' '),
+        'Verify the device operations and their descendants have stopped.',
+      ),
+      { reportCleanup: true },
+    );
+  }
+  if (rejected.length > 0) throw cleanup[0] ?? rejected[0];
   return device;
 }
 

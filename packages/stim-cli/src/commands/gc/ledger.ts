@@ -132,10 +132,15 @@ export async function forgetStaleLedgerEntries(
       if (entry.kind === 'android') {
         if (!(await forgetStaleAvdName(entry.id, signal))) {
           output.log(chalk.dim(`Kept the ledger entry for android ${entry.id}: the AVD or its setup reappeared`));
+          output.record('ledgerEntry', 'kept', `android ${entry.id}`, {
+            id: entry.id,
+            detail: 'the AVD or its setup reappeared',
+          });
           continue;
         }
       } else await forgetCreatedDeviceAsync(entry.kind, entry.id, signal);
       output.log(chalk.green(`Forgot the ledger entry for ${entry.kind} ${entry.id} (not on this machine)`));
+      output.record('ledgerEntry', 'done', `${entry.kind} ${entry.id}`, { id: entry.id });
     } catch (error) {
       signal?.throwIfAborted();
       failures++;
@@ -144,6 +149,10 @@ export async function forgetStaleLedgerEntries(
           `Could not forget the ledger entry for ${entry.kind} ${entry.id}: ${(error as Error)?.message || error}`,
         ),
       );
+      output.record('ledgerEntry', 'failed', `${entry.kind} ${entry.id}`, {
+        id: entry.id,
+        detail: error instanceof Error ? error.message : String(error),
+      });
     }
   }
   signal?.throwIfAborted();

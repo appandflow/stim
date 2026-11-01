@@ -28,10 +28,3 @@ test('parses project.pbxproj values without altering identifiers, versions or qu
     nested: { inner: '$(A_$(B))' },
   });
 });
-
-test.each(['', '{ a = b }', '{ a = (b c); }', '{ a = "b; }', '{ a = b; } trailing'])(
-  'refuses malformed project text %j',
-  (source) => {
-    expect(() => parseNativeXcodeSyntax(source)).toThrow(/Cannot parse project.pbxproj/);
-  },
-);

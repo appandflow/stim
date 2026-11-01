@@ -1,7 +1,7 @@
 import type { ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { getExecutor } from '../exec.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { createLineReader, stripAnsi, waitForChild } from '../process-output.ts';
@@ -16,6 +16,8 @@ type SpawnFn = (cmd: string, args: string[], opts: Record<string, unknown>) => C
 export const DEPS_ERROR = 'STIM_DEPS_FAILED';
 
 const LAST_LINES = 20;
+
+const BUILD_MARKER = '.last_build_configuration';
 
 const TRANSCRIPT_LINES = 2000;
 
@@ -589,6 +591,45 @@ function gemInstallRemedy(root: string, pin: { gemfile: string; lockfile: string
   );
 }
 
+interface BuildMarker {
+  dir: string;
+  ino: number;
+  content: Buffer;
+}
+
+// CocoaPods cleans every pod directory when it installs any pod, and its preserve_paths glob skips
+// dotfiles. That removes the .last_build_configuration marker react-native's replace-*-version.js
+// scripts read, which treat a missing marker as a Debug binary even when the Release one is still there.
+function readBuildMarkers(podsDir: string): BuildMarker[] {
+  let names: string[];
+  try {
+    names = readdirSync(podsDir);
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    const dir = join(podsDir, name);
+    try {
+      return [{ dir, ino: statSync(dir).ino, content: readFileSync(join(dir, BUILD_MARKER)) }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function restoreBuildMarkers(markers: BuildMarker[]): string[] {
+  const restored: string[] = [];
+  for (const { dir, ino, content } of markers) {
+    const file = join(dir, BUILD_MARKER);
+    try {
+      if (existsSync(file) || statSync(dir).ino !== ino) continue;
+      writeFileSync(file, content);
+      restored.push(basename(dir));
+    } catch {}
+  }
+  return restored;
+}
+
 export async function runPodInstall(
   root: string,
   logWriter: NdjsonWriter | null | undefined,
@@ -639,6 +680,7 @@ export async function runPodInstall(
 
   const args = bundler ? ['bundle', 'exec', 'pod', 'install'] : ['pod', 'install'];
   const command = args.join(' ');
+  const markers = readBuildMarkers(join(iosDir, 'Pods'));
   const run = await runCaptured({
     ...ctx,
     cmd: args[0] as string,
@@ -649,6 +691,10 @@ export async function runPodInstall(
     label: 'pods',
     estimateMs,
   });
+  const restored = restoreBuildMarkers(markers);
+  if (restored.length) {
+    notes.push(`kept the ${BUILD_MARKER} that pod install removed from ${restored.join(', ')}`);
+  }
 
   if (run.error) {
     const missing = bundler ? missingBundle(run.error, pin) : missingPod(run.error);
@@ -728,12 +774,14 @@ function missingBundle(err: unknown, pin: { gemfile: string; lockfile: string } 
   };
 }
 
+export const POD_MISSING_REASON = 'CocoaPods is not installed: no `pod` executable on PATH.';
+
 function missingPod(err: unknown) {
   if (!isMissingBinary(err)) return null;
   return {
     failed: true,
     code: DEPS_ERROR,
-    reason: 'CocoaPods is not installed: no `pod` executable on PATH.',
+    reason: POD_MISSING_REASON,
     remedy: 'Install CocoaPods (`brew install cocoapods`, or `gem install cocoapods`) and run again.',
     lastLines: [] as string[],
   };

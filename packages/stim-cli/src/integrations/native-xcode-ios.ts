@@ -26,6 +26,7 @@ import {
   HEARTBEAT_INTERVAL_MS,
   parseSwiftVersion,
   parseXcodeMajor,
+  readBundleId,
 } from '../engine/xcode.ts';
 import { readPodState, podsAreStale, runPodInstall, runCaptured } from '../engine/deps.ts';
 import { gateProfileForDevice } from '../engine/ios-signing.ts';
@@ -174,6 +175,7 @@ function nativeRecipe(root: string, context: IosArtifactContext): IosArtifactRec
       filesystemBuildCapability({
         context: context.operation,
         sources: snapshot ? nativeXcodeSources(snapshot) : null,
+        readAppId: (path) => readBundleId(path),
       }),
     async prepare(beforePrepare) {
       const pods = readPodState(root, root);
@@ -430,7 +432,6 @@ async function planNativeXcode(
       physical: false,
       remoteArch: null,
       hostArch: process.arch === 'arm64' ? 'arm64' : 'x86_64',
-      configuration,
     });
     const snapshot = await nativeXcodeInputSnapshot(
       root,

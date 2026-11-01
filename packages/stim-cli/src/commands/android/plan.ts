@@ -1,4 +1,5 @@
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
+import { lookupRecordedBuild } from '../../engine/recorded-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
@@ -24,10 +25,11 @@ import {
   systemImageSupportsFold,
 } from '../../devices/android.ts';
 import { deviceSlotPlatforms } from '../../devices/device-slots.ts';
+import { androidImageInstallPolicy, type AndroidImageInstallPolicy } from '../../devices/android-image.ts';
 import { getProject } from '../../workspace/config.ts';
 import { parkedMaxSetting } from '../../devices/sim-pool.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
-import type { SettingsObject } from '@stim-cli/core/state';
+import type { AutomaticPlacement, SettingsObject } from '@stim-cli/core/state';
 import {
   androidLayoutSetting,
   androidLayoutSettingError,
@@ -44,6 +46,7 @@ import {
   settingOriginScope,
   settingShapeErrors,
   settingsLayers,
+  inertSettingWarning,
   unknownSettingKeys,
 } from '../../workspace/settings.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
@@ -78,6 +81,8 @@ export interface AndroidBuildPlanInputs {
 
 export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly slot: string;
+  /** Set when the run installs a recorded build: refuses before any device work if there is none. */
+  readonly recordedBuild?: boolean;
   readonly signal?: AbortSignal;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;
@@ -92,6 +97,7 @@ type AndroidTargetPlan =
   | {
       readonly kind: 'hosted';
       readonly machine: string;
+      readonly placement?: AutomaticPlacement;
       readonly systemImage: string | null;
       readonly deviceProfile: string | null;
     }
@@ -263,7 +269,7 @@ export function resolveAndroidBuildPlan(
   if (layoutError) return fail('STIM_BAD_ARG', layoutError, SETTING_SHAPE_REMEDY);
   const layout = resolveAndroidLayout(settings, root, bound);
   for (const key of unknownSettingKeys(settings)) {
-    warn('setting', `Warning: setting "${key}" is not read by Stim and will be ignored.`);
+    warn('setting', inertSettingWarning(settings, key));
   }
   let optimizations: Optimizations;
   try {
@@ -316,6 +322,7 @@ export async function resolveAndroidRunPlan(
     slot,
     signal,
     easProfile,
+    recordedBuild,
     variant: variantFlag,
     systemImage: systemImageFlag,
     deviceProfile: deviceProfileFlag,
@@ -366,6 +373,11 @@ export async function resolveAndroidRunPlan(
     { warn, runtimeKind, resolveCompilerCache, resolveCacheProvider, variantProblem, detectExpo },
   );
   if (!plannedBuild.ok) return plannedBuild;
+  const recordedRefusal = lookupRecordedBuild(recordedBuild, root, {
+    platform: 'android',
+    configuration: plannedBuild.plan.build.variant,
+  }).refusal;
+  if (recordedRefusal) return fail(recordedRefusal.code, recordedRefusal.message, recordedRefusal.remedy);
   const dataPartitionSizeError = androidDataPartitionSizeGbSettingError(settings);
   if (dataPartitionSizeError) {
     return fail(
@@ -439,6 +451,7 @@ export async function resolveAndroidRunPlan(
         deviceProfile,
         physical,
         remoteBackend,
+        installImages: androidImageInstallPolicy(settings),
       },
       { listSystemImages, listDeviceProfiles, supportsFold, ownedAvd },
     );
@@ -447,7 +460,13 @@ export async function resolveAndroidRunPlan(
   const target: AndroidTargetPlan = physical
     ? { kind: 'physical', serial: typeof deviceFlag === 'string' ? deviceFlag : null, lease: { waitSeconds, noWait } }
     : machine
-      ? { kind: 'hosted', machine, systemImage, deviceProfile }
+      ? {
+          kind: 'hosted',
+          machine,
+          ...(remoteTarget?.kind === 'machine' && remoteTarget.placement ? { placement: remoteTarget.placement } : {}),
+          systemImage,
+          deviceProfile,
+        }
       : remoteBackend
         ? { kind: 'remote', backend: remoteBackend, systemImage, deviceProfile }
         : { kind: 'emulator', systemImage, deviceProfile };
@@ -482,6 +501,7 @@ export async function androidDeviceSelectorRefusal(
     deviceProfile,
     physical,
     remoteBackend,
+    installImages,
   }: {
     settingsContext: SettingsContext;
     signal?: AbortSignal;
@@ -492,6 +512,7 @@ export async function androidDeviceSelectorRefusal(
     deviceProfile: string | null;
     physical: boolean;
     remoteBackend: RemoteDeviceBackend | null;
+    installImages: AndroidImageInstallPolicy;
   },
   {
     listSystemImages = listInstalledSystemImages,
@@ -510,6 +531,7 @@ export async function androidDeviceSelectorRefusal(
     physical,
     remoteBackend,
     listImages: listSystemImages,
+    installImages,
   });
   if (imageRefusal) return fail(imageRefusal.code, imageRefusal.message, imageRefusal.remedy);
   const profileRefusal = await deviceProfileRefusal({
@@ -534,7 +556,8 @@ export async function androidDeviceSelectorRefusal(
     const profile = deviceProfile ?? existing?.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
     const image = () =>
       flagImage ?? existing?.systemImage ?? systemImage ?? pickDefaultSystemImage(listSystemImages())?.pkg ?? null;
-    const checked = profileNeedsFoldFeature(profile) ? image() : null;
+    const wanted = profileNeedsFoldFeature(profile) ? image() : null;
+    const checked = wanted !== null && listSystemImages().some((each) => each.pkg === wanted) ? wanted : null;
     const foldRefusal =
       checked !== null &&
       foldableImageRefusal({

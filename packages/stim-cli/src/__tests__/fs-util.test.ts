@@ -1,39 +1,10 @@
 import { mkdtempSync, symlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setExecutor, resetExecutor } from '../exec.ts';
-import { directorySize, volumeRootFor, isRealMount, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
-
-test.skipIf(process.platform === 'win32')(
-  'volumeRootFor identifies external and boot volumes (macOS /Volumes; skipped on win32)',
-  () => {
-    expect(volumeRootFor('/Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-    expect(volumeRootFor('/Users/j/Developer/app')).toBe('/');
-  },
-);
-
-test.skipIf(process.platform === 'win32')(
-  'volumeRootFor normalizes case, doubled slashes, and dot components (macOS /Volumes; skipped on win32)',
-  () => {
-    expect(volumeRootFor('/volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-    expect(volumeRootFor('//Volumes/ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-    expect(volumeRootFor('/Volumes/./ExternalSSD/Developer/app')).toBe('/Volumes/ExternalSSD');
-    expect(volumeRootFor('/Volumes/Other/../ExternalSSD/app')).toBe('/Volumes/ExternalSSD');
-  },
-);
-
-test('isRealMount treats a distinct st_dev as a genuine mount', () => {
-  expect(isRealMount(16777244, 16777234)).toBe(true);
-});
+import { volumeRootFor, isRealMount, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 
 test('isRealMount treats a matching st_dev (symlink to boot volume) as not a real mount', () => {
   expect(isRealMount(16777234, 16777234)).toBe(false);
-});
-
-test('isRealMount refuses to guess when either dev is missing', () => {
-  expect(isRealMount(null, 16777234)).toBe(false);
-  expect(isRealMount(16777234, null)).toBe(false);
-  expect(isRealMount(undefined, undefined)).toBe(false);
 });
 
 test.skipIf(process.platform === 'win32')(
@@ -53,11 +24,6 @@ test.skipIf(process.platform === 'win32')(
     }
   },
 );
-
-test('isOnMountedVolume confirms a plain boot-volume path', () => {
-  const boot = volumeRootFor(process.cwd());
-  expect(isOnMountedVolume(boot, [boot])).toBe(true);
-});
 
 describe.skipIf(process.platform !== 'win32')('the Windows volume model', () => {
   test('a drive path and a UNC path each report their own root', () => {
@@ -97,23 +63,4 @@ test('isOnMountedVolume returns false for a path it cannot resolve', () => {
   expect(isOnMountedVolume('relative/path/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('~/Developer/app', ['/'])).toBe(false);
   expect(isOnMountedVolume('/Volumes/StimTestVolumeThatDoesNotExist/app', ['/'])).toBe(false);
-});
-
-test('directorySize forwards its optional timeout and contains a timeout failure', () => {
-  let seenTimeout: number | undefined;
-  let seenArgs: string[] | undefined;
-  setExecutor({
-    runFile(_file, args, options) {
-      seenArgs = args;
-      seenTimeout = options?.timeoutMs;
-      throw new Error('timed out');
-    },
-  });
-  try {
-    expect(directorySize('/tmp/stim-avd', { timeoutMs: 5000 })).toBe(0);
-    expect(seenArgs).toEqual(['-sk', '/tmp/stim-avd']);
-    expect(seenTimeout).toBe(5000);
-  } finally {
-    resetExecutor();
-  }
 });

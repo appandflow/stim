@@ -1,0 +1,179 @@
+{
+  "devicetypes": [
+    {
+      "productFamily": "iPhone",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 18 Pro.simdevicetype",
+      "maxRuntimeVersion": 4294967295,
+      "maxRuntimeVersionString": "65535.255.255",
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+      "modelIdentifier": "iPhone19,2",
+      "minRuntimeVersionString": "27.0.0",
+      "minRuntimeVersion": 1769472,
+      "name": "iPhone 18 Pro"
+    },
+    {
+      "productFamily": "iPhone",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 18 Pro Max.simdevicetype",
+      "maxRuntimeVersion": 4294967295,
+      "maxRuntimeVersionString": "65535.255.255",
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro-Max",
+      "modelIdentifier": "iPhone19,3",
+      "minRuntimeVersionString": "27.0.0",
+      "minRuntimeVersion": 1769472,
+      "name": "iPhone 18 Pro Max"
+    },
+    {
+      "productFamily": "Apple Vision",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/Apple Vision Pro (at 2732x2048).simdevicetype",
+      "maxRuntimeVersion": 156416,
+      "maxRuntimeVersionString": "2.99.0",
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro",
+      "modelIdentifier": "RealityDevice14,1",
+      "minRuntimeVersionString": "1.0.0",
+      "minRuntimeVersion": 65536,
+      "name": "Apple Vision Pro (at 2732x2048)"
+    },
+    {
+      "productFamily": "iPhone",
+      "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPod touch (7th generation).simdevicetype",
+      "maxRuntimeVersion": 1048575,
+      "maxRuntimeVersionString": "15.255.255",
+      "identifier": "com.apple.CoreSimulator.SimDeviceType.iPod-touch--7th-generation-",
+      "modelIdentifier": "iPod9,1",
+      "minRuntimeVersionString": "12.3.1",
+      "minRuntimeVersion": 787201,
+      "name": "iPod touch (7th generation)"
+    }
+  ],
+  "runtimes": [
+    {
+      "isAvailable": true,
+      "version": "18.6",
+      "isInternal": false,
+      "buildversion": "22G86",
+      "supportedArchitectures": ["x86_64", "arm64"],
+      "supportedDeviceTypes": [
+        {
+          "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 16 Pro.simdevicetype",
+          "name": "iPhone 16 Pro",
+          "productFamily": "iPhone",
+          "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro"
+        },
+        {
+          "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 16 Pro Max.simdevicetype",
+          "name": "iPhone 16 Pro Max",
+          "productFamily": "iPhone",
+          "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro-Max"
+        }
+      ],
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-18-6",
+      "platform": "iOS",
+      "bundlePath": "/Library/Developer/CoreSimulator/Volumes/iOS_22G86/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 18.6.simruntime",
+      "runtimeRoot": "/Library/Developer/CoreSimulator/Volumes/iOS_22G86/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 18.6.simruntime/Contents/Resources/RuntimeRoot",
+      "lastUsage": {
+        "arm64": "2026-10-21T02:42:25Z",
+        "x86_64": "2026-10-16T15:46:46Z"
+      },
+      "name": "iOS 18.6"
+    },
+    {
+      "isAvailable": true,
+      "version": "27.0",
+      "isInternal": false,
+      "buildversion": "24A434",
+      "supportedArchitectures": ["arm64"],
+      "supportedDeviceTypes": [
+        {
+          "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 18 Pro.simdevicetype",
+          "name": "iPhone 18 Pro",
+          "productFamily": "iPhone",
+          "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro"
+        },
+        {
+          "bundlePath": "/Library/Developer/CoreSimulator/Profiles/DeviceTypes/iPhone 18 Pro Max.simdevicetype",
+          "name": "iPhone 18 Pro Max",
+          "productFamily": "iPhone",
+          "identifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro-Max"
+        }
+      ],
+      "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+      "platform": "iOS",
+      "bundlePath": "/private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.fQY9yn/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime",
+      "runtimeRoot": "/private/var/run/com.apple.security.cryptexd/mnt/com.apple.iPhoneOS.SimulatorRuntime-v24.1.434.0.fQY9yn/Library/Developer/CoreSimulator/Profiles/Runtimes/iOS 27.0.simruntime/Contents/Resources/RuntimeRoot",
+      "lastUsage": {
+        "arm64": "2026-10-21T18:07:08Z"
+      },
+      "name": "iOS 27.0"
+    }
+  ],
+  "devices": {
+    "com.apple.CoreSimulator.SimRuntime.iOS-18-6": [
+      {
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/FBCCB20E-B6CB-4DD1-B650-E5E7114D74A8/data",
+        "dataPathSize": 989143040,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/FBCCB20E-B6CB-4DD1-B650-E5E7114D74A8",
+        "udid": "FBCCB20E-B6CB-4DD1-B650-E5E7114D74A8",
+        "lastUsedAt": "2026-10-21T02:42:21Z",
+        "isAvailable": true,
+        "logPathSize": 229376,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+        "state": "Shutdown",
+        "name": "stim-rnsac-corner-adapted-insets-exampl (iPhone 16 Pro 18.6)"
+      },
+      {
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/196F40F7-DEDB-455D-8679-CBA1592FFC5D/data",
+        "dataPathSize": 1462583296,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/196F40F7-DEDB-455D-8679-CBA1592FFC5D",
+        "udid": "196F40F7-DEDB-455D-8679-CBA1592FFC5D",
+        "lastUsedAt": "2026-10-21T01:29:28Z",
+        "isAvailable": true,
+        "logPathSize": 229376,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+        "state": "Shutdown",
+        "name": "stim-th3rdwave-tabs-app-ios18 (iPhone 16 Pro 18.6)"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-27-0": [
+      {
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/2C6F7C9B-248E-4CA2-A550-F04AE3ECF0C9/data",
+        "dataPathSize": 3225702400,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/2C6F7C9B-248E-4CA2-A550-F04AE3ECF0C9",
+        "udid": "2C6F7C9B-248E-4CA2-A550-F04AE3ECF0C9",
+        "lastUsedAt": "2026-10-21T16:50:16Z",
+        "isAvailable": true,
+        "logPathSize": 405504,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+        "state": "Shutdown",
+        "name": "stim-parked (iPhone 18 Pro 27.0) 2c6f"
+      },
+      {
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/6E150F78-FB06-496A-95BE-11B04A20A580/data",
+        "dataPathSize": 2267615232,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/6E150F78-FB06-496A-95BE-11B04A20A580",
+        "udid": "6E150F78-FB06-496A-95BE-11B04A20A580",
+        "lastUsedAt": "2026-10-21T15:32:12Z",
+        "isAvailable": true,
+        "logPathSize": 262144,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro",
+        "state": "Shutdown",
+        "name": "stim-parked (iPhone 18 Pro 27.0) 6e15"
+      }
+    ],
+    "com.apple.CoreSimulator.SimRuntime.iOS-17-5": [
+      {
+        "dataPath": "/Users/example/Library/Developer/CoreSimulator/Devices/FBCCB20E-B6CB-4DD1-B650-E5E7114D74A8/data",
+        "dataPathSize": 989143040,
+        "logPath": "/Users/example/Library/Logs/CoreSimulator/FBCCB20E-B6CB-4DD1-B650-E5E7114D74A8",
+        "udid": "5A1E0B6C-0000-4000-8000-00000000A001",
+        "lastUsedAt": "2026-10-21T02:42:21Z",
+        "isAvailable": false,
+        "logPathSize": 229376,
+        "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-16-Pro",
+        "state": "Shutdown",
+        "name": "stim-rnsac-corner-adapted-insets-exampl (iPhone 16 Pro 18.6)",
+        "availabilityError": "runtime profile not found"
+      }
+    ]
+  },
+  "pairs": {}
+}

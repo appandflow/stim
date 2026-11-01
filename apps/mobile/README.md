@@ -66,10 +66,11 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   build while the workspace is active or for a day after, a closed app, **CI
   failing**, and warning or issue counts); while building, the build step with
   its counts, the cache outcome and the elapsed time against the estimate over
-  a bar of the planned phases; while warming, the step with an activity
+  a bar of the planned phases, with the build machine beside the step when the
+  build was offloaded; while warming, the step with an activity
   indicator; the running devices by kind (`2 iOS, Android`) with the tools
-  driving them, or how long they have been idle once that is 10 minutes, and
-  remote EAS sessions; and the git state: the pull request number colored by
+  driving them, or how long they have been idle once that is 10 minutes, the
+  machines hosted devices run on, and remote EAS sessions; and the git state: the pull request number colored by
   its state, commits ahead and behind, changed files, **merged into** and **no
   upstream**. The machine's name shows only when more than one machine is
   paired, and the app's folder in its checkout only when a repo's workspaces
@@ -160,7 +161,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 - **Machine Status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
   startup-volume free space charts over the last hour, the active workspaces and
-  Stim's share of memory, then **CPU and Memory**, the status `machine` owners
+  Stim's share of memory, the Mac's load per core, and the **Devices** and **Builds** slot meters while their caps are set (a full device meter lists the devices holding the slots), then **CPU and Memory**, the status `machine` owners
   by memory. **Disk** shows the lowest free space against Stim's disk budget
   and a bar of what uses it: Stim devices, Stim caches and outputs,
   `node_modules`, other simulators and AVDs, and runtimes and system images. A
@@ -1031,6 +1032,12 @@ one Mac that built here. The `a4-offloading`, `a4-offloaded` and
 `a4-offload-fallback` workspaces show an iOS build running on
 `janics-mac-mini`, a last build that machine compiled, and a local build after
 it was busy.
+`linux-owner.json` adds two workspaces a Linux `stim-server` could report, which
+has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
+`janics-mac-mini-2` and driven by Claude Code, and `bot/upgrade-pods`, an iOS build
+running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
+lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
+the machine's usage, `machine.details` and notifications stay the captured Mac's.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.
@@ -1073,6 +1080,12 @@ To screenshot slot waits, run `pnpm run mock-server --slot-waits` and pair with
 slot wait during compilation, or `a4-offloading` to see a build slot wait during
 pods. Both wait timers start at 0:42 and count up. The optional state lives in
 `mock-server/fixtures/slot-waits.json`; the default captured fixtures stay unchanged.
+
+To screenshot the machine's load and slot meters, run `pnpm run mock-server --capacity`. The Mac status
+sheet then shows a Load row and `Devices 6 / 6` and `Builds 2 / 2` meters, with the devices holding the
+slots listed because they are full. Without the flag the capture carries none of these fields, which is what
+a Mac running an older `stim` sends; the sheet shows only the memory line. The added state lives in
+`mock-server/fixtures/capacity.json`.
 
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and
@@ -1260,6 +1273,19 @@ builds ignore updates for another runtime. `xcodebuild` computes the
 fingerprint from `app.config.ts` during the build, which is why the phone
 build passes `APP_VARIANT` to it. The two variants have different bundle ids,
 so they never share a runtime.
+
+The Expo dev server sets `EXPO_DEV_SERVER_ORIGIN` once it starts, and
+`app.config.ts` gives the static runtime `dev-server` to the `expo-updates
+runtimeversion:resolve` child that inherits it. That child otherwise recomputes
+the fingerprint on every manifest request, which costs seconds on each
+dev-client launch ([expo/expo#46415](https://github.com/expo/expo/issues/46415)),
+and the dev launcher does not compare the manifest's runtime. Every other
+evaluation of the config keeps the fingerprint: builds, `eas update` and
+`expo-updates fingerprint:generate`, including a build started with
+`expo run:* --configuration Release`, which sets the variable before it builds
+but does not run `runtimeversion:resolve`, and eas-cli's own
+`runtimeversion:resolve` calls, which pass `--workflow`. The runtime of TestFlight builds and
+updates is unchanged.
 
 The app checks for an update on every launch without waiting for it: it
 starts the update it already has and downloads a newer one in the background.

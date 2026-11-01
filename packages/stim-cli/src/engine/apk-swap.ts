@@ -15,7 +15,7 @@ import { killOnAbort } from '../workspace/git-read.ts';
 import { operationState } from './operation-state.ts';
 import type { SettingsObject } from '@stim-cli/core/state';
 import { androidBuildToolName, findBuildTool, type BuildToolsEntry } from '../devices/android.ts';
-import { cleanLine, expoTelemetryEnv } from '../supervisor/server-expo.ts';
+import { cleanLine } from '../supervisor/server-expo.ts';
 import {
   assetDiffReason,
   compareAssetManifests,
@@ -23,7 +23,7 @@ import {
   type AssetManifest,
   type AssetManifestDiff,
 } from './asset-manifest.ts';
-import { detectEntryFile, refreshUpdatesManifestFile, UPDATES_MANIFEST_NAME } from './js-swap.ts';
+import { detectEntryFile, refreshUpdatesManifestFile, swapBundlerEnv, UPDATES_MANIFEST_NAME } from './js-swap.ts';
 import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat, tailLines } from './xcode.ts';
 import { defaultAndroidLayout, realpathInside, type AndroidLayout } from '../workspace/settings.ts';
 
@@ -97,11 +97,11 @@ export function androidHermescPath(
   return candidates.find(exists) ?? candidates[candidates.length - 1]!;
 }
 
-export function androidHermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
+function androidHermescArgs({ bundle, out }: { bundle: string; out: string }): string[] {
   return ['-emit-binary', '-O', '-w', '-out', out, bundle];
 }
 
-export function androidBundleCommand({
+function androidBundleCommand({
   isExpo,
   entryFile,
   bundleOutput,
@@ -148,7 +148,7 @@ export function androidBundleCommand({
   };
 }
 
-export function jarPath({
+function jarPath({
   javaHome = process.env.JAVA_HOME,
 }: {
   javaHome?: string | undefined;
@@ -156,7 +156,7 @@ export function jarPath({
   return javaHome ? join(javaHome, 'bin', 'jar') : 'jar';
 }
 
-export function zipalignArgs({
+function zipalignArgs({
   buildToolsMajor,
   input,
   output,
@@ -211,7 +211,7 @@ export function resolveKeystore(
   return { path, ...keystorePassArg(bag['keystorePassword']) };
 }
 
-export function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
+function apksignerArgs({ keystore, apkPath }: { keystore: KeystoreConfig; apkPath: string }): string[] {
   return ['sign', '--ks', keystore.path, '--ks-pass', keystore.pass, apkPath];
 }
 
@@ -336,7 +336,7 @@ export async function swapApkBundle({
       spawn(invocation.file, invocation.args, {
         cwd: root,
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...(context?.env ?? process.env), ...expoTelemetryEnv(context?.env ?? process.env), FORCE_COLOR: '0' },
+        env: swapBundlerEnv(root, context?.env ?? process.env),
       }),
     );
     killOnAbort(context ? (operationState(context).runSignal ?? context.signal) : undefined)(child);

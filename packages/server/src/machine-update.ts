@@ -16,6 +16,7 @@ import { dirname, join, sep } from 'node:path';
 import {
   isJsonObject,
   machineEndpoint,
+  parseMachine,
   readBuildMachines,
   readDeviceHostMachines,
   type Endpoint,
@@ -183,7 +184,10 @@ export class MachineUpdates {
     const credential = build ?? host;
     if (!credential?.serverKey)
       throw new Error(`${machine} has not approved this machine for builds or device hosting.`);
-    const found = machineEndpoint(credential.machine, await this.options.status());
+    const found = machineEndpoint(
+      credential.machine,
+      parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
+    );
     if (typeof found === 'string') throw new Error(found);
     const upstream = new Upstream(this.options.endpoint?.(found) ?? found, credential.serverKey);
     try {

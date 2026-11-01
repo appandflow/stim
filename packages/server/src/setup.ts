@@ -3,17 +3,25 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  stimBuildDigest,
+  tailscaleEnv,
+  type SetupCapability,
+  type SetupJournal,
+} from '@stim-cli/core/state';
 import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
 import { bundledStim } from './environment.ts';
-import { decodeSecret, secretValues } from '@stim-cli/core/noise-session';
+import { decodeSecret, keyFingerprint, secretValues } from '@stim-cli/core/noise-session';
+import { readLanAddresses } from './lan.ts';
 import {
   dropSetupSecret,
   readBuildClients,
   readDeviceHostClients,
   serverDir,
+  serverIdentity,
   storeSetupSecret,
   watchClientRegistries,
   type PairedDevice,
@@ -57,6 +65,9 @@ import {
 
 /** The protocol whose Noise authentication setup tickets rely on; a reused server must speak it. */
 const SETUP_PROTOCOL = 2;
+
+/** How long setup waits for a server it started or reused to report its local network listener. */
+const LAN_WAIT_MS = 15_000;
 
 export interface SetupOptions {
   ticket: Buffer;
@@ -109,7 +120,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
     );
   if (values.client !== undefined)
     throw new SetupRefusal(
-      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim doctor --fix` on the requesting machine.',
+      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim remote add <this machine>` on the requesting machine.',
     );
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
@@ -150,8 +161,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   };
 }
 
-/** The record a client made for each capability by spending this run's ticket. */
-export function selectGrants(
+function selectGrants(
   records: PairedDevice[],
   match: { journal: string; capabilities: SetupCapability[] },
 ): { capability: SetupCapability; record: PairedDevice }[] {
@@ -184,7 +194,7 @@ function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platfo
   return `Run tailscale up on this ${platform === 'darwin' ? 'Mac' : 'machine'}, then run this again.`;
 }
 
-export function setupExitCode(journal: SetupJournal): number {
+function setupExitCode(journal: SetupJournal): number {
   if (journal.steps.some((s) => s.state === 'failed')) return 1;
   if (journal.granted.length === 0) return 2;
   if (
@@ -202,6 +212,10 @@ interface SetupOutput {
   label: string;
   port: number;
   route: { state: string; dnsName: string | null; port: number };
+  /** The local network endpoints the server listens on, when setup ran without Tailscale. */
+  lan?: string[];
+  /** The fingerprint of this server's key, which the requesting machine shows before it pins a local network worker. */
+  fingerprint: string;
   server: ServerBuild;
   managed: boolean;
   granted: { capability: SetupCapability; id: string; client: { name: string } }[];
@@ -229,7 +243,15 @@ export interface SetupDeps {
   stderr(line: string): void;
   confirm(question: string, timeoutMs: number): Promise<boolean>;
   permissionWait(ms: number): Promise<boolean>;
-  preflight(options: SetupOptions): Promise<{ dnsName: string }>;
+  /**
+   * The tailnet name, null without Tailscale, and whether `server.lanAddresses` is set. Setup checks the local network
+   * listener when it is, and the tailnet route while Tailscale runs.
+   */
+  preflight(options: SetupOptions): Promise<{ dnsName: string | null; lan?: boolean }>;
+  /** This server's key fingerprint. */
+  fingerprint(): string;
+  /** Whether the macOS application firewall is on, or null when it cannot be read or the platform has none. */
+  firewall(): Promise<boolean | null>;
   claim(): () => void;
   write: typeof writeSetupJournal;
   prune: typeof pruneSetupJournals;
@@ -374,17 +396,26 @@ export function defaultSetupDeps(): SetupDeps {
       if (compareVersions(process.versions.node, '22.12.0') < 0)
         throw new SetupRefusal('setup needs Node 22.12 or later.');
       const status = await readRawTailscaleStatus(binary(), process.env);
-      if (
-        !isJsonObject(status) ||
-        !isJsonObject(status.Self) ||
-        typeof status.Self.DNSName !== 'string' ||
-        !status.Self.DNSName
-      ) {
-        throw new SetupRefusal(tailscaleRefusal(tailscaleInstall(process.env), platform));
+      const dnsName =
+        isJsonObject(status) && isJsonObject(status.Self) && typeof status.Self.DNSName === 'string'
+          ? status.Self.DNSName.replace(/\.$/, '')
+          : '';
+      const lan = (await readLanAddresses()).length > 0;
+      if (!dnsName && !lan) {
+        throw new SetupRefusal(
+          `${tailscaleRefusal(tailscaleInstall(process.env), platform)} To set this ${platform === 'darwin' ? 'Mac' : 'machine'} up on the local network without Tailscale, set server.lanAddresses first: npx --yes stim settings set server.lanAddresses '["en0"]', with this machine's network interface or private IPv4 address.`,
+        );
       }
       const problem = await manager.sessionProblem();
       if (problem) throw new SetupRefusal(problem);
-      return { dnsName: status.Self.DNSName.replace(/\.$/, '') };
+      return { dnsName: dnsName || null, lan };
+    },
+    fingerprint: () => keyFingerprint(serverIdentity().publicKey),
+    async firewall() {
+      if (platform !== 'darwin') return null;
+      const result = await run('/usr/libexec/ApplicationFirewall/socketfilterfw', ['--getglobalstate']);
+      const state = result.ok ? /State = (\d)/.exec(result.stdout)?.[1] : undefined;
+      return state === undefined ? null : state !== '0';
     },
     claim: setupClaim,
     write: writeSetupJournal,
@@ -408,7 +439,7 @@ export function defaultSetupDeps(): SetupDeps {
     prepareRoute,
     recordRoute: recordServiceRoute,
     async createRoute(args) {
-      const result = await run(binary() ?? 'tailscale', args);
+      const result = await run(binary() ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     records: () => [...readBuildClients(), ...readDeviceHostClients()],
@@ -573,7 +604,7 @@ function toolChecks(
     ],
     [
       'Android SDK',
-      !!tools.androidSdk?.platforms.length && !!tools.androidSdk.buildTools.length && !!tools.androidSdk.ndk.length,
+      !!tools.androidSdk,
       tools.androidSdk ? JSON.stringify(tools.androidSdk) : 'Missing Android SDK',
       platform === 'linux'
         ? 'Install the Android SDK in ~/Android/Sdk, or rerun setup with --env ANDROID_HOME=<sdk>'
@@ -671,6 +702,7 @@ function printSuccess(
     ...(output.managed && output.granted.length ? [`stim-server service uninstall --label ${output.label}`] : []),
   ];
   if (undo.length) printer.dim(`To undo: ${undo.join('; ')}`);
+  if (output.fingerprint) printer.dim(`Server key fingerprint: ${output.fingerprint}`);
 }
 
 function summarizeSetup(
@@ -699,6 +731,8 @@ function summarizeSetup(
     `Summary: ${output.label}, port ${output.port}, route https ${output.route.port}; ${output.granted.length} grant(s).`,
   );
   log(`Server: ${output.server.version}; ${output.managed ? output.label : 'existing app server'}.`);
+  if (output.fingerprint) log(`Server key fingerprint: ${output.fingerprint}.`);
+  if (output.lan) log(`Local network: ${output.lan.join(', ')}.`);
   for (const grant of output.granted) {
     log(`${grant.capability}: ${grant.client.name}, request ${grant.id}.`);
     log(`Undo: stim-server devices revoke ${grant.id}`);
@@ -709,6 +743,43 @@ function summarizeSetup(
   for (const tool of output.tools) log(`${tool.tool}: ${tool.state}.`);
   for (const warning of output.warnings) log(warning);
   if (output.managed) log(`Undo: stim-server service uninstall --label ${output.label}`);
+}
+
+/**
+ * Waits for the server to report its local network listener, and names what a person must allow before other machines
+ * reach it. Setup never changes the firewall.
+ */
+async function localNetwork(
+  deps: SetupDeps,
+  opts: SetupOptions,
+  desktop: boolean,
+  wait: <T>(work: Promise<T>) => Promise<T>,
+): Promise<{ endpoints: string[]; warnings: string[] }> {
+  const deadline = deps.now() + LAN_WAIT_MS;
+  let lan = (await wait(deps.health(opts.port)))?.lan;
+  while (!lan?.addresses.length && deps.now() < deadline) {
+    await wait(deps.sleep(1000));
+    lan = (await wait(deps.health(opts.port)))?.lan;
+  }
+  if (!lan?.addresses.length)
+    throw new SetupRefusal(
+      'stim-server does not listen on any address server.lanAddresses names. Its log names each entry it cannot use.',
+      false,
+      desktop
+        ? 'Check server.lanAddresses with `npx --yes stim settings get server.lanAddresses`, then quit and reopen Stim Desktop.'
+        : `Check server.lanAddresses with \`npx --yes stim settings get server.lanAddresses\`, and the log \`stim-server service status --label ${opts.label}\` names.`,
+    );
+  const { port } = lan;
+  const endpoints = lan.addresses.map((address) => `ws://${address}:${port}`);
+  if ((await wait(deps.firewall())) !== true) return { endpoints, warnings: [] };
+  const service = desktop ? null : await wait(deps.installed(opts.label));
+  const node = desktop ? "the node that runs Stim Desktop's stim-server" : (service?.node ?? deps.node);
+  return {
+    endpoints,
+    warnings: [
+      `The macOS firewall is on: when macOS asks whether ${node} may accept incoming network connections, choose Allow, or allow it in System Settings > Network > Firewall > Options. Other machines cannot connect until then.`,
+    ],
+  };
 }
 
 export async function runSetup(args: string[], version: string, deps: SetupDeps): Promise<number> {
@@ -727,6 +798,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     label: DEFAULT_LABEL,
     port: DEFAULT_PORT,
     route: { state: 'pending', dnsName: null, port: 7443 },
+    fingerprint: '',
     server: { version, stimBuild: deps.stimBuild },
     managed: false,
     granted: [],
@@ -795,6 +867,7 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
     };
     const preflight = await wait(deps.preflight(options));
     output.route.dnsName = preflight.dnsName;
+    output.fingerprint = deps.fingerprint();
     requireApprovalMode(deps, options);
     release = deps.claim();
     deps.prune(deps.now());
@@ -901,58 +974,77 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         { text: desktop ? `reusing the app server (no ${serviceNoun})` : `${serviceNoun} ${opts.label} running` },
       );
     });
-    const previous = desktop ? null : await wait(deps.installed(opts.label));
-    step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
-    const route = await wait(deps.route(opts.port));
-    output.route.state = route.state;
-    output.route.port = route.port;
-    const plan = planServe(route, opts.port, previous?.serve ?? null);
-    if ('refusal' in plan)
-      throw new SetupRefusal(
-        plan.refusal,
-        false,
-        route.state === 'funneled'
-          ? route.ports.map((p) => `tailscale funnel --https=${p} off`).join('\n')
-          : 'tailscale serve status --json',
-      );
-    const prepared = await wait(deps.prepareRoute(opts.port, previous));
-    if (desktop && prepared.create)
-      throw new SetupRefusal(
-        'The app server needs an existing tailnet route; setup cannot record route ownership for it.',
-        false,
-        `tailscale ${prepared.create.join(' ')}`,
-      );
-    let routeCreated = false;
-    let verified: ServeRoute;
-    try {
-      if (prepared.create) {
-        await deps.createRoute(prepared.create);
-        routeCreated = true;
+    if (preflight.lan) {
+      step('lan', 'running', 'Local network', undefined, undefined, {
+        running: 'Checking the local network listener',
+      });
+      const lan = await localNetwork(deps, opts, desktop, wait);
+      output.lan = lan.endpoints;
+      step('lan', 'ok', 'Local network', lan.endpoints.join(', '), undefined, {
+        text: `local network ${lan.endpoints.join(', ')}`,
+      });
+      for (const warning of lan.warnings) {
+        output.warnings.push(warning);
+        printer.clear();
+        log(warning);
       }
-      verified = await wait(deps.route(opts.port));
-      output.route.state = verified.state;
-      output.route.port = verified.port;
-      if (verified.state !== 'routed')
-        throw new SetupRefusal('Tailnet route could not be verified.', false, 'tailscale serve status --json');
-      if (!desktop) await deps.recordRoute(opts.label, opts.port, prepared.record);
-    } catch (error) {
-      if (routeCreated) {
-        try {
-          await deps.createRoute(['serve', `--https=${prepared.record.port}`, 'off']);
-          output.route.state = 'missing';
-        } catch (rollbackError) {
-          throw new SetupRefusal(
-            `${(error as Error).message}; could not remove the route: ${(rollbackError as Error).message}`,
-            false,
-            `tailscale serve --https=${prepared.record.port} off`,
-          );
-        }
-      }
-      throw error;
     }
-    step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`, undefined, {
-      text: `tailnet route https ${verified.port} (no Funnel)`,
-    });
+    if (preflight.dnsName === null) {
+      output.route.state = 'local-network';
+    } else {
+      const previous = desktop ? null : await wait(deps.installed(opts.label));
+      step('route', 'running', 'Tailnet route', undefined, undefined, { running: 'Checking the tailnet route' });
+      const route = await wait(deps.route(opts.port));
+      output.route.state = route.state;
+      output.route.port = route.port;
+      const plan = planServe(route, opts.port, previous?.serve ?? null);
+      if ('refusal' in plan)
+        throw new SetupRefusal(
+          plan.refusal,
+          false,
+          route.state === 'funneled'
+            ? route.ports.map((p) => `tailscale funnel --https=${p} off`).join('\n')
+            : 'tailscale serve status --json',
+        );
+      const prepared = await wait(deps.prepareRoute(opts.port, previous));
+      if (desktop && prepared.create)
+        throw new SetupRefusal(
+          'The app server needs an existing tailnet route; setup cannot record route ownership for it.',
+          false,
+          `tailscale ${prepared.create.join(' ')}`,
+        );
+      let routeCreated = false;
+      let verified: ServeRoute;
+      try {
+        if (prepared.create) {
+          await deps.createRoute(prepared.create);
+          routeCreated = true;
+        }
+        verified = await wait(deps.route(opts.port));
+        output.route.state = verified.state;
+        output.route.port = verified.port;
+        if (verified.state !== 'routed')
+          throw new SetupRefusal('Tailnet route could not be verified.', false, 'tailscale serve status --json');
+        if (!desktop) await deps.recordRoute(opts.label, opts.port, prepared.record);
+      } catch (error) {
+        if (routeCreated) {
+          try {
+            await deps.createRoute(['serve', `--https=${prepared.record.port}`, 'off']);
+            output.route.state = 'missing';
+          } catch (rollbackError) {
+            throw new SetupRefusal(
+              `${(error as Error).message}; could not remove the route: ${(rollbackError as Error).message}`,
+              false,
+              `tailscale serve --https=${prepared.record.port} off`,
+            );
+          }
+        }
+        throw error;
+      }
+      step('route', 'ok', 'Tailnet route', `${preflight.dnsName}: https port ${verified.port}`, undefined, {
+        text: `tailnet route https ${verified.port} (no Funnel)`,
+      });
+    }
     step('approve', 'running', 'Access approval', `Waiting until ${opts.expiresAt}.`, undefined, {
       running: `Waiting for approval until ${opts.expiresAt}`,
     });
@@ -1013,9 +1105,12 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
       try {
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
-        if (deps.fromDoctor) {
-          printer.line('Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.');
-        }
+        const waiting = preflight.lan
+          ? `Waiting for the requesting machine to reconnect. Run \`stim remote list\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          : deps.fromDoctor
+            ? 'Waiting for the requesting machine to reconnect. Run `stim remote list` on that machine to finish.'
+            : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
+        step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
         while (deps.now() < Date.parse(opts.expiresAt)) {
           changed = false;
           for (const grant of recorded(approved)) note(grant, false);

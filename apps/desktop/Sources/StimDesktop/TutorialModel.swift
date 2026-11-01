@@ -117,15 +117,16 @@ final class TutorialModel: ObservableObject {
     let nextWorkspace = workspaces.first { $0.path == (tracked ?? candidate?.path) }
     if workspace != nextWorkspace { workspace = nextWorkspace }
     let seen = defaults.stringArray(forKey: Self.seenKey) ?? []
-    if launchPending, let saved {
+    let offered = AppPreferences.offersTutorial(defaults)
+    if launchPending, let saved, offered {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
-        openPending = saved.step != "done"
+        openPending = saved.reopensAtLaunch
         launchPending = false
       } else if saved.tourPath == nil, saved.step != "done" {
-        openPending = true
+        openPending = saved.reopensAtLaunch
         launchPending = false
       }
-    } else if let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
+    } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
       progress = TutorialProgress()
       snapshot = nil
       archiveEnabled = nil
@@ -136,7 +137,7 @@ final class TutorialModel: ObservableObject {
       openPending = true
       launchPending = false
     }
-    if openPending, !sheetOpen {
+    if openPending, offered, !sheetOpen {
       isOpen = true
       openPending = false
     }
@@ -176,6 +177,7 @@ final class TutorialModel: ObservableObject {
       logs = []
       viewerEventSequence = viewerEvents.last?.sequence ?? 0
     }
+    setDismissed(false)
     isOpen = true
     launchPending = false
     refresh(now: now)
@@ -230,9 +232,15 @@ final class TutorialModel: ObservableObject {
   }
 
   func close() {
+    setDismissed(true)
     isOpen = false
     openPending = false
     syncFollowers()
+  }
+
+  private func setDismissed(_ dismissed: Bool) {
+    progress.setDismissed(dismissed)
+    records.record?.dismissed = dismissed ? true : nil
   }
 
   func next() {

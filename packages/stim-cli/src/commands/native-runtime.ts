@@ -100,6 +100,7 @@ export async function ensureWorkspaceStorageSafely(
 export function launchOutcomeRecord({
   launchState,
   release,
+  process = false,
   bundleId,
   configuration,
   metroPort,
@@ -107,6 +108,7 @@ export function launchOutcomeRecord({
 }: {
   launchState: boolean | string;
   release: boolean;
+  process?: boolean;
   bundleId: string | null;
   configuration: string | null;
   metroPort?: number | null;
@@ -115,7 +117,9 @@ export function launchOutcomeRecord({
   const unverified = launchState === LAUNCH_UNVERIFIED;
   const bundling = launchState === LAUNCH_BUNDLING;
   let msg: string;
-  if (release) {
+  if (process) {
+    msg = unverified ? `${bundleId} could not be verified as running` : `${bundleId} is running its native process`;
+  } else if (release) {
     msg = unverified
       ? `${bundleId} could not be verified as running after its ${configuration} launch`
       : `${bundleId} is running its embedded ${configuration} bundle`;

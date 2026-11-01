@@ -6,6 +6,7 @@ import {
   type EnvironmentState,
   type WarmRecord,
   type WarmStep,
+  trace,
   type WorkspaceState,
 } from '@stim-cli/core/state';
 import { readClaimSet, releaseClaim, tryAcquireClaim, type ClaimHandle, type ClaimSurvey } from '../ownership-claim.ts';
@@ -64,11 +65,15 @@ export function startWarmProgress(
     claim: { root: claim.root, claimId: claim.claimId },
   });
   write((state) => ({ ...state, [WARM_KEY]: warming(step) }));
+  const phases = trace.phases('worktree warm');
+  phases.enter(step);
   return {
     step(next) {
+      phases.enter(next);
       write((state) => (ours(state) ? { ...state, [WARM_KEY]: warming(next) } : state));
     },
     finish(succeeded) {
+      phases.end({ ok: succeeded });
       write((state) => {
         if (!ours(state)) return state;
         const { [WARM_KEY]: _, ...rest } = state;

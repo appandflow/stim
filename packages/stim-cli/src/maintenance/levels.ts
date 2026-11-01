@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import type { DiskPressureLevel, MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
-import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
+import { collectWorkspaceOutputs, keptByLock, LIGHTEN_AFTER_MS } from '../commands/gc/workspaces.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
@@ -40,14 +40,24 @@ async function planLevel2({
   const actions: MaintenanceAction[] = [];
   const skips: MaintenancePlan['skips'] = [];
   const reason = `disk pressure level 2, idle for ${settings.pressureProtectMinutes} minutes`;
+  const lightenReason = `disk pressure level 2, no ios, android or macos run in the last ${LIGHTEN_AFTER_MS / 60_000} minutes`;
   const outputs = (
-    await collectWorkspaceOutputs({ olderThan: null, now, measure: false, signal: operation?.signal, operation })
+    await collectWorkspaceOutputs({
+      olderThan: null,
+      now,
+      measure: false,
+      signal: operation?.signal,
+      operation,
+      lighten: true,
+    })
   ).workspaces
     .flatMap((entry) => {
       const root = entry.projectRoot === null ? null : canonicalPath(entry.projectRoot);
+      if (root !== null && keptByLock(entry) && entry.keptReason)
+        skips.push({ target: root, reason: entry.keptReason, workspace: root });
       if (root === null || !entry.willClear || root === protectedRoot || pinned(root)) return [];
       const used = workspaceLastUsed(root);
-      return Number.isFinite(used) && now - used >= windowMs ? [{ root, used }] : [];
+      return Number.isFinite(used) ? [{ root, used }] : [];
     })
     .toSorted((a, b) => a.used - b.used);
   for (const { root } of outputs) {
@@ -57,7 +67,7 @@ async function planLevel2({
       target: root,
       workspace: root,
       bytes: size?.bytes ?? 0,
-      reason,
+      reason: lightenReason,
       level: 2,
     });
   }
@@ -87,7 +97,7 @@ async function planLevel2({
     ? await collectArtifactsAsync('build', options, operation.signal, operation)
     : collectArtifacts('build', options);
   for (const candidate of build.candidates)
-    actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason, level: 2 });
+    actions.push({ kind: 'would-clear-build-dirs', target: candidate.path, bytes: 0, reason: lightenReason, level: 2 });
   skips.push(...build.skips);
   const deviceOptions: Parameters<typeof planDeviceDeletion>[0] = {
     roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),

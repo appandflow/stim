@@ -67,7 +67,8 @@ async function readManifest(dir: string): Promise<TrashManifest | null> {
     const parsed: unknown = JSON.parse(await readFile(join(dir, TRASH_MANIFEST), 'utf8'));
     if (!parsed || typeof parsed !== 'object' || !('worktree' in parsed) || !('createdAt' in parsed)) return null;
     const { worktree, createdAt } = parsed;
-    return typeof worktree === 'string' && typeof createdAt === 'string' ? { worktree, createdAt } : null;
+    if (typeof worktree !== 'string' || typeof createdAt !== 'string') return null;
+    return 'kind' in parsed && parsed.kind === 'warm' ? { worktree, createdAt, kind: 'warm' } : { worktree, createdAt };
   } catch {
     return null;
   }
@@ -95,7 +96,7 @@ export async function collectTrash({
       ? claimKept(path)
       : { kept: 'it has no valid trash.json, so Stim did not create it', live: false };
     const live = claim.live;
-    const kept = claim.kept ?? (manifest ? await worktreeKept(manifest.worktree) : null);
+    const kept = claim.kept ?? (manifest && manifest.kind !== 'warm' ? await worktreeKept(manifest.worktree) : null);
     entries.push({
       path,
       worktree: manifest?.worktree ?? null,

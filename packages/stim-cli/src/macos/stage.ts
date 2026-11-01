@@ -134,7 +134,8 @@ export async function stageBundle(
   await withDrainingCancellation(context, signal, async () => {
     throwIfCancelled(signal, 'macOS bundle staging');
     const { minimumSystemVersion } = await validateInfoPlist(context, root, product, infoPlist);
-    for (const entry of readdirSync(bin).filter((name) => name.endsWith('.bundle'))) {
+    const entries = readdirSync(bin);
+    for (const entry of entries.filter((name) => name.endsWith('.bundle'))) {
       for (const [destination, source] of Object.entries(extras.resources)) {
         if (overlaps(destination, entry))
           resourceError(
@@ -161,7 +162,7 @@ export async function stageBundle(
       },
     );
     if (displayName !== undefined) await setBundleName(context, join(contents, 'Info.plist'), displayName);
-    for (const entry of readdirSync(bin)) {
+    for (const entry of entries) {
       if (entry.endsWith('.framework')) {
         const target = join(contents, 'Frameworks', entry);
         await copy(context, join(bin, entry), target, { recursive: true, dereference: false, verbatimSymlinks: true });
@@ -170,7 +171,10 @@ export async function stageBundle(
         await copy(context, join(bin, entry), join(contents, 'Resources', entry), { recursive: true });
     }
     const frameworkPath = '@executable_path/../Frameworks';
-    if (!(await tool(context, 'otool', ['-l', executable], { timeoutMs: 30_000 })).includes(frameworkPath)) {
+    if (
+      entries.some((entry) => entry.endsWith('.framework')) &&
+      !(await tool(context, 'otool', ['-l', executable], { timeoutMs: 30_000 })).includes(frameworkPath)
+    ) {
       await tool(context, 'install_name_tool', ['-add_rpath', frameworkPath, executable], { timeoutMs: 30_000 });
     }
     for (const [destination, source] of Object.entries(extras.resources)) {

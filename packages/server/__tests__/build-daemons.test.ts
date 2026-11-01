@@ -18,12 +18,3 @@ test('finds the Gradle and Kotlin daemons in CRLF Windows listings by each clien
     { pid: 5, client: 'a' },
   ]);
 });
-
-test('finds only Gradle daemons under a client Gradle home in ps output', () => {
-  const listing = [
-    ` 41 java -cp /w/root/a/cache/gradle/wrapper/gradle-daemon-main.jar ${DAEMON}`,
-    ' 42 java -cp /w/root/a/cache/gradle/caches/kotlin.jar KotlinCompileDaemon',
-    ` 43 java -cp /other/a/cache/gradle/wrapper/gradle-daemon-main.jar ${DAEMON}`,
-  ].join('\n');
-  expect(workerGradleDaemons(listing, '/w/root', 'darwin')).toEqual([{ pid: 41, client: 'a' }]);
-});

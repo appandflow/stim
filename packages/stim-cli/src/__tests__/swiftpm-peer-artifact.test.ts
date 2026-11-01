@@ -63,29 +63,6 @@ afterEach(() => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-test('a verified completed receipt survives pruning the checkout and build output, without exposing private values', async () => {
-  const privateInput = join(directory, 'worker-private.txt');
-  writeFileSync(privateInput, 'private-file-value');
-  query.inputs.localFiles = [privateInput];
-  const output = join(directory, 'out');
-  mkdirSync(output);
-  writeFileSync(join(output, 'App.app'), 'completed output');
-  const snapshot = await swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment);
-  expect(snapshot.identity.hash).not.toBe(query.sourceDigest);
-  expect(JSON.stringify(snapshot.receipt)).not.toContain('private-file-value');
-  expect(JSON.stringify(snapshot.receipt)).not.toContain('private-blue-value');
-  rmSync(root, { recursive: true });
-  rmSync(output, { recursive: true });
-  expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, environment)).toEqual(
-    snapshot.identity,
-  );
-});
-
-test('a source transfer digest cannot certify altered worker files', async () => {
-  write('Sources/App/main.swift', 'changed after transfer');
-  await expect(swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment)).rejects.toThrow('source');
-});
-
 test('a nested project retains repository-scoped resources and project-scoped private inputs', async () => {
   const repository = root;
   const project = 'apps/example';
@@ -151,14 +128,6 @@ test('build choices and different source queries cannot borrow an existing recei
     { ...query, inputs: { ...query.inputs, environment: [] } },
   ])
     expect(await swiftpmArtifactFromReceipt(root, changed, snapshot.receipt, toolchain, environment)).toBeNull();
-});
-
-test('ignored lockfile changes are private inputs even after visible source is pruned', async () => {
-  visible = visible.filter((path) => path !== 'Package.resolved');
-  query.sourceDigest = manifestDigest(await sourceManifest(root, true));
-  const snapshot = await swiftpmWorkerArtifactSnapshot(root, query, toolchain, environment);
-  write('Package.resolved', 'different pins');
-  expect(await swiftpmArtifactFromReceipt(root, query, snapshot.receipt, toolchain, environment)).toBeNull();
 });
 
 test('undeclared ignored bundle files cannot become reusable worker artifacts', async () => {

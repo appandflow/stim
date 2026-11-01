@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { hostname } from 'node:os';
+import { hostname, networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { readHostedSessions } from '@stim-cli/core/state';
@@ -46,6 +46,8 @@ import { startServer } from '../src/server.ts';
 import { readDesktopBootstrap } from '../src/desktop-bootstrap.ts';
 import type { ServeRoute } from '@stim-cli/core/protocol';
 import { loadTransport } from '@stim-cli/transport';
+import { localTransport, resolveLanAddresses } from '@stim-cli/transport-local';
+import { readLanAddresses, watchLanAddresses } from '../src/lan.ts';
 import {
   findTailscale,
   serveCommand,
@@ -106,16 +108,23 @@ function tailscaleNote(tailscale: TailscaleState): string | null {
 
 function routeNote(route: ServeRoute, port: number): string | null {
   if (route.state === 'missing') {
-    return `No \`tailscale serve\` route reaches port ${port}, so phones cannot connect yet. Run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
+    return `No \`tailscale serve\` route reaches port ${port}, so clients connect to this machine's tailnet address directly. For a wss:// endpoint with a certificate, run this once to serve it on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   if (route.state === 'unknown') {
-    return `Could not read \`tailscale serve status --json\` (${route.reason}); assuming stim-server is served on port ${route.port}.`;
+    return `Could not read \`tailscale serve status --json\` (${route.reason}), so clients connect to this machine's tailnet address directly.`;
   }
   if (route.state === 'funneled') {
     const ports = route.ports.join(', ');
     return `Tailscale Funnel is on for port ${ports}, which proxies to stim-server, so the server is reachable from the public internet. Remove that handler (see \`tailscale serve status\`), then serve stim-server on a tailnet-only port: \`${serveCommand(route.port, port)}\``;
   }
   return null;
+}
+
+function pairingEndpoint(ips: string[], dnsName: string, route: ServeRoute, port: number) {
+  const ip = ips.find((address) => !address.includes(':')) ?? ips[0];
+  if ((route.state === 'missing' || route.state === 'unknown') && ip)
+    return `ws://${ip.includes(':') ? `[${ip}]` : ip}:${port}`;
+  return tailnetEndpoint(dnsName, route.port);
 }
 
 function macName(tailscale: TailscaleState): string {
@@ -134,12 +143,18 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       : undefined;
   delete process.env.NODE_COMPILE_CACHE;
   const captureHost = hostFromExecutable(process.env.STIM_HOST_EXECUTABLE);
-  const env = applyServeEnvironment(discoverToolchain(process.env).env, extraEnv, pathPrepend);
-  delete env.CLAUDE_CODE_SESSION_ID;
-  delete env.CODEX_THREAD_ID;
+  const inherited = { ...process.env };
+  const serveEnvironment = (warn?: (line: string) => void) => {
+    const found = applyServeEnvironment(discoverToolchain(inherited).env, extraEnv, pathPrepend, process.env, warn);
+    delete found.CLAUDE_CODE_SESSION_ID;
+    delete found.CODEX_THREAD_ID;
+    return found;
+  };
+  const env = serveEnvironment();
   if (!process.env.STIM_HOME && env.STIM_HOME) process.env.STIM_HOME = env.STIM_HOME;
   if (process.env.STIM_HOME) env.STIM_HOME = process.env.STIM_HOME;
   Object.assign(process.env, env);
+  const currentEnv = () => ({ ...serveEnvironment(() => {}), ...(env.STIM_HOME ? { STIM_HOME: env.STIM_HOME } : {}) });
 
   const loaded = await loadTransport({
     reference: '@stim-cli/transport-tailscale',
@@ -151,6 +166,9 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     fail('@stim-cli/transport-tailscale did not create a Tailscale transport');
   const transport = loaded.transport;
   const { state: tailscale } = transport.snapshot();
+  const lanSetting = watchLanAddresses();
+  await Promise.race([lanSetting.ready, new Promise((done) => setTimeout(done, 1000).unref())]);
+  const lan = localTransport({ entries: lanSetting.current });
   const stim = bundledStim();
   let server;
   try {
@@ -165,7 +183,8 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       stimVersion: stim.version,
       serverVersion: pkg.version,
       env,
-      transports: [transport],
+      currentEnv,
+      transports: [transport, lan],
       service: {
         label: serviceManagerOrNull()?.runningLabel(process.env) ?? null,
         node: process.execPath,
@@ -186,7 +205,8 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
     let note = tailscaleNote(state);
     if (state.state === 'running' && state.dnsName) {
       const route = await transport.serveRoute(port);
-      if (route.state !== 'funneled') console.log(`tailnet endpoint: ${tailnetEndpoint(state.dnsName, route.port)}`);
+      if (route.state !== 'funneled')
+        console.log(`tailnet endpoint: ${pairingEndpoint(state.ips, state.dnsName, route, port)}`);
       note = routeNote(route, port);
       if (route.state === 'funneled') note = `${note} Pairing is refused until then.`;
     }
@@ -199,10 +219,25 @@ async function serve(port: number, extraEnv: string[], pathPrepend: string[], lo
       else if (previous.state.state === 'running') console.error('Tailscale stopped.');
       if (state.state === 'running' || previous.state.state === 'running') void announce(state);
     });
+  let lanProblems = '';
+  const announceLan = () => {
+    const { addresses, problems } = lan.lan();
+    const next = problems.join('\n');
+    if (next !== lanProblems && problems.length)
+      for (const problem of problems) console.error(`stim-server: server.lanAddresses: ${problem}.`);
+    lanProblems = next;
+    if (addresses.length)
+      console.log(`local network endpoints: ${addresses.map((host) => `ws://${host}:${port}`).join(', ')}`);
+  };
+  const stopLan = loopbackOnly ? () => {} : lan.watch(announceLan);
+  if (!loopbackOnly) announceLan();
   let shuttingDown = false;
   const shutdown = () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stopLan();
+    lanSetting.stop();
+    lan.close?.();
     transport.close?.();
     void server
       .close()
@@ -239,20 +274,21 @@ const SCOPE_TEXT: Record<Scope, string> = {
 async function pair(port: number, json: boolean, control: boolean): Promise<void> {
   const binary = findTailscale(process.env);
   const tailscale = await readTailscaleStatus(binary, process.env);
-  let endpoint = `ws://127.0.0.1:${port}`;
+  const [lan] = resolveLanAddresses(await readLanAddresses(), networkInterfaces()).addresses;
+  let endpoint = `ws://${lan ?? '127.0.0.1'}:${port}`;
   let note = tailscaleNote(tailscale);
-  if (note) note = `${note} The endpoint above only works on this machine.`;
+  if (note)
+    note = `${note} The endpoint above only works ${lan ? 'on this local network, while stim-server listens there (server.lanAddresses)' : 'on this machine'}.`;
   if (tailscale.state === 'running' && tailscale.dnsName) {
     const route = await serveRoute(binary, process.env, port, tailscale.ips);
     if (route.state === 'funneled') fail(`refusing to pair. ${routeNote(route, port)}`);
-    endpoint = tailnetEndpoint(tailscale.dnsName, route.port);
+    endpoint = pairingEndpoint(tailscale.ips, tailscale.dnsName, route, port);
     note = routeNote(route, port);
   }
   const { token, expiresAt } = createPairingToken(Date.now(), capabilitiesFor(control));
   const fingerprint = keyFingerprint(serverIdentity().publicKey);
   const payload = { v: 2, name: macName(tailscale), endpoint, pairingToken: token, fingerprint };
-  if (json) return void console.log(JSON.stringify({ qr: payload, expiresAt }));
-  console.log(JSON.stringify(payload));
+  console.log(JSON.stringify(json ? { qr: payload, expiresAt } : payload));
   console.error(
     `The pairing token is single use and expires at ${expiresAt}. The device it pairs can ${control ? 'run actions' : 'only read'}.`,
   );

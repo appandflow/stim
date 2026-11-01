@@ -14,7 +14,7 @@ function isHelperName(entry: string, name: string): boolean {
   );
 }
 
-export function selectHelpersToPrune(
+function selectHelpersToPrune(
   entries: readonly { name: string; mtimeMs: number }[],
   currentName: string,
   name: string,
@@ -40,7 +40,7 @@ function runningExecutablePaths(): ReadonlySet<string> | null {
   );
 }
 
-export function pruneCompiledHelpers(
+function pruneCompiledHelpers(
   dir: string,
   currentName: string,
   name: string,

@@ -1,3 +1,4 @@
+import { setPriority } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import type { AndroidLayout } from './workspace/settings.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -16,6 +17,7 @@ export interface DoctorFingerprintRequest {
 export async function readDoctorFingerprint(
   operation: StimContext,
   request: DoctorFingerprintRequest,
+  { lowPriority = false }: { lowPriority?: boolean } = {},
 ): Promise<ProjectFingerprint | null> {
   const output = await getExecutor().runFileAsync(
     process.execPath,
@@ -29,6 +31,15 @@ export async function readDoctorFingerprint(
       timeoutMs: 60_000,
       killSignal: 'SIGKILL',
       signal: operation.signal,
+      ...(lowPriority
+        ? {
+            onSpawn: (child) => {
+              try {
+                if (child.pid) setPriority(child.pid, 10);
+              } catch {}
+            },
+          }
+        : {}),
     },
   );
   const result: ProjectFingerprint | null = JSON.parse(output);

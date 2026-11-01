@@ -11,7 +11,7 @@ import type { WorkspaceState } from './workspace-state.ts';
 /** A workspace slot's placement; null device means its reservation has not reached ready yet. */
 export interface HostedAndroidPlacement extends HostedNativePlacement<HostedAndroidDevice> {}
 
-/** Public hosting facts; the host's serial, AVD name and private Metro gateway are excluded. */
+/** Public hosting facts; the host's serial, AVD name and private Metro links are excluded. */
 export type HostedAndroidStatus = {
   machine: string;
   session: string;

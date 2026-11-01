@@ -61,6 +61,10 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
+ * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
+ * connects to the client.
+ * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
+ * connection its client opened and authenticated, so agent control needs no tailnet node.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
  * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
@@ -73,15 +77,21 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
  * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `native-gradle-peer-jdk` accepts an exact JDK major on native Gradle artifact queries.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
+ * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
+ * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
+ * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
  * `desktop-settings-schema` supplies this server's registry-derived settings schema to local Desktop clients.
  * `desktop-settings-write` mutates settings on the proved local Desktop connection.
@@ -118,6 +128,7 @@ export const FEATURES = [
   'native-gradle-build',
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
+  'native-gradle-peer-jdk',
   'react-native-peer-cache',
   'fingerprint-sources',
   'fingerprint-ignored',
@@ -127,11 +138,17 @@ export const FEATURES = [
   'hosted-android-data',
   'hosted-android-process',
   'hosted-metro-ports',
+  'hosted-metro-link',
+  'hosted-agent-link',
   'server-update',
   'build-compat',
+  'build-jdk',
+  'build-reuse-artifact',
   'status-views',
   'desktop-reports',
+  'desktop-machine-history',
   'desktop-report-platform',
+  'desktop-report-invalidate-target',
   'desktop-settings',
   'desktop-settings-schema',
   'desktop-settings-write',
@@ -225,6 +242,7 @@ export const METHODS = [
   'build.artifact',
   'build.cached-artifact',
   'build.attach',
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -238,6 +256,8 @@ export const METHODS = [
   'device-host.metro.open',
   'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -280,6 +300,7 @@ export const BUILD_METHODS = [
 
 /** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -293,6 +314,8 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.open',
   'device-host.metro.ports',
   'device-host.metro.close',
+  'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -468,7 +491,9 @@ export interface DesktopPlanRefusal {
   remedy: string | null;
 }
 
-export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
+export type DesktopReportTarget =
+  | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
+  | { report: 'gc' | 'gc-history' | 'builds' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1022,6 +1047,8 @@ export type BuildReactNativeArtifactQuery = {
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
 export interface BuildGradleArtifactQuery {
   project: string;
+  /** The exact JDK major to revalidate, sent only with native-gradle-peer-jdk. */
+  jdk?: string;
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };
@@ -1075,8 +1102,24 @@ export interface BuildToolchain {
   runtimes: string[];
   /** The major version of the JDK Gradle runs on there. */
   jdk: string | null;
+  /** The majors of every JDK it can find, the one `jdk` names included; absent from a stim-server older than this field. */
+  jdks?: string[];
+  /** What `xcode-select -p` prints on a Mac; absent from a stim-server older than this field, and while DEVELOPER_DIR is set there. */
+  developerDir?: string | null;
+  /** The Xcode apps in `/Applications`, with the license and first-launch checks of each while `xcode` is null. */
+  xcodeApps?: {
+    path: string;
+    version: string | null;
+    build: string | null;
+    license?: boolean;
+    firstLaunch?: boolean;
+  }[];
   /** The NDK, build-tools and platform directories of its Android SDK; null without an SDK. */
   androidSdk: { ndk: string[]; buildTools: string[]; platforms: string[] } | null;
+  /** Whether that SDK has its licenses accepted, so Gradle downloads a missing package; absent from a stim-server older than this field. */
+  androidLicenses?: boolean;
+  /** The SDK directory `androidSdk` was read from; absent from a stim-server older than this field. */
+  androidHome?: string;
 }
 
 /**
@@ -1202,7 +1245,21 @@ export interface BuildStartParams {
   stimBuild: string;
   /** The client's Stim build compatibility version, compared instead of `stimBuild` by a machine that reports one. */
   compat?: number;
+  /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
+  jdk?: string;
   cacheArtifact?: boolean;
+  /**
+   * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
+   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
+   * reports its own instead of refusing. An older machine ignores it.
+   */
+  podsOnWorker?: boolean;
+  /**
+   * With `podsOnWorker`, from a caller that saw `build-reuse-artifact`: the client's cache reads allow the machine to
+   * return the development app it retained under its own fingerprint after pod install instead of compiling. A
+   * non-Debug request never carries it, because a retained app carries its builder's JS.
+   */
+  reuseArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -1231,6 +1288,8 @@ export type BuildJobOutcome =
       ok: true;
       artifact: BuildArtifactResult;
       fingerprint: string | null;
+      /** The machine returned the app it retained under `fingerprint` instead of compiling. */
+      reused?: true;
       sourceDigest?: string;
       androidPackage?: string;
       compilationCache: Record<string, unknown>;
@@ -1330,11 +1389,28 @@ export interface BuildClientSummary {
   lastAt: string;
 }
 
+/**
+ * The first layer that stops this machine from using a remote machine, as `stim doctor --json` reports it under
+ * `diagnosis`. `code` is stable; `title` is a short label for a status pill; `message` says what failed and
+ * `remedy` what to do. `guide remote` lists the codes.
+ */
+export interface RemoteDiagnosis {
+  layer: 'tailscale' | 'peer' | 'route' | 'server' | 'compat';
+  code: string;
+  title: string;
+  message: string;
+  remedy: string;
+}
+
 /** One `remote.machines` entry as `stim doctor --json` reports it; `guide facts doctor` defines the fields. */
 export interface BuildMachineReport {
   machine: string;
   state: string;
+  /** Present for a state that stops at a layer below approval (`tailscale-off`, `not-on-tailnet`, `unreachable`, `outdated`). */
+  diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key a `local:` machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   offloadable?: boolean;
@@ -1562,6 +1638,7 @@ export interface Methods {
   };
   'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
   'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
+  'device-host.runtime.install': { params: { runtime: string }; result: { ok: true } };
   'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
   'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
@@ -1583,11 +1660,13 @@ export interface Methods {
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
-    params: { session: string; gatewayPort: number; secret: string; clientMetroPort?: number };
+    params: { session: string; clientMetroPort?: number };
     result: { port: number };
   };
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
+  'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
+  'device-host.agent.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
     result: FramesSubscribeResult;
@@ -1609,7 +1688,7 @@ export interface Methods {
   'desktop.authenticate': { params: { proof: string }; result: { authorized: true } };
   'desktop.reports.get': { params: DesktopReportTarget; result: DesktopReportSnapshot };
   'desktop.reports.subscribe': { params: DesktopReportTarget; result: SubscribeResult };
-  'desktop.reports.invalidate': { params?: Record<string, never>; result: Record<string, never> };
+  'desktop.reports.invalidate': { params?: Record<string, never> | DesktopReportTarget; result: Record<string, never> };
   'desktop.settings.get': { params: { cwd: string }; result: SettingsResult };
   'desktop.settings.schema': { params?: Record<string, never>; result: Record<string, unknown> };
   'desktop.settings.write': { params: DesktopSettingsWriteParams; result: DesktopSettingsWriteResult };
@@ -1976,7 +2055,7 @@ export type PlatformBuildOptions =
       platform: 'ios';
       configuration?: string;
       scheme?: string;
-      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      /** Defaults to the host simulator architecture in every configuration; `all` builds every architecture. */
       arch?: 'arm64' | 'x86_64' | 'all';
       buildCache?: boolean;
       remoteBuild?: string;
@@ -2124,6 +2203,14 @@ export interface DesktopRemedyEndedEvent {
   exitCode: 0 | 1;
   stdout: string;
   message: string;
+}
+
+/**
+ * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
+ * Only device-host links receive it, so it is not a `ServerEvent`.
+ */
+export interface MetroLinkOpenEvent {
+  event: 'device-host.metro.link.open';
 }
 
 export type ServerEvent =

@@ -1,4 +1,5 @@
 import { FEATURES } from '@stim-cli/core/protocol';
+import { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS } from '@stim-cli/agent-driver-agent-device';
 import { includesArchives } from '../commands/gc/caches.ts';
 import { registerIos } from '../commands/ios.ts';
 import { registerAndroid } from '../commands/android.ts';
@@ -21,6 +22,8 @@ import {
   CAPACITY_REFUSAL_LIMIT,
   CAPACITY_REFUSAL_MAX_AGE_MS,
   PLACEMENT_DECISIONS,
+  PLACEMENT_WORDS,
+  REPLACED_SETTINGS,
 } from '@stim-cli/core/state';
 import assert from 'node:assert';
 import { readdirSync, readFileSync } from 'fs';
@@ -64,6 +67,8 @@ function allBodies(): string[] {
 
 const NOT_A_REFUSAL_CODE = new Set([
   'STIM_HOME',
+  'STIM_TRACE',
+  'STIM_TRACE_OWNER',
   'STIM_ANDROID_CAS_TOOLCHAIN',
   'STIM_BACKGROUND_LAUNCH',
   'STIM_ACCESS_TICKET',
@@ -273,6 +278,7 @@ test('the errors topic documents every code the build commands, the Node check a
   assert(body);
   const commandFiles = [
     'device-provision.ts',
+    'device-tools.ts',
     'ios.ts',
     'android.ts',
     'macos.ts',
@@ -492,6 +498,23 @@ test('the settings topic documents every registered setting and its environment 
   assert(body);
   const names = SETTINGS.flatMap((setting) => (setting.env ? [setting.key, setting.env] : [setting.key]));
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
+});
+
+test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {
+  for (const body of [renderTopic('settings'), renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    assert(body);
+    expect(PLACEMENT_WORDS.filter((word) => !body.includes(word))).toEqual([]);
+  }
+  for (const body of [renderTopic('macos'), renderSection('lifecycle', 'hosted-ios')]) {
+    for (const key of Object.keys(REPLACED_SETTINGS)) expect(body).not.toContain(key);
+  }
+  const settings = renderTopic('settings');
+  assert(settings);
+  expect(settings).toContain(`stim settings set remote.machines '["fast-mini","slow-mini"]'`);
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
+      expect(settings).toContain(name);
+  }
 });
 
 test('the static skill is only the agent guide router', () => {
@@ -1032,12 +1055,26 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(hosted).toContain('agent-device <command> --remote-config <file>');
   expect(hosted).toContain('hosting.agentDriver');
   expect(hosted).toContain('hosted-ios-agent');
+  expect(hosted).toContain('hosted-agent-link');
   const android = renderSection('lifecycle', 'hosted-android');
   expect(android).toContain('hosted-android-agent');
+  expect(android).toContain('hosted-agent-link');
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
   expect(renderTopic('agent')).toContain('--remote-config');
+});
+
+test('the hosted device sections name every command the agent-device driver allows or refuses', () => {
+  const clientSide = REFUSED_DEVICE_COMMANDS.auth;
+  const named = [
+    ...Object.keys(DEVICE_COMMAND_RULES),
+    ...Object.keys(REFUSED_DEVICE_COMMANDS).filter((name) => REFUSED_DEVICE_COMMANDS[name] !== clientSide),
+  ];
+  for (const section of ['hosted-ios', 'hosted-android']) {
+    const words = new Set(renderSection('lifecycle', section)?.split(/[^a-z-]+/));
+    expect(named.filter((name) => !words.has(name))).toEqual([]);
+  }
 });
 
 test('native Xcode and Gradle apps route to their lifecycle sections', () => {

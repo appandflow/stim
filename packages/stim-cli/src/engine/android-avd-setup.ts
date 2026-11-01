@@ -16,7 +16,7 @@ import { captureProcessIdentity } from '@stim-cli/core/process-identity';
 import { getExecutor } from '../exec.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import {
-  assertOwnedAvdStopped,
+  assertOwnedAvdStoppedAsync,
   createOwnedAvd,
   listAvdsAsync,
   ownedAvdDeviceProfile,
@@ -128,8 +128,15 @@ export async function prepareOwnedAvd({
       );
     }
   };
+  const releaseReservation = () =>
+    withConfigLockAsync(() => {
+      if (!isDeepStrictEqual(currentRecord(), reservation)) return;
+      if (previous) setDevice(projectPath, 'android', previous, slot);
+      else clearDevice(projectPath, 'android', slot, avdName);
+    });
   let prepared: PreparedAvd;
   let child: ChildProcess | undefined;
+  let spawnAttempted = false;
   const creationRunning = () => child?.pid !== undefined && processGroupAlive(child.pid);
   let configurationFailure: { error: unknown } | undefined;
   try {
@@ -138,6 +145,7 @@ export async function prepareOwnedAvd({
         systemImage,
         deviceProfile,
         spawn: (...args) => {
+          spawnAttempted = true;
           markClaimChildPending(claim);
           child = getExecutor().spawn(...args);
           if (child.pid !== undefined) {
@@ -166,7 +174,10 @@ export async function prepareOwnedAvd({
       prepared = { ...creation.result, created: true };
     } catch (error) {
       const message = String((error as Error)?.message || error);
-      if (!message.includes('already exists')) throw error;
+      if (!message.includes('already exists')) {
+        if (!spawnAttempted) await releaseReservation();
+        throw error;
+      }
       try {
         if (!(await listAvdsAsync()).includes(avdName)) {
           throw new AvdRecoveryError(
@@ -182,7 +193,7 @@ export async function prepareOwnedAvd({
             cause: error,
           });
         }
-        if (!resolved.serial) assertOwnedAvdStopped(avdName);
+        if (!resolved.serial) await assertOwnedAvdStoppedAsync(avdName);
         prepared = {
           avdName,
           created: false,
@@ -193,11 +204,7 @@ export async function prepareOwnedAvd({
             : {}),
         };
       } catch (recoveryError) {
-        await withConfigLockAsync(() => {
-          if (!isDeepStrictEqual(currentRecord(), reservation)) return;
-          if (previous) setDevice(projectPath, 'android', previous, slot);
-          else clearDevice(projectPath, 'android', slot, avdName);
-        });
+        await releaseReservation();
         if (recoveryError instanceof AvdRecoveryError) throw recoveryError;
         throw new AvdRecoveryError(
           `Could not recover owned AVD ${avdName}: ${String((recoveryError as Error)?.message || recoveryError)}`,

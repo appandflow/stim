@@ -68,7 +68,7 @@ public final class ActionRun: ObservableObject, Identifiable {
     command.arguments.contains("--json") ? lines.filter { $0.channel != .stdout } : lines
   }
 
-  /// One line for the autopilot log: the cleanup summary, or the last line the command printed.
+  /// One line for the run: the cleanup summary, or the last line the command printed.
   public var summary: String? {
     if let launchError { return launchError }
     if case .success(let outcome) = gcOutcome { return outcome.headline }

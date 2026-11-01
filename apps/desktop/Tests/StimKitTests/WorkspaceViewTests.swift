@@ -475,6 +475,11 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     #expect(line.map { Vectors.Line(text: $0.text, tone: String(describing: $0.tone)) } == c.line)
   }
 
+  @Test func aBundlePercentPastIntsRangeDoesNotTrap() throws {
+    let reported = try workspace(#""metro":{"port":8081,"running":true,"bundle":{"bundling":true,"percent":1e300}}"#)
+    #expect(reported.bundleLine(now: Self.now, reportsBundles: true)?.text == "Bundling \u{00B7} 9223372036854775807%")
+  }
+
   @Test(arguments: vectors.diskParts.map(\.name))
   func splitsTheDiskAsThePhoneDoes(name: String) throws {
     let c = try #require(Self.vectors.diskParts.first { $0.name == name })

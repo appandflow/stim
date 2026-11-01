@@ -23,6 +23,7 @@ import type { CompilationCacheActivity } from './build-facts.ts';
 import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';
 import { killOnAbort } from '../workspace/git-read.ts';
+import { readPlistFile } from './app-schemes.ts';
 
 export interface XcodeProject {
   kind?: string;
@@ -118,7 +119,7 @@ async function probe(executor: Executor, file: string, args: string[], options: 
   }
 }
 
-export async function listSchemes(
+async function listSchemes(
   project: XcodeProject,
   { exec = null }: { exec?: Executor | null } = {},
 ): Promise<{ name: string | null; schemes: string[] } | null> {
@@ -190,7 +191,7 @@ export const COMPILATION_CACHE_MIN_XCODE = 26;
 
 const PREFIX_MAP_TARGET = '/^src';
 
-export function prefixMapping(workspaceRoot: string): string {
+function prefixMapping(workspaceRoot: string): string {
   return `${String(workspaceRoot).replace(/\/+$/, '')}=${PREFIX_MAP_TARGET}`;
 }
 
@@ -343,7 +344,7 @@ export function pickAppBundle(entries: unknown, preferredName: string | null = n
   return apps[0];
 }
 
-export function findAppBundle(dir: string, preferredName: string | null = null): string | null {
+function findAppBundle(dir: string, preferredName: string | null = null): string | null {
   let entries;
   try {
     entries = readdirSync(dir);
@@ -354,7 +355,7 @@ export function findAppBundle(dir: string, preferredName: string | null = null):
   return app ? join(dir, app) : null;
 }
 
-export function parseBundleId(plistJson: unknown): string | null {
+function parseBundleId(plistJson: unknown): string | null {
   if (typeof plistJson !== 'string') return null;
   let data: unknown;
   try {
@@ -384,10 +385,12 @@ export async function readBundleId(
       timeoutMs: 10_000,
     });
     const trimmed = String(value).trim();
-    return trimmed === '' ? null : trimmed;
-  } catch {
-    return null;
-  }
+    if (trimmed !== '') return trimmed;
+  } catch {}
+  const plist = readPlistFile(join(appPath, 'Info.plist'));
+  const id =
+    typeof plist === 'object' && plist !== null && 'CFBundleIdentifier' in plist ? plist.CFBundleIdentifier : null;
+  return typeof id === 'string' && id.trim() !== '' ? id.trim() : null;
 }
 
 export function parseBundleExecutable(plistJson: unknown): string | null {
@@ -437,7 +440,7 @@ export const HEARTBEAT_INTERVAL_MS = 30_000;
 
 const HEARTBEAT_ACTIVITY: Record<string, string> = { build: 'compiling', deps: 'installing', pods: 'installing' };
 
-export function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: number | null = null): string {
+function heartbeatLine(elapsedMs: number, label = 'build', estimateMs: number | null = null): string {
   const activity = HEARTBEAT_ACTIVITY[label] ?? 'running';
   const elapsed = formatElapsed(elapsedMs);
   const inside =
@@ -572,7 +575,7 @@ export const COMPILATION_CACHE_NOT_RUN: CompilationCacheActivity = {
   hitRatePercent: null,
 };
 
-export function parseCompilationCacheActivity(line: unknown): CompilationCacheActivity | null {
+function parseCompilationCacheActivity(line: unknown): CompilationCacheActivity | null {
   if (typeof line !== 'string') return null;
   const match = line.match(/(?:note:\s*)?(\d+) hits \/ (\d+) cacheable tasks \((\d+(?:\.\d+)?)%\)/);
   if (!match) return null;
@@ -696,7 +699,13 @@ export async function buildXcode({
       ? await compilationCache({ derivedDataPath: dd, exec: executor })
       : compilationCache || [];
   // Xcode forces ONLY_ACTIVE_ARCH=NO for a generic destination; only an explicit ARCHS narrows the build.
-  const buildSettings = arch ? [...cacheSettings, `ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : cacheSettings;
+  const debugSettings =
+    configuration === 'Debug' && sdk === 'iphonesimulator' ? ['DEBUG_INFORMATION_FORMAT=dwarf'] : [];
+  const buildSettings = [
+    ...cacheSettings,
+    ...debugSettings,
+    ...(arch ? [`ARCHS=${arch}`, 'ONLY_ACTIVE_ARCH=YES'] : []),
+  ];
   const casPathSetting = 'COMPILATION_CACHE_CAS_PATH=';
   const casDir = cacheSettings.includes('COMPILATION_CACHE_ENABLE_CACHING=YES')
     ? (cacheSettings.find((setting) => setting.startsWith(casPathSetting))?.slice(casPathSetting.length) ?? null)

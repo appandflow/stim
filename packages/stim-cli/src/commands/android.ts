@@ -3,8 +3,9 @@ import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import { selectAndroidPlacement } from './android/remote.ts';
 import { prepareHostedAndroid, placeHostedAndroid } from '../device-host/hosted-android.ts';
 import { readHostedAndroid, writeDevicePlacementAsync, writeHostedAndroidAsync } from '../device-host/ios-state.ts';
-import { hostedMetroSettings } from '../device-host/metro-gateway.ts';
+import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { finishHostedAndroidRun } from './android/hosted.ts';
+import { followHostedLaunchLogs } from '../device-host/hosted-logs-sync.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
 import { parseMachine } from '@stim-cli/core/state';
@@ -12,7 +13,12 @@ import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { configuredAndroidEmulatorApp } from '../devices/android-emulator-viewer.ts';
-import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
+import {
+  deviceSlotFileKey,
+  deviceSlotPlatforms,
+  parseDeviceSlotOption,
+  validateDeviceSlot,
+} from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
@@ -23,11 +29,12 @@ import {
   type BuildProgress,
   type recordFinishedBuild,
 } from '../engine/build-progress.ts';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { type Command, InvalidArgumentError } from 'commander';
 import chalk from 'chalk';
 import { loadCacheProvider } from '@stim-cli/cache';
+import { storedAppId as cacheEntryAppId } from '../cache/build-cache.ts';
 import { formatDuration, phaseLine, refuseNoProject, SLOW_STEP_MS, stepClock, stepTimer } from '../command-output.ts';
 import type { CcacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
@@ -74,6 +81,7 @@ import {
 } from '../engine/stats.ts';
 import { writeWorkspaceLaunchAsync } from '../supervisor/state.ts';
 import { readWorkspaceState, recordWorkspaceUseAsync, writeWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import {
   installAndroidApp,
   launchAndroidApp,
@@ -84,8 +92,10 @@ import {
 import { verifyAndroidReleaseLaunch, verifyLaunch } from '../engine/launch-verify.ts';
 import {
   androidDeviceAbi,
-  listAdbDevices,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   listInstalledSystemImages,
+  ownedAvdDirectory,
   physicalDeviceModel,
   probeEmulatorSerial,
   resolveOwnedAvdSerialAsync,
@@ -127,11 +137,13 @@ import { getExecutor } from '../exec.ts';
 import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
-import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './android/artifact.ts';
+import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
+import { lookupRecordedBuild } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
 import { planAndroid } from './android/next-build.ts';
+import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
 
 export { androidFacts, lastBuildRecord } from './android/result.ts';
 
@@ -160,6 +172,8 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
+  recordedBuild?: boolean;
+  cleanAppState?: boolean;
   slot?: string;
   json?: boolean;
   metroCheck?: boolean;
@@ -191,7 +205,7 @@ export function registerAndroid(program: Command): void {
     .option('--slot <name>', 'Reusable device slot within this workspace (default: default)', parseDeviceSlotOption)
     .option(
       '--remote-build <value>',
-      'Build on auto, local, or one named machine; a name refuses without fallback',
+      'Build on local, auto, remote (remote machines first), remote-only (never here), or one named machine; a name refuses without fallback',
       parseBuildMachineOption,
     )
     .option('--json', 'Emit the facts as a single JSON line on stdout; every other line goes to stderr')
@@ -231,10 +245,12 @@ export function registerAndroid(program: Command): void {
     )
     .option(
       '--remote <target>',
-      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; local runs here, whatever android.remote says',
+      'Run on eas, proxy, or a named approved Mac from remote.machines; auto places on an approved Mac when this machine is full or busy; remote tries remote.machines in order first and runs here only when none takes it; remote-only never runs here; local runs here, whatever android.remote says',
       (value) => {
         if (!parseMachine(value))
-          throw new InvalidArgumentError('expected eas, proxy, auto, local, or a tailnet machine name');
+          throw new InvalidArgumentError(
+            'expected eas, proxy, local, auto, remote, remote-only, or a tailnet machine name',
+          );
         return value;
       },
     )
@@ -271,6 +287,11 @@ export function runAndroidOperation(
     root,
     { command: 'android', platform: PLATFORM, slot: opts.slot ?? 'default' },
     async (claim) => {
+      const lightened = await restoreLightenedDependencies(root, context);
+      if (lightened) {
+        printLightenedFailure(context, lightened, Boolean(opts.json));
+        return { ok: false, error: lightened };
+      }
       await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
       const progress = startBuildProgress({
         root,
@@ -286,6 +307,8 @@ export function runAndroidOperation(
           buildMachine: opts.remoteBuild,
           slot: opts.slot,
           easProfile: opts.easProfile,
+          recordedBuild: opts.recordedBuild,
+          cleanAppState: opts.cleanAppState,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
           useBuildCache: opts.buildCache !== false,
@@ -316,9 +339,12 @@ interface RunAndroidOptions {
   placeHostedAndroid?: typeof placeHostedAndroid;
   readHostedAndroid?: typeof readHostedAndroid;
   writeHostedAndroid?: typeof writeHostedAndroidAsync;
+  followHostedLaunchLogs?: typeof followHostedLaunchLogs;
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
+  recordedBuild?: boolean;
+  cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
   root: string;
@@ -330,6 +356,7 @@ interface RunAndroidOptions {
   deviceProfile?: string | null;
   listSystemImages?: typeof listInstalledSystemImages;
   listDeviceProfiles?: (options?: { signal?: AbortSignal }) => string[] | Promise<string[]>;
+  ensureImage?: typeof ensureSystemImage;
   device?: string | boolean | null;
   wait?: string | boolean;
   waitConflict?: boolean;
@@ -337,7 +364,7 @@ interface RunAndroidOptions {
   makeRunLease?: typeof runLease;
   selectPool?: typeof selectFromPool;
   onLeaseSignal?: typeof releaseLeaseOnAbort;
-  listDevices?: typeof listAdbDevices;
+  listDevices?: typeof listAdbDevicesAsync;
   deviceModel?: typeof physicalDeviceModel;
   deviceAbi?: typeof androidDeviceAbi;
   isEmulatorDevice?: typeof probeEmulatorSerial;
@@ -378,6 +405,7 @@ interface RunAndroidOptions {
   uploadRemoteBuild?: typeof uploadRemote;
   resolveCacheProvider?: typeof resolveCacheProviderConfig;
   loadCacheProviderModule?: typeof loadCacheProvider;
+  storedAppId?: typeof cacheEntryAppId;
   install?: typeof installAndroidApp;
   launch?: typeof launchAndroidApp;
   launchRelease?: typeof launchAndroidReleaseApp;
@@ -413,6 +441,8 @@ function resolveRunAndroidOptions(
     metroCheck = true,
     useBuildCache = true,
     easProfile,
+    recordedBuild,
+    cleanAppState = false,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
     systemImage: systemImageFlag = null,
@@ -424,7 +454,7 @@ function resolveRunAndroidOptions(
     makeRunLease = runLease,
     selectPool = selectFromPool,
     onLeaseSignal = releaseLeaseOnAbort,
-    listDevices = listAdbDevices,
+    listDevices = listAdbDevicesAsync,
     deviceModel = physicalDeviceModel,
     deviceAbi = androidDeviceAbi,
     isEmulatorDevice = probeEmulatorSerial,
@@ -458,6 +488,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild = uploadRemote,
     resolveCacheProvider = resolveCacheProviderConfig,
     loadCacheProviderModule = loadCacheProvider,
+    storedAppId = cacheEntryAppId,
     install = installAndroidApp,
     launch = launchAndroidApp,
     launchRelease = launchAndroidReleaseApp,
@@ -492,6 +523,8 @@ function resolveRunAndroidOptions(
     metroCheck,
     useBuildCache,
     easProfile,
+    recordedBuild,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -537,6 +570,7 @@ function resolveRunAndroidOptions(
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
+    storedAppId,
     install,
     launch,
     launchRelease,
@@ -602,6 +636,32 @@ function avdSetupFailure(
   };
 }
 
+function slotKeepsAvd(root: string, slot: string): boolean {
+  const android = deviceSlotPlatforms(getProject(root), slot)?.android;
+  if (!android?.owned || !android.avdName || android.setupIncomplete || android.bootPending) return false;
+  return Boolean(ownedAvdDirectory(android.avdName));
+}
+
+async function localRunRefusal(
+  budgetRefusal: { code: string; message: string; remedy: string } | null,
+  target: { kind: string },
+  keepsAvd: () => boolean,
+  ensureImage: () => ReturnType<typeof ensureSystemImage>,
+  recheckSelectors: () => Promise<{ code: string; message: string; remedy: string } | null>,
+  signal: AbortSignal | undefined,
+): Promise<{ code: string; message: string; remedy: string } | null> {
+  if (budgetRefusal || target.kind !== 'emulator' || keepsAvd()) return budgetRefusal;
+  let image: Awaited<ReturnType<typeof ensureSystemImage>>;
+  try {
+    image = await ensureImage();
+  } catch (error) {
+    if (!signal?.aborted || (error instanceof Error && 'reportCleanup' in error)) throw error;
+    return { code: 'STIM_CANCELLED', message: 'during the Android system image install', remedy: '' };
+  }
+  if (!image.ok) return image;
+  return image.installed ? recheckSelectors() : null;
+}
+
 export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOptions): Promise<RunAndroidResult> {
   const { context } = options;
   let {
@@ -618,6 +678,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     metroCheck,
     useBuildCache: requestedBuildCache,
     easProfile,
+    recordedBuild: recordedBuildRequested,
+    cleanAppState,
     resolveEasBuild,
     variantFlag,
     systemImageFlag,
@@ -663,6 +725,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     uploadRemoteBuild,
     resolveCacheProvider,
     loadCacheProviderModule,
+    storedAppId,
     install,
     launch,
     launchRelease,
@@ -768,6 +831,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         status: 'failed',
         errorCode: code,
         diagnostics: rawDiagnostics,
+        message,
+        remedy,
         out,
       });
     }
@@ -835,6 +900,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       signal: context.signal,
       slot,
       easProfile,
+      recordedBuild: recordedBuildRequested,
       variant: variantFlag,
       systemImage: systemImageFlag,
       deviceProfile: deviceProfileFlag,
@@ -874,9 +940,9 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
-    displayName: basename(root),
     reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
+    onBootStart: () => progress.bootStarted(),
     onWait: (ms: number) => {
       stats.addDeviceSlotWaitMs(ms);
       if (record.devicePlacement?.decision === 'local' && ms > 0) record.devicePlacement.decision = 'waited-locally';
@@ -885,9 +951,29 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   const { build: buildPlan, isExpo, cacheProviderConfig } = plan;
 
   const { variant, release } = buildPlan;
+  const recordedLookup = lookupRecordedBuild(recordedBuildRequested, root, {
+    platform: 'android',
+    configuration: variant,
+  });
   const runtimeKind = integration.runtimeKind(buildPlan);
   const appMode = runtimeKind === 'process' ? 'process' : runtimeKind === 'metro' ? 'development' : 'release';
   record.configuration = variant ?? 'debug';
+  const localSelectors = (target: { systemImage: string | null; deviceProfile: string | null }) =>
+    androidDeviceSelectorRefusal(
+      {
+        settingsContext,
+        signal: context.signal,
+        slot,
+        systemImageFlag,
+        deviceProfileFlag,
+        systemImage: target.systemImage,
+        deviceProfile: target.deviceProfile,
+        physical: false,
+        remoteBackend: null,
+        installImages: androidImageInstallPolicy(settings),
+      },
+      { listSystemImages, listDeviceProfiles },
+    );
   const hosting = await selectAndroidPlacement({
     root,
     slot,
@@ -896,6 +982,8 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     appMode,
     metroCheck,
     noWait: plan.deviceSlotWaitMs === 0,
+    waitMs: plan.deviceSlotWaitMs,
+    signal: settingsSignal,
     buildMachine: options.buildMachine,
     read: options.readHostedAndroid,
     resolveSerial: resolveAvdSerial,
@@ -921,21 +1009,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
             }),
         }
       : {}),
-    localSelectors: (target) =>
-      androidDeviceSelectorRefusal(
-        {
-          settingsContext,
-          signal: context.signal,
-          slot,
-          systemImageFlag,
-          deviceProfileFlag,
-          systemImage: target.systemImage,
-          deviceProfile: target.deviceProfile,
-          physical: false,
-          remoteBackend: null,
-        },
-        { listSystemImages, listDeviceProfiles },
-      ),
+    localSelectors,
     checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
     note: out,
     phase,
@@ -954,11 +1028,26 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     if (appMode === 'development' && (publicUrlSetting(settings) || tunnelModeSetting(settings)))
       phase(
         'metro',
-        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+        'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
       );
   }
   reclaimed = budget.reclaimed;
-  if (budget.refusal) return fail(budget.refusal.code, budget.refusal.message, budget.refusal.remedy);
+  const localRefusal = await localRunRefusal(
+    budget.refusal,
+    target,
+    () => slotKeepsAvd(root, slot),
+    () =>
+      (options.ensureImage ?? ensureSystemImage)({
+        requested: target.kind === 'emulator' ? target.systemImage : null,
+        policy: androidImageInstallPolicy(settings),
+        env: context.env,
+        signal: settingsSignal,
+        note: (line) => phase('image', line),
+      }),
+    () => localSelectors(target.kind === 'emulator' ? target : { systemImage: null, deviceProfile: null }),
+    settingsSignal,
+  );
+  if (localRefusal) return fail(localRefusal.code, localRefusal.message, localRefusal.remedy);
   const remoteContext = remoteBackend
     ? await resolveRemoteDeviceContext({
         root,
@@ -1128,11 +1217,14 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     device = pooled.device;
     bootPromise = Promise.resolve({ ok: true, serial: pooled.device.serial });
   } else if (target.kind === 'physical') {
-    const resolved = resolvePhysicalDevice(target.serial, listDevices(), isEmulatorDevice);
+    const adb = await listDevices();
+    const resolved = await emulatorProbeSession(isEmulatorDevice)((isEmulator) =>
+      resolvePhysicalDevice(target.serial, adb, isEmulator),
+    );
     if (!resolved.serial) return fail(NO_DEVICE, resolved.error!, resolved.remedy!);
     device = {
       serial: resolved.serial,
-      deviceName: deviceModel(resolved.serial) ?? resolved.serial,
+      deviceName: (await deviceModel(resolved.serial)) ?? resolved.serial,
       owned: false,
     };
     bootPromise = Promise.resolve({ ok: true, serial: resolved.serial });
@@ -1150,7 +1242,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     }
     const capacity =
       plan.deviceSlotWaitMs === 0
-        ? checkCapacity({
+        ? await checkCapacity({
             platform: PLATFORM,
             project,
             max: limits.maxDevices,
@@ -1158,7 +1250,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         : null;
     if (capacity) {
       if (capacity.code === 'STIM_AT_CAPACITY') {
-        recordRefusal({ platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) }, now());
+        recordRefusal({ platform: PLATFORM, max: capacity.max, workspace: workspaceId(root) }, now());
       }
       return fail(capacity.code, capacity.message, capacity.remedy);
     }
@@ -1237,6 +1329,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
   record.avdName = device.avdName ?? null;
   record.deviceName = device.deviceName ?? device.avdName ?? null;
+  record.deviceSerial = device.serial;
   record.systemImage = device.systemImage;
   record.deviceProfile = device.deviceProfile;
 
@@ -1249,8 +1342,11 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         isExpo,
         appId: androidPackage,
         bundleUrl: metroWarmupUrlSetting(settings, 'android'),
+        logsDir,
+        root,
       });
-    const acquiredArtifact = await acquireAndroidArtifact(
+    const acquiredArtifact = await acquireAndroidArtifactOrRecorded(
+      recordedLookup.build,
       {
         context,
         root,
@@ -1263,7 +1359,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           writer,
           settings,
           buildPlan,
-          target: androidBuildOptions({
+          target: await androidBuildOptions({
             release,
             physical,
             device,
@@ -1309,6 +1405,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         resolveRemoteBuild,
         uploadRemoteBuild,
         loadCacheProviderModule,
+        storedAppId,
         acquireSlot,
         releaseSlot,
         now,
@@ -1330,6 +1427,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
 
     if (hostedTarget)
       return finishHostedAndroidRun({
+        operation: context,
         target: hostedTarget,
         artifact,
         root,
@@ -1343,6 +1441,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         place: options.placeHostedAndroid ?? placeHostedAndroid,
         writePlacement: options.writeHostedAndroid ?? writeHostedAndroidAsync,
         verifyLaunch: verifyLaunched,
+        followLogs: options.followHostedLaunchLogs ?? followHostedLaunchLogs,
         writeLaunch,
         readApkPackage,
         resolveDevClientScheme,
@@ -1353,6 +1452,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         fail,
         phase,
         enterPhase: progress.step,
+        enterActivity: progress.activity,
         out,
         json,
         useBuildCache,
@@ -1360,7 +1460,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         metroCheck,
         writer,
         emit,
-        recordRun,
+        recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
         reclaimed,
         devServer,
         recordBuild,
@@ -1458,6 +1558,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         device,
         physical,
         remoteDevice,
+        cleanAppState,
         bootPromise,
         resolveAvdSerial,
         waitForDeviceBoot,
@@ -1473,6 +1574,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         waitedForBuild: artifact.waitedForBuild,
         ccache: ccacheActivity,
         uploadPending: artifact.uploadPending,
+        fingerprintCheck: artifact.fingerprintCheck,
         providerUpload: artifact.providerUpload,
         providerName: artifact.providerName,
         remote: artifact.remote,
@@ -1482,7 +1584,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         writer,
         phase,
         fail,
-        readApkPackage,
+        readApkPackage: (path: string | null) => artifact.apkPackage ?? readApkPackage(path),
         readProjectPackage: async () => (await integration.appIds()).androidPackage,
         packageRemedy: integration.packageRemedy,
         install,
@@ -1500,7 +1602,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         now,
         out,
         emit,
-        recordRun,
+        recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
         reclaimed,
         devServer,
         enterPhase: progress.step,

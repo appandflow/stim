@@ -110,3 +110,24 @@ export function serviceRunningFrom(
   }
   return null;
 }
+
+/** The Stim CLI entry points removal must not delete: the running one and the `stim` on PATH. */
+export function stimCliEntries(env?: NodeJS.ProcessEnv): { label: string; path: string }[] {
+  const entries: { label: string; path: string }[] = [];
+  if (process.argv[1]) entries.push({ label: 'the running stim', path: process.argv[1] });
+  const onPath = getExecutor().findExecutable('stim', env ? { env } : undefined);
+  if (onPath) entries.push({ label: 'the stim on PATH', path: onPath });
+  return entries;
+}
+
+/** Why removing `folder` would delete a Stim CLI in `entries`, resolved through symlinks; empty when it would not. */
+export function stimCliUseOf(
+  folder: string,
+  canonical: (path: string) => string,
+  entries: readonly { label: string; path: string }[],
+): string[] {
+  return entries.flatMap(({ label, path }) => {
+    const resolved = canonical(path);
+    return isPathPrefix(folder, resolved) ? [`it holds ${label} (${resolved})`] : [];
+  });
+}

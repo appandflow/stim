@@ -11,6 +11,9 @@ project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
 
+If Expo cannot be resolved in a linked worktree, run \`stim worktree warm\`
+there before retrying. The refusal also names dependency installation.
+
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for server and remote tunnel readiness
@@ -24,19 +27,19 @@ comes from \`start --remote\`, eas/proxy in \`ios.remote\`, or \`android.remote\
 
 HOSTED IOS METRO
   ios --remote <machine> keeps Metro local and needs no start --remote.
-  The supervisor watches private gateway requests in workspace state, binds
-  only this machine's Tailscale address and accepts only the pinned hosting peer
-  with a per-session secret. The host's bridge is loopback-only. For an Expo
-  dev client it listens on this machine's Metro port, which the dev server
+  The supervisor watches hosted Metro requests in workspace state and keeps a
+  few authenticated connections open to the host for each session. The host
+  pairs one with each connection the device makes to its loopback-only bridge,
+  and the supervisor forwards it to this Metro, so the host never connects back
+  to this machine and a shared or ACL-restricted host works. For an Expo
+  dev client the bridge listens on this machine's Metro port, which the dev server
   writes into the manifest. ios --remote starts Metro on a port free on both
   Macs; a running Metro or a pin on a port the host uses refuses the run before
-  the build. Port and secret
-  stay in 0600 workspace state and never appear in status, JSON or logs.
-  metro.tunnel and metro.publicUrl are ignored. Supervisor restart recreates
-  the recorded gateway; stop or a stopped hosted session closes it. A recorded
-  hosted session prevents Metro idle stop. Release runs skip the bridge.
-  Hosted Debug runs require the supervisor's private gateway support before
-  reservation. --no-metro-check refuses; restart a missing or older supervisor
+  the build. metro.tunnel and metro.publicUrl are ignored. Supervisor restart
+  reopens the recorded links; stop or a stopped hosted session closes them. A recorded
+  hosted session prevents Metro idle stop; maintenance.idleStopHours still stops the workspace and its hosted session (guide cleanup). Release runs skip the bridge.
+  Hosted Debug runs require a supervisor and a stim-server that support these
+  links before reservation. --no-metro-check refuses; restart a missing or older supervisor
   with stim stop; stim start.
   Native iOS and Android logs are pulled from the host by stim logs, including --errors;
   JavaScript logs still arrive through Metro. Stop pulls native logs before
@@ -68,9 +71,16 @@ TAILNET-ONLY METRO
 
 BUNDLE WARMUP
   After verifying Metro, \`stim ios\` and \`stim android\` prefetch the
-  platform's development bundle while native work continues. Expo supplies the
-  entry point and bundle options through its manifest; bare React Native uses
-  the standard index entry and development bundle options, including lazy loading.
+  platform's development bundle while native work continues. The prefetch
+  requests the URL of the app's most recent bundle request on that platform,
+  read from this workspace's metro log, so it matches the app's entry point
+  and options and does not ask Expo for its manifest. A recorded URL whose
+  entry file no longer exists under the project root or its ancestors is
+  skipped. Expo computes the
+  runtime version fingerprint for every manifest request. Without a recorded
+  request, Expo supplies the entry point and bundle options through its
+  manifest, and bare React Native uses the standard index entry and
+  development bundle options, including lazy loading.
   Warmup is enabled by default. Set optimizations.metroWarmup=false to disable
   it on the next ios/android command, using the machine or project settings.
   For custom entry points or bundle options, set metro.warmupUrl.ios and/or
@@ -91,8 +101,8 @@ BUNDLE WARMUP
   device logs may prove a request, but bundle completion may stay unverified.
 
 HOSTED ANDROID
-  android --remote <machine> keeps Metro here through the private tailnet
-  gateway. The host reverses the client Metro port into its loopback bridge
+  android --remote <machine> keeps Metro here through the same client-opened
+  links as hosted iOS. The host reverses the client Metro port into its loopback bridge
   on the exact owned emulator. Each run and reload restores that reverse;
   no adb command for the host serial runs here. metro.tunnel and metro.publicUrl
   are ignored. See guide lifecycle hosted-android.
@@ -172,8 +182,9 @@ WHAT THE SUPERVISOR IS
                  for the bundle lines.
 
   expo-child and command-child put the Node the app pins (.nvmrc,
-  .node-version, .tool-versions nodejs, or package.json volta.node) first
-  on PATH when an nvm, fnm, Volta, asdf, mise or linked Homebrew
+  .node-version, .tool-versions nodejs, or package.json volta.node), looking
+  from the app directory up to its repository or worktree root, first on PATH
+  when an nvm, fnm, Volta, asdf, mise or linked Homebrew
   node/node@NN install satisfies the pin and the node already on PATH does
   not; the metro log then records a project_node event naming it. When no
   install has the version the pin names, the newest install of the pinned
@@ -200,8 +211,8 @@ WHAT THE SUPERVISOR IS
   (default 60; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo or metro.command, any stdout line of the
   dev server) and no Stim
-  command in the workspace (start, ios, android, reload, worktree warm). It
-  checks once a minute. It keeps running while a bundle response is in
+  command in the workspace (start, ios, android, reload, logs, worktree
+  warm). It checks once a minute. It keeps running while a bundle response is in
   flight, while a build in the workspace is in progress, while a stim ios,
   android or stop run holds the workspace's native-run lock, while the
   workspace holds an unexpired device lease (\`stim device lock\` or a
@@ -234,8 +245,9 @@ WHAT THE SUPERVISOR IS
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
                    stim worktree remove, stim gc --delete, stim start
-                   --reset-cache, or budget reclaim (with the workspace whose
-                   ios, android or start run reclaimed it)
+                   --reset-cache, budget reclaim (with the workspace whose
+                   ios, android or start run reclaimed it), or automatic
+                   maintenance with its idle reason (guide cleanup, IDLE STOP)
     signal         a SIGTERM or SIGINT with no Stim stop request recorded,
                    so it likely came from outside Stim (level warn)
     server-exited  the dev server exited on its own (level error). Expo CLI

@@ -10,7 +10,7 @@ import PromptBox, { PromptGrid } from '@site/src/components/PromptBox';
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off does not stop a running
@@ -60,7 +60,7 @@ bring back a welcome screen you have already dismissed or completed.
 
 ## Serve to phones
 
-On the Mac, open **Stim > Settings > Phones > Pair a Phone...**, or choose
+On the Mac, open **Stim > Settings > Paired Devices > Pair a Phone...**, or choose
 **Pair a Phone...** in the first-run guide's **Pair Your Phone** step. The wizard
 walks through getting Stim Mobile and Tailscale on your phone, connecting both
 devices to the same tailnet, turning on serving, scanning a code, and confirming
@@ -136,7 +136,7 @@ replay. With workspace diff support, it can also read changed and untracked
 text files in registered workspaces, including non-ignored `.env` files.
 
 To allow input, choose **Allow Control** from the phone's menu in Desktop's
-**Settings > Phones**, or run `stim-server devices grant <id> --control` on
+**Settings > Paired Devices**, or run `stim-server devices grant <id> --control` on
 the Mac. Use `--read` to take control away while retaining viewing access.
 The server's npx prefix is shown above. The phone's **Allow Control** action
 explains this Mac-side change; it cannot grant itself access. **Reconnect**
@@ -168,7 +168,7 @@ servers that support it.
 
 ## Revoke access
 
-In Desktop's **Settings > Phones**, choose **Revoke...** from the phone's menu, or run
+In Desktop's **Settings > Paired Devices**, choose **Revoke...** from the phone's menu, or run
 `stim-server devices revoke <id>` on the Mac. Revocation closes its active
 connections; the server checks registrations on changes and once a second.
 The phone must pair again to reconnect.
@@ -184,6 +184,14 @@ the server's authorization, use the Mac-side action above.
 | Read captured logs, build diagnostics and supported text diffs. | Tap, swipe, type and use supported buttons on controllable devices. |
 | View device screens and supported replay.                       | Control a leased Android phone while its lease is valid.            |
 
+Each machine the phone pairs with reports the work it started, including
+work it placed on another machine. A Home row names that machine on the build
+line, such as **Pods** beside `janics-mac-mini-2` for an offloaded build, and on
+the context line for running hosted simulators, emulators and macOS apps. The
+workspace page, build sheet and device tiles show it too. Each row stays under
+the server that owns it, and the phone pairs only with those servers. See
+[remote machines](./remote-machines.md).
+
 The build sheet shows build and device slot waits alongside the current phase,
 with the number of slots in use and a live elapsed wait timer. A device slot
 wait can overlap compilation. Older CLIs omit this information. While the run
@@ -191,6 +199,14 @@ boots its simulator or emulator, builds the app's first JS bundle in Metro, or
 waits for the app to report ready, the phase reads **Booting simulator**,
 **Bundling JS** with Metro's percentage once Metro reports one, or **Waiting
 for app ready**.
+
+A Mac's status sheet shows its load per core with the state `stim` reports (**Free**,
+**Busy** or **Holding new builds**). While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, it also shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
+`6 / 6`. A full device meter lists the devices holding the slots, with the slot and how long
+each has been idle. The phone cannot stop them; stop a slot from Stim Desktop or with
+`stim stop --slot`. A meter reads `? / 6` when `stim` could not count the devices.
+Older `stim` versions send none of these fields, and the sheet omits them.
 
 A leased iPhone connected over USB is view-only and must be unlocked and trust
 the Mac; over Wi-Fi it has no screen stream. Hosted iOS simulators can be viewed

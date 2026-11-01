@@ -5,7 +5,7 @@ import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, relative, sep } from 'node:path';
 import { workspaceAgentDeviceDir } from '../workspace/paths.ts';
-import { phaseLine } from '../command-output.ts';
+import { phaseLine, quotedPath } from '../command-output.ts';
 import { getExecutor } from '../exec.ts';
 import { agentDeviceDaemon, readAgentDeviceRecords } from './activity.ts';
 
@@ -100,19 +100,28 @@ function deviceClaims(device: Device): SessionClaim[] {
     }));
 }
 
+class AgentDeviceRefusal extends Error {
+  reason?: string;
+  stateDir?: string;
+}
+
 // agent-device writes its failure as a JSON envelope on stdout and exits non-zero, so the thrown
 // `Command failed` text carries none of its reason.
 function explainFailure(error: unknown): Error {
   const stdout = (error as { stdout?: unknown } | null)?.stdout;
-  let failure: { message?: unknown; details?: { reason?: unknown } } | undefined;
+  let failure: { message?: unknown; details?: { reason?: unknown; stateDir?: unknown } } | undefined;
   try {
     failure = typeof stdout === 'string' ? JSON.parse(stdout)?.error : undefined;
   } catch {
     failure = undefined;
   }
   if (typeof failure?.message !== 'string' || !failure.message) return error as Error;
-  const reason = typeof failure.details?.reason === 'string' ? ` (${failure.details.reason})` : '';
-  return new Error(`agent-device refused: ${failure.message}${reason}`);
+  const reason = typeof failure.details?.reason === 'string' ? failure.details.reason : undefined;
+  const stateDir = typeof failure.details?.stateDir === 'string' ? failure.details.stateDir : undefined;
+  const refusal = new AgentDeviceRefusal(`agent-device refused: ${failure.message}${reason ? ` (${reason})` : ''}`);
+  refusal.reason = reason;
+  refusal.stateDir = stateDir;
+  return refusal;
 }
 
 function report(message: string): void {
@@ -125,6 +134,7 @@ export async function closeOwnedDeviceSessions(
   workspace?: string,
   repoRoot?: string,
   operation?: StimContext,
+  reportedBusy: Set<string> = new Set<string>(),
 ): Promise<void> {
   const exec = getExecutor();
   try {
@@ -141,6 +151,7 @@ export async function closeOwnedDeviceSessions(
       undefined,
       ...(stateDir && !['none', 'dead'].includes(agentDeviceDaemon(stateDir)) ? [stateDir] : []),
     ];
+    const busy = new Set<string>();
     for (const dir of stateDirs) {
       const deadline = Date.now() + 15000;
       const run = async (args: string[]) => {
@@ -209,10 +220,21 @@ export async function closeOwnedDeviceSessions(
         if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
           throw error;
         operation?.signal.throwIfAborted();
-        report(
-          `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
-        );
+        if (error instanceof AgentDeviceRefusal && error.reason === 'daemon-busy')
+          busy.add(error.stateDir ?? dir ?? '');
+        else
+          report(
+            `could not list agent-device sessions for ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}: ${(error as Error).message}`,
+          );
       }
+    }
+    const unreported = [...busy].filter((dir) => !reportedBusy.has(dir));
+    if (unreported.length > 0) {
+      for (const dir of unreported) reportedBusy.add(dir);
+      const stop = unreported.map((dir) => `agent-device daemon stop${dir ? ` --state-dir ${quotedPath(dir)}` : ''}`);
+      report(
+        `agent-device daemon is busy, so Stim did not check it for sessions on ${device.platform === 'ios' ? device.id : (device.id ?? device.avdName)}; any that name the device stay open until the daemon is idle or, if it is yours, stopped with ${stop.join(' and ')}`,
+      );
     }
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))

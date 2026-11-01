@@ -269,10 +269,17 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   const consoleError = jest
     .spyOn(console, 'error')
     .mockImplementation((...args) => void errors.push(args.map(String).join(' ')));
+  const info = jest.spyOn(console, 'info').mockImplementation(() => {});
+  const readyLogs = () => info.mock.calls.filter(([message]) => message === '[stim:readiness] ready').length;
 
   await renderRouter('./src/app', { initialUrl: '/' });
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
-  await act(() => jest.advanceTimersByTimeAsync(1000));
+  await act(() => jest.advanceTimersByTimeAsync(0));
+  expect(readyLogs()).toBe(0);
+  await act(() => jest.advanceTimersByTimeAsync(400));
+  expect(screen.getByTestId('splash-overlay')).toBeTruthy();
+  expect(readyLogs()).toBe(1);
+  await act(() => jest.advanceTimersByTimeAsync(600));
   expect(MockSocket.sent).toContain('workspaces.subscribe');
   await act(async () => {
     activate();
@@ -282,6 +289,7 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
 
   expect(errors).toEqual([]);
   expect(screen.queryByTestId('splash-overlay')).toBeNull();
+  expect(readyLogs()).toBe(1);
   expect(screen.getAllByText('Mock Mac').length).toBeGreaterThan(0);
   expect(mockStore('stim.app').get('marker')).not.toBe(PREVIOUS_MARKER);
   expect(mockStore('stim.status').has(`status:${MAC_ID}`)).toBe(false);

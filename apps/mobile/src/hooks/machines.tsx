@@ -11,6 +11,7 @@ import { StimConnection } from '@/lib/connection';
 import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import { createMachineStore, IDLE_LINK, type MachineLink, type MachinesState } from '@/lib/machine-store';
 import { listMacs, rememberServerIdentity, type PairedMac } from '@/lib/macs';
+import { markMacsLoaded } from '@/lib/startup-readiness';
 import { StatusCache } from '@/lib/status-cache';
 import { applyWorkspaces, EMPTY_VIEWS, viewsPayload, type StatusViews } from '@/lib/status-views';
 import type { MachineUsage, StatusPayload, StatusUsage } from '@/protocol/types';
@@ -151,7 +152,10 @@ function useMachines<T>(selector: (state: MachinesState) => T): T {
 
 const reload = () => {
   listMacs().then(
-    (macs) => machines.setMacs(macs, true),
+    (macs) => {
+      machines.setMacs(macs, true);
+      markMacsLoaded();
+    },
     () => machines.setMacs([], false),
   );
 };

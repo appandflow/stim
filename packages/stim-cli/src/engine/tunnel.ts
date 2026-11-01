@@ -1,7 +1,18 @@
 import type { StimContext } from '@stim-cli/core';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import type { ChildProcess } from 'node:child_process';
-import { closeSync, mkdirSync, openSync, readFileSync, unlinkSync, watch, type FSWatcher } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  unlinkSync,
+  watch,
+  type FSWatcher,
+} from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, dirname, join, resolve as resolvePath, sep } from 'node:path';
 import { getConfigDir } from '../workspace/config.ts';
@@ -38,7 +49,7 @@ export interface TunnelRecord {
   logFile?: string | null;
 }
 
-export function tunnelArgv(
+function tunnelArgv(
   provider: ManagedProvider,
   port: number,
   ngrokUrl?: string | null,
@@ -68,7 +79,7 @@ export function tunnelArgv(
 
 const CLOUDFLARED_URL_RE = /https:\/\/[a-z0-9-]+\.trycloudflare\.com/i;
 
-export function parseCloudflaredLine(line: string): string | null {
+function parseCloudflaredLine(line: string): string | null {
   // cloudflared prints the quick-tunnel URL inside a stderr banner.
   const match = line.match(CLOUDFLARED_URL_RE);
   return match ? match[0] : null;
@@ -87,7 +98,7 @@ export function parseNgrokLine(line: string): string | null {
   return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
 }
 
-export function parseTailscaleLine(line: string): string | null {
+function parseTailscaleLine(line: string): string | null {
   return /^https:\/\/[^\s/]+\.ts\.net(:\d+)?\/?$/.test(line) ? line : null;
 }
 
@@ -109,10 +120,15 @@ export async function withManagedTunnelLock<T>(
   fn: (claim: ClaimHandle) => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
-    ...options,
-    rejectOwnerPurposes: ['workspace removal'],
-  });
+  const lockRoot = managedTunnelLockRoot(root);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'metro-tunnel', fn, {
+      ...options,
+      rejectOwnerPurposes: ['workspace removal'],
+    });
+  } finally {
+    removeEmptyDirs([join(lockRoot, '.stim'), lockRoot]);
+  }
 }
 
 export async function withManagedTunnelRemovalLock<T>(
@@ -120,10 +136,15 @@ export async function withManagedTunnelRemovalLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedTunnelLockRoot(root), 'metro-tunnel', fn, {
-    ...options,
-    ownerPurpose: 'workspace removal',
-  });
+  const lockRoot = managedTunnelLockRoot(root);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'metro-tunnel', fn, {
+      ...options,
+      ownerPurpose: 'workspace removal',
+    });
+  } finally {
+    removeEmptyDirs([join(lockRoot, '.stim'), lockRoot]);
+  }
 }
 
 export async function withManagedRemoteWorktreeLock<T>(
@@ -131,11 +152,16 @@ export async function withManagedRemoteWorktreeLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
-    ...options,
-    external: true,
-    rejectOwnerPurposes: ['worktree removal'],
-  });
+  const lockRoot = managedRemoteWorktreeLockRoot(worktreeRoot);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'managed-remote', fn, {
+      ...options,
+      external: true,
+      rejectOwnerPurposes: ['worktree removal'],
+    });
+  } finally {
+    removeEmptyDirs([lockRoot]);
+  }
 }
 
 export async function withManagedRemoteWorktreeRemovalLock<T>(
@@ -143,11 +169,16 @@ export async function withManagedRemoteWorktreeRemovalLock<T>(
   fn: () => Promise<T>,
   options: WorkspaceProcessLockOptions = {},
 ): Promise<T> {
-  return withWorkspaceProcessLock(managedRemoteWorktreeLockRoot(worktreeRoot), 'managed-remote', fn, {
-    ...options,
-    external: true,
-    ownerPurpose: 'worktree removal',
-  });
+  const lockRoot = managedRemoteWorktreeLockRoot(worktreeRoot);
+  try {
+    return await withWorkspaceProcessLock(lockRoot, 'managed-remote', fn, {
+      ...options,
+      external: true,
+      ownerPurpose: 'worktree removal',
+    });
+  } finally {
+    removeEmptyDirs([lockRoot]);
+  }
 }
 
 export function managedLockHolders(root: string): string[] {
@@ -170,6 +201,37 @@ export function managedLockHolders(root: string): string[] {
     }
   }
   return reasons;
+}
+
+function removeEmptyDirs(dirs: string[]): void {
+  for (const dir of dirs) {
+    try {
+      rmdirSync(dir);
+    } catch {}
+  }
+}
+
+function childDirs(dir: string): string[] {
+  try {
+    return readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(dir, entry.name));
+  } catch {
+    return [];
+  }
+}
+
+export function pruneEmptyProcessLockDirs(): number {
+  const base = join(getConfigDir(), 'process-locks');
+  let removed = 0;
+  for (const top of childDirs(base)) {
+    const entries = basename(top) === 'worktrees' ? childDirs(top) : [top];
+    for (const entry of entries) {
+      removeEmptyDirs(entry === top ? [join(top, '.stim'), top] : [entry]);
+      if (!existsSync(entry)) removed++;
+    }
+  }
+  return removed;
 }
 
 function managedTunnelLockRoot(root: string): string {

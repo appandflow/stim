@@ -72,7 +72,7 @@
   "packages/ci": {
     "src": {
       "as": 8,
-      "nonNull": 6
+      "nonNull": 5
     },
     "test": {
       "as": 5,
@@ -85,7 +85,7 @@
       "nonNull": 49
     },
     "test": {
-      "as": 35,
+      "as": 34,
       "nonNull": 44
     }
   },
@@ -116,16 +116,16 @@
     },
     "test": {
       "as": 253,
-      "nonNull": 407
+      "nonNull": 405
     }
   },
   "packages/stim-cli": {
     "src": {
-      "as": 839,
-      "nonNull": 342
+      "as": 835,
+      "nonNull": 341
     },
     "test": {
-      "as": 537,
+      "as": 543,
       "nonNull": 810
     }
   },

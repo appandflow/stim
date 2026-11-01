@@ -31,13 +31,15 @@ const { values } = parseArgs({
     'free-gb': { type: 'string', default: '212' },
     overlay: { type: 'string' },
     'slot-waits': { type: 'boolean', default: false },
+    capacity: { type: 'boolean', default: false },
+    'linux-owner': { type: 'boolean', default: false },
   },
 });
 
 const PAIRING_TTL_MS = 5 * 60 * 1000;
 const DEVICES_FILE = join(tmpdir(), 'stim-mobile-mock-server-devices.json');
 const IDENTITY_FILE = join(tmpdir(), 'stim-mobile-mock-server-identity.key');
-const fixtures = loadFixtures({ slotWaits: values['slot-waits'] });
+const fixtures = loadFixtures({ slotWaits: values['slot-waits'], capacity: values.capacity });
 const legacyArchives = process.env.STIM_MOCK_LEGACY_ARCHIVES === '1';
 const recording = loadRecording();
 const recordingFor = (params) => {
@@ -108,7 +110,8 @@ const busy = new Set();
 const startedAt = Date.now();
 const shiftMs = startedAt - Date.parse(fixtures.capturedAt);
 const logs = fixtures.logs.map((record) => ({ ...record, ts: record.ts + shiftMs }));
-const only = values.workspaces ? new RegExp(values.workspaces) : null;
+const LINUX_OWNER_ROOT = /^\/home\/floco\//;
+const only = values.workspaces ? new RegExp(values.workspaces) : values['linux-owner'] ? LINUX_OWNER_ROOT : null;
 const readOverlay = () => {
   if (!values.overlay) return {};
   try {
@@ -128,6 +131,7 @@ const overlaid = (payload) => {
 };
 const status = () => {
   const payload = overlaid(shiftTimestamps(fixtures.status, shiftMs));
+  if (values['linux-owner']) Object.assign(payload, { simctlAvailable: false, deviceLeases: [], archived: [] });
   const archived = payload.archived ?? [];
   payload.archivedUsage = {
     count: archived.length,

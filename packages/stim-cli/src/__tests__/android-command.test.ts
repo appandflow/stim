@@ -1,11 +1,12 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as androidOperation from '../commands/android.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { nativeAndroidFixture } from './_native-android-project.ts';
 import { readWorkspaceLaunches } from '../supervisor/state.ts';
 import { runReload } from '../commands/reload.ts';
-import { resolveBuild } from '../cache/build-cache.ts';
+import { resolveBuild, type FingerprintTarget, type ProjectFingerprint } from '../cache/build-cache.ts';
 import { projectIntegrations } from '../integrations/projects.ts';
 import { createProjectRegistry } from '../integrations/project-registry.ts';
 import {
@@ -31,7 +32,13 @@ import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import type { acquireBuildSlot } from '../engine/build-slots.ts';
-import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
+import {
+  ACTIVE_BUILD_KEY,
+  NO_BUILD_PROGRESS,
+  buildReport,
+  parseActiveBuild,
+  startBuildProgress,
+} from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -47,7 +54,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join, parse } from 'node:path';
+import { dirname, join, parse } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
@@ -58,7 +65,15 @@ import {
   upsertProject,
   writeConfigSetting,
 } from '../workspace/config.ts';
-import { buildMachinesFile, openLogDir, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
+import {
+  buildMachinesFile,
+  openLogDir,
+  queryLogs,
+  readBuildHistory,
+  readBuildLedger,
+  readLastBuilds,
+  readStats,
+} from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
   workspaceDir,
@@ -94,7 +109,7 @@ import {
   runAndroid,
 } from '../commands/android.ts';
 import * as androidDevices from '../devices/android.ts';
-import { newestBuildTools } from '../devices/android.ts';
+import { hostSystemImageArch, newestBuildTools } from '../devices/android.ts';
 import { BUILD_ERROR, type BuildAndroidResult } from '../engine/gradle.ts';
 import {
   ADB_INSTALL_TIMEOUT_MS,
@@ -108,6 +123,7 @@ import { PREBUILD_ERROR } from '../engine/prebuild.ts';
 import type { recordCapacityRefusal as recordRefusal, RecordStatsResult, StatsRun } from '../engine/stats.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, writeCasToolchain } from './_factories.ts';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { writeSignedApk } from './_signed-apk.ts';
 
 const IMAGES = [
   { api: 36, tag: 'google_apis', arch: 'arm64-v8a', pkg: 'system-images;android-36;google_apis;arm64-v8a' },
@@ -145,6 +161,7 @@ beforeEach(() => {
   androidHome = process.env.ANDROID_HOME;
   androidSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(home, 'sdk');
+  mkdirSync(process.env.ANDROID_HOME);
   delete process.env.ANDROID_SDK_ROOT;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-')));
   writeFileSync(
@@ -354,12 +371,13 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
     projectRegistry: undefined as NonNullable<Parameters<typeof runAndroid>[0]>['projectRegistry'],
     ensureRemoteBootOwned: (args: Parameters<typeof ensureRemoteBootOwned>[0]) =>
       ensureRemoteBootOwned({ ...args, ledgerRoot: join(home, 'machine-eas') }),
-    deviceAbi: () => null,
+    deviceAbi: async () => null,
     ensureDevice: async (args: unknown = {}) => {
       calls.ensureDevice.push(args);
       return { avdName: 'stim-app-412', consolePort: 5584, owned: true };
     },
     listSystemImages: () => IMAGES,
+    ensureImage: async () => ({ ok: true as const, installed: false }),
     ensureDeviceBooted: async (args: unknown = {}) => {
       calls.booted.push(args);
       return { ok: true, serial: 'emulator-5584' };
@@ -378,6 +396,13 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.fingerprint.push(path);
       return { hash: FINGERPRINT, sources: [] };
     },
+    memoize: async (
+      projectRoot: string,
+      target: FingerprintTarget,
+      {
+        fingerprint,
+      }: { fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null> },
+    ) => ({ fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null, memoHit: false, check: null }),
     untracked: (args: { projectRoot: string }) => {
       calls.untracked.push(args);
       return [];
@@ -536,6 +561,12 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       calls.verify.push(args);
       return { verified: true, waitedMs: 3100, timedOut: false, mode: null };
     },
+    followHostedLaunchLogs: () => ({
+      readDeviceRecords: () => [],
+      readNativeCrashes: () => [],
+      deviceLogsThrough: () => null,
+      stop: () => {},
+    }),
     ensureStorage: async (dir: string) => {
       calls.ensureStorage.push(dir);
     },
@@ -621,8 +652,10 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
 });
 
 test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'local.properties'), 'sdk.dir=/project-sdk');
   writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
   const h = harness({ resolveSettingsFor: () => ({ android: { gradleRoot: 'native' } }) });
   await h.run();
@@ -645,6 +678,22 @@ test('an invalid Android pool bound refuses before device creation and emits one
   } finally {
     delete process.env.STIM_POOL_ANDROID_PARKED_MAX;
   }
+});
+
+test('a missing local Android SDK refuses before Metro or device setup', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
+  const h = harness({ json: true });
+  const result = await h.run();
+  expect(result.error).toMatchObject({
+    code: 'STIM_BUILD_FAILED',
+    message: `No Android SDK at ${join(home, 'sdk')}.`,
+    remedy: expect.stringContaining('android/local.properties'),
+  });
+  expect(h.calls.metro).toEqual([]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.prebuild).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(JSON.parse(h.stdout.at(-1) ?? '')).toMatchObject({ code: 'STIM_BUILD_FAILED' });
 });
 
 test('a Windows project root with no room for the NDK object paths refuses before any emulator is prepared', async () => {
@@ -748,6 +797,56 @@ describe('adopted Android installs', () => {
       expect(loadConfig()?.projects[root]?.platforms?.android?.adoptionPending).toBe(failed ? true : undefined);
     },
   );
+});
+
+describe('adopted Android installs with a recorded signed tail', () => {
+  afterEach(() => resetExecutor());
+
+  test.each([
+    ['the installed APK has the same size and tail', 'same', 0],
+    ['the installed APK has a different tail', 'different', 1],
+  ] as const)('%s', async (_label, mode, expectedInstalls) => {
+    const apkPath = fakeApk();
+    const apk = writeSignedApk(apkPath);
+    const device = { avdName: 'stim-adopted', consolePort: 5584, owned: true, adoptionPending: true, adopted: true };
+    upsertProject(root, { platforms: { android: device } });
+    const commands: string[] = [];
+    let installs = 0;
+    setExecutor(
+      makeExecutor({
+        run(cmd) {
+          if (cmd.includes('-list-avds')) return 'stim-adopted';
+          if (cmd.endsWith('adb devices') || cmd.endsWith('adb" devices'))
+            return 'List of devices attached\nemulator-5584\tdevice';
+          if (cmd.includes('emu avd name')) return 'stim-adopted\nOK';
+          throw new Error(`Unexpected run: ${cmd}`);
+        },
+        runFileQuiet: (_file, args = []) => (args.join(' ').includes('emu avd name') ? 'stim-adopted\nOK' : null),
+        runFile(file, args = []) {
+          if (args[0] === '-list-avds') return 'stim-adopted';
+          if (args[0] === 'devices') return 'List of devices attached\nemulator-5584\tdevice';
+          commands.push([file, ...args].join(' '));
+          if (args.includes('list')) return 'package:com.example.app';
+          if (args.includes('clear')) return 'Success';
+          if (args.join(' ').includes('tail -c'))
+            return `path /data/app/base.apk\nsize ${apk.size}\n${mode === 'same' ? apk.tailSha256 : '0'.repeat(64)}  -\n`;
+          if (args.includes('install')) {
+            installs++;
+            return 'Success';
+          }
+          throw new Error(`Unexpected runFile: ${commands.at(-1)}`);
+        },
+      }),
+    );
+    const h = harness({ ensureDevice: async () => device, resolveCached: () => apkPath, install: installAndroidApp });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(installs).toBe(expectedInstalls);
+    expect(
+      commands.some((command) => command.includes('shell sha256sum') || command.endsWith('pm path com.example.app')),
+    ).toBe(false);
+    expect(h.stderr.some((line) => line.includes('already has this build'))).toBe(mode === 'same');
+  });
 });
 
 const DF_ROOMY =
@@ -910,7 +1009,7 @@ describe('explicit remote backend behavior', () => {
       resolveAvdSerial: never('local AVD resolution for a remote device'),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend, easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
           return { deviceName: 'remote device', owned: true, remote: true };
@@ -939,8 +1038,15 @@ describe('explicit remote backend behavior', () => {
   test.each(['proxy', 'eas'] as const)(
     '%s selects that backend and replaces only device operations',
     async (backend) => {
-      const { h, selected, remoteCalls } = remoteHarness(backend);
+      let clock = Date.now();
+      const { h, selected, remoteCalls } = remoteHarness(backend, {
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
+        now: () => (clock += 1000),
+      });
       const result = await h.run();
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.ok).toBe(true);
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
@@ -994,6 +1100,18 @@ describe('explicit remote backend behavior', () => {
     expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
   });
 
+  test('cleanAppState installs on a remote emulator without cleaning it', async () => {
+    const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+    try {
+      const { h, remoteCalls } = remoteHarness('eas', { cleanAppState: true });
+      expect((await h.run()).ok).toBe(true);
+      expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
+      expect(reset).not.toHaveBeenCalled();
+    } finally {
+      reset.mockRestore();
+    }
+  });
+
   test('an emulator refused at device admission ends as STIM_AT_CAPACITY with its remedy', async () => {
     const atCapacity = {
       code: 'STIM_AT_CAPACITY',
@@ -1022,7 +1140,7 @@ describe('explicit remote backend behavior', () => {
     const { h } = remoteHarness('proxy', {
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'proxy', easBin: null, agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'remote device', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ failed: true, reason: 'ENOSPC: remote profile write failed' }),
         install: never('install'),
@@ -1044,7 +1162,7 @@ describe('explicit remote backend behavior', () => {
     const { h } = remoteHarness('eas', {
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: step === 'install' ? failing : (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1067,7 +1185,7 @@ describe('explicit remote backend behavior', () => {
       verifyCollector: () => ({ status: 'ours' as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1190,6 +1308,19 @@ describe('explicit remote backend behavior', () => {
     expect(h.calls.ensureDevice.length).toBe(1);
   });
 
+  test.each(['auto', 'remote', 'remote-only'] as const)(
+    '--remote %s asks automatic placement with that word',
+    async (word) => {
+      const automatic = vi
+        .fn<typeof automaticDevicePlacement>()
+        .mockRejectedValue(Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' }));
+      const h = harness({ remoteDevice: word, automaticDevicePlacement: automatic });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(automatic).toHaveBeenCalledWith(expect.objectContaining({ platform: 'android', placement: word }));
+    },
+  );
+
   test('auto on a full machine with remote.easFallback creates the EAS Simulator session --remote eas would', async () => {
     const backends: unknown[] = [];
     const checkEasFallback = vi.fn<() => Promise<{ usable: true }>>(async () => ({ usable: true }));
@@ -1214,7 +1345,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -1252,7 +1383,7 @@ describe('explicit remote backend behavior', () => {
       },
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           order.push('ensureDevice');
           return { deviceName: 'EAS Simulator', owned: true, remote: true };
@@ -1302,7 +1433,7 @@ describe('explicit remote backend behavior', () => {
       }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => {
           remoteCalls.push('ensureDevice');
           return { deviceName: 'EAS Simulator', owned: true, remote: true };
@@ -1364,7 +1495,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
           order.push('boot');
@@ -1434,7 +1565,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => {
           log.push('boot');
@@ -1468,7 +1599,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: never('install'),
@@ -1505,7 +1636,7 @@ describe('explicit remote backend behavior', () => {
       ensureMetroReachable: async () => ({ ok: true as const }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_unmanaged' }),
         install: never('install'),
@@ -1563,7 +1694,7 @@ describe('explicit remote backend behavior', () => {
         ensureMetroReachable: async () => ({ ok: true as const }),
         remoteDeviceDeps: () => ({
           ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-          checkCapacity: () => null,
+          checkCapacity: async () => null,
           ensureDevice: async () => {
             deviceEntries += 1;
             if (deviceEntries === 2) bothAtDevice();
@@ -1642,7 +1773,7 @@ describe('explicit remote backend behavior', () => {
       }),
       remoteDeviceDeps: () => ({
         ctx: { root, label: 'app', backend: 'eas', easBin: '/bin/eas', agentDeviceBin: '/bin/agent-device' },
-        checkCapacity: () => null,
+        checkCapacity: async () => null,
         ensureDevice: async () => ({ deviceName: 'EAS Simulator', owned: true, remote: true }),
         ensureDeviceBooted: async () => ({ ok: true, serial: 'drs_42' }),
         install: (args: InstallArgs = {}) => ({ ok: true, apkPath: args.apkPath ?? '' }),
@@ -2103,6 +2234,30 @@ describe('product flavors (--variant / android.variant)', () => {
 });
 
 describe('the applicationId comes from the built APK', () => {
+  test('a memoized fingerprint whose background check disagrees warns at the end of the run', async () => {
+    const consulted: boolean[] = [];
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      memoize: async (_root: string, _target: FingerprintTarget, { consult }: { consult: boolean }) => {
+        consulted.push(consult);
+        return {
+          fingerprint: { hash: FINGERPRINT, sources: [] },
+          memoHit: true,
+          check: {
+            settle: async () => ({ status: 'stale', recorded: FINGERPRINT, current: 'ffee0011' }),
+            cancel: () => {},
+          },
+        };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(consulted).toEqual([true]);
+    expect(h.calls.fingerprint).toEqual([]);
+    expect(h.stderr.join('\n')).toMatch(/no longer matches the tree \(ffee0011\)/);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.find((record) => record.event === 'fingerprint_memo_stale')).toMatchObject({ current: 'ffee0011' });
+  });
+
   test('the APK is authoritative when it answers, even when project detection disagrees', async () => {
     const h = harness({ readApkPackage: () => 'io.tlon.groups' });
     const result = await h.run();
@@ -2113,6 +2268,20 @@ describe('the applicationId comes from the built APK', () => {
     expect(result.facts.bundleId).toBe('io.tlon.groups');
     expect(h.stdout[0]).toMatch(/io\.tlon\.groups/);
     expect(h.stderr.join('\n')).toMatch(/io\.tlon\.groups \(from the APK; project files say com\.example\.app\)/);
+  });
+
+  test('a hit takes the package stored on its cache entry instead of reading the cached APK', async () => {
+    const h = harness({
+      resolveCached: () => '/cache/app-debug.apk',
+      storedAppId: (platform: string, key: string) =>
+        platform === 'android' && key.startsWith(FINGERPRINT) ? 'io.tlon.groups' : null,
+    });
+    const result = await h.run();
+
+    expect(result.ok).toBe(true);
+    expect(h.calls.readApkPackage).toEqual([]);
+    expect(h.calls.install[0]?.packageName).toBe('io.tlon.groups');
+    expect(h.calls.launch[0]?.packageName).toBe('io.tlon.groups');
   });
 
   test('an unreadable APK falls back to project detection', async () => {
@@ -2733,7 +2902,9 @@ describe('a failed build', () => {
     const errors = labelled(h.stderr, 'error');
     expect(errors.some((l) => /MainActivity\.kt:23:9: Unresolved reference 'Foo'\./.test(l))).toBeTruthy();
     expect(errors.some((l) => /and 3 more diagnostic/.test(l))).toBeTruthy();
-    expect(labelled(h.stderr, 'log')[0]).toBe(phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson')));
+    expect(labelled(h.stderr, 'log')[0]).toBe(
+      phaseLine('log', join(workspaceLogsDir(root), 'build-android.ndjson.failed')),
+    );
   });
 
   test('falls back to the last transcript lines when nothing could be extracted', async () => {
@@ -2883,7 +3054,7 @@ describe('the remote cache', () => {
     });
     try {
       await installed;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.advanceTimersByTimeAsync(20);
       expect(installationStarted).toBe(true);
       expect(returned).toBe(false);
     } finally {
@@ -2919,7 +3090,7 @@ describe('the remote cache', () => {
         resolveRemoteBuild: async () => ({ timedOut: true }),
       });
       result = await h.run();
-      await new Promise((r) => setTimeout(r, 20));
+      await vi.advanceTimersByTimeAsync(20);
     } finally {
       process.exit = originalExit;
     }
@@ -3059,6 +3230,33 @@ describe('--no-build-cache', () => {
     );
     expect(activeReport).toMatchObject({ outcome: 'cold', outcomeKnown: true });
     expect(activeReport).not.toHaveProperty('cacheLookupOutcome');
+  });
+
+  test('fingerprints in full without consulting the memo', async () => {
+    const consulted: boolean[] = [];
+    const h = harness({
+      useBuildCache: false,
+      memoize: async (
+        projectRoot: string,
+        target: FingerprintTarget,
+        {
+          consult,
+          fingerprint,
+        }: {
+          consult: boolean;
+          fingerprint?: (root: string, target: FingerprintTarget) => Promise<ProjectFingerprint | null>;
+        },
+      ) => {
+        consulted.push(consult);
+        return {
+          fingerprint: fingerprint ? await fingerprint(projectRoot, target) : null,
+          memoHit: false,
+          check: null,
+        };
+      },
+    });
+    await h.run();
+    expect(consulted).toEqual([false]);
   });
 
   test('still STORES -- over the entry it was told not to trust -- and still uploads', async () => {
@@ -3463,7 +3661,7 @@ describe('Contract 5: the device-log collector', () => {
     writeWorkspaceState(root, {
       collectors: { android: { pid: PREVIOUS_COLLECTOR_PID, startedAt: 'then' }, ios: { pid: 777, startedAt: 'then' } },
     });
-    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }) });
+    const h = harness({ verifyCollector: () => ({ status: 'ours' as const }), pidAlive: () => false });
     await h.run();
     expect(h.calls.kill).toEqual([[PREVIOUS_COLLECTOR_PID, 'SIGTERM']]);
     expect(h.calls.spawn.length).toBe(1);
@@ -3839,6 +4037,32 @@ describe('launch verification', () => {
       }
     },
   );
+
+  test('every crash check of one launch verification shares one device clock sample', async () => {
+    const adbCalls: string[][] = [];
+    setExecutor(
+      makeExecutor({
+        runFileQuiet: (file, args) => {
+          if (file !== 'adb') return null;
+          adbCalls.push(args);
+          return args.includes('date') ? String(Date.now()) : '';
+        },
+      }),
+    );
+    try {
+      const h = harness({
+        verifyLaunched: async (args: Parameters<typeof verifyLaunch>[0]) => {
+          for (let check = 0; check < 3; check++) await args?.readNativeCrashes?.();
+          return { verified: true, processAlive: true, waitedMs: 2500, errors: [] };
+        },
+      });
+      expect((await h.run()).ok).toBe(true);
+      expect(adbCalls.filter((args) => args.includes('date'))).toHaveLength(1);
+      expect(adbCalls.filter((args) => args.includes('logcat')).length).toBeGreaterThanOrEqual(3);
+    } finally {
+      resetExecutor();
+    }
+  });
 
   test("a verified launch reports launched: true and polls this workspace's timeline", async () => {
     const h = harness();
@@ -4252,12 +4476,13 @@ describe('concurrency limits', () => {
       wait: false,
       recordCapacityRefusal,
       getLimits: () => ({ maxBuilds: 0, maxDevices: 3 }),
-      checkCapacity: (args: Record<string, unknown>) => {
+      checkCapacity: async (args: Record<string, unknown>) => {
         capacityCalls.push(args);
         return {
           code: 'STIM_AT_CAPACITY',
           message: 'at capacity',
           remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+          max: 1,
         };
       },
     });
@@ -4278,7 +4503,7 @@ describe('concurrency limits', () => {
     expect(result.error).toMatchObject({ code: 'STIM_AT_CAPACITY', message: 'at capacity' });
     expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
     expect(recordCapacityRefusal).toHaveBeenCalledWith(
-      { platform: 'android', max: 3, workspace: workspaceId(root) },
+      { platform: 'android', max: 1, workspace: workspaceId(root) },
       expect.any(Number),
     );
     expect(h.stderr.join('\n')).not.toContain('stats unavailable');
@@ -4294,7 +4519,11 @@ describe('concurrency limits', () => {
     const h = harness({
       recordCapacityRefusal,
       wait: false,
-      checkCapacity: () => ({ code: 'STIM_CLAIM_UNAVAILABLE', message: 'owner unknown', remedy: 'inspect claim' }),
+      checkCapacity: async () => ({
+        code: 'STIM_CLAIM_UNAVAILABLE',
+        message: 'owner unknown',
+        remedy: 'inspect claim',
+      }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -4599,6 +4828,74 @@ describe('release skips Metro entirely', () => {
     });
     expect((await h.run()).ok).toBe(true);
   });
+});
+
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    const h = harness({ variant: 'productionRelease', recordedBuild: true, build: never('the build') });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe('STIM_NO_RECORDED_BUILD');
+    expect(h.calls.install).toHaveLength(0);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or APK swap', async () => {
+    const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
+    mkdirSync(dirname(recorded), { recursive: true });
+    writeFileSync(recorded, 'apk');
+    recordBuild(root, recordedBuildKey({ platform: 'android', configuration: 'productionRelease' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture',
+    });
+    const h = harness({
+      variant: 'productionRelease',
+      recordedBuild: true,
+      resolveCached: never('the cache lookup'),
+      swapApk: never('the APK swap'),
+      build: never('the build'),
+      storeCached: never('storeBuild'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(true);
+    expect(h.calls.install[0]?.apkPath).toBe(recorded);
+  });
+});
+
+describe('clean app state', () => {
+  test('cleanAppState refuses to clean an emulator Stim does not own', async () => {
+    const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+    try {
+      const h = harness({
+        cleanAppState: true,
+        ensureDevice: async () => ({ avdName: 'Pixel_9', consolePort: 5584, owned: false }),
+      });
+      const result = await h.run();
+      expect(result.ok).toBe(false);
+      expect(result.error?.code).toBe('STIM_BAD_ARG');
+      expect(reset).not.toHaveBeenCalled();
+      expect(h.calls.install).toHaveLength(0);
+    } finally {
+      reset.mockRestore();
+    }
+  });
+
+  test.each([true, false])(
+    'cleanAppState=%s decides whether a run clears the app state of an emulator it does not adopt',
+    async (cleanAppState) => {
+      const reset = vi.spyOn(androidDevices, 'resetAdoptedAvd').mockResolvedValue();
+      try {
+        const h = harness({
+          cleanAppState,
+          ensureDevice: async () => ({ avdName: 'stim-app-412', consolePort: 5584, owned: true }),
+        });
+        expect((await h.run()).ok).toBe(true);
+        expect(reset.mock.calls).toEqual(cleanAppState ? [['stim-app-412', 'emulator-5584', 'com.example.app']] : []);
+        expect(h.calls.install).toHaveLength(1);
+      } finally {
+        reset.mockRestore();
+      }
+    },
+  );
 });
 
 describe('the release APK swap', () => {
@@ -5660,9 +5957,9 @@ describe('--device (a physical Android device)', () => {
   function physicalHarness(overrides: Record<string, unknown> = {}) {
     return harness({
       device: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -5689,7 +5986,7 @@ describe('--device (a physical Android device)', () => {
   test('a physical Debug run builds for the device primary ABI', async () => {
     const serials: string[] = [];
     const h = physicalHarness({
-      deviceAbi: (serial: string) => {
+      deviceAbi: async (serial: string) => {
         serials.push(serial);
         return 'arm64-v8a';
       },
@@ -5749,7 +6046,7 @@ describe('--device (a physical Android device)', () => {
   test('a physical run honours an explicit serial', async () => {
     const h = physicalHarness({
       device: 'RFCR7081Q9L',
-      listDevices: () => ({
+      listDevices: async () => ({
         emulators: [],
         physical: [{ serial: 'OTHER' }, { serial: 'RFCR7081Q9L' }],
         unhealthy: [],
@@ -5762,7 +6059,7 @@ describe('--device (a physical Android device)', () => {
 
   test('a physical run refuses with the resolver error and remedy when no device is connected', async () => {
     const h = physicalHarness({
-      listDevices: () => ({ emulators: [], physical: [], unhealthy: [] }),
+      listDevices: async () => ({ emulators: [], physical: [], unhealthy: [] }),
     });
     const result = await h.run();
     expect(result.ok).toBe(false);
@@ -5781,9 +6078,9 @@ describe('--device (a physical Android device)', () => {
     const h = harness({
       device: true,
       remoteDevice: 'proxy',
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       fingerprint: never('the fingerprint'),
       resolveRemoteDeviceContext: never('the remote session'),
     });
@@ -5805,9 +6102,9 @@ describe('--device refusals found in review', () => {
   test('an empty --device value is refused, never silently run on the emulator', async () => {
     const h = harness({
       device: '',
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -5829,9 +6126,9 @@ describe('--device refusals found in review', () => {
     const h = harness({
       device: true,
       ...(remoteDevice ? { remoteDevice } : {}),
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -5848,9 +6145,9 @@ describe('--device refusals found in review', () => {
     const h = harness({
       device: true,
       remoteDevice: 'proxy',
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       fingerprint: never('the fingerprint'),
       resolveRemoteDeviceContext: never('the remote session'),
     });
@@ -5868,9 +6165,9 @@ describe('--device refusals found in review', () => {
   test('a physical run records its Metro reverse, and no other serial, in the workspace state', async () => {
     const h = harness({
       device: true,
-      listDevices: () => CONNECTED2,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED2,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ensureDeviceBooted: never('the emulator boot'),
@@ -5891,9 +6188,9 @@ describe('--device refusals found in review', () => {
 test('a signature conflict on install names the conflict instead of blaming the cable', async () => {
   const h = harness({
     device: true,
-    listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
-    deviceModel: () => 'SM-G996W',
-    isEmulatorDevice: () => false,
+    listDevices: async () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+    deviceModel: async () => 'SM-G996W',
+    isEmulatorDevice: async () => false,
     checkCapacity: never('the device-capacity check'),
     ensureDevice: never('the owned-device path'),
     ensureDeviceBooted: never('the emulator boot'),
@@ -5982,9 +6279,9 @@ describe('--device: the lease on the device', () => {
     return harness({
       device: true,
       json: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       acquireLease: async () => ({ status: 'leased', kind: 'run', expiresAt: lease.expiresAt }),
       makeRunLease: () => lease,
       ...overrides,
@@ -6049,9 +6346,9 @@ describe('--device: the lease on the device', () => {
       device: true,
       json: true,
       wait: '0',
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     const result = await h.run();
 
@@ -6073,9 +6370,9 @@ describe('--device: the lease on the device', () => {
       device: true,
       json: true,
       wait: false,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     const result = await h.run();
 
@@ -6089,9 +6386,9 @@ describe('--device: the lease on the device', () => {
   test('a free device is leased by the run and released at the end', async () => {
     const h = harness({
       device: true,
-      listDevices: () => CONNECTED,
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
     });
     expect((await h.run()).ok).toBe(true);
     expect(h.stderr.join('\n')).toMatch(new RegExp(`run lease on ${SERIAL} until`));
@@ -6102,8 +6399,8 @@ describe('--device: the lease on the device', () => {
     const bad = await harness({
       device: true,
       wait: 'soon',
-      listDevices: () => CONNECTED,
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      isEmulatorDevice: async () => false,
     }).run();
     expect(bad.error?.message).toMatch(/Invalid --wait value/);
 
@@ -6111,8 +6408,8 @@ describe('--device: the lease on the device', () => {
       device: true,
       wait: false,
       waitConflict: true,
-      listDevices: () => CONNECTED,
-      isEmulatorDevice: () => false,
+      listDevices: async () => CONNECTED,
+      isEmulatorDevice: async () => false,
     }).run();
     expect(both.error?.message).toMatch(/--wait and --no-wait ask for opposite things/);
   });
@@ -6126,9 +6423,9 @@ describe('--device with no serial: the pool', () => {
     return harness({
       device: true,
       json: true,
-      listDevices: () => ({ emulators: [], physical: serials.map((serial) => ({ serial })), unhealthy: [] }),
+      listDevices: async () => ({ emulators: [], physical: serials.map((serial) => ({ serial })), unhealthy: [] }),
       deviceModel: (serial: string) => `model-${serial}`,
-      isEmulatorDevice: () => false,
+      isEmulatorDevice: async () => false,
       checkCapacity: never('the device-capacity check'),
       ensureDevice: never('the owned-device path'),
       ...overrides,
@@ -6276,8 +6573,12 @@ describe('the emulator system-image flag', () => {
     expect(neither.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: null } });
   });
 
-  test('an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
-    const h = harness({ json: true, systemImage: 'system-images;android-99;google_apis;arm64-v8a' });
+  test('with android.installImages never, an unknown system image refuses with STIM_BAD_ARG naming the installed ids, before anything is created', async () => {
+    const h = harness({
+      json: true,
+      systemImage: `system-images;android-99;google_apis;${hostSystemImageArch()}`,
+      resolveSettingsFor: () => ({ android: { installImages: 'never' } }),
+    });
     const result = await h.run();
     expect(result.ok).toBe(false);
     const stdout0 = h.stdout[0];
@@ -6289,6 +6590,107 @@ describe('the emulator system-image flag', () => {
       /system-images;android-36;google_apis;arm64-v8a, system-images;android-35;google_apis;arm64-v8a/,
     );
     expect(payload.remedy).toMatch(/--system-image/);
+    expect(payload.remedy).toMatch(/--install "system-images;android-99/);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('with android.installImages auto, an uninstalled image for this host goes to the installer before the device', async () => {
+    const wanted = `system-images;android-99;google_apis;${hostSystemImageArch()}`;
+    const asked: unknown[] = [];
+    const h = harness({
+      systemImage: wanted,
+      ensureImage: async (args: { requested: string | null; policy: string }) => {
+        asked.push([args.requested, args.policy, h.calls.ensureDevice.length]);
+        return { ok: true as const, installed: true };
+      },
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(asked).toEqual([[wanted, 'auto', 0]]);
+    expect(h.calls.ensureDevice[0]).toMatchObject({ flags: { systemImage: wanted } });
+  });
+
+  test('a foldable profile is checked again against the image the run just installed', async () => {
+    const wanted = `system-images;android-99;google_apis;${hostSystemImageArch()}`;
+    const images = [...IMAGES];
+    const h = harness({
+      json: true,
+      systemImage: wanted,
+      deviceProfile: 'pixel_fold',
+      listDeviceProfiles: () => ['pixel_6', 'pixel_fold'],
+      listSystemImages: () => images,
+      ensureImage: async () => {
+        images.push({ api: 99, tag: 'google_apis', arch: hostSystemImageArch(), pkg: wanted });
+        return { ok: true as const, installed: true };
+      },
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(JSON.parse(h.stdout[0] ?? '{}')).toMatchObject({
+      code: 'STIM_BAD_ARG',
+      message: expect.stringContaining('foldable support'),
+    });
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test.each([
+    { bootPending: false, avdOnDisk: true, installs: false },
+    { bootPending: true, avdOnDisk: true, installs: true },
+    { bootPending: false, avdOnDisk: false, installs: true },
+  ])(
+    'an owned emulator that finished a boot and still exists skips the image install (%j)',
+    async ({ bootPending, avdOnDisk, installs }) => {
+      const avds = join(root, 'avds');
+      const previous = process.env.ANDROID_AVD_HOME;
+      process.env.ANDROID_AVD_HOME = avds;
+      try {
+        if (avdOnDisk) {
+          mkdirSync(join(avds, 'stim-kept.avd'), { recursive: true });
+          writeFileSync(join(avds, 'stim-kept.ini'), `path=${join(avds, 'stim-kept.avd')}\n`);
+        }
+        upsertProject(root, { platforms: { android: { avdName: 'stim-kept', owned: true, bootPending } } });
+        let asked = 0;
+        const h = harness({
+          systemImage: `system-images;android-99;google_apis;${hostSystemImageArch()}`,
+          ensureImage: async () => {
+            asked += 1;
+            return { ok: true as const, installed: false };
+          },
+        });
+        await h.run();
+        expect(asked).toBe(installs ? 1 : 0);
+      } finally {
+        if (previous === undefined) delete process.env.ANDROID_AVD_HOME;
+        else process.env.ANDROID_AVD_HOME = previous;
+      }
+    },
+  );
+
+  test('a run cancelled during the image install prints one cancellation payload', async () => {
+    const controller = new AbortController();
+    const h = harness({
+      json: true,
+      context: testContext({ signal: controller.signal }),
+      ensureImage: async () => {
+        controller.abort();
+        throw new Error('cancelled');
+      },
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(h.stdout.map((line) => JSON.parse(line).code)).toEqual(['STIM_CANCELLED']);
+    expect(h.calls.ensureDevice.length).toBe(0);
+  });
+
+  test('a failed image install refuses before any device is created', async () => {
+    const h = harness({
+      json: true,
+      ensureImage: async () => ({
+        ok: false as const,
+        code: NO_DEVICE,
+        message: 'licenses',
+        remedy: 'sdkmanager --licenses',
+      }),
+    });
+    expect((await h.run()).ok).toBe(false);
+    expect(JSON.parse(h.stdout[0] ?? '{}')).toMatchObject({ code: NO_DEVICE, remedy: 'sdkmanager --licenses' });
     expect(h.calls.ensureDevice.length).toBe(0);
   });
 
@@ -6297,7 +6699,7 @@ describe('the emulator system-image flag', () => {
       version: 2,
       projects: {},
       repos: {},
-      android: { systemImage: 'system-images;android-99;google_apis;arm64-v8a' },
+      android: { systemImage: 'system-images;android-99;google_apis;arm64-v8a', installImages: 'never' },
     });
     const h = harness({ json: true });
     const result = await h.run();
@@ -6444,12 +6846,12 @@ describe('run statistics', () => {
     writeFileSync(buildMachinesFile(), JSON.stringify({ version: 2, machines: [credential] }));
   }
 
-  async function runWithMode(mode: string, overrides: Parameters<typeof harness>[0]) {
-    process.env.STIM_REMOTE_BUILD_MODE = mode;
+  async function runWithBuild(selected: string, overrides: Parameters<typeof harness>[0]) {
+    process.env.STIM_REMOTE_BUILD = selected;
     try {
       return await harness(overrides).run();
     } finally {
-      delete process.env.STIM_REMOTE_BUILD_MODE;
+      delete process.env.STIM_REMOTE_BUILD;
     }
   }
 
@@ -6457,15 +6859,15 @@ describe('run statistics', () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    expect((await runWithMode('off', { recordStats })).ok).toBe(true);
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: 'remote.buildMode is off' });
+    expect((await runWithBuild('local', { recordStats })).ok).toBe(true);
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
   });
 
   test('a fallback that no machine caused counts against none', async () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    expect((await runWithMode('force', { recordStats })).ok).toBe(true);
+    expect((await runWithBuild('remote', { recordStats })).ok).toBe(true);
     expect(runs[0]?.run.placement).toEqual({
       decision: 'fell-back',
       reason: expect.stringMatching(/^this app is not in a git checkout/),
@@ -6476,7 +6878,7 @@ describe('run statistics', () => {
     pairMini();
     const { runs, recordStats } = recorder();
 
-    await runWithMode('force', { recordStats, resolveCached: () => fakeApk(), build: never('the build') });
+    await runWithBuild('remote', { recordStats, resolveCached: () => fakeApk(), build: never('the build') });
     expect(runs[0]?.run).not.toHaveProperty('placement');
   });
 
@@ -6700,7 +7102,7 @@ describe('optimization configuration', () => {
   test('native switches disable injected ccache and ABI narrowing and reach the Gradle engine', async () => {
     const engine: unknown[] = [];
     const h = harness({
-      deviceAbi: () => 'arm64-v8a',
+      deviceAbi: async () => 'arm64-v8a',
       ccacheFor: never('ccache setup'),
       resolveSettingsFor: () => ({
         optimizations: { android: { compilerCache: 'none', pch: 'on', gradleBuildCache: false, targetAbiOnly: false } },
@@ -6965,7 +7367,15 @@ describe('Metro prefetch', () => {
         resolveSettingsFor: () =>
           bundleUrl ? { metro: { warmupUrl: { android: bundleUrl, ios: '/other.bundle?platform=ios' } } } : {},
         warmMetro: (args: unknown) => {
-          expect(args).toEqual({ port: 8082, platform: 'android', isExpo: false, appId: 'com.example.app', bundleUrl });
+          expect(args).toMatchObject({
+            port: 8082,
+            platform: 'android',
+            isExpo: false,
+            appId: 'com.example.app',
+            bundleUrl,
+            logsDir: expect.stringMatching(/logs$/),
+            root: expect.any(String),
+          });
           warming = true;
           return new Promise(() => {});
         },
@@ -7055,6 +7465,7 @@ describe('EAS development builds', () => {
 
   test('a miss refuses before creating an emulator or compiling locally', async () => {
     expoProject();
+    rmSync(join(home, 'sdk'), { recursive: true });
     const { run, calls } = harness({
       easProfile: 'development',
       resolveEasDevelopmentBuild: async () => ({
@@ -7074,9 +7485,9 @@ describe('EAS development builds', () => {
     const { run, calls } = harness({
       device: 'RFCR7081Q9L',
       easProfile: 'development',
-      listDevices: () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
-      deviceModel: () => 'SM-G996W',
-      isEmulatorDevice: () => false,
+      listDevices: async () => ({ emulators: [], physical: [{ serial: 'RFCR7081Q9L' }], unhealthy: [] }),
+      deviceModel: async () => 'SM-G996W',
+      isEmulatorDevice: async () => false,
       resolveEasDevelopmentBuild: async () => ({
         ok: true,
         path,
@@ -7127,6 +7538,7 @@ describe('strict remote machine selection', () => {
     setExecutor(makeExecutor());
     vi.spyOn(offloadClient, 'simulatorRuntime').mockReturnValue('iOS-27-0');
     vi.spyOn(offloadClient, 'closeOffload').mockImplementation(() => {});
+    vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({ capacity: null, problems: [] }));
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -7178,6 +7590,79 @@ describe('strict remote machine selection', () => {
       expect(slot).not.toHaveBeenCalled();
       expect(recordStats).not.toHaveBeenCalled();
       expect(readLastBuilds(readWorkspaceState(root)).android).toBeUndefined();
+    },
+  );
+
+  test('a named Android worker whose toolchain differs refuses before prebuild changes the checkout', async () => {
+    configureMini();
+    rmSync(join(home, 'sdk'), { recursive: true });
+    rmSync(join(root, 'android'), { recursive: true });
+    writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
+    writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: 'com.example.app' } } }));
+    vi.spyOn(offloadClient, 'offloadCheck').mockImplementation((_root, targets) => async () => {
+      expect(await targets()).toMatchObject([{ platform: 'android' }]);
+      return {
+        capacity: null,
+        problems: [
+          { code: 'jdk', reason: 'JDK 17 there, JDK 21 here' },
+          { code: 'android-sdk', reason: 'Android SDK missing there' },
+          { code: 'ndk', reason: 'NDK 27.1 missing there' },
+          { code: 'stim-build', reason: 'incompatible Stim build there' },
+          { code: 'busy', reason: 'busy (load)' },
+        ],
+      };
+    });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue('mini: late refusal');
+    const marker = join(root, 'prebuild-marker');
+    const prebuild = vi.fn<() => Promise<{ ok: true; durationMs: number }>>(async () => {
+      writeFileSync(marker, 'mutated');
+      return { ok: true, durationMs: 0 };
+    });
+    const result = await harness({ buildMachine: 'mini', planPrebuildFor: () => 'generate', prebuild }).run();
+    expect(result.error).toMatchObject({
+      code: 'STIM_OFFLOAD_REFUSED',
+      message:
+        'mini: JDK 17 there, JDK 21 here; Android SDK missing there; NDK 27.1 missing there; incompatible Stim build there',
+    });
+    expect(result.error?.remedy).toContain('JAVA_HOME');
+    expect(result.error?.remedy).toContain('sdkmanager');
+    expect(result.error?.remedy).toContain('stim-server service update');
+    expect(prebuild).not.toHaveBeenCalled();
+    expect(existsSync(marker)).toBe(false);
+    expect(choose).not.toHaveBeenCalled();
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf8'));
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: 'placement_fallback',
+        fallback: expect.objectContaining({ machine: 'mini', msg: expect.stringContaining('JDK 17') }),
+      }),
+    );
+  });
+
+  test.each(['busy', 'disk', 'unreachable'] as const)(
+    'a named Android worker that reports %s is checked again after prebuild',
+    async (code) => {
+      configureMini();
+      vi.spyOn(offloadClient, 'offloadCheck').mockReturnValue(async () => ({
+        capacity: null,
+        problems: [{ code, reason: `early ${code}` }],
+      }));
+      const order: string[] = [];
+      vi.spyOn(offloadClient, 'chooseBuildMachine').mockImplementation(async () => {
+        order.push('choose');
+        return 'mini: late refusal';
+      });
+      const result = await harness({
+        buildMachine: 'mini',
+        planPrebuildFor: () => 'generate',
+        prebuild: async () => {
+          order.push('prebuild');
+          return { ok: true, durationMs: 0 };
+        },
+        build: never('local Gradle'),
+      }).run();
+      expect(order).toEqual(['prebuild', 'choose']);
+      expect(result.error).toMatchObject({ code: 'STIM_OFFLOAD_REFUSED', message: 'mini: late refusal' });
     },
   );
 
@@ -7239,6 +7724,7 @@ describe('strict remote machine selection', () => {
     const build = vi.fn<() => never>();
     expect((await harness({ buildMachine: 'Mini', resolveCached: () => fakeApk(), build }).run()).ok).toBe(true);
     expect(choose).not.toHaveBeenCalled();
+    expect(offloadClient.offloadCheck).not.toHaveBeenCalled();
     expect(build).not.toHaveBeenCalled();
     const report = readLastBuilds(readWorkspaceState(root)).android;
     expect(report).toMatchObject({ buildMachine: 'mini:7443', cacheHit: 'local' });
@@ -7246,10 +7732,10 @@ describe('strict remote machine selection', () => {
   });
 
   test.each([null, 'release'])(
-    'local overrides force mode for %s and records the actual local compile',
+    'local overrides a remote setting for %s and records the actual local compile',
     async (variant) => {
       configureMini();
-      writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+      writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
       const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
       const h = harness({ buildMachine: 'local', variant });
       expect((await h.run()).ok).toBe(true);
@@ -7264,7 +7750,7 @@ describe('strict remote machine selection', () => {
 
   test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
     configureMini();
-    writeConfigSetting({ scope: 'machine' }, 'remote.buildMode', 'force');
+    writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const h = harness({ buildMachine: 'auto', variant: 'release' });
     expect((await h.run()).ok).toBe(true);
@@ -7527,7 +8013,7 @@ describe('named Android hosting placement', () => {
                 : { probe: { machine, failure: 'declined: occupied' } },
           }),
         checkBudget,
-        checkCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
+        checkCapacity: async () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
         placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
           const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
           args.reserved(hosted);
@@ -7684,6 +8170,7 @@ describe('named Android hosting placement', () => {
         json: true,
         remoteDevice: 'mini',
         variant: evidence === 'release' ? 'release' : 'debug',
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
         systemImage: hostDevice.systemImage,
         deviceProfile: 'pixel_7',
         prepareHostedAndroid: async (_machine: string, selectors: unknown) => {
@@ -7702,6 +8189,7 @@ describe('named Android hosting placement', () => {
         },
         build: async (args) => {
           order.push('build');
+          vi.advanceTimersByTime(1000);
           expect(args.abi).toBe('x86_64');
           return makeAndroidBuildSuccess({ apkPath: fakeApk() });
         },
@@ -7718,6 +8206,9 @@ describe('named Android hosting placement', () => {
       );
       expect(result.facts?.host?.device?.name).toBe('pixel_7 (API 30)');
       expect(result.facts?.cacheKey).toContain('x86-64');
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.facts?.serial).not.toBe(hostDevice.serial);
       expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
@@ -7727,6 +8218,150 @@ describe('named Android hosting placement', () => {
       expect(h.calls.spawn).toEqual([]);
     },
   );
+
+  test("a hosted debug launch waits for the app's readiness in the host's copied device log", async () => {
+    let at = 1000;
+    const copied = () => at - 3000;
+    const stop = vi.fn<() => void>();
+    const readiness = (ts: number, state: string) => ({
+      ts,
+      src: 'device',
+      platform: 'android',
+      level: 'info',
+      msg: `[stim:readiness] ${state}`,
+    });
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      followHostedLaunchLogs: () => ({
+        readDeviceRecords: () => [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
+        readNativeCrashes: () => [],
+        deviceLogsThrough: copied,
+        stop,
+      }),
+      verifyLaunched: (args: Parameters<typeof verifyLaunch>[0]) =>
+        verifyLaunch({
+          ...args,
+          since: 1000,
+          now: () => at,
+          sleep: async (ms) => {
+            at += ms;
+          },
+          readRecords: () => [
+            { ts: 1000, src: 'metro', platform: 'android', event: 'bundle_response_started', requestId: 'app' },
+            { ts: 1200, src: 'metro', platform: 'android', event: 'bundle_response_finished', requestId: 'app' },
+          ],
+        }),
+    });
+    const result = await h.run();
+    expect(h.stderr.join('\n')).toContain('waiting for app readiness');
+    expect(h.stderr.join('\n')).toContain('app reported ready');
+    expect(result.facts?.launched).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
+  });
+
+  test.each([
+    { verified: true, event: 'launch_verified', level: 'info' },
+    { verified: false, event: 'launch_unverified', level: 'warn' },
+  ])(
+    'a hosted launch writes its launch window so logs --errors shows only the latest attempt: $event',
+    async ({ verified, event, level }) => {
+      const h = harness({
+        json: true,
+        remoteDevice: 'mini',
+        prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+        placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+          args.reserved(placement);
+          return { placement, launched: 'unverified' };
+        },
+        build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+        verifyLaunched: async () => (verified ? { verified: true, waitedMs: 10 } : { verified: false, timedOut: true }),
+      });
+      await h.run();
+      const logsDir = workspaceLogsDir(root);
+      const records = parseNdjsonText(readFileSync(join(logsDir, 'build-android.ndjson'), 'utf-8'));
+      const marker = records.find((r) => r.marker === true);
+      expect(marker).toMatchObject({
+        event: 'launch_attempt',
+        platform: 'android',
+        slot: 'default',
+        remote: true,
+        host: 'mini',
+      });
+      expect(records.filter((r) => String(r.event).startsWith('launch_')).map((r) => [r.event, r.level])).toEqual([
+        ['launch_attempt', 'info'],
+        [event, level],
+      ]);
+      const client = (ts: number, msg: string) => ({ ts, src: 'client', platform: 'android', level: 'error', msg });
+      const launchTs = Number(marker?.ts);
+      writeFileSync(
+        join(logsDir, 'client.ndjson'),
+        [client(launchTs - 1000, 'before'), client(launchTs + 1000, 'after')].map((r) => JSON.stringify(r)).join('\n') +
+          '\n',
+      );
+      for (const slot of [undefined, 'default'])
+        expect(queryLogs({ dir: logsDir, slot, errorsOnly: true }).map((r) => r.msg)).toEqual(['after']);
+    },
+  );
+
+  test('a hosted placement that fails after the device is ready still leaves the launch marker', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: unknown) => unknown }) => {
+        await args.reserved({ ...placement, device: undefined });
+        await args.reserved(placement);
+        throw Object.assign(new Error('launch failed'), { code: 'STIM_HOSTING_REFUSED' });
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    const records = parseNdjsonText(readFileSync(join(workspaceLogsDir(root), 'build-android.ndjson'), 'utf-8'));
+    expect(records.filter((r) => r.marker === true)).toMatchObject([
+      { event: 'launch_attempt', remote: true, host: 'mini', deviceId: placement.session },
+    ]);
+  });
+
+  test('a hosted native crash names the hosted rerun command', async () => {
+    const h = harness({
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async (_target: unknown, args: { reserved: (value: typeof placement) => void }) => {
+        args.reserved(placement);
+        return { placement, launched: 'unverified' };
+      },
+      build: async () => makeAndroidBuildSuccess({ apkPath: fakeApk() }),
+      verifyLaunched: async () => ({
+        verified: false,
+        fatal: true,
+        processAlive: null,
+        waitedMs: 1500,
+        mode: null,
+        errors: [
+          {
+            ts: 2000,
+            src: 'device',
+            platform: 'android',
+            level: 'fatal',
+            event: 'native_crash',
+            msg: 'FATAL EXCEPTION: main',
+          },
+        ],
+      }),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(h.stderr.join('\n')).toContain('run `stim android --remote mini` again');
+  });
 
   test('a hosted launch failure after the build records the build as failed with its code', async () => {
     const h = harness({
@@ -7781,6 +8416,87 @@ describe('named Android hosting placement', () => {
     expect(h.calls.build[0]?.abi).toBe('arm64-v8a');
     expect(result.facts?.cacheKey).toContain('arm64-v8a');
   });
+
+  test('Ctrl-C during hosted launch readiness records a cancelled run', async () => {
+    const controller = new AbortController();
+    const context = testContext({ signal: controller.signal });
+    const h = harness({
+      context,
+      json: true,
+      remoteDevice: 'mini',
+      prepareHostedAndroid: async () => ({ host: { machine: 'mini' }, choice: hostDevice, session: null }),
+      placeHostedAndroid: async () => ({ placement, launched: 'unverified' }),
+      verifyLaunched: ({ signal }: Parameters<typeof verifyLaunch>[0] = {}) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          controller.abort('SIGINT');
+        }),
+    });
+    const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+      write: () => {},
+    });
+    expect(result.error?.code).toBe('STIM_CANCELLED');
+    expect(h.stdout.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ code: 'STIM_CANCELLED' })]);
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+      status: 'failed',
+      errorCode: 'STIM_CANCELLED',
+    });
+    expect(readBuildLedger().at(-1)).toMatchObject({ platform: 'android', outcome: 'cancelled' });
+  });
+});
+
+test('stop cancels a remote-only placement wait, which got the run signal and its --wait', async () => {
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  let aborted: boolean | undefined;
+  const automatic = vi.fn<typeof automaticDevicePlacement>(async ({ signal }) => {
+    const [claim] = readClaimSet(join(workspaceDir(root), 'native-run.lock')).live;
+    assert(claim);
+    requestNativeRunCancel(root, claim.claimId);
+    controller.abort('SIGINT');
+    aborted = signal?.aborted;
+    throw Object.assign(new Error('no host'), { code: 'STIM_HOSTING_REFUSED' });
+  });
+  const h = harness({
+    context,
+    json: true,
+    remoteDevice: 'remote-only',
+    wait: '90',
+    automaticDevicePlacement: automatic,
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(automatic).toHaveBeenCalledWith(
+    expect.objectContaining({ placement: 'remote-only', waitMs: 90_000, signal: expect.any(AbortSignal) }),
+  );
+  expect(aborted).toBe(true);
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.calls.build).toEqual([]);
+});
+
+test('Ctrl-C during the launch readiness wait ends the wait and records a cancelled run', async () => {
+  const controller = new AbortController();
+  const context = testContext({ signal: controller.signal });
+  const h = harness({
+    context,
+    json: true,
+    verifyLaunched: ({ signal }: Parameters<typeof verifyLaunch>[0] = {}) =>
+      new Promise((_resolve, reject) => {
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        controller.abort('SIGINT');
+      }),
+  });
+  const result = await withNativeBuildRun(context, root, { command: 'android', platform: 'android' }, () => h.run(), {
+    write: () => {},
+  });
+  expect(result.error?.code).toBe('STIM_CANCELLED');
+  expect(h.stdout.map((line) => JSON.parse(line))).toEqual([expect.objectContaining({ code: 'STIM_CANCELLED' })]);
+  expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+    status: 'failed',
+    errorCode: 'STIM_CANCELLED',
+  });
+  expect(readBuildLedger().at(-1)).toMatchObject({ platform: 'android', outcome: 'cancelled' });
 });
 
 test('stop cancels Android device preparation waiting for a slot before any build or boot', async () => {

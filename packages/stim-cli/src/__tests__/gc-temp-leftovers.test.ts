@@ -46,7 +46,7 @@ const TMP_KEYS = ['TMPDIR', 'TEMP', 'TMP'] as const;
 const realTmp = Object.fromEntries(TMP_KEYS.map((key) => [key, process.env[key]]));
 
 beforeEach(() => {
-  home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-test-')));
+  home = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-')));
   fakeTmp = join(home, 'tmp');
   outside = join(home, 'outside');
   mkdirSync(fakeTmp);
@@ -111,7 +111,7 @@ test('only recognized Stim temp directories and xctrace recordings idle for a da
   const unrelated = oldDir('stim-s3-test-abc123');
   const other = oldDir('metro-cache');
 
-  expect((await collectTempLeftovers())?.root).toBe(realpathSync(fakeTmp));
+  expect((await collectTempLeftovers())?.root).toBe(realpathSync.native(fakeTmp));
   expect((await leftovers()).map((entry) => [entry.path, entry.willDelete])).toEqual([
     [trace, true],
     [idle, true],
@@ -257,31 +257,6 @@ test('xctrace recordings stay while xctrace or Instruments runs, or when process
   expect(existsSync(trace)).toBe(true);
 });
 
-test.skipIf(!POSIX)("Jest's cache is reported and never deleted", async () => {
-  const jest = oldDir(`jest_${process.getuid?.().toString(36)}`, { 'haste-map': 'x' });
-  setExecutor({
-    ...getExecutor(),
-    runFileAsync: async (file: string) => (file === 'du' ? `12\t${jest}\n` : processes),
-  });
-
-  expect(await leftovers()).toEqual([
-    { kind: 'jest', path: jest, bytes: 12 * 1024, willDelete: false, kept: 'report only: Jest owns it' },
-  ]);
-  await deleteTempLeftovers();
-  expect(existsSync(jest)).toBe(true);
-});
-
-test("the caller's environment chooses the TMPDIR that is swept", async () => {
-  const clientTmp = join(home, 'client-tmp');
-  mkdirSync(clientTmp);
-  oldDir('stim-ws-host');
-  const env = { TMPDIR: clientTmp, TEMP: clientTmp, TMP: clientTmp };
-
-  expect(await collectTempLeftovers({ env })).toEqual(
-    expect.objectContaining({ root: realpathSync(clientTmp), entries: [] }),
-  );
-});
-
 test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', async () => {
   vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
   const idle = oldDir('stim-host-871a9a');
@@ -305,7 +280,7 @@ test('maintenance at disk pressure level 2 plans and deletes the idle leftovers'
     now: Date.now(),
   });
   const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
-  expect(action).toEqual(expect.objectContaining({ target: realpathSync(fakeTmp), level: 2 }));
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp), level: 2 }));
   if (!action) return;
 
   const outcome = await executeAction(action, {

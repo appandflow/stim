@@ -1,10 +1,12 @@
+import chalk from 'chalk';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import type { StimContext } from '@stim-cli/core';
 import { constants, promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
-import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { providerUploadOutcome, storedAppId } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { phaseLine } from '../../command-output.ts';
 import { hostSystemImageArch } from '../../devices/android.ts';
 import { workspaceShareURL } from '../../devices/stim-desktop.ts';
@@ -25,16 +27,22 @@ import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
+import { pruneArtifactCopies, recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
+import { resolveVariant } from './support.ts';
+import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireAndroidArtifact, type PreparedAndroidArtifact } from './artifact.ts';
 import { resolveAndroidBuildPlan } from './plan.ts';
 import { finishAndroidUpload, persistLastBuild } from './result.ts';
 import type { AndroidRecord } from './types.ts';
 import type { AndroidArtifactContext } from '../../integrations/android-project.ts';
 
-export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'>;
+export type AndroidBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'android' }>, 'platform'> & {
+  /** Downloads this EAS profile's completed development build instead of compiling; not part of the Desktop transport. */
+  easProfile?: string;
+};
 
 export interface AndroidBuildFacts {
-  /** Owned copy, retained with this workspace until explicitly removed. */
+  /** Owned copy, retained until a build replaces its recorded build or the worktree is removed. */
   apkPath: string;
   androidPackage: string | null;
   variant: string;
@@ -80,6 +88,7 @@ export async function buildAndroidOperation(
       settings,
       settingsContext,
       env: context.env,
+      easProfile: options.easProfile,
       variant: options.variant ?? null,
       buildCache: options.buildCache !== false,
     },
@@ -138,11 +147,26 @@ export async function buildAndroidOperation(
         stats.setProject(projectKey);
         progress.estimate(projectKey);
         const record: AndroidRecord = { buildMachine: placement.selected, configuration: plan.plan.build.variant };
+        const easBuild = await resolveEasDevelopmentBuild({
+          context,
+          root,
+          platform: 'android',
+          profile: options.easProfile,
+          note,
+          isExpo: integration.isExpo,
+          physical: false,
+          selectors: [options.variant],
+          buildCache: options.buildCache,
+          env: context.env,
+          signal: runCancellationSignal(context) ?? context.signal,
+        });
+        if (isEasBuildFailure(easBuild))
+          throw Object.assign(new Error(easBuild.message ?? easBuild.code), easBuild, { details: easBuild });
         let artifact: PreparedAndroidArtifact | undefined;
         let directory: string | undefined;
         let built: AndroidBuildFacts | null = null;
         let failureAfterCleanup: ReturnType<typeof cancelledError> | null = null;
-        const finishRecord = (status: 'ok' | 'failed', errorCode?: string) =>
+        const finishRecord = (status: 'ok' | 'failed', errorCode?: string, message?: string) =>
           persistLastBuild({
             root,
             record,
@@ -150,6 +174,7 @@ export async function buildAndroidOperation(
             durationMs: Date.now() - started,
             status,
             errorCode,
+            message,
             out: note,
             recordBuild: (at, entry) => recordFinishedBuild(at, entry, { artifactOnly: true }),
           });
@@ -178,7 +203,7 @@ export async function buildAndroidOperation(
               buildPlan: { ...plan.plan.build, ...(cachePolicy ? { cache: cachePolicy } : {}) },
               cacheProviderConfig: plan.plan.cacheProviderConfig,
               requestedBuildCache: options.buildCache !== false,
-              easBuild: null,
+              easBuild,
               androidPackage: (await integration.appIds()).androidPackage,
               record,
               maxBuilds: getConcurrencyLimits().maxBuilds,
@@ -202,6 +227,7 @@ export async function buildAndroidOperation(
               resolveRemoteBuild: resolveRemote,
               uploadRemoteBuild: uploadRemote,
               loadCacheProviderModule: loadCacheProvider,
+              storedAppId,
               acquireSlot: acquireBuildSlot,
               releaseSlot: releaseBuildSlot,
               now: Date.now,
@@ -229,6 +255,12 @@ export async function buildAndroidOperation(
             context.env,
           );
           if (uploaded) phase('cache', uploaded.line);
+          await settleFingerprintCheck(
+            artifact.fingerprintCheck,
+            'android',
+            (line) => phase('fingerprint', chalk.yellow(line)),
+            (entry) => writer.write(entry),
+          );
           const links = {
             workspace: await workspaceShareURL(
               root,
@@ -256,7 +288,11 @@ export async function buildAndroidOperation(
           };
         } catch (error) {
           const failure = runCancellationSignal(context)?.aborted ? cancelledError('Android build', error) : error;
-          finishRecord('failed', (failure as { code?: string }).code);
+          finishRecord(
+            'failed',
+            (failure as { code?: string }).code,
+            failure instanceof Error ? failure.message : String(failure),
+          );
           stats.record({ failed: true, durationMs: Date.now() - started });
           throw failure;
         } finally {
@@ -264,12 +300,23 @@ export async function buildAndroidOperation(
           failureAfterCleanup =
             built && runCancellationSignal(context)?.aborted ? cancelledError('Android build') : null;
           if (failureAfterCleanup) {
-            finishRecord('failed', failureAfterCleanup.code);
+            finishRecord('failed', failureAfterCleanup.code, failureAfterCleanup.message);
             stats.record({ failed: true, durationMs: Date.now() - started });
           }
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
           if (built && !failureAfterCleanup) {
             finishRecord('ok');
+            recordBuild(
+              root,
+              recordedBuildKey({ platform: 'android', configuration: resolveVariant(options.variant, settings) }),
+              {
+                appPath: built.apkPath,
+                bundleId: built.androidPackage,
+              },
+            );
+            await pruneArtifactCopies(root, 'android', dirname(built.apkPath), (line) =>
+              phase('artifacts', chalk.yellow(line)),
+            );
             stats.record({
               failed: false,
               cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,

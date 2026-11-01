@@ -3,6 +3,24 @@
 Edge cases and one-time procedures pulled out of [RELEASE.md](../RELEASE.md)
 so the normal path stays short. Come here from the step that failed.
 
+## The release gate is red, cancelled or missing
+
+RELEASE.md section 4 step 4 checks three `CI` jobs and the merge-queue
+`Merge gate` on the release commit. Read which part failed:
+
+- `Merge gate` missing: the commit did not land through the merge queue. Do not
+  tag it; land the version through a pull request.
+- No push `CI` run, or `cancelled` gate jobs: a pull request landed on `main`
+  before the run finished and the branch's concurrency group cancelled it. This
+  is not a failure of the commit. Dispatch `ci.yml` on `release-ci/X.Y.Z` at the
+  same commit as step 4 shows and check that run's three jobs. Do not re-run the
+  cancelled run: it would cancel the newest `main` run.
+- A red gate job: the candidate failed. Fix it with a new commit and repeat
+  steps 2 to 4. Do not tag.
+- `test (windows)`, `test (macos)`, the process-inspection jobs, the full Windows
+  suite and `Native E2E` are not part of the gate. Their failures follow
+  RELEASE.md section 5.
+
 ## A tag exists but npm does not have it
 
 The npm registry is the source of truth for "what was last released" -- a
@@ -26,6 +44,14 @@ what actually got published, and a backfill publish for the old version can
 re-point `latest` or `next` backwards onto it -- confirm with
 `npm dist-tag ls <package>` afterward if you do this.
 
+## Post-release validation failed
+
+The `Post-release validation` run starts from the same tag as `Release` and
+holds the full Windows unit suite. It never blocks or fails the publish, and a
+red run is not a reason to retry the publish, delete the tag or deprecate the
+version. Follow RELEASE.md section 5. Re-running `Release` does not re-run it;
+re-run `Post-release validation` itself.
+
 ## Smoke job failed after the publish job passed
 
 npm can take several minutes to serve a new version's metadata and longer for
@@ -42,7 +68,9 @@ and `npx stim@1.9.0` failed with E404 until then. The `smoke` job waits up to
   [Stale or wrong dist-tags](#stale-or-wrong-dist-tags).
 - `npx stim@X.Y.Z --version` or `npx -p @stim-cli/server@X.Y.Z stim-server
 --version` that installs but fails or prints another version: the published package is broken. A published version cannot be
-  replaced, so fix it and release a new version.
+  replaced, so fix it and release a new version. First confirm that you ran it from a scratch directory: inside this
+  repository npx runs the workspace's own bin or a `stim` on `PATH` when the version matches the workspace's
+  (RELEASE.md section 4 step 8).
 
 ## Manual publish fallback
 
@@ -66,6 +94,7 @@ pnpm --filter @stim-cli/expo-build-cache publish --access public --tag <dist-tag
 pnpm --filter stim publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/transport publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/transport-tailscale publish --access public --tag <dist-tag> --otp <code>
+pnpm --filter @stim-cli/transport-local publish --access public --tag <dist-tag> --otp <code>
 pnpm --filter @stim-cli/server publish --access public --tag <dist-tag> --otp <code>
 ```
 

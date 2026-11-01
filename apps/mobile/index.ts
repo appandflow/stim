@@ -1,3 +1,4 @@
+import './src/lib/startup-readiness';
 import './src/intl/polyfills';
 import './src/intl/i18n';
 import './src/lib/sentry';

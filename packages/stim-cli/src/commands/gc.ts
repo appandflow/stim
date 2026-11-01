@@ -16,15 +16,14 @@ import {
   gradleVersionsPending,
   includesGradleVersions,
 } from './gc/gradle-versions.ts';
-import { existsSync } from 'fs';
-import { isAbsolute } from 'path';
 import chalk from 'chalk';
 import { InvalidArgumentError, type Command } from 'commander';
 import { loadConfig, removeProject, withConfigLockAsync } from '../workspace/config.ts';
 import { plural, quotedPath } from '../command-output.ts';
-import { directorySizeAsync, isOnMountedVolume, listMountedVolumes, volumeRootFor } from '../fs-util.ts';
+import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
+import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
 import {
   ClaimRefusedError,
@@ -35,14 +34,15 @@ import {
   type ClaimHandle,
 } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
-import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
+import { reclaimProject } from '../devices/reclaim.ts';
 import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
 import { withEasProjectLock } from '../engine/eas-project-lock.ts';
-import type { StimConfig } from '@stim-cli/core/state';
-import type { GcSkip, OrphanedDevice } from './gc/types.ts';
+import type { OrphanedDevice } from './gc/types.ts';
+import { gcOptionsOf, openGcLog } from './gc/log.ts';
+import { classifyProjectEntries } from './gc/projects.ts';
 import { createGcResults, GC_OUTPUT, type GcOutput, type GcResult } from './gc/results.ts';
 import { phase } from './gc/progress.ts';
 import {
@@ -52,6 +52,7 @@ import {
   includesRecordings,
   includesWorkspaceOutputs,
   isWorkspacesScope,
+  markOverCapCompilationCache,
   planCacheEmptying,
   previewScopedEmptying,
   selectCaches,
@@ -67,6 +68,8 @@ import {
   eraseParkedDevices,
   deleteProjectDevices,
   describeUnverifiableDevices,
+  describeDeadProjectDevices,
+  findDeadProjectOwnedDevices,
   deviceSweepIsScoped,
   DEVICE_LIST_TIMEOUT_MS,
   findOrphanedDevices,
@@ -88,6 +91,7 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
+import { collectWorktreeDependencies, lightenWorktreeDependencies } from './gc/dependencies.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -123,6 +127,7 @@ import { collectInventory, type GcInventory } from './gc/inventory.ts';
 import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/hosted-devices.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
+import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
   collectMemoryReport,
   GRADLE_DAEMONS_KIND,
@@ -154,6 +159,7 @@ interface CollectGcReportOptions {
   cache?: string | null;
   worktrees?: boolean;
   refresh?: boolean;
+  measureBuildState?: boolean;
   now?: number;
   lastTouched?: (path: string) => number;
 }
@@ -165,6 +171,8 @@ interface RunGcOptions {
   delete?: boolean;
   worktrees?: boolean;
   json?: boolean;
+  /** False reports worktree build-state sizes only from the disk-usage cache: a stale one is unmeasured (null), and no `du` runs for it. */
+  measureBuildState?: boolean;
 }
 
 interface GcRefusal {
@@ -203,11 +211,17 @@ export interface GcExecutionResult {
   exitCode: 0 | 1;
 }
 
-export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees'>;
+export type GcReadOptions = Pick<RunGcOptions, 'olderThan' | 'cache' | 'worktrees' | 'measureBuildState'>;
 
 export function readGcReport(options: GcReadOptions = {}, deps: GcDependencies = {}): Promise<GcPayload> {
   return sweep(
-    { olderThan: options.olderThan, cache: options.cache, worktrees: options.worktrees, json: true },
+    {
+      olderThan: options.olderThan,
+      cache: options.cache,
+      worktrees: options.worktrees,
+      measureBuildState: options.measureBuildState,
+      json: true,
+    },
     deps,
     { output: GC_OUTPUT, takeResults: () => [] },
     true,
@@ -231,44 +245,11 @@ function collectGcMemory(scope: MemoryScope, env: NodeJS.ProcessEnv, operation?:
   return memorySweepIsScoped(env) ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true, operation);
 }
 
-function classifyProjectEntries(
-  cfg: StimConfig | null,
-  mountedVolumes: string[],
-): { deadProjects: string[]; invalidProjects: string[]; skipped: GcSkip[] } {
-  const deadProjects: string[] = [];
-  const invalidProjects: string[] = [];
-  const skipped: GcSkip[] = [];
-  for (const [path, project] of Object.entries(cfg?.projects || {})) {
-    if (!isAbsolute(path)) {
-      const claimed = describeDereferenced(project);
-      if (claimed.length) {
-        skipped.push({
-          dir: path,
-          reason:
-            `not an absolute path, so this record is invalid; kept because it still claims ${claimed.join(' and ')}; ` +
-            'gc removes it once that claim is gone, or drop the entry from the config file by hand',
-        });
-      } else {
-        invalidProjects.push(path);
-      }
-      continue;
-    }
-    if (existsSync(path)) continue;
-    if (!isOnMountedVolume(path, mountedVolumes)) {
-      const volume = volumeRootFor(path);
-      skipped.push({ dir: path, reason: `volume ${volume} is not mounted` });
-    } else {
-      deadProjects.push(path);
-    }
-  }
-  return { deadProjects, invalidProjects, skipped };
-}
-
 /** The workspace directories an unscoped run removes whole: those of dead projects and orphaned directories. */
 async function removedWholeWorkspaceDirs(operation?: StimContext): Promise<string[]> {
   const mountedVolumes = listMountedVolumes();
   const cfg = loadConfig();
-  const { deadProjects } = classifyProjectEntries(cfg, mountedVolumes);
+  const { deadProjects } = classifyProjectEntries(cfg?.projects ?? {}, mountedVolumes);
   const { orphaned } = await collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes, {
     measure: false,
     operation,
@@ -282,6 +263,7 @@ export async function collectGcReport(
     cache = null,
     worktrees = false,
     refresh = true,
+    measureBuildState = true,
     now = Date.now(),
     lastTouched = workspaceLastUsed,
   }: CollectGcReportOptions = {},
@@ -297,7 +279,10 @@ export async function collectGcReport(
   );
   if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`, operation);
   const sized = await sizeCaches(selected, operation);
-  const caches = scope === null ? previewScopedEmptying(sized, env) : planCacheEmptying(sized, all, env);
+  const caches =
+    scope === null
+      ? markOverCapCompilationCache(previewScopedEmptying(sized, env), env)
+      : planCacheEmptying(sized, all, env);
 
   if (scope) {
     return {
@@ -332,6 +317,7 @@ export async function collectGcReport(
             exclude: isWorkspacesScope(scope) ? await removedWholeWorkspaceDirs(operation) : [],
             signal: operation?.signal,
             operation,
+            lighten: true,
           })
         : null,
       workspaceLogs: [],
@@ -383,7 +369,7 @@ export async function collectGcReport(
   }
   const parkedSims = await collectParkedSims(deps, { olderThanDays: olderThan, now });
   const parkedAvds = await collectParkedAvds(deps, { olderThanDays: olderThan, now });
-  const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg, mountedVolumes);
+  const { deadProjects, invalidProjects, skipped } = classifyProjectEntries(cfg?.projects ?? {}, mountedVolumes);
   const workspaceDirs = await collectOrphanedWorkspaces(Object.keys(cfg?.projects ?? {}), mountedVolumes, {
     operation,
   });
@@ -423,12 +409,10 @@ export async function collectGcReport(
 
   phase('devices', 'listing simulators and emulators', operation);
   if (unsweepableReason) {
-    let simNames: string[] = [];
+    let allSims: IosSimRecord[] = [];
     let avdNames: string[] = [];
     try {
-      simNames = (
-        await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal })
-      ).map((s) => s.name);
+      allSims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal });
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
@@ -439,7 +423,17 @@ export async function collectGcReport(
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
     }
-    deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
+    const deadOwned =
+      cfg === null ? [] : findDeadProjectOwnedDevices({ config: cfg, deadProjects, sims: allSims, avds: avdNames });
+    const deadOwnedIds = new Set(deadOwned.map((device) => device.id));
+    deviceSweepNotices.push(
+      ...describeDeadProjectDevices(deadOwned),
+      ...describeUnverifiableDevices(
+        allSims.filter((sim) => !deadOwnedIds.has(sim.udid)).map((sim) => sim.name),
+        avdNames.filter((name) => !deadOwnedIds.has(name)),
+        { reason: unsweepableReason },
+      ),
+    );
   } else {
     let sims: IosSimRecord[] = [];
     let simsChecked = true;
@@ -574,6 +568,7 @@ export async function collectGcReport(
   const worktreeSweep = await measureWorktreeSweep(
     await collectWorktreeSweep({ idle: worktrees, olderThan, now, refresh, operation }),
     operation,
+    measureBuildState,
   );
 
   return {
@@ -615,7 +610,9 @@ export async function collectGcReport(
       exclude: goneWorkspaceDirs,
       signal: operation?.signal,
       operation,
+      lighten: true,
     }),
+    worktreeDependencies: await collectWorktreeDependencies({ now, operation }),
     workspaceLogs: await collectWorkspaceLogs({ exclude: goneWorkspaceDirs, operation }),
     recordings: await collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs, operation?.signal),
     worktreeSweep,
@@ -735,7 +732,16 @@ export async function executeGc(
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
 ): Promise<GcExecutionResult> {
-  const results = createGcResults();
+  const log =
+    opts.delete || opts.idle !== undefined
+      ? openGcLog({
+          trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
+          env: deps.operation?.env,
+          options: gcOptionsOf(opts),
+          holdKept: true,
+        })
+      : null;
+  const results = createGcResults(log?.record);
   let failed = false;
   const output: GcOutput = {
     log: (line) => write('stdout', line),
@@ -873,13 +879,14 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
   let deleteFailures = 0;
   for (const path of deadProjects) {
     operation?.signal.throwIfAborted();
-    if (existsSync(path) || !isOnMountedVolume(path)) {
+    if (!isAbsentPath(path) || !isOnMountedVolume(path)) {
       output.log(chalk.yellow(`Kept ${path}: its absence can no longer be confirmed.`));
       output.record('project', 'kept', path, { detail: 'its absence can no longer be confirmed' });
       continue;
     }
     const result = await reclaimProject(path, {
       archive: { removedBy: 'gc' },
+      deleteOwnedDevices: deviceSweepIsScoped(operation?.env ?? process.env),
       stopRequester: { by: 'stim gc --delete' },
       operation,
     }).catch((error: unknown) => {
@@ -898,7 +905,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
       output.log(chalk.green(`Pruned ${path}`));
       output.record('project', 'done', path);
     }
-    for (const dir of result.removedWorkspaceDirs) output.log(chalk.dim(`  removed workspace output ${dir}`));
+    for (const dir of result.removedWorkspaceDirs) {
+      output.log(chalk.dim(`  removed workspace output ${dir}`));
+      output.record('workspaceDirectory', 'done', dir);
+    }
     for (const dir of result.failedWorkspaceDirs) {
       output.log(chalk.red(`  could not remove workspace output ${dir}`));
       output.record('workspaceDirectory', 'failed', dir, { detail: `could not remove it while pruning ${path}` });
@@ -913,7 +923,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     if (result.stoppedTunnel) {
       output.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
     }
-    for (const name of result.deletedDevices) output.record('device', 'done', name);
+    for (const name of result.deletedDevices) {
+      output.log(chalk.dim(`  deleted owned device ${name}`));
+      output.record('device', 'done', name);
+    }
     for (const s of result.skippedDevices) {
       output.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
       output.record('device', result.failedDevices.includes(s) ? 'failed' : 'kept', s.name, {
@@ -991,6 +1004,7 @@ function reportActionable(report: GcReport): boolean {
     deadProjects.length + invalidProjects.length > 0 ||
       report.orphanedWorkspaces.length > 0 ||
       Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
+      Boolean(report.worktreeDependencies?.candidates.length) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
@@ -1008,6 +1022,7 @@ function reportActionable(report: GcReport): boolean {
       deviceLeases.expired.length > 0 ||
       easSessionSweep.orphaned.length > 0 ||
       ((olderThan !== null || all) && caches.length > 0) ||
+      caches.some((entry) => entry.willEmpty) ||
       scopedWorkPending(cache, report),
   );
 }
@@ -1030,6 +1045,7 @@ async function runGcCore(
       cache,
       worktrees: Boolean(opts.worktrees),
       refresh,
+      measureBuildState: opts.measureBuildState,
     },
     deps,
   );
@@ -1138,12 +1154,21 @@ async function runGcCore(
 
   let deleteFailures = idleFailures;
   throwIfCancelled(signal, 'GC');
+  if (cache === null) deleteFailures += await stopIdleWorkspaces(output, deps.operation);
+  throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');
   deleteFailures += report.workspaceOutputs
-    ? (await clearWorkspaceOutputs(report.workspaceOutputs, { olderThan, signal, operation: deps.operation }, output))
-        .failures
+    ? (
+        await clearWorkspaceOutputs(
+          report.workspaceOutputs,
+          { olderThan, signal, operation: deps.operation, lighten: true },
+          output,
+        )
+      ).failures
     : 0;
+  throwIfCancelled(signal, 'GC');
+  deleteFailures += await lightenWorktreeDependencies(report.worktreeDependencies, output, deps.operation);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs, output, deps.operation);
   throwIfCancelled(signal, 'GC');
@@ -1225,6 +1250,11 @@ async function runGcCore(
     );
   }
 
+  if (report.cacheScope === null) {
+    const emptyLockDirs = pruneEmptyProcessLockDirs();
+    if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock entries`));
+  }
+
   for (const slot of buildSlots.stale) {
     throwIfCancelled(signal, 'GC');
     const cleared = clearFreeClaimSet({ root: slot.path, label: 'build slot' });
@@ -1290,16 +1320,31 @@ async function runGcCore(
 
   throwIfCancelled(signal, 'GC');
   if (all) {
-    await emptyCaches(caches, output, signal, deps.operation);
+    deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
-    if (caches.length) {
+    if (caches.some((entry) => !entry.willEmpty)) {
       output.log(
         chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
   } else {
-    await trimCaches(caches, olderThan, output, signal, deps.operation);
+    deleteFailures += (
+      await trimCaches(
+        caches.filter((entry) => !entry.willEmpty),
+        olderThan,
+        output,
+        signal,
+        deps.operation,
+      )
+    ).failures;
   }
+  if (!all)
+    deleteFailures += await emptyCaches(
+      caches.filter((entry) => entry.willEmpty),
+      output,
+      signal,
+      deps.operation,
+    );
   return payload(deleteFailures);
 }
 
@@ -1315,7 +1360,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, clear the build outputs of every workspace not in use, and trim its Metro, client and device logs to their newest 8 MiB',
+      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does, and shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it',
     )
     .option(
       '--older-than <days>',

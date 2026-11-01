@@ -23,7 +23,7 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
     status: '',
     porcelain: '',
     worktrees: '',
-    gc: '',
+    gc: {},
     failure: null,
     processReads: 0,
     harnessVisible: true,
@@ -52,7 +52,9 @@ function fixture(t, platform = 'ios', processExitTimeoutMs = 0) {
       return { code: 0, stdout, stderr: '' };
     },
     cli(argv) {
-      return { code: 0, stdout: argv[0] === 'status' ? output.status : output.gc, stderr: '' };
+      if (argv[0] === 'status') return { code: 0, stdout: output.status, stderr: '' };
+      assert.deepEqual(argv, ['gc', '--json']);
+      return { code: 0, stdout: JSON.stringify({ sections: output.gc }), stderr: '' };
     },
   };
   const cleanup = createCleanupTracker({ h, platform, processExitTimeoutMs, processStart: null });
@@ -378,13 +380,33 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
     ['status', f.cwd, /status still lists a removed workspace/],
     ['porcelain', ' M tracked-file', /source checkout is dirty/],
     ['worktrees', `worktree ${f.cwd}\n`, /a worktree registration survived/],
-    ['gc', f.cwd, /gc reports one of our workspaces as orphaned/],
+    [
+      'gc',
+      { orphanedWorkspaces: [{ dir: join(f.cwd, '..', 'x'), projectRoot: f.cwd, bytes: null }] },
+      /gc reports one of our workspaces as orphaned/,
+    ],
   ]) {
     f.output[field] = text;
     await assert.rejects(() => f.verify(), message);
-    f.output[field] = '';
+    f.output[field] = field === 'gc' ? {} : '';
   }
   await f.verify();
+});
+
+test('native cleanup accepts pending trash and stale metadata but still rejects orphaned workspaces', async (t) => {
+  const f = fixture(t);
+  f.output.gc = {
+    trash: {
+      root: '/home/trash',
+      entries: [{ path: '/home/trash/remove-A', worktree: f.cwd, kept: 'still deleting' }],
+    },
+    staleStatusCaches: [
+      { kind: 'disk-usage', path: join(f.cwd, 'android', 'build'), file: '/home/disk-usage/cache.json', bytes: 175 },
+    ],
+  };
+  await f.verify();
+  f.output.gc.orphanedWorkspaces = [{ dir: '/home/workspaces/leftover', projectRoot: f.cwd, bytes: 100 }];
+  await assert.rejects(() => f.verify(), /gc reports one of our workspaces as orphaned/);
 });
 
 test('a failed JSON command keeps native ownership and diagnostics available to failure cleanup', (t) => {

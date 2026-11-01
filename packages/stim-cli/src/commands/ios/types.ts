@@ -8,6 +8,7 @@ export interface DeviceLike {
   avdName?: string | null;
   deviceType?: string | null;
   runtime?: string | null;
+  owned?: boolean;
   adopted?: boolean;
   adoptionPending?: boolean;
   parkedCacheKey?: string;
@@ -52,6 +53,7 @@ export interface VerifyLaunchResultLike {
   processAlive?: boolean | null;
   errors?: LaunchErrorRecord[];
   waitedMs?: number;
+  jsRunning?: boolean;
 }
 
 export interface IosCommandOptions {
@@ -63,8 +65,11 @@ export interface IosCommandOptions {
   configuration?: string;
   scheme?: string;
   easProfile?: string;
+  recordedBuild?: boolean;
+  cleanAppState?: boolean;
   deviceType?: string;
   runtime?: string;
+  installRuntime?: boolean;
   simulatorApp?: string;
   device?: string | boolean;
   remote?: string;

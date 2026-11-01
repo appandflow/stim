@@ -222,7 +222,7 @@ final class SetupWizardTests: XCTestCase {
       (.init(mode: "auto", modeOrigin: "default"), [.build], true),
       (.init(builds: ["other"]), [.build], false),
       (.init(mode: "auto", modeOrigin: "machine"), [.build], false),
-      (.init(mode: "off", modeOrigin: "env"), [.build], false),
+      (.init(mode: "local", modeOrigin: "env"), [.build], false),
       (.init(), [.deviceHost], false),
     ] {
       var wizard = wizard(settings: settings, capabilities: capabilities)
@@ -274,6 +274,66 @@ final class SetupWizardTests: XCTestCase {
     XCTAssertEqual(wizard.apply(.tick, now: ticket.expiresAt), [])
     XCTAssertEqual(wizard.failure(now: ticket.expiresAt), .expired)
     XCTAssertEqual(wizard.phase, .expiredCommand)
+  }
+
+  private var waitingStep: SetupJournal.Step {
+    .init(
+      id: "approve", state: .running, title: "Access approval",
+      detail: "Waiting for the requesting machine to connect. Stim Desktop sends this automatically.")
+  }
+
+  func testRequestIsSentAtOnceWhenSetupStartsWaitingForThisMacAndNotAgain() {
+    var wizard = wizard()
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
+    XCTAssertEqual(wizard.apply(.entriesWritten, now: now), [.askDoctor(ticket: ticket.value)])
+    XCTAssertEqual(wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now.addingTimeInterval(1)), [])
+    let waiting = journal(steps: [waitingStep])
+    XCTAssertTrue(waiting.waitsForConnection)
+    XCTAssertEqual(
+      wizard.apply(.journalAnswered(port: 7443, journal: waiting), now: now.addingTimeInterval(8)),
+      [.askDoctor(ticket: ticket.value)], "The ticket's secret exists now; the request must not wait for the next poll")
+    XCTAssertEqual(wizard.apply(.journalAnswered(port: 7443, journal: waiting), now: now.addingTimeInterval(9)), [])
+    XCTAssertEqual(
+      wizard.apply(.journalAnswered(port: 7443, journal: waiting), now: now.addingTimeInterval(10)), [])
+  }
+
+  func testNoRequestIsSentOnceTheTicketExpired() {
+    var wizard = wizard()
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
+    _ = wizard.apply(.entriesWritten, now: now)
+    XCTAssertEqual(
+      wizard.apply(.journalAnswered(port: 7443, journal: journal(steps: [waitingStep])), now: ticket.expiresAt), [])
+  }
+
+  func testMirrorSaysWhichMachineSetupWaitsForAfterTheApprovalPrompts() {
+    XCTAssertEqual(setupStepLine(waitingStep, clientName: "Laptop")?.text, "waiting for Laptop to connect")
+    let asking = SetupJournal.Step(id: "approve", state: .running, title: "Access approval", detail: "Waiting until later.")
+    XCTAssertEqual(setupStepLine(asking, clientName: "Laptop")?.text, "waiting for approval in Terminal")
+  }
+
+  func testWizardMovesToToolsOnlyWhenApprovedAndSetupFinishedCleanly() {
+    var wizard = wizard(capabilities: [.build])
+    let grant = [SetupJournal.Grant(capability: .build, id: "b")]
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(grants: grant)), now: now)
+    XCTAssertFalse(wizard.advancesToTools(now: now), "not approved yet")
+    _ = wizard.apply(.doctorReported(build: status(.approved, id: "b"), host: nil), now: now)
+    XCTAssertEqual(wizard.phase, .approved)
+    XCTAssertFalse(wizard.advancesToTools(now: now), "setup is still checking the machine")
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(grants: grant, done: true)), now: now)
+    XCTAssertTrue(wizard.advancesToTools(now: now))
+    let failed = SetupJournal.Step(id: "tools", state: .failed, title: "Tools", detail: "no toolchain")
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(steps: [failed], grants: grant, done: true)), now: now)
+    XCTAssertFalse(wizard.advancesToTools(now: now), "a failed step keeps its page")
+  }
+
+  func testSkippedPermissionKeepsTheSetupPageSoItsWarningIsRead() {
+    var wizard = wizard(capabilities: [.deviceHost])
+    let grant = [SetupJournal.Grant(capability: .deviceHost, id: "h")]
+    let skipped = SetupJournal.Step(id: "permissions.screenRecording", state: .skipped, title: "Screen recording")
+    _ = wizard.apply(.journalAnswered(port: 7443, journal: journal(steps: [skipped], grants: grant, done: true)), now: now)
+    _ = wizard.apply(.doctorReported(build: nil, host: status(.approved, id: "h")), now: now)
+    XCTAssertEqual(wizard.phase, .approved)
+    XCTAssertFalse(wizard.advancesToTools(now: now))
   }
 
   func testNoAnswerStartsAtThreeMinutesAndManualPortAcceptsOutsideProbeRange() {
@@ -391,21 +451,26 @@ final class SetupWizardTests: XCTestCase {
 
   func testBackgroundRefreshFollowsTheStepInPlaceOfACheckAgainButton() {
     var wizard = SetupWizard()
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.peers])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.peers])
     _ = wizard.apply(.macChosen(mac), now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.approvals])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.approvals])
     _ = wizard.apply(.next(ticket), now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.journal])
     _ = wizard.apply(.journalAnswered(port: 7443, journal: journal()), now: now)
     _ = wizard.apply(.entriesWritten, now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.journal, .doctor])
-    XCTAssertEqual(wizard.refreshes(page: .tools), [.tools])
-    XCTAssertEqual(wizard.refreshes(page: .summary), [])
+    XCTAssertEqual(wizard.refreshes(page: .setup, now: now), [.journal, .doctor])
+    XCTAssertEqual(wizard.refreshes(page: .tools, now: now), [.tools])
+    XCTAssertEqual(wizard.refreshes(page: .summary, now: now), [])
     _ = wizard.apply(.tick, now: ticket.expiresAt)
     XCTAssertEqual(wizard.phase, .expiredCommand)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [.doctor], "An expired ticket has no journal to read")
+    XCTAssertEqual(
+      wizard.refreshes(page: .setup, now: ticket.expiresAt.addingTimeInterval(29)), [.doctor],
+      "An expired ticket has no journal to read, but a grant recorded just before expiry still needs its doctor read")
+    XCTAssertEqual(
+      wizard.refreshes(page: .setup, now: ticket.expiresAt.addingTimeInterval(30)), [], "The grace window is over")
     _ = wizard.apply(.cancel, now: now)
-    XCTAssertEqual(wizard.refreshes(page: .setup), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
+    XCTAssertEqual(
+      wizard.refreshes(page: .setup, now: now), [], "A cancelled setup reads nothing; a failed undo waits for Retry undo")
 
     var clock = SetupRefreshClock()
     XCTAssertEqual(clock.due([.journal, .doctor], now: now), [.journal, .doctor])

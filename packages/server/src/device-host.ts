@@ -2,8 +2,15 @@ import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { connect, isIP, type AddressInfo } from 'node:net';
-import { withDirLock, createMetroBridge, type MetroBridge } from '@stim-cli/core';
+import { connect, type AddressInfo } from 'node:net';
+import {
+  withDirLock,
+  createMetroBridge,
+  createMetroLinks,
+  type MetroBridge,
+  type MetroLink,
+  type MetroLinks,
+} from '@stim-cli/core';
 import {
   clearClaimChild,
   ClaimRefusedError,
@@ -24,9 +31,12 @@ import {
   deviceHostRoot,
   getConcurrencyLimits,
   getParkedMax,
+  getPlatformDeviceLimits,
+  hostedIdleStopHours,
   isJsonObject,
   parseHostedPlatformDevice,
   hostedDeviceId,
+  hostedMemoryRefusal,
   hostedMacosBundleId,
   HOSTED_MACOS_APP_SLOTS,
   loadConfig,
@@ -38,8 +48,9 @@ import {
   readJsonObject,
   readHostedSessions,
   parseHostedOfferRequest,
+  maxLoadPerCore,
   parseHostedNativeOffer,
-  parseHostedLocalDeviceCount,
+  parseHostedLocalPlatformCounts,
   hostedAppAttempt,
   hostedMacosLogsDir,
   hostedNativeLogsDir,
@@ -54,6 +65,7 @@ import {
   type HostedAppRecord,
   type HostedDeviceRequest,
   type HostedDeviceSession,
+  type HostedLocalPlatformCounts,
   type HostedDeviceOffer,
   type HostedIosDevice,
   type HostedAndroidDevice,
@@ -66,6 +78,7 @@ import {
 import { readDeviceHostClients, writeJson } from './registry.ts';
 import { readHostedSessionRows } from './hosted-sessions.ts';
 import { takeHostedInputClaim } from './hosted-input.ts';
+import { planHostedIdleStops } from './hosted-idle.ts';
 import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
@@ -79,6 +92,7 @@ interface WorkerRun {
 interface OwnedSession {
   claim: ClaimHandle;
   adopting?: boolean;
+  imagePhase?: boolean;
   reachedReady?: boolean;
   run?: WorkerRun;
   data?: Promise<void>;
@@ -90,13 +104,11 @@ interface OwnedSession {
   metro?: {
     bridge: MetroBridge;
     ready: Promise<number>;
-    peer: string;
-    gatewayPort: number;
     clientMetroPort?: number;
-    secret: string;
     port?: number;
     closing?: boolean;
   };
+  links?: MetroLinks;
   viewer?: { close: () => Promise<void> };
 }
 
@@ -104,6 +116,8 @@ export interface DeviceHostOptions {
   worker: string;
   env: NodeJS.ProcessEnv;
   allowed: (client: string) => boolean;
+  /** Whether `client` has an authenticated connection now; without it no client counts as gone. */
+  connected?: (client: string) => boolean;
   /** Issues and revokes session-scoped agent control for installed hosted apps. */
   agents: Pick<HostedAgentHost, 'appRunning' | 'appStopped' | 'access'>;
   /** Takes the native app a build on this machine retained under `handoff`, when `client` may have it, or says why not. */
@@ -129,11 +143,74 @@ const refused = (code: ProtocolError['code'], message: string): { error: Protoco
 });
 
 function hostedDeviceExclusions(records: HostedDeviceSession[]) {
-  return records.flatMap((record) =>
-    record.platform === 'ios' && record.state !== 'stopped' && record.device
-      ? [{ platform: 'ios' as const, key: hostedDeviceId(record.device) }]
-      : [],
-  );
+  return records.flatMap((record) => {
+    if (record.platform !== 'ios' || record.state === 'stopped') return [];
+    const udids = new Set<string>();
+    if (record.device) udids.add(hostedDeviceId(record.device));
+    try {
+      for (const udid of readHostedDeviceLedger(join(deviceHostArea(record.id), 'home'))?.ios ?? []) udids.add(udid);
+    } catch {}
+    return [...udids].map((key) => ({ platform: 'ios' as const, key }));
+  });
+}
+
+function occupiedBy(records: HostedDeviceSession[], platform: HostedDeviceSession['platform']): number {
+  return records.filter(
+    (record) => record.state !== 'stopped' && (record.platform === 'macos') === (platform === 'macos'),
+  ).length;
+}
+
+const capacityUnknown = (why: string) => `Hosted device capacity is unknown: ${why}`;
+
+const HOSTED_PLATFORM_CAPS = {
+  ios: { setting: 'concurrency.maxIosDevices', label: 'iOS', noun: 'iOS simulator' },
+  android: { setting: 'concurrency.maxAndroidDevices', label: 'Android', noun: 'Android emulator' },
+  macos: { setting: 'concurrency.maxMacosApps', label: 'macOS', noun: 'macOS app' },
+} as const;
+
+const used = (limit: { hosted: number; local: number | null }) => limit.hosted + (limit.local ?? 0);
+
+/**
+ * What a hosted reservation on `platform` must fit: the platform's own cap `cap` and the shared `max`, where macOS apps
+ * fill a pool of their own against `max`. `local` counts the host's own simulators and emulators, absent where they are
+ * not counted. `full` names the first limit with no room, the platform's before the shared one.
+ */
+function hostedCapacity(
+  records: HostedDeviceSession[],
+  platform: HostedDeviceSession['platform'],
+  max: number,
+  cap: number,
+  local: HostedLocalPlatformCounts | undefined,
+): { running: number; available: number | null; full: string | null } {
+  const macos = platform === 'macos';
+  const localTotal = local ? local.ios + local.android : 0;
+  const pool = occupiedBy(records, platform);
+  const limits: { setting: string; label: string; noun: string; hosted: number; local: number | null; max: number }[] =
+    [];
+  if (cap > 0)
+    limits.push({
+      ...HOSTED_PLATFORM_CAPS[platform],
+      hosted: records.filter((record) => record.state !== 'stopped' && record.platform === platform).length,
+      local: macos ? null : (local?.[platform] ?? 0),
+      max: cap,
+    });
+  if (max > 0)
+    limits.push({
+      setting: 'concurrency.maxDevices',
+      label: macos ? 'macOS' : 'device',
+      noun: macos ? 'macOS app' : 'device',
+      hosted: pool,
+      local: macos ? null : localTotal,
+      max,
+    });
+  const full = limits.find((limit) => used(limit) >= limit.max);
+  return {
+    running: pool + (macos ? 0 : localTotal),
+    available: limits.length ? Math.max(0, Math.min(...limits.map((limit) => limit.max - used(limit)))) : null,
+    full: full
+      ? `Hosted ${full.label} capacity is full: ${full.local === null ? full.hosted : `${full.hosted} hosted + ${full.local} local`} of ${full.max} ${full.noun} reservations are occupied (${full.setting}), including unresolved sessions.`
+      : null,
+  };
 }
 
 /** macOS lets 127.0.0.1 bind beside a wildcard listener and takes its loopback traffic, so probe by connecting. */
@@ -160,6 +237,10 @@ export class DeviceHost {
   private readonly revoked = new Set<string>();
   private readonly probes = new Map<WorkerRun, string>();
   private closed = false;
+  private lastIdleSweep: number | undefined;
+  private clientActive = new Set<string>();
+  private clientsSeen = new Set<string>();
+  private readonly idleKept = new Map<string, string>();
   private reconciling?: Promise<void>;
   private draining: string | null = null;
   private readonly limits: DeviceHostLimits;
@@ -224,6 +305,47 @@ export class DeviceHost {
     return owned;
   }
 
+  async installRuntime(client: string, params: unknown, signal?: AbortSignal): Promise<AppAnswer<{ ok: true }>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (
+      !isJsonObject(params) ||
+      typeof params.runtime !== 'string' ||
+      params.runtime.length > 64 ||
+      !/^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(params.runtime)
+    )
+      return refused('bad-request', 'Runtime installation requires an exact iOS version.');
+    const run = this.runWorker({
+      cwd: dirname(this.options.worker),
+      env: this.options.env,
+      input: { mode: 'runtime', runtime: params.runtime },
+      timeoutMs: this.limits.imageInstallMs,
+      maxOutputBytes: 16_384,
+    });
+    this.probes.set(run, client);
+    const cancel = () => run.cancel();
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      const result = await run.done;
+      if (this.closed || !this.options.allowed(client))
+        return refused('forbidden', 'Current device-host approval is required.');
+      const value = result.value;
+      if (!result.settled || result.notice || !isJsonObject(value) || value.ok !== true)
+        return refused(
+          'action-failed',
+          result.notice ??
+            (isJsonObject(value) && typeof value.message === 'string'
+              ? `${value.message} ${typeof value.remedy === 'string' ? value.remedy : ''}`
+              : 'Xcode runtime installation did not finish.'),
+        );
+      return { result: { ok: true } };
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      this.probes.delete(run);
+    }
+  }
+
   async offer(client: string, params: unknown): Promise<AppAnswer<HostedDeviceOffer>> {
     if (this.closed || !this.options.allowed(client))
       return refused('forbidden', 'Current device-host approval is required.');
@@ -231,11 +353,13 @@ export class DeviceHost {
     if (!request) return refused('bad-request', 'offer needs a platform and valid optional selectors.');
     try {
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const cap = getPlatformDeviceLimits({ env: this.options.env })[request.platform];
+      const counted = request.platform !== 'macos' && (max > 0 || cap > 0);
       const recordsBefore = readHostedSessions();
       const result = await this.probe(client, {
         mode: 'offer',
         ...request,
-        ...(max > 0 ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
+        ...(counted ? { exclude: hostedDeviceExclusions(recordsBefore) } : {}),
       });
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
@@ -243,17 +367,23 @@ export class DeviceHost {
       const native = parseHostedNativeOffer(result.value);
       if (!native || native.platform !== request.platform) throw new Error('Invalid native hosted offer.');
       const records = readHostedSessions();
-      const hosted = records.filter((record) => record.state !== 'stopped').length;
-      const local =
-        max > 0 ? (native.resources.localDevices ?? { unknown: 'Host local device count is unavailable.' }) : undefined;
-      const running = hosted + (typeof local === 'number' ? local : 0);
+      const local = counted
+        ? (native.resources.localPlatforms ?? { unknown: 'Host local device count is unavailable.' })
+        : undefined;
+      const capacity = hostedCapacity(
+        records,
+        request.platform,
+        max,
+        cap,
+        local && 'unknown' in local ? undefined : local,
+      );
       let declined =
         this.draining ??
         (loadConfig()?.server?.devicesPaused === true
           ? 'Hosted sessions are paused; resume with stim settings set server.devicesPaused false'
           : null) ??
         native.declined ??
-        (native.resources.memoryPressure !== 'normal' ? 'Host memory pressure is unknown or elevated.' : null);
+        hostedMemoryRefusal(native.resources.memoryPressure);
       if (request.platform === 'android' || request.platform === 'macos') {
         try {
           if (request.platform === 'android') reserveAndroidPort(records);
@@ -262,18 +392,20 @@ export class DeviceHost {
           declined = (error as Error).message;
         }
       }
-      if (local && typeof local !== 'number') declined = local.unknown;
-      else if (max > 0 && running >= max)
-        declined = `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`;
+      if (local && 'unknown' in local) declined = capacityUnknown(local.unknown);
+      else if (capacity.full) declined = capacity.full;
+      const resources = { ...native.resources, maxLoadPerCore: maxLoadPerCore() };
+      delete resources.localPlatforms;
       return {
         result: {
           ...native,
+          resources,
           declined,
           capacity: {
-            running,
+            running: capacity.running,
             max,
-            available: local && typeof local !== 'number' ? 0 : max > 0 ? Math.max(0, max - running) : null,
-            ...(local !== undefined ? { local } : {}),
+            available: local && 'unknown' in local ? 0 : capacity.available,
+            ...(local !== undefined ? { local: 'unknown' in local ? local : local.ios + local.android } : {}),
           },
         },
       };
@@ -310,18 +442,23 @@ export class DeviceHost {
     let start: HostedDeviceSession | null = null;
     try {
       const max = getConcurrencyLimits({ env: this.options.env }).maxDevices;
+      const cap = getPlatformDeviceLimits({ env: this.options.env })[request.platform];
       const recordsBefore = readHostedSessions();
       const candidate = await this.parkedCandidate(client, request, recordsBefore);
       if (this.closed || !this.options.allowed(client))
         return refused('forbidden', 'Current device-host approval is required.');
-      let local: number | { unknown: string } = 0;
-      if (max > 0 && !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)) {
+      let local: HostedLocalPlatformCounts | { unknown: string } = { ios: 0, android: 0 };
+      if (
+        (max > 0 || cap > 0) &&
+        request.platform !== 'macos' &&
+        !recordsBefore.some((record) => record.client === client && record.attempt === request.attempt)
+      ) {
         const probe = await this.probe(client, { mode: 'count', exclude: hostedDeviceExclusions(recordsBefore) });
         if (this.closed || !this.options.allowed(client))
           return refused('forbidden', 'Current device-host approval is required.');
         local =
           probe.settled && !probe.notice
-            ? (parseHostedLocalDeviceCount(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
+            ? (parseHostedLocalPlatformCounts(probe.value) ?? { unknown: 'Host local device count is unavailable.' })
             : { unknown: probe.notice ?? 'Host local device count worker did not settle.' };
       }
       const result = this.transaction((records) => {
@@ -343,12 +480,9 @@ export class DeviceHost {
         if (this.draining) throw new Error(`This Mac takes no new hosted sessions: ${this.draining}.`);
         if (loadConfig()?.server?.devicesPaused === true)
           throw new Error('Hosted sessions are paused; resume with stim settings set server.devicesPaused false.');
-        if (typeof local !== 'number') throw new Error(local.unknown);
-        const hosted = records.filter((record) => record.state !== 'stopped').length;
-        if (max > 0 && hosted + local >= max)
-          throw new Error(
-            `${hosted} hosted + ${local} local of ${max} device reservations are occupied, including unresolved sessions.`,
-          );
+        if ('unknown' in local) throw new Error(capacityUnknown(local.unknown));
+        const { full } = hostedCapacity(records, request.platform, max, cap, local);
+        if (full) throw new Error(full);
         const adopted =
           candidate &&
           records.find(
@@ -403,6 +537,8 @@ export class DeviceHost {
             'agent',
             'metroPort',
             'clientMetroPort',
+            'clientAbsentMs',
+            'idleStop',
           ] as const)
             delete adopted[key];
           Object.assign(adopted, request, { state: 'preparing', createdAt: new Date().toISOString() });
@@ -579,29 +715,23 @@ export class DeviceHost {
     }
   }
 
-  async metroOpen(client: string, params: unknown, peer: string | null): Promise<AppAnswer<{ port: number }>> {
+  async metroOpen(client: string, params: unknown): Promise<AppAnswer<{ port: number }>> {
     if (!this.options.allowed(client)) return refused('forbidden', 'Current device-host approval is required.');
+    if (isJsonObject(params) && ('gatewayPort' in params || 'secret' in params))
+      return refused(
+        'protocol-unsupported',
+        'This stim-server carries Metro over connections the client opens, and this Stim is too old for that. Update stim on this machine, then retry.',
+      );
     if (
       !isJsonObject(params) ||
       typeof params.session !== 'string' ||
-      !peer ||
-      !isIP(peer) ||
-      typeof params.gatewayPort !== 'number' ||
-      !Number.isInteger(params.gatewayPort) ||
-      params.gatewayPort < 1 ||
-      params.gatewayPort > 65535 ||
-      typeof params.secret !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(params.secret) ||
       (params.clientMetroPort !== undefined &&
         (typeof params.clientMetroPort !== 'number' ||
           !Number.isInteger(params.clientMetroPort) ||
           params.clientMetroPort < 1 ||
           params.clientMetroPort > 65535))
     )
-      return refused(
-        'bad-request',
-        'Metro needs its session, client gateway port and 256-bit secret on a tailnet connection.',
-      );
+      return refused('bad-request', 'Metro needs its session and, when given, a client Metro port.');
     try {
       const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
       if (!record || record.state !== 'ready' || this.closed || !this.owned.has(record.id))
@@ -615,19 +745,14 @@ export class DeviceHost {
         throw new Error('This hosted session has a native operation in progress.');
       if (owned.metro) {
         if (owned.metro.closing) throw new Error('This session Metro bridge is closing.');
-        if (
-          owned.metro.peer !== peer ||
-          owned.metro.gatewayPort !== params.gatewayPort ||
-          owned.metro.secret !== params.secret ||
-          owned.metro.clientMetroPort !== params.clientMetroPort
-        )
-          throw new Error('Close this session Metro bridge before replacing its gateway.');
+        if (owned.metro.clientMetroPort !== params.clientMetroPort)
+          throw new Error('Close this session Metro bridge before changing its client Metro port.');
         const port = await owned.metro.ready;
         await this.restoreAndroidMetro(record, owned);
         return { result: { port } };
       }
       const devClientPort = record.platform === 'ios' ? (params.clientMetroPort as number | undefined) : undefined;
-      const bridge = createMetroBridge({ peer, gatewayPort: params.gatewayPort, secret: params.secret });
+      const bridge = createMetroBridge((owned.links ??= createMetroLinks()));
       const inUse = () =>
         Object.assign(
           new Error(
@@ -649,9 +774,6 @@ export class DeviceHost {
       const metro: NonNullable<OwnedSession['metro']> = {
         bridge,
         ready,
-        peer,
-        gatewayPort: params.gatewayPort,
-        secret: params.secret,
         clientMetroPort: params.clientMetroPort as number | undefined,
       };
       owned.metro = metro;
@@ -775,7 +897,34 @@ export class DeviceHost {
     }
   }
 
+  /** Holds a connection the client opened as an idle link that the session's Metro bridge pairs with one stream. */
+  metroLink(client: string, params: unknown, link: MetroLink): AppAnswer<Record<string, never>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (!isJsonObject(params) || typeof params.session !== 'string')
+      return refused('bad-request', 'A Metro link needs a session.');
+    try {
+      const record = readHostedSessions().find((each) => each.client === client && each.id === params.session);
+      if (!record) return refused('unknown-session', 'This client has no such hosted session.');
+      const owned = this.owned.get(record.id);
+      if (record.state !== 'ready' || !owned || owned.stopping)
+        throw new Error('Only a ready session attached to this owner can link Metro.');
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('Hosted Metro supports iOS and Android sessions only.');
+      if (!(owned.links ??= createMetroLinks()).add(link)) throw new Error('This session Metro bridge is closing.');
+      return { result: {} };
+    } catch (error) {
+      return refused('action-failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  metroUnlink(link: MetroLink): void {
+    for (const owned of this.owned.values()) owned.links?.remove(link);
+  }
+
   private async closeMetro(owned: OwnedSession): Promise<void> {
+    owned.links?.close();
+    delete owned.links;
     const metro = owned.metro;
     if (!metro) return;
     metro.closing = true;
@@ -1285,6 +1434,43 @@ export class DeviceHost {
       this.beginStop(record);
       return;
     }
+    if (record.platform === 'android' && !owned.adopting) {
+      const image = this.runWorker({
+        cwd: dirname(this.options.worker),
+        env: this.options.env,
+        input: { mode: 'image', ...(record.systemImage ? { systemImage: record.systemImage } : {}) },
+        claim: owned.claim,
+        timeoutMs: this.limits.imageInstallMs,
+        maxOutputBytes: 16_384,
+      });
+      owned.run = image;
+      owned.imagePhase = true;
+      const installed = await image.done;
+      if (owned.stopping) return;
+      if (
+        !installed.settled ||
+        installed.notice ||
+        !isJsonObject(installed.value) ||
+        installed.value.state !== 'ready'
+      ) {
+        const value = installed.value;
+        this.change(record.id, (current) => {
+          current.state = installed.settled ? 'stopped' : 'unknown';
+          current.notice =
+            installed.notice ??
+            (isJsonObject(value) && typeof value.notice === 'string'
+              ? value.notice
+              : 'The Android system image install did not finish.');
+          if (current.state === 'stopped') this.release(record.id, owned);
+        });
+        return;
+      }
+      if (!this.options.allowed(record.client) || this.closed) {
+        this.beginStop(record);
+        return;
+      }
+      delete owned.imagePhase;
+    }
     const run = this.run(record, owned, owned.adopting ? 'adopt' : 'prepare');
     owned.run = run;
     const outcome = await run.done;
@@ -1380,21 +1566,31 @@ export class DeviceHost {
       if (!outcome.settled)
         throw new Error('The prior worker group is unresolved. Its claim and device were retained.');
       if (
-        isJsonObject(value) &&
-        value.state === 'stopped' &&
-        value.device === null &&
+        (owned.imagePhase || (isJsonObject(value) && value.state === 'stopped' && value.device === null)) &&
         !existsSync(join(home, 'hosted-device.json')) &&
         !existsSync(join(home, 'created-devices.json'))
       ) {
         this.change(record.id, (current) => {
           current.state = 'stopped';
           current.device = null;
-          if (typeof value.notice === 'string') current.notice = value.notice;
+          if (isJsonObject(value) && typeof value.notice === 'string') current.notice = value.notice;
           else delete current.notice;
         });
         this.release(record.id, owned);
         return;
       }
+    } else if (
+      record.platform === 'android' &&
+      record.state === 'preparing' &&
+      !existsSync(join(home, 'hosted-device.json')) &&
+      !existsSync(join(home, 'created-devices.json'))
+    ) {
+      this.change(record.id, (current) => {
+        current.state = 'stopped';
+        current.device = null;
+      });
+      this.release(record.id, owned);
+      return;
     }
     const device = readHostedDevice(home, record.platform);
     assertSessionDevice(record, device);
@@ -1523,6 +1719,120 @@ export class DeviceHost {
 
   active(): number {
     return this.owned.size;
+  }
+
+  clientSeen(client: string): void {
+    this.clientsSeen.add(client);
+  }
+
+  clientActed(session: string): void {
+    this.clientActive.add(session);
+  }
+
+  /**
+   * Stops each ready session whose client has been gone for maintenance.idleStopHours, through the stop a person
+   * uses. A session with work in flight or a claim that is not provably free stays.
+   */
+  sweepIdle(): void {
+    if (this.closed) return;
+    const now = Date.now();
+    const elapsedMs = this.lastIdleSweep === undefined ? 0 : now - this.lastIdleSweep;
+    this.lastIdleSweep = now;
+    const active = this.clientActive;
+    this.clientActive = new Set();
+    const seen = this.clientsSeen;
+    this.clientsSeen = new Set();
+    try {
+      const setting = hostedIdleStopHours(this.options.env);
+      if ('invalid' in setting) this.logIdleKept('setting', `${setting.invalid}; hosted sessions are not idle-stopped`);
+      const windowMs = 'hours' in setting ? setting.hours * 3_600_000 : 0;
+      const live = this.options.connected ?? (() => true);
+      const connected = (client: string) => live(client) || seen.has(client);
+      const records = readHostedSessions();
+      const plan = planHostedIdleStops({
+        sessions: records,
+        connected,
+        active,
+        elapsedMs,
+        windowMs,
+        unresolved: (id) => this.idleUnresolved(id),
+        foreign: (id) => this.ownedElsewhere(id),
+      });
+      if (plan.updates.length)
+        this.transaction((current) => {
+          for (const { id, absentMs } of plan.updates) {
+            const record = current.find((each) => each.id === id);
+            if (!record) continue;
+            if (absentMs === null) delete record.clientAbsentMs;
+            else record.clientAbsentMs = absentMs;
+          }
+        });
+      for (const { id, reason } of plan.kept) this.logIdleKept(id, reason);
+      for (const { id, reason } of plan.stops) this.stopIdle(id, reason);
+      const due = new Set([...plan.kept, ...plan.stops].map(({ id }) => id));
+      for (const id of this.idleKept.keys())
+        if (id !== 'setting' && id !== 'journal' && !due.has(id)) this.idleKept.delete(id);
+      this.idleKept.delete('journal');
+      if (!('invalid' in setting)) this.idleKept.delete('setting');
+    } catch (error) {
+      this.logIdleKept(
+        'journal',
+        `hosted idle check could not use the journal: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private logIdleKept(key: string, reason: string): void {
+    if (this.idleKept.get(key) === reason) return;
+    this.idleKept.set(key, reason);
+    process.stderr.write(
+      `Hosted session ${key === 'setting' || key === 'journal' ? '' : `${key} `}kept: ${reason.replace(/[\r\n]+/g, ' ')}\n`,
+    );
+  }
+
+  private ownedElsewhere(id: string): boolean {
+    if (this.owned.has(id)) return false;
+    try {
+      const attempt = tryAcquireClaim({
+        root: join(deviceHostRoot(), `${id}.claims`),
+        mode: 'exclusive',
+        label: 'hosted device session',
+        details: { session: id },
+      });
+      if (attempt.pending) releaseClaim(attempt.pending);
+      if (!attempt.acquired) return true;
+      releaseClaim(attempt.acquired);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  private idleUnresolved(id: string): string | null {
+    const owned = this.owned.get(id);
+    if (!owned) return null;
+    if (owned.stopping || owned.data || owned.installing) return 'it has a native operation in progress';
+    try {
+      releaseClaim(takeHostedInputClaim(owned.claim));
+    } catch (error) {
+      return `its native input is not provably finished (${error instanceof Error ? error.message : String(error)})`;
+    }
+    return null;
+  }
+
+  private stopIdle(id: string, reason: string): void {
+    try {
+      const record = readHostedSessions().find((each) => each.id === id);
+      if (!record || record.state !== 'ready') return;
+      this.beginStop(record);
+      this.change(id, (current) => {
+        current.idleStop = { at: new Date().toISOString(), reason };
+        delete current.clientAbsentMs;
+      });
+      process.stderr.write(`Hosted session ${id} stopped: ${reason}\n`);
+    } catch (error) {
+      this.logIdleKept(id, error instanceof Error ? error.message : String(error));
+    }
   }
 
   drain(reason: string | null): void {

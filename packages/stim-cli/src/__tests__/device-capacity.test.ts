@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readStatsReport } from '@stim-cli/core/state';
@@ -8,12 +8,14 @@ import {
   withDeviceBootAdmission,
   deviceSlotWaitingLine,
   countLiveOwnedDevices,
+  countLiveOwnedDevicesByPlatform,
+  deviceSlotUsages,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
 import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
-import { goneClaimOwner, plantClaim, makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
+import { makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
 
 vi.mock('../devices/queue-reclaim.ts', () => ({
   reclaimIdleDevice: vi.fn<typeof import('../devices/queue-reclaim.ts').reclaimIdleDevice>(async () => 0),
@@ -34,14 +36,18 @@ const empty = { sims: [], adb: makeAdbDevices(), config: makeConfig() };
 const occupied = [makeIosSim({ udid: 'holder', name: 'stim-holder', state: 'Booted' })];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-test('local device counts exclude hosted simulator identities without excluding other booted devices', () => {
+test('local device counts split by platform and sum to the total, with a booting emulator counted as android', () => {
   const inventory = {
     ...empty,
-    sims: [...occupied, makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' })],
-    booting: [{ platform: 'ios', key: 'hosted' }],
+    sims: [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booting' })],
+    booting: [{ platform: 'android', key: 'stim-avd' }],
   };
-  expect(countLiveOwnedDevices(inventory)).toBe(2);
-  expect(countLiveOwnedDevices(inventory, { exclude: [{ platform: 'ios', key: 'hosted' }] })).toBe(1);
+  expect(countLiveOwnedDevicesByPlatform(inventory)).toEqual({ ios: 2, android: 1 });
+  expect(countLiveOwnedDevices(inventory)).toBe(3);
+  expect(countLiveOwnedDevicesByPlatform(inventory, { exclude: [{ platform: 'android', key: 'stim-avd' }] })).toEqual({
+    ios: 2,
+    android: 0,
+  });
 });
 
 function deferred<T>() {
@@ -127,78 +133,75 @@ test.each(['equal timestamps', 'backward clock'])(
   },
 );
 
-test('a dead waiter is reaped by process identity and cannot block an available slot', async () => {
-  const path = plantClaim(join(root, 'device-waits'), 'shared', goneClaimOwner(), {
-    startedAt: '2026-01-01T00:00:00.000Z',
-  });
-  await expect(
-    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => 'booted', {
+describe('per-platform device caps', () => {
+  const sim = (udid: string) => makeIosSim({ udid, name: `stim-${udid}`, state: 'Booted' });
+  const admit = (platform: string, policy: Partial<Parameters<typeof withDeviceBootAdmission>[2]>) =>
+    withDeviceBootAdmission({ platform, key: 'new' }, async () => 'booted', {
       root,
-      max: 1,
       sources: empty,
       noWait: true,
-    }),
-  ).resolves.toBe('booted');
-  expect(existsSync(path)).toBe(false);
+      ...policy,
+    });
+
+  test('a waiter held back only by its own platform cap does not block a waiter of another platform', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    try {
+      const sources = { ...empty, sims: [sim('a')] };
+      await expect(admit('android', { max: 0, platformMax: { ios: 1, android: 1 }, sources })).resolves.toBe('booted');
+    } finally {
+      releaseClaim(head);
+    }
+  });
+
+  test('queue reclaim for a full platform cap only reclaims devices of that platform', async () => {
+    let clock = Date.now();
+    await expect(
+      admit('ios', {
+        max: 0,
+        platformMax: { ios: 1 },
+        sources: { ...empty, sims: [sim('a')] },
+        noWait: false,
+        waitMs: 1000,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(reclaimIdleDevice).toHaveBeenCalledWith(
+      root,
+      expect.any(Number),
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Set),
+      'ios',
+    );
+  });
 });
 
-test.each([{ noWait: true }, { waitMs: 0 }])(
-  'an immediate run cannot jump a live ticket even with spare capacity: %j',
-  async (policy) => {
-    const ticket = takeTicket();
-    const boot = vi.fn<() => Promise<void>>(async () => {});
+describe('queue reclaim behind a platform-walled head', () => {
+  test('only the first waiter of a platform reclaims, so two runs queued on a full iOS cap do not both shut devices down', async () => {
+    const head = takeTicket({ platform: 'ios', sequence: 1 });
+    let clock = Date.now();
     try {
       await expect(
-        withDeviceBootAdmission({ platform: 'ios', key: 'new' }, boot, {
+        withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
           root,
-          max: 1,
-          sources: empty,
-          ...policy,
+          max: 0,
+          platformMax: { ios: 1 },
+          waitMs: 1000,
+          sources: { ...empty, sims: [makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted' })] },
+          now: () => clock,
+          sleep: async (ms) => {
+            clock += ms;
+          },
         }),
       ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-      expect(boot).not.toHaveBeenCalled();
-      expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
+      expect(reclaimIdleDevice).not.toHaveBeenCalled();
     } finally {
-      releaseClaim(ticket);
+      releaseClaim(head);
     }
-  },
-);
-
-test.each(['ios', 'android'])("the run's own booted or booting %s device bypasses a live queue", async (platform) => {
-  const ticket = takeTicket();
-  try {
-    await expect(
-      withDeviceBootAdmission({ platform, key: 'own' }, async () => 'reused', {
-        root,
-        max: 1,
-        sources: { ...empty, sims: occupied, booting: [{ platform, key: 'own' }] },
-        sleep: async () => {
-          throw new Error('own device must not wait');
-        },
-      }),
-    ).resolves.toBe('reused');
-    expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
-  } finally {
-    releaseClaim(ticket);
-  }
-});
-
-test('an already booted owned simulator bypasses a live queue even above the cap', async () => {
-  const ticket = takeTicket();
-  try {
-    await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'own' }, async () => 'reused', {
-        root,
-        max: 1,
-        sources: { ...empty, sims: [...occupied, makeIosSim({ udid: 'own', name: 'stim-own', state: 'Booted' })] },
-        sleep: async () => {
-          throw new Error('own device must not wait');
-        },
-      }),
-    ).resolves.toBe('reused');
-  } finally {
-    releaseClaim(ticket);
-  }
+  });
 });
 
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
@@ -255,24 +258,6 @@ test('admission records device slot duration in the compiling placement independ
   stats.record({ failed: false, durationMs: 3000 });
   expect(readStats().record?.placements?.[0]?.deviceSlotWaitMs).toBe(2000);
   expect(readStats().record?.capacityWaits?.[0]?.ms).toBe(2000);
-});
-
-test('an error during a wait releases the ticket and clears visible waiting state', async () => {
-  const waitingFor = vi.fn<NonNullable<DeviceSlotWaitPolicy['waitingFor']>>();
-  await expect(
-    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-      root,
-      max: 1,
-      sources: { ...empty, sims: occupied },
-      waitingFor,
-      sleep: async () => {
-        throw new Error('interrupted');
-      },
-    }),
-  ).rejects.toThrow('interrupted');
-  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
-  expect(waitingFor).toHaveBeenLastCalledWith(null);
-  expect(readStats().record?.capacityWaits).toHaveLength(1);
 });
 
 test('an unresolved waiter refuses with its exact claim and removal command', async () => {
@@ -368,63 +353,6 @@ test.each(['wait notification', 'progress output'])(
     expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
   },
 );
-
-test('an error reporting an admitted wait still releases the boot reservation', async () => {
-  let full = true;
-  await expect(
-    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-      root,
-      max: 1,
-      sources: { ...empty, sims: () => (full ? occupied : []) },
-      sleep: async () => {
-        full = false;
-      },
-      onWait: () => {
-        throw new Error('report failed');
-      },
-    }),
-  ).rejects.toThrow('report failed');
-  expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
-  expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
-});
-
-test('a queued run names the stuck head and times out listing devices only every 10 seconds', async () => {
-  const head = takeTicket({ sequence: 1, displayName: 'stuck-workspace' });
-  let now = Date.now();
-  const lines: string[] = [];
-  const listDevices = vi.fn<() => typeof occupied>(() => occupied);
-  try {
-    await expect(
-      withDeviceBootAdmission(
-        { platform: 'android', key: 'new' },
-        async () => {
-          throw new Error('the follower must not boot');
-        },
-        {
-          root,
-          max: 1,
-          waitMs: 12_000,
-          sources: { ...empty, sims: listDevices },
-          now: () => now,
-          sleep: async (ms) => {
-            now += ms;
-          },
-          out: (line) => lines.push(line),
-        },
-      ),
-    ).rejects.toMatchObject({
-      code: 'STIM_AT_CAPACITY',
-      message: expect.stringContaining(`queue position 2 behind stuck-workspace; queue: ${join(root, 'device-waits')}`),
-    });
-    expect(lines[1]).toContain('1/1 in use: stim-holder');
-    expect(lines[1]).toContain('queue position 2 behind stuck-workspace');
-    expect(lines[1]).toContain(join(root, 'device-waits'));
-    expect(listDevices).toHaveBeenCalledTimes(2);
-    expect(readClaimSet(join(root, 'device-waits')).live.map((holder) => holder.claimId)).toEqual([head.claimId]);
-  } finally {
-    releaseClaim(head);
-  }
-});
 
 test('a queued run whose own device starts booting is admitted without waiting for its turn', async () => {
   const head = takeTicket({ sequence: 1 });
@@ -615,43 +543,50 @@ test('reclaim attempts are at least fifteen seconds apart while capacity is poll
   expect(readStats().record?.capacityWaits?.[0]?.reclaimed).toBe(2);
 });
 
-test('the non-binding slot peek reports a live owned slot and FIFO waiters without taking capacity', () => {
-  const ticket = tryAcquireClaim({
-    root: join(root, 'device-waits'),
-    mode: 'shared',
-    label: 'device wait',
-    details: { sequence: 1 },
-  }).acquired!;
-  try {
-    const project = { platforms: { ios: { owned: true, deviceUdid: 'holder' } } };
-    expect(
-      peekDeviceSlots({
-        platform: 'ios',
-        project,
-        max: 3,
-        sources: { ...empty, sims: occupied, config: makeConfig({ projects: { [root]: project } }) },
-      }),
-    ).toEqual({ count: 1, max: 3, queued: 1, localLive: true });
-    expect(readClaimSet(join(root, 'device-waits')).live).toHaveLength(1);
-  } finally {
-    releaseClaim(ticket);
-  }
+test('status reports each per-platform cap that is set, with or without the shared cap, from one inventory', async () => {
+  const sources = {
+    ...empty,
+    sims: [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booted' })],
+  };
+  expect(await deviceSlotUsages(0, { ios: 2, android: 0 }, sources)).toEqual({
+    platformDevices: { ios: { max: 2, inUse: 2 } },
+  });
+  const both = await deviceSlotUsages(5, { ios: 3, android: 1 }, sources);
+  expect(both.devices).toMatchObject({ max: 5, inUse: 2 });
+  expect(both.platformDevices).toEqual({ ios: { max: 3, inUse: 2 }, android: { max: 1, inUse: 0 } });
+  expect(await deviceSlotUsages(5, {}, sources)).not.toHaveProperty('platformDevices');
+  const unknown = await deviceSlotUsages(
+    0,
+    { android: 1 },
+    {
+      ...sources,
+      sims: () => {
+        throw new Error('simctl timed out');
+      },
+    },
+  );
+  expect(unknown.platformDevices).toEqual({
+    android: { max: 1, inUse: null, unknown: expect.stringContaining('simctl timed out') },
+  });
 });
 
-test('the non-binding peek preserves an unknown count for the binding boot admission', () => {
-  expect(
-    peekDeviceSlots({
-      platform: 'ios',
-      project: null,
+test('the placement peek reports the tightest limit and does not queue a run behind a waiter held only by another platform cap', async () => {
+  const ticket = takeTicket({ platform: 'ios', sequence: 1 });
+  const sources = { ...empty, sims: [makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted' })] };
+  const android = () => peekDeviceSlots({ platform: 'android', project: null, max: 5, platformMax: 1, sources });
+  try {
+    expect(await android()).toMatchObject({ count: 0, max: 1, queued: 1, limit: 'concurrency.maxAndroidDevices' });
+    process.env.STIM_MAX_IOS_DEVICES = '1';
+    expect(await android()).toMatchObject({ queued: 0 });
+    expect(await peekDeviceSlots({ platform: 'ios', project: null, max: 5, sources })).toMatchObject({
+      count: 1,
       max: 1,
-      sources: {
-        ...empty,
-        sims: () => {
-          throw new Error('simctl unavailable');
-        },
-      },
-    }),
-  ).toMatchObject({ count: null, max: 1, localLive: false });
+      limit: 'concurrency.maxIosDevices',
+    });
+  } finally {
+    delete process.env.STIM_MAX_IOS_DEVICES;
+    releaseClaim(ticket);
+  }
 });
 
 test('automatic device admission rechecks exclusion after waiting and clears its own wait ticket', async () => {

@@ -50,16 +50,14 @@ public struct MaintenanceStatus: Decodable, Hashable, Sendable {
     self.lastPass = lastPass
   }
 
-  /// True when the CLI clears build outputs, trims caches and removes finished worktrees on its own: mode `on`
-  /// with valid settings and no unresolved claim blocking its passes. A `stim` without the block or in `report`
-  /// mode leaves that cleanup to the app.
+  /// True when the CLI cleans up on its own: mode `on` with valid settings and no unresolved claim blocking its
+  /// passes. A `stim` without the block, or in `report` or `off` mode, cleans up nothing by itself.
   public var cleansAutomatically: Bool { mode == "on" && invalid == nil && claim == nil }
 
-  /// The last pass as one line, or nil when none has run or it only planned.
-  public var lastPassLine: String? {
-    guard let pass = lastPass, pass.mode == "on" else { return nil }
-    let when = pass.date.formatted(date: .omitted, time: .shortened)
-    let actions = pass.actions == 1 ? "1 action" : "\(pass.actions) actions"
-    return "Last pass \(when): \(actions), \(Format.fileSize(pass.freedBytes)) freed."
+  /// Whether free disk under the budget needs a person: the CLI does not clean up on its own, or its last pass
+  /// was blocked.
+  public static func asksAboutDiskPressure(_ status: MaintenanceStatus?) -> Bool {
+    guard let status, status.cleansAutomatically else { return true }
+    return !(status.lastPass?.blocked.isEmpty ?? true)
   }
 }

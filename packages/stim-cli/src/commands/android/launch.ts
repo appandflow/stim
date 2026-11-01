@@ -9,6 +9,7 @@ import {
   type waitForBoot,
 } from '../../devices/android.ts';
 import { teardownOwnedAvd } from '../../devices/teardown.ts';
+import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { formatBytes } from '../../fs-util.ts';
 import type { ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
@@ -73,11 +74,17 @@ import { type ReportAndroidResultArgs, finishAndroidUpload, reportAndroidResult,
 import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { loadConfig, saveConfig, setDevice, withConfigLockAsync, upsertProject } from '../../workspace/config.ts';
 import { providerUploadOutcome } from '../../cache/build-cache.ts';
+import { settleFingerprintCheck, type FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { launchOutcomeRecord, type MobileRuntimePreparation, type RuntimeReadiness } from '../native-runtime.ts';
 import type { RuntimePlan } from '../../engine/runtime-plan.ts';
 import { killPreviousCollector, startCollector } from './collector.ts';
-import { captureNativeCrashes, printNativeCrashReport } from '../../diagnostics/native-crash.ts';
+import {
+  androidCrashClockOffset,
+  captureNativeCrashes,
+  printNativeCrashReport,
+} from '../../diagnostics/native-crash.ts';
 import { errorDiagnostics } from '../../diagnostics/error-diagnostics.ts';
+import type { HostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 
 interface VerifyAndroidRunArgs {
   operation?: StimContext;
@@ -100,6 +107,8 @@ interface VerifyAndroidRunArgs {
   component?: string | null;
   phase: (label: unknown, text: string) => void;
   enterActivity?: BuildProgress['activity'];
+  hostedLogs?: Omit<HostedLaunchLogs, 'stop'>;
+  hostedRunCommand?: string;
 }
 
 interface AndroidRuntimeLaunchContext {
@@ -116,18 +125,9 @@ export type AndroidRuntimeKind = 'metro' | 'embedded-js' | 'process';
 
 function androidLaunchOutcomeRecord(
   kind: AndroidRuntimeKind,
-  args: Omit<Parameters<typeof launchOutcomeRecord>[0], 'release'>,
+  args: Omit<Parameters<typeof launchOutcomeRecord>[0], 'release' | 'process'>,
 ): Record<string, unknown> {
-  if (kind !== 'process') return launchOutcomeRecord({ ...args, release: kind === 'embedded-js' });
-  const unverified = args.launchState === LAUNCH_UNVERIFIED;
-  return {
-    src: 'build',
-    level: unverified ? 'warn' : 'info',
-    event: unverified ? 'launch_unverified' : 'launch_verified',
-    msg: unverified
-      ? `${args.bundleId} could not be verified as running`
-      : `${args.bundleId} is running its native process`,
-  };
+  return launchOutcomeRecord({ ...args, release: kind === 'embedded-js', process: kind === 'process' });
 }
 
 export interface AndroidRuntimePlan extends RuntimePlan<
@@ -245,7 +245,7 @@ async function verifyAndroidProcessRun({
   return { state: LAUNCH_FATAL };
 }
 
-async function verifyAndroidMetroRun({
+export async function verifyAndroidMetroRun({
   operation,
   root,
   slot,
@@ -264,17 +264,36 @@ async function verifyAndroidMetroRun({
   component = null,
   phase,
   enterActivity,
-}: VerifyAndroidRunArgs): Promise<{ state: boolean | string; warning?: string; unattributed?: boolean }> {
-  const runCommand = nativeRunCommand('android', slot, { physical, deviceId: serial });
-  const readNativeCrashes = () =>
-    remoteDevice
-      ? []
-      : captureNativeCrashes(
-          { root, slot, platform: 'android', deviceId: serial, appId: androidPackage, since: launchedAt },
-          logsDir,
-          operation?.signal,
-          operation?.env,
-        );
+  hostedLogs,
+  hostedRunCommand,
+}: Omit<VerifyAndroidRunArgs, 'verifyReleaseLaunched' | 'variant'>): Promise<{
+  state: boolean | string;
+  warning?: string;
+  unattributed?: boolean;
+}> {
+  const runCommand = hostedRunCommand ?? nativeRunCommand('android', slot, { physical, deviceId: serial });
+  let clockOffsetMs: number | undefined;
+  const readNativeCrashes = async () => {
+    if (hostedLogs) return hostedLogs.readNativeCrashes();
+    if (remoteDevice) return [];
+    // One verification keeps one clock offset; a guest clock step during it is not re-measured.
+    const measured = clockOffsetMs ?? (await androidCrashClockOffset(serial, operation?.signal));
+    if (measured !== null) clockOffsetMs = measured;
+    return captureNativeCrashes(
+      {
+        root,
+        slot,
+        platform: 'android',
+        deviceId: serial,
+        appId: androidPackage,
+        since: launchedAt,
+        clockOffsetMs: measured,
+      },
+      logsDir,
+      operation?.signal,
+      operation?.env,
+    );
+  };
 
   const freshEmulator = Boolean((device.created || device.adoptionPending) && device.owned && !remoteDevice);
   const timeoutMs = freshEmulator ? 60000 : VERIFY_TIMEOUT_MS;
@@ -282,24 +301,31 @@ async function verifyAndroidMetroRun({
     phase('verify', `waiting up to 60s for bundle load (${device.created ? 'new' : 'adopted'} emulator)`);
   const siblings = metroCheck ? await siblingPlatformSlots(root, 'android', slot) : [];
   const verification: VerifyLaunchResultLike = metroCheck
-    ? await verifyLaunched({
-        timeoutMs,
-        requireBundleResponse: true,
-        slot: launchSlotScope(root, slot),
-        platformShared: siblings.length > 0,
-        onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
-        onActivity: enterActivity,
-        logsDir,
-        since: launchedAt,
-        metroPort,
-        platform: 'android',
-        mode: workspaceDevServerMode(root, isExpo),
-        readNativeCrashes,
-        processAlive: async () => {
-          const running = await androidAppProcess(serial, androidPackage);
-          return running.state === 'unknown' ? null : running.state === 'running';
-        },
-      })
+    ? await withDrainingCancellation(operation, operation?.signal, () =>
+        verifyLaunched({
+          signal: operation?.signal,
+          timeoutMs,
+          requireBundleResponse: true,
+          slot: launchSlotScope(root, slot),
+          platformShared: siblings.length > 0,
+          onReadinessPending: () => phase('readiness', 'waiting for app readiness (up to 30s after bundle load)'),
+          onActivity: enterActivity,
+          logsDir,
+          since: launchedAt,
+          metroPort,
+          platform: 'android',
+          mode: workspaceDevServerMode(root, isExpo),
+          readNativeCrashes,
+          readDeviceRecords: hostedLogs?.readDeviceRecords,
+          deviceLogsThrough: hostedLogs?.deviceLogsThrough,
+          processAlive: hostedLogs
+            ? null
+            : async () => {
+                const running = await androidAppProcess(serial, androidPackage);
+                return running.state === 'unknown' ? null : running.state === 'running';
+              },
+        }),
+      )
     : { verified: false, skipped: true };
   const nativeCrashes = verification.errors?.some((record) => record.event === 'native_crash')
     ? []
@@ -336,7 +362,9 @@ async function verifyAndroidMetroRun({
       phase(
         'remedy',
         chalk.yellow(
-          `Fix the crash, then run \`${runCommand}\` again; it force-stops a crashed process that remains alive behind the system crash dialog. Metro reload cannot recover it.`,
+          hostedRunCommand
+            ? `Fix the crash, then run \`${runCommand}\` again. Metro reload cannot recover it.`
+            : `Fix the crash, then run \`${runCommand}\` again; it force-stops a crashed process that remains alive behind the system crash dialog. Metro reload cannot recover it.`,
         ),
       );
     } else if (verification.processAlive === true && metroPort !== null) {
@@ -355,7 +383,11 @@ async function verifyAndroidMetroRun({
       'verify',
       `bundle loaded` +
         (verification.processAlive === true ? ', process alive' : '') +
-        (verification.readiness ? '' : ', stable for 3s -- the first screen may still be rendering') +
+        (verification.readiness
+          ? ''
+          : verification.jsRunning
+            ? ', app JavaScript running -- the first screen may still be rendering'
+            : ', stable for 3s -- the first screen may still be rendering') +
         ` (${formatDuration(verification.waitedMs ?? 0)} total)`,
     );
     const report = launchErrorReport(verification.errors ?? [], root);
@@ -415,6 +447,7 @@ async function verifyAndroidMetroRun({
     devClientUrl: scheme ? androidDevClientUrl(scheme, metroPort ?? DEFAULT_METRO_PORT, physical) : null,
     devClient: Boolean(scheme),
     mode: workspaceDevServerMode(root, isExpo),
+    remote: Boolean(hostedLogs),
   }))
     phase('', chalk.yellow(line));
   return { state: LAUNCH_UNVERIFIED };
@@ -440,6 +473,7 @@ interface FinishAndroidRunArgs {
   device: OwnedDeviceRecord;
   physical: boolean;
   remoteDevice: ReturnType<typeof remoteAndroidDeps> | null;
+  cleanAppState?: boolean;
   bootPromise: Promise<AndroidBootLike>;
   resolveAvdSerial: typeof resolveOwnedAvdSerialAsync;
   waitForDeviceBoot: typeof waitForBoot;
@@ -453,6 +487,7 @@ interface FinishAndroidRunArgs {
   waitedForBuild: WaitedForBuild | null;
   ccache: CcacheActivity;
   uploadPending: Promise<RemoteUploadLike> | null;
+  fingerprintCheck?: FingerprintCheck | null;
   providerUpload: Promise<ProviderCallResult<void>> | null;
   providerName: string | null;
   remote: LoadProjectProviderResult | null;
@@ -615,6 +650,41 @@ async function resolveInstallSerial({
   return resolved.serial;
 }
 
+async function cleanEmulatorAppState(
+  { avdName, owned }: OwnedDeviceRecord,
+  serial: string,
+  androidPackage: string | null,
+  adopting: boolean,
+  phase: (label: unknown, text: string) => void,
+): Promise<{ code: string; message: string; remedy: string } | null> {
+  if (!adopting && !owned)
+    return {
+      code: 'STIM_BAD_ARG',
+      message: `cleanAppState clears only an emulator Stim owns, and ${avdName ?? serial} is not one.`,
+      remedy: 'Run `stim gc --delete` to clear the assignment so Stim creates an owned emulator.',
+    };
+  const emulator = adopting ? 'adopted emulator' : 'emulator';
+  if (!androidPackage || !avdName)
+    return {
+      code: LAUNCH_FAILED,
+      message: `Cannot clean an ${emulator} without its app package and AVD name.`,
+      remedy: 'Retry once the APK applicationId can be read.',
+    };
+  try {
+    await resetAdoptedAvd(avdName, serial, androidPackage);
+  } catch (error) {
+    return {
+      code: LAUNCH_FAILED,
+      message: `Could not clean ${emulator} ${avdName}: ${String((error as Error)?.message || error)}`,
+      remedy: adopting
+        ? 'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.'
+        : 'Fix the device cleanup error and retry; the app was not launched.',
+    };
+  }
+  if (!adopting) phase('install', `cleared app state on ${avdName}`);
+  return null;
+}
+
 export async function finishAndroidRun({
   operation,
   runtime,
@@ -635,6 +705,7 @@ export async function finishAndroidRun({
   device,
   physical,
   remoteDevice,
+  cleanAppState = false,
   bootPromise,
   resolveAvdSerial,
   waitForDeviceBoot,
@@ -647,6 +718,7 @@ export async function finishAndroidRun({
   waitedForBuild,
   ccache,
   uploadPending,
+  fingerprintCheck,
   providerUpload,
   providerName,
   remote,
@@ -750,22 +822,9 @@ export async function finishAndroidRun({
   }
 
   const adopting = !physical && !remoteDevice && Boolean(device.adoptionPending);
-  if (adopting) {
-    if (!androidPackage || !device.avdName)
-      return fail(
-        LAUNCH_FAILED,
-        'Cannot clean an adopted emulator without its app package and AVD name.',
-        'Retry once the APK applicationId can be read.',
-      );
-    try {
-      await resetAdoptedAvd(device.avdName, serial, androidPackage);
-    } catch (error) {
-      return fail(
-        LAUNCH_FAILED,
-        `Could not clean adopted emulator ${device.avdName}: ${String((error as Error)?.message || error)}`,
-        'Fix the device cleanup error and retry; adoption remains pending and the app was not launched.',
-      );
-    }
+  if (adopting || (cleanAppState && !physical && !remoteDevice)) {
+    const cleanupFailure = await cleanEmulatorAppState(device, serial, androidPackage, adopting, phase);
+    if (cleanupFailure) return fail(cleanupFailure.code, cleanupFailure.message, cleanupFailure.remedy);
   }
 
   const lostBeforeInstall = physical ? raiseLeaseFor(ADB_INSTALL_TIMEOUT_MS, true) : null;
@@ -932,6 +991,12 @@ export async function finishAndroidRun({
   const uploadWasAbandoned = await finishAndroidUpload(uploadPending, remote, phase);
   const providerOutcome = providerUploadOutcome(providerUpload ? await providerUpload : null, providerName, env);
   if (providerOutcome) phase('cache', providerOutcome.warn ? chalk.yellow(providerOutcome.line) : providerOutcome.line);
+  await settleFingerprintCheck(
+    fingerprintCheck,
+    'android',
+    (line) => phase('fingerprint', chalk.yellow(line)),
+    (entry) => writer.write(entry),
+  );
 
   persistLastBuild({ recordBuild, root, record, startedAt, durationMs: now() - started, status: 'ok', out });
 

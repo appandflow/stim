@@ -122,7 +122,7 @@ public struct PairedDevice: Decodable, Equatable, Identifiable, Sendable {
   /// A Mac that may run hosted devices here.
   public var isDeviceHostClient: Bool { capabilities.contains("device-host") }
 
-  /// A paired phone or app that reads and may control, as the Phones list shows it.
+  /// A paired phone or app that reads and may control, as the Paired Devices list shows it.
   public var isPhone: Bool { !isBuildClient && !isDeviceHostClient }
 }
 

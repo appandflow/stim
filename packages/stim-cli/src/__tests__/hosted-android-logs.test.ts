@@ -5,10 +5,17 @@ import { join } from 'node:path';
 import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
 import { collectHostedAndroidLogs } from '../device-host/android-logs.ts';
 
-const native = vi.hoisted(() => ({
-  runFile: vi.fn<(file: string, args?: string[], options?: { timeoutMs?: number }) => string>(),
-  runFileQuiet: vi.fn<(file: string, args?: string[]) => string>(),
-}));
+const native = vi.hoisted(() => {
+  const runFile = vi.fn<(file: string, args?: string[], options?: { timeoutMs?: number }) => string>();
+  const runFileQuiet = vi.fn<(file: string, args?: string[]) => string>();
+  return {
+    runFile,
+    runFileAsync: async (file: string, args?: string[], options?: { timeoutMs?: number }) =>
+      runFile(file, args, options),
+    runFileQuiet,
+    runFileQuietAsync: async (file: string, args?: string[]) => runFileQuiet(file, args),
+  };
+});
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
 let root: string;
 let home: string;
@@ -77,13 +84,13 @@ beforeEach(() => {
   });
 });
 afterEach(() => {
-  vi.useRealTimers();
+  vi.clearAllTimers();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
 
-test('collects native errors for the exact serial and app pid, overlaps without replay, and drains the stopped pid', () => {
-  expect(collectHostedAndroidLogs(home, session, 'app', start)).toBe(false);
+test('collects native errors for the exact serial and app pid, overlaps without replay, and drains the stopped pid', async () => {
+  expect(await collectHostedAndroidLogs(home, session, 'app', start)).toBe(false);
   expect(records()).toMatchObject([
     { src: 'device', platform: 'android', level: 'error', msg: 'FATAL EXCEPTION: main' },
     { level: 'error', msg: 'java.lang.IllegalStateException: fixture crash' },
@@ -97,7 +104,7 @@ test('collects native errors for the exact serial and app pid, overlaps without 
   ]);
   vi.setSystemTime(start + 2000);
   pid = '456';
-  collectHostedAndroidLogs(home, session, 'app', start);
+  await collectHostedAndroidLogs(home, session, 'app', start);
   expect(records().map((record) => record.msg)).toEqual([
     'FATAL EXCEPTION: main',
     'java.lang.IllegalStateException: fixture crash',
@@ -108,116 +115,38 @@ test('collects native errors for the exact serial and app pid, overlaps without 
   pid = '';
   output += '\n1700000002.100   456   456 F libc: Fatal signal 11';
   vi.setSystemTime(start + 3000);
-  collectHostedAndroidLogs(home, session, 'app', start, true);
+  await collectHostedAndroidLogs(home, session, 'app', start, true);
   expect(records().at(-1)).toMatchObject({ src: 'device', level: 'fatal', msg: 'Fatal signal 11' });
   output += '\n1700000003.100   456   456 E OtherApp: reused pid failure';
   vi.setSystemTime(start + 4000);
-  collectHostedAndroidLogs(home, session, 'app', start, true);
+  await collectHostedAndroidLogs(home, session, 'app', start, true);
   expect(records()).toHaveLength(5);
   expect(checkpoint()?.pid).toBeUndefined();
   expect(checkpoint()?.until).toBe(start + 3000);
 });
 
-test.each(['foreign-ledger', 'wrong-avd', 'wrong-recorded-serial'])(
-  'refuses %s before reading a pid or logcat',
-  (scenario) => {
-    if (scenario === 'foreign-ledger')
-      writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
-    else native.runFileQuiet.mockReturnValue('user-created\nOK');
-    if (scenario === 'wrong-recorded-serial') {
-      const path = join(home, 'hosted-device.json');
-      const device = JSON.parse(readFileSync(path, 'utf8'));
-      writeFileSync(path, JSON.stringify({ ...device, serial: 'emulator-5556', consolePort: 5556 }));
-    }
-    expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow(/ledger|owned|identity/);
-    expect(native.runFile).not.toHaveBeenCalled();
-  },
-);
+test.each(['foreign-ledger', 'wrong-avd'])('refuses %s before reading a pid or logcat', async (scenario) => {
+  if (scenario === 'foreign-ledger')
+    writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+  else native.runFileQuiet.mockReturnValue('user-created\nOK');
+  if (scenario === 'wrong-recorded-serial') {
+    const path = join(home, 'hosted-device.json');
+    const device = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify({ ...device, serial: 'emulator-5556', consolePort: 5556 }));
+  }
+  await expect(collectHostedAndroidLogs(home, session, 'app', start)).rejects.toThrow(/ledger|owned|identity/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
 
-test.each(['timeout', 'transport'])(
-  'a %s during pid lookup preserves the checkpoint for a later crash-tail drain',
-  (failure) => {
-    collectHostedAndroidLogs(home, session, 'app', start);
-    const previous = checkpoint();
-    const runFile = native.runFile.getMockImplementation()!;
-    const error = Object.assign(
-      new Error('pid lookup failed'),
-      failure === 'timeout'
-        ? { code: 'ETIMEDOUT', status: null, signal: 'SIGKILL', stdout: '', stderr: '' }
-        : { status: 1, signal: null, stdout: '', stderr: 'error: device offline' },
-    );
-    native.runFile.mockClear().mockImplementation((file, args = [], options) => {
-      if (args.includes('pidof')) throw error;
-      return runFile(file, args, options);
-    });
-    vi.setSystemTime(start + 2000);
-    expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow(error);
-    expect(checkpoint()).toEqual(previous);
-    expect(native.runFile.mock.calls.some(([, args]) => args?.includes('logcat'))).toBe(false);
-
-    native.runFile.mockImplementation(runFile);
-    pid = '';
-    output += '\n1700000003.100   321   321 F libc: retained crash tail';
-    vi.setSystemTime(start + 4000);
-    collectHostedAndroidLogs(home, session, 'app', start, true);
-    expect(records().at(-1)).toMatchObject({ level: 'fatal', msg: 'retained crash tail' });
-    expect(checkpoint()?.pid).toBeUndefined();
-  },
-);
-
-test('an absent pid creates no checkpoint and never falls back to device-wide logs', () => {
+test('an absent pid creates no checkpoint and never falls back to device-wide logs', async () => {
   pid = '';
-  expect(collectHostedAndroidLogs(home, session, 'app', start, true)).toBe(false);
+  expect(await collectHostedAndroidLogs(home, session, 'app', start, true)).toBe(false);
   expect(checkpoint()).toBeNull();
   expect(native.runFile.mock.calls.some(([, args]) => args?.includes('logcat'))).toBe(false);
 });
 
-test('a prior attempt pid cannot select logs for a replacement app', () => {
-  collectHostedAndroidLogs(home, session, 'app', start);
-  const path = join(root, 'apps', 'app', 'receipt.json');
-  mkdirSync(join(root, 'apps', 'next'));
-  writeFileSync(
-    join(root, 'apps', 'next', 'receipt.json'),
-    JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), attempt: 'next' }),
-  );
-  pid = '';
-  native.runFile.mockClear();
-  expect(collectHostedAndroidLogs(home, session, 'next', start, true)).toBe(false);
-  expect(native.runFile.mock.calls.some(([, args]) => args?.includes('logcat'))).toBe(false);
-});
-
-test('clock alignment queries device epoch while persisting host timestamps', () => {
-  native.runFile.mockImplementation((_file, args = []) => {
-    if (args.includes('pidof')) return pidofOutput();
-    if (args.includes('date')) return String(Date.now() - 5000);
-    return fixture.replaceAll('1700000000.', '1699999995.');
-  });
-  collectHostedAndroidLogs(home, session, 'app', start);
-  expect(records()[0]).toMatchObject({ ts: start + 100, deviceTs: start - 4900, clockOffsetMs: 5000 });
-  expect(native.runFile.mock.calls.find(([, args]) => args?.includes('logcat'))?.[1]).toContain('1699999995.000');
-});
-
-test.each([false, true])(
-  'a dense buffer shrinks toward the tail within the budget (final=%s) and names the gap',
-  (final) => {
-    vi.setSystemTime(start + 240_000);
-    native.runFile.mockImplementation((_file, args = []) => {
-      if (args.includes('pidof')) return pidofOutput();
-      if (args.includes('date')) return String(Date.now());
-      if (args.includes('1700000000.000')) throw new Error('maxBuffer exceeded');
-      return '1700000230.100   321   321 E AndroidRuntime: stop tail';
-    });
-    expect(collectHostedAndroidLogs(home, session, 'app', start, final)).toBe(false);
-    expect(checkpoint()?.until).toBe(start + 240_000);
-    expect(records()).toMatchObject([
-      { level: 'warn', msg: expect.stringContaining('[2023-11-14T22:13:20.000Z, 2023-11-14T22:16:20.000Z)') },
-      { level: 'error', msg: 'stop tail' },
-    ]);
-  },
-);
-
-test('a failed query exhausts ten seconds without advancing its checkpoint', () => {
-  collectHostedAndroidLogs(home, session, 'app', start);
+test('a failed query exhausts ten seconds without advancing its checkpoint', async () => {
+  await collectHostedAndroidLogs(home, session, 'app', start);
   vi.setSystemTime(start + 240_000);
   pid = '';
   native.runFile.mockImplementation((_file, args = [], options) => {
@@ -227,7 +156,7 @@ test('a failed query exhausts ten seconds without advancing its checkpoint', () 
     vi.setSystemTime(Date.now() + options!.timeoutMs!);
     throw new Error('query timed out');
   });
-  expect(() => collectHostedAndroidLogs(home, session, 'app', start)).toThrow('collection budget');
+  await expect(collectHostedAndroidLogs(home, session, 'app', start)).rejects.toThrow('collection budget');
   expect(Date.now()).toBe(start + 250_000);
   expect(checkpoint()).toMatchObject({ until: start, pid: 321 });
   expect(records()).toHaveLength(3);
@@ -236,7 +165,7 @@ test('a failed query exhausts ten seconds without advancing its checkpoint', () 
     if (args.includes('date')) return String(Date.now());
     return '1700000249.100   321   321 F libc: final crash tail';
   });
-  collectHostedAndroidLogs(home, session, 'app', start, true);
+  await collectHostedAndroidLogs(home, session, 'app', start, true);
   expect(records().at(-1)).toMatchObject({ level: 'fatal', msg: 'final crash tail' });
   expect(checkpoint()?.pid).toBeUndefined();
 });

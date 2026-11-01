@@ -1,10 +1,11 @@
-import { statSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
-import { LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
+import { existsSync, statSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { ensurePrivateDir, LOG_ROTATE_BYTES, rotatedLogPath, withDirLock } from '@stim-cli/core';
 import {
   MAINTENANCE_LOG_NAME,
   maintenanceNdjsonFile,
   workspaceLogsDir,
+  workspaceMetadataFile,
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { createNdjsonWriter, type NdjsonWriter } from '../ndjson.ts';
@@ -20,17 +21,25 @@ interface MaintenanceLogger {
   close(): ReturnType<NdjsonWriter['close']>;
 }
 
-export function maintenanceLogger(settings: MaintenanceSettings, pass: string, trigger: string): MaintenanceLogger {
-  const file = maintenanceNdjsonFile();
+export function openRetainedLog(
+  file: string,
+  settings: Pick<MaintenanceSettings, 'logMaxMb' | 'logRetentionDays'>,
+): NdjsonWriter {
+  ensurePrivateDir(dirname(file));
   const rotated = rotatedLogPath(file);
   withDirLock(`${file}.lock`, () => {
     try {
       if (Date.now() - statSync(rotated).mtimeMs > settings.logRetentionDays * 86_400_000) unlinkSync(rotated);
     } catch {}
   });
-  const writer = createNdjsonWriter(file, {
+  return createNdjsonWriter(file, {
     maxBytes: settings.logMaxMb * 1024 ** 2,
   });
+}
+
+export function maintenanceLogger(settings: MaintenanceSettings, pass: string, trigger: string): MaintenanceLogger {
+  const file = maintenanceNdjsonFile();
+  const writer = openRetainedLog(file, settings);
   return {
     write(
       event: MaintenanceRecord['event'],
@@ -53,7 +62,8 @@ export function maintenanceLogger(settings: MaintenanceSettings, pass: string, t
       if (!writer.write(record)) throw writer.lastError ?? new Error(`Could not append ${file}`);
       if (
         typeof fields.workspace === 'string' &&
-        ['maintenance_action', 'maintenance_failure', 'maintenance_skip'].includes(event)
+        ['maintenance_action', 'maintenance_failure', 'maintenance_skip'].includes(event) &&
+        existsSync(workspaceMetadataFile(fields.workspace))
       ) {
         const workspace = createNdjsonWriter(join(workspaceLogsDir(fields.workspace), MAINTENANCE_LOG_NAME), {
           maxBytes: LOG_ROTATE_BYTES,

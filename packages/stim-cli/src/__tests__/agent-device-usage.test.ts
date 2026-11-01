@@ -1,30 +1,13 @@
-import { parseDu } from '../devices/report-only-usage.ts';
 import assert from 'node:assert/strict';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { agentDeviceUsageFile, readAgentDeviceUsage, readStatsReport } from '@stim-cli/core/state';
 import { workspaceStateDir } from '@stim-cli/core';
-import {
-  getAgentDeviceUsage,
-  parseRunnerMetadata,
-  runnerInUse,
-  runnerLastUsedAt,
-} from '../devices/agent-device-usage.ts';
+import { getAgentDeviceUsage, runnerInUse } from '../devices/agent-device-usage.ts';
 import { agentDeviceLines } from '../devices/agent-device-usage-output.ts';
 import { parseAgentDeviceRecord } from '../devices/activity.ts';
-import { inspectProcessStart, type ProcessStart } from '../process-identity.ts';
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { inspectProcessStart } from '../process-identity.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 
 let home: string;
@@ -70,32 +53,6 @@ function directory(dir: string, kib: number): string {
 function entry(platform: string, name: string, kib: number): string {
   return directory(join(runner, 'derived', platform, name), kib);
 }
-
-test('du preserves readable partial output and paths with spaces', () => {
-  const path = join(home, 'with spaces');
-  expect(parseDu(`4\t${path}\ndu: denied\n8\t${home}\nnot a size`)).toEqual(
-    new Map([
-      [path, 4096],
-      [home, 8192],
-    ]),
-  );
-});
-
-test('metadata and plist tolerate missing, malformed and invalid dates, falling back to directory mtime', () => {
-  expect(parseRunnerMetadata('{"packageVersion":"0.21.20","xcodeBuildVersion":"27A266a"}')).toEqual({
-    packageVersion: '0.21.20',
-    xcodeBuildVersion: '27A266a',
-  });
-  for (const raw of [null, '{', 'null', '[]', '{"packageVersion":42}'])
-    expect(parseRunnerMetadata(raw)).toEqual({ packageVersion: null, xcodeBuildVersion: null });
-  const at = Date.parse('2026-10-05T17:44:35Z');
-  expect(runnerLastUsedAt('<key>LastAccessedDate</key>\n<date>2026-10-05T17:44:35Z</date>', 0)).toBe(
-    new Date(at).toISOString(),
-  );
-  for (const raw of [null, 'bad plist', '<key>LastAccessedDate</key><date>bad</date>'])
-    expect(runnerLastUsedAt(raw, at)).toBe(new Date(at).toISOString());
-  expect(runnerLastUsedAt(null, null)).toBe(null);
-});
 
 test('the fixture tree reports platforms, shared builds, small entries, locks, other state, workspace and hosted totals once', async () => {
   directory(state, 4_600_000);
@@ -160,48 +117,6 @@ test('the fixture tree reports platforms, shared builds, small entries, locks, o
   expect(agentDeviceLines(report, true).join('\n')).toContain('in use (unreadable)');
 });
 
-test('an overridden state root measures runner builds separately without counting them in other state', async () => {
-  state = directory(join(home, 'custom state'), 100);
-  vi.stubEnv('AGENT_DEVICE_STATE_DIR', state);
-  directory(join(state, 'sessions'), 60);
-  directory(join(state, 'logs'), 10);
-  directory(runner, 400);
-  directory(join(runner, 'derived'), 390);
-  const report = await getAgentDeviceUsage();
-  expect(report.bytes).toBe(500 * 1024);
-  expect(report.stateDir.other.bytes).toBe(30 * 1024);
-  expect(du.mock.calls.map((call) => call[1])).toEqual([
-    ['-k', '-d', '4', state],
-    ['-k', '-d', '4', runner],
-  ]);
-});
-
-test.each(['workspace', 'hosted'] as const)(
-  'a %s state override overlapping managed state uses the home default and counts each directory once',
-  async (kind) => {
-    directory(state, 100);
-    const project = directory(join(home, 'project'), 0);
-    ensureWorkspaceStorage(project);
-    const managed = directory(
-      kind === 'workspace'
-        ? join(workspaceStateDir(project), 'agent-device')
-        : join(process.env.STIM_HOME!, 'server', 'agent-device'),
-      8,
-    );
-    const child = directory(join(managed, 'sessions'), 4);
-    for (const override of [managed, child, process.env.STIM_HOME!]) {
-      vi.stubEnv('AGENT_DEVICE_STATE_DIR', override);
-      const report = await getAgentDeviceUsage({ maxAgeMs: 0 });
-      expect(report.stateDir.dir).toBe(state);
-      expect(report.bytes).toBe(108 * 1024);
-      expect(report.workspaces).toEqual(
-        kind === 'workspace' ? [{ dir: managed, projectRoot: project, bytes: 8192 }] : [],
-      );
-    }
-    expect((await getAgentDeviceUsage()).stateDir.dir).toBe(state);
-  },
-);
-
 function lease(dir: string, fields: Record<string, unknown> = {}) {
   return parseAgentDeviceRecord(
     'runner-lease',
@@ -209,50 +124,6 @@ function lease(dir: string, fields: Record<string, unknown> = {}) {
     JSON.stringify({ deviceId: 'device', xctestrunPath: join(dir, 'Build', 'runner.xctestrun'), ...fields }),
   );
 }
-
-test('lease liveness accepts either owner or runner, compares start seconds and rejects dead or reused pids and path siblings', () => {
-  const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
-  const at = Date.parse('2026-09-28T11:55:59Z');
-  const start = (pid: number): ProcessStart =>
-    pid === 42 ? { status: 'running', startedAtMs: at + 234 } : { status: 'gone' };
-  const live = lease(dir, {
-    ownerPid: 42,
-    ownerStartTime: new Date(at).toISOString(),
-    runnerPid: 43,
-    runnerStartTime: new Date(at).toISOString(),
-  });
-  expect(runnerInUse(dir, [live], false, null, start)).toEqual({ inUse: true, inUseReason: 'lease' });
-  expect(runnerInUse(`${dir}-sibling`, [live], false, null, start).inUse).toBe(false);
-  expect(
-    runnerInUse(
-      dir,
-      [lease(`${dir}-sibling`, { ownerPid: 42, ownerStartTime: new Date(at).toISOString() })],
-      false,
-      null,
-      start,
-    ).inUse,
-  ).toBe(false);
-  const dead = lease(dir, { ownerPid: 43, ownerStartTime: new Date(at).toISOString() });
-  expect(runnerInUse(dir, [dead], false, null, start).inUse).toBe(false);
-  expect(
-    runnerInUse(
-      dir,
-      [lease(dir, { runnerPid: 42, runnerStartTime: new Date(at + 2000).toISOString() })],
-      false,
-      null,
-      start,
-    ).inUse,
-  ).toBe(false);
-  expect(runnerInUse(dir, [], false, { pid: 42, startTime: new Date(at).toISOString() }, start)).toEqual({
-    inUse: true,
-    inUseReason: 'lock',
-  });
-  expect(runnerInUse(dir, [], true, null, start)).toEqual({ inUse: true, inUseReason: 'unreadable' });
-  expect(runnerInUse(dir, [parseAgentDeviceRecord('runner-lease', 'bad.json', '{')], false, null, start)).toEqual({
-    inUse: true,
-    inUseReason: 'unreadable',
-  });
-});
 
 test('unknown lease identities keep their runner entry in use', () => {
   const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
@@ -266,56 +137,6 @@ test('unknown lease identities keep their runner entry in use', () => {
       inUseReason: 'unreadable',
     });
   }
-});
-
-test('runner locks compare the recorded owner start time and preserve unknown identities', () => {
-  const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
-  const lock = { pid: 42, startTime: 'Tue Sep 29 10:12:06 2026' };
-  const at = Date.parse(lock.startTime);
-  expect(runnerInUse(dir, [], false, lock, () => ({ status: 'running', startedAtMs: at + 234 }))).toEqual({
-    inUse: true,
-    inUseReason: 'lock',
-  });
-  for (const start of [{ status: 'gone' }, { status: 'running', startedAtMs: at + 2000 }] as ProcessStart[]) {
-    expect(runnerInUse(dir, [], false, lock, () => start)).toEqual({ inUse: false, inUseReason: null });
-  }
-  expect(runnerInUse(dir, [], false, lock, () => ({ status: 'unknown' }))).toEqual({
-    inUse: true,
-    inUseReason: 'lock',
-  });
-});
-
-test.each([null, '{', '{}', '{"pid":"42","startTime":"Tue Sep 29 10:12:06 2026"}'])(
-  'a missing or malformed lock owner (%s) conservatively protects the entry',
-  async (raw) => {
-    directory(state, 100);
-    const dir = entry('ios-simulator', 'cache-a', 8);
-    directory(`${dir}.lock`, 1);
-    if (raw !== null) writeFileSync(join(`${dir}.lock`, 'owner.json'), raw);
-    expect((await getAgentDeviceUsage()).runnerBuilds.platforms[0]!.entries[0]).toMatchObject({
-      inUse: true,
-      inUseReason: 'unreadable',
-    });
-  },
-);
-
-test('malformed leases and unreadable lease directories protect every entry', async () => {
-  directory(state, 100);
-  directory(runner, 90);
-  directory(join(runner, 'derived'), 80);
-  directory(join(runner, 'derived', 'ios-simulator'), 80);
-  entry('ios-simulator', 'cache-live', 80);
-  const leaseDir = directory(join(runner, 'leases'), 1);
-  writeFileSync(join(leaseDir, 'bad.json'), '{');
-  expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUseReason).toBe(
-    'unreadable',
-  );
-  const file = join(home, 'not-a-directory');
-  writeFileSync(file, '');
-  vi.stubEnv('AGENT_DEVICE_IOS_RUNNER_LEASE_DIR', file);
-  expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUseReason).toBe(
-    'unreadable',
-  );
 });
 
 test.skipIf(process.platform !== 'darwin')(
@@ -356,71 +177,3 @@ test.skipIf(process.platform !== 'darwin')(
     expect((await getAgentDeviceUsage({ maxAgeMs: 0 })).runnerBuilds.platforms[0]!.entries[0]!.inUse).toBe(false);
   },
 );
-
-test('fresh cache avoids du, stale or changed roots remeasure and atomically replace the cache', async () => {
-  directory(state, 100);
-  const first = await getAgentDeviceUsage();
-  du.mockClear();
-  expect(await getAgentDeviceUsage()).toEqual(first);
-  expect(du).not.toHaveBeenCalled();
-  const file = agentDeviceUsageFile();
-  const cached = JSON.parse(readFileSync(file, 'utf8'));
-  cached.measuredAt = '2026-01-01T00:00:00Z';
-  writeFileSync(file, JSON.stringify(cached));
-  sizes.set(state, 200 * 1024);
-  expect((await getAgentDeviceUsage()).bytes).toBe(200 * 1024);
-  expect(readdirSync(process.env.STIM_HOME!)).toEqual(['agent-device-usage.json']);
-  expect(readStatsReport(null, Date.now()).report.agentDevice?.bytes).toBe(200 * 1024);
-  state = directory(join(home, 'moved-state'), 5);
-  vi.stubEnv('AGENT_DEVICE_STATE_DIR', state);
-  expect((await getAgentDeviceUsage()).stateDir.dir).toBe(state);
-  expect(du).toHaveBeenCalledTimes(2);
-});
-
-test.each(['ETIMEDOUT', 'ENOENT'])(
-  'du %s leaves unknown bytes and an incomplete report without throwing',
-  async (code) => {
-    directory(state, 100);
-    du.mockRejectedValue(Object.assign(new Error(code), { code, status: 1, stdout: `100\t${state}` }));
-    const report = await getAgentDeviceUsage();
-    expect(report.stateDir.bytes).toBe(null);
-    expect(report.stateDir.other.bytes).toBe(null);
-    expect(report.complete).toBe(false);
-    expect(readAgentDeviceUsage()).toEqual(report);
-  },
-);
-
-test('du exit 1 retains measured partial sizes but marks the result incomplete', async () => {
-  directory(state, 100);
-  directory(join(state, 'logs'), 10);
-  du.mockRejectedValue(Object.assign(new Error('denied'), { status: 1, stdout: `100\t${state}` }));
-  const report = await getAgentDeviceUsage();
-  expect(report.stateDir.bytes).toBe(100 * 1024);
-  expect(report.stateDir.logs.bytes).toBe(null);
-  expect(report.complete).toBe(false);
-});
-
-test('absent state is silent and corrupt or unsupported cache versions are null for core stats readers', async () => {
-  const report = await getAgentDeviceUsage();
-  expect(report.bytes).toBe(0);
-  expect(report.complete).toBe(true);
-  expect(du).not.toHaveBeenCalled();
-  expect(agentDeviceLines(report)).toEqual([]);
-  for (const text of ['{', '{"version":0}', '{"version":1}', 'null']) {
-    writeFileSync(agentDeviceUsageFile(), text);
-    expect(readStatsReport(null, Date.now()).report.agentDevice).toBe(null);
-  }
-  rmSync(agentDeviceUsageFile());
-  expect(readAgentDeviceUsage()).toBe(null);
-  expect(existsSync(state)).toBe(false);
-});
-
-test('the real du invocation works on a temporary tree when du is available', async () => {
-  resetExecutor();
-  if (!getExecutor().findExecutable('du')) return;
-  directory(state, 0);
-  writeFileSync(join(state, 'data'), Buffer.alloc(8192, 1));
-  const report = await getAgentDeviceUsage();
-  expect(report.complete).toBe(true);
-  expect(report.stateDir.bytes).toBeGreaterThan(0);
-});

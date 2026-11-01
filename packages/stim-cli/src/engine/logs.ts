@@ -40,7 +40,8 @@ export async function openWorkspaceLogs(
       new Error(`No Stim workspace has run in ${root}. Run stim start, stim ios, or stim android in the app first.`),
       { code: 'STIM_NO_PROJECT' },
     );
-  const hostedReachable = await syncHostedLogs(root, context);
+  const readsDevice = !options.sources?.length || options.sources.includes('device');
+  const hostedReachable = await syncHostedLogs(root, context, readsDevice);
   context.signal.throwIfAborted();
   const initial = await openLogDir(dir, { signal: context.signal });
   let attempts: NdjsonRecord[];
@@ -81,12 +82,14 @@ export async function readWorkspaceLogs(context: StimContext, options: StimLogsO
   }
 }
 
+const WORKSPACE_SOURCES = SOURCES.filter((source) => source !== 'gc' && source !== 'builds');
+
 function validateLogOptions(options: StimLogsOptions): void {
   const bad =
     options.tail !== undefined && (!Number.isSafeInteger(options.tail) || options.tail < 0)
       ? 'tail must be a non-negative integer.'
-      : options.sources?.some((source) => !SOURCES.includes(source))
-        ? `sources must contain only ${SOURCES.join(', ')}.`
+      : options.sources?.some((source) => !WORKSPACE_SOURCES.includes(source))
+        ? `sources must contain only ${WORKSPACE_SOURCES.join(', ')}.`
         : options.minLevel !== undefined && !LEVELS.includes(options.minLevel)
           ? `minLevel must be one of ${LEVELS.join(', ')}.`
           : undefined;

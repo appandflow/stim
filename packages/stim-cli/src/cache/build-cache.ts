@@ -1,5 +1,5 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'fs';
-import { isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
+import { basename, isAbsolute, join, posix, relative, resolve as resolvePath, sep } from 'path';
 import { isDeepStrictEqual } from 'util';
 import * as expoFingerprint from '@expo/fingerprint';
 import type { Fingerprint, FingerprintSource, Options as FingerprintOptions } from '@expo/fingerprint';
@@ -8,13 +8,15 @@ import { normalizeOptionsAsync } from '@expo/fingerprint/build/Options.js';
 import { isIgnoredPathWithMatchObjects } from '@expo/fingerprint/build/utils/Path.js';
 import { buildUploadTimeoutMs, type BuildCacheCapability, type ProviderCallResult } from '@stim-cli/cache';
 import { resolveArtifact, storeArtifactAsync, type StimContext } from '@stim-cli/core';
-import { readdir, writeFile } from 'node:fs/promises';
+import { trace } from '@stim-cli/core/state';
+import { readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 import { childEnvironment, killOnAbort } from '../workspace/git-read.ts';
 import { getExecutor } from '../exec.ts';
 import { git, gitAsync, gitQuiet } from '../workspace/git.ts';
 import { register } from './cache-manifest.ts';
+import { computeSignedTail, writeSignedTail } from '../engine/apk-signed-tail.ts';
 import { ASSET_MANIFEST_FILE, parseAssetManifest, type AssetManifest } from '../engine/asset-manifest.ts';
 import { sharedBuildCache as cacheRoot } from '../workspace/paths.ts';
 import { DEFAULT_IOS_PROJECT_PATH, type AndroidLayout } from '../workspace/settings.ts';
@@ -47,6 +49,12 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/.idea/**',
   // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
   '**/*.xcodeproj/xcuserdata/**/*',
+  // A linked worktree's .git file holds that worktree's absolute git directory.
+  '**/.git',
+  // A main checkout's git directory changes with every commit, ref update and worktree add.
+  '**/.git/**',
+  // Metro and the Expo CLI write logs and caches here; reached through a `..` dir source it is not ignored by default.
+  '**/.expo/**',
 ];
 
 /**
@@ -169,7 +177,54 @@ export function androidProjectFingerprintOptions(
   };
 }
 
-interface FingerprintTarget {
+const LOCKFILES = ['pnpm-lock.yaml', 'yarn.lock', 'package-lock.json', 'bun.lock', 'bun.lockb'];
+
+/**
+ * The patches of a monorepo's install root, which @expo/fingerprint does not see: its patch sourcer reads only the
+ * app's own `patches/`, and its default preset hashes an installed package by name and version, so a patch applied
+ * from the workspace root would leave the key unchanged.
+ */
+function workspacePatchSources(projectRoot: string): NonNullable<FingerprintOptions['extraSources']> {
+  let dir = resolvePath(projectRoot);
+  for (;;) {
+    if (LOCKFILES.some((name) => existsSync(join(dir, name)))) break;
+    const parent = resolvePath(dir, '..');
+    if (parent === dir || existsSync(join(dir, '.git'))) return [];
+    dir = parent;
+  }
+  const sources: NonNullable<FingerprintOptions['extraSources']> = ['patches', '.yarn/patches']
+    .filter((name) => (name === 'patches' ? dir !== resolvePath(projectRoot) : true) && existsSync(join(dir, name)))
+    .map((name) => ({
+      type: 'dir' as const,
+      filePath: relative(projectRoot, join(dir, name)).split(sep).join('/'),
+      reasons: ['workspacePatches'],
+    }));
+  const patched = pnpmPatchedDependencies(join(dir, 'pnpm-lock.yaml'));
+  if (patched)
+    sources.push({ type: 'contents', id: 'pnpmPatchedDependencies', contents: patched, reasons: ['workspacePatches'] });
+  return sources;
+}
+
+/** The lockfile's `patchedDependencies` block, which pnpm rewrites with each patch's hash wherever the patch lives. */
+function pnpmPatchedDependencies(lockfile: string): string | null {
+  let text: string;
+  try {
+    text = readFileSync(lockfile, 'utf8');
+  } catch {
+    return null;
+  }
+  const lines = text.split(/\r?\n/);
+  const start = lines.indexOf('patchedDependencies:');
+  if (start === -1) return null;
+  const block: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line && !/^\s/.test(line)) break;
+    if (line.trim()) block.push(line.trim());
+  }
+  return block.length ? block.join('\n') : null;
+}
+
+export interface FingerprintTarget {
   platform?: string;
   iosProjectPath?: string;
   androidLayout?: AndroidLayout | null;
@@ -206,7 +261,7 @@ export function trackedFingerprintPaths(
   return names.filter((name) => matched.has(name) && !ignored.has(name)).toSorted();
 }
 
-async function fingerprintOptions(
+export async function fingerprintOptions(
   projectRoot: string,
   {
     platform,
@@ -230,10 +285,11 @@ async function fingerprintOptions(
       : androidLayout?.custom
         ? androidProjectFingerprintOptions(projectRoot, androidLayout)
         : {};
-  if (ios.extraSources) {
+  const patches = workspacePatchSources(projectRoot);
+  if (ios.extraSources || patches.length) {
     // An explicit extraSources replaces fingerprint.config.js's list in @expo/fingerprint, so keep the project's own.
     const config = await loadFingerprintConfig(projectRoot, true);
-    ios.extraSources = [...(config?.extraSources ?? []), ...ios.extraSources];
+    ios.extraSources = [...(config?.extraSources ?? []), ...(ios.extraSources ?? []), ...patches];
   }
   const bundleOutput =
     platform === 'android'
@@ -259,19 +315,30 @@ export async function fingerprintProject(
     debug?: boolean;
   } = {},
 ): Promise<ProjectFingerprint | null> {
-  const options = await fingerprintOptions(projectRoot, target);
-  const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
-  const hash = result?.hash ?? null;
-  if (!hash) return null;
-  const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
-  return { hash, sources };
+  return trace.spanAsync(
+    'fingerprint',
+    async () => {
+      const options = await fingerprintOptions(projectRoot, target);
+      const result = await createFingerprint(projectRoot, debug ? { ...options, debug } : options);
+      const hash = result?.hash ?? null;
+      if (!hash) return null;
+      const sources = Array.isArray(result?.sources) ? (result.sources as FingerprintSource[]) : [];
+      return { hash, sources };
+    },
+    { platform: target.platform },
+  );
 }
 
-/** The env files @expo/env loads for the config, in the mode @expo/fingerprint's config loader sets. */
-function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+/** The env files @expo/env loads for the config: @expo/fingerprint 0.21 evaluates it in development mode. */
+export function expoEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
   if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
-  const mode = env.NODE_ENV || 'development';
-  return [`.env.${mode}.local`, ...(mode === 'test' ? [] : ['.env.local']), `.env.${mode}`, '.env'];
+  return ['.env.development.local', '.env.local', '.env.development', '.env'];
+}
+
+/** The env files only a production bundle of an Expo app reads, beside the ones `expoEnvFiles` lists. */
+export function expoProductionEnvFiles(env: NodeJS.ProcessEnv = {}): string[] {
+  if (/^(1|true)$/i.test(env.EXPO_NO_DOTENV ?? '')) return [];
+  return ['.env.production.local', '.env.production'];
 }
 
 const inNodeModules = (path: string) => path.split('/').includes('node_modules');
@@ -291,8 +358,8 @@ export async function gitignoredFingerprintInputs(
   if (sources.some((source) => source.type === 'contents' && source.id === 'expoConfig'))
     for (const name of expoEnvFiles(env))
       if (lstatSync(join(projectRoot, name), { throwIfNoEntry: false })?.isFile()) found.add(name);
-  const top = realpathSync(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
-  const base = realpathSync(projectRoot);
+  const top = realpathSync.native(await gitAsync(projectRoot, ['rev-parse', '--show-toplevel'], { signal }));
+  const base = realpathSync.native(projectRoot);
   const pathspecs = sources.flatMap((source) => {
     if (source.type === 'contents' || inNodeModules(source.filePath)) return [];
     const inRepo = relative(top, resolvePath(base, source.filePath));
@@ -383,6 +450,7 @@ export async function storeBuild(
         overwrite?: boolean;
         sources?: FingerprintSource[] | null;
         assetManifest?: AssetManifest | null;
+        readAppId?: AppIdReader;
         signal?: AbortSignal;
         context?: StimContext;
       } = {},
@@ -410,6 +478,21 @@ export async function storeBuild(
           }),
         overwrite: Boolean(options.overwrite),
         writeMetadata: async (staging) => {
+          if (platform === 'android' && buildPath.endsWith('.apk')) {
+            try {
+              const tail = await computeSignedTail(join(staging, basename(buildPath)), (file, args) =>
+                getExecutor().runFileAsync(file, args, {
+                  timeoutMs: 120_000,
+                  ...(env ? childEnvironment(env) : {}),
+                  onSpawn: killOnAbort(signal),
+                  declareFor: options.context,
+                }),
+              );
+              if (tail) await writeSignedTail(staging, tail);
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
+          }
           if (Array.isArray(options.sources)) {
             try {
               await writeFile(join(staging, SOURCES_FILE), JSON.stringify(options.sources.map(withoutContents)));
@@ -419,6 +502,14 @@ export async function storeBuild(
             try {
               await writeFile(join(staging, ASSET_MANIFEST_FILE), JSON.stringify(options.assetManifest));
             } catch {}
+          }
+          if (options.readAppId) {
+            try {
+              const appId = await options.readAppId(buildPath);
+              if (appId) await writeFile(join(staging, APP_ID_FILE), JSON.stringify({ appId }));
+            } catch {
+              throwIfCancelled(signal, 'build cache copy');
+            }
           }
         },
       }),
@@ -430,6 +521,22 @@ export async function storeBuild(
 }
 
 export type BuildStore = (...args: Parameters<typeof storeBuild>) => string | null | ReturnType<typeof storeBuild>;
+
+export type AppIdReader = (artifactPath: string) => string | null | Promise<string | null>;
+
+/** Removes a stored build by renaming its entry aside first, so no run sees a half-deleted entry. */
+export async function evictBuild(platform: string, key: string, root: string = cacheRoot()): Promise<boolean> {
+  const dir = entryDir(platform, key, root);
+  const evicted = `${dir}.evicted-${process.pid}`;
+  try {
+    await rm(evicted, { recursive: true, force: true });
+    await rename(dir, evicted);
+  } catch {
+    return false;
+  }
+  await rm(evicted, { recursive: true, force: true }).catch(() => {});
+  return true;
+}
 
 export const PROVIDER_DOWNLOAD_DIR = 'cache-provider';
 
@@ -462,6 +569,7 @@ export interface FilesystemBuildCapabilityOptions {
   context?: StimContext;
   sources?: FingerprintSource[] | null;
   assetManifest?: AssetManifest | null;
+  readAppId?: AppIdReader;
   resolve?: typeof resolveBuild;
   store?: BuildStore;
 }
@@ -471,6 +579,7 @@ export function filesystemBuildCapability({
   context,
   sources,
   assetManifest,
+  readAppId,
   resolve = resolveBuild,
   store = storeBuild,
 }: FilesystemBuildCapabilityOptions = {}): BuildCacheCapability {
@@ -479,6 +588,7 @@ export function filesystemBuildCapability({
     ...(root === undefined ? {} : { root }),
     ...(sources === undefined ? {} : { sources }),
     ...(assetManifest === undefined ? {} : { assetManifest }),
+    ...(readAppId === undefined ? {} : { readAppId }),
   };
   return {
     resolve: ({ platform, key }) => (root === undefined ? resolve(platform, key) : resolve(platform, key, root)),
@@ -507,6 +617,7 @@ export function providerUploadOutcome(
 }
 
 const SOURCES_FILE = 'fingerprint-sources.json';
+const APP_ID_FILE = 'app-id.json';
 
 function withoutContents(source: FingerprintSource): FingerprintSource {
   return source.type === 'contents' ? { ...source, contents: '' } : source;
@@ -516,6 +627,18 @@ export function storedSources(platform: string, key: string, root: string = cach
   try {
     const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), SOURCES_FILE), 'utf-8'));
     return Array.isArray(parsed) ? (parsed as FingerprintSource[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The bundle id or Android package read from the entry's artifact when it was stored, or null for older entries. */
+export function storedAppId(platform: string, key: string, root: string = cacheRoot()): string | null {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(join(entryDir(platform, key, root), APP_ID_FILE), 'utf-8'));
+    if (parsed && typeof parsed === 'object' && 'appId' in parsed && typeof parsed.appId === 'string' && parsed.appId)
+      return parsed.appId;
+    return null;
   } catch {
     return null;
   }
@@ -559,7 +682,36 @@ function diffItemChange(item: unknown): SourceChange | null {
   return name === null ? null : { name, change, reasons: sourceReasons(source) };
 }
 
+/** The installed package a source path lies in: the name after its last `node_modules/`. */
+export function packageIn(path: string): string | null {
+  const matches = [...path.matchAll(/(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)/g)];
+  return matches.at(-1)?.[1] ?? null;
+}
+
+/** A package that moved, such as a version bump of a pnpm store directory, is one change rather than a removal and an addition. */
+function mergeMovedPackages(changes: SourceChange[]): SourceChange[] {
+  const added = new Map<string, SourceChange>();
+  for (const change of changes) {
+    const pkg = change.change === 'added' ? packageIn(change.name) : null;
+    if (pkg && !added.has(pkg)) added.set(pkg, change);
+  }
+  const moved = new Set<SourceChange>();
+  const kept = changes.filter((change) => {
+    const pkg = change.change === 'removed' ? packageIn(change.name) : null;
+    const counterpart = pkg ? added.get(pkg) : undefined;
+    if (!counterpart || moved.has(counterpart)) return true;
+    moved.add(counterpart);
+    return false;
+  });
+  for (const change of moved) change.change = 'changed';
+  return kept;
+}
+
 export function compareSourceLists(previous: unknown[], current: unknown[]): SourceChange[] {
+  return mergeMovedPackages(sourceListChanges(previous, current));
+}
+
+function sourceListChanges(previous: unknown[], current: unknown[]): SourceChange[] {
   const previousByName = new Map<string, { hash: string | null; reasons: string[] }>();
   for (const source of previous) {
     const name = sourceName(source);
@@ -587,6 +739,34 @@ export function compareSourceLists(previous: unknown[], current: unknown[]): Sou
   return changes;
 }
 
+/**
+ * Whether `current` differs from `previous` in at least one source, and only in file or directory sources whose
+ * normalized path lies inside `dir`.
+ */
+export function changedOnlyInside(previous: unknown[], current: unknown[], dir: string): boolean {
+  const contents = new Set(
+    current.flatMap((source) =>
+      typeof source === 'object' &&
+      source !== null &&
+      'type' in source &&
+      source.type === 'contents' &&
+      'id' in source &&
+      typeof source.id === 'string'
+        ? [source.id]
+        : [],
+    ),
+  );
+  const changes = sourceListChanges(previous, current);
+  return (
+    dir !== '.' &&
+    changes.length > 0 &&
+    changes.every(
+      ({ name }) =>
+        !contents.has(name) && posix.normalize(name) === name && (name === dir || name.startsWith(`${dir}/`)),
+    )
+  );
+}
+
 export function diffFingerprintSources({
   previous,
   previousHash = null,
@@ -605,16 +785,10 @@ export function diffFingerprintSources({
         { sources: current.sources, hash: current.hash },
       );
       if (Array.isArray(items)) {
-        const changes: SourceChange[] = [];
         const seen = new Set<string>();
-        for (const item of items) {
-          const change = diffItemChange(item);
-          if (change !== null && !seen.has(change.name)) {
-            seen.add(change.name);
-            changes.push(change);
-          }
-        }
-        return changes;
+        return mergeMovedPackages(
+          items.map(diffItemChange).filter((change): change is SourceChange => change !== null),
+        ).filter((change) => !seen.has(change.name) && Boolean(seen.add(change.name)));
       }
     } catch {}
   }

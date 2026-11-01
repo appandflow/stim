@@ -3,6 +3,7 @@ import { relative } from 'node:path';
 import type { StimContext } from '@stim-cli/core';
 import { killOnAbort } from '../../workspace/git-read.ts';
 import type { SettingsObject, SettingScope } from '@stim-cli/core/state';
+import { decideSystemImage, type AndroidImageInstallPolicy } from '../../devices/android-image.ts';
 import {
   androidDeviceAbi,
   androidSystemImageAbi,
@@ -14,8 +15,8 @@ import {
   extractEmulatorFailure,
   androidPoolCandidates,
   androidPoolNoCandidatesRefusal,
-  memoizeEmulatorProbe,
-  listAdbDevices,
+  emulatorProbeSession,
+  listAdbDevicesAsync,
   physicalDeviceModel,
   probeEmulatorSerial,
   hostSystemImageArch,
@@ -99,6 +100,7 @@ export function systemImageRefusal({
   physical,
   remoteBackend,
   listImages,
+  installImages,
 }: {
   slot?: string;
   flag: string | null | undefined;
@@ -107,6 +109,7 @@ export function systemImageRefusal({
   physical: boolean;
   remoteBackend: string | null;
   listImages: typeof listInstalledSystemImages;
+  installImages: AndroidImageInstallPolicy;
 }): { code: string; message: string; remedy: string } | null {
   if (slot && slot !== 'default' && remoteBackend)
     return {
@@ -136,7 +139,14 @@ export function systemImageRefusal({
   }
   const refusal = unknownAndroidSystemImageRefusal(resolved, images);
   if (!refusal) return null;
-  const { message, remedy } = layerNote(refusal, 'android.systemImage', flag, origin);
+  const decided = decideSystemImage({ requested: resolved, installed: images, policy: installImages });
+  if (decided.kind !== 'refuse') return null;
+  const { message, remedy } = layerNote(
+    { message: refusal.message, remedy: decided.remedy },
+    'android.systemImage',
+    flag,
+    origin,
+  );
   return { code: 'STIM_BAD_ARG', message, remedy };
 }
 
@@ -448,7 +458,7 @@ export async function pooledAndroidDevice({
 }: {
   root: string;
   selectPool: typeof selectFromPool;
-  listDevices: typeof listAdbDevices;
+  listDevices: typeof listAdbDevicesAsync;
   isEmulatorDevice: typeof probeEmulatorSerial;
   deviceModel: typeof physicalDeviceModel;
   waitSeconds: number;
@@ -456,14 +466,20 @@ export async function pooledAndroidDevice({
   now: () => number;
   warn: (line: string) => void;
 }): Promise<{ device: OwnedDeviceRecord } | { code: string; message: string; remedy: string; extra: FailExtra }> {
-  const isEmulator = memoizeEmulatorProbe(isEmulatorDevice);
+  const probed = emulatorProbeSession(isEmulatorDevice);
   const pooled = await selectPool({
     root,
     platform: PLATFORM,
     idLabel: 'serial',
-    list: () => androidPoolCandidates(listDevices(), isEmulator).map((entry) => ({ id: entry.serial })),
-    noCandidates: () => {
-      const resolved = androidPoolNoCandidatesRefusal(listDevices(), isEmulator);
+    list: async () => {
+      const adb = await listDevices();
+      return (await probed((isEmulator) => androidPoolCandidates(adb, isEmulator))).map((entry) => ({
+        id: entry.serial,
+      }));
+    },
+    noCandidates: async () => {
+      const adb = await listDevices();
+      const resolved = await probed((isEmulator) => androidPoolNoCandidatesRefusal(adb, isEmulator));
       return { message: resolved.error as string, remedy: resolved.remedy as string };
     },
     waitSeconds,
@@ -478,7 +494,7 @@ export async function pooledAndroidDevice({
   return {
     device: {
       serial: pooled.candidate.id,
-      deviceName: deviceModel(pooled.candidate.id) ?? pooled.candidate.id,
+      deviceName: (await deviceModel(pooled.candidate.id)) ?? pooled.candidate.id,
       owned: false,
     },
   };
@@ -500,7 +516,7 @@ export function androidJobLayout(layout: AndroidLayout): { gradleRoot?: string; 
   return layout.custom ? { gradleRoot: layout.gradleRootRelative, module: layout.module } : {};
 }
 
-export function androidBuildOptions({
+export async function androidBuildOptions({
   release,
   physical,
   device,
@@ -522,13 +538,13 @@ export function androidBuildOptions({
   targetAbiOnly?: boolean;
   hostedAbi?: string | null;
   gradleProject?: string | null;
-}): {
+}): Promise<{
   abi: string | null;
   runOptions: AndroidRunOptions;
   remoteRunOptions: AndroidRunOptions | null;
-} {
+}> {
   let abi: string | null = targetAbiOnly ? hostedAbi : null;
-  if (targetAbiOnly && !release && physical && device.serial) abi = deviceAbi(device.serial);
+  if (targetAbiOnly && !release && physical && device.serial) abi = await deviceAbi(device.serial);
   if (targetAbiOnly && !release && !physical) abi = androidSystemImageAbi(device.systemImage);
 
   const runOptions: AndroidRunOptions = {};

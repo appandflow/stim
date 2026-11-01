@@ -1,22 +1,26 @@
 import { existsSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { configCorruptRepair } from '../workspace/config.ts';
 import type { Finding } from './doctor.ts';
+import { configSettingRefusal, envSettingRefusal } from '../workspace/settings-payload.ts';
 import { compilerCacheFallbackMessage, type CompilerCacheFallback, type Optimizations } from '../optimizations.ts';
 import {
   mergeSettingsLayers,
   PATH_SETTINGS,
+  readCommittedSettings,
   SETTINGS_WITH_RESOLVE_TIME_FALLBACK,
   settingOrigin,
   settingsLayers,
+  settingValueAt,
   unknownSettingKeys,
   type SettingsLayer,
 } from '../workspace/settings.ts';
-import { settingDefinition, type SettingsObject } from '@stim-cli/core/state';
+import { REPLACED_SETTINGS, replacementAdvice, settingDefinition, type SettingsObject } from '@stim-cli/core/state';
 
 export interface MachineSettings {
   settings: SettingsObject;
   layers: SettingsLayer[];
+  repositoryLayer?: SettingsLayer | null;
   corrupt: Finding | null;
 }
 
@@ -27,7 +31,20 @@ export function readMachineSettings(context: {
 }): MachineSettings {
   try {
     const layers = settingsLayers(context);
-    return { settings: mergeSettingsLayers(layers.map((layer) => layer.settings)), layers, corrupt: null };
+    const repositoryLayer =
+      context.projectPath && context.repoRoot && context.repoRoot !== context.projectPath
+        ? {
+            scope: 'committed' as const,
+            file: join(context.repoRoot, '.stim.json'),
+            settings: readCommittedSettings(context.repoRoot),
+          }
+        : null;
+    return {
+      settings: mergeSettingsLayers(layers.map((layer) => layer.settings)),
+      layers,
+      repositoryLayer,
+      corrupt: null,
+    };
   } catch (error) {
     if ((error as { code?: string }).code !== 'STIM_CONFIG_CORRUPT') throw error;
     return {
@@ -48,19 +65,23 @@ const PATH_SETTINGS_TRIMMED_BY_THEIR_CONSUMER: ReadonlySet<string> = new Set(['a
 export function checkMachineSettings({
   settings,
   layers,
+  repositoryLayer = null,
   projectRoot,
   optimizations = null,
   reportedElsewhere = [],
   exists = existsSync,
   env = process.env,
+  remoteBuild,
 }: {
   settings: SettingsObject;
   layers: SettingsLayer[];
+  repositoryLayer?: SettingsLayer | null;
   projectRoot: string;
   optimizations?: Optimizations | null;
   reportedElsewhere?: readonly string[];
   exists?: (path: string) => boolean;
   env?: NodeJS.ProcessEnv;
+  remoteBuild?: unknown;
 }): Finding[] {
   const findings: Finding[] = [];
 
@@ -103,13 +124,58 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
-  for (const key of unknownSettingKeys(settings)) {
-    const file = settingOrigin(layers, key)?.file ?? null;
+  const holders = repositoryLayer ? [...layers, repositoryLayer] : layers;
+  const unknownKeys = new Set([
+    ...unknownSettingKeys(settings),
+    ...(repositoryLayer ? unknownSettingKeys(repositoryLayer.settings) : []),
+  ]);
+  for (const key of unknownKeys) {
+    for (const holder of holders.filter((layer) => settingValueAt(layer.settings, key) !== undefined)) {
+      const file = holder.file;
+      const advice = replacementAdvice(key, settingValueAt(holder.settings, key));
+      if (advice) {
+        findings.push({
+          level: 'note',
+          title: `${key} was replaced by ${advice.key}`,
+          detail: `${key} in ${file} is not read by Stim, so ${advice.key} decides placement and its default applies until you set it.`,
+          fix: `${advice.command ? `Run \`${advice.command}\`` : `Set ${advice.key}`}, then remove ${key} from ${file}.`,
+        });
+        continue;
+      }
+      findings.push({
+        level: 'note',
+        title: 'A key in the config is inert',
+        detail: `${key} in ${file} is not read by Stim, so its value changes nothing.`,
+        fix: `Remove ${key} from ${file}, or run \`stim guide settings\` for the name that replaced it.`,
+      });
+    }
+  }
+
+  const buildValueRefusal = configSettingRefusal('remote.build', remoteBuild);
+  if (buildValueRefusal)
+    findings.push({
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail: buildValueRefusal.message,
+      fix: buildValueRefusal.remedy,
+    });
+  const buildEnvRefusal = envSettingRefusal('remote.build', env);
+  if (buildEnvRefusal)
+    findings.push({
+      level: 'cost',
+      title: 'A setting has the wrong type',
+      detail: buildEnvRefusal.message,
+      fix: buildEnvRefusal.remedy,
+    });
+
+  for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
+    if (!replaced.env || !env[replaced.env]?.trim()) continue;
+    const advice = replacementAdvice(key, env[replaced.env]);
     findings.push({
       level: 'note',
-      title: 'A key in the config is inert',
-      detail: `${key}${file ? ` in ${file}` : ''} is not read by Stim, so its value changes nothing.`,
-      fix: `Remove ${key}${file ? ` from ${file}` : ''}, or run \`stim guide settings\` for the name that replaced it.`,
+      title: `${replaced.env} was replaced by ${replaced.key}`,
+      detail: `${replaced.env} is not read by Stim, so ${replaced.key} decides placement and its default applies until you set it.`,
+      fix: `${advice?.command ? `Run \`${advice.command}\`` : `Set ${replaced.key}`}, then unset ${replaced.env}.`,
     });
   }
 

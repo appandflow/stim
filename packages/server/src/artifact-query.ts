@@ -184,7 +184,7 @@ export function runArtifactQuery({
             receipt,
             ...('build' in query
               ? { query }
-              : { sourceDigest: query.sourceDigest, inputs: query.inputs, android: query.android }),
+              : { sourceDigest: query.sourceDigest, inputs: query.inputs, android: query.android, jdk: query.jdk }),
           }),
         );
     } catch (error) {

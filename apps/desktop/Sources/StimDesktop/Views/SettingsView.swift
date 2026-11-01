@@ -6,6 +6,8 @@ import SwiftUI
 struct SettingsView: View {
   @ObservedObject var store: StatusStore
   @StateObject private var model: SettingsModel
+  @StateObject private var history: GcHistoryModel
+  @StateObject private var builds: BuildLedgerModel
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var flags = FeatureFlagStore.shared
   @State private var workspace: String?
@@ -26,19 +28,26 @@ struct SettingsView: View {
     self.machine = machine
     self.buildMachines = buildMachines
     _model = StateObject(wrappedValue: SettingsModel(environment: environment, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(environment: environment))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(environment: environment))
   }
 
   var body: some View {
     TabView(selection: $tab) {
-      AppPreferencesView(stimHome: store.stimHome)
+      AppPreferencesView(stimHome: store.stimHome, settings: machine, history: history)
         .tabItem { Label("App", systemImage: "macwindow") }
         .tag("app")
       if flags.phoneApp {
         PhonesView(server: ServerController.shared, stimHome: store.stimHome)
-          .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+          .tabItem { Label("Paired Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") }
           .tag("phones")
       }
-      BuildMachinesView(model: buildMachines, store: store, workspace: workspace, actions: actions)
+      if flags.pairedMachines {
+        PairedMachinesView(servers: .shared)
+          .tabItem { Label("Paired Machines", systemImage: "server.rack") }
+          .tag("paired-machines")
+      }
+      BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Machines", systemImage: "hammer") }
         .tag("build-machines")
       stimSettings
@@ -54,6 +63,7 @@ struct SettingsView: View {
     .tint(Palette.primary)
     .onAppear {
       if tab == "phones", !flags.phoneApp { tab = "app" }
+      if tab == "paired-machines", !flags.pairedMachines { tab = "app" }
       if SettingScope(rawValue: tab) != nil {
         scope = tab
         tab = "stim-settings"

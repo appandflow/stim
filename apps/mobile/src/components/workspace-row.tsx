@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionLine } from '@/components/agent-sessions';
 import { PhaseBar } from '@/components/build-progress';
+import { HostLabel } from '@/components/host-label';
 import { Icon } from '@/components/icon';
 import { Pill } from '@/components/pill';
 import { Text } from '@/components/text';
@@ -21,6 +22,7 @@ import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
 import {
   offlineRowStatus,
   rowDevices,
+  rowHosts,
   rowLabel,
   rowProblems,
   rowStatus,
@@ -28,7 +30,7 @@ import {
   type HomeWorkspace,
 } from '@/lib/home-list';
 import { worktreeRowLabel, worktreeRowSummary, type PlatformState } from '@/lib/worktree-row';
-import { barSteps, currentPhaseLabel, gitChip, phaseSteps } from '@/lib/workspace-view';
+import { barSteps, currentPhaseLabel, gitChip, phaseSteps, remoteBuild } from '@/lib/workspace-view';
 import { isSettingUp, isShownLive, platformName, runningBuild } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState, WorktreeFacts } from '@/protocol/types';
 
@@ -161,6 +163,18 @@ const WorkspaceRow = memo(function WorkspaceRow({
       <Text key="idle" variant="footnote" tone="tertiary">
         {devices.idle.text}
       </Text>,
+    );
+  }
+  const deviceHosts = (summary?.hosts ?? rowHosts(env)).devices;
+  if (deviceHosts.length) {
+    context.push(
+      <HostLabel
+        key="hosts"
+        host={deviceHosts.join(', ')}
+        variant="footnote"
+        numberOfLines={lines}
+        color={offline ? theme.colors.tertiary : theme.colors.secondary}
+      />,
     );
   }
   const remote = summary?.remote ?? devices.remote;
@@ -416,16 +430,23 @@ function TickingRowBuild({ env, build }: { env: EnvironmentState; build: BuildRe
 }
 
 function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildReport; now: number }) {
+  const { theme } = useUnistyles();
   const steps = barSteps(phaseSteps(build, env.builds?.[build.platform] ?? [], now));
   const { elapsed, estimate } = buildTiming(build, now);
   const { phase, counts } = currentPhaseLabel(build);
   const outcome = outcomeLabel(build);
+  const large = useLargeText();
+  const host = remoteBuild(build, 0)?.host;
+  const hostLabel = host ? (
+    <HostLabel host={host} mode="building" variant="footnote" color={theme.colors.secondary} />
+  ) : null;
   return (
     <View style={styles.build}>
       <View style={styles.buildLine}>
         <Text variant="footnote" weight="semibold" tone="brand">
           {phase}
         </Text>
+        {large ? null : hostLabel}
         {counts ? (
           <Text variant="footnote" tone="secondary" numberOfLines={1} style={[styles.shrink, styles.tabular]}>
             {counts}
@@ -451,6 +472,7 @@ function RowBuild({ env, build, now }: { env: EnvironmentState; build: BuildRepo
           </Text>
         ) : null}
       </View>
+      {large ? hostLabel : null}
       <PhaseBar steps={steps} buildId={buildKey(build)} names={false} />
     </View>
   );

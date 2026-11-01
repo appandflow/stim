@@ -18,12 +18,16 @@ import {
   expectedShape,
   isLayeredSetting,
   coerceSettingText,
+  placementWord,
+  replacementAdvice,
   settingDefinition,
   settingValueError,
   REMOTE_DEVICE_BACKENDS,
+  REPLACED_SETTINGS,
   SETTING_GROUPS,
   SETTINGS,
   WEB_VIEWPORTS,
+  type AutomaticPlacement,
   type SettingScope,
   type SettingsObject,
   type WebViewport,
@@ -87,6 +91,7 @@ export function settingShapeErrors(settings: unknown): string[] {
     const expected =
       setting.key === 'ios.remote' ||
       setting.key === 'android.remote' ||
+      setting.key === 'macos.remote' ||
       setting.key === 'android.deviceProfile' ||
       (setting.type.kind === 'number' && !BOUNDS_CHECKED_WHEN_USED.has(setting.key))
         ? settingValueError(setting, value)
@@ -546,6 +551,10 @@ export function iosSimSlimProfileSetting(settings: unknown, settingsRoot: string
   }
 }
 
+export function iosSimSlimDefaultSetting(settings: unknown): boolean {
+  return isPlainObject(settings) && isPlainObject(settings.ios) && settings.ios.simslim === 'on';
+}
+
 function iosString(settings: unknown, key: string): unknown {
   if (!isPlainObject(settings) || !isPlainObject(settings.ios)) return undefined;
   return settings.ios[key];
@@ -620,6 +629,16 @@ export function unknownSettingKeys(settings: unknown, prefix = ''): string[] {
   return unknown;
 }
 
+export function inertSettingWarning(settings: unknown, key: string): string {
+  const advice = replacementAdvice(key, settingValueAt(settings, key));
+  const instead = advice
+    ? advice.command
+      ? ` Run \`${advice.command}\` instead.`
+      : ` Use ${advice.key} instead.`
+    : '';
+  return `Warning: setting "${key}" is not read by Stim and will be ignored.${instead}`;
+}
+
 export function readCommittedSettings(directory?: string | null): SettingsObject {
   if (!directory) return {};
   const p = join(directory, '.stim.json');
@@ -648,8 +667,17 @@ const MACHINE_READABLE_SETTINGS = SETTINGS.filter(
     isLayeredSetting(setting) && setting.scopes.includes('machine') && !setting.key.startsWith('optimizations.'),
 );
 
-function machineLayerSettings(machine: unknown): SettingsObject | null {
+export function removedMachineSettings(machine: unknown): SettingsObject {
   const settings: SettingsObject = {};
+  for (const key of Object.keys(REPLACED_SETTINGS)) {
+    const value = settingValueAt(machine, key);
+    if (value !== undefined) setSettingValueAt(settings, key, value);
+  }
+  return settings;
+}
+
+function machineLayerSettings(machine: unknown): SettingsObject | null {
+  const settings: SettingsObject = removedMachineSettings(machine);
   // Copied whole, not key by key, so an unknown or malformed key under machine
   // optimizations still reaches settingShapeErrors and doctor's inert-key check
   // instead of silently disappearing.
@@ -887,16 +915,20 @@ export function cacheProviderSettingError(settings: SettingsObject): string | nu
   return null;
 }
 
-export type IosRemoteTarget = { kind: 'backend'; backend: RemoteDeviceBackend } | { kind: 'machine'; machine: string };
+export type IosRemoteTarget =
+  | { kind: 'backend'; backend: RemoteDeviceBackend }
+  | { kind: 'machine'; machine: string; placement?: AutomaticPlacement };
 
 /** The remote target `remote` names, or null for `local`, which runs on this machine whatever a lower layer sets. */
 export function parseIosRemote(remote: string): IosRemoteTarget | null {
   const selected = remote.trim();
   const reserved = selected.toLowerCase();
-  if (reserved === 'local') return null;
+  const word = placementWord(selected);
+  if (word === 'local') return null;
+  if (word) return { kind: 'machine', machine: 'auto', placement: word };
   return (REMOTE_DEVICE_BACKENDS as readonly string[]).includes(reserved)
     ? { kind: 'backend', backend: reserved as RemoteDeviceBackend }
-    : { kind: 'machine', machine: reserved === 'auto' ? 'auto' : selected };
+    : { kind: 'machine', machine: selected };
 }
 
 export function remoteIosSetting(settings: SettingsObject): IosRemoteTarget | null {

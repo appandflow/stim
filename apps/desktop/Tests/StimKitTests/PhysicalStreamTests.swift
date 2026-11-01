@@ -27,6 +27,95 @@ import Testing
     #expect(params["video"] == .array([.string("h264")]))
   }
 
+  @Test func asksForThirtyFramesAtTheServersDefaultSizeUnlessHighQualityIsChosen() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    let standard = try #require(server.subs.first).params()
+    #expect(standard["fps"] == .number(30))
+    #expect(standard["maxEdge"] == nil)
+    let high = PhysicalStream(target: target, quality: .high)
+    high.connect(server)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(60))
+    #expect(params["maxEdge"] == .number(1600))
+  }
+
+  @Test func resubscribesAtTheNewQualityAndKeepsTheControlSession() async throws {
+    let (stream, server, _) = try await started()
+    stream.setQuality(.high)
+    #expect(server.subs.first?.cancelled == true)
+    let params = try #require(server.subs.last).params()
+    #expect(server.subs.count == 2)
+    #expect(params["fps"] == .number(60))
+    #expect(stream.control == .on(session: "c1"))
+  }
+
+  @Test func asksAgainAtStandardWhenTheServerAnswersHighWithoutVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    #expect(server.subs.first?.cancelled == true)
+    #expect(server.subs.count == 2)
+    let params = try #require(server.subs.last).params()
+    #expect(params["fps"] == .number(30))
+    #expect(params["maxEdge"] == nil)
+    server.subs.last?.onSubscribed(["subscription": .string("s2")])
+    #expect(server.subs.count == 2)
+    #expect(stream.quality == .high)
+  }
+
+  @Test func keepsHighWhenTheServerOffersVideo() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1"), "video": .string("h264")])
+    #expect(server.subs.count == 1)
+    #expect(server.subs.first?.cancelled == false)
+  }
+
+  @Test func asksAgainAtStandardWhenAnOlderServerRefusesHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    let refusal = ServerEvent(
+      name: "error", subscription: "",
+      fields: [
+        "error": .object([
+          "code": .string("bad-request"), "message": .string("fps must be a whole number from 1 to 30."),
+        ])
+      ])
+    try #require(server.subs.first).onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+    #expect(stream.problem == nil)
+    server.subs.last?.onEvent(refusal)
+    #expect(server.subs.count == 2)
+    #expect(stream.problem == "fps must be a whole number from 1 to 30.")
+  }
+
+  @Test func asksAgainAtStandardWhenARelayReportsTheHostRefusedHigh() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onEvent(
+      ServerEvent(
+        name: "error", subscription: "",
+        fields: ["error": .object(["code": .string("frames-failed"), "message": .string("Mini: refused.")])]))
+    #expect(try #require(server.subs.last).params()["fps"] == .number(30))
+  }
+
+  @Test func triesHighAgainAfterTheViewerPicksItAgain() throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target, quality: .high)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    stream.setQuality(.standard)
+    stream.setQuality(.high)
+    #expect(try #require(server.subs.last).params()["fps"] == .number(60))
+  }
+
   @Test func beginsControlOfThePhysicalDeviceAndSendsInputOnlyInItsSession() async throws {
     let server = FakeServer()
     let stream = PhysicalStream(target: target)
@@ -145,7 +234,10 @@ import Testing
     sub.onEvent(
       ServerEvent(
         name: "macos-windows", subscription: "s1",
-        fields: ["current": window(7, "Main"), "windows": .array([window(7, "Main"), window(9, "")]), "pinned": .bool(false)]))
+        fields: [
+          "current": window(7, "Main"), "windows": .array([window(7, "Main"), window(1e300, "Huge"), window(9, "")]),
+          "pinned": .bool(false),
+        ]))
     #expect(
       stream.windows?.windows == [MacosWindows.Window(id: 7, title: "Main"), MacosWindows.Window(id: 9, title: "")])
     #expect(stream.windows?.current == 7)
@@ -155,6 +247,21 @@ import Testing
     await settle()
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .number(9)])
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .null])
+  }
+
+  @Test func keepsOneKeyframeRequestOutstandingWhileTheServerDoesNotAnswer() async throws {
+    let server = FakeServer()
+    let stream = PhysicalStream(target: target)
+    stream.connect(server)
+    try #require(server.subs.first).onSubscribed(["subscription": .string("s1")])
+    for _ in 0..<5 { stream.requestKeyframe() }
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
+    try #require(server.take("frames.keyframe")).reply.resume(returning: .object([:]))
+    await settle()
+    stream.requestKeyframe()
+    await settle()
+    #expect(server.requests.map(\.method) == ["frames.keyframe"])
   }
 }
 

@@ -33,22 +33,26 @@ const NATIVE_RUN_HELD = 'a stim ios, android or stop run holds its native-run.lo
 
 interface InUseChecks {
   supervisor?: boolean;
+  devServer?: boolean;
   managedLocks?: boolean;
   hosted?: boolean;
+  hostedMacos?: boolean;
 }
 
 export function workspaceInUse(
   root: string,
   {
     supervisor = true,
+    devServer = true,
     managedLocks = true,
     hosted = true,
+    hostedMacos = true,
     nativeRun = true,
   }: InUseChecks & { nativeRun?: boolean } = {},
   bundleInstances: (root: string) => number[] = bundleInstancePids,
 ): string[] {
   const reasons: string[] = [];
-  if (supervisor) {
+  if (supervisor && devServer) {
     const project = getProject(root);
     const target = resolveSupervisorTarget({
       state: readWorkspaceState(root)?.supervisor,
@@ -59,9 +63,16 @@ export function workspaceInUse(
     else if (target.status === 'unverified') {
       reasons.push(`its dev server supervisor cannot be verified: ${target.reason ?? 'unknown identity'}`);
     }
+    const browser = webFacts(readWebRecord(root));
+    if (browser?.status === 'running' || browser?.status === 'orphaned') {
+      reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);
+    } else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
+  }
+  if (supervisor) {
     const macos = macosAppState(readMacosRecord(root));
-    if (macos?.host) reasons.push(`its macOS app runs on ${macos.host.machine}`);
-    else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
+    if (macos?.host) {
+      if (hostedMacos) reasons.push(`its macOS app runs on ${macos.host.machine}`);
+    } else if (macos?.state === 'running' || macos?.state === 'orphaned' || macos?.build.state === 'running')
       reasons.push('its macOS app or build is running');
     else if (macos?.state === 'unverified' || (!macos && readWorkspaceState(root)?.macos !== undefined))
       reasons.push('its macOS process owner cannot be verified');
@@ -77,10 +88,6 @@ export function workspaceInUse(
     if (runtime.live.length) reasons.push('its macOS runtime claim is held');
     else if (runtime.unresolved[0])
       reasons.push(`its macOS runtime cannot be verified: ${runtime.unresolved[0].reason}`);
-    const browser = webFacts(readWebRecord(root));
-    if (browser?.status === 'running' || browser?.status === 'orphaned') {
-      reasons.push(`its owned Chrome (pid ${browser.record.chromeProcess?.pid}) is running`);
-    } else if (browser?.status === 'unverified') reasons.push('its owned Chrome cannot be verified');
   }
   if (nativeRun) {
     const claims = readClaimSet(workspaceProcessLockPath(workspaceDir(root), NATIVE_RUN, true));

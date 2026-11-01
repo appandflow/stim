@@ -199,7 +199,7 @@ private struct InboxRow: View {
       if case .url = entry.target, let path {
         Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
           .accessibilityLabel("Show in Finder, \(title)")
-          .help("The autopilot keeps this worktree. Review it, then run stim worktree remove yourself.")
+          .help("Automatic maintenance keeps this worktree. Review it, then run stim worktree remove yourself.")
       }
       if let command {
         CopyButton(

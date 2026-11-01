@@ -50,12 +50,15 @@ import {
 import {
   assertOwnedAvdStoppedAsync,
   avdPathExists,
+  avdStorageExists,
   avdStorageRoots,
+  isEmulatorToolAbsent,
   listAdbDevicesAsync,
   listOrphanedAvdDirectories,
   ownedAvdDirectory,
   type OrphanedAvdDirectory,
   resolveOwnedAvdSerial,
+  type ResolvedAvdSerial,
   resolveOwnedAvdSerialAsync,
   shutdownAndroidEmulator,
   waitForAndroidEmulatorShutdown,
@@ -353,6 +356,7 @@ export async function teardownOwnedIosSim(
   } = {},
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
+  const reportedBusy = new Set<string>();
   try {
     const resolved = await resolveOwnedIosSimNow(udid, operation);
     if (resolved.notOwned) {
@@ -369,6 +373,7 @@ export async function teardownOwnedIosSim(
       workspace,
       undefined,
       operation,
+      reportedBusy,
     );
     const current = await resolveOwnedIosSimNow(udid, operation);
     if (current.missing) return { status: 'missing' };
@@ -423,6 +428,7 @@ export async function teardownOwnedIosSim(
         workspace,
         root,
         operation,
+        reportedBusy,
       );
     }
     return { status: 'torn-down', label: label ?? sim.name ?? udid };
@@ -534,11 +540,7 @@ async function teardownUnregisteredAvd(
   operation?.signal.throwIfAborted();
   const candidates = surveyed ? [surveyed] : listOrphanedAvdDirectories(avdName);
   if (candidates.length === 0) {
-    if (
-      avdStorageRoots().some(
-        (root) => avdPathExists(join(root, `${avdName}.ini`)) || avdPathExists(join(root, `${avdName}.avd`)),
-      )
-    )
+    if (avdStorageExists(avdName))
       throw new Error(`AVD ${avdName} is not listed but its storage remains; it was kept.`);
     return { status: 'missing' };
   }
@@ -642,10 +644,18 @@ async function teardownClaimedAvd(
     waitForShutdown = waitForAndroidEmulatorShutdown,
     assertStopped = (name) => assertOwnedAvdStoppedAsync(name, operation),
     resolveAvd: resolve = (name) =>
-      resolveOwnedAvdSerialAsync(name, { timeoutMs: AVD_INVENTORY_TIMEOUT_MS, operation, signal: operation?.signal }),
+      resolveOwnedAvdSerialAsync(name, {
+        timeoutMs: AVD_INVENTORY_TIMEOUT_MS,
+        operation,
+        signal: operation?.signal,
+      }).catch((error: unknown): ResolvedAvdSerial => {
+        if (isEmulatorToolAbsent(error, operation?.env)) return { missing: true };
+        throw error;
+      }),
   }: AvdTeardownOptions,
 ): Promise<TeardownOutcome> {
   let parkFallback: string | undefined;
+  const reportedBusy = new Set<string>();
   const resolveAvd = async (name: string) => {
     operation?.signal.throwIfAborted();
     const result = await resolve(name);
@@ -690,6 +700,7 @@ async function teardownClaimedAvd(
         workspace,
         undefined,
         operation,
+        reportedBusy,
       );
       if (!(await stillOwned())) throw new Error(`Owned AVD ${avdName} changed before shutdown; it was kept.`);
       await waitForShutdown(
@@ -716,6 +727,7 @@ async function teardownClaimedAvd(
           workspace,
           root,
           operation,
+          reportedBusy,
         );
       }
     } else {

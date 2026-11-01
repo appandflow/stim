@@ -8,7 +8,12 @@ export function due(
   state: MaintenanceState | null,
   settings: Pick<
     MaintenanceSettings,
-    'pressureCheckMinutes' | 'sizeCheckMinutes' | 'worktreeCheckMinutes' | 'sweepHours' | 'removeFinishedWorktrees'
+    | 'pressureCheckMinutes'
+    | 'sizeCheckMinutes'
+    | 'worktreeCheckMinutes'
+    | 'idleCheckMinutes'
+    | 'sweepHours'
+    | 'removeFinishedWorktrees'
   >,
   now: number,
   attemptedAt?: number,
@@ -20,8 +25,9 @@ export function due(
     size: settings.sizeCheckMinutes * 60_000,
     worktree: settings.removeFinishedWorktrees ? settings.worktreeCheckMinutes * 60_000 : Infinity,
     sweep: settings.sweepHours > 0 ? settings.sweepHours * 3_600_000 : Infinity,
+    idle: settings.idleCheckMinutes * 60_000,
   } satisfies Record<MaintenanceCheck, number>;
-  return (['pressure', 'size', 'worktree', 'sweep'] as const).filter((check) => {
+  return (['pressure', 'size', 'worktree', 'sweep', 'idle'] as const).filter((check) => {
     if (intervalMs[check] === Infinity || elapsed(state?.deferredAt?.[check]) < DEFERRED_RETRY_MS) return false;
     return elapsed(state?.lastAt[check]) >= intervalMs[check];
   });

@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   DEVICE_IDLE_SHUTDOWN_KEY,
   DEVICE_RECLAIM_REASON,
@@ -8,7 +10,9 @@ import {
 import { formatLongDuration } from '../command-output.ts';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
@@ -84,6 +88,14 @@ export interface IdleShutdownEvent {
   level: 'info' | 'warn';
   event: 'device_idle_shutdown' | 'device_idle_shutdown_failed';
   msg: string;
+  skipped?: true;
+}
+
+/** Appends an idle shutdown record to the workspace's metro.ndjson, where the supervisor writes its own. */
+export function writeIdleShutdownEvent(root: string, event: IdleShutdownEvent): void {
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  writer.write({ src: 'metro', ...event });
+  writer.close();
 }
 
 /**
@@ -148,6 +160,7 @@ export async function shutDownIdleDevices(
         level: 'warn',
         event: 'device_idle_shutdown_failed',
         msg: `could not shut down idle ${what}: ${outcome.reason}`,
+        ...(outcome.status === 'skipped' ? { skipped: true as const } : {}),
       });
     }
   }

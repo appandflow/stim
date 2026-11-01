@@ -17,11 +17,22 @@ import {
   untrackedMissLine,
   untrackedNativeFiles,
 } from '../cache/build-cache.ts';
+import { memoizedFingerprint, type FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
-import { relative } from 'node:path';
-import { androidGradleProject, androidJobLayout, displayPath, NO_FINGERPRINT } from '../commands/android/support.ts';
+import { existsSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { androidHome } from '../devices/android.ts';
+import { androidSdkRefusal } from '../engine/gradle.ts';
+import {
+  androidGradleProject,
+  androidJobLayout,
+  apkPackage,
+  displayPath,
+  dumpApkManifest,
+  NO_FINGERPRINT,
+} from '../commands/android/support.ts';
 import { resolveKeystore, swapApkBundle } from '../engine/apk-swap.ts';
 import { captureAssetManifest } from '../engine/asset-manifest.ts';
 import { resolveCcache } from '../engine/ccache.ts';
@@ -52,6 +63,7 @@ import { planReactNativeAndroid, type AndroidPlanDeps } from './react-native-and
 export interface ReactNativeAndroidDependencies {
   plan?: Partial<AndroidPlanDeps>;
   fingerprint?: typeof fingerprintProject;
+  memoize?: typeof memoizedFingerprint;
   untracked?: typeof untrackedNativeFiles;
   resolveCached?: typeof resolveBuild;
   storeCached?: BuildStore;
@@ -95,7 +107,18 @@ export function reactNativeAndroidProject(
     packageRemedy: `Set \`expo.android.package\` in app.json / app.config.js, or \`namespace\` in ${relative(root, layout.moduleDir) || '.'}/build.gradle.`,
     variantProblem,
     targets: ['emulator', 'physical', 'hosted', 'remote'],
-    preflight: (target) => androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }),
+    preflight: (target) => {
+      const sdkPath = androidHome();
+      return (
+        androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }) ??
+        androidSdkRefusal({
+          sdkPath,
+          sdkExists: existsSync(sdkPath),
+          hasLocalProperties: existsSync(join(layout.gradleRoot, 'local.properties')),
+          localPropertiesPath: relative(root, join(layout.gradleRoot, 'local.properties')).split(sep).join('/'),
+        })
+      );
+    },
     eas: true,
     runtimeKind,
     runtime: ({ build, prepareMetro, phase }) =>
@@ -128,6 +151,7 @@ function reactNativeAndroidArtifact(
   context: ResolvedProjectSettings['context'],
   {
     fingerprint = fingerprintProject,
+    memoize = memoizedFingerprint,
     untracked = untrackedNativeFiles,
     resolveCached = resolveBuild,
     storeCached = storeBuild,
@@ -155,6 +179,7 @@ function reactNativeAndroidArtifact(
   let initialSources: FingerprintSource[] = [];
   let prebuildRan = false;
   let editedConfig: string[] = [];
+  let fingerprintCheck: FingerprintCheck | null = null;
   const identity = () => ({ hash, key: buildCacheKey('android', hash, runOptions) });
 
   const materialize: AndroidArtifactRecipe['materialize'] = async (key, cachedPath) => {
@@ -209,10 +234,22 @@ function reactNativeAndroidArtifact(
   };
 
   return {
+    fingerprintCheck: () => fingerprintCheck,
     async identity() {
       let computed;
       try {
-        computed = await fingerprint(root, { platform: 'android', androidLayout: layout });
+        const memo = await memoize(
+          root,
+          { platform: 'android', androidLayout: layout },
+          { consult: buildPlan.cache.read, record: true, operation, fingerprint },
+        );
+        computed = memo.fingerprint;
+        fingerprintCheck = memo.check;
+        if (memo.memoHit)
+          phase(
+            'fingerprint',
+            chalk.dim('matches a recorded fingerprint of this tree; confirming it in the background'),
+          );
       } catch (error) {
         const message = String((error as Error)?.message || error);
         throw new AndroidRecipeRefusal(
@@ -245,6 +282,7 @@ function reactNativeAndroidArtifact(
         resolve: resolveCached,
         store: storeCached,
         sources,
+        readAppId: async (path) => apkPackage(await dumpApkManifest(path, { context: operation })),
         ...(compiled ? { assetManifest: release ? captureAssets(root, { variant, layout }) : null } : {}),
       }),
     async prepare(beforePrepare) {
@@ -389,7 +427,7 @@ function reactNativeAndroidArtifact(
       target: async () => ({
         platform: 'android',
         local: await androidToolchainAsync(operation?.env),
-        requires: androidRequirements(root),
+        requires: androidRequirements(root, layout.gradleRoot),
       }),
       request: {
         platform: 'android',

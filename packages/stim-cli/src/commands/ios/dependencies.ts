@@ -1,3 +1,5 @@
+import { ensureIosRuntime } from '../../devices/ios-runtime.ts';
+import { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import type { IosRuntimePlan } from './launch.ts';
@@ -6,11 +8,14 @@ import { checkEasFallback } from '../../engine/eas-fallback.ts';
 import { prepareHostedIos, placeHostedIos } from '../../device-host/hosted-ios.ts';
 import { hostedMetroPortProbe } from '../../device-host/hosted-native.ts';
 import { readHostedIos, writeHostedIosAsync } from '../../device-host/ios-state.ts';
+import { followHostedLaunchLogs } from '../../device-host/hosted-logs-sync.ts';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { buildIos, discoverXcodeProject } from '../../integrations/react-native-build.ts';
 import { resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
+import { memoizedFingerprint } from '../../cache/fingerprint-memo.ts';
 import {
   fingerprintProject,
+  evictBuild,
   resolveBuild,
   storeBuild,
   type BuildStore,
@@ -29,11 +34,19 @@ import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
+import { iosToolchainAsync } from '../../offload/toolchain.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
-import { clearIosAppData, listIosRuntimesAsync, listIosRuntimes, listAllIosSims } from '../../devices/ios.ts';
+import {
+  clearIosAppData,
+  resetIosKeychain,
+  listIosRuntimesAsync,
+  listIosRuntimes,
+  listAllIosSims,
+  type IosSimSnapshot,
+} from '../../devices/ios.ts';
 import {
   ensureRemoteBootOwned,
   ensureMetroReachable,
@@ -87,6 +100,8 @@ import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../d
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  ensureIosRuntime: typeof ensureIosRuntime;
+  installHostedIosRuntime: typeof installHostedIosRuntime;
   projectRegistry: Pick<ProjectRegistry, 'selectIos'>;
   runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
@@ -124,6 +139,7 @@ export interface IosDeps {
   ensureOwnedDevice: typeof ensureOwnedDevice;
   listIosRuntimes: (options?: {
     signal?: AbortSignal;
+    snapshot?: IosSimSnapshot;
   }) => ReturnType<typeof listIosRuntimes> | Promise<ReturnType<typeof listIosRuntimes>>;
   listAllIosSims: typeof listAllIosSims;
   ensureBooted: typeof ensureBooted;
@@ -134,7 +150,9 @@ export interface IosDeps {
   pidExists: typeof pidExists;
   getConcurrencyLimits: typeof getConcurrencyLimits;
   fingerprintProject: typeof fingerprintProject;
+  memoizedFingerprint: typeof memoizedFingerprint;
   untrackedNativeFiles: typeof untrackedNativeFiles;
+  evictBuild: typeof evictBuild;
   resolveBuild: typeof resolveBuild;
   storeBuild: BuildStore;
   resolveCacheProviderConfig: typeof resolveCacheProviderConfig;
@@ -153,6 +171,7 @@ export interface IosDeps {
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
+  iosToolchain: typeof iosToolchainAsync;
   buildIos: typeof buildIos;
   discoverXcodeProject: typeof discoverXcodeProject;
   resolveScheme: typeof resolveScheme;
@@ -179,10 +198,12 @@ export interface IosDeps {
   installIosApp: typeof installIosApp;
   clearOtherUserApps: typeof clearOtherUserApps;
   clearIosAppData: typeof clearIosAppData;
+  resetIosKeychain: typeof resetIosKeychain;
   clearIosAdoptionPending: typeof clearIosAdoptionPending;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
   verifyReleaseLaunch: typeof verifyReleaseLaunch;
+  followHostedLaunchLogs: typeof followHostedLaunchLogs;
   ensureWorkspaceStorage: typeof ensureWorkspaceStorageSafely;
   replaceCollector: typeof replaceCollector;
   stopPreviousCollector: typeof stopPreviousCollector;
@@ -196,6 +217,8 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  ensureIosRuntime,
+  installHostedIosRuntime,
   projectRegistry,
   automaticDevicePlacement,
   checkEasFallback,
@@ -239,7 +262,9 @@ export const DEFAULT_DEPS: IosDeps = {
   pidExists,
   getConcurrencyLimits,
   fingerprintProject,
+  memoizedFingerprint,
   untrackedNativeFiles,
+  evictBuild,
   resolveBuild,
   storeBuild,
   resolveCacheProviderConfig,
@@ -259,6 +284,7 @@ export const DEFAULT_DEPS: IosDeps = {
   readPodState,
   podsAreStale,
   runPodInstall,
+  iosToolchain: iosToolchainAsync,
   buildIos,
   discoverXcodeProject,
   resolveScheme,
@@ -281,10 +307,12 @@ export const DEFAULT_DEPS: IosDeps = {
   installIosApp,
   clearOtherUserApps,
   clearIosAppData,
+  resetIosKeychain,
   clearIosAdoptionPending,
   launchIosApp,
   verifyLaunch,
   verifyReleaseLaunch,
+  followHostedLaunchLogs,
   ensureWorkspaceStorage: ensureWorkspaceStorageSafely,
   replaceCollector,
   stopPreviousCollector,

@@ -2,6 +2,8 @@ import { readdir, rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { cacheDirRefusal, type StimContext } from '@stim-cli/core';
+import { sharedCompilationCache } from '@stim-cli/core/state';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import { getConfigDir } from '../../workspace/config.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { pruneCacheAsync, type CacheDescriptor } from '../../cache/caches.ts';
@@ -120,6 +122,21 @@ export function previewScopedEmptying(caches: CacheDescriptor[], env: NodeJS.Pro
   return planCacheEmptying(caches, false, env).map((c) => Object.assign({}, c, { scopedEmpty: emptyVerdict(c) }));
 }
 
+/**
+ * Plain `gc --delete` empties the shared Swift compilation cache once it exceeds `caches.swiftCompilationCacheMaxGb`
+ * (0 means no cap); the claim taken for emptying still refuses while a build holds the cache.
+ */
+export function markOverCapCompilationCache(caches: GcCache[], env: NodeJS.ProcessEnv = process.env): GcCache[] {
+  const capGb = resolveMaintenanceSettings(undefined, env).swiftCompilationCacheMaxGb;
+  if (capGb === 0) return caches;
+  const dir = canonicalPath(sharedCompilationCache());
+  return caches.map((cache) =>
+    cache.prune === 'atomic' && canonicalPath(cache.dir) === dir && (cache.bytes ?? 0) > capGb * 1024 ** 3
+      ? { ...cache, ...cache.scopedEmpty }
+      : cache,
+  );
+}
+
 // Metro file maps share os.tmpdir() with other processes and do not own that directory.
 function ownsItsDirectory(cache: CacheDescriptor): boolean {
   return !Array.isArray(cache.files) && !cacheDirRefusal(cache.dir);
@@ -172,7 +189,7 @@ async function emptyCache(
 
 function reportFailures(cache: CacheDescriptor, failed: number | undefined, { log, record, fail }: GcOutput): boolean {
   if (!failed) return false;
-  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be removed`;
+  const message = `${failed} entr${failed === 1 ? 'y' : 'ies'} in ${cache.dir} could not be read or removed`;
   log(chalk.red(`${cache.name}: ${message}`));
   record('cache', 'failed', cache.name, { id: cache.dir, detail: message });
   fail();
@@ -190,6 +207,7 @@ export async function trimCaches(
   let cacheBytes = 0;
   let failures = 0;
   const trimmed: GcCache[] = [];
+  let unchanged = 0;
   for (const c of caches) {
     signal?.throwIfAborted();
     if (c.machineGlobal) {
@@ -209,10 +227,12 @@ export async function trimCaches(
         chalk.green(`Trimmed ${c.name}: ${r.removed} entr${r.removed === 1 ? 'y' : 'ies'} (${formatBytes(r.bytes)})`),
       );
     } else if (!r.failed) {
-      log(chalk.dim(`${c.name}: nothing older than ${olderThan}d`));
+      unchanged++;
     }
     if (reportFailures(c, r.failed, output)) failures++;
   }
+
+  if (unchanged) log(chalk.dim(`${unchanged} cache${unchanged === 1 ? '' : 's'}: nothing older than ${olderThan}d`));
 
   if (cacheBytes) {
     log(
@@ -229,9 +249,10 @@ export async function emptyCaches(
   output: GcOutput = GC_OUTPUT,
   signal?: AbortSignal,
   operation?: StimContext,
-): Promise<void> {
+): Promise<number> {
   const { log, record } = output;
   let cacheBytes = 0;
+  let failures = 0;
   for (const c of caches) {
     signal?.throwIfAborted();
     if (!c.willEmpty) {
@@ -252,7 +273,7 @@ export async function emptyCaches(
     } else if (!r.failed) {
       log(chalk.dim(`${c.name}: already empty`));
     }
-    reportFailures(c, r.failed, output);
+    if (reportFailures(c, r.failed, output)) failures++;
   }
   if (cacheBytes) {
     log(
@@ -261,4 +282,5 @@ export async function emptyCaches(
       ),
     );
   }
+  return failures;
 }

@@ -38,13 +38,13 @@ enum TextVariant: CaseIterable {
 
   var size: CGFloat {
     switch self {
-    case .caption2: 10.5
-    case .caption: 11
-    case .footnote: 11.5
-    case .callout: 12
-    case .body: 13
-    case .headline: 15
-    case .title: 22
+    case .caption2: 11.5
+    case .caption: 12
+    case .footnote: 12.5
+    case .callout: 13
+    case .body: 14
+    case .headline: 16
+    case .title: 23
     }
   }
 

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceDir } from '../workspace/paths.ts';
+import { phaseLine } from '../command-output.ts';
 import { agentAccess, removeAgentAccess } from './hosted-agent.ts';
 import { closeAgentConnection } from './agent-connection.ts';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +24,7 @@ import {
   hostedNativeRecords,
   parseHostedNativePlacement,
   unreadableHostedNative,
+  hostedMemoryRefusal,
 } from '@stim-cli/core/state';
 import {
   call,
@@ -40,17 +42,19 @@ import {
   POLL_MS,
   SESSION_TIMEOUT_MS,
   PREPARE_TIMEOUT_MS,
+  IMAGE_INSTALL_TIMEOUT_MS,
   INSTALL_TIMEOUT_MS,
   OFFER_TIMEOUT_MS,
   RESERVE_TIMEOUT_MS,
   type HostConnection,
   type HostedSession,
 } from './hosted-client.ts';
-import { requestHostedMetro, closeHostedMetro, requireHostedMetro } from './metro-gateway.ts';
+import { requestHostedMetro, closeHostedMetro, hostedAgentPort, requireHostedMetro } from './metro-request.ts';
 import { writeHostedNative } from './ios-state.ts';
 import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/workspace-state.ts';
 import { cancellableSleep } from '../cancellation.ts';
 import { runCancellationSignal } from '../engine/native-run.ts';
+import { withDrainingCancellation } from '../engine/operation-state.ts';
 import { ambientContext, ambientWrite } from '@stim-cli/core';
 
 function hostingRefusal(machine: string, error: unknown): Error & { code: string } {
@@ -65,6 +69,7 @@ export interface HostedNativeTarget {
   choice: HostedIosChoice | HostedAndroidChoice;
   session: HostedSession | null;
   selection?: { selected: string; reason?: string };
+  installImage?: string;
 }
 
 export const androidAgentRemoteConfig = (root: string, slot: string): string =>
@@ -108,7 +113,7 @@ export async function prepareHostedNative(
           host,
           await attach(host, recorded.session, undefined, platform),
           ['preparing'],
-          PREPARE_TIMEOUT_MS,
+          platform === 'android' ? PREPARE_TIMEOUT_MS + IMAGE_INSTALL_TIMEOUT_MS : PREPARE_TIMEOUT_MS,
           platform,
           runCancellationSignal(ambientContext()),
         );
@@ -171,9 +176,10 @@ export async function prepareHostedNative(
       );
     if (!isJsonObject(offer.capacity) || offer.capacity.available === 0)
       throw new Error('No hosted device capacity is available.');
-    if (!isJsonObject(offer.resources) || offer.resources.memoryPressure !== 'normal')
-      throw new Error('Host memory pressure is unknown or elevated.');
-    return { host, choice, session: null };
+    const memoryRefusal = hostedMemoryRefusal(isJsonObject(offer.resources) ? offer.resources.memoryPressure : null);
+    if (memoryRefusal) throw new Error(memoryRefusal);
+    const installImage = parsedOffer?.platform === 'android' ? parsedOffer.installImage : undefined;
+    return { host, choice, session: null, ...(installImage ? { installImage } : {}) };
   } catch (error) {
     if (error instanceof Error && 'code' in error && error.code === 'STIM_BAD_ARG') throw error;
     throw hostingRefusal(machine, error);
@@ -257,7 +263,17 @@ export function hostedMetroPortProbe(
   };
 }
 
-export async function placeHostedNative(
+export function placeHostedNative(
+  target: HostedNativeTarget,
+  options: Parameters<typeof placeHostedNativeOnce>[1],
+): ReturnType<typeof placeHostedNativeOnce> {
+  const context = ambientContext();
+  return withDrainingCancellation(context, runCancellationSignal(context), () =>
+    placeHostedNativeOnce(target, options),
+  );
+}
+
+async function placeHostedNativeOnce(
   target: HostedNativeTarget,
   {
     root,
@@ -294,12 +310,20 @@ export async function placeHostedNative(
   },
 ): Promise<{ placement: HostedNativePlacement<HostedIosDevice | HostedAndroidDevice>; launched: true | 'unverified' }> {
   let host = target.host;
+  const signal = runCancellationSignal(ambientContext());
+  const closeOnAbort = () => host.connection.close();
+  signal?.addEventListener('abort', closeOnAbort, { once: true });
   try {
     if (mode === 'development' && metro === requestHostedMetro) requireHostedMetro(root);
     enterPhase('device');
-    host = await connectHost(host.machine, undefined, true);
+    host = await connectHost(host.machine, undefined, true, signal);
     target.host = host;
     requireHostedAppMode(host, platform, mode);
+    if (mode === 'development' && !host.connection.supports('hosted-metro-link'))
+      throw Object.assign(new Error(`${host.machine} runs a stim-server that cannot link Metro.`), {
+        code: 'STIM_HOSTING_REFUSED',
+        remedy: `Update stim-server on ${host.machine}, then retry.`,
+      });
     let session =
       (target.session ? await attach(host, target.session.id, undefined, platform) : null) ??
       (await reserveHostedNative(
@@ -327,11 +351,18 @@ export async function placeHostedNative(
       agent: { driver: 'none', setting: 'hosting.agentDriver' },
     };
     await reserved(placement);
+    if (target.installImage && session.state === 'preparing')
+      note(
+        phaseLine(
+          'image',
+          `installing ${target.installImage} on ${host.machine}; the download can take several minutes`,
+        ),
+      );
     session = await settle(
       host,
       session,
       ['preparing'],
-      PREPARE_TIMEOUT_MS,
+      PREPARE_TIMEOUT_MS + (target.installImage ? IMAGE_INSTALL_TIMEOUT_MS : 0),
       platform,
       runCancellationSignal(ambientContext()),
     );
@@ -353,10 +384,9 @@ export async function placeHostedNative(
     placement = { ...placement, device };
     await reserved(placement);
     if (mode === 'development') {
-      const gateway = await metro(root, session.id, host.credential);
+      await metro(root, session.id, host.credential);
       await call(host, 'device-host.metro.open', {
         session: session.id,
-        ...gateway,
         ...(platform === 'android' || devClientScheme ? { clientMetroPort: metroPort } : {}),
       }).catch((error: unknown) => {
         if (platform === 'ios' && devClientScheme && (error as { code?: unknown }).code === 'device-busy')
@@ -463,12 +493,19 @@ export async function placeHostedNative(
           : undefined,
         note,
         platform,
+        mode !== 'development'
+          ? undefined
+          : !host.connection.supports('hosted-agent-link')
+            ? `${host.machine} runs a stim-server that cannot carry agent control over the local network. Update stim-server there, then retry.`
+            : (hostedAgentPort(root, session.id) ??
+              `The Metro supervisor has no agent relay ready for ${host.machine}. Rerun this command; if it persists, run stim stop; stim start, then retry.`),
       ),
     };
     return { placement, launched: mode !== 'development' && delivery.launched === true ? true : 'unverified' };
   } catch (error) {
     throw hostingRefusal(host.machine, error);
   } finally {
+    signal?.removeEventListener('abort', closeOnAbort);
     if (platform === 'android') host.connection.close();
   }
 }
@@ -495,16 +532,6 @@ export async function stopHostedNative(
     signal?.addEventListener('abort', cancel, { once: true });
     try {
       host = await connectHost(placement.machine, undefined, false, signal);
-      try {
-        await pullHostedNativeLogs(root, name, placement, host, true, platform, signal);
-      } catch (error) {
-        signal?.throwIfAborted();
-        ambientWrite(
-          'stderr',
-          `Could not copy final native logs from ${placement.machine}: ${(error as Error).message}\n`,
-        );
-      }
-      signal?.throwIfAborted();
       const stopped = await settle(
         host,
         hostedSession(host, await call(host, 'device-host.stop', { session: placement.session }), platform),

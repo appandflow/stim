@@ -304,6 +304,8 @@ export interface DeviceActivity {
   /** The newest time of each kind of evidence behind `lastActivityAt`, so a reader can leave out app log chatter. */
   recent?: Partial<Record<ActivityRecencyBasis, string>>;
   basis: string[];
+  /** For a driven device, the probes that could not be read, which `basis` leaves out. */
+  unknown?: string[];
 }
 
 /** Every state a device's app process can report. */
@@ -651,6 +653,12 @@ export interface EnvironmentState {
   doctorRuns?: Partial<Record<'ios' | 'android', { at: string }>>;
   live: boolean;
   phase?: WorkspacePhase;
+  /**
+   * Present when the workspace's folder no longer exists on a mounted volume, for example after `git worktree remove`
+   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc --delete`. A
+   * folder on a volume that is not mounted is not reported.
+   */
+  pathMissing?: true;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
@@ -712,6 +720,78 @@ export interface StatusCapacity {
   committedMb: number;
   totalMemoryMb: number;
   overCapacity: boolean;
+  /** `concurrency.maxBuilds` usage; present only while that cap is set. */
+  builds?: StatusBuildSlots;
+  /** `concurrency.maxDevices` usage; present only while that cap is set. */
+  devices?: StatusDeviceSlots;
+  /** `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set. */
+  platformDevices?: Partial<Record<'ios' | 'android', StatusPlatformDeviceSlots>>;
+  /** This machine's load. Optional only so payloads from releases that predate it still decode. */
+  load?: StatusCapacityLoad;
+}
+
+/**
+ * `free` is under `busyAt` (`server.maxLoadPerCore`), where placement keeps work on this machine; `busy` is at or over
+ * it, where placement prefers another machine; `holding` is at or over `limit`, where new local native work waits.
+ */
+export type LoadState = 'free' | 'busy' | 'holding';
+
+/**
+ * `loadPerCore` is the 5-minute load average divided by `cpus`, rounded to one decimal. `limit` is the load per core at
+ * which new local native work waits, null while no limit is configured.
+ */
+export interface StatusCapacityLoad {
+  cpus: number;
+  loadPerCore: number;
+  busyAt: number;
+  limit: number | null;
+  state: LoadState;
+}
+
+/**
+ * A held build slot. `workspace` is the root of the local build holding it, `client` the device id of the client
+ * whose offloaded build this machine runs in it; both are null for a slot whose holder Stim cannot read.
+ */
+export interface StatusBuildSlotHolder {
+  slot: number;
+  workspace: string | null;
+  client: string | null;
+  since: string | null;
+  unresolved?: true;
+}
+
+/** `inUse` counts the slots below `max` that a live or unresolved claim holds, which a new build cannot take. */
+export interface StatusBuildSlots {
+  max: number;
+  inUse: number;
+  holders: StatusBuildSlotHolder[];
+}
+
+/**
+ * An owned device counted against `concurrency.maxDevices`. `label` is the label of the workspace that records it, or
+ * the device's name when no workspace does; `workspace` and `slot` are null then.
+ */
+export interface StatusDeviceSlotHolder {
+  platform: 'ios' | 'android';
+  label: string;
+  workspace: string | null;
+  slot: string | null;
+  booting?: true;
+}
+
+/** `inUse` is null, with `unknown` saying why, when Stim cannot count the owned devices. */
+export interface StatusDeviceSlots {
+  max: number;
+  inUse: number | null;
+  unknown?: string;
+  holders: StatusDeviceSlotHolder[];
+}
+
+/** `inUse` is null, with `unknown` saying why, when Stim cannot count the owned devices. */
+export interface StatusPlatformDeviceSlots {
+  max: number;
+  inUse: number | null;
+  unknown?: string;
 }
 
 export interface DeviceLeaseState {

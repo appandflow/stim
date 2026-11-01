@@ -6,8 +6,11 @@ import { inspectProcessIdentity } from './process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 import { basename, dirname, join } from 'path';
-import { loadConfig } from './workspace/config.ts';
+import { getConcurrencyLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
+import { buildSlotUsage } from './engine/build-slots.ts';
+import { deviceSlotUsages } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
@@ -30,6 +33,7 @@ import { detectTutorial, findServerWorkspace, readAppJson } from './workspace/pr
 import { listAllIosSimsAsync, parseSimctlList } from './devices/ios.ts';
 import {
   listAdbDevices,
+  listAdbDevicesAsync,
   ownedAvdDeviceProfile,
   ownedAvdSerialResolver,
   type AdbDevices,
@@ -74,6 +78,7 @@ import {
   readDevicePlacement,
   withStateReadCache,
   type MachineUsageState,
+  type StatusCapacity,
   archivedUsage,
   linkReplacedArchives,
   readArchives,
@@ -179,6 +184,7 @@ export interface StatusSnapshot {
   cwdRoot: string | null;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
+  slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
   probes: StatusProbes;
@@ -221,7 +227,11 @@ export function liveProbes({
   const androidRuntimeOf = androidRuntimeReader();
   return {
     simulators: () =>
-      simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+      process.platform !== 'darwin'
+        ? Promise.resolve([])
+        : simctlListing === null
+          ? listAllIosSimsAsync()
+          : Promise.resolve().then(() => parseSimctlList(simctlListing)),
     metro: readMetroFacts,
     hostedIos: readHostedIosStatus,
     hostedAndroid: readHostedAndroidStatus,
@@ -277,10 +287,12 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const simsByUdid: Record<string, IosSimRecord> = {};
   let simsAvailable = true;
   let simctlError: string | null = null;
+  let simctlFailure: unknown = null;
   try {
     for (const sim of await simsRead) simsByUdid[sim.udid] = sim;
   } catch (e) {
     simsAvailable = false;
+    simctlFailure = e;
     simctlError = String((e as Error)?.message || e).split('\n')[0] ?? '';
   }
   const running = await processes;
@@ -318,6 +330,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
 
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
+  let mountedVolumes: string[] | undefined;
   const labelOnlyRoots: boolean[] = [];
   const launchesByState: ReturnType<typeof readWorkspaceLaunches>[] = [];
   const easLedger = readEasSessionLedger();
@@ -417,7 +430,10 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
-      Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+      const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
+      const phase = workspacePhase(state.live, saved, { now: leaseNow });
+      Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {
+        ...(missing ? { pathMissing: true as const } : {}),
         platforms: (() => {
           const context = {
             projectPath: path,
@@ -468,6 +484,25 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
+  const { maxBuilds, maxDevices } = getConcurrencyLimits();
+  const platformLimits = getPlatformDeviceLimits();
+  const slotUsage: StatusSnapshot['slotUsage'] = {
+    ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),
+    ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
+      ? await deviceSlotUsages(maxDevices, platformLimits, {
+          config: cfg,
+          sims:
+            process.platform !== 'darwin'
+              ? []
+              : simsAvailable
+                ? sims
+                : () => {
+                    throw simctlFailure;
+                  },
+          adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+        })
+      : {}),
+  };
   const archives = probes.archives();
   const maxCount = machineNumber('archive.maxCount', cfg, process.env);
   return {
@@ -488,6 +523,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     cwdRoot,
     tables,
     machine,
+    slotUsage,
     roots,
     simNames,
     probes,

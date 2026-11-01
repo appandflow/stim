@@ -58,13 +58,13 @@ type MacosTextStyle = Pick<TextStyleToken, 'fontSize' | 'lineHeight'> & Partial<
 
 /** Stim Desktop's sizes for the same text styles. macOS body text is 13 pt. */
 export const macosText: Record<TextVariant, MacosTextStyle> = {
-  caption2: { fontSize: 10.5, lineHeight: 13 },
-  caption: { fontSize: 11, lineHeight: 14 },
-  footnote: { fontSize: 11.5, lineHeight: 15 },
-  callout: { fontSize: 12, lineHeight: 16 },
-  body: { fontSize: 13, lineHeight: 17 },
-  headline: { fontSize: 15, lineHeight: 20 },
-  title: { fontSize: 22, lineHeight: 28, fontWeight: 'semibold' },
+  caption2: { fontSize: 11.5, lineHeight: 13 },
+  caption: { fontSize: 12, lineHeight: 14 },
+  footnote: { fontSize: 12.5, lineHeight: 15 },
+  callout: { fontSize: 13, lineHeight: 16 },
+  body: { fontSize: 14, lineHeight: 17 },
+  headline: { fontSize: 16, lineHeight: 20 },
+  title: { fontSize: 23, lineHeight: 28, fontWeight: 'semibold' },
 };
 
 export const fonts = {

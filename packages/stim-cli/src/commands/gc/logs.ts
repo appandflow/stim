@@ -194,15 +194,20 @@ export async function trimWorkspaceLogs(
       signal?.throwIfAborted();
       failures++;
       output.log(chalk.red(`Could not trim the logs of ${root}: ${(error as Error)?.message || String(error)}`));
+      output.record('workspaceLogs', 'failed', root, {
+        detail: error instanceof Error ? error.message : String(error),
+      });
       continue;
     }
     if (!run.ran || run.value.kept) {
       const kept = run.ran ? run.value.kept : `in use: ${run.reasons.join('; ')}`;
       output.log(chalk.yellow(`Kept the logs of ${root}: ${kept}`));
+      output.record('workspaceLogs', 'kept', root, { detail: kept });
       continue;
     }
     trimmed += run.value.bytes;
     output.log(chalk.green(`Trimmed the logs of ${root} (${formatBytes(run.value.bytes)})`));
+    output.record('workspaceLogs', 'done', root, { bytes: run.value.bytes });
   }
   signal?.throwIfAborted();
   if (trimmed) output.log(chalk.dim(`Trimmed ${formatBytes(trimmed)} of workspace logs.`));

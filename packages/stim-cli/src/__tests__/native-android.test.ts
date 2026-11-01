@@ -184,12 +184,14 @@ test('the registered native Android provider retains build-only APKs without cla
   writeWorkspaceState(root, { android: existing });
   const options = { variant: 'release', abi: 'x86_64', remoteBuild: 'local' } as const;
   const first = await buildAndroidOperation(testContext(), root, options);
+  rmSync(compiled);
+  expect(readFileSync(first.apkPath, 'utf8')).toBe('release:1');
   const second = await buildAndroidOperation(testContext(), root, options);
   for (const result of [first, second])
     expect(result).toMatchObject({ cacheHit: false, cacheSkipped: true, cacheKey: null });
   expect(generation).toBe(2);
   rmSync(compiled);
-  expect(readFileSync(first.apkPath, 'utf8')).toBe('release:1');
+  expect(existsSync(first.apkPath)).toBe(false);
   expect(readFileSync(second.apkPath, 'utf8')).toBe('release:2');
   expect(readWorkspaceState(root)?.android).toEqual(existing);
   expect(readWorkspaceState(root)).not.toHaveProperty('supervisor');
@@ -218,7 +220,6 @@ function uncachedOffloadProject(selected: string) {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(selection, 'resolveBuildPlacement').mockReturnValue({ selected });
   vi.spyOn(offload, 'buildPlacementCandidates').mockReturnValue({
-    mode: 'force',
     localEnabled: true,
     machines: [{ machine: 'worker' }],
   } as ReturnType<typeof offload.buildPlacementCandidates>);
@@ -228,6 +229,30 @@ function uncachedOffloadProject(selected: string) {
   } as Awaited<ReturnType<typeof offload.chooseBuildMachine>>);
   vi.spyOn(offload, 'closeOffload').mockImplementation(() => {});
 }
+
+test.each([false, true])('a named native target refusal preserves cancellation=%s', async (cancelled) => {
+  uncachedOffloadProject('worker');
+  write(join(root, 'buildSrc', 'build.gradle.kts'), 'source');
+  const controller = new AbortController();
+  vi.spyOn(offload, 'offloadCheck').mockImplementation((_root, targets) => async () => {
+    if (cancelled) controller.abort('SIGINT');
+    await targets();
+    return { capacity: null, problems: [] };
+  });
+  const local = vi.spyOn(gradleEngine, 'buildGradle');
+  await expect(
+    buildAndroidOperation(testContext({ signal: controller.signal }), root, {
+      variant: 'freeRelease',
+      abi: 'x86_64',
+      remoteBuild: 'worker',
+    }),
+  ).rejects.toMatchObject({
+    code: cancelled ? 'STIM_CANCELLED' : 'STIM_OFFLOAD_REFUSED',
+    message: expect.stringContaining(cancelled ? 'cancelled' : 'buildSrc'),
+  });
+  expect(offload.chooseBuildMachine).not.toHaveBeenCalled();
+  expect(local).not.toHaveBeenCalled();
+});
 
 test.each([
   { cancelled: false, eligible: false, cached: false },

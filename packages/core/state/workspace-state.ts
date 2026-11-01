@@ -402,6 +402,19 @@ export function lastUseFrom(state: WorkspaceState | null, logMtimes: readonly nu
   return candidates.length ? Math.max(...candidates) : NaN;
 }
 
+/**
+ * When an ios, android or macos run last finished in the workspace, from its recorded builds (a cache hit counts),
+ * in epoch milliseconds; NaN when it records none. Dev server starts, reloads and logs do not count.
+ */
+export function lastNativeUseFrom(state: WorkspaceState | null): number {
+  const runs = [
+    ...Object.values(readLastBuilds(state)),
+    ...Object.values(readBuildHistory(state)).flatMap((entries) => entries.slice(0, 1)),
+  ];
+  const times = runs.map((run) => Date.parse(run.finishedAt ?? run.startedAt)).filter(Number.isFinite);
+  return times.length ? Math.max(...times) : NaN;
+}
+
 export const MAINTENANCE_LOG_NAME = 'maintenance.ndjson';
 
 /**

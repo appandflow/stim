@@ -8,6 +8,7 @@ import WebKit
 
 struct DeviceTile: View {
   var device: DeviceRef
+  var owner: ServerOwner = .local
   var hostedPreview: PhysicalScreen? = nil
   var screenHeight: CGFloat
   var interactive = false
@@ -64,6 +65,8 @@ struct DeviceTile: View {
   @State private var windowState = ClipboardSync.WindowState.hidden
   @State private var clipboardSync = ClipboardSync()
   @AppStorage(AppPreferences.Key.syncsClipboard) private var syncsClipboard = true
+  @AppStorage(AppPreferences.Key.streamQuality) private var preferredQuality = StreamQuality.standard
+  @State private var viewerQuality: StreamQuality?
   @State private var hingeAngle = 180.0
   @State private var postureTarget: DuoPosture?
   @State private var rotateFailed = false
@@ -88,6 +91,8 @@ struct DeviceTile: View {
   }
   static let minimumWidth: CGFloat = 240
   static let stoppedMaximumWidth: CGFloat = 420
+
+  private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
 
   var body: some View {
     Group {
@@ -125,10 +130,13 @@ struct DeviceTile: View {
         .overlay {
           if !framed { RoundedRectangle(cornerRadius: Radius.card).strokeBorder(frameColor, lineWidth: frameWidth) }
         }
-        if interactive, Self.hasButtons(device) {
+        if interactive, Self.hasButtons(owned) {
           buttonBar
         } else if frameOption != nil {
           controlGroup { optionsButton }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
+        } else if offersStreamQuality {
+          controlGroup { qualityButton }
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }, action: { controlsHeight = $0 })
         }
       }
@@ -209,10 +217,11 @@ struct DeviceTile: View {
   }
 
   /// Whether the viewer offers hardware controls below the device's screen.
-  static func hasButtons(_ device: DeviceRef) -> Bool {
-    switch device {
-    case .ios: return device.isRunning && device.localSimulatorUDID != nil
-    case .android: return device.isRunning && !device.isPhysical && device.hostedMachine == nil
+  static func hasButtons(_ device: OwnedDevice) -> Bool {
+    switch device.ref {
+    case .ios: return device.ref.isRunning && device.localSimulatorUDID != nil
+    case .android:
+      return device.owner.isLocal && device.ref.isRunning && !device.ref.isPhysical && device.ref.hostedMachine == nil
     case .web, .remote, .macos: return false
     }
   }
@@ -265,7 +274,7 @@ struct DeviceTile: View {
     .overlay(alignment: .topTrailing) {
       if hasMenu, let workspace {
         DeviceTileMenu(
-          device: device, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
+          device: device, owner: owner, workspace: workspace, building: build != nil, choice: choice, openBuildLogs: onBuildLogs
         )
         .padding(.trailing, CardMetrics.headerPadding)
         .padding(.top, CardMetrics.headerPadding + 2)
@@ -346,7 +355,7 @@ struct DeviceTile: View {
       FlowLayout(spacing: Space.sm) {
         TimelineView(.periodic(from: .now, by: 30)) { context in
           if let badge = ActivityBadge(
-            device.activity, screenChangedAt: device.activityKey.flatMap(ScreenActivity.shared.lastChange),
+            device.activity, screenChangedAt: owned.activityKey.flatMap(ScreenActivity.shared.lastChange),
             now: context.date), badge.driverTool == nil
           {
             activityChip(badge)
@@ -386,9 +395,9 @@ struct DeviceTile: View {
     guard viewer, screenID == 1, device.formFactor != .dual else { return nil }
     switch device {
     case .ios(_, let sim) where !sim.physical && device.isRunning:
-      return device.localSimulatorUDID.flatMap { SimulatorDisplayView.frameSize(udid: $0) }
+      return owned.localSimulatorUDID.flatMap { SimulatorDisplayView.frameSize(udid: $0) }
     case .android(_, let avd)
-    where avd.owned && !avd.physical && avd.host == nil && device.isRunning && device.localEmulatorSerial != nil:
+    where avd.owned && !avd.physical && avd.host == nil && device.isRunning && owned.localEmulatorSerial != nil:
       return EmulatorDisplayView.frameSize(avdName: avd.name)
     default: return nil
     }
@@ -405,8 +414,8 @@ struct DeviceTile: View {
   private var frameOption: DeviceFrameOption? {
     guard viewer, !replaying, device.isRunning else { return nil }
     switch device {
-    case .ios(_, let sim) where !sim.physical && device.localSimulatorUDID != nil: break
-    case .android(_, let avd) where avd.owned && !avd.physical && device.localEmulatorSerial != nil: break
+    case .ios(_, let sim) where !sim.physical && owned.localSimulatorUDID != nil: break
+    case .android(_, let avd) where avd.owned && !avd.physical && owned.localEmulatorSerial != nil: break
     default: return nil
     }
     return DeviceFrameOption(
@@ -427,6 +436,27 @@ struct DeviceTile: View {
       }
     }
     return "No installed device frame matches this device."
+  }
+
+  private var streamQuality: StreamQuality { viewer ? viewerQuality ?? preferredQuality : .standard }
+
+  private var offersStreamQuality: Bool {
+    guard viewer, !replaying, !showsStoppedBar, workspace != nil, hostedPreview == nil else { return false }
+    return device.hostedMachine != nil || isPhysical || !owner.isLocal && ["ios", "android"].contains(device.platform)
+  }
+
+  private var qualityButton: some View {
+    let high = streamQuality == .high
+    return Button(
+      "High stream quality", systemImage: high ? "speedometer" : "gauge.with.dots.needle.33percent"
+    ) { viewerQuality = high ? .standard : .high }
+    .labelStyle(.iconOnly)
+    .buttonStyle(DeviceControlButtonStyle())
+    .foregroundStyle(high ? Palette.accent : Palette.primary)
+    .help(
+      high ? "High quality: 60 fps. Click for Standard." : "Standard quality: 30 fps. Click for High, which uses more bandwidth."
+    )
+    .accessibilityValue(high ? "On" : "Off")
   }
 
   private var optionsButton: some View {
@@ -462,7 +492,7 @@ struct DeviceTile: View {
   private var emulatorAudioTarget: DeviceAudioTarget? {
     guard viewer, interactive, !replaying, device.isRunning,
       case .android(_, let avd) = device, avd.owned, !avd.physical,
-      let serial = device.localEmulatorSerial
+      let serial = owned.localEmulatorSerial
     else { return nil }
     return .emulator(serial: serial, avdName: avd.name)
   }
@@ -487,7 +517,7 @@ struct DeviceTile: View {
         rotateButton(clockwise: false)
         rotateButton(clockwise: true)
       }
-      if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device, device.localSimulatorUDID != nil {
+      if device.formFactor == .dual, screenIDs.count > 1, case .ios(_, let sim) = device, owned.localSimulatorUDID != nil {
         if hingeAvailable {
           controlGroup {
             ForEach(DuoPosture.allCases, id: \.self) { postureButton($0, udid: sim.udid) }
@@ -497,7 +527,7 @@ struct DeviceTile: View {
           controlGroup { foldButton(udid: sim.udid) }
         }
       }
-      if let emulatorPosture, case .android = device, let serial = device.localEmulatorSerial {
+      if let emulatorPosture, case .android = device, let serial = owned.localEmulatorSerial {
         controlGroup { postureMenu(serial: serial, current: emulatorPosture) }
       }
       if simulatorOptionsUDID != nil || frameOption != nil { controlGroup { optionsButton } }
@@ -531,7 +561,7 @@ struct DeviceTile: View {
   private var isPhysical: Bool { device.isPhysical }
 
   private var hasMenu: Bool {
-    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device)
+    clickThrough && !viewer && workspace != nil && DeviceTileMenu.applies(to: device, owner: owner)
   }
 
   private var buildCovered: Bool {
@@ -579,6 +609,7 @@ struct DeviceTile: View {
 
   var showsStoppedBar: Bool {
     if case .remote = device { return false }
+    if !owner.isLocal, workspace != nil { return false }
     if isPhysical || device.hostedMachine != nil, workspace != nil { return false }
     return !device.isRunning && build == nil && !["Booting", "unknown"].contains(device.state)
   }
@@ -632,7 +663,7 @@ struct DeviceTile: View {
         case .ios(_, let sim):
           rotateFailed = !(await SimulatorRotation.rotateBounded(udid: sim.udid, clockwise: clockwise))
         case .android:
-          guard let serial = device.localEmulatorSerial else { return }
+          guard let serial = owned.localEmulatorSerial else { return }
           rotateFailed = !(await EmulatorRotation.rotate(serial: serial, clockwise: clockwise))
         case .remote, .web, .macos: break
         }
@@ -735,9 +766,9 @@ struct DeviceTile: View {
 
   private var dualSimulatorUDID: String? {
     guard viewer, !replaying, device.isRunning, !device.isPhysical, device.formFactor == .dual,
-      screenIDs.count > 1, device.localSimulatorUDID != nil
+      screenIDs.count > 1, owned.localSimulatorUDID != nil
     else { return nil }
-    return device.localSimulatorUDID
+    return owned.localSimulatorUDID
   }
 
   private func clipboardOptions(dismiss: Binding<Bool>) -> ClipboardOptionsView? {
@@ -849,22 +880,22 @@ struct DeviceTile: View {
   private var clipboardTarget: String? {
     guard viewer, interactive, !replaying, device.isRunning else { return nil }
     switch device {
-    case .ios(_, let sim) where sim.owned: return device.localSimulatorUDID
-    case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil: return device.localEmulatorSerial
+    case .ios(_, let sim) where sim.owned: return owned.localSimulatorUDID
+    case .android(_, let avd) where avd.owned && !avd.physical && avd.host == nil: return owned.localEmulatorSerial
     default: return nil
     }
   }
 
   private var simulatorOptionsUDID: String? {
-    guard viewer, interactive, !replaying, device.isRunning, case .ios = device, device.localSimulatorUDID != nil else {
+    guard viewer, interactive, !replaying, device.isRunning, case .ios = device, owned.localSimulatorUDID != nil else {
       return nil
     }
-    return device.localSimulatorUDID
+    return owned.localSimulatorUDID
   }
 
   private var currentHingeAngle: Double {
     if let observedHingeAngle { return observedHingeAngle }
-    guard let udid = device.localSimulatorUDID else { return 180 }
+    guard let udid = owned.localSimulatorUDID else { return 180 }
     return SimulatorPosture.estimatedAngle(udid: udid, folded: posture.map { $0 == "Folded" })
   }
 
@@ -966,7 +997,9 @@ struct DeviceTile: View {
       return height + screenPadding * 2
     }
     let availableHeight =
-      screenHeight - (viewer && (interactive && Self.hasButtons(device) || frameOption != nil) ? controlsHeight + Space.lg : 0)
+      screenHeight
+      - (viewer && (interactive && Self.hasButtons(owned) || frameOption != nil || offersStreamQuality)
+        ? controlsHeight + Space.lg : 0)
     let screenHeight = min(availableHeight, maxCardHeight.map { max(0, $0 - headerHeight - 1) } ?? availableHeight)
     if case .macos = device, let size = pixelSizes[1], size.width > 0, size.height > 0 {
       let padding = screenPadding * 2
@@ -1033,20 +1066,33 @@ struct DeviceTile: View {
         }
       } else if let workspace {
         PhysicalDeviceScreen(
-          device: device, workspace: workspace, interactive: interactive, covered: buildCovered,
-          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice
+          device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
+          onPixelSizeChange: { pixelSizes[1] = pointSize($0) }, onControlLost: onControlLost, windowChoice: choice,
+          quality: streamQuality
         )
-        .id([device.id, device.activityKey].compactMap { $0 }.joined(separator: "|"))
+        .id([device.id, owned.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
         .padding(screenPadding)
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
+    case _ where !owner.isLocal:
+      if let workspace, device.platform == "ios" || device.platform == "android" {
+        PhysicalDeviceScreen(
+          device: device, owner: owner, workspace: workspace, interactive: interactive, covered: buildCovered,
+          onPixelSizeChange: { pixelSizes[1] = $0 }, onControlLost: onControlLost, quality: streamQuality
+        )
+        .id(owned.id)
+        .frame(width: screenWidth(1))
+        .padding(screenPadding)
+      } else {
+        placeholder("Stim Desktop shows this device only on the Mac that runs it.")
+      }
     case .macos(let app) where device.hostedMachine == nil:
       MacosLocalScreen(app: app, choice: choice, viewer: viewer) { pixelSizes[1] = $0 }
         .frame(width: screenWidth(1))
         .padding(screenPadding)
-    case .ios(_, let sim) where device.isRunning && device.localSimulatorUDID != nil:
+    case .ios(_, let sim) where device.isRunning && owned.localSimulatorUDID != nil:
       HStack(alignment: .bottom, spacing: displayedScreenIDs.count > 1 ? screenPadding : 0) {
         ForEach(screenIDs, id: \.self) { screenID in
           SimulatorDisplayView(
@@ -1079,7 +1125,7 @@ struct DeviceTile: View {
         }
       }
     case .android(_, let avd) where device.isRunning && avd.owned && !avd.physical && avd.host == nil:
-      if let serial = device.localEmulatorSerial {
+      if let serial = owned.localEmulatorSerial {
         EmulatorScreen(
           serial: serial, interactive: interactive, buttons: emulatorButtons, avdName: avd.name,
           fullResolution: pixelScale != nil,
@@ -1117,9 +1163,9 @@ struct DeviceTile: View {
     default:
       if isPhysical, let workspace {
         PhysicalDeviceScreen(
-          device: device, workspace: workspace, interactive: interactive,
+          device: device, owner: owner, workspace: workspace, interactive: interactive,
           onPixelSizeChange: { pixelSizes[1] = $0 },
-          onControlLost: onControlLost
+          onControlLost: onControlLost, quality: streamQuality
         )
         .id(device.id)
         .frame(width: screenWidth(1))
@@ -1155,20 +1201,6 @@ private struct DeviceControlButtonStyle: ButtonStyle {
       .background(Palette.text.opacity(active ? Opacity.pressed : 0), in: Capsule())
       .hoverHighlight(radius: Radius.round)
       .opacity(isEnabled ? (configuration.isPressed ? 0.7 : 1) : Opacity.disabled)
-  }
-}
-
-extension DeviceRef {
-  var isInteractive: Bool {
-    switch self {
-    case .ios(_, let sim):
-      return !sim.physical && (hostedIos != nil ? state != "stopped" : isRunning && localSimulatorUDID != nil)
-    case .android(_, let avd):
-      return hostedMachine != nil ? state != "stopped" : isRunning && (avd.owned || avd.physical) && localEmulatorSerial != nil
-    case .web(let browser): return browser.running && browser.cdpEndpoint != nil && browser.targetId != nil
-    case .macos: return hostedMachine != nil && state != "stopped"
-    case .remote: return false
-    }
   }
 }
 

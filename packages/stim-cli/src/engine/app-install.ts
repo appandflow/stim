@@ -199,7 +199,8 @@ export async function clearOtherUserApps(
     return { listed: false, kept: false, removed, failed };
   }
   for (const bundleId of installed) {
-    if (bundleId === keep) continue;
+    // Xcode names every UI test runner app <test bundle id>.xctrunner.
+    if (bundleId === keep || bundleId.endsWith('.xctrunner')) continue;
     try {
       await uninstall(udid, bundleId);
       removed.push(bundleId);
@@ -210,7 +211,7 @@ export async function clearOtherUserApps(
   return { listed: true, kept: keep ? installed.includes(keep) : false, removed, failed };
 }
 
-export function jsLocationValue(metroPort: number | string): string {
+function jsLocationValue(metroPort: number | string): string {
   return `localhost:${metroPort}`;
 }
 
@@ -244,7 +245,7 @@ export function devClientUrl(
   return devClientDeepLink(scheme, `http://${host}:${metroPort}`, options);
 }
 
-export function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
+function iosSchemeApprovalKeys(bundleId: string, schemes: string[]): string[] {
   return [...new Set([bundleId, ...schemes])].map((target) => `${IOS_SCHEME_APPROVAL_OPENER}-->${target}`);
 }
 
@@ -344,18 +345,39 @@ export async function launchIosApp(
   { exec = null }: ExecOpt = {},
 ): Promise<IosLaunchResult> {
   const e = exec || getExecutor();
-  const running = await iosAppProcess(udid, bundleId, { exec: e });
+  const launchRestarts = metroPort === null || !devClientScheme || Boolean(consolePaths);
+  const writeJsLocation = async (port: number | string): Promise<IosLaunchResult | null> => {
+    try {
+      await e.runFileAsync(
+        'xcrun',
+        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(port)],
+        { timeoutMs: 60000 },
+      );
+      return null;
+    } catch (err) {
+      return {
+        failed: true,
+        code: LAUNCH_ERROR,
+        reason: `Could not point ${bundleId} at Metro port ${port} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
+      };
+    }
+  };
+  const runningProbe = iosAppProcess(udid, bundleId, { exec: e });
+  const earlyWrite = metroPort !== null && launchRestarts ? writeJsLocation(metroPort) : null;
+  const running = await runningProbe;
   const stateUnknown = running.state === 'unknown';
   const launchArgs = [
     'simctl',
     'launch',
     ...(consolePaths ? [`--stdout=${consolePaths.stdout}`, `--stderr=${consolePaths.stderr}`] : []),
-    ...(stateUnknown ? ['--terminate-running-process'] : []),
+    ...(stateUnknown || (running.state === 'running' && launchRestarts) ? ['--terminate-running-process'] : []),
     udid,
     bundleId,
   ];
   const restart: { restartedPid?: number } = {};
-  if (running.state === 'running') {
+  if (running.state === 'running' && launchRestarts) {
+    restart.restartedPid = running.pid;
+  } else if (running.state === 'running') {
     try {
       await e.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], { timeoutMs: 30000 });
     } catch (err) {
@@ -368,19 +390,8 @@ export async function launchIosApp(
     restart.restartedPid = running.pid;
   }
   if (metroPort !== null) {
-    try {
-      await e.runFileAsync(
-        'xcrun',
-        ['simctl', 'spawn', udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', jsLocationValue(metroPort)],
-        { timeoutMs: 60000 },
-      );
-    } catch (err) {
-      return {
-        failed: true,
-        code: LAUNCH_ERROR,
-        reason: `Could not point ${bundleId} at Metro port ${metroPort} (defaults write RCT_jsLocation): ${await describeIosSimulatorFailure(err, e)}`,
-      };
-    }
+    const writeFailure = await (earlyWrite ?? writeJsLocation(metroPort));
+    if (writeFailure) return writeFailure;
 
     if (devClientScheme) {
       const url = devClientUrl(devClientScheme, metroPort, 'localhost', { devMenuParams });
@@ -525,7 +536,7 @@ export async function installAndroidApp(
   }
 }
 
-export function parseResolvedActivity(text: unknown): string | null {
+function parseResolvedActivity(text: unknown): string | null {
   if (typeof text !== 'string') return null;
   for (const raw of text.split('\n')) {
     const line = raw.trim();
@@ -675,7 +686,7 @@ export function androidDevClientUrl(scheme: string, metroPort: number | string, 
   return devClientUrl(scheme, metroPort, androidMetroHost(physical));
 }
 
-export function amStartError(text: unknown): string | null {
+function amStartError(text: unknown): string | null {
   const out = String(text ?? '');
   for (const raw of out.split('\n')) {
     const line = raw.trim();
@@ -684,7 +695,7 @@ export function amStartError(text: unknown): string | null {
   return null;
 }
 
-export async function openAndroidDevClientUrl(
+async function openAndroidDevClientUrl(
   {
     serial,
     url,
@@ -879,7 +890,7 @@ function describe(err: unknown) {
   return stderr ? `${message}: ${stderr}` : message;
 }
 
-export function parsePidof(text: unknown): number | null {
+function parsePidof(text: unknown): number | null {
   const first = String(text ?? '')
     .trim()
     .split(/\s+/)[0];
@@ -887,7 +898,7 @@ export function parsePidof(text: unknown): number | null {
   return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
-export function parsePsPid(text: unknown, packageName: string): number | null {
+function parsePsPid(text: unknown, packageName: string): number | null {
   for (const raw of String(text ?? '').split('\n')) {
     const cols = raw.trim().split(/\s+/);
     if (cols.length < 2) continue;

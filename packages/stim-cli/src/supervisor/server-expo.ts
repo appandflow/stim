@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
@@ -75,7 +75,7 @@ export function findBinUpward(
   }
 }
 
-function repositoryRoot(startDir: string, exists: (p: string) => boolean): string | null {
+export function repositoryRoot(startDir: string, exists: (p: string) => boolean = existsSync): string | null {
   for (let dir = startDir; ; dir = dirname(dir)) {
     if (exists(join(dir, '.git'))) return dir;
     if (dirname(dir) === dir) return null;
@@ -95,11 +95,14 @@ export function expoBinRefusal(
   root: string,
   what = 'start an Expo dev server for',
 ): { message: string; remedy: string } {
+  const repo = repositoryRoot(root, existsSync);
+  const linked = repo && statSync(join(repo, '.git'), { throwIfNoEntry: false })?.isFile();
   return {
     message:
       `Cannot ${what} ${root}: the \`expo\` package is not resolvable from it` +
       ' (require.resolve("expo/package.json") failed, and no node_modules/.bin/expo exists in it or in any parent).',
     remedy:
+      (linked ? 'Run `stim worktree warm` in this worktree, then retry. ' : '') +
       "Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.",
   };
 }
@@ -158,15 +161,13 @@ export function recordFromLine(
   if (stream === 'stderr' && msg.startsWith('stim-bundle-response: ')) {
     try {
       const record = JSON.parse(msg.slice('stim-bundle-response: '.length));
-      if (
-        record.src === 'metro' &&
+      const request =
         /^(?:bundle_(?:response|prefetch)_(?:started|progress|finished|failed)|manifest_request_(?:started|finished|failed))$/.test(
           record.event,
         ) &&
         ['ios', 'android'].includes(record.platform) &&
-        typeof record.requestId === 'string' &&
-        Number.isFinite(record.ts)
-      )
+        typeof record.requestId === 'string';
+      if (record.src === 'metro' && (request || record.event === 'hmr_update') && Number.isFinite(record.ts))
         return record;
     } catch {}
   }
@@ -319,7 +320,7 @@ export async function startExpoServer({
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
   const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
-  const node = withProjectNode(root, process.env);
+  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',
@@ -344,7 +345,7 @@ export async function startExpoServer({
   });
 
   let tunnelUrlSeen = false;
-  return superviseChildServer({
+  const handle = superviseChildServer({
     mode: 'expo-child',
     child,
     log,
@@ -360,4 +361,6 @@ export async function startExpoServer({
       }
     },
   });
+  handle.observesRequests = storeEnv !== null;
+  return handle;
 }

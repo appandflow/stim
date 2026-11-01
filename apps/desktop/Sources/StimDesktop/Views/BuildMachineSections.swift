@@ -1,27 +1,50 @@
 import StimKit
 import SwiftUI
 
-/// Where this Mac's compiling builds ran today and the latest placements with their reasons, from `stim stats`;
-/// hidden while `remote.machines` names no machine or no build has compiled.
 struct ThisMacPlacements: View {
   var model: BuildMachinesModel
+  var limit = 6
+  var showsEmpty = false
 
   var body: some View {
     if !(model.entries ?? []).isEmpty, let offload = model.stats.value?.offload, !offload.placements.isEmpty {
       VStack(alignment: .leading, spacing: Space.md) {
-        Text("Where Builds Ran").font(.stim(.headline))
+        Text("Where builds ran").font(.stim(.headline))
         Text(
           "Today: \(offload.today.here) here, \(offload.today.offloaded) on a remote machine, \(offload.today.fellBack) here after trying one."
         )
         .foregroundStyle(Palette.secondary)
-        PlacementList(placements: Array(offload.placements.prefix(6)))
+        PlacementList(placements: Array(offload.placements.prefix(limit)))
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+    } else if showsEmpty {
+      VStack(alignment: .leading, spacing: Space.md) {
+        Label("Build placements", systemImage: "hammer").font(.stim(.headline))
+        if (model.entries ?? []).isEmpty {
+          Text("Link a remote Mac to see where builds run and compare their times.")
+        } else if model.stats.error != nil {
+          Text("Build history is unavailable. The page will retry automatically.")
+        } else if model.stats.value == nil {
+          ProgressView("Loading build history...").controlSize(.small)
+        } else if model.stats.value?.offload == nil {
+          Text("This Stim version does not report build placements. Update Stim to see them here.")
+        } else {
+          Text("No build placements yet. Compiling builds will appear here with the machine they ran on.")
+        }
+      }
+      .foregroundStyle(Palette.secondary)
+      .frame(maxWidth: .infinity, alignment: .leading)
+      .padding(.vertical, Space.xl)
     }
   }
 }
 
-/// The selected remote Mac's readiness, capacity and build history from the page's minute refresh.
+private struct MachinePageKey: Hashable {
+  var machine: String
+  var checkout: String?
+}
+
+/// The selected remote Mac's readiness, problems and notes, capacity and build history from the page's minute refresh.
 struct MachineBuildMachines: View {
   var model: BuildMachinesModel
   var checkout: String?
@@ -57,6 +80,12 @@ struct MachineBuildMachines: View {
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
+    .task(id: MachinePageKey(machine: selectedMachine, checkout: checkout)) {
+      while !Task.isCancelled {
+        let loaded = await model.loadDetails(selectedMachine, checkout: checkout)
+        try? await Task.sleep(for: .seconds(loaded ? 60 : 3))
+      }
+    }
   }
 
   private func section(_ machine: BuildMachineStatus) -> some View {
@@ -69,13 +98,27 @@ struct MachineBuildMachines: View {
         icon: "desktopcomputer", title: machineName(machine.machine),
         subtitle: machine.capacity?.line.nilIfEmpty ?? machine.dnsName
       ) {
-        Pill(ready.title, tone: ready.tone, size: .small).help(ready.reasons ?? machine.detail)
+        Pill(
+          model.install(for: machine)?.block?.remoteIsNewer == true ? "Update this Mac" : ready.title, tone: ready.tone,
+          size: .small
+        ).help(ready.reasons ?? machine.detail)
       }
-      if ready.remedy != nil || machine.state != .approved {
+      let install = model.install(for: machine)
+      if (ready.remedy != nil || machine.state != .approved) && install?.block?.remoteIsNewer != true {
         Text(machine.detail).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
-      MachineUpdateLine(phase: model.updates[machine.machine], needed: needsStimUpdate(machine)) {
+      MachineUpdateLine(machine: machine.machine, phase: model.updates[machine.machine], install: install) {
         Task { await model.update(machine.machine, checkout: checkout) }
+      }
+      let detail = model.detail(for: machine.machine, checkout: checkout)
+      ForEach(detail.groups) { group in
+        VStack(alignment: .leading, spacing: Space.md) {
+          Text(group.platform.title).font(.stim(.headline))
+          ForEach(group.issues) { MachineIssueRow(issue: $0, machine: machine.machine) }
+        }
+      }
+      if let message = detail.androidMessage {
+        Text(verbatim: message).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
       }
       if let counts {
         HStack(alignment: .top, spacing: Space.md) {
@@ -121,14 +164,16 @@ extension MachineUpdatePhase {
   }
 }
 
-/// The install button of a remote Mac that runs another Stim build, and the progress of an update Desktop asked for.
+/// The install button of a remote Mac that runs another Stim build, disabled with the reason when the Mac would
+/// refuse it, and the progress of an update Desktop asked for.
 struct MachineUpdateLine: View {
+  var machine: String
   var phase: MachineUpdatePhase?
-  var needed: Bool
+  var install: StimInstall?
   var update: () -> Void
 
   var body: some View {
-    if phase != nil || needed {
+    if phase != nil || install != nil {
       VStack(alignment: .leading, spacing: Space.xs) {
         HStack(alignment: .firstTextBaseline, spacing: Space.md) {
           if let phase, !phase.isDone { ProgressView().controlSize(.small) }
@@ -139,22 +184,39 @@ struct MachineUpdateLine: View {
               .lineLimit(3)
               .textSelection(.enabled)
           }
-          if needed, phase?.isDone ?? true {
+          if let install, phase?.isDone ?? true, !(install.block?.remoteIsNewer ?? false) {
             Button("Install This Mac's Build", action: update)
-              .help("Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
+              .disabled(install.block != nil)
+              .help(
+                install.block?.reason ?? "Installs this Mac's Stim build on it over the tailnet, then restarts its stim-server.")
           }
         }
+        if let block = install?.block, phase?.isDone ?? true { blockLine(block) }
         if let phase, case .failed(let message) = phase {
-          HStack(alignment: .firstTextBaseline, spacing: Space.xs) {
-            Text(verbatim: message)
-              .font(.stim(.footnote))
-              .foregroundStyle(Palette.error)
-              .textSelection(.enabled)
-              .fixedSize(horizontal: false, vertical: true)
-            CopyButton(message, size: .small, help: "Copy the failure text")
-          }
+          Text(verbatim: message)
+            .font(.stim(.footnote))
+            .foregroundStyle(Palette.error)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
         }
       }
+    }
+  }
+
+  private func blockLine(_ block: StimInstallBlock) -> some View {
+    VStack(alignment: .leading, spacing: Space.xs) {
+      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+        Text(verbatim: block.reason)
+          .font(.stim(.footnote))
+          .foregroundStyle(Palette.secondary)
+          .textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
+        if block.action == .checkForUpdates, AppUpdater.shared.isAvailable {
+          Button("Check for Updates\u{2026}") { AppUpdater.shared.checkForUpdates() }
+            .buttonStyle(.stim(.secondary))
+        }
+      }
+      if case .runOnRemote(let command)? = block.action { CopyableCommand(command: command, runsOn: machine) }
     }
   }
 

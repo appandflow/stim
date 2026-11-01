@@ -194,6 +194,70 @@ import Testing
     #expect(BuildMachineStatus(machine: "mini", state: .pending).readiness.line == "Waiting for approval")
   }
 
+  @Test func namesTheLayerThatStoppedAMachineInsteadOfTheGenericLine() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let notReady = try status(
+      #"""
+      {"machine":"mini","state":"unreachable","diagnosis":{"layer":"server","code":"server-not-ready","title":"Server not ready","message":"stim-server on mini is running but is not serving clients (HTTP 503).","remedy":"Check the disk that holds the Stim home on mini."}}
+      """#)
+    #expect(notReady.listStatus == MachineListStatus(title: "Server not ready", tone: .warning))
+    #expect(notReady.readiness.title == "Server not ready")
+    #expect(notReady.diagnosis?.code == "server-not-ready")
+    #expect(notReady.rowDetail.hasPrefix("stim-server on mini is running but is not serving clients"))
+    #expect(notReady.detail.hasSuffix("Check the disk that holds the Stim home on mini."))
+
+    let signedOut = try status(
+      #"""
+      {"machine":"mini","state":"tailscale-off","diagnosis":{"layer":"tailscale","code":"tailscale-logged-out","title":"Tailscale signed out","message":"Tailscale on this Mac is signed out.","remedy":"Sign in."}}
+      """#)
+    #expect(signedOut.listStatus.title == "Tailscale signed out")
+
+    let outdated = try status(
+      #"""
+      {"machine":"mini","state":"outdated","diagnosis":{"layer":"compat","code":"server-outdated","title":"Server is outdated","message":"Older protocol.","remedy":"Update it."}}
+      """#)
+    #expect(outdated.state == .unknown)
+    #expect(outdated.listStatus == MachineListStatus(title: "Server is outdated", tone: .warning))
+
+    let older = try status(#"{"machine":"mini","state":"unreachable"}"#)
+    #expect(older.listStatus.title == "Unreachable")
+    #expect(older.detail == "stim-server did not answer on its tailscale serve route.")
+  }
+
+  @Test func marksATailnetMachineInRemoteMachinesWithItsDoctorStateNotTheTailscaleFlag() throws {
+    func status(_ json: String) throws -> BuildMachineStatus {
+      try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
+    }
+    let mini = TailnetMac(id: "n1", hostName: "Mini", dnsName: "janics-mac-mini.tail.ts.net")
+    let second = TailnetMac(id: "n2", hostName: "Mini (2)", dnsName: "janics-mac-mini-2.tail.ts.net")
+
+    #expect(OffloadMachines.added(mini, entries: [], statuses: nil) == nil)
+    #expect(OffloadMachines.added(second, entries: ["janics-mac-mini"], statuses: nil) == nil)
+    #expect(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: nil) == AddedMachine(entry: "janics-mac-mini"))
+    #expect(
+      OffloadMachines.added(mini, entries: ["Janics-Mac-Mini.tail.ts.net:7444"], statuses: nil)?.entry
+        == "Janics-Mac-Mini.tail.ts.net:7444")
+
+    let healthy = try status(
+      #"{"machine":"janics-mac-mini","state":"approved","offloadable":true,"dnsName":"janics-mac-mini.tail.ts.net"}"#)
+    #expect(
+      OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [healthy])
+        == AddedMachine(entry: "janics-mac-mini", status: MachineListStatus(title: "Approved", tone: .success), detail: nil))
+
+    let stopped = try status(
+      #"""
+      {"machine":"janics-mac-mini","state":"unreachable","dnsName":"janics-mac-mini.tail.ts.net","diagnosis":{"layer":"server","code":"server-not-running","title":"Server not running","message":"stim-server is not running on janics-mac-mini.","remedy":"Start it there."}}
+      """#)
+    let added = try #require(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [stopped]))
+    #expect(added.status == MachineListStatus(title: "Server not running", tone: .warning))
+    #expect(added.detail == "stim-server is not running on janics-mac-mini. Start it there.")
+
+    let otherMachine = try status(#"{"machine":"janics-mac-mini","state":"approved","dnsName":"another.tail.ts.net"}"#)
+    #expect(OffloadMachines.added(mini, entries: ["janics-mac-mini"], statuses: [otherMachine])?.status == nil)
+  }
+
   @Test func showsOneListPillPerMachine() throws {
     func status(_ json: String) throws -> BuildMachineStatus {
       try JSONDecoder().decode(BuildMachineStatus.self, from: Data(json.utf8))
@@ -244,7 +308,6 @@ import Testing
                    "memoryUsedBytes":9663676416,"memoryTotalBytes":17179869184}}
       """#)
     #expect(busy.listStatus == MachineListStatus(title: "Busy (1/2 builds)", tone: .warning))
-    #expect(busy.problemLines.isEmpty)
     #expect(busy.rowDetail.isEmpty)
     #expect(
       busy.capacity?.resources == [
@@ -264,10 +327,6 @@ import Testing
     #expect(
       try status(#"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"r"}]}"#).listStatus
         .title == "Busy")
-    let both = try status(
-      #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"busy","reason":"b"},{"code":"stim-build","reason":"s"}]}"#
-    )
-    #expect(both.problemLines.map(\.reason) == ["s"])
   }
 
   @Test func describesAMachineRowFromDoctorsReport() throws {
@@ -286,26 +345,26 @@ import Testing
         MachineResource(kind: .cpu, label: "Load", value: "0.6/core", tone: .normal),
         MachineResource(kind: .disk, label: "Disk", value: "825.2 GB free", tone: .normal),
       ])
-    #expect(
-      mini.problemLines == [
-        .init(code: "cocoapods", reason: "CocoaPods 1.17.0 there, 1.16.2 here", fix: .command("gem install cocoapods -v 1.16.2"))
-      ])
+    func issues(_ status: BuildMachineStatus) -> [MachineIssue] {
+      MachineDetail(MachineDetail.Input(entry: status.machine, status: status)).groups.flatMap(\.issues)
+    }
+    #expect(issues(mini).map(\.fix?.commands) == [["gem install cocoapods -v 1.16.2"]])
 
     let missingPods = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"cocoapods","reason":"CocoaPods null there, 1.16.2 here"}]}"#
     )
-    #expect(missingPods.problemLines.first?.fix == .command("brew install cocoapods"))
+    #expect(issues(missingPods).first?.fix?.commands == ["brew install cocoapods"])
     let build = try status(
       #"{"machine":"m","state":"approved","offloadable":false,"problems":[{"code":"stim-build","reason":"Stim build 5773060690f40277 there, d9b8bdb39828c9a0 here"},{"code":"other","reason":"odd"}]}"#
     )
-    #expect(build.problemLines.map(\.fix) == [.advice("Update the remote machine."), nil])
-    #expect(build.problemLines.map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
+    #expect(issues(build).map(\.fix?.text) == [["Update the remote machine."], nil])
+    #expect(issues(build).map(\.reason) == ["Stim build 5773060 there, d9b8bdb here", "odd"])
     #expect(build.rowDetail.isEmpty)
 
     let ready = try status(
       #"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2,"builds":3,"maxBuilds":0}}"#)
     #expect(ready.rowDetail == "Builds can run there.")
-    #expect(ready.problemLines.isEmpty)
+    #expect(issues(ready).isEmpty)
     let older = try status(#"{"machine":"m","state":"approved","offloadable":true,"capacity":{"running":1,"max":2}}"#)
     #expect(older.rowDetail == "Builds can run there.")
     #expect(try status(#"{"machine":"m","state":"approved"}"#).rowDetail == "Builds can run there.")
@@ -322,6 +381,16 @@ import Testing
     #expect(buildMachineCapabilities("Mini:7443", hosts: hosts) == ["Builds", "Simulators"])
     #expect(buildMachineCapabilities("studio", hosts: hosts) == ["Builds"])
     #expect(buildMachineCapabilities("mini", hosts: nil) == ["Builds"])
+  }
+
+  @Test func movesAnEntryToChangeThePlacementPriority() {
+    let entries = ["fast", "slow", "spare"]
+    #expect(OffloadMachines.moving("slow", by: -1, in: entries) == #"["slow","fast","spare"]"#)
+    #expect(OffloadMachines.moving("fast", by: 1, in: entries) == #"["slow","fast","spare"]"#)
+    #expect(OffloadMachines.moving("spare", by: -2, in: entries) == #"["spare","fast","slow"]"#)
+    #expect(OffloadMachines.moving("fast", by: -1, in: entries) == nil)
+    #expect(OffloadMachines.moving("spare", by: 1, in: entries) == nil)
+    #expect(OffloadMachines.moving("unlisted", by: -1, in: entries) == nil)
   }
 
   @Test func editsTheSettingAndUnsetsItWhenEmpty() {

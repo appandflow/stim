@@ -1,5 +1,6 @@
 import type { StimContext } from '@stim-cli/core';
 import type { BuildCacheCapability } from '@stim-cli/cache';
+import type { FingerprintCheck } from '../cache/fingerprint-memo.ts';
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { IosRuntimeKind, IosRuntimePlan } from '../commands/ios/launch.ts';
 import type { FailArgs, IosCommandOptions } from '../commands/ios/types.ts';
@@ -27,6 +28,8 @@ export interface IosSourcePreparation {
 
 export interface IosArtifactRecipe {
   identity(): Promise<IosArtifactIdentity | { cacheIneligible: string }>;
+  /** The background check of a memoized fingerprint that identity() used, if any. */
+  fingerprintCheck?(): FingerprintCheck | null;
   cache(): BuildCacheCapability;
   prepare(beforePrepare: () => void): Promise<void>;
   reconcile(): Promise<IosSourcePreparation>;
@@ -50,6 +53,8 @@ export interface IosArtifactRecipe {
     request(runtime: string): Extract<Parameters<typeof offloadBuild>[0]['request'], { platform: 'ios' }>;
     fingerprintInputs?: Parameters<typeof offloadBuild>[0]['fingerprintInputs'];
     unchanged(): Promise<boolean>;
+    /** The identity of an app the machine built under another fingerprint, after its own pod install. */
+    rekeyed?(fingerprint: string): IosArtifactIdentity;
   } | null;
 }
 

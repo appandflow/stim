@@ -145,30 +145,10 @@ test('doctor combines shared findings with the selected native platform and reco
       (finding: { code?: string; title: string }) =>
         finding.code === 'not-an-app' ||
         finding.code?.startsWith('android-') ||
-        finding.title.includes('iOS runs through EAS'),
+        finding.title.includes('iOS runs on a remote Mac or through EAS'),
     ),
   ).toBe(false);
   expect(getProject(root)?.doctorRuns?.ios?.version).toBe('1.2.3');
   expect(getProject(root)?.doctorRuns?.android).toBeUndefined();
   expect(process.exitCode).toBeUndefined();
-});
-
-test('ambiguous doctor admission does not load either project inspector', async () => {
-  const fail = async () => {
-    throw new Error('an ambiguous integration was loaded');
-  };
-  const providers = ['first', 'second'].map((id): ProjectIntegration => ({
-    id,
-    inspect: () => ({
-      root: 'candidate',
-      application: true,
-      platforms: () => ['ios'],
-      validate: (operation) => (operation === 'ios' ? null : undefined),
-      doctor: fail,
-    }),
-  }));
-  const selected = createProjectRegistry(providers).selectDoctor(root, 'ios');
-  expect(selected.problem?.kind).toBe('ambiguous');
-  expect(await selected.load()).toEqual([]);
-  expect(selected.platforms).toEqual([]);
 });

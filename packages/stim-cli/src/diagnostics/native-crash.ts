@@ -30,6 +30,7 @@ interface CrashTarget {
   until?: number;
   appPath?: string | null;
   physical?: boolean;
+  clockOffsetMs?: number | null;
 }
 
 interface CrashFrame {
@@ -125,6 +126,30 @@ export function parseIosCrash(text: string, target: CrashTarget): { record: Ndjs
         rawReport: text,
       },
     };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The symbol dyld could not bind when one image of the app bundle needs a symbol that another image of the same
+ * bundle does not export. Only the bundle's own bytes decide this, so a stored app that does it never launches.
+ */
+export function bundleBindFailure(record: NdjsonRecord): string | null {
+  if (record.event !== 'native_crash' || typeof record.rawReport !== 'string') return null;
+  try {
+    const termination = (JSON.parse(record.rawReport.slice(record.rawReport.indexOf('\n') + 1)) as IosReport)
+      .termination;
+    if (termination?.namespace !== 'DYLD') return null;
+    const bundles = new Map<string, string>();
+    let symbol: string | undefined;
+    for (const line of termination.reasons ?? []) {
+      symbol ??= /^Symbol not found: (\S+)/.exec(line)?.[1];
+      const image = /^(Referenced from|Expected in):\s+<[^>]+> (.*?\.app)\//.exec(line);
+      if (image?.[1] && image[2]) bundles.set(image[1], image[2]);
+    }
+    const bundle = bundles.get('Referenced from');
+    return symbol && bundle && bundle === bundles.get('Expected in') ? symbol : null;
   } catch {
     return null;
   }
@@ -380,6 +405,21 @@ async function simulatorFatalConsole(target: CrashTarget, signal?: AbortSignal):
   return records;
 }
 
+export async function androidCrashClockOffset(deviceId: string, signal?: AbortSignal): Promise<number | null> {
+  const before = Date.now();
+  const clock = (
+    await crashCommand(
+      'adb',
+      ['-s', deviceId, 'shell', 'date', '+%s%3N'],
+      { timeoutMs: 1000, cwd: androidToolCwd() },
+      signal,
+    )
+  )?.trim();
+  const after = Date.now();
+  if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return null;
+  return Math.round((before + after) / 2) - Number(clock);
+}
+
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
 export async function captureNativeCrashes(
   target: CrashTarget,
@@ -413,21 +453,11 @@ export async function captureNativeCrashes(
       }
       if (nativeReports.length) records = nativeReports;
     } else if (target.platform === 'android') {
-      const before = Date.now();
-      const clock = (
-        await crashCommand(
-          'adb',
-          ['-s', target.deviceId, 'shell', 'date', '+%s%3N'],
-          {
-            timeoutMs: 1000,
-            cwd: androidToolCwd(),
-          },
-          signal,
-        )
-      )?.trim();
-      const after = Date.now();
-      if (!/^\d{13}$/.test(clock ?? '') || after < before || after - before > 1000) return [];
-      const offset = Math.round((before + after) / 2) - Number(clock);
+      const offset =
+        target.clockOffsetMs === undefined
+          ? await androidCrashClockOffset(target.deviceId, signal)
+          : target.clockOffsetMs;
+      if (offset === null) return [];
       const text = await crashCommand(
         'adb',
         ['-s', target.deviceId, 'logcat', '-b', 'crash', '-d', '-v', 'time,epoch', '-t', '2000'],
