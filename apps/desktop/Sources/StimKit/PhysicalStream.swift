@@ -267,6 +267,8 @@ public struct MacosWindows: Equatable, Sendable {
   }
 
   public var current: Int?
+  /// The captured window's size in points, when the host includes its logical frame.
+  public var currentPointSize: CGSize?
   public var windows: [Window]
   public var pinned: Bool
 
@@ -278,6 +280,12 @@ public struct MacosWindows: Equatable, Sendable {
       return Window(id: id, title: object["title"]?.string ?? "")
     }
     current = window(fields["current"])?.id
+    if current != nil, case .object(let value)? = fields["current"], case .object(let frame)? = value["frame"],
+      let width = frame["width"]?.number, let height = frame["height"]?.number,
+      width.isFinite, height.isFinite, width > 0, height > 0
+    {
+      currentPointSize = CGSize(width: width, height: height)
+    }
     if case .array(let list)? = fields["windows"] { windows = list.compactMap(window) } else { windows = [] }
     pinned = fields["pinned"] == .bool(true)
   }
