@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { BuildHost, type BuildLimits } from '../src/build.ts';
-import { windowsShortDir } from '@stim-cli/core/state';
+import { buildSlotPath, windowsShortDir, windowsShortDirKey } from '@stim-cli/core/state';
 import { readClaimSet } from '@stim-cli/core/ownership-claim';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -39,16 +39,21 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-test.skipIf(process.platform !== 'win32')(
-  'retains a process and claims after a short-home ownership collision',
-  async () => {
+test.each(['foreign-owner', 'parent-child'] as const)(
+  '%s repository Gradle cleanup retains unresolved claims only',
+  { skip: process.platform !== 'win32' },
+  async (scenario) => {
     vi.stubEnv('SystemDrive', home);
+    writeFileSync(join(home, 'config.json'), JSON.stringify({ concurrency: { maxBuilds: 1 } }));
     const client = 'collision-client';
     const repo = 'app-1';
     const area = join(root, client, 'repos', repo);
     const gradle = windowsShortDir(join(area, 'cache', 'gradle'));
     mkdirSync(gradle, { recursive: true });
-    writeFileSync(`${gradle}.owner`, 'another-repository');
+    writeFileSync(
+      `${gradle}.owner`,
+      scenario === 'foreign-owner' ? 'another-repository' : windowsShortDirKey('gradle', area),
+    );
     const gate = join(home, 'worker-gate');
     const worker = join(home, 'worker.mjs');
     writeFileSync(
@@ -56,21 +61,28 @@ test.skipIf(process.platform !== 'win32')(
       `import { existsSync } from 'node:fs';
 for await (const chunk of process.stdin) {}
 while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 10));
-console.log(JSON.stringify({ type: 'result', ok: false, code: 'worker-crashed', message: 'private home refused' }));`,
+console.log(JSON.stringify({ type: 'result', ok: false, code: 'worker-crashed', message: 'private fixture failed' }));`,
     );
-    const foreign = spawn(
+    const daemon = spawn(
       process.execPath,
       [
         '-e',
-        'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+        `const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)', process.argv[1], 'KotlinCompileDaemon'], { stdio: ['ignore', 'pipe', 'ignore'] });
+child.stdout.once('data', () => process.stdout.write(JSON.stringify({ child: child.pid })));
+setInterval(() => {}, 1000);`,
         join(gradle, 'wrapper', 'gradle-daemon-main.jar'),
         'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
       ],
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
+    let childPid: number | null = null;
     try {
-      assert(foreign.stdout);
-      await once(foreign.stdout, 'data');
+      assert(daemon.stdout);
+      const [ready] = await once(daemon.stdout, 'data');
+      const value = JSON.parse(String(ready));
+      assert.equal(typeof value.child, 'number');
+      childPid = value.child;
       running = new BuildHost({
         worker,
         env: process.env,
@@ -84,16 +96,24 @@ console.log(JSON.stringify({ type: 'result', ok: false, code: 'worker-crashed', 
         send() {},
       });
       assert(!('error' in launched));
+      expect(readClaimSet(buildSlotPath(0)).live).toHaveLength(1);
       writeFileSync(gate, '');
       await launched.done;
-      expect(launched.outcome).toHaveProperty('code', 'cleanup-unresolved');
-      expect(foreign.exitCode).toBe(null);
-      expect(foreign.signalCode).toBe(null);
-      expect(readClaimSet(`${area}.claims`).live).toHaveLength(1);
+      const unresolved = scenario === 'foreign-owner';
+      expect(launched.outcome).toHaveProperty('code', unresolved ? 'cleanup-unresolved' : 'worker-crashed');
+      expect(daemon.exitCode === null && daemon.signalCode === null).toBe(unresolved);
+      expect(readClaimSet(`${area}.claims`).live).toHaveLength(unresolved ? 1 : 0);
+      expect(readClaimSet(buildSlotPath(0)).live).toHaveLength(unresolved ? 1 : 0);
+      if (!unresolved) assert.throws(() => process.kill(value.child, 0), { code: 'ESRCH' });
     } finally {
-      if (foreign.exitCode === null && foreign.signalCode === null) {
-        const closed = once(foreign, 'close');
-        foreign.kill();
+      if (childPid) {
+        try {
+          process.kill(childPid);
+        } catch {}
+      }
+      if (daemon.exitCode === null && daemon.signalCode === null) {
+        const closed = once(daemon, 'close');
+        daemon.kill();
         await closed;
       }
       vi.unstubAllEnvs();

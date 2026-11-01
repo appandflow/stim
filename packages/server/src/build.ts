@@ -585,7 +585,9 @@ export class BuildHost {
         new Set(identities.map(({ pid }) => pid)),
       );
       for (const identity of identities) {
-        if (inspectProcessIdentity(identity) !== 'same') throw new Error('Gradle daemon identity changed.');
+        const state = inspectProcessIdentity(identity);
+        if (state === 'gone') continue;
+        if (state !== 'same') throw new Error('Gradle daemon identity changed.');
         if (process.platform === 'win32') await killTree(identity.pid);
         else {
           try {

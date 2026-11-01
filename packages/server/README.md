@@ -1919,7 +1919,9 @@ connected since stim-server started keeps its directory when revoked.
   Gradle home, so cancellation can stop its verified daemons without waiting
   for or stopping another repository's build. Android claims remain pending
   until cancellation cleanup proves those identities exited; unknown cleanup
-  retains the repository and build-slot claims. The daemon stays warm with
+  retains the repository and build-slot claims. A daemon exiting between process
+  inventory and identity capture also requires inspection and manual claim
+  recovery before retrying. The daemon stays warm with
   `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
   Gradle fixes that timeout at daemon startup. Once no build of a client runs,
   stim-server also stops its daemons when the client loses `build` or the
