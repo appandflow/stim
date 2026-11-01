@@ -70,7 +70,7 @@ console.log(JSON.stringify({ type: 'result', ok: false, code: 'worker-crashed', 
         `const { spawn } = require('node:child_process');
 const child = spawn(process.execPath, ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)', process.argv[1], 'KotlinCompileDaemon'], { stdio: ['ignore', 'pipe', 'ignore'] });
 child.stdout.once('data', () => process.stdout.write(JSON.stringify({ child: child.pid })));
-setInterval(() => {}, 1000);`,
+setInterval(() => {}, 1000);`.replaceAll('\n', ' '),
         join(gradle, 'wrapper', 'gradle-daemon-main.jar'),
         'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
       ],
