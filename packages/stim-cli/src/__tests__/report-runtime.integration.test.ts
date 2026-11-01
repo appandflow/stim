@@ -526,9 +526,9 @@ test.each([true, false])(
                 '-e',
                 `
           const fs = require('node:fs');
-          fs.watch(${JSON.stringify(scratch)}, () => {
+          setInterval(() => {
             if (fs.existsSync(${JSON.stringify(releaseLauncher)})) process.exit(0);
-          });
+          }, 10);
           const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
           console.log(c.pid);
         `,
