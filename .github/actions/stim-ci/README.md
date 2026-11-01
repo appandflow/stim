@@ -9,11 +9,32 @@ evidence with the official GitHub artifact toolkit when `artifacts` is set. iOS 
 Android always build first. macOS builds first only with `export`, and web never
 builds; `stim-ci run` builds a macOS app itself.
 
+Set `build-only: 'true'` to invoke only `stim-ci build` on iOS, Android or macOS,
+including macOS without `export`. This needs no test command, runtime target or
+Metro. `command` and web are refused in this mode. For example:
+
+```yaml
+- uses: ./.github/actions/stim-ci
+  with:
+    cli-path: packages/ci/dist/stim-ci.mjs
+    platform: android
+    project: apps/mobile
+    build-only: 'true'
+    export: out/app.apk
+    artifacts: stim-ci-build-results
+```
+
+The default remains build then run. Build-only records the app in this job's
+workspace/home and optionally exports it; an export alone is not a supported
+cross-job import into a fresh home.
+Use a package version supporting `stim-ci build --artifacts`, or a matching built
+checkout; older releases may not support build diagnostics.
+
 Use a macOS or Linux runner with Bash. Windows runners are refused. The Action
 uses GitHub's Node.js 24 runtime; install the app's dependencies and native tools
 before using it. Self-hosted runners must support Node.js 24 JavaScript actions.
 iOS and macOS require a macOS runner; Android requires
-an SDK, an installed emulator image, and hardware virtualization. The action
+an SDK, plus an installed emulator image and hardware virtualization when running the app. The action
 does not install Xcode or an Android SDK.
 
 When testing this repository, use the built checkout:
@@ -52,7 +73,7 @@ earlier refuse with `Separate the test command with --.`
 comments and other event text out of it. Supply test inputs as environment
 variables instead. All other action inputs are passed as argument values.
 
-The build step writes no result or diagnostic files, so a failed build is reported only in the job log and the step exits without upload or summary. Nothing is collected unless `artifacts` is set. Without it the action writes no result,
+In combined mode the build step writes no result or diagnostic files, so a failed build is reported only in the job log and the step exits without upload or summary. Build-only passes `artifacts` to the build, retaining its result and diagnostics on success and failure through the same upload and summary path. Nothing is collected unless `artifacts` is set. Without it the action writes no result,
 test or diagnostic file, copies no logs and uploads nothing, and the `result` and
 `artifacts` outputs are not set; the build and run results still print to the job log.
 `export` also writes the built app to the given path, an APK for Android or a tar.gz for
@@ -61,7 +82,7 @@ iOS and macOS; without it build only records the app for run. Export is never up
 `scheme`, `configuration` (iOS) and `variant` (Android) select the build and are passed
 to both build and run, so run installs the build that build recorded. `arch`, `abi` and
 `eas-profile` go to build only, and the action refuses them when it does not build (web, or
-macOS without `export`). Empty inputs keep the project's normal build settings, and
+macOS without `export` or `build-only`). Empty inputs keep the project's normal build settings, and
 `stim-ci` refuses a selector that does not apply to the platform.
 
 Whether or not `artifacts` is set, the action reads the results `stim-ci` prints and sets
@@ -69,6 +90,8 @@ Whether or not `artifacts` is set, the action reads the results `stim-ci` prints
 as step outputs, leaving out any that do not apply. A later step can then use the app or the
 device without parsing the job log. The device is shut down, not deleted, when the step ends: a
 simulator can be booted again by `device-id`, while an Android emulator is gone.
+Build-only sets the app, export, cache and exit-code outputs that apply; it sets no device outputs.
+The existing macOS output mapping leaves `cache-hit` unset.
 
 With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
 The Action uploads `result.json`, `run.json`, test stdout/stderr,
@@ -76,6 +99,8 @@ The Action uploads `result.json`, `run.json`, test stdout/stderr,
 It never uploads app bundles, APKs, caches, arbitrary test files, symlinks, or
 files referenced by log records. Raw log collection requires a `@stim-cli/ci`
 version containing that feature.
+Build-only also writes `build.json` locally; the uploaded `result.json` already contains
+the build facts, so `build.json` is not uploaded separately.
 
 `artifact-id` and `artifact-url` are set only after a successful upload. The
 default artifact name is unique to each invocation; a supplied `artifact-name`

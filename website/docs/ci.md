@@ -184,6 +184,30 @@ Once released, consumers can pin the action to a commit and supply `version`
 with an exact published `@stim-cli/ci` version instead of `cli-path`. The
 command input is Bash source, like a workflow `run:` step. Pass untrusted
 event values through environment variables, not interpolation into `command`.
+
+Set `build-only: 'true'` to build iOS, Android or macOS without installing,
+launching, starting Metro or running a test command. macOS builds even without
+`export`; web and `command` are refused. The combined build/run flow remains the default.
+
+```yaml
+- uses: ./.github/actions/stim-ci
+  with:
+    cli-path: packages/ci/dist/stim-ci.mjs
+    platform: android
+    project: apps/mobile
+    build-only: 'true'
+    export: out/app.apk
+    artifacts: stim-ci-build-results
+```
+
+Build-only records the app for the same workspace/home, sets app/export/cache/exit
+outputs without device outputs, and uses the same diagnostic upload and summary
+path. `build.json` stays local because uploaded `result.json` includes the build facts.
+The existing macOS output mapping leaves `cache-hit` unset.
+Exported bytes alone are not a supported cross-job import into a fresh home.
+Use a package version supporting `stim-ci build --artifacts`, or a matching built
+checkout; older releases may not support build diagnostics.
+
 Leave `command` out to only build, install and launch the app from clean state,
 then stop it; a later step can drive it with the outputs below. That needs a
 `@stim-cli/ci` version newer than 1.37.0, which refuses a run without a command.

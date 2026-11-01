@@ -97568,6 +97568,10 @@ function readInputs(input, root, host = process.platform) {
 	const platform = input("platform");
 	if (platform !== "ios" && platform !== "android" && platform !== "macos" && platform !== "web") throw new Error("platform must be ios, android, macos, or web.");
 	const command = input("command").trim() ? input("command") : "";
+	const onlyBuild = input("build-only") || "false";
+	if (onlyBuild !== "true" && onlyBuild !== "false") throw new Error("build-only must be true or false.");
+	if (onlyBuild === "true" && platform === "web") throw new Error("build-only does not apply to web projects, which have no native build.");
+	if (onlyBuild === "true" && command) throw new Error("command does not apply when build-only is true.");
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
@@ -97576,15 +97580,16 @@ function readInputs(input, root, host = process.platform) {
 	const upload = input("upload-artifacts") || "true";
 	if (upload !== "true" && upload !== "false") throw new Error("upload-artifacts must be true or false.");
 	if (input("export") && platform === "web") throw new Error("export does not apply to web projects, which have no native build.");
-	const builds = platform === "ios" || platform === "android" || Boolean(input("export"));
+	const builds = onlyBuild === "true" || platform === "ios" || platform === "android" || Boolean(input("export"));
 	const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
-	if (!builds && ignored.length) throw new Error(`${ignored.join(", ")} apply only when the action builds: iOS, Android, or macOS with export.`);
+	if (!builds && ignored.length) throw new Error(`${ignored.join(", ")} apply only when the action builds: iOS, Android, or macOS with export or build-only.`);
 	const retention = input("retention-days") || "0";
 	if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) throw new Error("retention-days must be a non-negative whole number.");
 	return {
 		platform,
 		project: resolve$1(root, input("project") || "."),
 		command,
+		onlyBuild: onlyBuild === "true",
 		version,
 		cli: cli ? resolve$1(root, cli) : "",
 		artifacts: input("artifacts") ? resolve$1(root, input("artifacts")) : "",
@@ -97750,7 +97755,10 @@ async function runAction() {
 	if (options.cache) common.push("--build-cache", options.cache);
 	const buildOutput = [];
 	let buildResult = null;
-	if ((options.platform === "ios" || options.platform === "android" || Boolean(options.exportPath)) && options.platform !== "web") {
+	let runResult = null;
+	let started = Date.now();
+	let code = 0;
+	if ((options.onlyBuild || options.platform === "ios" || options.platform === "android" || Boolean(options.exportPath)) && options.platform !== "web") {
 		const buildArgs = [
 			cli,
 			"build",
@@ -97759,25 +97767,29 @@ async function runAction() {
 			...options.buildOnly
 		];
 		if (options.exportPath) buildArgs.push("--export", options.exportPath);
-		const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+		if (options.onlyBuild && options.artifacts) buildArgs.push("--artifacts", options.artifacts);
+		code = await execute(process.execPath, buildArgs, root, buildOutput);
 		buildResult = finalResult(buildOutput);
-		if (buildCode !== 0) {
+		if (code !== 0 && !options.onlyBuild) {
 			setResultOutputs(buildResult, null, setOutput);
-			return buildCode;
+			return code;
 		}
 	}
-	const args = [
-		cli,
-		"run",
-		...common,
-		...options.selectors
-	];
-	if (options.artifacts) args.push("--artifacts", options.artifacts);
-	if (options.command) args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
-	const started = Date.now();
-	const runOutput = [];
-	let code = await execute(process.execPath, args, root, runOutput);
-	setResultOutputs(buildResult, finalResult(runOutput), setOutput);
+	if (!options.onlyBuild) {
+		const args = [
+			cli,
+			"run",
+			...common,
+			...options.selectors
+		];
+		if (options.artifacts) args.push("--artifacts", options.artifacts);
+		if (options.command) args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
+		started = Date.now();
+		const runOutput = [];
+		code = await execute(process.execPath, args, root, runOutput);
+		runResult = finalResult(runOutput);
+	}
+	setResultOutputs(buildResult, runResult, setOutput);
 	setOutput("exit-code", String(code));
 	let result = null;
 	if (options.artifacts) try {

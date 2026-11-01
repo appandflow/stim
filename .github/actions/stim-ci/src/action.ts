@@ -17,12 +17,13 @@ import { dirname, join, resolve } from 'node:path';
 import { DefaultArtifactClient } from '@actions/artifact';
 import * as core from '@actions/core';
 import { diagnosticArtifactFiles } from '@stim-cli/ci/artifacts';
-import type { CIResult } from '@stim-cli/ci';
+import type { CIBuildResult, CIResult } from '@stim-cli/ci';
 
 interface Inputs {
   platform: 'ios' | 'android' | 'macos' | 'web';
   project: string;
   command: string;
+  onlyBuild: boolean;
   version: string;
   cli: string;
   /** Empty when no result, test or diagnostic files were requested. */
@@ -53,6 +54,11 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     throw new Error('platform must be ios, android, macos, or web.');
   }
   const command = input('command').trim() ? input('command') : '';
+  const onlyBuild = input('build-only') || 'false';
+  if (onlyBuild !== 'true' && onlyBuild !== 'false') throw new Error('build-only must be true or false.');
+  if (onlyBuild === 'true' && platform === 'web')
+    throw new Error('build-only does not apply to web projects, which have no native build.');
+  if (onlyBuild === 'true' && command) throw new Error('command does not apply when build-only is true.');
   const cli = input('cli-path');
   const version = input('version');
   if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) {
@@ -66,10 +72,12 @@ export function readInputs(input: (name: string) => string, root: string, host: 
   if (upload !== 'true' && upload !== 'false') throw new Error('upload-artifacts must be true or false.');
   if (input('export') && platform === 'web')
     throw new Error('export does not apply to web projects, which have no native build.');
-  const builds = platform === 'ios' || platform === 'android' || Boolean(input('export'));
+  const builds = onlyBuild === 'true' || platform === 'ios' || platform === 'android' || Boolean(input('export'));
   const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
   if (!builds && ignored.length)
-    throw new Error(`${ignored.join(', ')} apply only when the action builds: iOS, Android, or macOS with export.`);
+    throw new Error(
+      `${ignored.join(', ')} apply only when the action builds: iOS, Android, or macOS with export or build-only.`,
+    );
   const retention = input('retention-days') || '0';
   if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) {
     throw new Error('retention-days must be a non-negative whole number.');
@@ -78,6 +86,7 @@ export function readInputs(input: (name: string) => string, root: string, host: 
     platform,
     project: resolve(root, input('project') || '.'),
     command,
+    onlyBuild: onlyBuild === 'true',
     version,
     cli: cli ? resolve(root, cli) : '',
     artifacts: input('artifacts') ? resolve(root, input('artifacts')) : '',
@@ -119,14 +128,14 @@ async function execute(file: string, args: string[], cwd: string, stdout?: Buffe
   }
 }
 
-function currentResult(path: string, options: Inputs, started: number): CIResult | null {
+function currentResult(path: string, options: Inputs, started: number): CIResult | CIBuildResult | null {
   try {
     if (!lstatSync(path).isFile()) throw new Error('result.json is not a regular file.');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
-  const result = JSON.parse(readFileSync(path, 'utf8')) as CIResult;
+  const result = JSON.parse(readFileSync(path, 'utf8')) as CIResult | CIBuildResult;
   if (
     result.version !== 1 ||
     result.platform !== options.platform ||
@@ -238,26 +247,34 @@ export async function runAction(): Promise<number> {
   if (options.cache) common.push('--build-cache', options.cache);
   const buildOutput: Buffer[] = [];
   let buildResult: Record<string, unknown> | null = null;
-  const built = options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
+  let runResult: Record<string, unknown> | null = null;
+  let started = Date.now();
+  let code = 0;
+  const built =
+    options.onlyBuild || options.platform === 'ios' || options.platform === 'android' || Boolean(options.exportPath);
   if (built && options.platform !== 'web') {
     const buildArgs = [cli, 'build', ...common, ...options.selectors, ...options.buildOnly];
     if (options.exportPath) buildArgs.push('--export', options.exportPath);
-    const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+    if (options.onlyBuild && options.artifacts) buildArgs.push('--artifacts', options.artifacts);
+    code = await execute(process.execPath, buildArgs, root, buildOutput);
     buildResult = finalResult(buildOutput);
-    if (buildCode !== 0) {
+    if (code !== 0 && !options.onlyBuild) {
       setResultOutputs(buildResult, null, core.setOutput);
-      return buildCode;
+      return code;
     }
   }
-  const args = [cli, 'run', ...common, ...options.selectors];
-  if (options.artifacts) args.push('--artifacts', options.artifacts);
-  if (options.command) args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
-  const started = Date.now();
-  const runOutput: Buffer[] = [];
-  let code = await execute(process.execPath, args, root, runOutput);
-  setResultOutputs(buildResult, finalResult(runOutput), core.setOutput);
+  if (!options.onlyBuild) {
+    const args = [cli, 'run', ...common, ...options.selectors];
+    if (options.artifacts) args.push('--artifacts', options.artifacts);
+    if (options.command) args.push('--', 'bash', '-e', '-o', 'pipefail', '-c', options.command);
+    started = Date.now();
+    const runOutput: Buffer[] = [];
+    code = await execute(process.execPath, args, root, runOutput);
+    runResult = finalResult(runOutput);
+  }
+  setResultOutputs(buildResult, runResult, core.setOutput);
   core.setOutput('exit-code', String(code));
-  let result: CIResult | null = null;
+  let result: CIResult | CIBuildResult | null = null;
   if (options.artifacts) {
     try {
       result = currentResult(resultPath, options, started);
