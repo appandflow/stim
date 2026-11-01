@@ -3179,6 +3179,13 @@ describe('plain --delete and the Swift compilation cache cap', () => {
     expect(existsSync(join(casDir(), 'v4.actions'))).toBe(false);
   });
 
+  test('with --older-than empties it once, without a contradicting kept line', async () => {
+    process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
+    const output = await captureLog(() => cli(['--delete', '--older-than', '30']));
+    expect(existsSync(leaf())).toBe(false);
+    expect(output).not.toContain('index-backed; empty it whole or not at all');
+  });
+
   test('keeps it, naming the build, while a build holds the cache', async () => {
     process.env.STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB = OVER_CAP_GB;
     const build = plantClaim(cacheClaimRoot(casDir()), 'shared', liveClaimOwner(), {

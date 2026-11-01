@@ -1321,13 +1321,21 @@ async function runGcCore(
   if (all) {
     deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
-    if (caches.length) {
+    if (caches.some((entry) => !entry.willEmpty)) {
       output.log(
         chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
   } else {
-    deleteFailures += (await trimCaches(caches, olderThan, output, signal, deps.operation)).failures;
+    deleteFailures += (
+      await trimCaches(
+        caches.filter((entry) => !entry.willEmpty),
+        olderThan,
+        output,
+        signal,
+        deps.operation,
+      )
+    ).failures;
   }
   if (!all)
     deleteFailures += await emptyCaches(
