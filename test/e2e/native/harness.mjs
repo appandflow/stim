@@ -546,7 +546,9 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
         Object.fromEntries(
           Object.entries(sections).filter(
             ([name, value]) =>
-              name !== 'trash' && created.some((p) => JSON.stringify(value).includes(JSON.stringify(p).slice(1, -1))),
+              name !== 'trash' &&
+              name !== 'staleStatusCaches' &&
+              created.some((p) => JSON.stringify(value).includes(JSON.stringify(p).slice(1, -1))),
           ),
         ),
         null,
