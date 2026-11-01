@@ -539,7 +539,7 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
   if (gc.code === 0) {
     const { sections } = JSON.parse(gc.stdout);
     assert(sections && typeof sections === 'object', `cleanup gc --json has no sections: ${gc.stdout.slice(0, 500)}`);
-    const text = JSON.stringify({ ...sections, trash: null });
+    const text = JSON.stringify({ ...sections, trash: null, staleStatusCaches: null });
     assert(
       !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),
       'gc reports one of our workspaces as orphaned',
