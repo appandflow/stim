@@ -1,5 +1,7 @@
 name: Windows hosted cancellation fixture probe
 on:
+  push:
+    branches: [codex/4712-windows-hosted-fixtures]
   workflow_dispatch:
 permissions:
   contents: read
