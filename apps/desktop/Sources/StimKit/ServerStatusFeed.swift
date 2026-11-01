@@ -211,9 +211,11 @@ import Foundation
   private func receiveMachine(_ event: ServerEvent) {
     prepareViews()
     if ended(event, view: "machine") { return }
-    guard event.name == "machine", views.applyMachine(event.fields) == .changed else { return }
+    guard event.name == "machine", case .object? = event.fields["machine"] else { return }
+    let changed = views.applyMachine(event.fields) == .changed
+    let recovering = failures["machine"] != nil
     recovered("machine")
-    if views.hasWorkspaces { decode() }
+    if views.hasWorkspaces, changed || recovering { decode() }
   }
 
   private func receiveDetail(_ event: ServerEvent, path: String) {
