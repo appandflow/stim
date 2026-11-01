@@ -163,6 +163,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
   { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
+    key: 'ios.autoInstallRuntime',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description: 'Install an explicitly requested missing iOS simulator runtime on the selected Mac',
+  },
+  {
     key: 'ios.configuration',
     type: STRING,
     scopes: PROJECT,

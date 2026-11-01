@@ -7476,6 +7476,57 @@ describe('the simulator model and runtime flags', () => {
     expect(ok.calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
+  test.each(['flag', 'setting'])(
+    'runtime installation through %s happens before selector validation and continues the run',
+    async (entry) => {
+      reserve();
+      let installed = false;
+      const result = await run(
+        { runtime: '26.5', installRuntime: entry === 'flag', json: true },
+        {
+          resolveSettings: () => ({ ios: { autoInstallRuntime: entry === 'setting' } }),
+          ensureIosRuntime: async () => {
+            installed = true;
+            return { ok: true };
+          },
+          listIosRuntimes: async () =>
+            installed
+              ? [
+                  {
+                    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+                    version: '26.5',
+                    name: 'iOS 26.5',
+                    supportedDeviceTypes: [{ identifier: 'iphone', name: 'iPhone 17' }],
+                  },
+                ]
+              : [],
+        },
+      );
+      expect(installed).toBe(true);
+      expect(result.exitCode).toBe(null);
+      expect(result.calls.order).toContain('ensureOwnedDevice');
+    },
+  );
+
+  test('runtime installation failure stops before any device or app build', async () => {
+    reserve();
+    const result = await run(
+      { runtime: '26.5', installRuntime: true, json: true },
+      {
+        ensureIosRuntime: async () => ({
+          ok: false,
+          code: 'STIM_NO_DEVICE',
+          message: 'Xcode cannot install that version',
+          remedy: 'Choose an available version.',
+        }),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).message).toContain('Xcode cannot install');
+    expect(result.calls.order).not.toContain('ensureOwnedDevice');
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
   test('an unknown runtime refuses first, naming the installed versions', async () => {
     reserve();
     const { exitCode, logs, calls } = await run({ runtime: '99.9', json: true });
@@ -8486,6 +8537,7 @@ describe('--plan', () => {
   test.each([
     [{ device: true }, '--device'],
     [{ remote: 'proxy' }, '--remote'],
+    [{ installRuntime: true }, '--install-runtime'],
     [{ simulatorApp: 'xcode' }, '--simulator-app'],
   ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
     const { logs, exitCode, calls } = await run({ plan: true, json: true, ...flags });
@@ -8924,16 +8976,24 @@ describe('iOS placement on a hosting Mac', () => {
     expect(calls.order).not.toContain('ensureOwnedDevice');
   });
 
-  test.each([undefined, 'other', 'proxy'])('a recorded host refuses switching to %s until stop', async (remote) => {
-    writeHostedIos(root, 'default', placement);
-    const { logs, calls } = await run({ remote, json: true });
-    expect(parseFirst(logs)).toMatchObject({
-      code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('runs on mini; run stim stop first'),
-    });
-    expect(calls.order).not.toContain('ensureOwnedDevice');
-    expect(calls.order).not.toContain('buildIos');
-  });
+  test.each([undefined, 'other', 'proxy'])(
+    'a recorded host refuses switching to %s before runtime installation',
+    async (remote) => {
+      writeHostedIos(root, 'default', placement);
+      const install = vi.fn<() => Promise<{ ok: true }>>(async () => ({ ok: true }));
+      const { logs, calls } = await run(
+        { remote, runtime: '26.5', installRuntime: true, json: true },
+        { installHostedIosRuntime: install },
+      );
+      expect(parseFirst(logs)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('runs on mini; run stim stop first'),
+      });
+      expect(install).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('ensureOwnedDevice');
+      expect(calls.order).not.toContain('buildIos');
+    },
+  );
 
   test.each(['Debug', 'Release'])(
     'builds %s for the offered architecture before reservation and never touches a local device',

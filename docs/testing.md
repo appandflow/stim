@@ -70,6 +70,12 @@ probe is useful while iterating, for example:
 pnpm run test:compat engine-ios-device.compat.test.ts
 ```
 
+The focused `ios-runtime.compat.test.ts` probe requires macOS, Xcode, access to
+its download catalog and 20 GB free on the simulator volume. It runs the real
+installer with the impossible iOS version `0.0`, verifies Xcode accepts the
+arguments and refuses the version, and downloads no runtime. It uses a private
+Stim home; it does not create, boot or delete a simulator.
+
 The focused `native-android-cache.compat.test.ts` probe requires an installed
 Android SDK platform, `aapt`, `apksigner`, and JDK `keytool`. It creates and signs
 a temporary manifest-only APK with a disposable keystore, verifies cache reuse,

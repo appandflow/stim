@@ -4421,6 +4421,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
         return input(id, inputMethod, raw, session);
       }
+      if (method === 'device-host.runtime.install') {
+        const cancellation = new AbortController();
+        const cancel = () => cancellation.abort();
+        socket.once('close', cancel);
+        try {
+          const answer = await hostedDevices.installRuntime(session.id, raw, cancellation.signal);
+          return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+        } finally {
+          socket.off('close', cancel);
+        }
+      }
       const answer =
         method === 'device-host.offer'
           ? await hostedDevices.offer(session.id, raw)
