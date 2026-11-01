@@ -2762,8 +2762,8 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   simulator slice on a phone or publish an iphoneos app under a key simulator
   builds resolve.
 
-  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-sdk
-  iphoneos\`, the project's own signing settings, no signing flags on the argv.
+  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-destination
+  id=<udid>\`, the project's own signing settings, no signing flags on the argv.
   It is installed with \`devicectl device install app\` and launched with
   \`devicectl device process launch\`. Every device install is SIGNED, Debug
   included, so the signing gate runs before it: the app's own

@@ -179,12 +179,11 @@ describe('listSchemes and resolveScheme', () => {
 describe('xcodebuildArgs', () => {
   const project = { flag: '-workspace', path: '/p/ios/App.xcworkspace' };
 
-  test('the device slice is -sdk iphoneos plus the phone id, and carries no signing flag', () => {
+  test('the device slice is the phone id with no -sdk, and carries no signing flag', () => {
     const args = xcodebuildArgs({
       project,
       scheme: 'App',
       udid: '00008030-001A2B3C4D5E802E',
-      sdk: 'iphoneos',
       configuration: 'Release',
       derivedDataPath: '/dd',
     });
@@ -195,8 +194,6 @@ describe('xcodebuildArgs', () => {
       'App',
       '-configuration',
       'Release',
-      '-sdk',
-      'iphoneos',
       '-destination',
       'id=00008030-001A2B3C4D5E802E',
       '-derivedDataPath',
@@ -698,17 +695,20 @@ describe('buildXcode with explicit project inputs', () => {
       const otherApp = join(tmp, 'products', 'Other.app');
       mkdirSync(selectedApp, { recursive: true });
       mkdirSync(otherApp);
-      const product = (projectPath: string, name: string) => ({
+      const watchApp = join(tmp, 'products-watch', 'Native.app');
+      mkdirSync(watchApp, { recursive: true });
+      const product = (projectPath: string, name: string, platform = 'iphonesimulator') => ({
         buildSettings: {
           TARGET_NAME: 'Native',
           PROJECT_FILE_PATH: projectPath,
           PRODUCT_TYPE: 'com.apple.product-type.application',
-          PLATFORM_NAME: 'iphonesimulator',
-          TARGET_BUILD_DIR: join(tmp, 'products'),
+          PLATFORM_NAME: platform,
+          TARGET_BUILD_DIR: join(tmp, platform === 'iphonesimulator' ? 'products' : 'products-watch'),
           FULL_PRODUCT_NAME: name,
         },
       });
       const child = fakeChild();
+      const xcodebuildCalls: string[][] = [];
       const promise = buildXcode({
         root: tmp,
         project,
@@ -721,15 +721,19 @@ describe('buildXcode with explicit project inputs', () => {
         exec: makeExecutor({
           runFile(file, args = []) {
             if (file === 'xcodebuild' && args.includes('-list')) return '{"workspace":{"schemes":["Native"]}}';
-            if (file === 'xcodebuild' && args.includes('-showBuildSettings'))
+            if (file === 'xcodebuild' && args.includes('-showBuildSettings')) {
+              xcodebuildCalls.push(args);
               return JSON.stringify([
                 product(otherProject, 'Other.app'),
+                product(selectedProject, 'Native.app', 'watchsimulator'),
                 ...(present ? [product(selectedProject, 'Selected.app')] : []),
               ]);
+            }
             if (file === 'plutil') return '{"CFBundleIdentifier":"org.example.selected"}';
             throw new Error(`unexpected tool ${file}`);
           },
-          spawn: () => {
+          spawn: (_file, args = []) => {
+            xcodebuildCalls.push([...args]);
             child.start();
             return child as unknown as ChildProcess;
           },
@@ -740,6 +744,11 @@ describe('buildXcode with explicit project inputs', () => {
       const result = await promise;
       expect(result).toMatchObject(present ? { ok: true } : { ok: false, code: 'STIM_BUILD_FAILED' });
       expect('appPath' in result ? result.appPath : null).toBe(present ? selectedApp : null);
+      expect(xcodebuildCalls).toHaveLength(2);
+      for (const args of xcodebuildCalls) {
+        expect(args).toContain('-destination');
+        expect(args).not.toContain('-sdk');
+      }
     },
   );
 });
