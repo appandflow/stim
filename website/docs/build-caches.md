@@ -295,6 +295,23 @@ and earlier lack Expo's config override and are not isolated; SDK 58 and later
 include Expo's transform cache fix. This does not fix Gradle skipping its bundle
 task when environment values change ([upstream PR](https://github.com/expo/expo/pull/49839)).
 
+SDK 53 projects can opt in to a different Metro transform key when public
+environment values change. Add this after creating and merging your existing
+`config` in `metro.config.js`, before exporting it:
+
+```js
+const { createHash } = require('node:crypto');
+const publicEnv = Object.entries(process.env)
+  .filter(([name]) => name.startsWith('EXPO_PUBLIC_'))
+  .sort(([a], [b]) => a.localeCompare(b));
+const publicEnvKey = createHash('sha256').update(JSON.stringify(publicEnv)).digest('hex');
+config.cacheVersion = `${config.cacheVersion ?? ''}:${publicEnvKey}`;
+```
+
+This preserves the existing `cacheVersion` and `cacheStores`. It varies the key
+for effective `EXPO_PUBLIC_` values; it does not make Gradle execute a skipped
+bundle task.
+
 ### Generated dependency output and cache misses
 
 A build that misses the cache says why before it compiles:
