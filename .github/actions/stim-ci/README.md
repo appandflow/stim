@@ -91,6 +91,7 @@ as step outputs, leaving out any that do not apply. A later step can then use th
 device without parsing the job log. The device is shut down, not deleted, when the step ends: a
 simulator can be booted again by `device-id`, while an Android emulator is gone.
 Build-only sets the app, export, cache and exit-code outputs that apply; it sets no device outputs.
+The existing macOS output mapping leaves `cache-hit` unset.
 
 With `artifacts`, the `result` and `artifacts` outputs are absolute paths available within the job.
 The Action uploads `result.json`, `run.json`, test stdout/stderr,
