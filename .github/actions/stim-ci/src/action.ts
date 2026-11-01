@@ -172,11 +172,12 @@ function setResultOutputs(
 ): void {
   const built = facts(build, 'build');
   const ran = facts(run, 'run');
+  const cacheHit = built.cacheHit ?? (isRecord(built.build) ? built.build.cacheHit : undefined);
   const outputs: Record<string, unknown> = {
     'app-id': ran.bundleId ?? built.bundleId ?? built.androidPackage,
     'app-path': built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
     'export-path': build?.artifactPath,
-    'cache-hit': built.cacheHit === undefined ? undefined : Boolean(built.cacheHit),
+    'cache-hit': cacheHit === undefined ? undefined : Boolean(cacheHit),
     'device-id': ran.udid ?? ran.serial,
     'device-name': ran.deviceName,
   };

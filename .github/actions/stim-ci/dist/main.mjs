@@ -97661,11 +97661,12 @@ function facts(result, stage) {
 function setResultOutputs(build, run, setOutput) {
 	const built = facts(build, "build");
 	const ran = facts(run, "run");
+	const cacheHit = built.cacheHit ?? (isRecord(built.build) ? built.build.cacheHit : void 0);
 	const outputs = {
 		"app-id": ran.bundleId ?? built.bundleId ?? built.androidPackage,
 		"app-path": built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
 		"export-path": build?.artifactPath,
-		"cache-hit": built.cacheHit === void 0 ? void 0 : Boolean(built.cacheHit),
+		"cache-hit": cacheHit === void 0 ? void 0 : Boolean(cacheHit),
 		"device-id": ran.udid ?? ran.serial,
 		"device-name": ran.deviceName
 	};
