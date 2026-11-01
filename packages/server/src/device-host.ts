@@ -1181,6 +1181,51 @@ export class DeviceHost {
     }
   }
 
+  async appState(client: string, params: unknown): Promise<AppAnswer<Methods['device-host.app.state']['result']>> {
+    if (this.closed || !this.options.allowed(client))
+      return refused('forbidden', 'Current device-host approval is required.');
+    if (!isJsonObject(params) || !hostedAppAttempt(params.attempt))
+      return refused('bad-request', 'App state requires a session and app attempt.');
+    try {
+      const record = this.appSession(client, params);
+      if (record.platform !== 'ios' && record.platform !== 'android')
+        throw new Error('App state supports hosted iOS and Android sessions only.');
+      this.viewTarget(client, record.id);
+      const owned = this.acquire(record);
+      const attempt = params.attempt;
+      if (owned.installedAttempt !== attempt || readHostedAppMetadata(record.id, attempt).state !== 'installed')
+        throw new Error("App state requires this session's current installed app attempt.");
+      const claim = takeHostedInputClaim(owned.claim);
+      let run: WorkerRun | undefined;
+      let settled = false;
+      let pending: Promise<void> | undefined;
+      try {
+        run = this.run(record, owned, 'app-state', attempt, claim);
+        this.probes.set(run, client);
+        pending = run.done.then(() => undefined);
+        owned.data = pending;
+        const outcome = await run.done;
+        settled = outcome.settled;
+        if (owned.data === pending) delete owned.data;
+        if (this.closed || !this.options.allowed(client))
+          return refused('forbidden', 'Current device-host approval is required.');
+        this.viewTarget(client, record.id);
+        if (this.owned.get(record.id) !== owned || owned.installedAttempt !== attempt)
+          throw new Error('The hosted app attempt changed while checking its process.');
+        const state = isJsonObject(outcome.value) ? outcome.value.state : undefined;
+        if (!outcome.settled || outcome.notice || (state !== 'running' && state !== 'stopped' && state !== 'unknown'))
+          throw new Error(outcome.notice ?? 'Hosted app process state could not be established.');
+        return { result: { state } };
+      } finally {
+        if (pending && owned.data === pending) delete owned.data;
+        if (!run || settled) releaseClaim(claim);
+        if (run) this.probes.delete(run);
+      }
+    } catch (error) {
+      return refused('action-failed', error instanceof Error ? error.message : String(error));
+    }
+  }
+
   /** Captured app logs remain readable from the isolated home after the session stops. */
   async logsQuery(client: string, params: unknown): Promise<AppAnswer<Methods['device-host.logs.query']['result']>> {
     if (this.closed || !this.options.allowed(client))
@@ -1972,7 +2017,7 @@ export class DeviceHost {
   private run(
     record: HostedDeviceSession,
     owned: OwnedSession,
-    mode: 'prepare' | 'stop' | 'install' | 'logs' | 'reverse' | 'park' | 'adopt',
+    mode: 'prepare' | 'stop' | 'install' | 'app-state' | 'logs' | 'reverse' | 'park' | 'adopt',
     attempt?: string,
     claim: ClaimHandle = owned.claim,
     finalLogs = false,
@@ -2002,7 +2047,7 @@ export class DeviceHost {
       timeoutMs:
         mode === 'stop' || mode === 'park'
           ? this.limits.stopMs
-          : mode === 'logs'
+          : mode === 'logs' || mode === 'app-state'
             ? this.limits.logsMs
             : this.limits.prepareMs,
       maxOutputBytes: 16_384,

@@ -146,7 +146,7 @@ export async function finishHostedAndroidRun({
     let launchWarning: string | undefined;
     let unattributed = false;
     if (appMode === 'development') {
-      const hostedLogs = followLogs(root, slot, 'android', launchedAt);
+      const hostedLogs = followLogs(root, slot, 'android', launchedAt, operation);
       let verification;
       try {
         verification = await verifyAndroidMetroRun({

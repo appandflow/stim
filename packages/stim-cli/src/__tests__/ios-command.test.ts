@@ -471,6 +471,7 @@ function harness(overrides: LooseDeps = {}) {
       readDeviceRecords: () => [],
       readNativeCrashes: () => [],
       deviceLogsThrough: () => null,
+      processAlive: async () => null,
       stop: () => {},
     }),
     hostLanCandidates: () => [{ interfaceName: 'en0', address: '192.168.1.5' }],
@@ -9205,11 +9206,12 @@ describe('iOS placement on a hosting Mac', () => {
     expect(logs.join('\n') + stderr).not.toContain('(iOS iOS');
   });
 
-  test("a hosted Debug launch waits for the app's readiness in the host's copied device log", async () => {
+  test("a hosted Debug launch waits for the app's readiness in the host's copied device log and checks its process", async () => {
     reserve();
     let at = 1000;
     const copied = () => at - 3000;
     const stop = vi.fn<() => void>();
+    const processAlive = vi.fn<() => Promise<boolean>>(async () => true);
     const readiness = (ts: number, state: string) => ({
       ts,
       src: 'device',
@@ -9234,6 +9236,7 @@ describe('iOS placement on a hosting Mac', () => {
             [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
           readNativeCrashes: () => [],
           deviceLogsThrough: copied,
+          processAlive,
           stop,
         }),
         verifyLaunch: (args) =>
@@ -9255,6 +9258,7 @@ describe('iOS placement on a hosting Mac', () => {
     expect(stderr).toContain('app reported ready');
     expect(parseFirst(logs).launched).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
+    expect(processAlive).toHaveBeenCalled();
   });
 
   test('hosted intent starts Metro locally even when tunnel settings are configured', async () => {

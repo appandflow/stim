@@ -144,6 +144,10 @@ if(input.mode === 'inspect') {
     else if(input.deviceType === 'lost') { process.exitCode=1; }
     else out({state:'ready',device});
   }
+} else if(input.mode === 'app-state') {
+  writeFileSync(join(home,'app-state-entered'),String(process.pid));
+  while(existsSync(join(home,'app-state-wait'))) await new Promise(resolve=>setTimeout(resolve,20));
+  out({state:existsSync(join(home,'app-exited'))?'stopped':'running'});
 } else if(input.mode === 'logs') {
   writeFileSync(join(home,'logs-entered'),String(process.pid));
   if((input.deviceType ?? input.deviceProfile) === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
@@ -2879,3 +2883,30 @@ test('disconnect cancellation settles a runtime install worker before returning'
   expect(await pending).toHaveProperty('error.code', 'action-failed');
   await groupGone(pid);
 });
+
+test.each(['ios', 'android'])(
+  'app state checks the current %s attempt, serializes native work and refuses revoked ownership',
+  async (platform) => {
+    const { id, params } = await installApp(platform);
+    const area = join(deviceHostArea(id), 'home');
+    for (const [client, input] of [
+      ['other', params],
+      ['client', { ...params, attempt: 'not-installed' }],
+    ] as const)
+      expect(await host.appState(client, input)).toHaveProperty('error');
+    expect(existsSync(join(area, 'app-state-entered'))).toBe(false);
+    expect(await host.appState('client', params)).toEqual({ result: { state: 'running' } });
+    writeFileSync(join(area, 'app-exited'), '');
+    expect(await host.appState('client', params)).toEqual({ result: { state: 'stopped' } });
+    rmSync(join(area, 'app-state-entered'));
+    writeFileSync(join(area, 'app-state-wait'), '');
+    const pending = host.appState('client', params);
+    await vi.waitFor(() => expect(existsSync(join(area, 'app-state-entered'))).toBe(true));
+    expect(await host.appState('client', params)).toHaveProperty('error.message', expect.stringContaining('operation'));
+    allowed.delete('client');
+    host.revoke();
+    expect(await pending).toHaveProperty('error.code', 'forbidden');
+    await state(id, 'stopped');
+    expect(readClaimSet(join(deviceHostRoot(), `${id}.claims.input`)).live).toEqual([]);
+  },
+);

@@ -23,6 +23,7 @@ import {
   type HostedAppRecord,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import { installIosApp, iosAppProcess, launchIosApp } from '../engine/app-install.ts';
 
 function inside(root: string, path: string): boolean {
@@ -199,9 +200,6 @@ export async function installHostedApp(
   });
   if (!launched.ok) throw new Error(launched.reason ?? 'Hosted app launch was not established.');
   if (record.mode === 'development') return 'unverified';
-  for (let tries = 0; tries < 10; tries++) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    if ((await iosAppProcess(device.udid, record.bundleId)).state === 'running') return true;
-  }
-  return 'unverified';
+  await new Promise((resolve) => setTimeout(resolve, RELEASE_VERIFY_WAIT_MS));
+  return (await iosAppProcess(device.udid, record.bundleId)).state === 'running' ? true : 'unverified';
 }
