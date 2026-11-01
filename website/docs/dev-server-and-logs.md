@@ -25,6 +25,11 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+For Expo and custom Metro commands, Stim looks for a Node pin from the app
+directory up to the repository or worktree root. The nearest `.nvmrc`,
+`.node-version`, `.tool-versions` Node entry or `package.json` `volta.node` wins.
+When a compatible Node is installed, Stim puts it first on the child's `PATH`.
+
 ## Start Metro with your own command
 
 Some apps only start Metro through their own command, for example an app
