@@ -1,0 +1,21 @@
+name: Windows hosted cancellation fixture probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+      - name: Hosted cancellation fixtures
+        run: pnpm test packages/server/__tests__/device-host.integration.test.ts --retry=2 --reporter=default --reporter=json --outputFile.json=test-results/4712-windows.json
+      - name: Retain results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-hosted-cancellation-results
+          path: test-results/4712-windows.json
+          if-no-files-found: ignore
