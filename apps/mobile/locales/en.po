@@ -4496,6 +4496,7 @@ msgstr "Window"
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx
 #: src/screens/workspace-work.tsx
+#: src/screens/workspace-work.tsx
 msgid "Work"
 msgstr "Work"
 

@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   Keyboard,
   PixelRatio,
@@ -52,7 +53,14 @@ import { LANDED_SCREEN_RADIUS, useDeviceZoom, zoomKey } from '@/hooks/device-zoo
 import { useScreenZoom } from '@/hooks/screen-zoom';
 import { grantCommand, readOnlyReason, allowControlSteps } from '@/components/read-only';
 import { useDeviceControl } from '@/hooks/device-control';
-import { useHasStatus, useMachinePresence, useMachineStatus, useMacConnection, useWorkspace } from '@/hooks/machines';
+import {
+  useArchivesPending,
+  useHasStatus,
+  useMachinePresence,
+  useMachineStatus,
+  useMacConnection,
+  useWorkspace,
+} from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { matchingDeviceFrame } from '@/lib/device-frame';
@@ -145,6 +153,7 @@ export function DeviceView({
   const cached = useMachinePresence(macId ?? '').cached;
   const hasStatus = loaded && !cached;
   const status = useMachineStatus(macId);
+  const archivesPending = useArchivesPending(macId ?? '');
   const env = item?.env;
   const device = env
     ? devicesOf(env).find(
@@ -692,7 +701,9 @@ export function DeviceView({
                       onLayout={barBottom > 0 ? zoom.measure : undefined}
                       collapsable={false}
                     >
-                      {streams ? null : (
+                      {streams ? null : !item && archivesPending ? (
+                        <ActivityIndicator color={theme.colors.primary} />
+                      ) : (
                         <Text style={styles.placeholder}>
                           {deviceUnavailable({
                             hasStatus,

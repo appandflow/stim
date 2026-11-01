@@ -25,6 +25,8 @@ export interface MachineLink {
   disconnectedAt: number | null;
   /** Whether the Mac's last `hello` listed the `status-views` feature; null before the first `hello`. */
   statusViews: boolean | null;
+  archiveSummary?: string | null;
+  archivesRead?: string | null;
 }
 
 export interface MachineSnapshot {

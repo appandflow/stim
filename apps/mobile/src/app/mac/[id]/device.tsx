@@ -2,7 +2,14 @@ import { Redirect, useLocalSearchParams } from 'expo-router';
 import { StyleSheet } from 'react-native';
 import { ReservedRegionsProvider } from 'react-native-reserved-regions';
 
-import { useHasStatus, useMachinePresence, useMachineStatus, useWorkspace } from '@/hooks/machines';
+import {
+  useArchives,
+  useHasCurrentStatus,
+  useHasStatus,
+  useMachinePresence,
+  useMachineStatus,
+  useWorkspace,
+} from '@/hooks/machines';
 import { archivedDeviceRoute } from '@/lib/archived';
 import type { DevicePlatform } from '@/protocol/types';
 import { DeviceView } from '@/screens/device-view';
@@ -29,6 +36,8 @@ export default function DeviceRoute() {
   const hasStatus = loaded && !cached;
   const status = useMachineStatus(id);
   const item = useWorkspace(id, path);
+  const current = useHasCurrentStatus(id);
+  useArchives(current && !item, id);
   const redirect = archivedDeviceRoute({
     macId: id,
     path,

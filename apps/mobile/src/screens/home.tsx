@@ -57,9 +57,11 @@ export function Home() {
   const welcome = useWelcome(macs);
   const items = useWorkspaceItems();
   const worktrees = useWorktreeItems();
-  const archives = useArchiveItems();
-  const entries = useMemo(() => [...items, ...worktrees, ...archives], [items, worktrees, archives]);
   const { filters, update, view } = useHomeFilters();
+  const { items: archives, pending: archivesPending } = useArchiveItems(
+    view === 'workspaces' && (filters.statuses.includes('archived') || filters.projects.length > 0),
+  );
+  const entries = useMemo(() => [...items, ...worktrees, ...archives], [items, worktrees, archives]);
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const [aspects, setAspects] = useState<ReadonlyMap<string, number>>(new Map());
   const onAspect = useCallback(
@@ -284,7 +286,9 @@ export function Home() {
           )
         }
         ListEmptyComponent={
-          filters.statuses.every((status) => status === 'archived') ? (
+          archivesPending ? (
+            <ActivityIndicator style={styles.loading} color={theme.colors.primary} />
+          ) : filters.statuses.every((status) => status === 'archived') ? (
             <Text tone="secondary" style={styles.emptyMessage}>
               <Trans>No archived workspaces. Removed workspaces appear here when the server keeps an archive.</Trans>
             </Text>

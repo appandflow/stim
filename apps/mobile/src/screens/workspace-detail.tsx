@@ -43,7 +43,14 @@ import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
 import { isGitHubPullUrl } from '@/lib/github';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
-import { useHasStatus, useMacConnection, useMachineStatus, useWorkspace } from '@/hooks/machines';
+import {
+  useArchives,
+  useHasCurrentStatus,
+  useHasStatus,
+  useMacConnection,
+  useMachineStatus,
+  useWorkspace,
+} from '@/hooks/machines';
 import { useAnnounce } from '@/hooks/screen-reader';
 import { useAction } from '@/hooks/workspace-actions';
 import { useNow } from '@/hooks/use-now';
@@ -110,6 +117,7 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
   const { mac, state, home } = useMacConnection();
   const status = useMachineStatus(mac?.id ?? '');
   const archive = status?.archived?.find((entry) => entry.id === id);
+  const archivesPending = useArchives(true, mac?.id ?? '');
   const detail = useArchiveDetail(id);
   const legacy = detail.error instanceof RequestError && detail.error.error.code === 'unknown-method';
   const focused = useIsFocused();
@@ -130,7 +138,11 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
       <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.container}>
         <Stack.Screen options={{ title: t`Archived Workspace` }} />
         <ConnectionBanner state={state} />
-        <Text tone="secondary">{t`This archive is no longer available.`}</Text>
+        {archivesPending ? (
+          <ActivityIndicator style={styles.loading} color={theme.colors.primary} />
+        ) : (
+          <Text tone="secondary">{t`This archive is no longer available.`}</Text>
+        )}
       </ScrollView>
     );
   const page = archivedPage(archive, detail.data, now);
@@ -264,6 +276,8 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const hasStatus = useHasStatus(macId);
   const item = useWorkspace(macId, path);
   const env = item?.env;
+  const current = useHasCurrentStatus(macId);
+  useArchives(current && !env, macId);
   const title = item?.title ?? workspaceTitleAt(path, null);
   const project = item?.project ?? null;
   const inCheckout = item?.inCheckout ?? null;
