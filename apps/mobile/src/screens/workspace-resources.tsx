@@ -23,7 +23,7 @@ import {
   workspaceUsage,
   type DiskPart,
 } from '@/lib/workspace-view';
-import { worktreeApps, worktreeDisk, worktreeHistory, worktreePage, worktreeUsage } from '@/lib/worktree-page';
+import { worktreeApps, worktreeHistory, worktreePage, worktreeUsage } from '@/lib/worktree-page';
 import { devicesOf, orderDevices } from '@/lib/workspaces';
 import type { MachineUsage } from '@/protocol/types';
 
@@ -122,8 +122,8 @@ function LiveWorkspaceResources({ path }: { path: string }) {
   }
   const apps = worktreeApps(path, status?.environments ?? []);
   const multi = apps.length > 1;
-  const leadPath = worktreePage({ path, environments: apps, entries: [], now }).lead;
-  const lead = multi ? apps.find((app) => app.path === leadPath)! : env;
+  const page = worktreePage({ path, environments: apps, entries: [], now });
+  const lead = multi ? apps.find((app) => app.path === page.lead)! : env;
   const usage = multi ? worktreeUsage(apps, status?.machine) : workspaceUsage(env, status?.machine);
   const devices = orderDevices(devicesOf(env));
   const stage = workspaceStage(lead, now);
@@ -140,7 +140,6 @@ function LiveWorkspaceResources({ path }: { path: string }) {
   const minutes = series?.minutes ?? 0;
   const peakCpu = series?.peakCpuPercent == null ? null : formatCpu(series.peakCpuPercent);
   const freeSpace = free === null ? '' : formatBytes(free);
-  const disk = diskParts(multi ? { ...env, disk: worktreeDisk(apps) } : env);
   return (
     <SheetScreen
       title={t`Status`}
@@ -206,7 +205,12 @@ function LiveWorkspaceResources({ path }: { path: string }) {
           <Trans>Nothing in this workspace is using CPU or memory now.</Trans>
         </Text>
       )}
-      {disk ? <DiskCard parts={disk} /> : null}
+      {apps.map((app, index) => {
+        const parts = diskParts(app);
+        return parts ? (
+          <DiskCard key={app.path} parts={parts} title={multi ? page.projects[index] : undefined} />
+        ) : null;
+      })}
       {free === null ? null : (
         <Text variant="footnote" tone="tertiary">
           <Trans>The Mac volume that holds workspaces has {freeSpace} free.</Trans>
@@ -262,15 +266,16 @@ function Tile({
 
 const PART_COLOR = { nodeModules: 'accent', worktree: 'tertiary', build: 'info' } as const;
 
-function DiskCard({ parts }: { parts: DiskPart[] }) {
+function DiskCard({ parts, title }: { parts: DiskPart[]; title?: string }) {
   const { theme } = useUnistyles();
   const total = parts.reduce((sum, part) => sum + part.bytes, 0);
   const size = formatSize(total);
   const summary = diskPartsLabel(parts);
+  const heading = title ?? t`Disk`;
   return (
-    <View style={styles.card} accessible accessibilityLabel={t`Disk ${size}: ${summary}`}>
+    <View style={styles.card} accessible accessibilityLabel={t`${heading} ${size}: ${summary}`}>
       <Text variant="caption" tone="secondary">
-        <Trans>Disk</Trans>
+        {heading}
       </Text>
       <Text variant="headline" style={styles.tabular} numberOfLines={1}>
         {size}
