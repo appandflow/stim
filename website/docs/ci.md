@@ -203,7 +203,6 @@ launching, starting Metro or running a test command. macOS builds even without
 Build-only records the app for the same workspace/home, sets app/export/cache/exit
 outputs without device outputs, and uses the same diagnostic upload and summary
 path. `build.json` stays local because uploaded `result.json` includes the build facts.
-The existing macOS output mapping leaves `cache-hit` unset.
 Exported bytes alone are not a supported cross-job import into a fresh home.
 Use a package version supporting `stim-ci build --artifacts`, or a matching built
 checkout; older releases may not support build diagnostics.
