@@ -5,7 +5,10 @@ import { join } from 'node:path';
 import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
 import { collectHostedIosLogs, collectHostedIosCrashes } from '../device-host/ios-logs.ts';
 
-const native = vi.hoisted(() => ({ runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>() }));
+const native = vi.hoisted(() => ({
+  runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
+  runFileQuietAsync: vi.fn<() => Promise<string | null>>(),
+}));
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
 let root: string;
 let home: string;
@@ -55,6 +58,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(start + 500);
   native.runFile.mockReset();
+  native.runFileQuietAsync.mockReset();
   native.runFile.mockImplementation((file: string) => (file === '/usr/libexec/PlistBuddy' ? 'Fixture' : ''));
 });
 afterEach(() => {
@@ -158,7 +162,7 @@ test('final collection shrinks toward the recent tail instead of spending its bo
   ]);
 });
 
-test('hosted iOS crash collection keeps one bounded exact-device summary and leaves raw reports host-side', async () => {
+test('hosted iOS retains one bounded exact-device crash when symbolication times out and leaves raw reports host-side', async () => {
   const directory = join(root, 'Library', 'Logs', 'DiagnosticReports');
   mkdirSync(directory, { recursive: true });
   const report = {
@@ -167,14 +171,16 @@ test('hosted iOS crash collection keeps one bounded exact-device summary and lea
     incident: 'owned-incident',
     bundleInfo: { CFBundleIdentifier: 'dev.fixture' },
     exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+    usedImages: [{ path: '/app/App.app/Fixture', uuid: 'fixture-uuid', arch: 'arm64', base: 4096 }],
     termination: { namespace: 'SIGNAL', reasons: [`${root}/${udid}/App.app crashed ` + 'x'.repeat(1024 * 1024)] },
     threads: [
       {
         triggered: true,
         frames: Array.from({ length: 64 }, () => ({
           sourceFile: `${root}/${udid}/Fixture.m`,
-          sourceLine: 12,
           symbol: 'abort',
+          imageIndex: 0,
+          imageOffset: 16,
         })),
       },
     ],
@@ -189,9 +195,15 @@ test('hosted iOS crash collection keeps one bounded exact-device summary and lea
     ['old', { ...report, incident: 'old', captureTime: new Date(start - 1000).toISOString() }],
   ])
     writeFileSync(join(directory, `${name}.ips`), '{}\n' + JSON.stringify(value));
-  vi.setSystemTime(start + 10_000);
-  for (let i = 0; i < 2; i++)
+  writeFileSync(join(root, 'apps', 'app', 'App.app', 'Fixture'), 'fixture');
+  native.runFileQuietAsync.mockImplementation(async () => {
+    vi.setSystemTime(start + 20_000);
+    throw new DOMException('symbolication deadline expired', 'TimeoutError');
+  });
+  for (let i = 0; i < 2; i++) {
+    vi.setSystemTime(start + 10_000);
     await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  }
   const page = readLogsSince(hostedNativeLogsDir(home, 'ios'), {});
   expect(page.more).toBe(false);
   expect(page.records).toHaveLength(1);

@@ -442,8 +442,12 @@ export async function readIosCrashReports(
     if (Date.now() >= deadline) break;
     if ((await stat(path)).size > 8 * 1024 * 1024) continue;
     const parsed = parseIosCrash(await readFile(path, { encoding: 'utf8', signal }), target);
-    if (parsed)
-      nativeReports.push(await symbolicateIos(parsed.record, parsed.report, target.appPath, deadline, signal));
+    if (parsed) {
+      nativeReports.push(
+        await symbolicateIos(parsed.record, parsed.report, target.appPath, deadline, signal).catch(() => parsed.record),
+      );
+      if (signal?.aborted) break;
+    }
   }
   return nativeReports;
 }
