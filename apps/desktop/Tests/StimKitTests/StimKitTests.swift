@@ -1029,6 +1029,11 @@ import Testing
     ]
     let usage = sampler.sample([env], processes: second, at: Date(timeIntervalSince1970: 3))["/w"]
     #expect(usage?.cpuPercent == 150)
+    #expect(sampler.sample([], processes: [], at: Date(timeIntervalSince1970: 4)).isEmpty)
+    let resumed = sampler.sample([env], processes: first, at: Date(timeIntervalSince1970: 100))["/w"]
+    #expect(resumed?.cpuPercent == nil)
+    let next = sampler.sample([env], processes: second, at: Date(timeIntervalSince1970: 103))["/w"]
+    #expect(next?.cpuPercent == 150)
   }
 
   @Test func sumsOnlyWhatGcDeleteWouldFree() throws {

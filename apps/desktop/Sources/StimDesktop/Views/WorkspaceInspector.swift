@@ -182,7 +182,13 @@ struct ResourcesSection: View {
       if !rows.isEmpty {
         ProcessRowsTable(rows: rows)
       }
-      if let disk = page == nil ? env.diskBreakdown : page?.diskBreakdown {
+      if let page, page.isUnified {
+        ForEach(page.apps) { app in
+          if let disk = app.diskBreakdown {
+            DiskCard(breakdown: disk, title: WorktreePage.project(app))
+          }
+        }
+      } else if let disk = env.diskBreakdown {
         DiskCard(breakdown: disk)
       }
     }
@@ -228,6 +234,7 @@ struct ResourcesSection: View {
 
 private struct DiskCard: View {
   var breakdown: DiskBreakdown
+  var title = "Disk"
 
   private func color(_ part: DiskBreakdown.Part) -> Color {
     switch part.kind {
@@ -240,7 +247,7 @@ private struct DiskCard: View {
   var body: some View {
     Card(radius: Radius.control, border: nil, clipsContent: false) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Label("Disk", systemImage: "internaldrive").foregroundStyle(Palette.secondary)
+        Label(title, systemImage: "internaldrive").foregroundStyle(Palette.secondary)
         Text(Format.fileSize(Int64(breakdown.total))).font(.stim(.headline)).monospacedDigit()
         GeometryReader { geo in
           HStack(spacing: 1) {
