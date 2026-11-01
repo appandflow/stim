@@ -774,6 +774,9 @@ machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in
 **Settings > Paired Machines** after the grant. The machine checks its record on
 every request, so `stim-server devices grant <id> --read` ends control at once.
 
+The paired workspace's sidebar menu also offers **Reload App** and **Stop** with
+the same permissions. **Stop** asks for confirmation naming the owning machine.
+
 Building, running a device, logs, replay, files, worktrees, cleanup and settings
 stay on the machine itself; Desktop does not start work there.
 

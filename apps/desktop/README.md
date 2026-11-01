@@ -308,7 +308,9 @@ when `OwnedDevice.offersControl` finds the server granting `control`. **Reload A
 `PairedAccess`: the known actions (`reload`, `stop`) the open connection's `hello.actions` lists, run with the
 server's `action` method by `ServerSession.runPairedAction`. A read-only pairing shows both disabled with the grant
 command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
-page has no logs, files or settings, and no context menu beyond Hide. **Machines** lists each paired server after the
+page has no logs, files or settings. The sidebar row's context menu offers the same **Reload App** and **Stop** actions,
+with the same access checks and a confirmation naming the owning server before Stop, alongside **Hide**.
+**Machines** lists each paired server after the
 build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
 servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
 With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
