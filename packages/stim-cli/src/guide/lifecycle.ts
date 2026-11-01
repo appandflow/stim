@@ -984,8 +984,10 @@ ${HOSTED_RECORDING('simulator')}
 
 If hosting.agentDriver is none, the driver cannot enforce its policy, or the
 host does not advertise hosted-ios-agent, agent reports
-{ driver: 'none', setting: 'hosting.agentDriver' }. Update the host and check
-its setting and agent-device installation. No other simulator becomes reachable.
+{ driver: 'none', setting: 'hosting.agentDriver' }. A run whose host disables
+the driver prints a notice; plain status also names the host setting when
+agent control is unavailable. Update the host and check its setting and
+agent-device installation. No other simulator becomes reachable.
 Client hello carries only name and version, not features, so the host cannot gate
 daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.

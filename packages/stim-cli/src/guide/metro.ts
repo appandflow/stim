@@ -11,6 +11,9 @@ project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
 
+If Expo cannot be resolved in a linked worktree, run \`stim worktree warm\`
+there before retrying. The refusal also names dependency installation.
+
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for server and remote tunnel readiness

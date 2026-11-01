@@ -1128,7 +1128,8 @@ does not own.
 The target is the slot's owned, booted simulator or emulator, checked the way
 `reload` checks it. A hosted device, an EAS Simulator session, a physical device
 and a device Stim does not own refuse with `STIM_DEVICE_TOOL_TARGET` and run
-nothing. An action the platform lacks refuses with
+nothing. A non-Mac client cannot run a local iOS simulator; use these iOS tools
+on a Mac with a local Stim-owned simulator. An action the platform lacks refuses with
 `STIM_DEVICE_TOOL_UNSUPPORTED`, and a tool call that fails, or a device that does
 not report the change afterwards, with `STIM_DEVICE_TOOL_FAILED`.
 

@@ -4,6 +4,12 @@ import { parseHostedAgentGrant, type DeviceHostMachineCredential, type HostedAge
 import { parseMachine } from '../offload/tailnet.ts';
 import { agentClientFiles, agentDriverClient } from './agent-drivers.ts';
 
+export function hostedAgentLine(agent: HostedAgentAccess, machine: string): string {
+  return 'command' in agent
+    ? agent.command
+    : `Agent control is unavailable on ${machine}. On that machine, check \`hosting.agentDriver\` (\`agent-device\` enables it) and the installed agent-device version.`;
+}
+
 /** Removes every driver's client file beside `file`, the placement's agent-device config path. */
 export async function removeAgentAccess(file: string, keep?: string): Promise<void> {
   for (const name of agentClientFiles()) {
@@ -29,12 +35,14 @@ export async function agentAccess(
 ): Promise<HostedAgentAccess> {
   const machine = parseMachine(credential.machine);
   const local = machine?.transport === 'local';
+  const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
+  if (parsed?.driver === 'none')
+    note(hostedAgentLine({ driver: 'none', setting: 'hosting.agentDriver' }, credential.machine));
   if (local && typeof relay === 'string') {
-    if (grant !== undefined) note(relay);
+    if (grant !== undefined && parsed?.driver !== 'none') note(relay);
     await removeAgentAccess(file);
     return { driver: 'none', setting: 'hosting.agentDriver' };
   }
-  const parsed = grant === undefined ? null : parseHostedAgentGrant(grant);
   const issued = parsed && 'token' in parsed ? parsed : null;
   const loaded = issued ? await agentDriverClient(issued.driver) : null;
   if ((grant !== undefined && !parsed) || (loaded && 'unavailable' in loaded))
