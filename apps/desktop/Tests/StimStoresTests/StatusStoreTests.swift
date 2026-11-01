@@ -330,11 +330,14 @@ struct StatusStoreTests {
     #expect(store.payload?.capacity?.liveCount == 7)
   }
 
-  private func pairedClient(_ host: String, memoryMb: Int, path: String, udid: String, checkout: String? = nil) -> ServerClient {
+  private func pairedClient(
+    _ host: String, memoryMb: Int, path: String, udid: String, checkout: String? = nil,
+    onTransport: @escaping (PairedStatusTransport) -> Void = { _ in }
+  ) -> ServerClient {
     ServerClient(
       endpoint: URL(string: "ws://\(host):7787")!, clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
-        PairedStatusTransport(
+        let transport = PairedStatusTransport(
           workspace: .object([
             "path": .string(path), "live": .bool(true), "warnings": .array([]), "issues": .array([]),
             "checkout": checkout.map(JSONValue.string) ?? .null,
@@ -344,6 +347,8 @@ struct StatusStoreTests {
               "state": .string("Booted"),
             ]),
           ]), onEvent: onEvent)
+        onTransport(transport)
+        return transport
       })
   }
 
@@ -364,7 +369,10 @@ struct StatusStoreTests {
           .utf8))
     store.accept(.success(local))
     #expect(await until { store.payload != nil })
-    let floco = pairedClient("100.64.0.2", memoryMb: 2, path: checkout, udid: "1A2B", checkout: root.path)
+    var flocoTransport: PairedStatusTransport!
+    let floco = pairedClient(
+      "100.64.0.2", memoryMb: 2, path: checkout, udid: "1A2B", checkout: root.path,
+      onTransport: { flocoTransport = $0 })
     let mini = pairedClient("100.64.0.3", memoryMb: 3, path: checkout, udid: "1A2B", checkout: root.path)
     let socket = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
@@ -389,6 +397,16 @@ struct StatusStoreTests {
     #expect(store.paired["floco"]?.payload?.environments.first?.project == Project(root: root.path))
     #expect(await until { store.projects[checkout] != nil })
     #expect(store.projects[checkout] != Project(root: root.path))
+
+    flocoTransport.changeArchiveSummary()
+    #expect(await until { store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.live == false })
+    #expect(store.paired["floco"]?.delivering == true)
+    store.show(workspace: WorkspaceKey(owner: .paired("floco"), path: checkout))
+    #expect(
+      await until {
+        store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.logs?.errorsSinceMarker == 4
+      })
+    #expect(!flocoTransport.methods.contains("archived.list"))
 
     floco.stop()
     store.usePairedServers(clients)
@@ -486,6 +504,7 @@ struct StatusStoreTests {
 @MainActor private final class PairedStatusTransport: ServerTransport {
   let workspace: JSONValue
   let onEvent: @MainActor (ServerTransportEvent) -> Void
+  var methods: [String] = []
 
   init(workspace: JSONValue, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
     self.workspace = workspace
@@ -494,10 +513,21 @@ struct StatusStoreTests {
 
   func close() {}
 
+  func changeArchiveSummary() {
+    guard case .object(var idle) = workspace else { return }
+    idle["live"] = .bool(false)
+    event([
+      "event": .string("workspaces"), "subscription": .string("s1"), "seq": .number(1),
+      "workspaces": .object(["upsert": .array([.object(idle)]), "remove": .array([])]),
+      "archived": .object(["count": .number(1), "bytes": .number(1), "newest": .array([])]),
+    ])
+  }
+
   func send(_ text: String) {
     guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
       let id = request["id"], case .string(let method)? = request["method"]
     else { return }
+    methods.append(method)
     switch method {
     case "hello":
       reply([
@@ -528,6 +558,20 @@ struct StatusStoreTests {
           ]),
           "machine": .null, "deviceLeases": .array([]), "simctlAvailable": .bool(true), "maintenance": .null,
         ]),
+      ])
+    case "workspace.subscribe":
+      reply(["id": id, "result": .object(["subscription": .string("detail")])])
+      if case .object(var detail) = workspace {
+        detail["logs"] = .object(["dir": .string("/logs"), "errorsSinceMarker": .number(4)])
+        event([
+          "event": .string("workspace"), "subscription": .string("detail"), "seq": .number(0),
+          "environment": .object(detail),
+        ])
+      }
+    case "archived.list":
+      reply([
+        "id": id,
+        "error": .object(["code": .string("archive-unavailable"), "message": .string("Archive storage unavailable.")]),
       ])
     default: break
     }
