@@ -1,6 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { EAS_TEST_GUARD_ROOT_ENV } from './packages/stim-cli/src/engine/eas-machine-root-guard-env.ts';
 import { TEMP_LEFTOVERS_TEST_GUARD_ENV } from './packages/stim-cli/src/commands/gc/temp-leftovers-guard-env.ts';
 
@@ -38,3 +39,12 @@ delete process.env.SHELL;
 // @expo/fingerprint runs `npx react-native config` in a project without expo-modules-autolinking 1.12 or later, and
 // npx installs react-native (about 330 MB) from the registry when the project has none. Offline, npx fails at once.
 process.env.npm_config_offline ??= 'true';
+
+beforeEach(({ task }) => {
+  if (/\.(?:integration|compat)\.test\.(?:ts|mjs)$/.test(task.file.filepath)) return;
+  vi.useFakeTimers({
+    toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance', 'hrtime'],
+  });
+});
+
+afterEach(() => vi.useRealTimers());

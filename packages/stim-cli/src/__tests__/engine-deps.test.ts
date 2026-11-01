@@ -95,7 +95,7 @@ describe('runPodInstall', () => {
     mkdirSync(join(root, 'ios'), { recursive: true });
     const beats: string[] = [];
     const child = makeChildProcess({ pid: 4243 });
-    const result = await runPodInstall(root, collectingWriter(), {
+    const pending = runPodInstall(root, collectingWriter(), {
       spawnFn: () => {
         setTimeout(() => child.emit('exit', 0, null), 120);
         return child;
@@ -104,6 +104,8 @@ describe('runPodInstall', () => {
       estimateMs: 100_000,
       onHeartbeat: (l: string) => beats.push(l),
     });
+    await vi.advanceTimersByTimeAsync(120);
+    const result = await pending;
     expect(result.ok).toBe(true);
     expect(beats[0]).toMatch(/^ {2}pods\s+still installing \(\d+s of ~1m40s\)$/);
   });

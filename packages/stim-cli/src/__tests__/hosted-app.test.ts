@@ -111,7 +111,10 @@ test.each(['release', 'process'])(
       ],
       mode,
     );
-    expect(await installHostedApp(home, session, 'app', device)).toBe(true);
+    const ready = installHostedApp(home, session, 'app', device);
+    await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('launch')));
+    await vi.runAllTimersAsync();
+    expect(await ready).toBe(true);
     expect(readFileSync(join(area, 'App.app', 'data-link'), 'utf8')).toBe('payload');
     expect(
       native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation') || args?.includes('openurl')),

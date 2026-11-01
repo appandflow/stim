@@ -23,6 +23,7 @@ import { plural, quotedPath } from '../command-output.ts';
 import { directorySizeAsync, isAbsentPath, isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { listBuildLocks } from '../engine/build-lock.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
+import { pruneEmptyProcessLockDirs } from '../engine/tunnel.ts';
 import { removeExpiredLease } from '../engine/device-lease.ts';
 import {
   ClaimRefusedError,
@@ -51,6 +52,7 @@ import {
   includesRecordings,
   includesWorkspaceOutputs,
   isWorkspacesScope,
+  markOverCapCompilationCache,
   planCacheEmptying,
   previewScopedEmptying,
   selectCaches,
@@ -66,6 +68,8 @@ import {
   eraseParkedDevices,
   deleteProjectDevices,
   describeUnverifiableDevices,
+  describeDeadProjectDevices,
+  findDeadProjectOwnedDevices,
   deviceSweepIsScoped,
   DEVICE_LIST_TIMEOUT_MS,
   findOrphanedDevices,
@@ -275,7 +279,10 @@ export async function collectGcReport(
   );
   if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`, operation);
   const sized = await sizeCaches(selected, operation);
-  const caches = scope === null ? previewScopedEmptying(sized, env) : planCacheEmptying(sized, all, env);
+  const caches =
+    scope === null
+      ? markOverCapCompilationCache(previewScopedEmptying(sized, env), env)
+      : planCacheEmptying(sized, all, env);
 
   if (scope) {
     return {
@@ -402,12 +409,10 @@ export async function collectGcReport(
 
   phase('devices', 'listing simulators and emulators', operation);
   if (unsweepableReason) {
-    let simNames: string[] = [];
+    let allSims: IosSimRecord[] = [];
     let avdNames: string[] = [];
     try {
-      simNames = (
-        await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal })
-      ).map((s) => s.name);
+      allSims = await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation, signal: operation?.signal });
     } catch (error) {
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
@@ -418,7 +423,17 @@ export async function collectGcReport(
       if (error instanceof WorkspaceProcessCleanupError) throw error;
       operation?.signal.throwIfAborted();
     }
-    deviceSweepNotices.push(...describeUnverifiableDevices(simNames, avdNames, { reason: unsweepableReason }));
+    const deadOwned =
+      cfg === null ? [] : findDeadProjectOwnedDevices({ config: cfg, deadProjects, sims: allSims, avds: avdNames });
+    const deadOwnedIds = new Set(deadOwned.map((device) => device.id));
+    deviceSweepNotices.push(
+      ...describeDeadProjectDevices(deadOwned),
+      ...describeUnverifiableDevices(
+        allSims.filter((sim) => !deadOwnedIds.has(sim.udid)).map((sim) => sim.name),
+        avdNames.filter((name) => !deadOwnedIds.has(name)),
+        { reason: unsweepableReason },
+      ),
+    );
   } else {
     let sims: IosSimRecord[] = [];
     let simsChecked = true;
@@ -870,6 +885,7 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     }
     const result = await reclaimProject(path, {
       archive: { removedBy: 'gc' },
+      deleteOwnedDevices: deviceSweepIsScoped(operation?.env ?? process.env),
       stopRequester: { by: 'stim gc --delete' },
       operation,
     }).catch((error: unknown) => {
@@ -906,7 +922,10 @@ async function pruneDeadProjects(deadProjects: string[], output: GcOutput, opera
     if (result.stoppedTunnel) {
       output.log(chalk.dim(`  stopped ${result.stoppedTunnel} tunnel`));
     }
-    for (const name of result.deletedDevices) output.record('device', 'done', name);
+    for (const name of result.deletedDevices) {
+      output.log(chalk.dim(`  deleted owned device ${name}`));
+      output.record('device', 'done', name);
+    }
     for (const s of result.skippedDevices) {
       output.log(chalk.yellow(`  ${s.name}: ${s.reason}`));
       output.record('device', result.failedDevices.includes(s) ? 'failed' : 'kept', s.name, {
@@ -1002,6 +1021,7 @@ function reportActionable(report: GcReport): boolean {
       deviceLeases.expired.length > 0 ||
       easSessionSweep.orphaned.length > 0 ||
       ((olderThan !== null || all) && caches.length > 0) ||
+      caches.some((entry) => entry.willEmpty) ||
       scopedWorkPending(cache, report),
   );
 }
@@ -1229,6 +1249,11 @@ async function runGcCore(
     );
   }
 
+  if (report.cacheScope === null) {
+    const emptyLockDirs = pruneEmptyProcessLockDirs();
+    if (emptyLockDirs > 0) output.log(chalk.dim(`Removed ${emptyLockDirs} empty process lock entries`));
+  }
+
   for (const slot of buildSlots.stale) {
     throwIfCancelled(signal, 'GC');
     const cleared = clearFreeClaimSet({ root: slot.path, label: 'build slot' });
@@ -1296,14 +1321,29 @@ async function runGcCore(
   if (all) {
     deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
-    if (caches.length) {
+    if (caches.some((entry) => !entry.willEmpty)) {
       output.log(
         chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
   } else {
-    deleteFailures += (await trimCaches(caches, olderThan, output, signal, deps.operation)).failures;
+    deleteFailures += (
+      await trimCaches(
+        caches.filter((entry) => !entry.willEmpty),
+        olderThan,
+        output,
+        signal,
+        deps.operation,
+      )
+    ).failures;
   }
+  if (!all)
+    deleteFailures += await emptyCaches(
+      caches.filter((entry) => entry.willEmpty),
+      output,
+      signal,
+      deps.operation,
+    );
   return payload(deleteFailures);
 }
 
@@ -1319,7 +1359,7 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does',
+      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does, and shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it',
     )
     .option(
       '--older-than <days>',

@@ -888,7 +888,11 @@ describe('the simulator boot gate', () => {
     const events: string[] = [];
     let bootStartedAt = 0;
     let fingerprintStartedAt = 0;
-    const { exitCode, errs } = await run(
+    let markFingerprintStarted: () => void = () => {};
+    const fingerprintStarted = new Promise<void>((resolve) => {
+      markFingerprintStarted = resolve;
+    });
+    const pending = run(
       {},
       {
         now: () => clock,
@@ -910,6 +914,7 @@ describe('the simulator boot gate', () => {
         fingerprintProject: async () => {
           fingerprintStartedAt ||= clock;
           events.push('fingerprint start');
+          markFingerprintStarted();
           await tick();
           clock += 3_000;
           events.push('fingerprint end');
@@ -917,6 +922,9 @@ describe('the simulator boot gate', () => {
         },
       },
     );
+    await fingerprintStarted;
+    await vi.runAllTimersAsync();
+    const { exitCode, errs } = await pending;
     expect(exitCode).toBe(null);
     expect(events.slice(0, 3)).toEqual(['boot start', 'fingerprint start', 'fingerprint end']);
     expect(events).toContain('boot end');
@@ -2060,7 +2068,7 @@ describe('the remote cache', () => {
     });
     try {
       await installed;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.advanceTimersByTimeAsync(20);
       expect(installationStarted).toBe(true);
       expect(returned).toBe(false);
     } finally {
@@ -7784,8 +7792,7 @@ describe('run statistics', () => {
         },
         ensureBooted: async () => {
           await built;
-          while (!['device', 'install'].includes(phase() as string))
-            await new Promise((resolve) => setTimeout(resolve, 5));
+          await vi.waitUntil(() => ['device', 'install'].includes(phase() as string));
           waitPhase = phase();
           return { ok: true, udid: UDID };
         },

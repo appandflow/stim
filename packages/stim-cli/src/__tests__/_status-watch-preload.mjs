@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { relative, sep } from 'node:path';
+import { mock } from 'node:test';
+
+mock.timers.enable({ apis: ['Date', 'setInterval'], now: Date.now() });
 
 const watch = fs.watch;
 const listeners = new Map();
@@ -15,7 +18,12 @@ fs.watch = (path, options, listener) => {
 };
 syncBuiltinESMExports();
 
-process.on('message', ({ path, name }) => {
+process.on('message', ({ path, name, advanceMs }) => {
+  if (typeof advanceMs === 'number') {
+    mock.timers.tick(advanceMs);
+    process.send({ advanceMs });
+    return;
+  }
   const exact = listeners.get(path);
   if (exact) return exact.listener('change', name);
   for (const [root, { listener, recursive }] of listeners) {

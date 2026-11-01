@@ -116,8 +116,9 @@ In on mode a pass runs, cheapest to rebuild first:
   3. build-cache and Metro entries, least recently used first, down to
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
-  4. the Swift compilation cache, emptied whole, only below
-     budget.hardFloorDiskGb, and kept while an iOS build holds its shared
+  4. the Swift compilation cache, emptied whole once it is over
+     caches.swiftCompilationCacheMaxGb (default 0, no cap), whatever the free
+     disk, and kept while an iOS build holds its shared
      claim (taken for each xcodebuild run that compiles with it) or that
      claim is unresolved; the emptying holds the exclusive claim
   5. linked worktrees whose branch or pull request finished (gc's finished
@@ -315,8 +316,9 @@ WHAT RECLAIMS AN OWNED DEVICE
                             shuts DOWN (never deletes) owned devices with no
                             driver, claim or activity for that long
 
-\`gc --delete --cache watchman\` and \`gc --delete --cache gradle-daemons\`
-stop shared helper processes, not devices (\`guide cleanup memory\`).
+\`gc --delete\` also shuts down an unused watchman daemon, and \`gc --delete
+--cache gradle-daemons\` stops idle Gradle and Kotlin daemons. They are shared
+helper processes, not devices (\`guide cleanup memory\`).
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
@@ -790,8 +792,15 @@ ORPHANED WORKSPACE DIRECTORIES
   "Orphaned workspace directories" when the recorded project root is gone,
   its volume is mounted, no registry key equals it or sits under it, and the
   workspace is not in use. \`gc --delete\` re-checks each one, then removes
-  it. A directory with a missing or unparseable workspace.json, or a root on
-  an unmounted volume, is reported under Skipped and never deleted.
+  it. A directory with an unparseable workspace.json, or a root on an
+  unmounted volume, is reported under Skipped and never deleted.
+  A directory with no workspace.json that holds only leftovers of a removed
+  workspace is reported the same way: maintenance.ndjson, log-error-index.json,
+  ended-agents.json, empty lock files and an agent-device directory with no
+  running daemon. It counts as gone when it is empty, or when the project
+  root its maintenance log names maps to the directory name and is gone. Any
+  other file (state.json, for one), a held lock or a log naming no root keeps
+  it under Skipped. The empty directory report has no project root.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`
@@ -826,9 +835,11 @@ TMPDIR LEFTOVERS
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
   each worktree's pull request under $STIM_HOME/pull-requests, which the
-  maintenance worktree check and \`gc --delete\` also write. \`worktree
+  maintenance worktree check and \`gc --delete\` also write. The merge check
+  caches each worktree's verdict under $STIM_HOME/git-merge. \`worktree
   remove\` drops the entries of the worktree it removed (its checkout,
-  node_modules and workspace folder, and its pull request), not the size
+  node_modules and workspace folder, its pull request and its merge
+  verdict), not the size
   entries of its owned devices' data folders. \`gc\` reports the
   entries of a folder or worktree that was removed some other way under "Stale
   status cache entries", and \`gc --delete\` removes them. An entry counts as
@@ -887,6 +898,10 @@ WHICH stim-* DEVICES gc DELETES
   \`rm -rf <dir>\` for AVD data with no registration), and
   never runs it. Boot, shutdown and teardown re-check ownership by the same
   rule, so a device that stops matching is left alone.
+  With STIM_HOME set, gc skips the device sweep because simulators and AVDs
+  are machine-global, but pruning a dead project still deletes the devices its
+  record marks as owned. gc lists them as to be deleted under "Device sweep
+  notices"; every other stim-* device is reported as not touched.
 
 ANDROID DATA WITHOUT A REGISTRATION
   \`gc\` also reports stim-*.avd directories whose .ini registration is
@@ -906,6 +921,9 @@ BUILD LOCKS
   \`gc --delete\` clears them. A lock whose builder IS running is a build in
   progress -- it is named in the report and touched by nothing, because
   removing it would put a second workspace on the same compile.
+  \`gc --delete\` also removes the empty directories under ~/.stim/process-locks
+  that removed projects and worktrees leave behind; it never touches a lock
+  that holds a claim.
 
 DEVICE LEASES
   A workspace can hold a timed lease on a physical device. The lease is one
@@ -1057,7 +1075,7 @@ THE ONE CASE GC WILL NOT REAP
     },
     memory: {
       summary:
-        'watchman and Gradle and Kotlin daemon memory in gc, and when gc --delete --cache watchman or gradle-daemons stops them',
+        'watchman and Gradle and Kotlin daemon memory in gc, and when gc --delete and gc --delete --cache gradle-daemons stop them',
       body: () => `MEMORY
   Every \`gc\` without --cache, and \`gc --cache watchman\` or
   \`gc --cache gradle-daemons\`, reports the long-lived helpers that grow while
@@ -1065,19 +1083,22 @@ THE ONE CASE GC WILL NOT REAP
   daemons. Each line gives the pid, physical footprint (the measure status
   uses; resident size when the footprint cannot be read), uptime and whether
   it is idle, and a kept one says why. The reclaimable line totals what
-  the two commands below would free now.
+  the commands below would free now.
 
-  Only these two commands stop anything, and each acts only on its own kind.
-  Neither a plain \`gc --delete\` nor \`--cache all\` touches them:
-    stim gc --delete --cache watchman
+  Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
+  watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
+  The Gradle and Kotlin daemons are stopped only by \`--cache gradle-daemons\`:
+    stim gc --delete              (or: stim gc --delete --cache watchman)
                                   runs \`watchman watch-del\` on each stale root
                                   with no subscription or trigger, then
                                   \`watchman shutdown-server\` only when
                                   \`debug-status\` lists no client but gc's own
-                                  call and no root has a trigger; otherwise
-                                  the daemon is kept and the report names
-                                  each client, as the Stim workspace whose
-                                  dev server it belongs to where it can
+                                  call, every root's subscriptions and
+                                  triggers were readable and no root has a
+                                  trigger; otherwise the daemon is kept and
+                                  the report names each client, as the Stim
+                                  workspace whose dev server it belongs to
+                                  where it can
     stim gc --delete --cache gradle-daemons
                                   stops each Gradle daemon its own
                                   \`gradle --status\` reports IDLE, then each
@@ -1310,8 +1331,13 @@ DEVICE RECORDINGS
   stays.
 
 SHARED BUILD CACHES
-  The caches that make a second workspace fast are alive by design and never
-  included in a plain \`gc --delete\`. Every \`gc\` run reports them anyway,
+  The caches that make a second workspace fast are alive by design and, with
+  one exception, not touched by a plain \`gc --delete\`. The exception is the
+  Swift compilation cache (the Xcode CAS under $STIM_HOME/compilation-cache):
+  once it is over caches.swiftCompilationCacheMaxGb (default 0, no cap), a
+  plain \`gc --delete\` empties it whole, since age trimming would corrupt its
+  index. It is kept, with the build named, while an iOS build holds its shared
+  claim or that claim is unresolved. Every \`gc\` run reports them anyway,
   each row tagged (registered) or (detected), with its size:
     stim gc                            # report, caches included
     stim gc --delete --older-than 30   # trim entries nothing has used

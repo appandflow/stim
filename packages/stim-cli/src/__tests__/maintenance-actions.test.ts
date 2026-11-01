@@ -293,28 +293,36 @@ describe('executing single actions', () => {
     expect(hasOutputs(own.dir)).toBe(true);
   });
 
-  test('the compilation cache is emptied whole only below the hard floor and never beside a live build', async () => {
+  test('the compilation cache is emptied whole above the hard floor, but never beside a live build', async () => {
     const dir = sharedCompilationCache();
     mkdirSync(join(dir, 'objects'), { recursive: true });
     writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
     register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
     const empty = action({ kind: 'would-empty-cache', target: dir, bytes: 4096 });
 
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 10 * 1024 }]);
-    const above = await executeAction(empty, context({ budget: { ...context().budget, hardFloorDiskMb: 5 * 1024 } }));
-    expect(above.status).toBe('kept');
-    expect(existsSync(join(dir, 'objects'))).toBe(true);
-
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 1024 }]);
-    const hardFloor = { ...context().budget, hardFloorDiskMb: 5 * 1024 };
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
     const build = plantClaim(cacheClaimRoot(dir), 'shared', liveClaimOwner());
-    expect((await executeAction(empty, context({ budget: hardFloor }))).status).toBe('kept');
+    expect((await executeAction(empty, context())).status).toBe('kept');
     expect(existsSync(join(dir, 'objects'))).toBe(true);
 
     rmSync(build);
-    const emptied = await executeAction(empty, context({ budget: hardFloor }));
+    const emptied = await executeAction(empty, context());
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);
+  });
+
+  test('a level 3 compilation cache emptying is kept once free disk is back above the level 3 floor', async () => {
+    const dir = sharedCompilationCache();
+    mkdirSync(join(dir, 'objects'), { recursive: true });
+    writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
+    register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
+    const outcome = await executeAction(
+      action({ kind: 'would-empty-cache', target: dir, bytes: 4096, level: 3 }),
+      context(),
+    );
+    expect(outcome.status).toBe('kept');
+    expect(existsSync(join(dir, 'objects'))).toBe(true);
   });
 
   test('a stale registration is kept when its directory exists again', async () => {

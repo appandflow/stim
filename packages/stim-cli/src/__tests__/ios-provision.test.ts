@@ -159,7 +159,7 @@ describe('runProvisioningBuild', () => {
   });
   afterEach(() => {
     resetExecutor();
-    vi.useRealTimers();
+    vi.clearAllTimers();
   });
   const start = (over: Partial<Parameters<typeof runProvisioningBuild>[0]> = {}) =>
     runProvisioningBuild({ args: ['-scheme', 'App', 'build'], cwd: '/app/ios', env: {}, ...over });

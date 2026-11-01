@@ -2032,7 +2032,7 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   looks exactly like a cache that is not there.
 
   Stim ignores paths a fresh checkout never has and no native Debug build
-  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, and,
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo, and,
   while a .gitignore pattern matches them (even when committed), the
   \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
   does not repeat those.
@@ -2564,6 +2564,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   source checkout's files (entitlements, Podfile.properties.json). If it
   cannot (stale node_modules, a leftover path, an error), warm deletes
   ios/Pods/Manifest.lock so \`stim ios\` runs \`pod install\`.
+
+  In an Expo project whose ios/ or android/ Git ignores, warm copies that
+  directory only when the source's last Stim prebuild of it ran on the app's
+  current native fingerprint, and records the same prebuild in the worktree.
+  Otherwise it leaves the directory out and prints
+  "carry       left out <app>/<platform>: <reason>"; the first
+  \`stim <platform>\` there generates it fresh. A directory generated outside
+  Stim has no record and is left out. To make it eligible, delete it in the
+  source checkout and run \`stim <platform>\` there so Stim generates it
+  fresh; running Stim over the existing directory records it as current even
+  when it came from an older template.
 
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about

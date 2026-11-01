@@ -57,7 +57,7 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
   expect(miss).toBeNull();
 
   const timedOutWarnings: string[] = [];
-  const timedOut = await resolveTieredBuild({
+  const pendingTimeout = resolveTieredBuild({
     local: local.cap,
     loadProvider: () => ({
       name: 'team-cache',
@@ -68,6 +68,8 @@ test('a provider miss, timeout, failure, or missing path returns a miss', async 
     timeoutMs: 5,
     warn: (_code, message) => timedOutWarnings.push(message),
   });
+  await vi.runAllTimersAsync();
+  const timedOut = await pendingTimeout;
   expect(timedOut).toBeNull();
   expect(timedOutWarnings[0]).toBe('team-cache did not answer within 5ms; building instead');
 

@@ -475,7 +475,7 @@ describe('idle stop', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   async function startIdleSupervisor({
@@ -633,7 +633,7 @@ describe('device idle shutdown', () => {
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   });
 
   async function startDeviceIdleSupervisor({

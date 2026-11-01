@@ -125,6 +125,7 @@ async function lookup(root: string, env?: NodeJS.ProcessEnv, background = confir
 }
 
 beforeEach(() => {
+  vi.stubEnv('npm_config_yes', 'false');
   resetExecutor();
   base = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fpmemo-')));
   home = mkdtempSync(join(tmpdir(), 'stim-fpmemo-home-'));
@@ -134,6 +135,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(base, { recursive: true, force: true });
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;

@@ -9,6 +9,11 @@ test('a cleanup failure wins over an earlier abort, and no item starts after a f
     await new Promise((resolve) => setTimeout(resolve, 10));
     throw cleanup;
   });
-  await expect(run).rejects.toBe(cleanup);
+  const failed = run.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  await vi.advanceTimersByTimeAsync(10);
+  expect(await failed).toBe(cleanup);
   expect(started).toEqual([0, 1]);
 });

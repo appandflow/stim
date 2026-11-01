@@ -141,7 +141,7 @@ test('provider reads are capped so a slow provider cannot fan out per transform'
     tiered.get(Buffer.from('04', 'hex')),
   ];
   expect(await Promise.all(reads.slice(2))).toEqual([null, null]);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await vi.advanceTimersByTimeAsync(0);
   expect(provider.calls.get).toBe(2);
   expect(warnings.map((w) => w.code)).toEqual(['provider-read-busy']);
 

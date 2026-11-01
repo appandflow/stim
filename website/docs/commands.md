@@ -1898,7 +1898,9 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--idle <duration>] [--json]
 ```
 
-Reports stale workspace entries, orphaned workspace directories, clean linked
+Reports stale workspace entries, orphaned workspace directories (including a
+directory with no `workspace.json` that holds only logs or lock files left by a
+removed workspace), clean linked
 worktrees whose branch is merged or whose pull request was merged or closed,
 orphaned owned devices and remote sessions,
 stale locks, shared cache sizes, and the memory of the watchman daemon and the
@@ -1931,8 +1933,9 @@ Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other 
 devices shut down, never deleted. The dry run lists those stops in its
 maintenance plan.
 
-`stim status` caches each folder's size and each worktree's pull request under
-`$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
+`stim status` caches each folder's size, each worktree's pull request and each
+worktree's merge verdict under `$STIM_HOME/disk-usage`,
+`$STIM_HOME/pull-requests` and `$STIM_HOME/git-merge`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
 devices' data folders. `gc` lists the entries of a folder or
 worktree that is gone from a mounted volume under "Stale status cache entries",
@@ -1990,13 +1993,16 @@ The Memory section lists long-lived helpers that grow while they run: the
 shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
-the memory that can be reclaimed. A plain `--delete` and `--cache all` never
-stop them; each kind has its own `--cache` value:
+the memory that can be reclaimed. A plain `--delete` stops watchman, and
+`--cache watchman` does the same on its own. `--cache all` does not touch
+watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
 
-- `stim gc --delete --cache watchman` removes the stale roots (a directory that
-  is gone, or a linked worktree git pruned) that no subscription or trigger
-  uses. It then shuts watchman down only when no other client is connected and no root has a trigger;
-  otherwise it keeps the daemon and names each client, such as the Stim
+- `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
+  roots (a directory that is gone, or a linked worktree git pruned) that no
+  subscription or trigger uses. They then shut watchman down only when no other
+  client is connected, every root's subscriptions and triggers were readable
+  and no root has a trigger;
+  otherwise they keep the daemon and name each client, such as the Stim
   workspace whose Metro uses it. Removing roots does not shrink watchman; only a
   restart does, and the next client that needs watchman starts it again.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
@@ -2373,7 +2379,8 @@ how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
 ```text
 Run `stim gc` and show me how much memory watchman and the Gradle and Kotlin
 daemons use and what is reclaimable. If watchman has no clients, run
-`stim gc --delete --cache watchman`; then run
+`stim gc --delete --cache watchman` (a plain `stim gc --delete` also stops it);
+then run
 `stim gc --delete --cache gradle-daemons` to stop the idle daemons if memory is low.
 ```
 

@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { killRunProcesses } from '../../../vitest.kill-run-processes.ts';
 import { reapChildren } from '../../../vitest.reap-children.ts';
 
 function alive(pid: number): boolean {
@@ -65,6 +68,36 @@ describe('reapChildren', () => {
       expect(
         await until(() => !alive(fixturePid) && !alive(grandchildPid) && !alive(sleeperPid) && !alive(orphanPid)),
       ).toBe(true);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'kills a reparented descendant that carries the run root in its environment and spares one that does not',
+    async () => {
+      const root = join(tmpdir(), 'stim-vitest-reaptest');
+      const sleeper = 'setInterval(() => {}, 1000)';
+      const leaderScript = `
+      const { spawn } = require('node:child_process');
+      const child = spawn(process.execPath, ['-e', ${JSON.stringify(sleeper)}], { detached: true, stdio: 'ignore' });
+      console.log(child.pid);
+      child.unref();
+    `;
+      const leader = spawn(process.execPath, ['-e', leaderScript], {
+        env: { ...process.env, TMPDIR: root },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      });
+      const orphanPid = await new Promise<number>((resolve) => {
+        leader.stdout.once('data', (data: Buffer) => resolve(Number(data.toString().trim())));
+      });
+      await new Promise((resolve) => leader.once('exit', resolve));
+      const bystander = spawn(process.execPath, ['-e', sleeper], { detached: true, stdio: 'ignore' });
+      const bystanderPid = bystander.pid as number;
+
+      killRunProcesses(root);
+
+      expect(await until(() => !alive(orphanPid))).toBe(true);
+      expect(alive(bystanderPid)).toBe(true);
+      reapChildren();
     },
   );
 });

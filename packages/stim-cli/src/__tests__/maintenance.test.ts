@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
@@ -17,6 +17,7 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { maintenanceLogger } from '../maintenance/log.ts';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 
 let home: string;
 beforeEach(() => {
@@ -103,6 +104,44 @@ test('disk shortfall maps existing dry-run targets while excluding the triggerin
   expect(plan({ ...input, diskSteps: [] }).blocked).toEqual([expect.stringContaining('no reclaimable disk targets')]);
 });
 
+describe('the Swift compilation cache cap', () => {
+  const planFor = (bytes: number, capGb: number, extra: Partial<MaintenanceSize> = {}) =>
+    plan({
+      pressure: pressure(),
+      sizes: [size('compilation-cache', bytes, extra)],
+      settings: { ...settings, swiftCompilationCacheMaxGb: capGb },
+      budget,
+      protectedRoot: '/self',
+    });
+
+  test('is emptied whole above the cap with plenty of free disk', () => {
+    expect(planFor(16 * 1024 ** 3, 15).actions).toEqual([
+      expect.objectContaining({ kind: 'would-empty-cache', dir: '/compilation-cache', bytes: 16 * 1024 ** 3 }),
+    ]);
+  });
+
+  test('is kept, with the build named, while a build may be using it', () => {
+    const result = planFor(16 * 1024 ** 3, 15, { blocked: 'the ios build (pid 42 in /w/app) may be using it' });
+    expect(result.actions).toEqual([]);
+    expect(result.skips).toContainEqual({
+      target: '/compilation-cache',
+      reason: 'the ios build (pid 42 in /w/app) may be using it',
+    });
+    expect(result.blocked).toEqual([expect.stringContaining('compilation-cache 16.0G over the 15G cap')]);
+  });
+
+  test('is kept at or under the cap', () => {
+    expect(planFor(15 * 1024 ** 3, 15).actions).toEqual([]);
+    expect(planFor(1024 ** 3, 15).actions).toEqual([]);
+  });
+
+  test('is kept when the cap is 0', () => {
+    const result = planFor(40 * 1024 ** 3, 0);
+    expect(result.actions).toEqual([]);
+    expect(result.skips).toEqual([]);
+  });
+});
+
 test('caps aggregate Metro stores and target 80 percent while retaining busy outputs', () => {
   const result = plan({
     pressure: pressure(),
@@ -116,7 +155,7 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
         blocked: 'in use: native run claim',
       }),
     ],
-    settings,
+    settings: { ...settings, swiftCompilationCacheMaxGb: 15 },
     budget,
     protectedRoot: '/self',
   });
@@ -134,9 +173,8 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
       }),
     ]),
   );
-  expect(result.actions.some((action) => action.kind === 'would-empty-cache')).toBe(false);
-  expect(result.skips).toContainEqual(
-    expect.objectContaining({ target: '/compilation-cache', reason: expect.stringContaining('hard floor') }),
+  expect(result.actions).toContainEqual(
+    expect.objectContaining({ kind: 'would-empty-cache', target: '/compilation-cache', bytes: 16 * 1024 ** 3 }),
   );
   expect(result.actions.some((action) => action.workspace === '/busy')).toBe(false);
   expect(result.skips).toContainEqual({
@@ -155,6 +193,7 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   utimesSync(rotatedLogPath(file), past, past);
   const logger = maintenanceLogger({ ...settings, logChecks: true }, 'pass-1', 'status');
   const workspace = join(home, 'app');
+  ensureWorkspaceStorage(workspace);
   const events = [
     'maintenance_action',
     'maintenance_skip',
@@ -198,6 +237,16 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   const silent = maintenanceLogger(settings, 'pass-3', 'status');
   expect(silent.write('maintenance_check', 'debug', 'routine')).toBeNull();
   silent.close();
+});
+
+test('maintenance records about a removed workspace do not recreate its directory', () => {
+  const logger = maintenanceLogger(settings, 'pass-1', 'status');
+  const removed = join(home, 'removed');
+  const record = logger.write('maintenance_skip', 'info', 'Kept it', { workspace: removed, target: removed });
+  logger.close();
+  expect(record?.event).toBe('maintenance_skip');
+  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('Kept it');
+  expect(existsSync(workspaceDir(removed))).toBe(false);
 });
 
 test('status does not infer a live pass from a check stamp', () => {
