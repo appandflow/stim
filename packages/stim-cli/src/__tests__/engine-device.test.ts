@@ -288,19 +288,18 @@ describe('ensureBooted: ios', () => {
           return makeExitingChild();
         },
       });
-      const result = await vi.waitUntil(
-        () =>
-          ensureBooted({
-            projectPath: tmpHome,
-            platform: 'ios',
-            simulatorApp: 'siniulator',
-            device: { deviceUdid: 'U1', owned: true },
-            timeoutMs: 5000,
-            pollMs: 5,
-            out: (line) => notes.push(line),
-          }),
-        { interval: 1 },
-      );
+      const booting = ensureBooted({
+        projectPath: tmpHome,
+        platform: 'ios',
+        simulatorApp: 'siniulator',
+        device: { deviceUdid: 'U1', owned: true },
+        timeoutMs: 5000,
+        pollMs: 5,
+        out: (line) => notes.push(line),
+      });
+      await vi.waitUntil(() => springBoardCalls > 0);
+      for (let pending = 1; pending < springBoard.length; pending++) await vi.advanceTimersToNextTimerAsync();
+      const result = await vi.waitUntil(() => booting);
       expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
       expect(result).toEqual({ ok: true, udid: 'U1' });
       expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);

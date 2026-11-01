@@ -233,27 +233,38 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
   );
 });
 
-test('native preparation stops each simulator before the next and stops after a failed preparation', (t) => {
+test('native preparation controls simulator shutdown and stops after a failed preparation', (t) => {
   const root = scratch(t);
   const homes = [join(root, 'first'), join(root, 'second')];
   for (const cwd of homes) {
     mkdirSync(cwd);
     writeFileSync(join(cwd, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'profile.json' } }));
   }
-  for (const failure of [false, true]) {
+  for (const { failure, shutdown } of [
+    { failure: null, shutdown: true },
+    { failure: 'prepare', shutdown: true },
+    { failure: null, shutdown: false },
+    { failure: 'inventory', shutdown: false },
+  ]) {
     const events = [];
     const h = {
       log() {},
-      sh(file, args, { cwd } = {}) {
-        if (file === 'xcrun')
-          return { code: 0, stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: 'Shutdown' }] } }) };
+      sh(file, args, { cwd, allowFail } = {}) {
+        if (file === 'xcrun') {
+          assert.equal(allowFail, true);
+          if (failure === 'inventory') return { code: 1, stdout: '', stderr: 'inventory timed out' };
+          return {
+            code: 0,
+            stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: shutdown ? 'Shutdown' : 'Booted' }] } }),
+          };
+        }
         assert.equal(file, process.execPath);
         assert.equal(args[2], cwd);
         events.push(['prepare', cwd]);
         return {
-          code: failure ? 1 : 0,
+          code: failure === 'prepare' ? 1 : 0,
           stdout: JSON.stringify({ udid: 'owned' }),
-          stderr: failure ? 'boot timed out' : '',
+          stderr: failure === 'prepare' ? 'boot timed out' : '',
         };
       },
       cli(args, { cwd }) {
@@ -266,6 +277,7 @@ test('native preparation stops each simulator before the next and stops after a 
       prepareIosDevices({
         h,
         platform: 'ios',
+        shutdown,
         targets: homes.map((cwd) => ({ cwd })),
         cleanup: {
           recordWorkspace(cwd) {
@@ -280,18 +292,19 @@ test('native preparation stops each simulator before the next and stops after a 
       } catch (error) {
         observed = error;
       }
-      assert.match(observed.message, /boot timed out/);
+      assert.match(observed.message, failure === 'prepare' ? /boot timed out/ : /inventory timed out/);
       assert.equal(observed.preserveNativeState, true);
       cleanupTmp(homes, observed);
       assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
     } else run();
     assert.deepEqual(
       events,
-      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) => [
-        ['prepare', cwd],
-        ['record', cwd],
-        ['stop', cwd],
-      ]),
+      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) =>
+        [
+          ['prepare', cwd],
+          ['record', cwd],
+        ].concat(shutdown ? [['stop', cwd]] : []),
+      ),
     );
   }
 });

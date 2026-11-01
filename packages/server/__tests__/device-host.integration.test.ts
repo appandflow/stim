@@ -2909,7 +2909,8 @@ test('runtime installs require hosting approval and a version, and preserve Xcod
 
 test('disconnect cancellation settles a runtime install worker before returning', async () => {
   await host.close();
-  hostEnv.RUNTIME_GATE = join(home, 'runtime-release');
+  const gate = join(home, 'runtime-release');
+  hostEnv.RUNTIME_GATE = gate;
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: hostEnv,
@@ -2921,9 +2922,13 @@ test('disconnect cancellation settles a runtime install worker before returning'
   const pending = host.installRuntime('client', { runtime: '26.5' }, abort.signal);
   await vi.waitFor(() => expect(existsSync(join(home, 'runtime-entered'))).toBe(true));
   const pid = await readPid(join(home, 'runtime-entered'));
+  const worker = { pid, processToken: processIdentity.captureProcessToken(pid) };
+  expect(worker.processToken).toEqual(expect.any(String));
   abort.abort();
+  if (process.platform === 'win32') writeFileSync(gate, '');
   expect(await pending).toHaveProperty('error.code', 'action-failed');
   await groupGone(pid);
+  await vi.waitFor(() => expect(['gone', 'different']).toContain(processIdentity.inspectProcessIdentity(worker)));
 });
 
 test.each(['ios', 'android'])(
@@ -2947,6 +2952,7 @@ test.each(['ios', 'android'])(
     expect(await host.appState('client', params)).toHaveProperty('error.message', expect.stringContaining('operation'));
     allowed.delete('client');
     host.revoke();
+    if (process.platform === 'win32') rmSync(join(area, 'app-state-wait'));
     expect(await pending).toHaveProperty('error.code', 'forbidden');
     await state(id, 'stopped');
     expect(readClaimSet(join(deviceHostRoot(), `${id}.claims.input`)).live).toEqual([]);
