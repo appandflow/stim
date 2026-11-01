@@ -1905,7 +1905,8 @@ connected since stim-server started keeps its directory when revoked.
   `build-busy` while the offer would be declined, naming the reason (a load,
   offloaded-build cap or build-slot decline also names the load per core,
   offloaded builds running and free disk it was decided on), or while
-  another build of the same client and repository runs, or while every one
+  another build of the same client and repository runs or a cancelled Android
+  one is still in its 15-second hold, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `compat` differs from this machine's, or, when either
   side has no `compat`, when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with
