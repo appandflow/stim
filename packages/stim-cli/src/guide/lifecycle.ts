@@ -3103,6 +3103,24 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   (https://github.com/expo/expo/pull/49839). The same isolation applies to
   non-Debug iOS configurations.
 
+  SDK 53 projects can opt in through metro.config.js. After creating and
+  merging the existing config, before exporting it:
+
+  \`\`\`js
+  const { createHash } = require('node:crypto');
+  const publicEnv = Object.entries(process.env)
+    .filter(([name]) => name.startsWith('EXPO_PUBLIC_'))
+    .sort(([a], [b]) => a.localeCompare(b));
+  const publicEnvKey = createHash('sha256')
+    .update(JSON.stringify(publicEnv))
+    .digest('hex');
+  config.cacheVersion = \`\${config.cacheVersion ?? ''}:\${publicEnvKey}\`;
+  \`\`\`
+
+  This preserves existing cacheVersion and cacheStores and varies the key for
+  effective EXPO_PUBLIC_ values. It does not make Gradle execute a skipped
+  bundle task.
+
   AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
   update with the newest commitTime for the binary's runtime version, and the
   embedded bundle is one of those updates. The cached artifact's embedded
