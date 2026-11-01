@@ -329,7 +329,7 @@ try {
   assert.deepEqual((await inventory('after-plan-devices')).map((device) => device.udid).toSorted(), initialDevices);
   if (!foodTruck) {
     const preparationStarted = Date.now();
-    prepareIosDevices({ h: harness, platform: 'ios', targets: [{ cwd: app }], cleanup });
+    prepareIosDevices({ h: harness, platform: 'ios', targets: [{ cwd: app }], cleanup, shutdown: false });
     summary.simulatorPreparationMs = Date.now() - preparationStarted;
   }
   if (foodTruck) {

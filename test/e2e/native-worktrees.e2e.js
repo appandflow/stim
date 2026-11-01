@@ -220,20 +220,27 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
   );
 });
 
-test('native preparation stops each simulator before the next and stops after a failed preparation', (t) => {
+test('native preparation controls simulator shutdown and stops after a failed preparation', (t) => {
   const root = scratch(t);
   const homes = [join(root, 'first'), join(root, 'second')];
   for (const cwd of homes) {
     mkdirSync(cwd);
     writeFileSync(join(cwd, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'profile.json' } }));
   }
-  for (const failure of [false, true]) {
+  for (const { failure, shutdown } of [
+    { failure: false, shutdown: true },
+    { failure: true, shutdown: true },
+    { failure: false, shutdown: false },
+  ]) {
     const events = [];
     const h = {
       log() {},
       sh(file, args, { cwd } = {}) {
         if (file === 'xcrun')
-          return { code: 0, stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: 'Shutdown' }] } }) };
+          return {
+            code: 0,
+            stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: shutdown ? 'Shutdown' : 'Booted' }] } }),
+          };
         assert.equal(file, process.execPath);
         assert.equal(args[2], cwd);
         events.push(['prepare', cwd]);
@@ -253,6 +260,7 @@ test('native preparation stops each simulator before the next and stops after a 
       prepareIosDevices({
         h,
         platform: 'ios',
+        shutdown,
         targets: homes.map((cwd) => ({ cwd })),
         cleanup: {
           recordWorkspace(cwd) {
@@ -274,11 +282,12 @@ test('native preparation stops each simulator before the next and stops after a 
     } else run();
     assert.deepEqual(
       events,
-      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) => [
-        ['prepare', cwd],
-        ['record', cwd],
-        ['stop', cwd],
-      ]),
+      (failure ? homes.slice(0, 1) : homes).flatMap((cwd) =>
+        [
+          ['prepare', cwd],
+          ['record', cwd],
+        ].concat(shutdown ? [['stop', cwd]] : []),
+      ),
     );
   }
 });
