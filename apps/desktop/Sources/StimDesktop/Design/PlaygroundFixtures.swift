@@ -14,6 +14,27 @@
     var id: Self { self }
   }
 
+  /// A device tool that answers like the CLI would, without touching a device.
+  func playgroundDeviceTool(_ platform: String) -> (DeviceTool) async throws -> DeviceToolResult {
+    { tool in
+      let body: String
+      switch tool {
+      case .setLocation: body = #"{"tool":"location","action":"set","readBack":null}"#
+      case .clearLocation: body = #"{"tool":"location","action":"clear","readBack":null}"#
+      case .permission(_, let service):
+        body =
+          platform == "ios"
+          ? #"{"tool":"permission","action":"grant","service":"\#(service)","readBack":null}"#
+          : #"{"tool":"permission","action":"grant","service":"\#(service)","readBack":{"permissions":[{"name":"android.permission.CAMERA","granted":true}]}}"#
+      case .push: body = #"{"tool":"push","readBack":null}"#
+      case .network(let enabled):
+        body = #"{"tool":"network","enabled":\#(enabled),"readBack":{"wifi":\#(enabled),"data":\#(enabled)}}"#
+      }
+      let json = String(body.dropLast()) + #","deviceName":"playground"}"#
+      return try JSONDecoder().decode(DeviceToolResult.self, from: Data(json.utf8))
+    }
+  }
+
   struct PlaygroundSimulator {
     let loading: Bool
     let error: String?
