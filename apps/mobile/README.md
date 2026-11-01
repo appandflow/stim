@@ -32,7 +32,9 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  grouped by repo. Each repo is a heading with how many of its workspaces are
+  grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
+  list; select Hidden in the Home filters to see them. Starting or warming the
+  workspace clears that shared flag. Each repo is a heading with how many of its workspaces are
   active and idle; repos with an active workspace come first, then by name. In a
   repo, active workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns active or idle, not while builds run and

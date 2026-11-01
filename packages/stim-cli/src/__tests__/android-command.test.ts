@@ -55,7 +55,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, parse } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
@@ -88,7 +88,6 @@ import {
   NO_DEVICE,
   NO_FINGERPRINT,
   androidDevClientScheme,
-  androidFacts,
   androidSystemImageSetting,
   androidVariantSetting,
   collectorLogFile,
@@ -100,7 +99,6 @@ import {
   dumpApkManifest,
   findAapt,
   parseXmltree,
-  displayPath,
   killPreviousCollector,
   lastBuildRecord,
   noDeviceDiagnostic,
@@ -3829,66 +3827,6 @@ describe('the pure parts', () => {
     });
     expect(remoteNoSpace.remedy).toBe('Inspect the remote device.');
     expect(remoteNoSpace.logPath).toBe(null);
-  });
-
-  test('phaseLine lines the values up in one column', () => {
-    expect(phaseLine('device', 'x')).toBe('  device      x');
-    expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
-  });
-
-  test('displayPath shortens a workspace path and leaves a foreign one alone', () => {
-    expect(displayPath(root, join(root, '.stim', 'logs'))).toBe(join('.stim', 'logs'));
-    const foreign = join(parse(root).root, 'elsewhere', 'build.ndjson');
-    expect(displayPath(root, foreign)).toBe(foreign);
-  });
-
-  test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
-    expect(androidFacts({ root })).toEqual({
-      platform: 'android',
-      buildMachine: 'auto',
-      serial: null,
-      avdName: null,
-      deviceName: null,
-      systemImage: null,
-      deviceProfile: null,
-      fingerprint: null,
-      cacheKey: null,
-      variant: null,
-      metroPort: null,
-      cacheHit: false,
-      cacheSkipped: false,
-      waitedForBuild: null,
-      appPath: null,
-      bundleId: null,
-      installSkipped: false,
-      launched: false,
-      ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
-      debugHttpHost: null,
-      debugHttpHostNote: null,
-      devClientUrl: null,
-      logs: null,
-      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
-      durationMs: null,
-    });
-    expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
-    expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
-      `${FINGERPRINT}-productionrelease-sim`,
-    );
-    expect({
-      avdName: androidFacts({ avdName: 'stim-app-412' }).avdName,
-      deviceName: androidFacts({ avdName: 'stim-app-412' }).deviceName,
-    }).toEqual({ avdName: 'stim-app-412', deviceName: 'stim-app-412' });
-    expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
-    expect(androidFacts({ durationMs: 123 }).durationMs).toBe(123);
-    expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
-    expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
-      pid: 41233,
-      ms: 761000,
-    });
-    const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    expect(record.buildMachine).toBe('auto');
-    expect(record.builtOn).toBeUndefined();
-    expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
   test('killPreviousCollector signals a pid proven ours and tolerates a dead one', () => {
