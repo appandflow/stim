@@ -171,7 +171,8 @@ from `buildPlacement`, whose `preference` follows `--remote-build`, `STIM_REMOTE
 and `remote.build` in that order. Its `reason` distinguishes cache reuse from compilation.
 Automatic build preferences remain policies: the run checks worker availability and
 compatibility and applies its normal fallback. CLI plans accept `--remote` to override
-the device setting without reserving or starting a device. Plans use the report execution and cleanup
+the device setting without reserving or starting a device. EAS-profile plans leave device
+placement unknown until the run. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
 Cache providers must settle after cancellation. If cleanup cannot finish within

@@ -296,7 +296,13 @@ export function plannedBuildPlacement(plan: BuildPlanPayload, preference: string
             : preference === 'remote-only'
               ? 'requires an approved worker at run time; never builds on this machine'
               : 'requires this worker; availability and compatibility are checked at run time';
-  return { ...plan, placement: plan.placement ?? 'this machine', buildPlacement: { preference, reason } };
+  return {
+    ...plan,
+    placement:
+      plan.placement ??
+      (plan.provider === 'eas' ? 'unknown; device placement is selected when the command runs' : 'this machine'),
+    buildPlacement: { preference, reason },
+  };
 }
 
 export function printPlan(plan: BuildPlanPayload, json: boolean): void {
