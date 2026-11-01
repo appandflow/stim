@@ -3381,7 +3381,7 @@ describe('offloaded builds', () => {
       async () => {
         const port = await start({
           env: { FAKE_WORKER_HANG: '1' },
-          buildLimits: { killGraceMs: 100, daemonSweepMs: 50, minFreeMemoryBytes: 0 },
+          buildLimits: { killGraceMs: 100, daemonSweepMs: 50, minFreeMemoryBytes: 0, gradleCancelDrainMs: 0 },
         });
         const { client, id } = await buildClient(port);
         const job = await launch(client);
@@ -3391,6 +3391,27 @@ describe('offloaded builds', () => {
         expect(revokeDevice(id)).toBe(true);
         await new Promise((resolve) => setTimeout(resolve, 300));
         expect(running(daemon)).toBe(true);
+      },
+    );
+
+    test.skipIf(!fakeTailscale)(
+      'keeps a cancelled Android build repository claimed while its daemon may still be cancelling',
+      async () => {
+        const port = await start({
+          env: { FAKE_WORKER_HANG: '1' },
+          buildLimits: { killGraceMs: 100, gradleCancelDrainMs: 1500 },
+        });
+        const { client, id } = await buildClient(port);
+        const job = await launch(client);
+        await eventually(() => existsSync(join(root, 'job.json')));
+        const { pid } = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8')) as { pid: number };
+        const claims = `${join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1')}.claims`;
+        expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
+        await eventually(() => !alive(pid));
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        expect(readClaimSet(claims).live).toHaveLength(1);
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
+        expect(readClaimSet(claims).live).toHaveLength(0);
       },
     );
 
