@@ -198,7 +198,7 @@ import {
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
-import { Pending, runStim, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
+import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
@@ -3861,31 +3861,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           .catch(() => {})
           .then(async () => {
             if (closing) return;
-            const run = runStim(
-              options.stimCli,
-              options.env,
-              ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
-              homedir(),
-              actionLimits,
-            );
-            let stop!: () => void;
-            const stopped = new Promise<null>((resolve) => {
-              stop = () => resolve(null);
-            });
-            const cancel = () => {
-              stop();
-              return run.cancel();
+            const abort = new AbortController();
+            let finished = false;
+            const fail = (message: string) => {
+              if (finished || closing) return;
+              finished = true;
+              refuseSetting('action-failed', message);
+            };
+            const deadline = setTimeout(() => {
+              fail(`stim settings did not finish within ${actionLimits.timeoutMs / 1000} s.`);
+              abort.abort();
+            }, actionLimits.timeoutMs);
+            const task = Promise.resolve()
+              .then(() =>
+                createStim({ projectRoot: homedir(), env: options.env }).setSetting(
+                  'recording.enabled',
+                  String(enabled),
+                  { scope: 'machine', signal: abort.signal },
+                ),
+              )
+              .then((result) => {
+                if (finished || closing) return;
+                if (Buffer.byteLength(JSON.stringify(result)) + 1 > actionLimits.maxOutputBytes)
+                  return fail(`stim settings printed more than ${actionLimits.maxOutputBytes} bytes.`);
+                finished = true;
+                audit({ ok: true });
+                send(socket, { id, result: { enabled, recordingsDeleted: result.recordingsDeleted ?? [] } });
+                return undefined;
+              })
+              .catch((cause: unknown) => fail(readFailure(cause)))
+              .finally(() => clearTimeout(deadline));
+            const cancel = async () => {
+              abort.abort();
+              await task;
             };
             running.add(cancel);
-            const outcome = await Promise.race([run.outcome, stopped]);
-            running.delete(cancel);
-            if (!outcome) return;
-            const printed = actionOutcome(outcome);
-            if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
-            audit({ ok: true });
-            const deleted = printed.output.recordingsDeleted;
-            const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
-            return send(socket, { id, result: { enabled, recordingsDeleted } });
+            await task.finally(() => running.delete(cancel));
+            return undefined;
           }),
       );
     }

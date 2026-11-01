@@ -8343,7 +8343,7 @@ describe('frames.subscribe', () => {
     env: Record<string, string>,
     frameLimits?: ServerOptions['frameLimits'],
     frameHelper?: string,
-    recording?: Pick<ServerOptions, 'record' | 'recordLimits'>,
+    recording?: Pick<ServerOptions, 'record' | 'recordLimits' | 'actionLimits'>,
   ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -11219,7 +11219,39 @@ describe('frames.subscribe', () => {
       });
     });
 
+    function holdRecordingDeletion(recordings: string) {
+      let entered = () => {};
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const remove = fsPromises.rm;
+      const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+        if (path === recordings) {
+          entered();
+          await held;
+        }
+        return remove(path, options);
+      });
+      syncBuiltinESMExports();
+      return {
+        started,
+        release,
+        restore: () => {
+          deletion.mockRestore();
+          syncBuiltinESMExports();
+        },
+      };
+    }
+
     test.skipIf(!fakeTailscale)('turns recording off at machine scope for a device with control only', async () => {
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
       const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), { record: true });
       const reader = await authed(port);
       expect(await reader.request('recording.set', { enabled: false })).toMatchObject({ error: { code: 'forbidden' } });
@@ -11228,15 +11260,11 @@ describe('frames.subscribe', () => {
         error: { code: 'bad-request' },
       });
       expect(await controller.request('recording.set', { enabled: false })).toMatchObject({
-        result: { enabled: false, recordingsDeleted: [] },
+        result: { enabled: false, recordingsDeleted: [workspace] },
       });
-      const settings = readFileSync(calls, 'utf8')
-        .split('\n')
-        .filter((line) => line.includes('"settings'))
-        .map((line) => JSON.parse(line));
-      expect(settings).toEqual([
-        { args: 'settings set recording.enabled false --scope machine --json', cwd: homedir() },
-      ]);
+      expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+      expect(existsSync(recordings)).toBe(false);
+      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
       expect(readAudit().map((entry) => [entry.action, entry.ok])).toEqual([
         ['recording.set', false],
         ['recording.set', false],
@@ -11245,51 +11273,91 @@ describe('frames.subscribe', () => {
     });
 
     test.skipIf(!fakeTailscale)('runs recording.set requests one at a time, so the last one wins', async () => {
-      const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '200' },
-        undefined,
-        fakeHelper(),
-        { record: true },
-      );
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), { record: true });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      const settingsLines = () =>
-        existsSync(calls)
-          ? readFileSync(calls, 'utf8')
-              .split('\n')
-              .filter((line) => line.includes('settings set'))
-              .map((line) => JSON.parse(line) as { args?: string; ended?: string })
-          : [];
+      const deletion = holdRecordingDeletion(recordings);
       const off = first.request('recording.set', { enabled: false });
-      await until(() => settingsLines().length === 1);
-      const on = second.request('recording.set', { enabled: true });
-      expect(await off).toMatchObject({ result: { enabled: false } });
-      expect(await on).toMatchObject({ result: { enabled: true } });
-      const set = (value: boolean) => `settings set recording.enabled ${value} --scope machine --json`;
-      expect(settingsLines().map((line) => line.args ?? `ended ${line.ended}`)).toEqual([
-        set(false),
-        `ended ${set(false)}`,
-        set(true),
-        `ended ${set(true)}`,
-      ]);
+      let on: ReturnType<typeof second.request> | undefined;
+      try {
+        await deletion.started;
+        on = second.request('recording.set', { enabled: true });
+        await second.request('machine.get');
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        expect(existsSync(recordings)).toBe(true);
+        deletion.release();
+        expect(await off).toMatchObject({ result: { enabled: false, recordingsDeleted: [workspace] } });
+        expect(await on).toMatchObject({ result: { enabled: true, recordingsDeleted: [] } });
+        expect(loadConfig()).toMatchObject({ recording: { enabled: true } });
+        expect(existsSync(recordings)).toBe(false);
+        expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
+        expect(
+          readAudit()
+            .filter((entry) => entry.action === 'recording.set')
+            .map((entry) => entry.ok),
+        ).toEqual([true, true]);
+      } finally {
+        deletion.release();
+        await Promise.allSettled([off, on]);
+        deletion.restore();
+      }
     });
 
     test.skipIf(!fakeTailscale)('closes while a recording.set runs and starts none queued behind it', async () => {
-      const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '30000' },
-        undefined,
-        fakeHelper(),
-        { record: true },
-      );
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), {
+        record: true,
+        actionLimits: { timeoutMs: 1000 },
+      });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
-      await until(() => stimCalls().some((call) => call.args?.startsWith('settings set')));
-      second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await server!.close();
-      server = null;
-      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toHaveLength(1);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const deletion = holdRecordingDeletion(recordings);
+      let closing: Promise<void> | undefined;
+      try {
+        first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
+        await deletion.started;
+        second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
+        await second.request('settings.get');
+        const timedOut = first.next();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await timedOut).toMatchObject({
+          id: 90,
+          error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
+        });
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        let serverClosed = false;
+        closing = server!.close().then(() => {
+          serverClosed = true;
+          return undefined;
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(serverClosed).toBe(false);
+        deletion.release();
+        await closing;
+        server = null;
+        expect(existsSync(recordings)).toBe(false);
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
+        expect(readAudit().filter((entry) => entry.action === 'recording.set')).toEqual([
+          expect.objectContaining({
+            ok: false,
+            error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
+          }),
+        ]);
+      } finally {
+        deletion.release();
+        await closing;
+        deletion.restore();
+        vi.useRealTimers();
+      }
     });
 
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
