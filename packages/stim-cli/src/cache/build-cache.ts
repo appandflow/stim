@@ -49,6 +49,12 @@ export const DEFAULT_FINGERPRINT_IGNORES: string[] = [
   '**/android/.idea/**',
   // Appears the first time someone opens the project in Xcode; @expo/fingerprint only ignores the workspace's.
   '**/*.xcodeproj/xcuserdata/**/*',
+  // A linked worktree's .git file holds that worktree's absolute git directory.
+  '**/.git',
+  // A main checkout's git directory changes with every commit, ref update and worktree add.
+  '**/.git/**',
+  // Metro and the Expo CLI write logs and caches here; reached through a `..` dir source it is not ignored by default.
+  '**/.expo/**',
 ];
 
 /**

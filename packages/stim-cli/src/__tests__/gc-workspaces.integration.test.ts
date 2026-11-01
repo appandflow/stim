@@ -50,7 +50,7 @@ import {
 } from '../workspace/pull-request.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
@@ -68,7 +68,7 @@ import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
-import { diskUsageCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
+import { diskUsageCacheFile, gitMergeCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 vi.mock('../devices/machine-cache-usage.ts', () => ({ getMachineCacheReport: async () => null }));
@@ -274,6 +274,78 @@ describe('orphaned workspace classification', () => {
     const result = classify([entry('/w/gone')], { busy: ['/w/gone'] });
     expect(result.orphaned).toEqual([]);
     expect(result.skipped[0]?.reason).toMatch(/native-run\.lock/);
+  });
+});
+
+describe('residue-only workspace directories', () => {
+  const entry = (residue: { projectRoot: string | null; empty?: boolean; blocked?: string | null }) => ({
+    dir: `/h/workspaces/${residue.projectRoot ?? 'x'}`,
+    projectRoot: null,
+    problem: 'it has no workspace.json',
+    residue: { empty: false, blocked: null, ...residue },
+  });
+  const classify = (entries: ReturnType<typeof entry>[], existing: string[] = []) =>
+    classifyWorkspaceDirs(entries, {
+      registryKeys: [],
+      exists: (path) => existing.includes(path),
+      isMounted: () => true,
+      inUse: () => [],
+    });
+
+  test('residue naming a gone root is orphaned, and one naming an existing root is not', () => {
+    expect(classify([entry({ projectRoot: '/w/gone' })]).orphaned).toMatchObject([
+      { projectRoot: '/w/gone', residue: true },
+    ]);
+    expect(classify([entry({ projectRoot: '/w/here' })], ['/w/here'])).toEqual({ orphaned: [], skipped: [] });
+  });
+
+  test('empty residue with no root is orphaned, and non-empty residue with no root is skipped', () => {
+    expect(classify([entry({ projectRoot: null, empty: true })]).orphaned).toMatchObject([
+      { projectRoot: null, residue: true },
+    ]);
+    expect(classify([entry({ projectRoot: null })]).skipped[0]?.reason).toMatch(/name no project root/);
+  });
+
+  test('residue that is blocked stays skipped with the reason', () => {
+    const result = classify([entry({ projectRoot: '/w/gone', blocked: 'it holds state.json' })]);
+    expect(result.orphaned).toEqual([]);
+    expect(result.skipped[0]?.reason).toMatch(/it holds state\.json/);
+  });
+});
+
+describe('workspace directories without workspace.json', () => {
+  function husk(root: string, entries: Record<string, string> = {}, logRoot: string | null = root): string {
+    const dir = join(tmpHome, 'workspaces', workspaceName(root));
+    mkdirSync(dir, { recursive: true });
+    if (logRoot !== null) {
+      mkdirSync(join(dir, 'logs'));
+      writeFileSync(join(dir, 'logs', 'maintenance.ndjson'), `${JSON.stringify({ workspace: logRoot })}\n`);
+    }
+    for (const [name, text] of Object.entries(entries)) writeFileSync(join(dir, name), text);
+    return dir;
+  }
+
+  test('gc --delete removes the leftovers of a removed workspace and keeps everything else', async () => {
+    const gone = husk(join(projects, 'gone'), { 'log-error-index.json': '{}' });
+    const empty = husk(join(projects, 'empty'), {}, null);
+    const live = join(projects, 'live');
+    mkdirSync(live);
+    const present = husk(live);
+    const stateful = husk(join(projects, 'stateful'), { 'state.json': '{}' });
+    const renamed = husk(join(projects, 'renamed'), {}, join(projects, 'other'));
+    const held = husk(join(projects, 'held'));
+    plantClaim(join(held, 'metadata.lock'), 'exclusive', liveClaimOwner());
+    const unnamed = husk(join(projects, 'unnamed'), { 'ended-agents.json': '{}' }, null);
+
+    const report = await captureLog(() => runGc({}));
+    expect(report).toContain('Orphaned workspace directories (2):');
+    expect(report).toContain(`the project root its logs name ${join(projects, 'gone')} is gone`);
+    for (const dir of [gone, empty, present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
+
+    await captureLog(() => runGc({ delete: true }));
+    expect(existsSync(gone)).toBe(false);
+    expect(existsSync(empty)).toBe(false);
+    for (const dir of [present, stateful, renamed, held, unnamed]) expect(existsSync(dir)).toBe(true);
   });
 });
 
@@ -3014,12 +3086,19 @@ describe('status cache entries of gone workspaces', () => {
     expect(readFileSync(later, 'utf8')).toBe(original);
   });
 
+  const seedMerge = (path: string) => {
+    const file = gitMergeCacheFile(path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, JSON.stringify({ path, head: 'h', target: 't', mergedInto: null }));
+    return file;
+  };
+
   test('gc reports and --delete removes entries whose path is gone, and keeps the rest', async () => {
     const live = join(projects, 'live');
     mkdirSync(join(live, 'node_modules'), { recursive: true });
     const gone = join(projects, 'gone');
-    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone)];
-    const kept = [seedDisk(live), seedPullRequest(live), seedDisk(join(live, 'node_modules'))];
+    const stale = [seedDisk(gone), seedDisk(join(gone, 'node_modules')), seedPullRequest(gone), seedMerge(gone)];
+    const kept = [seedDisk(live), seedPullRequest(live), seedMerge(live), seedDisk(join(live, 'node_modules'))];
     const unreadable = join(dirname(diskUsageCacheFile(live)), `${'0'.repeat(32)}.json`);
     writeFileSync(unreadable, 'not json');
     const foreign = diskUsageCacheFile(join(projects, 'elsewhere'));
@@ -3061,8 +3140,14 @@ describe('status cache entries of gone workspaces', () => {
       seedDisk(join(going, 'node_modules')),
       seedDisk(workspaceDir(going)),
       seedPullRequest(going),
+      seedMerge(going),
     ];
-    const stayingFiles = [seedDisk(staying), seedDisk(workspaceDir(staying)), seedPullRequest(staying)];
+    const stayingFiles = [
+      seedDisk(staying),
+      seedDisk(workspaceDir(staying)),
+      seedPullRequest(staying),
+      seedMerge(staying),
+    ];
 
     await captureLog(() => removeWorktreeTarget(going));
 

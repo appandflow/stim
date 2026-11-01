@@ -58,7 +58,7 @@ beforeEach(() => {
   native.runFile.mockImplementation((file: string) => (file === '/usr/libexec/PlistBuddy' ? 'Fixture' : ''));
 });
 afterEach(() => {
-  vi.useRealTimers();
+  vi.clearAllTimers();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });

@@ -50,7 +50,12 @@ test('explicit doctor recording keeps lock contention cancellable without changi
     controller.abort();
   }, 10);
   try {
-    await expect(recordDoctorCheck(root, 'ios', '1.4.0', controller.signal)).rejects.toMatchObject({
+    const recorded = recordDoctorCheck(root, 'ios', '1.4.0', controller.signal).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await recorded).toMatchObject({
       name: 'AbortError',
     });
     expect(ticked).toBe(true);

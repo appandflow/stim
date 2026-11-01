@@ -328,6 +328,62 @@
       "rules": {
         "unicorn/consistent-function-scoping": "off"
       }
+    },
+    {
+      "files": [
+        "packages/**/*.test.ts",
+        "scripts/**/*.test.mjs",
+        ".github/actions/stim-ci/src/**/*.test.ts",
+        "website/src/**/*.test.ts",
+        "website/scripts/**/*.test.mjs"
+      ],
+      "excludeFiles": ["**/*.integration.test.ts", "**/*.integration.test.mjs", "**/*.compat.test.ts"],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "property": "useRealTimers",
+            "message": "Unit tests use fake clocks. Put real-clock contracts in an integration test."
+          },
+          {
+            "object": "Atomics",
+            "property": "wait",
+            "message": "Advance the fake clock instead of blocking a unit-test worker."
+          },
+          {
+            "object": "Atomics",
+            "property": "waitAsync",
+            "message": "Advance the fake clock instead of waiting on real time in a unit test."
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "node:timers/promises",
+                "importNames": ["setTimeout", "setInterval", "scheduler"],
+                "message": "Use fake-clock timers in units; real-clock contracts belong in integration tests."
+              },
+              {
+                "name": "timers/promises",
+                "importNames": ["setTimeout", "setInterval", "scheduler"],
+                "message": "Use fake-clock timers in units; real-clock contracts belong in integration tests."
+              },
+              {
+                "name": "node:timers",
+                "importNames": ["setTimeout", "setInterval"],
+                "message": "Use the fake-clock global timers in units."
+              },
+              {
+                "name": "timers",
+                "importNames": ["setTimeout", "setInterval"],
+                "message": "Use the fake-clock global timers in units."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

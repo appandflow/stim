@@ -218,7 +218,7 @@ test('cancelling an APK export drains the copy before cleanup and permits recove
   try {
     expect(await Promise.race([copying, operation.then(() => false)])).toBe(true);
     controller.abort('SIGINT');
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.advanceTimersByTimeAsync(10);
     expect(settled).toBe(false);
     expect(existsSync(destination)).toBe(true);
   } finally {

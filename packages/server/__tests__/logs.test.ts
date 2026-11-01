@@ -2,7 +2,7 @@ import { LogBatcher, parseLogFilter } from '../src/logs.ts';
 import { protocolJsonSchema } from '../src/protocol.ts';
 import Ajv2020 from 'ajv/dist/2020.js';
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => vi.clearAllTimers());
 
 test('finite log delivery waits for congestion to clear, batches the records, and ends once', () => {
   vi.useFakeTimers();

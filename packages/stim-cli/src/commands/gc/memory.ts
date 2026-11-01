@@ -48,6 +48,11 @@ export function memoryCacheKind(cache: string | null | undefined): MemoryCacheKi
   return wanted === WATCHMAN_KIND || wanted === GRADLE_DAEMONS_KIND ? wanted : null;
 }
 
+/** The memory kind `gc --delete` acts on: the one `--cache` names, or watchman when there is no `--cache`. */
+function reclaimedKind(cache: string | null | undefined): MemoryCacheKind | null {
+  return cache?.trim() ? memoryCacheKind(cache) : WATCHMAN_KIND;
+}
+
 /** Which helpers a gc run inspects: both without --cache, one for its own kind, none for any other --cache. */
 export function memoryScope(cache: string | null | undefined): MemoryScope | null {
   if (!cache?.trim()) return { watchman: true, gradle: true };
@@ -876,7 +881,7 @@ export function memoryLines(
     ? 'footprint, resident size where unreadable'
     : 'physical footprint';
   const lines = [
-    `Memory (${measure}) - shared helpers that grow while they run; only --cache watchman or gradle-daemons stops them:`,
+    `Memory (${measure}) - shared helpers that grow while they run; --delete stops an unused watchman and --cache gradle-daemons stops idle Gradle and Kotlin daemons:`,
   ];
   for (const entry of report.processes) {
     const state = entry.reclaimable
@@ -901,7 +906,8 @@ export function memoryLines(
     if (!report.processes.some((entry) => entry.cacheKind === kind)) continue;
     const roots = kind === WATCHMAN_KIND ? report.watchmanRoots.filter((root) => root.removable).length : 0;
     const note = roots ? ` (and ${roots} stale root(s) removed)` : '';
-    parts.push(`${formatBytes(reclaimableBytes(report, kind))} with stim gc --delete --cache ${kind}${note}`);
+    const command = kind === WATCHMAN_KIND && !scoped ? 'stim gc --delete' : `stim gc --delete --cache ${kind}`;
+    parts.push(`${formatBytes(reclaimableBytes(report, kind))} with ${command}${note}`);
   }
   if (parts.length) lines.push(`  reclaimable ${formatBytes(reclaimableBytes(report))}: ${parts.join('; ')}`);
   return lines;
@@ -1217,11 +1223,15 @@ export async function stopIdleGradleDaemons(pids: readonly number[], output: GcO
 
 /** Whether `gc --delete --cache <cache>` would act on a memory kind: stop a process or remove a watchman root. */
 export function memoryWorkPending(cache: string | null, report: MemoryReport | null | undefined): boolean {
-  if (!memoryCacheKind(cache) || !report) return false;
-  return reclaimableBytes(report) > 0 || report.watchmanRoots.some((root) => root.removable);
+  const kind = reclaimedKind(cache);
+  if (!kind || !report) return false;
+  return (
+    reclaimableBytes(report, kind) > 0 ||
+    (kind === WATCHMAN_KIND && report.watchmanRoots.some((root) => root.removable))
+  );
 }
 
-/** Acts on the one memory kind `--cache` names: never on an unscoped run or `--cache all`. */
+/** Acts on the one memory kind `--cache` names, and on watchman alone for an unscoped run; never on `--cache all`. */
 export async function reclaimMemory(
   cache: string | null,
   report: MemoryReport | null | undefined,
@@ -1229,7 +1239,7 @@ export async function reclaimMemory(
   operation?: StimContext,
 ): Promise<number> {
   operation?.signal.throwIfAborted();
-  const kind = memoryCacheKind(cache);
+  const kind = reclaimedKind(cache);
   if (!kind || !report || report.processes.length === 0) return 0;
   return kind === WATCHMAN_KIND
     ? reclaimWatchman(report, output, operation)

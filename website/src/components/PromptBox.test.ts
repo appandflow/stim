@@ -21,7 +21,7 @@ describe('PromptBox simulation', () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    vi.useRealTimers();
+    vi.clearAllTimers();
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: false });
   });
 

@@ -303,6 +303,49 @@ export function findStaleDeviceRecords({
   return stale;
 }
 
+export interface DeadProjectOwnedDevice {
+  kind: 'ios' | 'android';
+  id: string;
+  name: string;
+  project: string;
+}
+
+export function findDeadProjectOwnedDevices({
+  config,
+  deadProjects,
+  sims,
+  avds,
+}: {
+  config: Config | null;
+  deadProjects: string[];
+  sims: { udid: string; name: string }[];
+  avds: string[];
+}): DeadProjectOwnedDevice[] {
+  const found: DeadProjectOwnedDevice[] = [];
+  for (const project of deadProjects) {
+    for (const { platforms } of projectDeviceSlots(config?.projects[project])) {
+      const ios = platforms.ios;
+      const sim =
+        ios?.owned && ios.deviceUdid
+          ? sims.find((s) => s.udid === ios.deviceUdid && s.name.startsWith('stim-'))
+          : undefined;
+      if (sim) found.push({ kind: 'ios', id: sim.udid, name: sim.name, project });
+      const android = platforms.android;
+      if (android?.owned && android.avdName?.startsWith('stim-') && avds.includes(android.avdName)) {
+        found.push({ kind: 'android', id: android.avdName, name: android.avdName, project });
+      }
+    }
+  }
+  return found;
+}
+
+export function describeDeadProjectDevices(devices: DeadProjectOwnedDevice[]): string[] {
+  return devices.map(
+    (device) =>
+      `${device.kind === 'ios' ? 'ios sim' : 'android avd'} ${device.name} is owned by the dead project ${device.project}; --delete tries to delete it with the entry`,
+  );
+}
+
 export function describeUnverifiableDevices(
   simNames: string[] = [],
   avdNames: string[] = [],

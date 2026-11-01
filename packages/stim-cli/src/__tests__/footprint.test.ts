@@ -17,7 +17,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   resetExecutor();
-  vi.useRealTimers();
+  vi.clearAllTimers();
   rmSync(root, { recursive: true, force: true });
   if (savedHome === undefined) delete process.env.STIM_HOME;
   else process.env.STIM_HOME = savedHome;

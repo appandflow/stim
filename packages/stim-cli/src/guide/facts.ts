@@ -918,7 +918,8 @@ RULES
     invalidProjects         { path }  the registry key is not absolute
     orphanedPorts           { project, label, port }
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
-                              whole workspace directory
+                              whole workspace directory; projectRoot is null
+                              for an empty directory with no workspace.json
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
                               pullRequestUnknown, willRemove, reason,
                               detail, eligibleAt, buildState }  mergedInto is the
@@ -1009,9 +1010,10 @@ RULES
                               whose absolute workspace root is missing on a
                               mounted volume; --delete forgets the entry
                               only and contacts no EAS session
-    staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
-                              file, bytes }  entries of $STIM_HOME/disk-usage
-                              and pull-requests whose path is gone from a
+    staleStatusCaches       { kind: "disk-usage" | "pull-request" | "git-merge",
+                              path, file, bytes }  entries of
+                              $STIM_HOME/disk-usage, pull-requests and
+                              git-merge whose path is gone from a
                               mounted volume; --delete removes the file
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
@@ -1146,12 +1148,14 @@ RULES
                               "busy" | "unknown", reclaimable, reason,
                               detail }  without --cache, or with --cache
                               watchman or gradle-daemons; reclaimable marks
-                              the ones gc --delete --cache <cacheKind>
-                              would stop (\`guide cleanup memory\`)
+                              the ones gc --delete would stop (watchman) or
+                              gc --delete --cache gradle-daemons would
+                              (\`guide cleanup memory\`)
     watchmanRoots           { path, stale: "missing" | "pruned-worktree" |
                               null, subscriptions, triggers, removable,
                               detail }  removable marks the stale roots
-                              --cache watchman would watch-del
+                              gc --delete (or --cache watchman) would
+                              watch-del
     memoryNotices           { message }  why the memory sweep was skipped
   bytes is null when the size is unknown: not measured, or the measurement
   failed. idleDays is null when the last use is unknown. listed is false for

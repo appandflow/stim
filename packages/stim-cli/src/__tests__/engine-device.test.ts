@@ -74,7 +74,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  vi.useRealTimers();
+  vi.clearAllTimers();
   vi.restoreAllMocks();
   rmSync(tmpHome, { recursive: true, force: true });
   delete process.env.STIM_HOME;
@@ -196,14 +196,18 @@ describe('ensureBooted: ios', () => {
       else process.env.USERPROFILE = savedProfile;
     });
     const ensure = (out: string[] = []) =>
-      ensureBooted({
-        projectPath: tmpHome,
-        platform: 'ios',
-        device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
-        timeoutMs: 5000,
-        pollMs: 1,
-        out: (line) => out.push(line),
-      });
+      vi.waitUntil(
+        () =>
+          ensureBooted({
+            projectPath: tmpHome,
+            platform: 'ios',
+            device: { deviceUdid: 'U1', owned: true, booted: 'U1' },
+            timeoutMs: 5000,
+            pollMs: 1,
+            out: (line) => out.push(line),
+          }),
+        { interval: 1 },
+      );
 
     test('copies the simulator SpringBoard crash reports into the workspace logs before the restart', async () => {
       const name = 'SpringBoard-2026-10-23-000000.ips';
@@ -284,15 +288,19 @@ describe('ensureBooted: ios', () => {
           return makeExitingChild();
         },
       });
-      const result = await ensureBooted({
-        projectPath: tmpHome,
-        platform: 'ios',
-        simulatorApp: 'siniulator',
-        device: { deviceUdid: 'U1', owned: true },
-        timeoutMs: 5000,
-        pollMs: 5,
-        out: (line) => notes.push(line),
-      });
+      const result = await vi.waitUntil(
+        () =>
+          ensureBooted({
+            projectPath: tmpHome,
+            platform: 'ios',
+            simulatorApp: 'siniulator',
+            device: { deviceUdid: 'U1', owned: true },
+            timeoutMs: 5000,
+            pollMs: 5,
+            out: (line) => notes.push(line),
+          }),
+        { interval: 1 },
+      );
       expect(commands).toContain('open -a Siniulator siniulator://open?udid=U1');
       expect(result).toEqual({ ok: true, udid: 'U1' });
       expect(commands.filter((c) => c === 'xcrun simctl boot U1').length).toBe(1);
@@ -398,11 +406,15 @@ describe('ensureBooted: ios', () => {
         resolve();
       }, 5),
     );
-    const result = await ensureBooted({
-      projectPath: tmpHome,
-      platform: 'ios',
-      device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
-    });
+    const result = await vi.waitUntil(
+      () =>
+        ensureBooted({
+          projectPath: tmpHome,
+          platform: 'ios',
+          device: { deviceUdid: 'U1', owned: true, booting: { udid: 'U1', done } },
+        }),
+      { interval: 1 },
+    );
     expect(result).toEqual({ ok: true, udid: 'U1' });
     expect(finished).toBe(true);
     expect(commands).toEqual(['xcrun simctl spawn U1 launchctl list']);

@@ -14,7 +14,7 @@ export interface StaleStatusCache {
   bytes: number;
 }
 
-const KINDS: readonly StatusCacheEntry['kind'][] = ['disk-usage', 'pull-request'];
+const KINDS: readonly StatusCacheEntry['kind'][] = ['disk-usage', 'pull-request', 'git-merge'];
 
 type Verdict = 'gone' | 'present' | 'unreadable' | 'unknown' | 'unmounted';
 

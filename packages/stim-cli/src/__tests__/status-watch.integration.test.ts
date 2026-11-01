@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 import { type ChildProcess, spawn } from 'node:child_process';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import {
   type WatchOptions,
@@ -541,7 +541,13 @@ describe('stim status --watch --json', () => {
       lines.push(...parts);
     });
     const exited = new Promise<number | null>((resolve) => proc.on('exit', (code) => resolve(code)));
-    return { proc, lines, exited, adbPid };
+    const advanceClock = async (advanceMs: number) => {
+      const advanced = once(proc, 'message');
+      proc.send({ advanceMs });
+      const [reply] = await advanced;
+      expect(reply).toEqual({ advanceMs });
+    };
+    return { proc, lines, exited, adbPid, advanceClock };
   }
 
   async function until(check: () => boolean, ms = 10_000) {
@@ -585,34 +591,40 @@ describe('stim status --watch --json', () => {
       );
       chmodSync(join(bin, 'xcrun'), 0o755);
       chmodSync(join(bin, 'ps'), 0o755);
-      const { lines } = startWatch();
+      const { lines, advanceClock } = startWatch(true);
       await until(() => lines.length > 0);
       return {
         lines,
         cpu: (line: string) => JSON.parse(line).machine.owners[0].cpuPercent as number,
         reads: () => Number(readFileSync(count, 'utf-8')),
         moveCpu: () => writeFileSync(moved, ''),
+        advanceClock,
       };
     }
 
     test('a CPU move past a step prints a new line without any state change; skipped off macOS, where no simulator runs', async () => {
-      const { lines, cpu, reads, moveCpu } = await machineWatch('$((up ? 20 : 10))');
+      const { lines, cpu, reads, moveCpu, advanceClock } = await machineWatch('$((up ? 20 : 10))');
       const before = cpu(last(lines));
-      await until(() => reads() >= 2, 30_000);
+      const initialReads = reads();
+      await advanceClock(15_000);
+      await until(() => reads() > initialReads);
       moveCpu();
-      await until(() => cpu(last(lines)) > before, 25_000);
+      await advanceClock(15_000);
+      await until(() => cpu(last(lines)) > before);
       expect(cpu(last(lines))).toBe(20);
-    }, 40_000);
+    });
 
     test('CPU jitter below a step prints no line even though the process table is read again', async () => {
-      const { lines, cpu, reads } = await machineWatch('$((50 + n % 2))');
+      const { lines, cpu, reads, advanceClock } = await machineWatch('$((50 + n % 2))');
       const before = cpu(last(lines));
       const seen = lines.length;
-      await until(() => reads() > 2, 30_000);
+      const initialReads = reads();
+      await advanceClock(15_000);
+      await until(() => reads() > initialReads);
       await new Promise((resolve) => setTimeout(resolve, 1000));
       expect(lines).toHaveLength(seen);
       expect(cpu(last(lines))).toBe(before);
-    }, 40_000);
+    });
   });
 
   function last(lines: string[]): string {

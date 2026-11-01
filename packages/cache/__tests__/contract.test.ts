@@ -56,7 +56,7 @@ test('the contract covers an iOS artifact directory', async () => {
 });
 
 test('a capability that ignores its abort signal fails the contract', async () => {
-  const results = await runCacheProviderContract({
+  const pending = runCacheProviderContract({
     provider: {
       metro: { get: () => new Promise(() => {}), set: () => {} },
     },
@@ -65,6 +65,8 @@ test('a capability that ignores its abort signal fails the contract', async () =
     checkTimeoutMs: 400,
     abortSettleMs: 100,
   });
+  await vi.runAllTimersAsync();
+  const results = await pending;
 
   const aborting = results.find((result) => result.name === 'metro get settles when its signal aborts');
   expect(aborting?.passed).toBe(false);

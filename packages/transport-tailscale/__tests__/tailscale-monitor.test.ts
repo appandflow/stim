@@ -6,7 +6,7 @@ const timedOut: TailscaleState = { state: 'unavailable', reason: 'it timed out' 
 const running: TailscaleState = { state: 'running', ips: ['100.64.0.1'], dnsName: 'mac.tail1.ts.net', hostName: 'mac' };
 
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
+afterEach(() => vi.clearAllTimers());
 
 function watch(reads: TailscaleState[], find: () => string | null = () => 'tailscale') {
   const seen: TailscaleState[] = [];

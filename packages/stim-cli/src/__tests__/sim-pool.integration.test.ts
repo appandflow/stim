@@ -283,8 +283,9 @@ test('a live deletion claim blocks adoption beyond the ordinary lock stale windo
   let childResult = '';
 
   const removed = await removeParkedAfter('ios', first.udid, () => {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_250);
     const script = `
+        const { mock } = await import('node:test');
+        mock.timers.enable({ apis: ['Date'], now: Date.now() + 10_250 });
         const { adoptParked, removeParkedAfter } = await import(process.argv[1]);
         const request = JSON.parse(process.argv[2]);
         let deleted = false;

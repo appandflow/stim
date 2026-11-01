@@ -1,3 +1,4 @@
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -255,6 +256,7 @@ test.each([
   let now = Date.now();
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   const workspace = join(home, 'idle');
+  ensureWorkspaceStorage(workspace);
   const action = {
     kind: 'would-clear-outputs' as const,
     target: workspace,

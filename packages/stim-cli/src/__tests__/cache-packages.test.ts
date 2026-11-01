@@ -9,13 +9,10 @@ import { hasStoreAt } from '../supervisor/metro-store.ts';
 import { buildCacheKey, resolveBuild, storeBuild, storedSources } from '../cache/build-cache.ts';
 
 async function waitForRegistration(dir: string, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const found = readManifest().caches.find((c) => c.dir === dir);
-    if (found) return found;
-    await new Promise((r) => setTimeout(r, 10));
-  }
-  return null;
+  return vi.waitUntil(() => readManifest().caches.find((cache) => cache.dir === dir), {
+    timeout: timeoutMs,
+    interval: 10,
+  });
 }
 
 test.each(['ios', 'android'])(

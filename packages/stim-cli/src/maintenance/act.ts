@@ -159,13 +159,11 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
 }
 
 async function emptyCompilationCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const floor = action.level === 3 ? levelFloors(context.budget, context.settings)[3] : context.budget.hardFloorDiskMb;
-  if (!measureDisk().some((disk) => disk.freeMb < floor))
-    return kept(
-      action.level === 3
-        ? 'free disk is back above the level 3 floor, and this cache can only be emptied whole'
-        : 'free disk is above budget.hardFloorDiskGb, and this cache can only be emptied whole',
-    );
+  if (action.level === 3) {
+    const floor = levelFloors(context.budget, context.settings)[3];
+    if (!measureDisk().some((disk) => disk.freeMb < floor))
+      return kept('free disk is back above the level 3 floor, and this cache can only be emptied whole');
+  }
   const dir = sharedCompilationCache();
   const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' });
   if (blocked) return kept(blocked);

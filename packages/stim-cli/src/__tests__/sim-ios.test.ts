@@ -259,9 +259,11 @@ test.each(['Booting', 'Booted'])(
   'bootIosSim names the udid and the wait when the deadline expires while %s',
   async (state) => {
     bootstatusExecutor(['hang'], () => bootSimList(state));
-    await expect(bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 })).rejects.toThrow(
-      /UDID-A did not finish booting within 1s/,
-    );
+    const booting = bootIosSim('UDID-A', { timeoutMs: 1200, attemptMs: 300 }).catch((error: unknown) => error);
+    await vi.runAllTimersAsync();
+    const failed = await booting;
+    expect(failed).toBeInstanceOf(Error);
+    expect(failed).toHaveProperty('message', expect.stringMatching(/UDID-A did not finish booting within 1s/));
   },
 );
 
@@ -297,7 +299,7 @@ test('bootIosSim fails at the boot deadline when SpringBoard never starts', asyn
       /UDID-A did not finish booting within 60s\. Last boot output: waiting for SpringBoard/,
     );
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
     vi.restoreAllMocks();
   }
 });
@@ -321,7 +323,7 @@ test('bootstatus refuses a retry when termination cannot be confirmed within the
     expect(await outcome).toMatchObject({ message: expect.stringMatching(/could not be confirmed stopped/) });
     expect(surveys).toBe(0);
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
   }
 });
 
@@ -363,7 +365,7 @@ test('boot diagnostics retain peak pressure after recovery and unknown readings,
     expect(reads).toBe(count);
     expect(vi.getTimerCount()).toBe(0);
   } finally {
-    vi.useRealTimers();
+    vi.clearAllTimers();
     vi.restoreAllMocks();
   }
 });

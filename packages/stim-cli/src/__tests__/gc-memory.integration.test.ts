@@ -437,14 +437,41 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32')('neither --cache all nor an unscoped --delete touches watchman', async () => {
+test.skipIf(process.platform === 'win32')('--cache all does not touch watchman', async () => {
   vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
   const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
   vi.spyOn(console, 'log').mockImplementation(() => {});
   await runGc({ cache: 'all', delete: true });
   expect(calls).toEqual([]);
+});
+
+test.skipIf(process.platform === 'win32')('a plain gc --delete shuts down a watchman no client uses', async () => {
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  await runGc({ delete: true });
+  expect(calls.filter((args) => args[1] === 'shutdown-server')).toEqual([['--no-spawn', 'shutdown-server']]);
+});
+
+test.skipIf(process.platform === 'win32')('a plain gc --delete keeps a watchman a client uses', async () => {
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  const calls = fakeWatchman({
+    clients: [{ pid: 4242, name: 'node' }],
+    subscribers: { [tmpHome]: ['metro-file-map-4242-x'] },
+  });
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
   await runGc({ delete: true });
   expect(calls.some((args) => ['watch-del', 'shutdown-server'].includes(args[1]!))).toBe(false);
+  expect(log.mock.calls.flat().join('\n')).toContain('node (pid 4242)');
+});
+
+test.skipIf(process.platform === 'win32')('a plain gc dry run names gc --delete as the watchman reclaim', async () => {
+  vi.spyOn(memory, 'memorySweepIsScoped').mockReturnValue(false);
+  const calls = fakeWatchman({ clients: [], subscribers: { [tmpHome]: [] } });
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  await runGc({});
+  expect(calls.some((args) => ['watch-del', 'shutdown-server'].includes(args[1]!))).toBe(false);
+  expect(stripVTControlCharacters(log.mock.calls.flat().join('\n'))).toMatch(/with stim gc --delete(;|$|\n)/m);
 });
 
 test('doctor notes watchman only past 2 GiB, with its stale roots and whether gc could shut it down', () => {
