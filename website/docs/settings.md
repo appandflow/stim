@@ -158,6 +158,17 @@ The setting only changes the prefetch, not the app. Setting
 }
 ```
 
+### Installing a missing iOS runtime
+
+`ios.autoInstallRuntime` defaults to `false`. Set it to `true` to install an
+explicitly requested `ios.runtime` or `--runtime` version on the local or named
+approved Mac before running the app. `--install-runtime` opts in for one run.
+Choose `--remote local` or `--remote <mac>`; automatic placement, EAS, proxy and
+physical phones do not install runtimes. An install typically downloads 8–10 GB
+and requires 20 GB free on the simulator volume for download and unpacking.
+Runtimes are shared Xcode components. List available versions and remove unused
+ones manually in Xcode Settings > Components; Stim does not prune them.
+
 ### Default simulator model and runtime
 
 `ios.deviceType`, `ios.runtime`, `android.systemImage`, and

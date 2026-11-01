@@ -1035,8 +1035,9 @@ export function unknownIosRuntimeRefusal(
   if ((runtimes || []).some((r) => iosRuntimeMatches(r, requested))) return null;
   return {
     message: `No installed simulator runtime matches "${requested}". Installed runtimes: ${installedNames((runtimes || []).map((r) => r.version))}.`,
-    remedy:
-      'Pass `--runtime` (or set ios.runtime) a version printed above ("26.5") or a runtime\'s full name ("iOS 26.5"); nothing else matches. Install more runtimes through Xcode.',
+    remedy: /^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(requested)
+      ? `Retry with --runtime "${requested}" --install-runtime on the local or named Mac, or run \`xcodebuild -downloadPlatform iOS -buildVersion ${requested.replace(/^iOS /, '')} -architectureVariant ${process.arch === 'arm64' ? 'arm64' : 'universal'}\` on the simulator Mac. Xcode Settings > Components lists available versions.`
+      : 'Pass --runtime (or set ios.runtime) an installed version or full name printed above. To install another exact version, pass --runtime <major.minor[.patch]> --install-runtime on the local or named Mac.',
   };
 }
 

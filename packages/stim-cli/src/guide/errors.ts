@@ -175,7 +175,8 @@ Branch on the code, never on the message.`,
   the first diagnostics are the phase names and the last error lines the
   script printed, ahead of the compiler diagnostics.
   Three Android refusals share this code without gradle itself failing:
-  - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
+  - NO ANDROID SDK, before gradle starts: local React Native emulator runs
+    refuse before Metro or device setup. Nothing exists at the SDK path
     Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
     location), and there is no android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
     into android/local.properties; \`stim doctor --platform android\` reports
@@ -1695,6 +1696,16 @@ not on any remote"  (worktree remove)
   and does not print this line. When the locks match but Pods still name the
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
+
+"carry       left out <app>/<platform>: <reason>"
+  The app is an Expo project whose ios/ or android/ Git ignores, and Stim
+  cannot show the source checkout's copy was generated from the app's current
+  inputs: Stim has no prebuild record for it, its last prebuild did not
+  finish, or the record names an earlier native fingerprint. Warm does not
+  copy it, so the first \`stim <platform>\` in this worktree generates it
+  fresh. Nothing to fix. To let later warms copy it, delete <platform>/ in
+  the source checkout and run \`stim <platform>\` there, so Stim generates it
+  fresh and records that.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

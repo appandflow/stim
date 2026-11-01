@@ -1304,6 +1304,12 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.runtime.install', {
+            type: 'object',
+            required: ['runtime'],
+            additionalProperties: false,
+            properties: { runtime: { type: 'string', pattern: '^(iOS )?[0-9]+[.][0-9]+([.][0-9]+)?$', maxLength: 64 } },
+          }),
           request('device-host.offer', {
             type: 'object',
             required: ['platform'],

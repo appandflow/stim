@@ -21,7 +21,10 @@ import { memoizedFingerprint, type FingerprintCheck } from '../cache/fingerprint
 import { explainBuildMiss, fingerprintErrorMissReason } from '../cache/miss-reason.ts';
 import { formatDuration, shortHash } from '../command-output.ts';
 import { androidMetroRuntime, androidProcessRuntime } from '../commands/android/launch.ts';
-import { relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { androidHome } from '../devices/android.ts';
+import { androidSdkRefusal } from '../engine/gradle.ts';
 import {
   androidGradleProject,
   androidJobLayout,
@@ -104,7 +107,18 @@ export function reactNativeAndroidProject(
     packageRemedy: `Set \`expo.android.package\` in app.json / app.config.js, or \`namespace\` in ${relative(root, layout.moduleDir) || '.'}/build.gradle.`,
     variantProblem,
     targets: ['emulator', 'physical', 'hosted', 'remote'],
-    preflight: (target) => androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }),
+    preflight: (target) => {
+      const sdkPath = androidHome();
+      return (
+        androidPathRoomRefusal(root, { ...target, platform: dependencies.platform }) ??
+        androidSdkRefusal({
+          sdkPath,
+          sdkExists: existsSync(sdkPath),
+          hasLocalProperties: existsSync(join(layout.gradleRoot, 'local.properties')),
+          localPropertiesPath: relative(root, join(layout.gradleRoot, 'local.properties')).split(sep).join('/'),
+        })
+      );
+    },
     eas: true,
     runtimeKind,
     runtime: ({ build, prepareMetro, phase }) =>

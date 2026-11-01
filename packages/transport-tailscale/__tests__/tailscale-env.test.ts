@@ -19,6 +19,30 @@ if (process.argv[2] === 'whois') {
 }
 `;
 
+describe.skipIf(process.platform === 'win32')('Tailscale status on a large tailnet', () => {
+  let dir: string;
+  let binary: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), 'stim-tailscale-large-'));
+    binary = join(dir, 'tailscale');
+    // Larger than Node's default 1 MiB execFile maxBuffer, as a tailnet with many peers prints.
+    writeFileSync(
+      binary,
+      `#!/usr/bin/env node
+console.log(JSON.stringify({ BackendState: 'Running', TailscaleIPs: ['100.64.0.1'], Self: { DNSName: 'mac.tail.ts.net.' }, Peer: { p: 'x'.repeat(2 * 1024 * 1024) } }));
+`,
+    );
+    chmodSync(binary, 0o755);
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reads the whole status', async () => {
+    const env = { PATH: process.env.PATH };
+    expect(await readRawTailscaleStatus(binary, env)).toMatchObject({ BackendState: 'Running' });
+    expect(await readTailscaleStatus(binary, env)).toMatchObject({ state: 'running', dnsName: 'mac.tail.ts.net' });
+  });
+});
+
 describe.skipIf(process.platform === 'win32')('Tailscale CLI environment', () => {
   let dir: string;
   let binary: string;

@@ -2032,7 +2032,7 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   looks exactly like a cache that is not there.
 
   Stim ignores paths a fresh checkout never has and no native Debug build
-  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git, and,
+  reads: android/local.properties, android/.idea, *.xcodeproj/xcuserdata, .git (and its contents), .expo, and,
   while a .gitignore pattern matches them (even when committed), the
   \`react-native bundle\` output ios/main.jsbundle and ios/assets. A project
   does not repeat those.
@@ -2346,7 +2346,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
   android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local
@@ -2565,6 +2565,17 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   cannot (stale node_modules, a leftover path, an error), warm deletes
   ios/Pods/Manifest.lock so \`stim ios\` runs \`pod install\`.
 
+  In an Expo project whose ios/ or android/ Git ignores, warm copies that
+  directory only when the source's last Stim prebuild of it ran on the app's
+  current native fingerprint, and records the same prebuild in the worktree.
+  Otherwise it leaves the directory out and prints
+  "carry       left out <app>/<platform>: <reason>"; the first
+  \`stim <platform>\` there generates it fresh. A directory generated outside
+  Stim has no record and is left out. To make it eligible, delete it in the
+  source checkout and run \`stim <platform>\` there so Stim generates it
+  fresh; running Stim over the existing directory records it as current even
+  when it came from an older template.
+
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about
   regeneration. Native intermediates can record the source checkout's paths;
@@ -2627,6 +2638,26 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   "pixel_fold" for a foldable. Each overrides its setting (ios.deviceType,
   ios.runtime, android.systemImage, android.deviceProfile) for that one
   invocation, exactly as \`--configuration\` overrides ios.configuration.
+
+  \`stim ios --runtime 26.5 --install-runtime --remote local\` installs that
+  missing iOS runtime with Xcode, then continues the run. Use
+  \`--remote <mac>\` for a named approved hosting Mac, including from Linux.
+  ios.autoInstallRuntime enables the same opt-in for an explicit ios.runtime
+  or --runtime version; it defaults to false. Installation requires an exact
+  major.minor[.patch] version, about 8-10 GB to download (actual size varies),
+  and at least 20 GB free on the simulator volume for download and unpacking.
+  A child-aware ownership claim serializes Stim installs in this Mac's Stim
+  home and the installer takes an available build slot. Run output shows
+  Xcode progress locally and periodic waiting messages remotely; status shows
+  the install phase and remote machine. Without opt-in, a missing runtime
+  still refuses. Automatic placement, eas/proxy and physical-device runs do
+  not install runtimes: choose --remote local or one named Mac first.
+  Xcode Settings > Components lists downloadable versions supported by Xcode;
+  Stim retains Xcode's error for unavailable versions. Installed versions
+  appear in stim doctor and xcrun simctl list runtimes. Runtimes are shared
+  Xcode components, not Stim-owned devices: remove them manually through
+  Xcode Settings > Components after checking other workspaces no longer need
+  them. Stim does not prune them.
 
   A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
   before anything is created, and the message lists the installed names, so a

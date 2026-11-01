@@ -154,6 +154,7 @@ beforeEach(() => {
   androidHome = process.env.ANDROID_HOME;
   androidSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(home, 'sdk');
+  mkdirSync(process.env.ANDROID_HOME);
   delete process.env.ANDROID_SDK_ROOT;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-')));
   writeFileSync(
@@ -644,8 +645,10 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
 });
 
 test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'local.properties'), 'sdk.dir=/project-sdk');
   writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
   const h = harness({ resolveSettingsFor: () => ({ android: { gradleRoot: 'native' } }) });
   await h.run();
@@ -668,6 +671,22 @@ test('an invalid Android pool bound refuses before device creation and emits one
   } finally {
     delete process.env.STIM_POOL_ANDROID_PARKED_MAX;
   }
+});
+
+test('a missing local Android SDK refuses before Metro or device setup', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
+  const h = harness({ json: true });
+  const result = await h.run();
+  expect(result.error).toMatchObject({
+    code: 'STIM_BUILD_FAILED',
+    message: `No Android SDK at ${join(home, 'sdk')}.`,
+    remedy: expect.stringContaining('android/local.properties'),
+  });
+  expect(h.calls.metro).toEqual([]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.prebuild).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(JSON.parse(h.stdout.at(-1) ?? '')).toMatchObject({ code: 'STIM_BUILD_FAILED' });
 });
 
 test('a Windows project root with no room for the NDK object paths refuses before any emulator is prepared', async () => {
@@ -7432,6 +7451,7 @@ describe('EAS development builds', () => {
 
   test('a miss refuses before creating an emulator or compiling locally', async () => {
     expoProject();
+    rmSync(join(home, 'sdk'), { recursive: true });
     const { run, calls } = harness({
       easProfile: 'development',
       resolveEasDevelopmentBuild: async () => ({
@@ -7561,6 +7581,7 @@ describe('strict remote machine selection', () => {
 
   test('a named Android worker whose toolchain differs refuses before prebuild changes the checkout', async () => {
     configureMini();
+    rmSync(join(home, 'sdk'), { recursive: true });
     rmSync(join(root, 'android'), { recursive: true });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: 'com.example.app' } } }));

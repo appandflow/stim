@@ -341,6 +341,39 @@ describe('library example apps in linked worktrees', () => {
   }, 60_000);
 });
 
+describe('library example apps in the main checkout', () => {
+  test('fingerprint alike after git activity and Metro writing .expo state', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'stim-bc-lib-main-'));
+    const git = (...args: string[]) => getExecutor().runFile('git', ['-C', repo, ...args], { timeoutMs: 10_000 });
+    try {
+      mkdirSync(join(repo, 'example/ios'), { recursive: true });
+      writeFileSync(join(repo, 'package.json'), '{"name":"lib"}');
+      writeFileSync(join(repo, 'example/package.json'), '{"name":"example"}');
+      writeFileSync(join(repo, 'example/ios/Podfile'), 'platform :ios');
+      git('init', '--quiet');
+      git('add', '.');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '--quiet', '-m', 'init');
+      const withLibrary: typeof expoFingerprint.createFingerprintAsync = (dir, options) =>
+        offlineFingerprint(dir, { ...options, extraSources: [{ type: 'dir', filePath: '..', reasons: ['library'] }] });
+      const fingerprint = async () =>
+        (await fingerprintProject(join(repo, 'example'), { platform: 'ios', createFingerprint: withLibrary }))?.hash;
+      const before = await fingerprint();
+      expect(before).toBeTruthy();
+
+      git('worktree', 'add', '--quiet', '--detach', `${repo}-wt`, 'HEAD');
+      git('update-ref', 'refs/heads/probe', 'HEAD');
+      mkdirSync(join(repo, 'example/.expo/dev/logs'), { recursive: true });
+      writeFileSync(join(repo, 'example/.expo/dev/logs/start.log'), 'metro started');
+      expect(await fingerprint()).toBe(before);
+
+      writeFileSync(join(repo, 'example/ios/Podfile'), 'platform :ios, 16');
+      expect(await fingerprint()).not.toBe(before);
+    } finally {
+      for (const dir of [repo, `${repo}-wt`]) rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+});
+
 describe('untracked native files on a first miss', () => {
   test('runs git without a shell and returns one name per line', () => {
     const calls: { file: string; args: string[] }[] = [];
