@@ -97666,7 +97666,7 @@ function facts(result, stage) {
 function setResultOutputs(build, run, setOutput) {
 	const built = facts(build, "build");
 	const ran = facts(run, "run");
-	const cacheHit = built.cacheHit ?? (isRecord(built.build) ? built.build.cacheHit : void 0);
+	const cacheHit = built.cacheHit ?? (isRecord(built.build) ? built.build.cacheHit : void 0) ?? (isRecord(ran.build) ? ran.build.cacheHit : void 0);
 	const outputs = {
 		"app-id": ran.bundleId ?? built.bundleId ?? built.androidPackage,
 		"app-path": built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,

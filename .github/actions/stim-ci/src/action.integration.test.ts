@@ -382,18 +382,26 @@ else process.exitCode = 4;`,
   });
 });
 
-test.skipIf(process.platform === 'win32')('sets the macOS cache output from native build facts', async () => {
-  github.inputs.platform = 'macos';
-  github.inputs.export = 'out/App.tar.gz';
-  delete github.inputs.artifacts;
-  writeFileSync(
-    join(root, 'fixture.mjs'),
-    `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
-else console.log(JSON.stringify({ exitCode: 0, run: { facts: { bundle: '/w/App.app', bundleId: 'com.example' } } }));`,
-  );
-  expect(await runAction()).toBe(0);
-  expect(github.output).toHaveBeenCalledWith('cache-hit', 'false');
-});
+test.each([true, false])(
+  'sets the macOS cache output from native facts (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    github.inputs.platform = 'macos';
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.export = 'out/App.tar.gz';
+    }
+    delete github.inputs.command;
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
+else console.log(JSON.stringify({ exitCode: 0, run: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    expect(github.output).toHaveBeenCalledWith('cache-hit', 'false');
+  },
+);
 
 test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
   const seen = recorder();
