@@ -67,6 +67,16 @@ export interface IosBoot {
 
 type IosBootOrigin = 'adopted' | 'created' | 'existing' | 'restart';
 
+async function requireOwnedIosSim(udid: string, listed?: SimRecord[]): Promise<SimRecord> {
+  const current = resolveOwnedIosSim(udid, listed ?? (await listAllIosSimsAsync({ includeUnavailable: true })));
+  if (current.notOwned)
+    throw new Error(
+      `Simulator ${udid} is now named "${current.notOwned}" and is not Stim-owned; refusing to change it.`,
+    );
+  if (!current.sim) throw new Error(`Simulator ${udid} no longer exists. Run \`stim ios\` again.`);
+  return current.sim;
+}
+
 function recordBootPhase(record: IosBootRecorder, udid: string, origin?: IosBootOrigin) {
   return (event: IosBootEvent) => {
     const pid = 'pid' in event ? event.pid : undefined;
@@ -94,6 +104,7 @@ function startIosBoot(
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
     async () => {
+      await requireOwnedIosSim(udid);
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, {
         label,
@@ -411,7 +422,9 @@ function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPat
 }
 
 async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): Promise<string> {
-  const wanted = ownedIosName(sim, label, model, projectPath, await listAllIosSimsAsync({ includeUnavailable: true }));
+  const listed = await listAllIosSimsAsync({ includeUnavailable: true });
+  sim = await requireOwnedIosSim(sim.udid, listed);
+  const wanted = ownedIosName(sim, label, model, projectPath, listed);
   if (sim.name === wanted) return wanted;
   try {
     await renameIosSim(sim.udid, wanted);
@@ -423,7 +436,9 @@ async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel,
 
 async function resetAdoptedSim(udid: string, out: Notify): Promise<void> {
   out(chalk.dim(phaseLine('device', `resetting privacy grants and the keychain on ${udid}`)));
+  await requireOwnedIosSim(udid);
   await resetIosPrivacy(udid);
+  await requireOwnedIosSim(udid);
   await resetIosKeychain(udid);
 }
 
@@ -499,6 +514,7 @@ async function takeParkedIosSim({
     };
     const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
+    await requireOwnedIosSim(parked.udid);
     try {
       await renameIosSim(parked.udid, name);
     } catch {}
@@ -792,6 +808,7 @@ async function bootOwnedIosSim({
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
       async () => {
+        await requireOwnedIosSim(udid);
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
         await bootIosSim(udid, {
           timeoutMs,
