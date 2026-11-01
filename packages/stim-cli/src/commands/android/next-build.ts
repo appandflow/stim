@@ -57,7 +57,7 @@ export async function readAndroidBuildPlan(
   const build = resolveBuildPlacement(opts.remoteBuild);
   if (build.failure) return { refusal: build.failure };
   const plan = await planner({ ...opts, remoteBuild: build.selected }, resolved, operation);
-  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected) : plan;
+  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected, opts.easProfile !== undefined) : plan;
 }
 
 export async function planAndroid(opts: AndroidPlanOptions, overrides: Partial<AndroidPlanDeps> = {}): Promise<void> {

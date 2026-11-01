@@ -282,10 +282,14 @@ function cacheLine(plan: BuildPlanPayload): string {
   return `${why}: compiles${prebuild}`;
 }
 
-export function plannedBuildPlacement(plan: BuildPlanPayload, preference: string): BuildPlanPayload {
+export function plannedBuildPlacement(
+  plan: BuildPlanPayload,
+  preference: string,
+  easProfile: boolean,
+): BuildPlanPayload {
   const reason = plan.cacheHit
     ? 'cache hit; no compilation expected'
-    : plan.provider === 'eas'
+    : easProfile
       ? 'uses a completed EAS build; no compilation is started'
       : preference === 'local'
         ? 'builds on this machine'
@@ -299,8 +303,7 @@ export function plannedBuildPlacement(plan: BuildPlanPayload, preference: string
   return {
     ...plan,
     placement:
-      plan.placement ??
-      (plan.provider === 'eas' ? 'unknown; device placement is selected when the command runs' : 'this machine'),
+      plan.placement ?? (easProfile ? 'unknown; device placement is selected when the command runs' : 'this machine'),
     buildPlacement: { preference, reason },
   };
 }

@@ -39,7 +39,7 @@ export async function readIosBuildPlan(
   const build = resolveBuildPlacement(opts.remoteBuild);
   if (build.failure) return { refusal: build.failure };
   const plan = await project.plan({ ...opts, remoteBuild: build.selected }, { context, settings }, operation);
-  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected) : plan;
+  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected, opts.easProfile !== undefined) : plan;
 }
 
 export async function planIos(opts: IosCommandOptions, d: IosDeps): Promise<void> {

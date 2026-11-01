@@ -8450,14 +8450,21 @@ describe('--plan', () => {
     const { logs } = await run(
       { plan: true, json: true },
       {
-        loadProjectProvider: async () => ({ name: 'probe', provider: { easCli: '/fixture/eas' } }),
+        loadProjectProvider: async () => ({ name: 'eas', provider: { easCli: '/fixture/eas' } }),
         resolveRemote: async (args) => {
           asked.push(args);
           return { appPath: join(root, 'remote', 'Fixture.app') };
         },
       },
     );
-    expect(parseFirst(logs)).toMatchObject({ cacheHit: 'remote', provider: 'probe', outcome: 'hit', prebuild: null });
+    expect(parseFirst(logs)).toMatchObject({
+      cacheHit: 'remote',
+      provider: 'eas',
+      outcome: 'hit',
+      prebuild: null,
+      placement: 'this machine',
+      buildPlacement: { preference: 'auto', reason: 'cache hit; no compilation expected' },
+    });
     expect(asked).toEqual([
       expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: { configuration: 'Debug', arch: 'arm64' } }),
     ]);
