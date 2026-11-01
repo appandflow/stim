@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import vm from 'node:vm';
 assert.equal(process.platform,'win32');
 const tree=process.cwd(),base=join(process.env.RUNNER_TEMP,'stim-4081-private-dirs-'+randomUUID());
-const source=readFileSync(join(tree,'packages/stim-cli/src/offload/worker.ts'),'utf8');
+const source=readFileSync(join(tree,'packages/stim-cli/src/offload/worker.ts'),'utf8').replace(/\r\n/g,'\n');
 assert.equal(createHash('sha256').update(source).digest('hex'),'53ae3b645c041010f92d89bed22018de288b5767987467813e7783aa137b36fb');
 const literal=/const PRIVATE_DIRS = (\[[\s\S]*?\])\.join\('\\n'\);/u.exec(source)?.[1];assert(literal);
 const script=vm.runInNewContext(literal,{},{timeout:1000}).join('\n');
