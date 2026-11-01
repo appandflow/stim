@@ -4015,8 +4015,20 @@ describe('--remote', () => {
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    const { calls, exitCode } = await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        fingerprintProject: async () => {
+          vi.advanceTimersByTime(1000);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
     expect(exitCode).toBeFalsy();
+    const stats = sharedState.readStats().record;
+    expect(stats?.machine.ios?.runs).toBe(1);
+    expect(stats?.history).toBeUndefined();
     expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
@@ -8955,6 +8967,7 @@ describe('iOS placement on a hosting Mac', () => {
           hostSimulatorArch: () => 'arm64',
           buildIos: async (args) => {
             order.push('build');
+            vi.advanceTimersByTime(1000);
             expect(args.destination).toBe('generic/platform=iOS Simulator');
             expect(args.arch).toBe('x86_64');
             return makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
@@ -8978,6 +8991,9 @@ describe('iOS placement on a hosting Mac', () => {
         agent: { driver: 'none' },
       });
       expect(facts.cacheKey).toContain('x86-64');
+      const stats = sharedState.readStats().record;
+      expect(stats?.machine.ios?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(JSON.stringify(facts).includes(hostedDevice.udid)).toBe(false);
       for (const native of ['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp', 'replaceCollector'])
         expect(calls.order).not.toContain(native);

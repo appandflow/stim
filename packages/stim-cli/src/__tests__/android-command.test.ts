@@ -32,7 +32,13 @@ import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import type { acquireBuildSlot } from '../engine/build-slots.ts';
-import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
+import {
+  ACTIVE_BUILD_KEY,
+  NO_BUILD_PROGRESS,
+  buildReport,
+  parseActiveBuild,
+  startBuildProgress,
+} from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -66,6 +72,7 @@ import {
   readBuildHistory,
   readBuildLedger,
   readLastBuilds,
+  readStats,
 } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
@@ -1012,8 +1019,15 @@ describe('explicit remote backend behavior', () => {
   test.each(['proxy', 'eas'] as const)(
     '%s selects that backend and replaces only device operations',
     async (backend) => {
-      const { h, selected, remoteCalls } = remoteHarness(backend);
+      let clock = Date.now();
+      const { h, selected, remoteCalls } = remoteHarness(backend, {
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
+        now: () => (clock += 1000),
+      });
       const result = await h.run();
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.ok).toBe(true);
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
@@ -8135,6 +8149,7 @@ describe('named Android hosting placement', () => {
         json: true,
         remoteDevice: 'mini',
         variant: evidence === 'release' ? 'release' : 'debug',
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
         systemImage: hostDevice.systemImage,
         deviceProfile: 'pixel_7',
         prepareHostedAndroid: async (_machine: string, selectors: unknown) => {
@@ -8153,6 +8168,7 @@ describe('named Android hosting placement', () => {
         },
         build: async (args) => {
           order.push('build');
+          vi.advanceTimersByTime(1000);
           expect(args.abi).toBe('x86_64');
           return makeAndroidBuildSuccess({ apkPath: fakeApk() });
         },
@@ -8169,6 +8185,9 @@ describe('named Android hosting placement', () => {
       );
       expect(result.facts?.host?.device?.name).toBe('pixel_7 (API 30)');
       expect(result.facts?.cacheKey).toContain('x86-64');
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.facts?.serial).not.toBe(hostDevice.serial);
       expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
