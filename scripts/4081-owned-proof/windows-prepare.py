@@ -3,10 +3,12 @@ checkout=pathlib.Path(sys.argv[1]);base=pathlib.Path(sys.argv[2]);node24=sys.arg
 start=time.monotonic();deadline=start+max(0,(int(sys.argv[4])-int(time.time()*1000))/1000)
 base.mkdir();evidence=base/'evidence';evidence.mkdir();private=base/'private-raw';private.mkdir()
 meta=json.loads((checkout/'scripts/4081-owned-proof/template-metadata.json').read_text())
-def run(command,cwd=checkout,env=None):
+def run(command,cwd=checkout,env=None,sdk_summary=False):
  remaining=deadline-time.monotonic();assert remaining>0,'Prerequisite15min deadline'
- with (private/('prerequisite-'+str(time.time_ns())+'.log')).open('w') as f:
+ log=private/('prerequisite-'+str(time.time_ns())+'.log')
+ with log.open('w') as f:
   x=subprocess.run(command,cwd=cwd,env=env,stdout=f,stderr=subprocess.STDOUT,timeout=remaining)
+ if sdk_summary:(evidence/'sdkmanager-install.json').write_text(json.dumps({'exitCode':x.returncode,'output':log.read_text(errors='replace')[-16384:]},indent=2))
  assert x.returncode==0,command
 try:
  archive=urllib.request.urlopen(meta['dist.tarball'],timeout=min(30,deadline-time.monotonic())).read()
@@ -26,7 +28,9 @@ try:
  cmake='3.30.5';ndk='27.1.12297006'
  needed=[name for name,file in [('ndk;'+ndk,sdk/'ndk'/ndk/'source.properties'),('cmake;'+cmake,sdk/'cmake'/cmake/'bin/cmake.exe'),('build-tools;37.0.0',sdk/'build-tools/37.0.0/aapt2.exe')] if not file.exists()]
  assert (sdk/'platforms/android-37/android.jar').exists() or (sdk/'platforms/android-37.0/android.jar').exists(),'exactSDK37 unavailable'
- if needed:run([os.environ.get('COMSPEC','cmd.exe'),'/d','/s','/c','""'+str(manager)+'" --install '+' '.join(needed)+'"'],env=os.environ.copy())
+ if needed:
+  script=base/'install-sdk.ps1';script.write_text("$ErrorActionPreference = 'Stop'\n& '"+str(manager).replace("'","''")+"' --install "+' '.join("'"+name+"'" for name in needed)+"\nexit $LASTEXITCODE\n")
+  run(['powershell.exe','-NoProfile','-NonInteractive','-File',str(script)],env=os.environ.copy(),sdk_summary=True)
  assert (sdk/'ndk'/ndk/'source.properties').exists() and (sdk/'cmake'/cmake/'bin/cmake.exe').exists()
  npm=pathlib.Path(node24).parent/'node_modules/npm/bin/npm-cli.js';assert npm.exists()
  env=os.environ.copy();env['npm_config_cache']=str(base/'npm-cache')
