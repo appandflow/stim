@@ -195,7 +195,12 @@ if (mode === 'offer-native-gradle') {
   await mkdir(join(root, 'home'), { recursive: true });
   await writeFile(join(root, 'home', 'config.json'), JSON.stringify({ server: { maxLoadPerCore: 100_000 } }));
   let allowed = true;
-  const host = new BuildHost({ worker, env: process.env, allowed: () => allowed, limits: { killGraceMs: 50 } });
+  const host = new BuildHost({
+    worker,
+    env: process.env,
+    allowed: () => allowed,
+    limits: { killGraceMs: 50, gradleCancelDrainMs: 0 },
+  });
   const frames: Buffer[] = [];
   const socket = {
     OPEN: 1,

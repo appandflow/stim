@@ -88,6 +88,12 @@ export interface BuildLimits {
   minFreeMemoryBytes: number;
   /** How often the idle Gradle daemons of offloaded builds are checked. */
   daemonSweepMs: number;
+  /**
+   * How long a repository stays claimed after its Android build is cancelled or its worker dies. A Gradle daemon
+   * leaves the build's process group and keeps running the cancelled build in the checkout; Gradle waits up to
+   * 10 seconds for it to stop, then stops the daemon (DaemonStateCoordinator's cancelTimeoutMs).
+   */
+  gradleCancelDrainMs: number;
   /** How long a fetched macOS bundle stays here for a hosted session on this machine to take. */
   handoffMs: number;
 }
@@ -101,6 +107,7 @@ const DEFAULT_BUILD_LIMITS: BuildLimits = {
   toolchainTtlMs: 60_000,
   minFreeMemoryBytes: 2 * 1024 ** 3,
   daemonSweepMs: 60_000,
+  gradleCancelDrainMs: 15_000,
   handoffMs: 10 * 60_000,
 };
 
@@ -1191,6 +1198,12 @@ export class BuildHost {
           await treeKilled;
           if (killTimer) clearTimeout(killTimer);
           finished = true;
+          const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
+          if (gradle && !this.closed && (killTimer || (!outcome.ok && outcome.code === 'worker-exited'))) {
+            releaseClaim(slot);
+            slot = null;
+            await new Promise((resolve) => setTimeout(resolve, this.limits.gradleCancelDrainMs));
+          }
           releaseClaims();
           if (
             entry.outcome?.ok &&

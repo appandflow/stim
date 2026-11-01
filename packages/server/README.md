@@ -1917,7 +1917,10 @@ connected since stim-server started keeps its directory when revoked.
   simulators on `runtime`, which it never boots, or Gradle's
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group, so no claim or slot tracks
-  it. An Android build leaves the client's daemon warm for Gradle's own idle
+  it. When an Android build is cancelled or its worker dies, the repository
+  stays claimed for 15 more seconds: the daemon keeps running the cancelled
+  build in the checkout for up to Gradle's 10-second cancel grace before it
+  stops itself, and a rerun must not change those sources first. An Android build leaves the client's daemon warm for Gradle's own idle
   timeout, and a cancelled build does not stop it. While no offloaded build
   runs and this machine has less than 2 GB of available memory (total memory
   minus Activity Monitor's Memory Used), stim-server sends SIGTERM to each
