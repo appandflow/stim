@@ -480,7 +480,7 @@ struct DeviceTile: View {
   }
 
   private var deviceToolsView: DeviceToolsView? {
-    guard viewer, interactive, !replaying, device.isRunning, let workspace else { return nil }
+    guard owner.isLocal, viewer, interactive, !replaying, device.isRunning, let workspace else { return nil }
     let platform: String
     switch device {
     case .ios(_, let sim) where sim.owned && !sim.physical && device.localSimulatorUDID != nil: platform = "ios"
