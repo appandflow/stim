@@ -280,7 +280,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
     getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
       input: dirs.map((entry) => entry.join('\t')).join('\n'),
       // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
-      omitEnv: ['PSModulePath'],
+      omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
       timeoutMs: 60_000,
     });
   } catch (error) {

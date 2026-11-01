@@ -143,16 +143,26 @@ test('file commands isolate child environment and preserve stdin and raw stdout'
   resetExecutor();
   const echo = [
     '-e',
-    'if ("STIM_EXEC_OMITTED" in process.env || process.env.STIM_EXEC_KEPT !== "kept") process.exit(3); process.stdin.pipe(process.stdout)',
+    'if (Object.keys(process.env).some(key => key.toLowerCase() === "psmodulepath") || process.env.STIM_EXEC_KEPT !== "kept") process.exit(3); process.stdin.pipe(process.stdout)',
   ];
   const input = ' \t<plist/> \n';
-  const env = { STIM_EXEC_OMITTED: 'omitted', STIM_EXEC_KEPT: 'kept' };
-  const options = { input, env, omitEnv: ['STIM_EXEC_OMITTED'], timeoutMs: 60_000 };
   const executor = getExecutor();
-  expect(await executor.runFileAsync(process.execPath, echo, options)).toBe('<plist/>');
-  expect(await executor.runFileAsync(process.execPath, echo, { ...options, untrimmed: true })).toBe(input);
-  expect(executor.runFile(process.execPath, echo, { ...options, untrimmed: true })).toBe(input);
-  expect(env).toEqual({ STIM_EXEC_OMITTED: 'omitted', STIM_EXEC_KEPT: 'kept' });
+  for (const [index, key] of ['PSModulePath', 'PSMODULEPATH', 'psmodulepath'].entries()) {
+    const env = { [key]: 'omitted', STIM_EXEC_KEPT: 'kept' };
+    const options = {
+      input,
+      env,
+      omitEnv: Object.keys({ ...process.env, ...env }).filter((envKey) => envKey.toLowerCase() === 'psmodulepath'),
+      timeoutMs: 60_000,
+      ...(index > 0 ? { untrimmed: true } : {}),
+    };
+    const output =
+      index === 2
+        ? executor.runFile(process.execPath, echo, options)
+        : await executor.runFileAsync(process.execPath, echo, options);
+    expect(output).toBe(index === 0 ? '<plist/>' : input);
+    expect(env[key]).toBe('omitted');
+  }
 });
 
 test('file commands can reject stderr on a successful exit without changing the default', async () => {
