@@ -1,3 +1,4 @@
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { hostedIosStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import type { HostedIosTarget } from '../../device-host/hosted-ios.ts';
 import type { IosDeps } from './dependencies.ts';
@@ -137,7 +138,7 @@ export async function finishHostedIosRun({
   let launchWarning: string | undefined;
   let unattributed = false;
   if (appMode === 'development') {
-    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt);
+    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt, operation);
     let verification;
     try {
       verification = await verifyIosMetroRun({
@@ -208,9 +209,10 @@ export async function finishHostedIosRun({
     metroCheck,
     metroPort,
     logsDir,
-    device: { deviceName: device.deviceType, deviceType: device.deviceType, runtime: device.runtime },
-    udid: '',
+    device: { deviceName: device.name, deviceType: device.deviceType, runtime: device.runtime },
+    udid: null,
     host: hostedIosStatus(run.placement),
+    links: await workspaceLinks(root, { platform: 'ios', slot }),
     appPath: artifact.path,
     bundleId,
     installSkipped: false,

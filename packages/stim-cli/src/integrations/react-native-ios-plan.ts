@@ -15,6 +15,7 @@ import {
   resolveIosProjectDir,
   type ResolvedProjectSettings,
   remoteEasFallbackSetting,
+  parseIosRemote,
   remoteIosSetting,
   SETTING_SHAPE_REMEDY,
   settingShapeErrors,
@@ -79,7 +80,7 @@ export async function planReactNativeIos(
   } as const;
   const isExpo = d.detectIsExpo(root);
   const settingsLayersForOrigin = d.settingsLayers(settingsContext);
-  const iosRemote = remoteIosSetting(settings);
+  const iosRemote = opts.remote !== undefined ? parseIosRemote(opts.remote) : remoteIosSetting(settings);
   const modelRefusal = await deviceModelRefusal({
     slot,
     deviceTypeFlag: opts.deviceType,
@@ -182,6 +183,7 @@ export async function planReactNativeIos(
       slot,
       platform: 'ios',
       machine: iosRemote.machine,
+      buildMachine: opts.remoteBuild,
       ...(iosRemote.placement ? { placement: iosRemote.placement } : {}),
       selectors: hostedIosSelectors(
         resolveDeviceType(opts.deviceType, settings),

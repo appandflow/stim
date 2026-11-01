@@ -3,7 +3,7 @@ import { writeHostedNative } from '../device-host/ios-state.ts';
 import type { HostedIosPlacement, HostedAndroidPlacement } from '@stim-cli/core/state';
 import * as hostedClient from '../device-host/hosted-client.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { execFileSync } from 'child_process';
 import { availableParallelism, loadavg, tmpdir } from 'os';
 import { join } from 'path';
@@ -1124,7 +1124,7 @@ test.each(['moved', 'absent', 'launched', 'missing', 'unavailable'] as const)(
   },
 );
 
-test('status lists worktrees with no environment for every registered repository, from outside any repository, and reads git only for live environments once every merge verdict is cached', async () => {
+test('status lists worktrees with no environment for every registered repository, from outside any repository, and limits git status to live environments once every merge verdict is cached', async () => {
   const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-repos-')));
   const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf-8' });
   const commit = (cwd: string, file: string, message: string) => {
@@ -1147,6 +1147,17 @@ test('status lists worktrees with no environment for every registered repository
   try {
     const first = repo('first');
     const second = repo('second');
+    const inner = repo('first/vendor/inner');
+    const separate = repo('separate');
+    git(separate, 'init', '-q', '--separate-git-dir', join(base, 'separate-metadata'));
+    mkdirSync(join(separate, 'apps', 'desktop'));
+    const alias = join(base, 'first-alias');
+    symlinkSync(first, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const bogusGit = join(base, 'bogus-git');
+    mkdirSync(join(bogusGit, '.git'), { recursive: true });
+    const standalone = join(base, 'standalone');
+    mkdirSync(standalone);
+    mkdirSync(join(first, 'apps', 'desktop'));
     execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(base, 'first.git')]);
     git(first, 'remote', 'add', 'origin', join(base, 'first.git'));
     git(first, 'push', '-q', '-u', 'origin', 'main');
@@ -1157,6 +1168,8 @@ test('status lists worktrees with no environment for every registered repository
       return path;
     };
     const nested = worktree(first, 'nested');
+    const nestedRepo = repo('nested-wt/vendor/inner');
+    writeFileSync(join(first, '.git', 'info', 'exclude'), 'vendor/\n');
     const loose = worktree(first, 'loose');
     const other = worktree(second, 'other');
     const idleWorktree = worktree(second, 'idle');
@@ -1183,6 +1196,15 @@ test('status lists worktrees with no environment for every registered repository
         version: 2,
         projects: {
           [first]: { label: 'first', platforms: {} },
+          [join(first, 'apps', 'mobile')]: { label: 'mobile', platforms: {} },
+          [join(first, 'apps', 'desktop')]: { label: 'desktop', platforms: {} },
+          [join(alias, 'apps', 'mobile')]: { label: 'alias', platforms: {} },
+          [join(inner, 'apps', 'mobile')]: { label: 'inner', platforms: {} },
+          [join(nestedRepo, 'apps', 'mobile')]: { label: 'nested-repo', platforms: {} },
+          [join(separate, 'apps', 'mobile')]: { label: 'separate-mobile', platforms: {} },
+          [join(separate, 'apps', 'desktop')]: { label: 'separate-desktop', platforms: {} },
+          [standalone]: { label: 'standalone', platforms: {} },
+          [bogusGit]: { label: 'bogus', platforms: {} },
           [join(nested, 'apps', 'mobile')]: {
             label: 'nested',
             platforms: { ios: { deviceUdid: 'UDID-ABC', owned: true } },
@@ -1210,11 +1232,20 @@ test('status lists worktrees with no environment for every registered repository
         })),
       },
     });
+    const checkoutReads: string[] = [];
+    let refusedCheckout: string | null = null;
     setExecutor({
-      runFileAsync: (file: string, args: string[], opts: ExecOptions) =>
-        file === 'git'
-          ? realExecutor.runFileAsync(file, args, opts)
-          : Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : ''),
+      runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
+        if (file === 'git') {
+          if (args.includes('--show-toplevel')) {
+            const path = args[args.indexOf('-C') + 1]!;
+            checkoutReads.push(path);
+            if (path === refusedCheckout) return Promise.reject(new Error('dubious ownership'));
+          }
+          return realExecutor.runFileAsync(file, args, opts);
+        }
+        return Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : '');
+      },
       runFile: real(''),
       runQuiet: () => null,
       runFileQuiet: (file: string, args: string[], opts: ExecOptions) =>
@@ -1225,7 +1256,33 @@ test('status lists worktrees with no environment for every registered repository
     });
 
     await runStatusJson();
+    checkoutReads.length = 0;
     const payload = await runStatusJson();
+    expect(checkoutReads.toSorted()).toEqual(
+      [first, second, inner, separate, nested, nestedRepo, loose, idleWorktree, bogusGit].toSorted(),
+    );
+    const checkout = (path: string) => payload.environments.find((e: { path: string }) => e.path === path);
+    for (const path of [
+      first,
+      join(first, 'apps', 'mobile'),
+      join(first, 'apps', 'desktop'),
+      join(alias, 'apps', 'mobile'),
+    ])
+      expect(checkout(path)).toMatchObject({ path, checkout: first, worktree: null });
+    expect(checkout(join(inner, 'apps', 'mobile'))).toMatchObject({ checkout: inner, worktree: null });
+    expect(checkout(join(nestedRepo, 'apps', 'mobile'))).toMatchObject({ checkout: nestedRepo, worktree: null });
+    expect(checkout(join(second, 'apps', 'mobile'))).toMatchObject({ checkout: second, worktree: null });
+    expect(checkout(join(nested, 'apps', 'mobile'))).toMatchObject({ checkout: nested });
+    for (const name of ['mobile', 'desktop'])
+      expect(checkout(join(separate, 'apps', name))).toMatchObject({ checkout: separate, worktree: null });
+    expect(checkout(standalone)?.checkout).toBeNull();
+    expect(checkout(bogusGit)?.checkout).toBeNull();
+    expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
+    refusedCheckout = nestedRepo;
+    const refused = await runStatusJson();
+    expect(
+      refused.environments.find((e: { path: string }) => e.path === join(nestedRepo, 'apps', 'mobile')),
+    ).toMatchObject({ checkout: null, worktree: null });
     expect(payload.unprovisionedWorktrees).toEqual([
       { path: deleted, branch: 'deleted', repository: second, git: null },
       { path: other, branch: 'other', repository: second, git: null },
@@ -1327,6 +1384,26 @@ test.each([false, true])(
     expect(output).toContain(json ? 'UDID-ABC' : 'stim-projA');
   },
 );
+
+test('plain status explains how to enable a hosted agent when no driver is available', async () => {
+  const root = join(tmpHome, 'app');
+  mkdirSync(root);
+  writeFileSync(join(root, 'package.json'), '{}');
+  saveConfig(makeConfig({ projects: { [root]: { platforms: {} } } }));
+  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+  writeHostedIos(root, 'default', {
+    machine: 'mini',
+    selected: 'mini',
+    session: '12345678-1234-1234-1234-123456789abc',
+    appAttempt: 'attempt',
+    device: null,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  });
+  const plain = (await runStatus()).join('\n');
+  expect(plain).toContain('Agent control is unavailable on mini');
+  expect(plain).toContain('hosting.agentDriver');
+  expect(plain).toContain('agent-device');
+});
 
 test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknown'].map((state) => ({ slot, state }))))(
   'status reconciles a $state local simulator with a hosted record in slot $slot',

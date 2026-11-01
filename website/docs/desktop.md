@@ -13,14 +13,17 @@ agents driving them. It runs `stim` for you, so it needs the CLI from
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
-Apps in one linked worktree share a detail page and one sidebar row, with platform
-badges for each app. Selecting the row opens the page; a link or action for one app
-scrolls to that app. The row's context menu has per-app submenus, **Stop All** and
-**Remove Worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
-subtitles only for repeated platforms. The inspector aggregates resources,
-labels each Metro and deduplicates agents. The logs drawer follows app selection
-and has an **App** picker. The actions menu keeps each app's commands plus
-**Stop All** and one **Remove Worktree** action.
+Apps sharing a reported checkout, including a primary checkout, share a detail
+page and one sidebar row, with platform badges for each app. Older servers retain
+linked-worktree grouping. Selecting the row opens the page; a link or action for
+one app scrolls to that app. Each app keeps its own commands, devices and log
+routes. The context and actions menus have per-app submenus and **Stop All**;
+**Remove Worktree** appears only for linked worktrees. The canvas combines all
+devices, with one stage and git chip. Build cards keep platform titles, adding
+project subtitles only for repeated platforms. The inspector aggregates process
+resources, shows each app's dependency disk breakdown separately, labels each
+Metro and deduplicates agents. The logs drawer follows app selection and has an
+**App** picker.
 
 ## Download
 
@@ -264,7 +267,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
-  screen, wrapping when space is tight.
+  screen, wrapping when space is tight. An already-running app stays visible
+  during rebuilds; take **Control** to keep using it while the next build compiles.
   Local iOS input connects in the background and drops clicks and keys while
   the screen shows **Connecting input** or **Input unavailable**. Lookups time
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's

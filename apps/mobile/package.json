@@ -96,6 +96,9 @@
     "ws": "^8.21.3"
   },
   "jest": {
+    "fakeTimers": {
+      "enableGlobally": true
+    },
     "moduleNameMapper": {
       "^@/assets/(.*)$": "<rootDir>/assets/$1"
     },

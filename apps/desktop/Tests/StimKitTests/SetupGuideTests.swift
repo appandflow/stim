@@ -179,12 +179,12 @@ private let setUp = SetupChecks(
   #expect(!defaults.bool(forKey: SetupGuideProgress.completedKey))
   defaults.removeObject(forKey: SetupGuideProgress.resumeKey)
 
-  defaults.register(defaults: [SetupGuideProgress.skipDefaultsKey: true])
+  defaults.set(true, forKey: SetupGuideProgress.skipDefaultsKey)
   let fromArgument = SetupGuideProgress(defaults, environment: [:])
   #expect(fromArgument.skipsOnboarding)
   #expect(fromArgument.stepAtLaunch(missing) == nil)
   #expect(!defaults.bool(forKey: SetupGuideProgress.completedKey))
-  defaults.register(defaults: [SetupGuideProgress.skipDefaultsKey: false])
+  defaults.set(false, forKey: SetupGuideProgress.skipDefaultsKey)
   #expect(SetupGuideProgress(defaults, environment: ["STIM_DESKTOP_SKIP_ONBOARDING": "0"]).stepAtLaunch(missing) == .welcome)
 }
 

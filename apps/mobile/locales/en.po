@@ -218,6 +218,10 @@ msgstr "{freeGb} GB free"
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}"
+msgstr "{heading} {size}: {summary}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -1644,10 +1648,6 @@ msgstr "disk"
 msgid "Disk"
 msgstr "Disk"
 
-#: src/screens/workspace-resources.tsx
-msgid "Disk {size}: {summary}"
-msgstr "Disk {size}: {summary}"
-
 #: src/screens/mac-status.tsx
 msgid "Disk details are unavailable: {message}"
 msgstr "Disk details are unavailable: {message}"
@@ -2307,9 +2307,21 @@ msgstr "logs {logs}"
 msgid "Logs for Which App?"
 msgstr "Logs for Which App?"
 
+#: src/screens/logs.tsx
+msgid "Logs from {windowStart} to {windowEnd}"
+msgstr "Logs from {windowStart} to {windowEnd}"
+
 #: src/lib/machine-report.ts
 msgid "Logs of {workspace}"
 msgstr "Logs of {workspace}"
+
+#: src/screens/logs.tsx
+msgid "Logs since {windowStart}"
+msgstr "Logs since {windowStart}"
+
+#: src/screens/logs.tsx
+msgid "Logs until {windowEnd}"
+msgstr "Logs until {windowEnd}"
 
 #: src/lib/format.ts
 msgid "longer than usual"
@@ -2664,6 +2676,10 @@ msgstr "No recording for this device."
 #: src/screens/logs.tsx
 msgid "No records match these filters."
 msgstr "No records match these filters."
+
+#: src/screens/logs.tsx
+msgid "No records match this time window and these filters."
+msgstr "No records match this time window and these filters."
 
 #: src/screens/mac-status.tsx
 msgid "No shared cache was found."
@@ -3582,6 +3598,10 @@ msgstr "Show All {count}"
 #: src/components/collapsible-section.tsx
 msgid "Show all {count} {title}"
 msgstr "Show all {count} {title}"
+
+#: src/screens/logs.tsx
+msgid "Show All Times"
+msgstr "Show All Times"
 
 #: src/components/workspace-row.tsx
 #: src/screens/workspace-detail.tsx

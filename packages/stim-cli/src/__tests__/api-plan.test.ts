@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createStim } from '../api.ts';
+import { saveConfig } from '../workspace/config.ts';
 import { entryDir } from '../cache/build-cache.ts';
 import { planCachedBuild } from '../commands/build-plan.ts';
 import { DEFAULT_DEPS } from '../commands/ios/dependencies.ts';
@@ -74,6 +75,37 @@ test('concurrent plan clients isolate cache homes without changing caller contex
   expect(process.exitCode).toBe(exit);
   expect(['SIGINT', 'SIGTERM', 'exit'].map((name) => process.rawListeners(name))).toEqual(signals);
 });
+
+test.each([
+  { setting: 'remote-only', env: undefined, preference: 'remote-only' },
+  { setting: 'remote-only', env: 'local', preference: 'local' },
+] as const)(
+  'API plans resolve build preference from settings and environment (%j)',
+  async ({ setting, env, preference }) => {
+    const root = join(scratch, 'app');
+    mkdirSync(root);
+    writeNativeXcodeProject(root);
+    const home = join(scratch, 'home');
+    await withAmbientContext(testContext({ home }), async () => {
+      saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: setting } });
+    });
+    setExecutor(
+      makeExecutor({
+        runFileAsync: async (file) => {
+          if (file === 'git') throw new Error('Fixture is not a Git checkout.');
+          return 'Fixture toolchain';
+        },
+        spawn: () => {
+          throw new Error('Planning cannot start a runtime or build.');
+        },
+      }),
+    );
+    const plan = await createStim({ projectRoot: root, home, env: { ...process.env, STIM_REMOTE_BUILD: env } }).plan({
+      platform: 'ios',
+    });
+    expect(plan).toMatchObject({ placement: 'this machine', buildPlacement: { preference } });
+  },
+);
 
 test.skipIf(process.platform !== 'darwin')(
   'a macOS plan validates the configured app without building or launching',

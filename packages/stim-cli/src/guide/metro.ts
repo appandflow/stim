@@ -11,6 +11,9 @@ project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
 
+If Expo cannot be resolved in a linked worktree, run \`stim worktree warm\`
+there before retrying. The refusal also names dependency installation.
+
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for server and remote tunnel readiness
@@ -203,6 +206,30 @@ WHAT THE SUPERVISOR IS
   \`stim stop\` is the inverse of \`start\`: it halts the supervisor, reaps
   the device-log collectors, shuts the owned device down (never deletes it)
   and frees the port.
+
+LINUX RUNNERS THAT REAP BACKGROUND PROCESSES
+
+Some command runners kill every descendant when a call ends, including Stim's
+detached Metro supervisor. If this happens on Linux and a user systemd manager
+is available, start Metro from the worktree in a transient user service. Choose
+a distinct unit name for each workspace:
+
+  systemd-run --user --collect --property=RemainAfterExit=yes \\
+    --working-directory="$PWD" --unit=stim-metro-my-worktree \\
+    bash -lc 'stim start'
+  journalctl --user --unit=stim-metro-my-worktree.service --no-pager
+
+Wait for the service's stim start to report ready before running stim ios or
+stim android. RemainAfterExit keeps systemd from stopping Metro when stim start
+returns; --scope and setsid do not escape a runner that reaps descendants.
+The service uses the user's login-shell environment. Check its journal if it
+cannot find stim or the project's Node version.
+
+Stim does not detect these runners or manage the transient unit. At the end of
+the workflow, stop the workspace and the specific unit you created:
+
+  stim stop
+  systemctl --user stop stim-metro-my-worktree.service
 
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
   (default 60; 0 never stops) with no bundle request, no client log record

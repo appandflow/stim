@@ -645,6 +645,9 @@ jobs:
         run: |
           npm install --global --prefix "$HOME/.local" agent-device@0.21.22
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install SimSlim for the native fixture
+        if: inputs.native_ios_project != 'food-truck'
+        run: brew install mobai-app/tap/simslim
       - name: Monitor native fixture host memory and load
         shell: bash
         run: |

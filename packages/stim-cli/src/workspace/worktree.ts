@@ -992,18 +992,26 @@ export function linkedWorktreesOnDisk(commonDir: string): WorktreeEntry[] {
  * git. Returns null when `start` is missing, unreadable, or not inside a repository.
  */
 export function gitCommonDirOnDisk(start: string): string | null {
+  return gitLocationOnDisk(start)?.commonDir ?? null;
+}
+
+/** The canonical on-disk Git location; Git has not verified that it is a valid checkout. */
+export function gitLocationOnDisk(start: string): { path: string; commonDir: string } | null {
   try {
     for (let dir = realpathSync.native(start); ; dir = dirname(dir)) {
       const dotGit = join(dir, '.git');
       if (existsSync(dotGit)) {
-        if (statSync(dotGit).isDirectory()) return realpathSync.native(dotGit);
+        if (statSync(dotGit).isDirectory()) return { path: dir, commonDir: realpathSync.native(dotGit) };
         const gitdir = /^gitdir: (.+)$/m.exec(readFileSync(dotGit, 'utf-8'))?.[1]?.trim();
         if (!gitdir) return null;
         const linked = resolve(dir, gitdir);
         const commondir = join(linked, 'commondir');
-        return realpathSync.native(
-          existsSync(commondir) ? resolve(linked, readFileSync(commondir, 'utf-8').trim()) : linked,
-        );
+        return {
+          path: dir,
+          commonDir: realpathSync.native(
+            existsSync(commondir) ? resolve(linked, readFileSync(commondir, 'utf-8').trim()) : linked,
+          ),
+        };
       }
       if (dirname(dir) === dir) return null;
     }
