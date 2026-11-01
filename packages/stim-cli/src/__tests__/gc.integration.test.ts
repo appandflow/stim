@@ -3590,8 +3590,8 @@ test('--delete removes the stale build slot and leaves a live one alone', async 
   expect(output).toMatch(/build slot/i);
 });
 
-// Quarantined on Windows: https://github.com/appandflow/stim/issues/3873
-describe.skipIf(process.platform === 'win32')(
+// Windows diagnostic: https://github.com/appandflow/stim/issues/3873
+describe(
   '--delete against a claim taken while gc is deleting',
   { timeout: 60_000 },
   () => {
@@ -3633,6 +3633,10 @@ describe.skipIf(process.platform === 'win32')(
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let output = '';
+      const label = path.endsWith('holder.mjs') ? 'holder' : 'gc';
+      console.error(`[gc-race] ${label} spawned ${Date.now()}`);
+      child.once('error', (error) => console.error(`[gc-race] ${label} error ${Date.now()}: ${error.message}`));
+      child.once('exit', (code, signal) => console.error(`[gc-race] ${label} exit ${Date.now()} code=${code} signal=${signal} output=${JSON.stringify(output)}`));
       child.stdout?.on('data', (d) => (output += d));
       child.stderr?.on('data', (d) => (output += d));
       const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
@@ -3650,6 +3654,7 @@ describe.skipIf(process.platform === 'win32')(
         if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
         await new Promise((r) => setTimeout(r, 5));
       }
+      console.error(`[gc-race] barrier ready ${Date.now()}`);
     }
 
     // gc, paused inside the first removal it makes anywhere under the claim set it decided was stale.

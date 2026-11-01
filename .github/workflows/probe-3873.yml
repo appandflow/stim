@@ -1,0 +1,28 @@
+name: Probe GC race on Windows
+
+on:
+  push:
+    branches: [codex/3873-windows-gc-race]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '22'
+      - name: Existing whole-file GC integration contracts
+        run: pnpm run test:integration packages/stim-cli/src/__tests__/gc.integration.test.ts --reporter=default --reporter=json --outputFile.json=gc-3873-results.json
+      - name: Retain probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gc-3873-windows
+          path: gc-3873-results.json
+          if-no-files-found: ignore
+          retention-days: 7
