@@ -436,7 +436,7 @@ async function removeWorkspaceOutput(
   operation?: StimContext,
 ): Promise<void> {
   const stateDir = workspaceAgentDeviceDir(path);
-  if (!['none', 'dead'].includes(agentDeviceDaemon(stateDir))) {
+  if (agentDeviceDaemon(stateDir) !== 'none') {
     const exec = getExecutor();
     try {
       if (!exec.findExecutable('agent-device')) throw new Error('agent-device is not on PATH');
