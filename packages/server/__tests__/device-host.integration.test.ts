@@ -25,6 +25,8 @@ import {
   deviceHostArea,
   deviceHostRoot,
   readHostedAppMetadata,
+  hostedAppArea,
+  hostedAppBlobs,
   readHostedApp,
   readHostedSessions,
   readHostedMacosApp,
@@ -2035,6 +2037,12 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
     timeout: 5000,
   });
+  const previousArea = hostedAppArea(session.id, app.params.attempt);
+  mkdirSync(join(previousArea, 'App.app'));
+  const unused = join(hostedAppBlobs(session.id), createHash('sha256').update('old bytes').digest('hex'));
+  writeFileSync(unused, 'old bytes');
+  const pendingBlob = `${unused}.part`;
+  writeFileSync(pendingBlob, 'partial');
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
@@ -2058,10 +2066,19 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     'result.records',
     [],
   );
+  const currentBundle = join(hostedAppArea(session.id, rerun.attempt), 'App.app');
+  mkdirSync(currentBundle);
+  writeFileSync(join(currentBundle, 'current'), 'current app');
+  expect(existsSync(previousArea)).toBe(true);
   expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
   await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'), {
     timeout: 5000,
   });
+  expect(existsSync(previousArea)).toBe(false);
+  expect(readFileSync(join(currentBundle, 'current'), 'utf8')).toBe('current app');
+  expect(existsSync(join(hostedAppBlobs(session.id), app.sha256))).toBe(true);
+  expect(existsSync(unused)).toBe(false);
+  expect(readFileSync(pendingBlob, 'utf8')).toBe('partial');
   host.stop('client', query);
   await state(session.id, 'stopped');
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
