@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rotatedLogPath } from '@stim-cli/core';
@@ -17,6 +17,7 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { maintenanceLogger } from '../maintenance/log.ts';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import { tryAcquireClaim, releaseClaim } from '../ownership-claim.ts';
+import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 
 let home: string;
 beforeEach(() => {
@@ -155,6 +156,7 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   utimesSync(rotatedLogPath(file), past, past);
   const logger = maintenanceLogger({ ...settings, logChecks: true }, 'pass-1', 'status');
   const workspace = join(home, 'app');
+  ensureWorkspaceStorage(workspace);
   const events = [
     'maintenance_action',
     'maintenance_skip',
@@ -198,6 +200,16 @@ test('maintenance records stay parseable, mirror named workspace actions and rot
   const silent = maintenanceLogger(settings, 'pass-3', 'status');
   expect(silent.write('maintenance_check', 'debug', 'routine')).toBeNull();
   silent.close();
+});
+
+test('maintenance records about a removed workspace do not recreate its directory', () => {
+  const logger = maintenanceLogger(settings, 'pass-1', 'status');
+  const removed = join(home, 'removed');
+  const record = logger.write('maintenance_skip', 'info', 'Kept it', { workspace: removed, target: removed });
+  logger.close();
+  expect(record?.event).toBe('maintenance_skip');
+  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('Kept it');
+  expect(existsSync(workspaceDir(removed))).toBe(false);
 });
 
 test('status does not infer a live pass from a check stamp', () => {

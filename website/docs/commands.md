@@ -1898,7 +1898,9 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--idle <duration>] [--json]
 ```
 
-Reports stale workspace entries, orphaned workspace directories, clean linked
+Reports stale workspace entries, orphaned workspace directories (including a
+directory with no `workspace.json` that holds only logs or lock files left by a
+removed workspace), clean linked
 worktrees whose branch is merged or whose pull request was merged or closed,
 orphaned owned devices and remote sessions,
 stale locks, shared cache sizes, and the memory of the watchman daemon and the
