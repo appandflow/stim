@@ -1,7 +1,7 @@
 ---
 title: 'Cache packages'
 sidebar_position: 5
-description: 'Optional npm packages for builds that run outside Stim'
+description: 'Optional npm packages for shared caches and explicit Metro configuration'
 ---
 
 :::note[Command examples]
@@ -15,7 +15,7 @@ Stim supplies its own cache arguments when it runs Metro and native builds. A
 project does not need these packages for `stim start`, `stim ios`, or
 `stim android`.
 
-The npm packages are useful when the same project also runs tools outside Stim.
+Use these packages for tools outside Stim or for explicit cache configuration.
 
 ## `@stim-cli/metro`
 
@@ -27,11 +27,19 @@ with Stim-managed workspaces.
 npm install --save-dev @stim-cli/metro
 ```
 
+Set `cacheStores` on the final merged Metro config:
+
 ```js
 const { sharedCacheStores } = require('@stim-cli/metro');
+const { name } = require('./package.json');
 
-config.cacheStores = sharedCacheStores('my-app');
+config.cacheStores = sharedCacheStores(name, { cwd: __dirname });
 ```
+
+For bare React Native under Stim, this explicitly selects one shared transform
+store. Stim's automatic setup preserves Metro's default `os.tmpdir()/metro-cache`
+store; this assignment replaces it and any custom stores in `cacheStores`.
+Using the package name lets Stim recognize the shared store without adding another.
 
 ## `@stim-cli/expo-build-cache`
 
