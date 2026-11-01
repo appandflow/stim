@@ -1,9 +1,14 @@
+import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { BuildHost, type BuildLimits } from '../src/build.ts';
+import { windowsShortDir } from '@stim-cli/core/state';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 const file = (path: string, text: string, size = text.length) => ({ path, kind: 'file', size, sha256: sha(text) });
@@ -33,6 +38,68 @@ afterEach(async () => {
   delete process.env.STIM_HOME;
   rmSync(home, { recursive: true, force: true });
 });
+
+test.skipIf(process.platform !== 'win32')(
+  'retains a process and claims after a short-home ownership collision',
+  async () => {
+    vi.stubEnv('SystemDrive', home);
+    const client = 'collision-client';
+    const repo = 'app-1';
+    const area = join(root, client, 'repos', repo);
+    const gradle = windowsShortDir(join(area, 'cache', 'gradle'));
+    mkdirSync(gradle, { recursive: true });
+    writeFileSync(`${gradle}.owner`, 'another-repository');
+    const gate = join(home, 'worker-gate');
+    const worker = join(home, 'worker.mjs');
+    writeFileSync(
+      worker,
+      `import { existsSync } from 'node:fs';
+for await (const chunk of process.stdin) {}
+while (!existsSync(${JSON.stringify(gate)})) await new Promise(resolve => setTimeout(resolve, 10));
+console.log(JSON.stringify({ type: 'result', ok: false, code: 'worker-crashed', message: 'private home refused' }));`,
+    );
+    const foreign = spawn(
+      process.execPath,
+      [
+        '-e',
+        'process.stdout.write("ready"); setInterval(() => {}, 1000)',
+        join(gradle, 'wrapper', 'gradle-daemon-main.jar'),
+        'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    try {
+      assert(foreign.stdout);
+      await once(foreign.stdout, 'data');
+      running = new BuildHost({
+        worker,
+        env: process.env,
+        limits: { minFreeBytes: 0, minFreeMemoryBytes: 0, killGraceMs: 100 },
+      });
+      const launched = running.launch({
+        client,
+        repo,
+        job: { platform: 'android' },
+        session: running.session(client, socket, () => {}),
+        send() {},
+      });
+      assert(!('error' in launched));
+      writeFileSync(gate, '');
+      await launched.done;
+      expect(launched.outcome).toHaveProperty('code', 'cleanup-unresolved');
+      expect(foreign.exitCode).toBe(null);
+      expect(foreign.signalCode).toBe(null);
+      expect(readClaimSet(`${area}.claims`).live).toHaveLength(1);
+    } finally {
+      if (foreign.exitCode === null && foreign.signalCode === null) {
+        const closed = once(foreign, 'close');
+        foreign.kill();
+        await closed;
+      }
+      vi.unstubAllEnvs();
+    }
+  },
+);
 
 test('refuses a blob whose declared size would take the worker volume under its free floor', () => {
   const stats = statfsSync(root);

@@ -341,6 +341,14 @@ function gradleUserHome(area: string, platform: NodeJS.Platform = process.platfo
   return platform === 'win32' ? windowsShortDir(win32.join(area, 'cache', 'gradle')) : join(area, 'cache', 'gradle');
 }
 
+function ownsWindowsGradleHome(area: string): boolean {
+  try {
+    return readFileSync(`${gradleUserHome(area, 'win32')}.owner`, 'utf8') === windowsShortDirKey('gradle', area);
+  } catch {
+    return false;
+  }
+}
+
 interface GradleScope {
   client: string;
   repo?: string;
@@ -546,7 +554,13 @@ export class BuildHost {
           scopes.push({ client, repo: entry.name });
       }
     } catch {}
-    return scopes;
+    return process.platform === 'win32'
+      ? scopes.filter((scope) =>
+          ownsWindowsGradleHome(
+            scope.repo ? join(this.clientDir(client), 'repos', scope.repo) : this.clientDir(client),
+          ),
+        )
+      : scopes;
   }
 
   private async drainCancelledAndroid(client: string, repo: string): Promise<boolean> {
@@ -554,6 +568,13 @@ export class BuildHost {
       const daemons = workerGradleDaemons(await listCommandLines(), this.root(), process.platform, [
         { client, repo },
       ]).filter((daemon) => daemon.client === client && daemon.repo === repo);
+      if (
+        process.platform === 'win32' &&
+        daemons.length > 0 &&
+        !ownsWindowsGradleHome(join(this.clientDir(client), 'repos', repo))
+      ) {
+        throw new Error('The repository Gradle home has no matching owner key.');
+      }
       const identities = daemons.map(({ pid }) => {
         const captured = captureProcessIdentity(pid);
         if (!captured.ok) throw new Error(`Cannot identify Gradle daemon ${pid}.`);
