@@ -20,14 +20,14 @@ const PLATFORMS: DevicePlatform[] = ['ios', 'android', 'macos', 'web'];
 export function worktreeApps(path: string, environments: EnvironmentState[]): EnvironmentState[] {
   const selected = environments.find((env) => env.path === path);
   if (!selected) return [];
-  const checkout = selected.worktree?.path;
+  const checkout = selected.checkout ?? selected.worktree?.path;
   return environments
-    .filter((env) => env.path === path || (checkout && env.worktree?.path === checkout))
+    .filter((env) => env.path === path || (checkout && (env.checkout ?? env.worktree?.path) === checkout))
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 function projectLabel(env: EnvironmentState): string {
-  const checkout = env.worktree?.path;
+  const checkout = env.checkout ?? env.worktree?.path;
   return checkout && env.path.startsWith(`${checkout}/`)
     ? env.path.slice(checkout.length + 1)
     : (env.path.split('/').filter(Boolean).at(-1) ?? env.path);
@@ -137,7 +137,7 @@ export function worktreeDisk(apps: EnvironmentState[]): EnvironmentState['disk']
     values.every((value) => value === null) ? null : Math.max(...values.map((value) => value ?? 0));
   return {
     worktreeBytes: max(disks.map((disk) => disk.worktreeBytes)),
-    nodeModulesBytes: max(disks.map((disk) => disk.nodeModulesBytes)),
+    nodeModulesBytes: apps.length === 1 ? disks[0].nodeModulesBytes : null,
     buildBytes: sumMeasured(disks.map((disk) => disk.buildBytes)),
     measuredAt: disks[0].measuredAt,
   };

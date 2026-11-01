@@ -96,6 +96,7 @@ function simulatorDataDir(udid: string): string {
 }
 
 function checkoutDir(state: EnvironmentState): string {
+  if (state.checkout) return state.checkout;
   if (state.worktree?.path) return state.worktree.path;
   const common = gitCommonDirOnDisk(state.path);
   return common && basename(common) === '.git' ? dirname(common) : state.path;

@@ -95,12 +95,12 @@ export function mergeArchives(macs: MacSnapshot[]): HomeArchive[] {
 
 export type HomeEntry = HomeItem | HomeWorktree | HomeArchive;
 
-/** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
+/** The home row an entry belongs to: apps of one checkout share a row, so they share a key. */
 export function workspaceKey(item: HomeEntry): string {
   if ('facts' in item) return item.key;
   if ('archive' in item)
     return `${item.macId}\narchive-checkout\n${item.env.worktree?.path}\n${item.archive.removedAt}`;
-  const checkout = item.env.worktree?.path;
+  const checkout = item.env.checkout ?? item.env.worktree?.path;
   return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
 }
 

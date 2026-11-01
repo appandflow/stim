@@ -218,6 +218,10 @@ msgstr "{freeGb} GB free"
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}"
+msgstr "{heading} {size}: {summary}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -1643,10 +1647,6 @@ msgstr "disk"
 #: src/screens/workspace-resources.tsx
 msgid "Disk"
 msgstr "Disk"
-
-#: src/screens/workspace-resources.tsx
-msgid "Disk {size}: {summary}"
-msgstr "Disk {size}: {summary}"
 
 #: src/screens/mac-status.tsx
 msgid "Disk details are unavailable: {message}"
