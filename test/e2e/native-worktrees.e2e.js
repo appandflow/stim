@@ -208,7 +208,7 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
       prepared = true;
       return { code: 0, stdout: '', stderr: '' };
     }
-    if (file === process.execPath && argv[1].endsWith('/record-fixture-prebuild.mjs')) {
+    if (file === process.execPath && basename(argv[1]) === 'record-fixture-prebuild.mjs') {
       assert.equal(prepared, true);
       assert.equal(git(opts.cwd, 'status', '--porcelain'), '');
       assert.equal(git(opts.cwd, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
