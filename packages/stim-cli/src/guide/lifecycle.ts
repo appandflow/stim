@@ -3096,7 +3096,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`ios --configuration <name>\` selects the Xcode configuration --
   for React Native and Expo, \`--configuration Release\` builds a SIMULATOR
   Release app with the JS bundle embedded. It overrides the ios.configuration setting (the app-level
-  default); unset, the Debug flow is unchanged. A non-Debug configuration
+  default); unset, the Debug flow is unchanged. A configuration whose name contains
+  "Debug" (\`Debug\`, \`Dev.Debug\`) runs the Debug flow, as React Native's bundling
+  script decides. Any other configuration
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --
   \`launched\` is verified by the app PROCESS staying alive, not by a bundle

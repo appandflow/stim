@@ -4738,11 +4738,14 @@ describe('configuration resolution', () => {
     expect(iosConfigurationSetting(null)).toBe(null);
   });
 
-  test('only Debug (case-insensitive) is the dev flow; everything else embeds its JS', () => {
+  test('a configuration React Native treats as Debug is the dev flow; everything else embeds its JS', () => {
     expect(isReleaseConfiguration('Release')).toBe(true);
     expect(isReleaseConfiguration('Staging')).toBe(true);
+    expect(isReleaseConfiguration('Staging.debug')).toBe(true);
     expect(isReleaseConfiguration('Debug')).toBe(false);
     expect(isReleaseConfiguration('debug')).toBe(false);
+    expect(isReleaseConfiguration('Dev.Debug')).toBe(false);
+    expect(isReleaseConfiguration('Debug Staging')).toBe(false);
     expect(isReleaseConfiguration(null)).toBe(false);
     expect(isReleaseConfiguration('')).toBe(false);
   });
