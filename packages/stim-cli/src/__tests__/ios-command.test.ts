@@ -4015,8 +4015,20 @@ describe('--remote', () => {
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    const { calls, exitCode } = await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        fingerprintProject: async () => {
+          vi.advanceTimersByTime(1000);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
     expect(exitCode).toBeFalsy();
+    const stats = sharedState.readStats().record;
+    expect(stats?.machine.ios?.runs).toBe(1);
+    expect(stats?.history).toBeUndefined();
     expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
@@ -7473,6 +7485,57 @@ describe('the simulator model and runtime flags', () => {
     expect(ok.calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
+  test.each(['flag', 'setting'])(
+    'runtime installation through %s happens before selector validation and continues the run',
+    async (entry) => {
+      reserve();
+      let installed = false;
+      const result = await run(
+        { runtime: '26.5', installRuntime: entry === 'flag', json: true },
+        {
+          resolveSettings: () => ({ ios: { autoInstallRuntime: entry === 'setting' } }),
+          ensureIosRuntime: async () => {
+            installed = true;
+            return { ok: true };
+          },
+          listIosRuntimes: async () =>
+            installed
+              ? [
+                  {
+                    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+                    version: '26.5',
+                    name: 'iOS 26.5',
+                    supportedDeviceTypes: [{ identifier: 'iphone', name: 'iPhone 17' }],
+                  },
+                ]
+              : [],
+        },
+      );
+      expect(installed).toBe(true);
+      expect(result.exitCode).toBe(null);
+      expect(result.calls.order).toContain('ensureOwnedDevice');
+    },
+  );
+
+  test('runtime installation failure stops before any device or app build', async () => {
+    reserve();
+    const result = await run(
+      { runtime: '26.5', installRuntime: true, json: true },
+      {
+        ensureIosRuntime: async () => ({
+          ok: false,
+          code: 'STIM_NO_DEVICE',
+          message: 'Xcode cannot install that version',
+          remedy: 'Choose an available version.',
+        }),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).message).toContain('Xcode cannot install');
+    expect(result.calls.order).not.toContain('ensureOwnedDevice');
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
   test('an unknown runtime refuses first, naming the installed versions', async () => {
     reserve();
     const { exitCode, logs, calls } = await run({ runtime: '99.9', json: true });
@@ -8483,6 +8546,7 @@ describe('--plan', () => {
   test.each([
     [{ device: true }, '--device'],
     [{ remote: 'proxy' }, '--remote'],
+    [{ installRuntime: true }, '--install-runtime'],
     [{ simulatorApp: 'xcode' }, '--simulator-app'],
   ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
     const { logs, exitCode, calls } = await run({ plan: true, json: true, ...flags });
@@ -8921,16 +8985,24 @@ describe('iOS placement on a hosting Mac', () => {
     expect(calls.order).not.toContain('ensureOwnedDevice');
   });
 
-  test.each([undefined, 'other', 'proxy'])('a recorded host refuses switching to %s until stop', async (remote) => {
-    writeHostedIos(root, 'default', placement);
-    const { logs, calls } = await run({ remote, json: true });
-    expect(parseFirst(logs)).toMatchObject({
-      code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('runs on mini; run stim stop first'),
-    });
-    expect(calls.order).not.toContain('ensureOwnedDevice');
-    expect(calls.order).not.toContain('buildIos');
-  });
+  test.each([undefined, 'other', 'proxy'])(
+    'a recorded host refuses switching to %s before runtime installation',
+    async (remote) => {
+      writeHostedIos(root, 'default', placement);
+      const install = vi.fn<() => Promise<{ ok: true }>>(async () => ({ ok: true }));
+      const { logs, calls } = await run(
+        { remote, runtime: '26.5', installRuntime: true, json: true },
+        { installHostedIosRuntime: install },
+      );
+      expect(parseFirst(logs)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('runs on mini; run stim stop first'),
+      });
+      expect(install).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('ensureOwnedDevice');
+      expect(calls.order).not.toContain('buildIos');
+    },
+  );
 
   test.each(['Debug', 'Release'])(
     'builds %s for the offered architecture before reservation and never touches a local device',
@@ -8955,6 +9027,7 @@ describe('iOS placement on a hosting Mac', () => {
           hostSimulatorArch: () => 'arm64',
           buildIos: async (args) => {
             order.push('build');
+            vi.advanceTimersByTime(1000);
             expect(args.destination).toBe('generic/platform=iOS Simulator');
             expect(args.arch).toBe('x86_64');
             return makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
@@ -8978,6 +9051,9 @@ describe('iOS placement on a hosting Mac', () => {
         agent: { driver: 'none' },
       });
       expect(facts.cacheKey).toContain('x86-64');
+      const stats = sharedState.readStats().record;
+      expect(stats?.machine.ios?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(JSON.stringify(facts).includes(hostedDevice.udid)).toBe(false);
       for (const native of ['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp', 'replaceCollector'])
         expect(calls.order).not.toContain(native);

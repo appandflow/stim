@@ -32,7 +32,13 @@ import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { requestNativeRunCancel, withNativeBuildRun } from '../engine/native-run.ts';
 import type { acquireBuildSlot } from '../engine/build-slots.ts';
-import { ACTIVE_BUILD_KEY, buildReport, parseActiveBuild, startBuildProgress } from '../engine/build-progress.ts';
+import {
+  ACTIVE_BUILD_KEY,
+  NO_BUILD_PROGRESS,
+  buildReport,
+  parseActiveBuild,
+  startBuildProgress,
+} from '../engine/build-progress.ts';
 import type { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -66,6 +72,7 @@ import {
   readBuildHistory,
   readBuildLedger,
   readLastBuilds,
+  readStats,
 } from '@stim-cli/core/state';
 import { parseNdjsonText } from '../ndjson.ts';
 import {
@@ -154,6 +161,7 @@ beforeEach(() => {
   androidHome = process.env.ANDROID_HOME;
   androidSdkRoot = process.env.ANDROID_SDK_ROOT;
   process.env.ANDROID_HOME = join(home, 'sdk');
+  mkdirSync(process.env.ANDROID_HOME);
   delete process.env.ANDROID_SDK_ROOT;
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-android-')));
   writeFileSync(
@@ -644,8 +652,10 @@ test.each([false, true])('the Android API preserves retained Metro cleanup after
 });
 
 test('android.gradleRoot reaches the Gradle build and the cache key', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
   mkdirSync(join(root, 'native', 'app'), { recursive: true });
   writeFileSync(join(root, 'native', 'settings.gradle'), '');
+  writeFileSync(join(root, 'native', 'local.properties'), 'sdk.dir=/project-sdk');
   writeFileSync(join(root, 'native', 'app', 'build.gradle'), '');
   const h = harness({ resolveSettingsFor: () => ({ android: { gradleRoot: 'native' } }) });
   await h.run();
@@ -668,6 +678,22 @@ test('an invalid Android pool bound refuses before device creation and emits one
   } finally {
     delete process.env.STIM_POOL_ANDROID_PARKED_MAX;
   }
+});
+
+test('a missing local Android SDK refuses before Metro or device setup', async () => {
+  rmSync(join(home, 'sdk'), { recursive: true });
+  const h = harness({ json: true });
+  const result = await h.run();
+  expect(result.error).toMatchObject({
+    code: 'STIM_BUILD_FAILED',
+    message: `No Android SDK at ${join(home, 'sdk')}.`,
+    remedy: expect.stringContaining('android/local.properties'),
+  });
+  expect(h.calls.metro).toEqual([]);
+  expect(h.calls.ensureDevice).toEqual([]);
+  expect(h.calls.prebuild).toEqual([]);
+  expect(h.calls.build).toEqual([]);
+  expect(JSON.parse(h.stdout.at(-1) ?? '')).toMatchObject({ code: 'STIM_BUILD_FAILED' });
 });
 
 test('a Windows project root with no room for the NDK object paths refuses before any emulator is prepared', async () => {
@@ -1012,8 +1038,15 @@ describe('explicit remote backend behavior', () => {
   test.each(['proxy', 'eas'] as const)(
     '%s selects that backend and replaces only device operations',
     async (backend) => {
-      const { h, selected, remoteCalls } = remoteHarness(backend);
+      let clock = Date.now();
+      const { h, selected, remoteCalls } = remoteHarness(backend, {
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
+        now: () => (clock += 1000),
+      });
       const result = await h.run();
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.ok).toBe(true);
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
@@ -7432,6 +7465,7 @@ describe('EAS development builds', () => {
 
   test('a miss refuses before creating an emulator or compiling locally', async () => {
     expoProject();
+    rmSync(join(home, 'sdk'), { recursive: true });
     const { run, calls } = harness({
       easProfile: 'development',
       resolveEasDevelopmentBuild: async () => ({
@@ -7561,6 +7595,7 @@ describe('strict remote machine selection', () => {
 
   test('a named Android worker whose toolchain differs refuses before prebuild changes the checkout', async () => {
     configureMini();
+    rmSync(join(home, 'sdk'), { recursive: true });
     rmSync(join(root, 'android'), { recursive: true });
     writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '54.0.0' } }));
     writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { android: { package: 'com.example.app' } } }));
@@ -8135,6 +8170,7 @@ describe('named Android hosting placement', () => {
         json: true,
         remoteDevice: 'mini',
         variant: evidence === 'release' ? 'release' : 'debug',
+        progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
         systemImage: hostDevice.systemImage,
         deviceProfile: 'pixel_7',
         prepareHostedAndroid: async (_machine: string, selectors: unknown) => {
@@ -8153,6 +8189,7 @@ describe('named Android hosting placement', () => {
         },
         build: async (args) => {
           order.push('build');
+          vi.advanceTimersByTime(1000);
           expect(args.abi).toBe('x86_64');
           return makeAndroidBuildSuccess({ apkPath: fakeApk() });
         },
@@ -8169,6 +8206,9 @@ describe('named Android hosting placement', () => {
       );
       expect(result.facts?.host?.device?.name).toBe('pixel_7 (API 30)');
       expect(result.facts?.cacheKey).toContain('x86-64');
+      const stats = readStats().record;
+      expect(stats?.machine.android?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(result.facts?.serial).not.toBe(hostDevice.serial);
       expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
       expect(getProject(root)?.platforms?.android).toBeUndefined();

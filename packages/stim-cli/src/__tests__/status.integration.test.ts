@@ -1328,6 +1328,26 @@ test.each([false, true])(
   },
 );
 
+test('plain status explains how to enable a hosted agent when no driver is available', async () => {
+  const root = join(tmpHome, 'app');
+  mkdirSync(root);
+  writeFileSync(join(root, 'package.json'), '{}');
+  saveConfig(makeConfig({ projects: { [root]: { platforms: {} } } }));
+  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+  writeHostedIos(root, 'default', {
+    machine: 'mini',
+    selected: 'mini',
+    session: '12345678-1234-1234-1234-123456789abc',
+    appAttempt: 'attempt',
+    device: null,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+  });
+  const plain = (await runStatus()).join('\n');
+  expect(plain).toContain('Agent control is unavailable on mini');
+  expect(plain).toContain('hosting.agentDriver');
+  expect(plain).toContain('agent-device');
+});
+
 test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknown'].map((state) => ({ slot, state }))))(
   'status reconciles a $state local simulator with a hosted record in slot $slot',
   async ({ slot, state }) => {

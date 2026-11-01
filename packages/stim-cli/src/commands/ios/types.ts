@@ -69,6 +69,7 @@ export interface IosCommandOptions {
   cleanAppState?: boolean;
   deviceType?: string;
   runtime?: string;
+  installRuntime?: boolean;
   simulatorApp?: string;
   device?: string | boolean;
   remote?: string;

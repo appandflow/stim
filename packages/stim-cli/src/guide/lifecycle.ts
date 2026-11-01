@@ -984,8 +984,10 @@ ${HOSTED_RECORDING('simulator')}
 
 If hosting.agentDriver is none, the driver cannot enforce its policy, or the
 host does not advertise hosted-ios-agent, agent reports
-{ driver: 'none', setting: 'hosting.agentDriver' }. Update the host and check
-its setting and agent-device installation. No other simulator becomes reachable.
+{ driver: 'none', setting: 'hosting.agentDriver' }. A run whose host disables
+the driver prints a notice; plain status also names the host setting when
+agent control is unavailable. Update the host and check its setting and
+agent-device installation. No other simulator becomes reachable.
 Client hello carries only name and version, not features, so the host cannot gate
 daemon startup or grant issuance on client support. The client checks the host's
 hosted-ios-agent feature before using a grant.
@@ -2346,7 +2348,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
   android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (default 600s), or physical
   leases with --device (default 60s). Remote targets do not join this local
@@ -2638,6 +2640,26 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   "pixel_fold" for a foldable. Each overrides its setting (ios.deviceType,
   ios.runtime, android.systemImage, android.deviceProfile) for that one
   invocation, exactly as \`--configuration\` overrides ios.configuration.
+
+  \`stim ios --runtime 26.5 --install-runtime --remote local\` installs that
+  missing iOS runtime with Xcode, then continues the run. Use
+  \`--remote <mac>\` for a named approved hosting Mac, including from Linux.
+  ios.autoInstallRuntime enables the same opt-in for an explicit ios.runtime
+  or --runtime version; it defaults to false. Installation requires an exact
+  major.minor[.patch] version, about 8-10 GB to download (actual size varies),
+  and at least 20 GB free on the simulator volume for download and unpacking.
+  A child-aware ownership claim serializes Stim installs in this Mac's Stim
+  home and the installer takes an available build slot. Run output shows
+  Xcode progress locally and periodic waiting messages remotely; status shows
+  the install phase and remote machine. Without opt-in, a missing runtime
+  still refuses. Automatic placement, eas/proxy and physical-device runs do
+  not install runtimes: choose --remote local or one named Mac first.
+  Xcode Settings > Components lists downloadable versions supported by Xcode;
+  Stim retains Xcode's error for unavailable versions. Installed versions
+  appear in stim doctor and xcrun simctl list runtimes. Runtimes are shared
+  Xcode components, not Stim-owned devices: remove them manually through
+  Xcode Settings > Components after checking other workspaces no longer need
+  them. Stim does not prune them.
 
   A name that is not INSTALLED on this machine refuses with STIM_BAD_ARG
   before anything is created, and the message lists the installed names, so a
