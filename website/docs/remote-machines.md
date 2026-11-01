@@ -501,9 +501,11 @@ Volta, asdf, mise or linked Homebrew `node`/`node@NN` install. On every
 offloaded iOS build, pinned or not, the worker also writes the first `node` on
 its `PATH` (the pinned Node when it put one first) as `NODE_BINARY` in the iOS
 project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
-there. A warm Gradle daemon keeps
-running React Native's Node steps on the Node it started with
-([#4081](https://github.com/appandflow/stim/issues/4081)). A pin naming a version the
+there. Offloaded React Native and Expo Android builds keep a separate Gradle
+home for each selected Node executable and version. Changing Node starts a cold
+Gradle dependency cache and can retain another warm daemon; switching back reuses
+that Node's cache. These caches stay until the client is removed. Native Gradle
+projects keep their existing home. A pin naming a version the
 worker does not have, such as `22.22.0`, uses the newest installed Node of that
 major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
 Without one, the steps run on the worker's own `node`, and a failed install or
