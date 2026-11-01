@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('units advance fake deadlines, integration exceptions keep real clocks, and lint rejects unit opt-outs', () => {
+  // Vite cannot load these fixture paths across Windows drives: https://github.com/appandflow/stim/issues/4709
   const fixture = mkdtempSync(join(root, '.stim-clock-policy-'));
   const source = join(fixture, 'packages', 'clock', '__tests__');
   mkdirSync(source, { recursive: true });
