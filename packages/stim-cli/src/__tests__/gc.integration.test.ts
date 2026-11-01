@@ -3410,6 +3410,7 @@ describe('gc --json', () => {
       'parkedSimulators',
       'parkedEmulators',
       'parkedHostedDevices',
+      'hostedAppStorage',
       'orphanedDevices',
       'unverifiedDevices',
       'staleDevices',
@@ -4639,8 +4640,53 @@ describe('parked hosted device GC', () => {
     expect(stderr).toContain('Parked hosted devices (1)');
     expect(readFileSync(join(deviceHostRoot(), 'sessions.json'), 'utf8')).toBe(before);
     expect(readHostedDeviceLedger(join(deviceHostArea(sessionId), 'home'))?.ios).toEqual([udid]);
+    const active = session({ state: 'ready', parked: undefined });
+    journal([active]);
+    const apps = join(deviceHostArea(sessionId), 'apps');
+    const blobs = join(deviceHostArea(sessionId), 'blobs');
+    mkdirSync(apps);
+    mkdirSync(blobs);
+    writeFileSync(join(apps, 'current'), 'app');
+    writeFileSync(join(blobs, 'content'), 'blob');
+    const executor = getExecutor();
+    setExecutor({
+      ...executor,
+      runFileAsync: (file, args, options) =>
+        file === 'du' && [apps, blobs].includes(String(args.at(-1)))
+          ? Promise.resolve(`4\t${args.at(-1)}`)
+          : executor.runFileAsync(file, args, options),
+    });
+    const usage = await captureJson(() => cli(['--json']));
+    const onlyStorage = JSON.parse(usage.stdout[0]!);
+    expect(onlyStorage.actionable).toBe(false);
+    expect(onlyStorage.sections.hostedAppStorage).toEqual([
+      {
+        session: sessionId,
+        client: active.client,
+        platform: 'ios',
+        state: 'ready',
+        path: deviceHostArea(sessionId),
+        appsBytes: 4096,
+        blobsBytes: 4096,
+      },
+    ]);
+    expect(usage.stderr).toContain('Hosted app storage (report only)');
+    expect(readFileSync(join(apps, 'current'), 'utf8')).toBe('app');
+    expect(readFileSync(join(blobs, 'content'), 'utf8')).toBe('blob');
     const scoped = await collectGcReport({ cache: 'parked' });
     expect(scoped.parkedHostedDevices).toEqual([]);
+    expect(scoped.hostedAppStorage ?? []).toEqual([]);
+    const outside = join(tmpHome, 'outside-app-storage');
+    mkdirSync(outside);
+    writeFileSync(join(outside, 'keep'), 'outside');
+    rmSync(apps, { recursive: true });
+    symlinkSync(outside, apps, process.platform === 'win32' ? 'junction' : 'dir');
+    const linked = await collectGcReport({});
+    expect(linked.hostedAppStorage).toEqual([]);
+    expect(linked.deviceSweepNotices).toContain(
+      `Hosted app storage ${sessionId} unavailable: Hosted app storage is not an owned directory.`,
+    );
+    expect(readFileSync(join(outside, 'keep'), 'utf8')).toBe('outside');
   });
 });
 
