@@ -1,19 +1,23 @@
 import Foundation
 
+#if canImport(StimKit)
+  import StimKit
+#endif
+
 /// One `Page.screencastFrame`: Chrome's JPEG, the page area it shows in CSS pixels, and when Chrome drew it,
 /// in milliseconds since the epoch.
-public struct ScreencastFrame {
+public struct ScreencastFrame: Sendable {
   public let jpeg: Data
   public let cssWidth: Double
   public let cssHeight: Double
   public let capturedAt: Double
 }
 
-public enum WebTouchPhase: String {
+public enum WebTouchPhase: String, Sendable {
   case down, move, up
 }
 
-public enum WebMouseEvent: String {
+public enum WebMouseEvent: String, Sendable {
   case pressed = "mousePressed"
   case moved = "mouseMoved"
   case released = "mouseReleased"
@@ -21,7 +25,7 @@ public enum WebMouseEvent: String {
 
 /// A key `Input.dispatchKeyEvent` presses by name, with its DOM `key`, `code` and Windows virtual key code, which
 /// Chrome needs to run the key's default action.
-public enum WebKey: String, CaseIterable {
+public enum WebKey: String, CaseIterable, Sendable {
   case enter, tab, backspace, escape, delete, left, right, up, down, home, end, pageUp, pageDown
 
   var fields: (key: String, code: String, keyCode: Int, text: String?) {
@@ -62,8 +66,8 @@ public final class WebPage: @unchecked Sendable {
   private let sessionId: String
   private let queue = DispatchQueue(label: "stim.web.page")
   private var viewport: (width: Double, height: Double)?
-  private var frameHandler: ((ScreencastFrame) -> Void)?
-  private var endHandler: ((String) -> Void)?
+  private var frameHandler: (@Sendable (ScreencastFrame) -> Void)?
+  private var endHandler: (@Sendable (String) -> Void)?
   private var ended: String?
   private var touching = false
   private var markedAt: DispatchTime?
@@ -76,13 +80,13 @@ public final class WebPage: @unchecked Sendable {
 
   /// Connects to the owned Chrome at `endpoint` and attaches to `targetId`, both from `stim status`'s `web` entry.
   public static func open(
-    endpoint: URL, chromePid: Int32, targetId: String, completion: @escaping (Result<WebPage, DevToolsError>) -> Void
+    endpoint: URL, chromePid: Int32, targetId: String, completion: @escaping @Sendable (Result<WebPage, DevToolsError>) -> Void
   ) {
     DevToolsClient.connect(endpoint: endpoint, chromePid: chromePid) { connected in
       switch connected {
       case .failure(let failure): completion(.failure(failure))
       case .success(let client):
-        client.send("Target.attachToTarget", ["targetId": targetId, "flatten": true]) { attached in
+        client.send("Target.attachToTarget", ["targetId": .string(targetId), "flatten": .bool(true)]) { attached in
           guard case .success(let reply) = attached, let sessionId = reply["sessionId"] as? String else {
             client.close()
             if case .failure(let failure) = attached { return completion(.failure(failure)) }
@@ -91,10 +95,10 @@ public final class WebPage: @unchecked Sendable {
           let page = WebPage(client: client, targetId: targetId, sessionId: sessionId)
           client.onEvent { page.handle($0) }
           client.onClose { page.end("The DevTools connection closed.") }
-          client.send("Target.setDiscoverTargets", ["discover": true])
+          client.send("Target.setDiscoverTargets", ["discover": .bool(true)])
           client.send("Page.enable", sessionId: sessionId)
           client.send(
-            "Runtime.evaluate", ["expression": "[innerWidth, innerHeight]", "returnByValue": true],
+            "Runtime.evaluate", ["expression": .string("[innerWidth, innerHeight]"), "returnByValue": .bool(true)],
             sessionId: sessionId
           ) { measured in
             if case .success(let reply) = measured,
@@ -110,12 +114,12 @@ public final class WebPage: @unchecked Sendable {
   }
 
   /// Frames arrive on the page's private queue; Chrome sends one when the page changes, and once on start.
-  public func onFrame(_ handler: @escaping (ScreencastFrame) -> Void) {
+  public func onFrame(_ handler: @escaping @Sendable (ScreencastFrame) -> Void) {
     queue.async { self.frameHandler = handler }
   }
 
   /// Called once, when the page closes, Chrome exits or the connection drops; a crashed page stays attached.
-  public func onEnd(_ handler: @escaping (String) -> Void) {
+  public func onEnd(_ handler: @escaping @Sendable (String) -> Void) {
     queue.async {
       if let ended = self.ended { handler(ended) } else { self.endHandler = handler }
     }
@@ -127,7 +131,10 @@ public final class WebPage: @unchecked Sendable {
     command("Page.stopScreencast")
     command(
       "Page.startScreencast",
-      ["format": "jpeg", "quality": quality, "maxWidth": maxEdge, "maxHeight": maxEdge, "everyNthFrame": 1])
+      [
+        "format": .string("jpeg"), "quality": .number(Double(quality)), "maxWidth": .number(Double(maxEdge)),
+        "maxHeight": .number(Double(maxEdge)), "everyNthFrame": .number(1),
+      ])
   }
 
   public func stopScreencast() {
@@ -153,9 +160,11 @@ public final class WebPage: @unchecked Sendable {
       case .up:
         guard self.touching else { return }
         self.touching = false
-        return self.command("Input.dispatchTouchEvent", ["type": "touchEnd", "touchPoints": [] as [Any]])
+        return self.command("Input.dispatchTouchEvent", ["type": .string("touchEnd"), "touchPoints": .array([])])
       }
-      self.command("Input.dispatchTouchEvent", ["type": type, "touchPoints": [["x": point.x, "y": point.y]]])
+      self.command(
+        "Input.dispatchTouchEvent",
+        ["type": .string(type), "touchPoints": .array([.object(["x": .number(point.x), "y": .number(point.y)])])])
     }
   }
 
@@ -165,11 +174,12 @@ public final class WebPage: @unchecked Sendable {
     queue.async {
       guard let point = self.point(x, y) else { return }
       if event != .moved || pressed { self.markTakeover() }
-      var params: [String: Any] = [
-        "type": event.rawValue, "x": point.x, "y": point.y, "modifiers": modifiers.rawValue,
-        "button": event == .moved && !pressed ? "none" : "left", "buttons": pressed ? 1 : 0,
+      var params: [String: JSONValue] = [
+        "type": .string(event.rawValue), "x": .number(point.x), "y": .number(point.y),
+        "modifiers": .number(Double(modifiers.rawValue)),
+        "button": .string(event == .moved && !pressed ? "none" : "left"), "buttons": .number(pressed ? 1 : 0),
       ]
-      if event != .moved { params["clickCount"] = clickCount }
+      if event != .moved { params["clickCount"] = .number(Double(clickCount)) }
       self.command("Input.dispatchMouseEvent", params)
     }
   }
@@ -182,8 +192,9 @@ public final class WebPage: @unchecked Sendable {
       self.command(
         "Input.dispatchMouseEvent",
         [
-          "type": "mouseWheel", "x": point.x, "y": point.y, "deltaX": deltaX, "deltaY": deltaY,
-          "modifiers": modifiers.rawValue,
+          "type": .string("mouseWheel"), "x": .number(point.x), "y": .number(point.y), "deltaX": .number(deltaX),
+          "deltaY": .number(deltaY),
+          "modifiers": .number(Double(modifiers.rawValue)),
         ])
     }
   }
@@ -200,8 +211,9 @@ public final class WebPage: @unchecked Sendable {
         default:
           let value = String(character)
           self.command(
-            "Input.dispatchKeyEvent", ["type": "keyDown", "key": value, "text": value, "unmodifiedText": value])
-          self.command("Input.dispatchKeyEvent", ["type": "keyUp", "key": value])
+            "Input.dispatchKeyEvent",
+            ["type": .string("keyDown"), "key": .string(value), "text": .string(value), "unmodifiedText": .string(value)])
+          self.command("Input.dispatchKeyEvent", ["type": .string("keyUp"), "key": .string(value)])
         }
       }
     }
@@ -220,22 +232,23 @@ public final class WebPage: @unchecked Sendable {
     let now = DispatchTime.now()
     if let markedAt, now.uptimeNanoseconds - markedAt.uptimeNanoseconds < 1_000_000_000 { return }
     markedAt = now
-    command("Runtime.evaluate", ["expression": "window.dispatchEvent(new Event('stim-takeover'))"])
+    command("Runtime.evaluate", ["expression": .string("window.dispatchEvent(new Event('stim-takeover'))")])
   }
 
   private func sendKey(_ key: WebKey, _ modifiers: WebModifiers) {
     let fields = key.fields
-    var down: [String: Any] = [
-      "type": fields.text == nil ? "rawKeyDown" : "keyDown", "key": fields.key, "code": fields.code,
-      "windowsVirtualKeyCode": fields.keyCode, "modifiers": modifiers.rawValue,
+    var down: [String: JSONValue] = [
+      "type": .string(fields.text == nil ? "rawKeyDown" : "keyDown"), "key": .string(fields.key), "code": .string(fields.code),
+      "windowsVirtualKeyCode": .number(Double(fields.keyCode)), "modifiers": .number(Double(modifiers.rawValue)),
     ]
-    if let text = fields.text, modifiers.isEmpty { down["text"] = text }
+    if let text = fields.text, modifiers.isEmpty { down["text"] = .string(text) }
     command("Input.dispatchKeyEvent", down)
     command(
       "Input.dispatchKeyEvent",
       [
-        "type": "keyUp", "key": fields.key, "code": fields.code, "windowsVirtualKeyCode": fields.keyCode,
-        "modifiers": modifiers.rawValue,
+        "type": .string("keyUp"), "key": .string(fields.key), "code": .string(fields.code),
+        "windowsVirtualKeyCode": .number(Double(fields.keyCode)),
+        "modifiers": .number(Double(modifiers.rawValue)),
       ])
   }
 
@@ -249,7 +262,7 @@ public final class WebPage: @unchecked Sendable {
       guard case .success(let history) = result, let index = history["currentIndex"] as? Int, index > 0,
         let entries = history["entries"] as? [[String: Any]], let id = entries[index - 1]["id"] as? Int
       else { return }
-      self.command("Page.navigateToHistoryEntry", ["entryId": id])
+      self.command("Page.navigateToHistoryEntry", ["entryId": .number(Double(id))])
     }
   }
 
@@ -257,7 +270,7 @@ public final class WebPage: @unchecked Sendable {
     queue.async { self.command("Page.reload") }
   }
 
-  private func command(_ method: String, _ params: [String: Any] = [:]) {
+  private func command(_ method: String, _ params: [String: JSONValue] = [:]) {
     client.send(method, params, sessionId: sessionId)
   }
 
@@ -269,8 +282,8 @@ public final class WebPage: @unchecked Sendable {
   private func handle(_ event: DevToolsClient.Event) {
     switch event.method {
     case "Page.screencastFrame" where event.sessionId == sessionId:
-      guard let ack = event.params["sessionId"] else { return }
-      command("Page.screencastFrameAck", ["sessionId": ack])
+      guard let ack = event.params["sessionId"] as? Double else { return }
+      command("Page.screencastFrameAck", ["sessionId": .number(ack)])
       guard let base64 = event.params["data"] as? String, let jpeg = Data(base64Encoded: base64),
         let metadata = event.params["metadata"] as? [String: Any],
         let width = metadata["deviceWidth"] as? Double, let height = metadata["deviceHeight"] as? Double
