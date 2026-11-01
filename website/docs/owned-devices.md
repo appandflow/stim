@@ -982,7 +982,9 @@ predates hosted recording refuses `record` as a command outside its allowed list
 If the setting is `none`, the daemon cannot enforce the policy, or the host
 lacks the `hosted-ios-agent` hello feature, agent access stays
 `{ driver: 'none', setting: 'hosting.agentDriver' }`. Update the host and check
-its agent-device installation and setting. This never grants another device.
+its agent-device installation and setting. A run whose host disables the driver
+prints a notice; plain status also names the host setting when agent control is
+unavailable. This never grants another device.
 Client hello carries only name and version, not features, so the host cannot gate
 daemon startup or grant issuance on client support. The client checks the host's
 `hosted-ios-agent` feature before using a grant.

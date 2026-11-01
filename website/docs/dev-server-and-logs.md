@@ -25,6 +25,10 @@ Bare React Native runs Metro in the supervisor. Expo runs the project's Expo CLI
 as a supervised child. A healthy server that another process started for the
 same project can be reused, but Stim cannot capture its full output.
 
+If Expo cannot be resolved in a linked worktree, run `stim worktree warm`
+there before retrying. The refusal includes this command alongside dependency
+installation guidance.
+
 ## Start Metro with your own command
 
 Some apps only start Metro through their own command, for example an app

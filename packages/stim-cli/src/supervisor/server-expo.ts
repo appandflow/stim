@@ -1,5 +1,5 @@
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { resolveMetroSharedCache } from '../optimizations.ts';
 import { resolveProjectSettings, type SettingsObject } from '../workspace/settings.ts';
@@ -95,11 +95,14 @@ export function expoBinRefusal(
   root: string,
   what = 'start an Expo dev server for',
 ): { message: string; remedy: string } {
+  const repo = repositoryRoot(root, existsSync);
+  const linked = repo && statSync(join(repo, '.git'), { throwIfNoEntry: false })?.isFile();
   return {
     message:
       `Cannot ${what} ${root}: the \`expo\` package is not resolvable from it` +
       ' (require.resolve("expo/package.json") failed, and no node_modules/.bin/expo exists in it or in any parent).',
     remedy:
+      (linked ? 'Run `stim worktree warm` in this worktree, then retry. ' : '') +
       "Install the project's dependencies (in a monorepo, from the workspace root), or check that this package really depends on `expo`.",
   };
 }
