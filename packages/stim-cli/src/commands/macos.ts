@@ -30,6 +30,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
+import { assertLocalMacosCapacity, withLocalMacosAdmission } from '../macos/admission.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
 import { waitForMacosRegistration } from '../macos/registration.ts';
@@ -117,6 +118,7 @@ export async function runMacos(
             hostServerKey = probe.credential.serverKey;
             probe.connection.close();
           }
+          if (!remote) await assertLocalMacosCapacity(root, context);
           if (!previous?.host) await stopMacosAppHeld(root);
           await withConfigLockAsync(() => upsertProject(root, {}));
           await recordWorkspaceUseAsync(root, new Date(), context.env, context.cwd, context.signal);
@@ -151,7 +153,8 @@ export async function runMacos(
             }
           };
           if (!remote) {
-            const here = await launchHere(context, root, record, note);
+            // https://github.com/appandflow/stim/issues/4483: capacity can fill during compilation; builds stay parallel without an app reservation.
+            const here = await withLocalMacosAdmission(root, context, () => launchHere(context, root, record, note));
             launched();
             return here;
           }

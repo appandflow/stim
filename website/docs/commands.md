@@ -1494,8 +1494,9 @@ devices could not be listed. With neither cap set, neither field appears.
 `iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,
 `capacity.platformDevices.ios` or `.android`: `max` and `inUse`, with `unknown`
 saying why `inUse` is `null`. Each appears only while its cap is set, whether or
-not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits hosted macOS
-apps only and has no status line.
+not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits local app
+workspaces in this Stim home and hosted reservations in separate pools; it
+has no status line.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then

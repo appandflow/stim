@@ -1,7 +1,7 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
-import { writeConfigSetting, loadConfig, saveConfig } from '../workspace/config.ts';
+import { writeConfigSetting, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -47,6 +47,7 @@ import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownersh
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as registration from '../macos/registration.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { withLocalMacosAdmission } from '../macos/admission.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
@@ -203,6 +204,46 @@ test('a device-slot stop preserves the recorded macOS app and supervisor', async
   expect(inspectProcessIdentity(app)).toBe('same');
   expect(inspectProcessIdentity(supervisor)).toBe('same');
   expect(readMacosRecord(root)?.app).toEqual(app);
+});
+
+test('local app admission serializes launch registration and allows replacement at the cap', async () => {
+  const other = join(dir, 'other');
+  mkdirSync(other);
+  upsertProject(root, {});
+  upsertProject(other, {});
+  writeConfigSetting({ scope: 'machine' }, 'concurrency.maxMacosApps', 1);
+  writeConfigSetting({ scope: 'machine' }, 'concurrency.maxDevices', 2);
+  const app = await ownedProcess();
+  let release!: () => void;
+  let started!: () => void;
+  const entered = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const first = withLocalMacosAdmission(root, testContext(), async () => {
+    started();
+    await gate;
+    writeWorkspaceState(root, { macos: record({ app }) });
+  });
+  await entered;
+  const launch = vi.fn<() => Promise<void>>(async () => {});
+  const second = withLocalMacosAdmission(other, testContext(), launch).then(
+    () => null,
+    (error: unknown) => error,
+  );
+  release();
+  await first;
+  expect(await second).toMatchObject({ code: 'STIM_AT_CAPACITY' });
+  expect(launch).not.toHaveBeenCalled();
+  await withLocalMacosAdmission(root, testContext(), launch);
+  expect(launch).toHaveBeenCalledOnce();
+  writeConfigSetting({ scope: 'machine' }, 'concurrency.maxMacosApps', 0);
+  writeConfigSetting({ scope: 'machine' }, 'concurrency.maxDevices', 0);
+  await withLocalMacosAdmission(other, testContext(), launch);
+  expect(launch).toHaveBeenCalledTimes(2);
+  expect(inspectProcessIdentity(app)).toBe('same');
 });
 
 describe.skipIf(process.platform !== 'darwin')('unrecorded copies of the owned bundle', () => {
@@ -829,7 +870,7 @@ describe('macOS build placement and promotion', () => {
       expect(slots.acquireBuildSlot).not.toHaveBeenCalled();
     },
   );
-  test.each(['missing product', 'malformed settings', 'invalid plist', 'missing resource'])(
+  test.each(['missing product', 'malformed settings', 'invalid plist', 'missing resource', 'full macOS capacity'])(
     'the selected SwiftPM operation refuses %s before stopping the previous app',
     async (reason) => {
       if (process.platform !== 'darwin') return;
@@ -841,6 +882,13 @@ describe('macOS build placement and promotion', () => {
       writeFileSync(join(root, '.stim.json'), JSON.stringify({ macos }));
       if (reason === 'invalid plist') plist.SUFeedURL = 'feed';
       writeWorkspaceState(root, { macos: record() });
+      if (reason === 'full macOS capacity') {
+        const other = join(dir, 'other');
+        mkdirSync(other);
+        upsertProject(other, {});
+        writeWorkspaceState(other, { macos: record({ app: macosProcess(process.pid) }) });
+        writeConfigSetting({ scope: 'machine' }, 'concurrency.maxMacosApps', 1);
+      }
       const before = readMacosRecord(root);
       const stop = vi.spyOn(stopping, 'stopMacosAppHeld');
       await expect(runMacos(testContext(), root, () => {})).rejects.toThrow(
@@ -848,7 +896,9 @@ describe('macOS build placement and promotion', () => {
           ? 'macos.product'
           : reason === 'invalid plist'
             ? 'development Info.plist'
-            : 'source does not exist',
+            : reason === 'full macOS capacity'
+              ? 'concurrency.maxMacosApps is 1'
+              : 'source does not exist',
       );
       expect(readMacosRecord(root)).toEqual(before);
       expect(stop).not.toHaveBeenCalled();
