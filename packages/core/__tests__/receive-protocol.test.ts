@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import {
   receiveStatus,
-  statusEnumPaths,
+  workspaceEnumPaths,
   resultEnumCases,
   eventEnumCases,
   archivedLogsEnded,
@@ -22,33 +22,24 @@ test.each([
   expect(isRpcEvent(event)).toBe(false);
 });
 
-test('accepts captured older status while checking Android runtime fields', () => {
+test('checks Android runtime fields in a captured workspace', () => {
   const { payload } = JSON.parse(
     readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
   );
-  payload.maintenance = {
-    mode: 'report',
-    lastChecks: { pressure: 1, size: null },
-    pressure: null,
-    sizes: [],
-    lastPass: null,
-    running: null,
-    recent: [],
-    plan: [],
-  };
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
   const environment = payload.environments.find((entry: { android?: unknown }) => entry.android);
+  const event = { event: 'workspace', subscription: 's', seq: 0, environment };
+  expect(isRpcEvent(event)).toBe(true);
   for (const state of ['detected', 'not-detected', 'missing', 'unknown']) {
     environment.android.state = state;
-    expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+    expect(isRpcEvent(event)).toBe(true);
   }
   for (const state of [{}, 1]) {
     environment.android.state = state;
-    expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(false);
+    expect(isRpcEvent(event)).toBe(false);
   }
   environment.android.state = 'detected';
   environment.android.owned = 'true';
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(false);
+  expect(isRpcEvent(event)).toBe(false);
 });
 
 test('accepts future device idle shutdown reasons without disconnecting the phone', () => {
@@ -58,17 +49,14 @@ test('accepts future device idle shutdown reasons without disconnecting the phon
   const idleShutdown = { at: '2026-10-07T12:00:00Z', idleMinutes: 10 };
   for (const reason of [undefined, 'reclaimed for a waiting run', 'future-reason']) {
     environment.ios.idleShutdown = { ...idleShutdown, ...(reason ? { reason } : {}) };
-    expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+    expect(isRpcEvent({ event: 'workspace', subscription: 's', seq: 0, environment })).toBe(true);
   }
   expect(
     isRpcEvent({
-      event: 'status',
+      event: 'workspace',
       subscription: 's',
-      payload: replaceReceivedField(
-        payload,
-        `environments.${payload.environments.indexOf(environment)}.ios.idleShutdown.reason`,
-        1,
-      ),
+      seq: 0,
+      environment: replaceReceivedField(environment, 'ios.idleShutdown.reason', 1),
     }),
   ).toBe(false);
 });
@@ -109,14 +97,15 @@ test('accepts future maintenance modes and nonzero outcomes without disconnectin
       },
     ],
   };
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload: { ...payload, maintenance } })).toBe(true);
+  const { machine } = statusViews(JSON.parse(JSON.stringify(payload)));
+  const event = { event: 'machine', subscription: 's', seq: 0, machine: { ...machine, maintenance } };
+  expect(isRpcEvent(event)).toBe(true);
   const { sizes: _sizes, recent: _recent, ...compact } = maintenance;
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload: { ...payload, maintenance: compact } })).toBe(true);
+  expect(isRpcEvent({ ...event, machine: { ...machine, maintenance: compact } })).toBe(true);
   expect(
     isRpcEvent({
-      event: 'status',
-      subscription: 's',
-      payload: { ...payload, maintenance: { ...maintenance, lastPass: { ...maintenance.lastPass, freedBytes: '5' } } },
+      ...event,
+      machine: { ...machine, maintenance: { ...maintenance, lastPass: { ...maintenance.lastPass, freedBytes: '5' } } },
     }),
   ).toBe(false);
 });
@@ -154,8 +143,8 @@ test('accepts the original hello and unknown compatible fields but refuses malfo
   expect(isRpcResult('hello', { ...hello, server: { ...hello.server, name: 1 } })).toBe(false);
   expect(isRpcResult('hello', { ...hello, capabilities: [1] })).toBe(false);
   expect(isRpcResult('hello', { subscription: 'wrong-method' })).toBe(false);
-  expect(isRpcResult('status.subscribe', hello)).toBe(false);
-  expect(isRpcResult('status.subscribe', { subscription: 's', future: true })).toBe(true);
+  expect(isRpcResult('workspaces.subscribe', hello)).toBe(false);
+  expect(isRpcResult('workspaces.subscribe', { subscription: 's', future: true })).toBe(true);
 });
 
 test.each(['metro', 'maintenance'])(
@@ -228,20 +217,21 @@ test('accepts results and web state from servers that predate cpu, buildMachines
   };
   const status = (value: unknown) => {
     payload.environments[0].web = value;
-    return isRpcEvent({ event: 'status', subscription: 's', payload });
+    return isRpcEvent({ event: 'workspace', subscription: 's', seq: 0, environment: payload.environments[0] });
   };
   expect(status(web)).toBe(true);
   expect(status({ ...web, targetId: null })).toBe(true);
   expect(status({ ...web, targetId: 1 })).toBe(false);
 });
 
-test('accepts status without machine memory fields, null stack frames and extra fields on empty results', () => {
+test('accepts machine memory omissions, null stack frames and extra fields on empty results', () => {
   const { payload } = JSON.parse(
     readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
   );
   delete payload.machine.memorySource;
   for (const owner of payload.machine.owners) delete owner.memoryMb;
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+  const { machine } = statusViews(payload);
+  expect(isRpcEvent({ event: 'machine', subscription: 's', seq: 0, machine })).toBe(true);
 
   const frame = { file: null, line: null, column: null, fn: null };
   const record = { ts: 1, src: 'web', level: 'error', msg: 'Error', stack: [frame] };
@@ -254,22 +244,27 @@ test('accepts status without machine memory fields, null stack frames and extra 
 const captured = JSON.parse(
   readFileSync(new URL('../../../apps/mobile/mock-server/fixtures/status.json', import.meta.url), 'utf8'),
 ).payload as StatusPayload;
-const statusFixture = { event: 'status', subscription: 's', payload: receiveStatus(captured) };
+const workspaceFixture = {
+  event: 'workspace',
+  subscription: 's',
+  seq: 0,
+  environment: receiveStatus(captured).environments[0],
+};
 
 test('accepts a server clearing the provisional cache-miss flag while rejecting a non-boolean flag', () => {
-  const path = 'payload.environments.0.build.missProvisional';
-  expect(isRpcEvent(replaceReceivedField(statusFixture, path, false))).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, path, 'future-kind'))).toBe(false);
+  const path = 'environment.build.missProvisional';
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, false))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, 'future-kind'))).toBe(false);
 });
 
 test.each([
-  ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
-  ['environments.0.build.missProvisional', false] as const,
-  ['environments.0.platforms', ['ios', 'future-platform']] as const,
-])('a newer server does not invalidate status at %s', (path, value) => {
-  expect(isRpcEvent(statusFixture)).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, `payload.${path}`, value))).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, `payload.${path}`, {}))).toBe(false);
+  ...workspaceEnumPaths.map((path) => [path, 'future-kind'] as const),
+  ['build.missProvisional', false] as const,
+  ['platforms', ['ios', 'future-platform']] as const,
+])('a newer server does not invalidate a workspace at %s', (path, value) => {
+  expect(isRpcEvent(workspaceFixture)).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, `environment.${path}`, value))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, `environment.${path}`, {}))).toBe(false);
 });
 
 test.each(resultEnumCases)('a newer server does not invalidate %s result at %s', (method, fixture, path, value) => {
@@ -285,16 +280,19 @@ test.each(eventEnumCases)('a newer server does not invalidate event %j at %s', (
 });
 
 test('unknown structural tags and malformed fields still reject', () => {
-  expect(isRpcEvent({ ...statusFixture, event: 'future-event' })).toBe(false);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, 'payload.environments.0.path', 1))).toBe(false);
+  expect(isRpcEvent({ ...workspaceFixture, event: 'future-event' })).toBe(false);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, 'environment.path', 1))).toBe(false);
   expect(
-    isRpcEvent(replaceReceivedField(statusFixture, 'payload.environments.0.worktree.gitChip.parts.0.count', 'wrong')),
+    isRpcEvent(replaceReceivedField(workspaceFixture, 'environment.worktree.gitChip.parts.0.count', 'wrong')),
   ).toBe(false);
 });
 
-test('future device usage kinds do not reject a status snapshot', () => {
+test('future device usage kinds do not reject a machine event', () => {
   const event = {
-    ...statusFixture,
+    event: 'machine',
+    subscription: 's',
+    seq: 0,
+    machine: statusViews(JSON.parse(JSON.stringify(receiveStatus(captured)))).machine,
     usage: {
       intervalMs: 1000,
       endAt: 1,
@@ -308,25 +306,25 @@ test('future device usage kinds do not reject a status snapshot', () => {
 
 test('opening display enums preserves validation of nested app, agent and ownership data', () => {
   for (const path of [
-    'payload.environments.0.macos.product',
-    'payload.environments.0.macos.build.startedAt',
-    'payload.environments.0.agents.0.cwd',
-    'payload.environments.0.endedAgents.0.openUrl',
+    'environment.macos.product',
+    'environment.macos.build.startedAt',
+    'environment.agents.0.cwd',
+    'environment.endedAgents.0.openUrl',
   ]) {
-    expect(isRpcEvent(replaceReceivedField(statusFixture, path, 1))).toBe(false);
+    expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, 1))).toBe(false);
   }
   for (const [path, value] of [
-    ['payload.environments.0.physicalDevices.0.owned', true],
-    ['payload.environments.0.physicalDevices.0.physical', false],
-    ['payload.environments.0.macos.host.agent.command', 1],
-    ['payload.environments.0.build.placement', { host: 1 }],
+    ['environment.physicalDevices.0.owned', true],
+    ['environment.physicalDevices.0.physical', false],
+    ['environment.macos.host.agent.command', 1],
+    ['environment.build.placement', { host: 1 }],
   ]) {
-    expect(isRpcEvent(replaceReceivedField(statusFixture, path as string, value))).toBe(false);
+    expect(isRpcEvent(replaceReceivedField(workspaceFixture, path as string, value))).toBe(false);
   }
 });
 
 test('accepts new display kinds without requiring the known kind details', () => {
-  const payload = replaceReceivedField(statusFixture, 'payload.environments.0.worktree.gitChip.parts', [
+  const payload = replaceReceivedField(workspaceFixture, 'environment.worktree.gitChip.parts', [
     { kind: 'future-kind' },
   ]);
   expect(isRpcEvent(payload)).toBe(true);
@@ -337,9 +335,7 @@ test('accepts new display kinds without requiring the known kind details', () =>
   );
 });
 
-test('archives accept future enum strings while older status remains valid', () => {
-  const payload = structuredClone(captured);
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload })).toBe(true);
+test('archive lists accept future enum strings and reject malformed byte counts', () => {
   const archive = {
     id: 'app--1',
     projectRoot: '/app',
@@ -363,27 +359,23 @@ test('archives accept future enum strings while older status remains valid', () 
     version: 1,
   };
   const updated = {
-    ...payload,
+    next: null,
     archived: [archive],
-    archivedUsage: { count: 1, bytes: 10, byKind: { logs: 1, recordings: 2, agentActions: 3, record: 4 } },
+    usage: { count: 1, bytes: 10, byKind: { logs: 1, recordings: 2, agentActions: 3, record: 4 } },
   };
-  expect(isRpcEvent({ event: 'status', subscription: 's', payload: updated })).toBe(true);
+  expect(isRpcResult('archived.list', updated)).toBe(true);
   expect(
-    isRpcEvent({
-      event: 'status',
-      subscription: 's',
-      payload: { ...updated, archived: [{ ...archive, bytes: { ...archive.bytes, logs: 'bad' } }] },
-    }),
+    isRpcResult('archived.list', { ...updated, archived: [{ ...archive, bytes: { ...archive.bytes, logs: 'bad' } }] }),
   ).toBe(false);
 });
 
 test('slot waits are additive for older phone status and accept future kinds while checking their shape', () => {
-  const path = 'payload.environments.0.build.waitingFor';
+  const path = 'environment.build.waitingFor';
   const waitingFor = { kind: 'device-slot', inUse: 2, max: 2, since: '2026-10-01T00:00:00.000Z' };
-  expect(isRpcEvent(statusFixture)).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, path, waitingFor))).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, kind: 'future-slot' }))).toBe(true);
-  expect(isRpcEvent(replaceReceivedField(statusFixture, path, { ...waitingFor, inUse: '2' }))).toBe(false);
+  expect(isRpcEvent(workspaceFixture)).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, waitingFor))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, { ...waitingFor, kind: 'future-slot' }))).toBe(true);
+  expect(isRpcEvent(replaceReceivedField(workspaceFixture, path, { ...waitingFor, inUse: '2' }))).toBe(false);
 });
 
 test('names the schema location of a rejected value and nothing from the value', () => {
@@ -397,5 +389,7 @@ test('names the schema location of a rejected value and nothing from the value',
     expectedType: 'number',
   });
   expect(JSON.stringify([missing, wrongType])).not.toMatch(/secret-value|tail1a2b3/);
-  expect(rpcEventIssue({ event: 'status', subscription: 's', payload: { environments: 'x' } })?.keyword).toBeTruthy();
+  expect(
+    rpcEventIssue({ event: 'workspace', subscription: 's', seq: 0, environment: { path: 1 } })?.keyword,
+  ).toBeTruthy();
 });

@@ -2139,34 +2139,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return subscription;
     }
 
-    function subscribeStatus(id: RequestId): void {
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
-      const stopUsage = recordUsage();
-      const unsubscribe = statusFeed.subscribe({
-        item: (_payload, text) => {
-          const history = usage.history();
-          const leases = control.ownLeaseTimes();
-          send(
-            socket,
-            `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}${
-              leases.length ? `,"ownLeases":${JSON.stringify(leases)}` : ''
-            }}`,
-          );
-        },
-        failed: (message) => {
-          stopUsage();
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-        },
-      });
-      subscriptions.set(subscription, () => {
-        stopUsage();
-        unsubscribe();
-      });
-    }
-
     function subscribeWorkspaces(id: RequestId): void {
       const subscription = openSubscription(id);
       if (!subscription) return;
@@ -4729,7 +4701,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const read = reads[message.method];
         if (read) return archiveRead(id, () => read(id, params));
       }
-      if (message.method === 'status.subscribe') return subscribeStatus(id);
       const statusMethod = statusMethods[message.method];
       if (statusMethod) return void statusMethod(id, message.params);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);

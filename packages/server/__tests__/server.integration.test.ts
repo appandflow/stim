@@ -65,7 +65,7 @@ import {
   type HelloResult,
   type MachineUsage,
   type ServerMessage,
-  type StatusEvent,
+  type MachineEvent,
   type WorkspacesEvent,
   type ArchivedListResult,
 } from '../src/protocol.ts';
@@ -342,7 +342,13 @@ if (process.argv[2].startsWith('offer')) {
 
 const PAYLOADS = [
   { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
-  { environments: [{ path: '/work/app', live: true }], capacity: { live: 1 }, deviceLeases: [], simctlAvailable: true },
+  {
+    environments: [{ path: '/work/app', live: true }],
+    capacity: { live: 1 },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+  },
 ];
 
 // The fake tailscale is a script with a shebang, which Windows cannot execute.
@@ -1304,7 +1310,6 @@ describe('pairing', () => {
           'build-compat',
           'build-jdk',
           'build-reuse-artifact',
-          'status-views',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -2231,7 +2236,7 @@ describe('setup approval', () => {
               ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
             ];
       const refused: [string, unknown][] = [
-        ['status.subscribe', undefined],
+        ['machine.subscribe', undefined],
         ['machine.get', undefined],
         ['notifications.list', undefined],
         ['stats.get', undefined],
@@ -4158,7 +4163,7 @@ describe('unauthenticated connections', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await connect(port, undefined, { keyPair });
-    expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
+    expect(await client.request('machine.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
     expect(await client.closed).toBe(4401);
     expect(readdirSync(root)).not.toContain('pids');
   });
@@ -4403,7 +4408,7 @@ describe('a client that leaves during the handshake', () => {
     const { token } = createPairingToken();
     const leaving = await connect(port, '100.64.0.2', { secret: token });
     leaving.socket.send(JSON.stringify({ id: 1, method: 'hello', params: { client: CLIENT } }));
-    leaving.socket.send(JSON.stringify({ id: 2, method: 'status.subscribe' }));
+    leaving.socket.send(JSON.stringify({ id: 2, method: 'machine.subscribe' }));
     leaving.socket.terminate();
     await new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -4414,22 +4419,42 @@ describe('a client that leaves during the handshake', () => {
   });
 });
 
-describe('status.subscribe', () => {
+describe('status feed lifecycle', () => {
   it('shares one status watch across subscribers and stops it with the last one', async () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const first = await returning(port, keyPair);
-    expect(await first.request('status.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
-    expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[0] });
-    expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    expect(await first.request('machine.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
+    expect(await first.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 0 } },
+    });
+    expect(await first.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 1,
+      machine: { capacity: { live: 1 } },
+    });
 
     await until(() => statusWorkers().length === 1);
 
     const second = await returning(port, keyPair);
-    await second.request('status.subscribe');
-    expect(await second.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
-    expect(await second.request('status.subscribe')).toMatchObject({ result: { subscription: 's2' } });
-    expect(await second.next()).toEqual({ event: 'status', subscription: 's2', payload: PAYLOADS[1] });
+    await second.request('machine.subscribe');
+    expect(await second.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
+    expect(await second.request('machine.subscribe')).toMatchObject({ result: { subscription: 's2' } });
+    expect(await second.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's2',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
     expect(statusWorkers()).toHaveLength(1);
 
     expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
@@ -4448,8 +4473,13 @@ describe('status.subscribe', () => {
     await until(() => statusWorkers().length === 1);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const client = await authed(port);
-    await client.request('status.subscribe');
-    expect(await client.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    await client.request('machine.subscribe');
+    expect(await client.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
     client.socket.close();
     await client.closed;
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -4460,7 +4490,7 @@ describe('status.subscribe', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
+    await client.request('machine.subscribe');
     await client.next();
     await until(() => statusWorkers().length === 1);
 
@@ -4470,7 +4500,7 @@ describe('status.subscribe', () => {
     expect(statusWorkers()).toEqual([]);
   });
 
-  it('sends the CPU and memory history beside the payload once a payload reports machine owners', async () => {
+  it('sends CPU and memory history with the machine view once a payload reports owners', async () => {
     const machine = {
       memorySource: 'footprint',
       owners: [
@@ -4490,9 +4520,9 @@ describe('status.subscribe', () => {
     const port = await start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]) } });
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
-    const event = (await client.next()) as StatusEvent;
-    expect(event.payload).toEqual({ ...PAYLOADS[1], machine });
+    await client.request('machine.subscribe');
+    const event = (await client.next()) as MachineEvent;
+    expect(event.machine.machine).toEqual(machine);
     expect(event.usage).toMatchObject({
       intervalMs: 15_000,
       devices: [{ kind: 'simulator', id: 'UDID-1', workspace: '/work/app' }],
@@ -4508,7 +4538,7 @@ describe('status.subscribe', () => {
     const port = await start({ exit: true });
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
+    await client.request('machine.subscribe');
     await client.next();
     await client.next();
     expect(await client.next()).toEqual({
@@ -4571,6 +4601,7 @@ describe('status views', () => {
 
   it('sends the workspace list once, then only the workspaces that changed or went away', async () => {
     const client = await authed(await startViews());
+    expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unknown-method' } });
     expect(await client.request('workspaces.subscribe')).toMatchObject({ result: { subscription: 's1' } });
     const first = (await client.next()) as WorkspacesEvent;
     expect(first).toMatchObject({ event: 'workspaces', subscription: 's1', seq: 0 });
@@ -10070,13 +10101,13 @@ describe('frames.subscribe', () => {
     const port = await startControl();
     const client = await authed(port, true);
     const watcher = await authed(port, true);
-    await watcher.request('status.subscribe');
-    expect(((await watcher.next()) as StatusEvent).ownLeases).toBeUndefined();
+    await watcher.request('machine.subscribe');
+    expect(((await watcher.next()) as MachineEvent).ownLeases).toBeUndefined();
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     await until(() => lockCalls().length === 1);
-    await watcher.request('status.subscribe');
-    const event = (await watcher.next()) as StatusEvent;
+    await watcher.request('machine.subscribe');
+    const event = (await watcher.next()) as MachineEvent;
     expect(event.ownLeases).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\dT/)]);
     await client.request('control.end', { session: (begun.result as { session: string }).session });
   });

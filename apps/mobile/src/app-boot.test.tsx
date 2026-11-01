@@ -123,11 +123,10 @@ const ENDPOINT = 'ws://mock-mac:7787';
 /** Answers `hello` and the status feeds like stim-server, with the mock server's captured status. */
 class MockSocket {
   static sent: string[] = [];
-  static features = ['status-views'];
-  static fullStatus: object = statusFixture.payload;
   static viewStatus = statusFixture.payload;
   static homeId: string | undefined;
   static holdWorkspaces = false;
+  static refuseViews = false;
   static holdMachine = false;
   static archiveReply: ((before: string | undefined, reply: (result: object) => void) => void) | null = null;
   static latest: MockSocket | null = null;
@@ -136,7 +135,6 @@ class MockSocket {
   onmessage: ((text: string) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   readyState = 0;
-  feed: ReturnType<typeof setInterval> | undefined;
   releaseMachine: (() => void) | undefined;
 
   constructor(readonly endpoint: string) {
@@ -156,7 +154,7 @@ class MockSocket {
       reply({
         id,
         result: {
-          protocol: 1,
+          protocol: 2,
           server: {
             id: MockSocket.homeId,
             name: 'Mock Mac',
@@ -167,16 +165,14 @@ class MockSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
-          features: MockSocket.features,
+          features: [],
         },
       });
-    } else if (method === 'status.subscribe') {
-      reply({ id, result: { subscription: 's0' } });
-      this.feed = setInterval(
-        () => reply({ event: 'status', subscription: 's0', payload: MockSocket.fullStatus }),
-        1000,
-      );
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
+      if (MockSocket.refuseViews) {
+        reply({ id, error: { code: 'unknown-method', message: 'unknown method' } });
+        return;
+      }
       const views = statusViews(
         (this.endpoint === ENDPOINT
           ? MockSocket.viewStatus
@@ -224,7 +220,6 @@ class MockSocket {
   }
 
   close() {
-    clearInterval(this.feed);
     this.readyState = 3;
   }
 }
@@ -539,41 +534,14 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 }, 60_000);
 
 afterEach(() => {
-  MockSocket.features = ['status-views'];
-  MockSocket.fullStatus = statusFixture.payload;
   MockSocket.viewStatus = statusFixture.payload;
   MockSocket.homeId = undefined;
   MockSocket.holdWorkspaces = false;
+  MockSocket.refuseViews = false;
   MockSocket.holdMachine = false;
   MockSocket.archiveReply = null;
   MockSocket.all = [];
 });
-
-it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
-  jest.restoreAllMocks();
-  mockStores.clear();
-  MockSocket.sent = [];
-  MockSocket.features = [];
-  const [first, ...rest] = statusFixture.payload.environments;
-  if (!first) throw new Error('the captured status lists a workspace');
-  MockSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
-  seedPreviousInstall();
-  const activate = launchInactive();
-
-  await renderRouter('./src/app', {
-    initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(first.path)}`,
-  });
-  await act(() => jest.advanceTimersByTimeAsync(1000));
-  await act(async () => {
-    activate();
-    await jest.advanceTimersByTimeAsync(1000);
-  });
-
-  expect(MockSocket.sent).toContain('status.subscribe');
-  expect(MockSocket.sent).not.toContain('workspaces.subscribe');
-  await act(() => jest.advanceTimersByTimeAsync(1000));
-  expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
-}, 60_000);
 
 it('does not resolve a shared link from previous workspace views after reconnect', async () => {
   jest.restoreAllMocks();
@@ -642,4 +610,14 @@ it('does not resolve a shared link from previous workspace views after reconnect
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
+  MockSocket.refuseViews = true;
+  await act(async () => {
+    current.close();
+    current.onclose?.({ code: 1006, reason: 'reconnect' });
+    router.replace(`/mac/${MAC_ID}`);
+    await jest.advanceTimersByTimeAsync(6000);
+  });
+  expect(screen.getByText('Update stim-server on this Mac to load its live status.')).toBeTruthy();
+  expect(screen.queryByText(/Pair this machine again/)).toBeNull();
+  expect(MockSocket.sent).not.toContain('status.subscribe');
 }, 60_000);
