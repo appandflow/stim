@@ -1277,17 +1277,17 @@ export class BuildHost {
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         const abnormal = !entry.outcome;
         entry.outcome = outcome;
-        if (job.platform === 'android' && (abnormal || !outcome.ok)) cancel();
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
+        const drainAndroid = job.platform === 'android' && (killTimer !== null || abnormal || !outcome.ok);
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
             setTimeout(settle, GROUP_POLL_MS).unref();
             return;
           }
           await treeKilled;
-          const drained = job.platform !== 'android' || !killTimer || (await this.drainCancelledAndroid(client, repo));
           if (killTimer) clearTimeout(killTimer);
           finished = true;
+          const drained = !drainAndroid || (await this.drainCancelledAndroid(client, repo));
           if (drained) releaseClaims();
           else
             entry.outcome = {

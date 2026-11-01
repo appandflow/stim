@@ -3454,7 +3454,9 @@ describe('offloaded builds', () => {
         const daemon = daemonOf(id, 'app-1');
         const sibling = daemonOf(id, 'another-repo');
         if (reason === 'cancelled') {
-          assert.deepStrictEqual(await client.request('build.cancel', { job }), { result: {} });
+          const response = await client.request('build.cancel', { job });
+          assert('result' in response);
+          assert.deepStrictEqual(response.result, {});
         } else writeFileSync(gate, '');
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
         await eventually(() => !running(daemon));
