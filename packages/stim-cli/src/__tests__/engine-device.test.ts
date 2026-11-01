@@ -884,8 +884,18 @@ function iosExecutor(devices: SimEntry[]) {
       },
       runFile(file: string, args: string[] = []) {
         files.push([file, ...args]);
-        if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? ''))
-          return this.run!([file, ...args].join(' '));
+        if (file === 'xcrun' && args[0] === 'simctl' && ['list', 'boot', 'create'].includes(args[1] ?? '')) {
+          const result = this.run!([file, ...args].join(' '));
+          if (args[1] === 'create')
+            devices.push({
+              udid: result,
+              name: args[2]!,
+              state: 'Shutdown',
+              isAvailable: true,
+              deviceTypeIdentifier: args[3],
+            });
+          return result;
+        }
         return simctlSpawnStub(file, args);
       },
       spawn(cmd: string, args: readonly string[] = []) {
@@ -1012,10 +1022,10 @@ describe('ensureOwnedDevice: ios', () => {
           schemeApprovals,
         });
         expect(readParked('ios')).toEqual([]);
-        expect(run).toContain('xcrun simctl boot U1');
         expect(files).toContainEqual(['xcrun', 'simctl', 'rename', 'U1', name]);
         expect(files.some((call) => call.includes('privacy'))).toBe(false);
         await device.booting?.done;
+        expect(run).toContain('xcrun simctl boot U1');
         expect(files).toContainEqual(['xcrun', 'simctl', 'privacy', 'U1', 'reset', 'all']);
         expect(files).toContainEqual(['xcrun', 'simctl', 'keychain', 'U1', 'reset']);
         expect(getProject(root)?.platforms?.ios).toMatchObject({ schemeApprovals });
@@ -1303,34 +1313,78 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('an owned record renamed away from stim- ownership is never booted; a fresh owned sim is created', async () => {
-    const root = projectDir();
-    try {
-      setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-old' });
-      const { run, exec } = iosExecutor([
-        { udid: 'U1', name: 'Renamed-By-User', state: 'Shutdown', isAvailable: true },
-      ]);
-      setExecutor(exec);
-      const notes: string[] = [];
-      const result = await ensureOwnedDevice({
-        platform: 'ios',
-        project: getProject(root),
-        projectPath: root,
-        label: 'app',
-        settings: {},
-        note: (l) => notes.push(String(l)),
-      });
-      expect(run.some((c) => c === 'xcrun simctl boot U1')).toBe(false);
-      expect(run.some((c) => /simctl create/.test(c))).toBeTruthy();
-      expect(result.deviceUdid).toBe('NEW-UDID');
-      expect(result.owned).toBe(true);
-      expect(result.created).toBe(true);
-      expect(notes.some((n) => /not Stim-owned/i.test(n))).toBeTruthy();
-      await result.booting?.done;
-    } finally {
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
+  test.each(['before setup', 'during admission', 'during privacy reset'])(
+    'ownership loss %s stops later simulator boot and reset commands',
+    async (when) => {
+      const root = projectDir();
+      process.env.STIM_MAX_DEVICES = '1';
+      try {
+        const sim = {
+          udid: 'U1',
+          name: when === 'before setup' ? 'Renamed-By-User' : 'stim-app (iPhone 17 Pro 26.2)',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: TYPE_17_PRO.identifier,
+        };
+        const holder = { ...sim, udid: 'OTHER', name: 'stim-holder', state: 'Booted' };
+        setDevice(root, 'ios', {
+          deviceUdid: 'U1',
+          owned: true,
+          deviceName: 'stim-app (iPhone 17 Pro 26.2)',
+          adoptionPending: true,
+        });
+        const { run, files, exec } = iosExecutor([sim, holder]);
+        setExecutor({
+          ...exec,
+          runFile(file, args = []) {
+            const result = exec.runFile(file, args);
+            if (when === 'during privacy reset' && args[1] === 'privacy') sim.name = 'Renamed-By-User';
+            return result;
+          },
+        });
+        const notes: string[] = [];
+        let waits = 0;
+        const result = await ensureOwnedDevice({
+          platform: 'ios',
+          project: getProject(root),
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          note: (line) => notes.push(String(line)),
+          flags: {
+            deviceSlotWait: {
+              reclaimIdleMinutes: 0,
+              sleep: async () => {
+                waits++;
+                if (when === 'during admission') sim.name = 'Renamed-By-User';
+                holder.state = 'Shutdown';
+              },
+            },
+          },
+        });
+        const boot = await ensureBooted({ platform: 'ios', projectPath: root, device: result });
+        const beforeSetup = when === 'before setup';
+        const notOwned = expect.stringMatching(/not Stim-owned/);
+        expect(run.some((command) => /simctl create/.test(command))).toBe(beforeSetup);
+        expect(boot).toMatchObject(beforeSetup ? { ok: true, udid: 'NEW-UDID' } : { failed: true, reason: notOwned });
+        expect(result).toMatchObject(
+          beforeSetup
+            ? { deviceUdid: 'NEW-UDID', owned: true, created: true }
+            : { deviceUdid: 'U1', owned: true, adoptionPending: true },
+        );
+        expect(notes.some((line) => /not Stim-owned/i.test(line))).toBe(beforeSetup);
+        expect(waits).toBe(1);
+        expect(run.includes('xcrun simctl boot U1')).toBe(when === 'during privacy reset');
+        expect(files.some((call) => call.includes('U1') && call.includes('privacy'))).toBe(
+          when === 'during privacy reset',
+        );
+        expect(files.some((call) => call.includes('U1') && call.includes('keychain'))).toBe(false);
+      } finally {
+        delete process.env.STIM_MAX_DEVICES;
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 
   describe('SimSlim rerun on a running simulator', () => {
     function prepareRunning(springBoardPids: number[]) {
