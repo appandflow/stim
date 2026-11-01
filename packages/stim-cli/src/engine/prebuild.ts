@@ -17,6 +17,14 @@ import {
   withWorkspaceStateLockAsync,
 } from '../workspace/workspace-state.ts';
 import { ambientContext } from '@stim-cli/core';
+import { fingerprintProject } from '../cache/build-cache.ts';
+import { shortHash } from '../command-output.ts';
+import {
+  resolveAndroidLayout,
+  resolveIosProjectDir,
+  resolveProjectSettings,
+  type SettingsObject,
+} from '../workspace/settings.ts';
 
 export const PREBUILD_ERROR = 'STIM_PREBUILD_FAILED';
 
@@ -151,6 +159,54 @@ export function recordPrebuild(root: string, platform: string, fingerprint: stri
 /** Records the prebuild fingerprint after waiting for the workspace state lock without blocking the event loop. */
 export function recordPrebuildAsync(root: string, platform: string, fingerprint: string | null): Promise<void> {
   return withWorkspaceStateLockAsync(root, () => recordPrebuild(root, platform, fingerprint));
+}
+
+export type NativeDirCarry = { generatedFrom: string } | { reason: string };
+
+/**
+ * Whether a worktree may carry `appRoot`'s gitignored native directory: only when Stim's prebuild record there equals
+ * the app's current native fingerprint. A directory Stim did not generate, or generated from other inputs, may come
+ * from an older Expo or React Native template that a prebuild without --clean keeps.
+ */
+export async function nativeDirCarry(
+  appRoot: string,
+  platform: string,
+  { fingerprint = fingerprintProject }: { fingerprint?: typeof fingerprintProject } = {},
+): Promise<NativeDirCarry> {
+  const dir = nativeDirName(platform);
+  const regenerates = `stim ${platform} generates ${dir}/ fresh here`;
+  const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
+  if (typeof recorded !== 'string') {
+    return {
+      reason:
+        recorded === null
+          ? `the source's last Stim prebuild of ${dir}/ did not finish; ${regenerates}`
+          : `Stim has no record of generating the source's ${dir}/, so it cannot show the directory is current; ${regenerates}`,
+    };
+  }
+  let settings: SettingsObject | null = null;
+  let repoRoot = appRoot;
+  try {
+    const resolved = resolveProjectSettings(appRoot);
+    settings = resolved.settings;
+    repoRoot = resolved.context.repoRoot ?? appRoot;
+  } catch {}
+  let current: string | null = null;
+  try {
+    const computed = await fingerprint(
+      appRoot,
+      platform === 'ios'
+        ? { platform, iosProjectPath: resolveIosProjectDir(settings, appRoot).relative }
+        : { platform, androidLayout: resolveAndroidLayout(settings, appRoot, repoRoot) },
+    );
+    current = computed?.hash ?? null;
+  } catch {}
+  if (current === recorded) return { generatedFrom: recorded };
+  return {
+    reason: current
+      ? `the source's ${dir}/ was generated from fingerprint ${shortHash(recorded)}, and the source is now ${shortHash(current)}; ${regenerates}`
+      : `could not fingerprint the source to check its ${dir}/; ${regenerates}`,
+  };
 }
 
 /**

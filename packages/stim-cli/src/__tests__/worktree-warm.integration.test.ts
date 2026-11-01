@@ -28,6 +28,8 @@ import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { READY_PHASE_MS, readWarmRecord } from '@stim-cli/core/state';
 import { goneClaimOwner, liveClaimOwner, plantClaim } from './_factories.ts';
+import { fingerprintProject } from '../cache/build-cache.ts';
+import { recordPrebuild } from '../engine/prebuild.ts';
 
 const renameIo: { fail: boolean } = vi.hoisted(() => ({ fail: false }));
 
@@ -685,3 +687,41 @@ test.skipIf(process.platform === 'win32' || process.geteuid?.() === 0)(
   },
   30_000,
 );
+
+describe('an Expo app whose native directories git ignores', () => {
+  const app = () => join(root, 'app');
+  beforeEach(() => {
+    write(root, '.gitignore', `${readFileSync(join(root, '.gitignore'), 'utf-8')}app/ios/\napp/android/\n`);
+    write(root, 'app/package.json', '{"name":"cng","dependencies":{"expo":"57.0.0"}}\n');
+    write(root, 'app/app.json', '{"expo":{"name":"cng","slug":"cng"}}\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'cng app');
+    git(target, 'merge', '-q', '--ff-only', 'main');
+    write(root, 'app/ios/Podfile', "platform :ios, '15.1'\n");
+    write(root, 'app/android/build.gradle', '// generated\n');
+  });
+
+  test('warm carries a native directory only when Stim generated it from the current fingerprint', async () => {
+    const current = await fingerprintProject(app(), { platform: 'ios', iosProjectPath: 'ios' });
+    assert(current?.hash);
+    recordPrebuild(app(), 'ios', current.hash);
+    recordPrebuild(app(), 'android', 'an-earlier-fingerprint');
+    const result = await runWarm(join(target, 'app'));
+    expect(result.code).toBe(0);
+    expect(result.stdout).toEqual([]);
+    expect(readFileSync(join(target, 'app/ios/Podfile'), 'utf-8')).toBe("platform :ios, '15.1'\n");
+    expect(readWorkspaceState(join(target, 'app'))?.prebuild).toEqual({ ios: current.hash });
+    expect(existsSync(join(target, 'app/android'))).toBe(false);
+    expect(result.stderr).toMatch(
+      /left out app\/android: the source's android\/ was generated from fingerprint an-ear\.\./,
+    );
+  }, 30_000);
+
+  test('warm leaves out a native directory Stim has no prebuild record for', async () => {
+    const result = await runWarm(join(target, 'app'));
+    expect(result.code).toBe(0);
+    expect(existsSync(join(target, 'app/ios'))).toBe(false);
+    expect(existsSync(join(target, 'app/android'))).toBe(false);
+    expect(result.stderr).toMatch(/left out app\/ios: Stim has no record of generating the source's ios\//);
+  }, 30_000);
+});

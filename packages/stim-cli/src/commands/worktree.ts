@@ -5,7 +5,7 @@ import { existsSync, realpathSync, rmSync } from 'fs';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { phaseLine, plural, releasedLeaseFact, shortUdid } from '../command-output.ts';
+import { phaseLine, plural, releasedLeaseFact, shortHash, shortUdid } from '../command-output.ts';
 import { isTimeoutError } from '../exec.ts';
 import {
   resolveIosProjectDir,
@@ -29,7 +29,8 @@ import {
 import type { ReleasedLease } from '../engine/device-lease.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
 import { relocatePods } from '../workspace/pods-relocate.ts';
-import { isMobileProject, findProjectRoot } from '../workspace/project.ts';
+import { detectIsExpo, isMobileProject, findProjectRoot } from '../workspace/project.ts';
+import { nativeDirCarry, recordPrebuildAsync } from '../engine/prebuild.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { forgetStatusMeasures } from '../status-measures.ts';
 import { reclaimProject, type ReclaimResult } from '../devices/reclaim.ts';
@@ -143,6 +144,22 @@ function relocateCarriedPods(root: string, target: string, copied: string[], out
       );
     }
   }
+}
+
+function checkNativeDir(
+  root: string,
+  generatedFrom: Map<string, string>,
+): (rel: string) => Promise<string | null> | null {
+  return (rel) => {
+    const platform = basename(rel);
+    const app = join(root, dirname(rel));
+    if ((platform !== 'ios' && platform !== 'android') || !detectIsExpo(app)) return null;
+    return nativeDirCarry(app, platform).then((carry) => {
+      if ('reason' in carry) return carry.reason;
+      generatedFrom.set(rel, carry.generatedFrom);
+      return null;
+    });
+  };
 }
 
 function reportCarriedStateHealth(root: string, target: string, copied: string[], out: (line: string) => void): void {
@@ -349,11 +366,30 @@ export async function warmWorktreeTarget(opts: {
             }
             const excluded = readWorktreeExclude(root);
             const patterns = excluded?.length ? excluded : (settings as WorktreeSettings).worktree?.exclude || [];
+            const generatedFrom = new Map<string, string>();
             const result = await trace.spanAsync('carry ignored entries', () =>
-              cloneIgnoredEntries({ root, target, patterns, operation }),
+              cloneIgnoredEntries({ root, target, patterns, operation, withhold: checkNativeDir(root, generatedFrom) }),
             );
             for (const entry of result.skipped) {
               out(chalk.dim(phaseLine('carry', `kept ${entry.file} (${entry.reason})`)));
+            }
+            for (const entry of result.withheld) {
+              out(chalk.yellow(phaseLine('carry', `left out ${entry.file}: ${entry.reason}`)));
+            }
+            for (const rel of result.copied) {
+              const fingerprint = generatedFrom.get(rel);
+              if (!fingerprint) continue;
+              await recordPrebuildAsync(join(target, dirname(rel)), basename(rel), fingerprint).catch(
+                (error: unknown) =>
+                  out(
+                    chalk.yellow(
+                      phaseLine(
+                        'carry',
+                        `could not record that ${rel} was generated from ${shortHash(fingerprint)}: ${error instanceof Error ? error.message : String(error)}. stim ${basename(rel)} updates it in place`,
+                      ),
+                    ),
+                  ),
+              );
             }
             for (const entry of result.failed) {
               out(chalk.yellow(phaseLine('carry', `could not copy ${entry.file}: ${entry.error}`)));

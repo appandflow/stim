@@ -1696,6 +1696,15 @@ not on any remote"  (worktree remove)
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
 
+"carry       left out <app>/<platform>: <reason>"
+  The app is an Expo project whose ios/ or android/ Git ignores, and Stim
+  cannot show the source checkout's copy was generated from the app's current
+  inputs: Stim has no prebuild record for it, its last prebuild did not
+  finish, or the record names an earlier native fingerprint. Warm does not
+  copy it, so the first \`stim <platform>\` in this worktree generates it
+  fresh. Nothing to fix; run \`stim <platform>\` once in the source checkout
+  to let later warms copy it.
+
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed
   pod-install command before building.

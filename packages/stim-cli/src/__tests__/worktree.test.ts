@@ -118,6 +118,14 @@ describe.each([
     writeFileSync(join(target, lockfile), fixture('lockfile.txt').replaceAll('\r\n', '\n').replaceAll('\n', '\r\n'));
     expect(depsOutOfSync(root, target, ['node_modules'])).toEqual([]);
   });
+
+  test('checks a carried workspace node_modules against the lockfile at the repository root', () => {
+    writeFileSync(join(target, lockfile), fixture('lockfile.next.txt'));
+    mkdirSync(join(target, 'example/node_modules'), { recursive: true });
+    const stale = [{ dir: '.', lockfile, reason: 'installed' }];
+    expect(depsOutOfSync(root, target, ['example/node_modules'])).toEqual(stale);
+    expect(depsOutOfSync(root, target, ['node_modules', 'example/node_modules'])).toEqual(stale);
+  });
 });
 
 test('cloneIgnoredEntries against a real git repo never overwrites a path the destination tracks', async () => {
