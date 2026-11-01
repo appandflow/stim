@@ -2571,8 +2571,10 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Otherwise it leaves the directory out and prints
   "carry       left out <app>/<platform>: <reason>"; the first
   \`stim <platform>\` there generates it fresh. A directory generated outside
-  Stim has no record and is left out; run \`stim <platform>\` once in the
-  source checkout to make it eligible.
+  Stim has no record and is left out. To make it eligible, delete it in the
+  source checkout and run \`stim <platform>\` there so Stim generates it
+  fresh; running Stim over the existing directory records it as current even
+  when it came from an older template.
 
   Other generated state stays eligible: .gradle, .cxx, *.tsbuildinfo, build
   directories, and embedded JavaScript need project-specific decisions about

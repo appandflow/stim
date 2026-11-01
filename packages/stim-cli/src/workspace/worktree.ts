@@ -402,9 +402,21 @@ export async function cloneIgnoredEntries({
   if (!guard.known) throw new Error("Could not list the destination's tracked files.");
   const nested = await nestedWorktreePaths(target, reads);
   const carryable = await listCarryableIgnoredEntries(root, patterns, reads);
+  const keptReason = (rel: string): string | null =>
+    guard.covers(rel)
+      ? 'tracked'
+      : overlapsNestedWorktree(rel, nested)
+        ? 'nested worktree'
+        : missingDestinationReason(target, rel);
   const checks = new Map<string, Promise<string | null>>();
   for (const rel of carryable) {
-    const check = withhold(rel);
+    let copies: boolean;
+    try {
+      copies = keptReason(rel) === null;
+    } catch {
+      copies = true;
+    }
+    const check = copies ? withhold(rel) : null;
     if (check) checks.set(rel, check);
   }
   const entries = [...carryable.filter((rel) => !checks.has(rel)), ...checks.keys()];
@@ -423,11 +435,7 @@ export async function cloneIgnoredEntries({
       const to = join(target, rel);
       let copying = false;
       try {
-        const reason = guard.covers(rel)
-          ? 'tracked'
-          : overlapsNestedWorktree(rel, nested)
-            ? 'nested worktree'
-            : missingDestinationReason(target, rel);
+        const reason = keptReason(rel);
         if (reason) {
           skipped.push({ file: rel, reason });
           continue;
@@ -618,7 +626,9 @@ export function depsOutOfSync(
     if (!found || checked.has(found.dir)) continue;
     checked.add(found.dir);
     const { dir, name } = found;
-    const installed = installedMatchesLockfile(join(target, dir), name, { read });
+    const installed = copiedEntries?.includes(dir ? `${dir}/node_modules` : 'node_modules')
+      ? installedMatchesLockfile(join(target, dir), name, { read })
+      : null;
     if (installed === false) {
       problems.push({ dir: dir || '.', lockfile: name, reason: 'installed' });
       continue;

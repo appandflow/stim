@@ -161,18 +161,14 @@ export function recordPrebuildAsync(root: string, platform: string, fingerprint:
   return withWorkspaceStateLockAsync(root, () => recordPrebuild(root, platform, fingerprint));
 }
 
-export type NativeDirCarry = { generatedFrom: string } | { reason: string };
+type NativeDirCarry = { generatedFrom: string } | { reason: string };
 
 /**
  * Whether a worktree may carry `appRoot`'s gitignored native directory: only when Stim's prebuild record there equals
  * the app's current native fingerprint. A directory Stim did not generate, or generated from other inputs, may come
  * from an older Expo or React Native template that a prebuild without --clean keeps.
  */
-export async function nativeDirCarry(
-  appRoot: string,
-  platform: string,
-  { fingerprint = fingerprintProject }: { fingerprint?: typeof fingerprintProject } = {},
-): Promise<NativeDirCarry> {
+export async function nativeDirCarry(appRoot: string, platform: string): Promise<NativeDirCarry> {
   const dir = nativeDirName(platform);
   const regenerates = `stim ${platform} generates ${dir}/ fresh here`;
   const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
@@ -193,7 +189,7 @@ export async function nativeDirCarry(
   } catch {}
   let current: string | null = null;
   try {
-    const computed = await fingerprint(
+    const computed = await fingerprintProject(
       appRoot,
       platform === 'ios'
         ? { platform, iosProjectPath: resolveIosProjectDir(settings, appRoot).relative }

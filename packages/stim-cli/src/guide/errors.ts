@@ -1702,8 +1702,9 @@ not on any remote"  (worktree remove)
   inputs: Stim has no prebuild record for it, its last prebuild did not
   finish, or the record names an earlier native fingerprint. Warm does not
   copy it, so the first \`stim <platform>\` in this worktree generates it
-  fresh. Nothing to fix; run \`stim <platform>\` once in the source checkout
-  to let later warms copy it.
+  fresh. Nothing to fix. To let later warms copy it, delete <platform>/ in
+  the source checkout and run \`stim <platform>\` there, so Stim generates it
+  fresh and records that.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

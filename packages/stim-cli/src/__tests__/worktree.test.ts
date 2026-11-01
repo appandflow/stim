@@ -120,11 +120,11 @@ describe.each([
   });
 
   test('checks a carried workspace node_modules against the lockfile at the repository root', () => {
-    writeFileSync(join(target, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(root, lockfile), fixture('lockfile.next.txt'));
+    writeFileSync(join(target, lockfile), fixture('lockfile.txt'));
     mkdirSync(join(target, 'example/node_modules'), { recursive: true });
-    const stale = [{ dir: '.', lockfile, reason: 'installed' }];
-    expect(depsOutOfSync(root, target, ['example/node_modules'])).toEqual(stale);
-    expect(depsOutOfSync(root, target, ['node_modules', 'example/node_modules'])).toEqual(stale);
+    expect(depsOutOfSync(root, target, ['example/node_modules'])).toEqual([{ dir: '.', lockfile, reason: 'lockfile' }]);
+    expect(depsOutOfSync(root, target, ['node_modules', 'example/node_modules'])).toEqual([]);
   });
 });
 
