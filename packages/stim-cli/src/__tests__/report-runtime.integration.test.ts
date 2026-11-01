@@ -67,41 +67,37 @@ function reapFixtureChild(record: { pid: number; processToken: string } | undefi
   }
 }
 
-// https://github.com/appandflow/stim/issues/3865
-test.skipIf(process.platform === 'win32' && Boolean(process.env.CI))(
-  'cancelling a report reaps its child and leaves another client running',
-  async () => {
-    const controller = new AbortController();
-    let pid: number | undefined;
-    const one = runReport(context(controller.signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
-        timeoutMs: 10_000,
-        onSpawn: (child) => {
-          pid = child.pid;
-          child.stdout?.once('data', () => controller.abort());
-        },
-      }),
-    );
-    const failure = one.then(
-      () => null,
-      (error: unknown) => error,
-    );
-    const other = runReport(context(new AbortController().signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
-        timeoutMs: 10_000,
-      }),
-    );
-    const otherResult = other.then(
-      (value) => value,
-      (error: unknown) => error,
-    );
-    expect(await failure).toBe(controller.signal.reason);
-    if (pid === undefined) throw new Error('The controlled child did not start');
-    const ownPid = pid;
-    expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-    expect(await otherResult).toBe('other client');
-  },
-);
+test('cancelling a report reaps its child and leaves another client running', async () => {
+  const controller = new AbortController();
+  let pid: number | undefined;
+  const one = runReport(context(controller.signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+      timeoutMs: 10_000,
+      onSpawn: (child) => {
+        pid = child.pid;
+        child.stdout?.once('data', () => controller.abort());
+      },
+    }),
+  );
+  const failure = one.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const other = runReport(context(new AbortController().signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
+      timeoutMs: 10_000,
+    }),
+  );
+  const otherResult = other.then(
+    (value) => value,
+    (error: unknown) => error,
+  );
+  expect(await failure).toBe(controller.signal.reason);
+  if (pid === undefined) throw new Error('The controlled child did not start');
+  const ownPid = pid;
+  expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+  expect(await otherResult).toBe('other client');
+});
 
 test.each(['caller', 'deadline'])('a %s cancellation rejects while a read remains pending', async (kind) => {
   vi.useFakeTimers();
