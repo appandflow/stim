@@ -543,6 +543,21 @@ private struct BuildMachineRow<Toggles: View>: View {
         .accessibilityLabel("Remove \(entry)")
     }
     .padding(.vertical, Space.sm)
+    .contextMenu {
+      if let status, status.state.canAsk(requested: status.requestedAt != nil) {
+        Button(status.state == .notAsked ? "Ask" : "Ask Again", systemImage: "paperplane", action: ask)
+          .disabled(working || !canAsk)
+      }
+      Button("Details", systemImage: "info.circle", action: open)
+      if count > 1 {
+        Divider()
+        Button("Move Up", systemImage: "chevron.up") { move(-1) }.disabled(working || position == 1)
+        Button("Move Down", systemImage: "chevron.down") { move(1) }.disabled(working || position == count)
+      }
+      Divider()
+      Button("Remove\u{2026}", systemImage: "trash", role: .destructive, action: remove)
+        .disabled(working || (status?.state == .keyChanged && !canAsk))
+    }
   }
 }
 
