@@ -1,3 +1,4 @@
+import { installRequestedIosRuntime } from './ios/runtime.ts';
 import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
 import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
@@ -179,6 +180,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
       'Simulator runtime to create this workspace\'s owned sim on, as a version ("18.5") or a runtime\'s full name ' +
         '("iOS 18.5"); nothing else matches. Overrides the ios.runtime setting for this invocation. An unknown version ' +
         'refuses with STIM_BAD_ARG and prints the installed runtimes.',
+    )
+    .option(
+      '--install-runtime',
+      'Install the explicitly requested missing iOS runtime with Xcode on the local or named approved Mac (about 8-10 GB; shared by all workspaces)',
     )
     .option(
       '--simulator-app <app>',
@@ -657,10 +662,25 @@ async function runIos(
     scheme: buildScheme,
     configuration: builtConfiguration,
   });
-  const capabilityRefusal = iosProjectTargetRefusal(integration, {
+  const capabilityRefusal = await installRequestedIosRuntime({
+    targetRefusal: iosProjectTargetRefusal(integration, {
+      physical,
+      easProfile: opts.easProfile,
+      recordedRefusal: recordedLookup.refusal,
+    }),
+    root,
+    slot,
+    release,
+    appMode,
+    metroCheck,
+    opts,
+    settings,
     physical,
-    easProfile: opts.easProfile,
-    recordedRefusal: recordedLookup.refusal,
+    runtime,
+    d,
+    progress,
+    note,
+    context,
   });
   if (capabilityRefusal) return fail(capabilityRefusal);
   const simSnapshot = createIosSimSnapshot();
