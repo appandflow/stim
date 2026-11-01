@@ -586,7 +586,7 @@ picker selects which one to set up. The page also shows the folder, repository
 and branch, with a Show in Finder link.
 
 Run, Reload App, Start Dev Server and Stop from a workspace or its sidebar menu,
-Stop (or Shut down) in the now band, and Build and Run and Stop on a macOS app card run without
+Stop workspace or Stop devices in slot in the resource list, and Build and Run and Stop on a macOS app card run without
 opening an activity sheet. Follow progress on the workspace page and open **Last Output**
 or **Operations** to inspect the command; pending and failed runs remain there.
 The device viewer's Run, Stop (including a remote session's), Reload web and Close web also run without opening
@@ -721,9 +721,11 @@ emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
 build or `stim web` Chrome, stim-server, or a machine-wide process such as
 CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
 is one core) and memory, largest memory first so rows stay in place
-as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
-runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
-`stim stop`. Nothing Stim does not own has an action. The information button
+as CPU changes; each process counts in one row only. A row's trailing Actions menu names its scope:
+**Stop devices in slot** runs `stim stop --slot <slot>` for an owned simulator or emulator,
+and **Stop workspace** runs `stim stop` for its Metro. Other process groups have no stop action.
+Shared Watchman, Gradle and Kotlin rows offer category-wide reclaim only when GC proves resources unused;
+the confirmation describes what is affected. The information button
 explains measurement scope and the difference between row CPU (one core) and
 summary CPU (a share of the whole Mac). Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3
@@ -764,7 +766,8 @@ remembers each section's choices in its own preferences.
   workspaces, merged worktrees (sized by their `node_modules`, since their build
   outputs and logs are rows of their own) and non-empty shared caches. A row
   that a refreshed report no longer lists is never acted on. Each row carries a
-  checkbox and the command that frees it. Rows marked **stim gc** are one unit,
+  checkbox and the command that frees it. The section header counts the checked rows;
+  changing a selection runs nothing. Rows marked **stim gc** are one unit,
   `stim gc --delete`, which also removes merged worktrees and clears idle build
   outputs; while it is checked, those rows are checked and locked. With it
   unchecked, a worktree row runs `stim worktree remove <path>` in its
@@ -772,8 +775,8 @@ remembers each section's choices in its own preferences.
 workspaces`. A cache row runs `stim gc --delete --cache <name or directory>`
   and starts unchecked. **Free** previews a selection that is one gc run (`stim
 gc --json`, with its `--cache` scope) in the activity sheet, whose **Delete**
-  runs the same scope with `--delete`. A selection of several commands lists
-  them in a confirmation first and then runs them in order. When no items are
+  runs the same scope with `--delete`. A mixed selection names its checked items and
+  consequences before command details in a confirmation, then runs the commands in order. When no items are
   selected, **Free space** is muted and a **Select items to free space** hint
   appears above the checklist. Running activities show progress in the current
   step row; the header shows only finished or failed outcomes.
