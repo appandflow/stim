@@ -1,11 +1,12 @@
 import Constants from 'expo-constants';
-import { useLocalSearchParams } from 'expo-router';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useIsFocused, useLocalSearchParams } from 'expo-router';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 
 import type { AttentionMachine } from '@/lib/attention';
+import { useAppForeground } from '@/hooks/app-foreground';
 import { usePolledRequest } from '@/hooks/polled-request';
 import { StimConnection } from '@/lib/connection';
 import type { HomeArchive, HomeItem, HomeWorktree } from '@/lib/home';
@@ -72,36 +73,31 @@ function follow(macId: string, path: string, connection: StimConnection): () => 
   };
 }
 
-async function readArchives(macId: string, connection: StimConnection, summary: string): Promise<void> {
+async function readArchives(
+  macId: string,
+  connection: StimConnection,
+  summary: string,
+  current: () => boolean,
+): Promise<void> {
   const archived: NonNullable<StatusViews['archives']>['archived'] = [];
   let usage: NonNullable<StatusViews['archives']>['usage'] | null = null;
   let before: string | null = null;
   do {
+    if (!current()) return;
     const page: Awaited<ReturnType<typeof connection.request<'archived.list'>>> = await connection.request(
       'archived.list',
       before ? { before } : {},
     );
+    if (!current()) return;
     archived.push(...page.archived);
     usage = page.usage;
     before = page.next;
   } while (before);
-  if (JSON.stringify(views.get(macId)?.archivedSummary ?? null) !== summary) return;
-  update(macId, (current) => ({ ...current, archives: usage ? { archived, usage } : null }));
+  update(macId, (view) => ({ ...view, archives: usage ? { archived, usage } : null }));
+  if (current()) machines.patchLink(macId, { archivesRead: summary });
 }
 
 function followViews(macId: string, connection: StimConnection): () => void {
-  let stopped = false;
-  let archivesRead: string | null = null;
-  let retry: ReturnType<typeof setTimeout> | null = null;
-  const read = (summary: string) => {
-    readArchives(macId, connection, summary).catch(() => {
-      if (stopped || archivesRead !== summary) return;
-      retry = setTimeout(() => {
-        retry = null;
-        if (!stopped && archivesRead === summary) read(summary);
-      }, ARCHIVES_RETRY_MS);
-    });
-  };
   let stopWorkspaces = () => {};
   const subscribeWorkspaces = () => {
     stopWorkspaces = connection.subscribe('workspaces.subscribe', {}, (event) => {
@@ -114,12 +110,8 @@ function followViews(macId: string, connection: StimConnection): () => void {
       }
       views.set(macId, next);
       const summary = JSON.stringify(next.archivedSummary);
-      if (summary !== archivesRead) {
-        archivesRead = summary;
-        if (retry) clearTimeout(retry);
-        retry = null;
-        read(summary);
-      }
+      if (summary !== machines.store.getState().links[macId]?.archiveSummary)
+        machines.patchLink(macId, { archiveSummary: summary });
       publish(macId);
     });
   };
@@ -130,8 +122,6 @@ function followViews(macId: string, connection: StimConnection): () => void {
     machines.setHistory(macId, event.usage);
   });
   return () => {
-    stopped = true;
-    if (retry) clearTimeout(retry);
     stopWorkspaces();
     stopMachine();
     views.delete(macId);
@@ -193,13 +183,15 @@ function MacLink({ mac }: { mac: PairedMac }) {
           state.kind === 'open'
             ? {
                 state,
+                archiveSummary: null,
+                archivesRead: null,
                 home: state.server.home ?? null,
                 disconnectedAt: null,
                 statusViews: state.features.includes('status-views'),
               }
             : wasOpen
-              ? { state, disconnectedAt: Date.now() }
-              : { state },
+              ? { state, disconnectedAt: Date.now(), archiveSummary: null, archivesRead: null }
+              : { state, archiveSummary: null, archivesRead: null },
         );
         wasOpen = isOpen;
       },
@@ -326,6 +318,7 @@ export function useStatus(): StatusPayload | null {
     if (!id || !path || archive || !connection) return;
     return follow(id, path, connection);
   }, [id, path, archive, connection]);
+  useArchives(Boolean(archive), id);
   return useMachineStatus(id);
 }
 
@@ -369,8 +362,98 @@ export function useWorkspaceItems(): HomeItem[] {
   return useMachines((state) => state.workspaces);
 }
 
-export function useArchiveItems(): HomeArchive[] {
-  return useMachines((state) => state.archives);
+/** Whether demanded archive pages are pending. Cached rows stay available while an already-sent request finishes. */
+export function useArchives(active: boolean, macId?: string): boolean {
+  const focused = useIsFocused();
+  const foreground = useAppForeground();
+  const links = useMachines(
+    useShallow((state) =>
+      macId === undefined ? state.links : state.links[macId] ? { [macId]: state.links[macId] } : {},
+    ),
+  );
+  const readers = useRef(new Map<string, { link: MachineLink; stop: () => void }>());
+  useEffect(
+    () => () => {
+      for (const reader of readers.current.values()) reader.stop();
+      readers.current.clear();
+    },
+    [readers],
+  );
+  useEffect(() => {
+    const entries = readers.current;
+    const wanted = active && focused && foreground;
+    for (const [id, reader] of entries) {
+      const link = wanted ? links[id] : undefined;
+      if (
+        link &&
+        link.connection === reader.link.connection &&
+        link.state === reader.link.state &&
+        link.archiveSummary === reader.link.archiveSummary
+      )
+        continue;
+      reader.stop();
+      entries.delete(id);
+    }
+    if (!wanted) return;
+    for (const [id, link] of Object.entries(links)) {
+      const { connection, state, archiveSummary: summary } = link;
+      if (
+        (macId !== undefined && id !== macId) ||
+        !connection ||
+        state.kind !== 'open' ||
+        !link.statusViews ||
+        !summary
+      )
+        continue;
+      if (entries.has(id) || link.archivesRead === summary) continue;
+      let stopped = false;
+      let retry: ReturnType<typeof setTimeout> | null = null;
+      const current = () =>
+        !stopped &&
+        machines.store.getState().links[id]?.state === state &&
+        machines.store.getState().links[id]?.archiveSummary === summary;
+      const read = () => {
+        readArchives(id, connection, summary, current).catch(() => {
+          if (!current()) return;
+          retry = setTimeout(() => {
+            retry = null;
+            if (current()) read();
+          }, ARCHIVES_RETRY_MS);
+        });
+      };
+      read();
+      entries.set(id, {
+        link,
+        stop: () => {
+          stopped = true;
+          if (retry) clearTimeout(retry);
+        },
+      });
+    }
+  }, [active, focused, foreground, links, macId, readers]);
+  const pending = useArchivesPending(macId);
+  return active && focused && foreground && pending;
+}
+
+/** Whether the current connection has not yet supplied its demanded archive list. */
+export function useArchivesPending(macId?: string): boolean {
+  return useMachines((state) =>
+    Object.entries(state.links).some(
+      ([id, link]) =>
+        (macId === undefined || id === macId) &&
+        link.state.kind === 'open' &&
+        link.statusViews &&
+        (state.snapshots[id]?.source !== link.state ||
+          !link.archiveSummary ||
+          link.archivesRead !== link.archiveSummary),
+    ),
+  );
+}
+
+export function useArchiveItems(active = false): { items: HomeArchive[]; pending: boolean } {
+  const pending = useArchives(active);
+  const items = useMachines((state) => state.archives);
+  return { items, pending };
 }
 
 export function useWorktreeItems(): HomeWorktree[] {
@@ -385,4 +468,12 @@ export function useWorkspace(macId: string, path: string): HomeItem | undefined 
 
 export function useHasStatus(macId: string): boolean {
   return useMachines((state) => macId in state.snapshots);
+}
+
+/** Whether this connection has delivered a status snapshot since its current authenticated open state. */
+export function useHasCurrentStatus(macId: string): boolean {
+  return useMachines((state) => {
+    const link = state.links[macId];
+    return link?.state.kind === 'open' && state.snapshots[macId]?.source === link.state;
+  });
 }

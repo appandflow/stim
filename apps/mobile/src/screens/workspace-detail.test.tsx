@@ -15,11 +15,13 @@ import type { ArchivedWorkspace } from '@/lib/archived';
 import { WorkspaceDetail } from './workspace-detail';
 
 let mockEnvironments: EnvironmentState[] = [];
+let mockArchivesPending = false;
 let mockArchives: ArchivedWorkspace[] = mockCaptured.payload.archived as ArchivedWorkspace[];
 const mockPush = jest.fn();
 let mockDetail: { data: ArchiveDetailResult | null; error: Error | null };
 const mockConnection = { request: jest.fn() };
 beforeEach(() => {
+  mockArchivesPending = false;
   mockDetail = { data: mockArchiveDetails['stim--archive-1'] as ArchiveDetailResult, error: null };
   mockConnection.request.mockReset();
   mockArchives = mockCaptured.payload.archived as ArchivedWorkspace[];
@@ -35,6 +37,9 @@ jest.mock('expo-router', () => {
   };
 });
 jest.mock('@/hooks/machines', () => ({
+  useArchives: () => mockArchivesPending,
+  useArchivesPending: () => mockArchivesPending,
+  useHasCurrentStatus: () => true,
   useMacConnection: () => ({
     mac: { id: 'mac', name: 'Mac' },
     state: { kind: 'open', features: [] },
@@ -190,7 +195,14 @@ const archivedBody = () => (
 );
 
 it('keeps live-only actions and devices absent from archived workspaces', async () => {
+  const saved = mockArchives;
+  mockArchives = [];
+  mockArchivesPending = true;
   const screen = await render(archivedBody());
+  expect(screen.queryByText('This archive is no longer available.')).toBeNull();
+  mockArchives = saved;
+  mockArchivesPending = false;
+  await screen.rerender(archivedBody());
   for (const text of ['Stop', 'Reload', 'Allow Control...', 'Devices']) expect(screen.queryByText(text)).toBeNull();
   expect(screen.getByText('#2600 Merged')).toBeTruthy();
   expect(screen.queryByText('Draft')).toBeNull();
