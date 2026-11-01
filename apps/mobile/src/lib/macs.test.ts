@@ -27,6 +27,11 @@ function load(): typeof Macs {
   return macs;
 }
 
+async function settled<T>(pending: Promise<T>): Promise<T> {
+  await jest.runAllTimersAsync();
+  return pending;
+}
+
 beforeEach(() => {
   mockSecure.clear();
   mockClientKey = 'key-a';
@@ -39,28 +44,27 @@ test('drops a protocol 1 pairing and its device token, keeping protocol 2 pairin
   mockSecure.set('stim.mac.old.token', 'device-token');
   mockSecure.set('stim.mac.new.token', 'unrelated');
 
-  expect(await load().listMacs()).toEqual([current]);
+  expect(await settled(load().listMacs())).toEqual([current]);
   expect(mockSecure.has('stim.mac.old.token')).toBe(false);
   expect(JSON.parse(mockSecure.get('stim.macs')!)).toEqual([current]);
 });
 
 test('drops every saved Mac when the session made a new client key, and keeps them when the key is the same', async () => {
   mockSecure.set('stim.macs', JSON.stringify([current]));
-  expect(await load().listMacs()).toEqual([current]);
+  expect(await settled(load().listMacs())).toEqual([current]);
   expect(mockSecure.get('stim.client-key')).toBe('key-a');
-  expect(await load().listMacs()).toEqual([current]);
+  expect(await settled(load().listMacs())).toEqual([current]);
   mockClientKey = 'key-b';
-  expect(await load().listMacs()).toEqual([]);
+  expect(await settled(load().listMacs())).toEqual([]);
   expect(mockSecure.get('stim.macs')).toBe('[]');
 });
 
 test('a migration running beside a save does not write back the index the save replaced', async () => {
   mockSecure.set('stim.macs', JSON.stringify([legacy, current]));
   const macs = load();
-  const [, saved] = await Promise.all([
-    macs.listMacs(),
-    macs.saveMac({ name: 'Studio', endpoint: 'ws://10.0.0.3', serverKey: 'k2' }),
-  ]);
+  const [, saved] = await settled(
+    Promise.all([macs.listMacs(), macs.saveMac({ name: 'Studio', endpoint: 'ws://10.0.0.3', serverKey: 'k2' })]),
+  );
   expect((await macs.listMacs()).map((mac) => mac.id)).toEqual([current.id, saved.id]);
 });
 

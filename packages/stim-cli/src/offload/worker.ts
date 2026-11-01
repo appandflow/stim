@@ -47,7 +47,7 @@ import { CCACHE_UNAVAILABLE, resolveCcache } from '../engine/ccache.ts';
 import { assembleTaskFor } from '../engine/gradle.ts';
 
 import { getExecutor } from '../exec.ts';
-import { git } from '../workspace/git.ts';
+import { git, gitQuiet } from '../workspace/git.ts';
 import { logLines } from '../macos/run.ts';
 import { stripAnsi } from '../process-output.ts';
 import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
@@ -289,7 +289,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
 
 /**
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
- * client's Gradle home is made private too; an area whose `src` is a directory keeps it.
+ * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
@@ -300,7 +300,7 @@ function ensureCheckout(area: string, src: string): void {
     const gradleHome = process.env.GRADLE_USER_HOME;
     const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
     if (linked) dirs.push([target, windowsShortDirKey('checkout', realArea)]);
-    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', dirname(dirname(area)))]);
+    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', area)]);
     makePrivateWindowsDirs(dirs);
     if (!linked) return;
     let current: string | null = null;
@@ -333,6 +333,34 @@ async function materialize(
     git(src, ['config', 'core.excludesFile', '/dev/null'], { write: true, timeoutMs: 30_000 });
   }
   git(src, ['read-tree', '--empty'], { write: true, timeoutMs: 30_000 });
+  if (gitQuiet(src, ['rev-parse', '--verify', 'HEAD']) === null) {
+    // React Native development podspecs resolve HEAD even for local path pods.
+    git(
+      src,
+      [
+        '-c',
+        'core.hooksPath=/dev/null',
+        'commit',
+        '--quiet',
+        '--allow-empty',
+        '--no-gpg-sign',
+        '-m',
+        'Initialize build mirror',
+      ],
+      {
+        write: true,
+        env: {
+          GIT_AUTHOR_NAME: 'Stim',
+          GIT_AUTHOR_EMAIL: 'build@stim.invalid',
+          GIT_AUTHOR_DATE: '2000-01-01T00:00:00Z',
+          GIT_COMMITTER_NAME: 'Stim',
+          GIT_COMMITTER_EMAIL: 'build@stim.invalid',
+          GIT_COMMITTER_DATE: '2000-01-01T00:00:00Z',
+        },
+        timeoutMs: 30_000,
+      },
+    );
+  }
   let retained: string[] = [];
   if (job.native) {
     if (job.native.provider === 'gradle') {
@@ -1259,7 +1287,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
 }
 
 /**
- * Stops the Gradle daemons of this client's Gradle home. A daemon calls setsid, so it leaves the build's
+ * Stops the Gradle daemons of this repository's Gradle home. A daemon calls setsid, so it leaves the build's
  * process group and would outlive the job and its claim.
  */
 function stopGradleDaemons(gradlew: string, timeoutMs: number): void {

@@ -1,5 +1,9 @@
 import Foundation
 
+#if canImport(StimKit)
+  import StimKit
+#endif
+
 public struct DevToolsError: Error, CustomStringConvertible {
   public let description: String
 
@@ -39,11 +43,11 @@ public final class DevToolsClient: @unchecked Sendable {
   private let task: URLSessionWebSocketTask
   private let session: URLSession
   private let queue = DispatchQueue(label: "stim.web.devtools")
-  private var pending: [Int: (Result<[String: Any], DevToolsError>) -> Void] = [:]
+  private var pending: [Int: @Sendable (Result<[String: Any], DevToolsError>) -> Void] = [:]
   private var nextId = 1
   private var closed = false
-  private var eventHandler: ((Event) -> Void)?
-  private var closeHandlers: [() -> Void] = []
+  private var eventHandler: (@Sendable (Event) -> Void)?
+  private var closeHandlers: [@Sendable () -> Void] = []
 
   private init(url: URL) {
     session = URLSession(configuration: .ephemeral)
@@ -53,7 +57,7 @@ public final class DevToolsClient: @unchecked Sendable {
 
   /// `endpoint` is `web.cdpEndpoint` from `stim status`, `http://127.0.0.1:<port>`.
   public static func connect(
-    endpoint: URL, chromePid: Int32, completion: @escaping (Result<DevToolsClient, DevToolsError>) -> Void
+    endpoint: URL, chromePid: Int32, completion: @escaping @Sendable (Result<DevToolsClient, DevToolsError>) -> Void
   ) {
     guard endpoint.host == "127.0.0.1", let port = endpoint.port else {
       return completion(.failure(DevToolsError("\(endpoint) is not a loopback DevTools endpoint.")))
@@ -96,19 +100,19 @@ public final class DevToolsClient: @unchecked Sendable {
   }
 
   /// Events arrive on the client's private queue, in order.
-  public func onEvent(_ handler: @escaping (Event) -> Void) {
+  public func onEvent(_ handler: @escaping @Sendable (Event) -> Void) {
     queue.async { self.eventHandler = handler }
   }
 
-  public func onClose(_ handler: @escaping () -> Void) {
+  public func onClose(_ handler: @escaping @Sendable () -> Void) {
     queue.async {
       if self.closed { handler() } else { self.closeHandlers.append(handler) }
     }
   }
 
   public func send(
-    _ method: String, _ params: [String: Any] = [:], sessionId: String? = nil,
-    reply: ((Result<[String: Any], DevToolsError>) -> Void)? = nil
+    _ method: String, _ params: [String: JSONValue] = [:], sessionId: String? = nil,
+    reply: (@Sendable (Result<[String: Any], DevToolsError>) -> Void)? = nil
   ) {
     queue.async {
       guard !self.closed else {
@@ -117,9 +121,9 @@ public final class DevToolsClient: @unchecked Sendable {
       }
       let id = self.nextId
       self.nextId += 1
-      var message: [String: Any] = ["id": id, "method": method, "params": params]
-      if let sessionId { message["sessionId"] = sessionId }
-      guard let data = try? JSONSerialization.data(withJSONObject: message),
+      var message: [String: JSONValue] = ["id": .number(Double(id)), "method": .string(method), "params": .object(params)]
+      if let sessionId { message["sessionId"] = .string(sessionId) }
+      guard let data = try? JSONEncoder().encode(message),
         let text = String(data: data, encoding: .utf8)
       else {
         reply?(.failure(DevToolsError("\(method) has parameters that are not JSON.")))

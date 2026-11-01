@@ -22,14 +22,14 @@ final class StorageStore: ObservableObject {
   @Published private(set) var paths = StoragePaths(home: NSHomeDirectory())
 
   private let status: StatusStore
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
   private let terminationObserver: NSObjectProtocol
 
   var measuring: Bool { !disk.pending.isEmpty || loadingPulls }
 
-  init(status: StatusStore, cli: Task<StimCLI, Never>) {
+  init(status: StatusStore, environment: Task<[String: String], Never>) {
     self.status = status
-    self.cli = cli
+    self.environment = environment
     terminationObserver = NotificationCenter.default.addObserver(
       forName: NSApplication.willTerminateNotification, object: nil, queue: nil
     ) { _ in Self.running.terminateAll() }
@@ -49,9 +49,9 @@ final class StorageStore: ObservableObject {
       environments.map { "\($0.worktree?.path ?? $0.path)/node_modules" } + unprovisioned.map { "\($0.path)/node_modules" })
     loadingPulls = true
     disk = DiskMeasurements(pending: Set(modules))
-    let cli = cli
+    let environment = environment
     Task {
-      let environment = await cli.value.environment
+      let environment = await environment.value
       let paths = StoragePaths(home: NSHomeDirectory(), environment: environment)
       self.paths = paths
       let jobs =

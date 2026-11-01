@@ -47,13 +47,20 @@ public final class StatusStore: ObservableObject {
   private static let doctorCheckInterval: TimeInterval = 60
 
   /// `stimHome` is the home to expect until the CLI environment resolves, so its server feed can show first.
-  public init(cli: Task<StimCLI, Never>, stimHome expected: String? = nil) {
+  public init(environment: Task<[String: String], Never>, stimHome expected: String? = nil) {
     if let expected { self.stimHome = expected }
     Task {
-      stimHome = await cli.value.stimHome
-      LaunchMilestones.reach("cli-ready")
+      stimHome = StimHome.path(environment: await environment.value)
+      LaunchMilestones.reach("environment-ready")
     }
   }
+
+  #if DEBUG
+    public convenience init(fixture: StatusPayload) {
+      self.init(environment: Task { [String: String]() })
+      payload = fixture
+    }
+  #endif
 
   public func start() {
     guard !started else { return }
@@ -115,7 +122,7 @@ public final class StatusStore: ObservableObject {
       for i in payload.environments.indices {
         let env = payload.environments[i]
         payload.environments[i].project =
-          env.worktree?.repository.map { Project(root: $0) } ?? Project(fallbackFor: env.path)
+          (env.worktree?.repository ?? env.checkout).map { Project(root: $0) } ?? Project(fallbackFor: env.path)
       }
       paired[id] = PairedStatus(payload: payload, error: nil, updatedAt: Date(), delivering: paired[id]?.delivering ?? false)
     case .failure(let failure):

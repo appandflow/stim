@@ -832,7 +832,9 @@ hosting Mac, requires `stim stop` first for that slot.
 is replaced in status without a warning. A booted or unknown local simulator
 stays visible alongside `ios.host` with a warning; plain status shows both. The
 default slot appears only in `ios`, never in `slots[]`. The host UDID never appears
-in local device fields. Stop and worktree removal wait for the host, park its
+in local device fields. A hosted `stim ios --json` result uses `udid: null` and
+reports the actual simulator name as `deviceName`; use `host.agent.command` for
+hosted agent control. Stop and worktree removal wait for the host, park its
 eligible owned simulator within the host's `pool.iosParkedMax` limit (delete
 otherwise), then clear placement. `stop --json` reports
 each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local
@@ -982,7 +984,9 @@ predates hosted recording refuses `record` as a command outside its allowed list
 If the setting is `none`, the daemon cannot enforce the policy, or the host
 lacks the `hosted-ios-agent` hello feature, agent access stays
 `{ driver: 'none', setting: 'hosting.agentDriver' }`. Update the host and check
-its agent-device installation and setting. This never grants another device.
+its agent-device installation and setting. A run whose host disables the driver
+prints a notice; plain status also names the host setting when agent control is
+unavailable. This never grants another device.
 Client hello carries only name and version, not features, so the host cannot gate
 daemon startup or grant issuance on client support. The client checks the host's
 `hosted-ios-agent` feature before using a grant.

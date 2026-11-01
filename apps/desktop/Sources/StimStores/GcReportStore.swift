@@ -31,6 +31,13 @@ public final class GcReportStore {
     self.init(run: { try await reader.refresh() })
   }
 
+  #if DEBUG
+    public convenience init(fixture: GcReport) {
+      self.init(run: { fixture })
+      latest.record(.success(fixture))
+    }
+  #endif
+
   public var report: GcReport? { latest.value }
   public var error: String? { latest.error }
 

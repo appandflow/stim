@@ -95,12 +95,12 @@ export function mergeArchives(macs: MacSnapshot[]): HomeArchive[] {
 
 export type HomeEntry = HomeItem | HomeWorktree | HomeArchive;
 
-/** The home row an entry belongs to: apps of one linked checkout share a row, so they share a key. */
+/** The home row an entry belongs to: apps of one checkout share a row, so they share a key. */
 export function workspaceKey(item: HomeEntry): string {
   if ('facts' in item) return item.key;
   if ('archive' in item)
     return `${item.macId}\narchive-checkout\n${item.env.worktree?.path}\n${item.archive.removedAt}`;
-  const checkout = item.env.worktree?.path;
+  const checkout = item.env.checkout ?? item.env.worktree?.path;
   return `${item.macId}\n${checkout ? `checkout\n${checkout}` : `app\n${item.env.path}`}`;
 }
 
@@ -137,13 +137,14 @@ export function mergeWorktrees(macs: MacSnapshot[]): HomeWorktree[] {
   );
 }
 
-export const STATUSES = ['live', 'idle', 'notSetUp', 'archived'] as const;
+export const STATUSES = ['live', 'idle', 'notSetUp', 'archived', 'hidden'] as const;
 export type HomeStatus = (typeof STATUSES)[number];
 
 /** The status chip an entry answers to: a worktree with no app is not set up, a removed one is archived. */
 export function entryStatus(item: HomeEntry): HomeStatus {
   if ('archive' in item) return 'archived';
   if ('facts' in item) return 'notSetUp';
+  if (item.env.hidden) return 'hidden';
   return isShownLive(item.env) ? 'live' : 'idle';
 }
 
@@ -273,7 +274,7 @@ export function filterWorkspaces<T extends HomeEntry>(
   const hidden = new Set<string>();
   for (const item of items) {
     const status = entryStatus(item);
-    if (status === 'archived' && !filters.statuses.includes(status)) continue;
+    if ((status === 'archived' || status === 'hidden') && !filters.statuses.includes(status)) continue;
     if (macs.length && !macs.includes(item.macId)) continue;
     if (projects.length && !projects.includes(item.project)) continue;
     if (

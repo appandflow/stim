@@ -11,7 +11,6 @@ struct DeviceTileMenu: View {
   var building: Bool
   @ObservedObject var choice: MacosWindowChoice
   var openBuildLogs: (() -> Void)?
-  @EnvironmentObject private var actions: ActionCenter
 
   static func applies(to device: DeviceRef, owner: ServerOwner) -> Bool {
     if device.isPhysical || !owner.isLocal { return false }
@@ -26,8 +25,32 @@ struct DeviceTileMenu: View {
   }
 
   private var menu: some View {
+    Menu {
+      DeviceTileMenuItems(
+        device: device, workspace: workspace, building: building, choice: choice, openBuildLogs: openBuildLogs)
+    } label: {
+      Image(systemName: "ellipsis")
+    }
+    .menuStyle(.button)
+    .menuIndicator(.hidden)
+    .buttonStyle(.borderless)
+    .fixedSize()
+    .help("Device actions")
+    .accessibilityLabel("Device actions")
+  }
+}
+
+struct DeviceTileMenuItems: View {
+  var device: DeviceRef
+  var workspace: String
+  var building: Bool
+  var choice: MacosWindowChoice?
+  var openBuildLogs: (() -> Void)?
+  @EnvironmentObject private var actions: ActionCenter
+
+  var body: some View {
     let busy = actions.active(for: workspace) != nil
-    return Menu {
+    Group {
       if let run = runCommand(for: device, cwd: workspace) {
         Button("Build and Run", systemImage: "play.fill") {
           actions.run("Run \(device.label)", steps: [run], present: false)
@@ -39,36 +62,39 @@ struct DeviceTileMenu: View {
       }
       .disabled(
         !(device.isRunning || device.state == "orphaned" || device.hostedMachine != nil && device.state != "stopped") || busy)
-      if case .macos = device {
-        if device.hostedMachine == nil {
-          Button("Bring to Front", systemImage: "arrow.up.forward.app") { choice.open() }
-            .disabled(!choice.canOpen)
-        }
-        if choice.windows.count > 1 || choice.pinned {
-          Divider()
-          Toggle("Follow Front Window", isOn: Binding(get: { !choice.pinned }, set: { if $0 { choice.select(nil) } }))
-            .disabled(!choice.canSelect)
-          ForEach(choice.windows) { window in
-            Toggle(
-              window.title.isEmpty ? "Untitled Window" : window.title,
-              isOn: Binding(get: { choice.pinned && window.id == choice.current }, set: { if $0 { choice.select(window.id) } })
-            )
-            .disabled(!choice.canSelect)
-          }
-        }
-        if let openBuildLogs {
-          Divider()
-          Button("Build Logs", systemImage: "doc.text.magnifyingglass", action: openBuildLogs)
-        }
+      if case .macos = device, let choice {
+        MacosWindowItems(
+          choice: choice, hosted: device.hostedMachine != nil, openBuildLogs: openBuildLogs)
       }
-    } label: {
-      Image(systemName: "ellipsis")
     }
-    .menuStyle(.button)
-    .menuIndicator(.hidden)
-    .buttonStyle(.borderless)
-    .fixedSize()
-    .help("Device actions")
-    .accessibilityLabel("Device actions")
+  }
+}
+
+private struct MacosWindowItems: View {
+  @ObservedObject var choice: MacosWindowChoice
+  var hosted: Bool
+  var openBuildLogs: (() -> Void)?
+
+  var body: some View {
+    if !hosted {
+      Button("Bring to Front", systemImage: "arrow.up.forward.app") { choice.open() }
+        .disabled(!choice.canOpen)
+    }
+    if choice.windows.count > 1 || choice.pinned {
+      Divider()
+      Toggle("Follow Front Window", isOn: Binding(get: { !choice.pinned }, set: { if $0 { choice.select(nil) } }))
+        .disabled(!choice.canSelect)
+      ForEach(choice.windows) { window in
+        Toggle(
+          window.title.isEmpty ? "Untitled Window" : window.title,
+          isOn: Binding(get: { choice.pinned && window.id == choice.current }, set: { if $0 { choice.select(window.id) } })
+        )
+        .disabled(!choice.canSelect)
+      }
+    }
+    if let openBuildLogs {
+      Divider()
+      Button("Build Logs", systemImage: "doc.text.magnifyingglass", action: openBuildLogs)
+    }
   }
 }

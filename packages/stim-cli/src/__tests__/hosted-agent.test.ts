@@ -57,3 +57,16 @@ test('a local network machine without a relay gets no agent control and the reas
   expect(notes).toEqual([reason]);
   expect(existsSync(join(dir, 'agent-device-remote.json'))).toBe(false);
 });
+
+test('a host with no driver names its setting once and writes no remote config', async () => {
+  const notes: string[] = [];
+  const file = join(dir, 'agent-device-remote.json');
+  expect(await agentAccess(file, LOCAL, { driver: 'none' }, (line) => notes.push(line), 'ios')).toEqual({
+    driver: 'none',
+    setting: 'hosting.agentDriver',
+  });
+  expect(notes).toHaveLength(1);
+  expect(notes[0]).toContain(LOCAL.machine);
+  expect(notes[0]).toContain('hosting.agentDriver');
+  expect(existsSync(file)).toBe(false);
+});

@@ -393,15 +393,20 @@ test('native cleanup preserves registry, checkout, worktree and GC checks', asyn
   await f.verify();
 });
 
-test('native cleanup accepts the trash entry of a worktree removal that is still deleting', async (t) => {
+test('native cleanup accepts pending trash and stale metadata but still rejects orphaned workspaces', async (t) => {
   const f = fixture(t);
   f.output.gc = {
     trash: {
       root: '/home/trash',
       entries: [{ path: '/home/trash/remove-A', worktree: f.cwd, kept: 'still deleting' }],
     },
+    staleStatusCaches: [
+      { kind: 'disk-usage', path: join(f.cwd, 'android', 'build'), file: '/home/disk-usage/cache.json', bytes: 175 },
+    ],
   };
   await f.verify();
+  f.output.gc.orphanedWorkspaces = [{ dir: '/home/workspaces/leftover', projectRoot: f.cwd, bytes: 100 }];
+  await assert.rejects(() => f.verify(), /gc reports one of our workspaces as orphaned/);
 });
 
 test('a failed JSON command keeps native ownership and diagnostics available to failure cleanup', (t) => {

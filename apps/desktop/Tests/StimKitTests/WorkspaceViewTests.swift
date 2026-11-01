@@ -139,6 +139,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     ]
     #expect(idle.orderedDevices.map(\.id) == order)
     #expect(driven.orderedDevices.map(\.id) == order)
+    #expect(idle.orderedDevices.first(where: { $0.id == "remote:S" })?.placement?.machine == "EAS")
+    #expect(idle.orderedDevices.first?.placement == nil)
   }
 }
 

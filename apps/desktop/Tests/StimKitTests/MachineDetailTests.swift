@@ -151,6 +151,13 @@ import Testing
     #expect(MachineDetail(MachineDetail.Input(entry: "studio", status: pending)).situation?.title == "Waiting for approval")
   }
 
+  @Test func unlimitedOffloadedBuildsShowOnlyTheRunningCount() throws {
+    let list = try status(#"{"machine":"mini","state":"approved","capacity":{"running":2,"max":0,"cpus":12}}"#)
+    let detail = MachineDetail(MachineDetail.Input(entry: "mini", status: list))
+    #expect(detail.capacity.first { $0.label == "Offloaded builds" }?.value == "2")
+    #expect(list.identityLine == "12 cores \u{00B7} 2 offloaded builds")
+  }
+
   @Test func capacityVersionsAndApprovalsComeFromTheReports() throws {
     let list = try status(
       #"""
@@ -167,6 +174,7 @@ import Testing
     #expect(
       detail.capacity.map(\.label) == ["Load", "RAM", "Disk", "Cores", "Builds running", "Offloaded builds"])
     #expect(detail.capacity.first { $0.label == "Builds running" }?.value == "1/2 builds")
+    #expect(detail.capacity.first { $0.label == "Offloaded builds" }?.value == "0 of 1")
     #expect(
       detail.versions == [
         MachineDetailRow(label: "This Mac", value: "Stim 1.25.0"),

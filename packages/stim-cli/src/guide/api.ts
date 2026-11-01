@@ -73,6 +73,18 @@ cancellation before writing.
 On Windows, report probes require the built-in Windows PowerShell for process-tree containment.
 A probe's time limit counts only the probe itself; PowerShell's startup and exit each have their own 30 second limit.
 
+repairDoctor({ platform?, signal?, beforeRepair? }) applies the repairs offered by doctor --fix,
+then returns { report, exitCode }. A refused project repair sets exitCode to 1
+without changing the caller's process exit code. Progress uses onProgress. Its
+execution budget is 120 seconds; cancellation drains owned report resources.
+Stop native builds in this checkout before requesting repairs.
+beforeRepair and beforeUnlock receive the resolved canonical project root before
+mutation; throwing refuses the operation. Use them to reserve the actual project
+when the client's directory is a subdirectory.
+unlockDevice({ platform?, slot?, signal?, beforeUnlock? }) releases only the selected project's
+leases in this client's Stim home. Other projects, platforms and slots are left
+alone. Lock acquisition cancels; a committed lease release cannot be undone.
+
 requestMachineAccess({ ticket?, signal? }) requests build and device-host access
 from configured remote machines without granting capabilities or repairing project
 state. It returns the iOS doctor report and records the completed project check

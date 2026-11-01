@@ -4,7 +4,7 @@ import type { DetailsRead } from './machine-details.ts';
 const MAX_REPORT_READS = 4;
 
 const reportKey = (target: DesktopReportTarget) =>
-  target.report === 'gc' ? 'gc' : `doctor:${target.platform ?? 'all'}:${target.cwd}`;
+  target.report === 'doctor' ? `doctor:${target.platform ?? 'all'}:${target.cwd}` : target.report;
 
 interface Entry {
   target: DesktopReportTarget;

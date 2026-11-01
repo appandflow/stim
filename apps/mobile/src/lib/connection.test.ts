@@ -99,7 +99,7 @@ class FakeSocket {
   }
 }
 
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+const flush = () => jest.advanceTimersByTimeAsync(0);
 const status = {
   environments: [],
   capacity: { liveCount: 0, committedMb: 0, totalMemoryMb: 1024, overCapacity: false },

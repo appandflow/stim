@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Testing
 
@@ -327,6 +328,33 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
 
     controller.live()
     #expect(sub.cancelled && controller.replay == nil)
+  }
+
+  @Test func reportsPlaybackStartsOnlyForPausedToPlayingTransitions() async throws {
+    let server = FakeServer()
+    let controller = ReplayController(target: target, scheduler: ManualScheduler().schedule)
+    controller.connect(server)
+    controller.seek(at: 5_000, rate: 2)
+    var starts = 0
+    let early = controller.playbackStarts.sink { starts += 1 }
+    #expect(starts == 0)
+
+    controller.seek(at: 6_000, rate: 0)
+    controller.seek(at: 6_000, rate: 1)
+    controller.seek(at: 7_000, rate: 2)
+    #expect(starts == 1)
+    controller.seek(at: 7_000, rate: 0)
+    controller.seek(at: 8_000, rate: 1)
+    #expect(starts == 2)
+
+    var late = 0
+    let lateSink = controller.playbackStarts.sink { late += 1 }
+    #expect(late == 0)
+    controller.seek(at: 8_000, rate: 0)
+    controller.seek(at: 9_000, rate: 1)
+    #expect(late == 1 && starts == 3)
+    early.cancel()
+    lateSink.cancel()
   }
 
   @Test func refusesToReplayWhenTheServerAnswersWithoutH264() async throws {
@@ -850,8 +878,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let sample = WizardSample(applicationSupport: alias)
     let (client, socket) = try await openConnection()
     defer { client.stop() }
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim"], override: "/does-not-exist/stim")
-    let request = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: sample.folder.path) }
+    let environment = ["STIM_HOME": "/tmp/stim"]
+    let request = Task {
+      try await readServerBuildTimings(
+        stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: sample.folder.path)
+    }
     await settle()
     #expect(
       socket.sent.last?["params"]
@@ -872,7 +903,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
         ])
       ]))
     #expect(try await request.value == BuildTimings(offerMs: 1, syncMs: 2, workerMs: 3, fetchMs: 4, totalMs: 10))
-    let failed = Task { try await readServerBuildTimings(cli: cli, connection: (client, "/tmp/stim"), cwd: "/sample") }
+    let failed = Task {
+      try await readServerBuildTimings(
+        stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/sample")
+    }
     await settle()
     socket.refuse("logs.query", code: "unknown-workspace")
     let error = await #expect(throws: ServerError.self) { try await failed.value }
@@ -976,7 +1010,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   private let statsJSON =
     #"{"version":1,"project":{"ios":{"runs":3,"failed":1,"hits":1,"misses":1},"android":null},"offload":{"today":{"here":1,"offloaded":0,"fellBack":0},"machines":{"mini":{"today":{"offloaded":0,"offloadedMs":0,"savedMs":0,"fallbacks":0},"total":{"offloaded":1,"offloadedMs":2000,"savedMs":-500,"fallbacks":0}}},"placements":[]}}"#
 
-  private func statsCLI(in directory: URL) throws -> StimCLI {
+  private func statsEnvironment(in directory: URL) throws -> [String: String] {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let executable = directory.appendingPathComponent("stim")
     let script = """
@@ -986,18 +1020,18 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       """
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    return StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+    return ["PATH": "\(directory.path):/usr/bin:/bin", "STIM_HOME": directory.path]
   }
 
   @Test func statsUseTheMatchingHomeSessionAndDoNotRetryRPCFailuresThroughCLI() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let alias = directory.appendingPathComponent("alias")
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
     let (client, socket) = try await openConnection()
     defer { client.stop() }
-    let reader = StatsReader(cli: Task { cli }) { (client, alias.path) }
+    let reader = StatsReader(environment: Task { environment }) { (client, alias.path) }
     let payload = try JSONDecoder().decode(JSONValue.self, from: Data(statsJSON.utf8))
     let project = Task { try await reader.project(workspace: directory.path) }
     await settle()
@@ -1031,11 +1065,11 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func statsRequireAnEligibleRPCWithoutInvokingCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("stats-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state)
     defer { client.stop() }
-    let reader = StatsReader(cli: Task { cli }) {
+    let reader = StatsReader(environment: Task { environment }) {
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     }
     let projectError = await #expect(throws: ServerError.self) { try await reader.project(workspace: directory.path) }
@@ -1049,11 +1083,14 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func copiedDiagnosticsReadRunningVersionsAndPreserveTheCompleteReportWithoutCLI() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       features: ["desktop-reports"], versions: (stim: "producer-stim", server: "producer-server"))
     defer { client.stop() }
-    let read = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: "/workspace") }
+    let read = Task {
+      await readDoctorDiagnostics(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/workspace")
+    }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.get") })
@@ -1072,7 +1109,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(!copied.contains("shortpw"))
     #expect(copied.contains("cache.example") && copied.contains(DebugLogRedaction.placeholder))
 
-    let failed = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: "/workspace") }
+    let failed = Task {
+      await readDoctorDiagnostics(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/workspace")
+    }
     await settle()
     socket.answer("desktop.reports.invalidate", .object([:]))
     await settle()
@@ -1087,7 +1127,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func copiedDiagnosticsRequireTheMatchingReportServerWithoutCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
       features: state == "old-server" ? nil : ["desktop-reports"])
@@ -1098,7 +1138,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       : (
         client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path
       )
-    let result = await readDoctorDiagnostics(cli: cli, connection: connection, cwd: directory.path)
+    let result = await readDoctorDiagnostics(
+      stimHome: StimHome.path(environment: environment), connection: connection, cwd: directory.path)
     #expect(result.report.contains("unavailable"))
     if state != "old-server" { #expect(result.stimVersion == nil && result.serverVersion == nil) }
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
@@ -1109,10 +1150,13 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func copiedDiagnosticsDoNotPresentIncompleteSnapshotsAsDoctorJSON(_ pending: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("diagnostics-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports"])
     defer { client.stop() }
-    let read = Task { await readDoctorDiagnostics(cli: cli, connection: (client, directory.path), cwd: directory.path) }
+    let read = Task {
+      await readDoctorDiagnostics(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: directory.path)
+    }
     await settle()
     socket.answer("desktop.reports.invalidate", .object([:]))
     await settle()
@@ -1125,12 +1169,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func gcInvalidatesBeforeReadingAndNeverRetriesServerFailuresThroughCLI() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let alias = directory.appendingPathComponent("alias")
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports"])
     defer { client.stop() }
-    let reader = GcReportReader(cli: Task { cli }) { (client, alias.path) }
+    let reader = GcReportReader(environment: Task { environment }) { (client, alias.path) }
     let read = Task { try await reader.refresh() }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
@@ -1161,10 +1205,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func refusedOrCancelledGcInvalidationDoesNotReadOrDisconnectTheSession() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports"])
     defer { client.stop() }
-    let reader = GcReportReader(cli: Task { cli }) { (client, directory.path) }
+    let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
     let refused = Task { try await reader.refresh() }
     await settle()
     socket.refuse("desktop.reports.invalidate", code: "forbidden")
@@ -1185,12 +1229,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func gcRequiresAnEligibleReportServerWithoutCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
       features: state == "old-server" ? nil : ["desktop-reports"])
     defer { client.stop() }
-    let reader = GcReportReader(cli: Task { cli }) {
+    let reader = GcReportReader(environment: Task { environment }) {
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     }
     let error = await #expect(throws: ServerError.self) { try await reader.refresh() }
@@ -1203,11 +1247,13 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func platformToolsReadFreshFilteredFindingsWithoutCLI(_ platform: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports", "desktop-report-platform"])
     defer { client.stop() }
     let read = Task {
-      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+      try await readPlatformDoctor(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/workspace",
+        platform: platform)
     }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
@@ -1232,7 +1278,9 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let report = try await read.value
     #expect(report.costFindings.first?.detail == platform)
     let failed = Task {
-      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+      try await readPlatformDoctor(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/workspace",
+        platform: platform)
     }
     await settle()
     socket.refuse("desktop.reports.invalidate", code: "forbidden")
@@ -1240,7 +1288,9 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(error?.code == "forbidden")
     let gets = socket.sent.filter { $0["method"] == .string("desktop.reports.get") }.count
     let cancelled = Task {
-      try await readPlatformDoctor(cli: cli, connection: (client, directory.path), cwd: "/workspace", platform: platform)
+      try await readPlatformDoctor(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/workspace",
+        platform: platform)
     }
     await settle()
     cancelled.cancel()
@@ -1256,7 +1306,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func platformToolsRefuseIneligibleServersWithoutCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("tools-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
       features: state == "old-server" ? ["desktop-reports"] : ["desktop-reports", "desktop-report-platform"])
@@ -1264,7 +1314,8 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     let connection =
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     let error = await #expect(throws: ServerError.self) {
-      try await readPlatformDoctor(cli: cli, connection: connection, cwd: directory.path, platform: "ios")
+      try await readPlatformDoctor(
+        stimHome: StimHome.path(environment: environment), connection: connection, cwd: directory.path, platform: "ios")
     }
     #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
     #expect(!socket.sent.contains { $0["method"] == .string("desktop.reports.invalidate") })
@@ -1274,10 +1325,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func gcDoesNotAcceptAPendingSnapshotAsAFreshMeasurement() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gc-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports"])
     defer { client.stop() }
-    let reader = GcReportReader(cli: Task { cli }) { (client, directory.path) }
+    let reader = GcReportReader(environment: Task { environment }) { (client, directory.path) }
     let read = Task { try await reader.refresh() }
     await settle()
     socket.answer("desktop.reports.invalidate", .object([:]))
@@ -1295,11 +1346,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func settingsReadSelectedFolderLayersAndPropagateFailureOrCancellationWithoutCLI() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-settings"])
     defer { client.stop() }
     let read = Task {
-      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+      try await readServerSettings(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/selected")
     }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.settings.get"))
@@ -1326,14 +1378,16 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(payload.entry("android.keystorePassword")?.sensitive == true)
     #expect(payload.unknown.first?.key == "other")
     let failed = Task {
-      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+      try await readServerSettings(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/selected")
     }
     await settle()
     socket.refuse("desktop.settings.get", code: "stim-failed")
     let error = await #expect(throws: ServerError.self) { try await failed.value }
     #expect(error?.code == "stim-failed")
     let cancelled = Task {
-      try await readServerSettings(cli: cli, connection: (client, directory.path), cwd: "/selected")
+      try await readServerSettings(
+        stimHome: StimHome.path(environment: environment), connection: (client, directory.path), cwd: "/selected")
     }
     await settle()
     cancelled.cancel()
@@ -1346,10 +1400,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func settingsSchemaUsesServerFieldsAndReportsInvalidSchemasOrReadFailuresWithoutCLI() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("schema-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-settings-schema"])
     defer { client.stop() }
-    let read = Task { try await readServerSettingsSchema(cli: cli, connection: (client, directory.path)) }
+    let read = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
     await settle()
     let schema = try JSONDecoder().decode(
       JSONValue.self,
@@ -1370,11 +1426,15 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
     #expect(fields.first?.control == .picker(["light", "dark"]))
     #expect(fields.last?.control == .secure)
     #expect(fields.last?.scopes == [.machine])
-    let invalid = Task { try await readServerSettingsSchema(cli: cli, connection: (client, directory.path)) }
+    let invalid = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
     await settle()
     socket.answer("desktop.settings.schema", .object([:]))
     await #expect(throws: SettingsSchema.Invalid.self) { try await invalid.value }
-    let failed = Task { try await readServerSettingsSchema(cli: cli, connection: (client, directory.path)) }
+    let failed = Task {
+      try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: (client, directory.path))
+    }
     await settle()
     socket.refuse("desktop.settings.schema", code: "stim-failed")
     let error = await #expect(throws: ServerError.self) { try await failed.value }
@@ -1386,7 +1446,7 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func settingsRefuseIneligibleServersWithoutCLI(_ state: String, schema: Bool) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("settings-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
       features: state == "old-server" ? nil : ["desktop-settings", "desktop-settings-schema"])
@@ -1395,9 +1455,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     let error = await #expect(throws: ServerError.self) {
       if schema {
-        _ = try await readServerSettingsSchema(cli: cli, connection: connection)
+        _ = try await readServerSettingsSchema(stimHome: StimHome.path(environment: environment), connection: connection)
       } else {
-        _ = try await readServerSettings(cli: cli, connection: connection, cwd: directory.path)
+        _ = try await readServerSettings(
+          stimHome: StimHome.path(environment: environment), connection: connection, cwd: directory.path)
       }
     }
     #expect(error?.code == (state == "old-server" ? "unsupported" : "not-connected"))
@@ -1408,10 +1469,10 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   @Test func machineAccessReadsFreshBuildAndHostStatesWithoutCLIAndPropagatesFailures() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(features: ["desktop-reports"])
     defer { client.stop() }
-    let reader = MachineAccessReader(cli: Task { cli }) { (client, directory.path) }
+    let reader = MachineAccessReader(environment: Task { environment }) { (client, directory.path) }
     let read = Task { try await reader.report(cwd: "/workspace", ask: false) }
     await settle()
     #expect(socket.sent.last?["method"] == .string("desktop.reports.invalidate"))
@@ -1456,12 +1517,12 @@ private let target = ReplayTarget(workspace: "/work/app", platform: "ios", slot:
   func machineAccessReadsRequireTheMatchingReportServerWithoutCLI(_ state: String) async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("access-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = try statsCLI(in: directory)
+    let environment = try statsEnvironment(in: directory)
     let (client, socket) = try await openConnection(
       capabilities: state == "no-read" ? ["build"] : ["read"], state: state,
       features: state == "old-server" ? nil : ["desktop-reports"])
     defer { client.stop() }
-    let reader = MachineAccessReader(cli: Task { cli }) {
+    let reader = MachineAccessReader(environment: Task { environment }) {
       state == "off" ? nil : (client, state == "wrong-home" ? directory.appendingPathComponent("other").path : directory.path)
     }
     let error = await #expect(throws: ServerError.self) { try await reader.report(cwd: directory.path, ask: false) }

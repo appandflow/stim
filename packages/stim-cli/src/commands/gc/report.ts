@@ -1,3 +1,4 @@
+import type { HostedAppStorage } from './hosted-apps.ts';
 import type { ParkedHostedDeviceReport } from './hosted-devices.ts';
 import type { MaintenancePreview } from '../../maintenance/preview.ts';
 import { archiveLines, type ArchiveSelection } from './archives.ts';
@@ -69,6 +70,7 @@ export interface GcReport {
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
+  hostedAppStorage?: HostedAppStorage[];
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -173,6 +175,17 @@ function formatParkedHostedDeviceReport(devices: readonly ParkedHostedDeviceRepo
   return lines;
 }
 
+function hostedAppStorageLines(areas: readonly HostedAppStorage[] = []): string[] {
+  if (!areas.length) return [];
+  return [
+    'Hosted app storage (report only):',
+    ...areas.map(
+      (area) =>
+        `  ${area.platform} session ${area.session} client ${area.client} (${area.state}) ${area.path}: apps ${area.appsBytes === null ? 'unknown' : formatBytes(area.appsBytes)}, blobs ${area.blobsBytes === null ? 'unknown' : formatBytes(area.blobsBytes)}`,
+    ),
+  ];
+}
+
 function projectEntryLines(header: string, paths: string[]): string[] {
   return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
 }
@@ -232,6 +245,7 @@ export function formatGcReport(
     parkedSims = [],
     parkedAvds = [],
     parkedHostedDevices,
+    hostedAppStorage,
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
@@ -334,6 +348,7 @@ export function formatGcReport(
   lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
   lines.push(...parkedHostedLines);
+  lines.push(...hostedAppStorageLines(hostedAppStorage));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -714,6 +729,7 @@ export interface GcJsonSections {
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
+  hostedAppStorage: HostedAppStorage[];
   orphanedDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -831,6 +847,7 @@ export function gcReportSections({
   parkedSims = [],
   parkedAvds = [],
   parkedHostedDevices = [],
+  hostedAppStorage = [],
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
@@ -896,6 +913,7 @@ export function gcReportSections({
       listed,
     })),
     parkedHostedDevices,
+    hostedAppStorage,
     orphanedDevices: orphanedDevices.map((d) => ({
       kind: d.kind,
       id: d.id,

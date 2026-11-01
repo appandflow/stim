@@ -5,7 +5,7 @@ import SwiftUI
 
 struct NoEnvironmentDetail: View {
   var worktree: UnprovisionedWorktree
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var apps: [NotSetUpApp]
   var projectName: String?
   @EnvironmentObject private var actions: ActionCenter
@@ -94,7 +94,7 @@ struct NoEnvironmentDetail: View {
       }
       if let chip = GitChip(worktree.info) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(cli: cli, chip: chip, worktree: worktree.info, workspace: worktree.path)
+        GitChipButton(environment: environment, chip: chip, worktree: worktree.info, workspace: worktree.path)
       }
       Spacer(minLength: Space.md)
       if let run = latestRun {

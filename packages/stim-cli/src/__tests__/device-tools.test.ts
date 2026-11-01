@@ -38,6 +38,7 @@ function harness(over: Partial<ToolDeps> = {}, replies: (args: string[]) => stri
   const out: string[] = [];
   const note: string[] = [];
   const deps: Partial<ToolDeps> = {
+    hostPlatform: 'darwin',
     findProjectRoot: () => '/ws',
     getProject: () => project,
     hostedSlots: () => [],
@@ -136,6 +137,18 @@ describe('target ownership', () => {
   test('an EAS session recorded for the other platform does not block this one', async () => {
     const h = harness({ readRemotePlatform: () => ({ platform: 'android', sessionId: 's1' }) });
     expect(succeeded(await runDeviceTool(request, {}, h.deps)).tool).toBe('location');
+  });
+
+  test.each([
+    { hostPlatform: 'darwin' as const, remedy: /stim ios --remote local/ },
+    { hostPlatform: 'linux' as const, remedy: /on a Mac/ },
+  ])('hosted iOS remedies fit the $hostPlatform client', async ({ hostPlatform, remedy }) => {
+    const h = harness({ hostPlatform, hostedSlots: () => ['default'] });
+    const result = failed(await runDeviceTool(request, { json: true }, h.deps));
+    expect(result.code).toBe('STIM_DEVICE_TOOL_TARGET');
+    expect(result.remedy).toMatch(remedy);
+    expect(result.remedy?.includes('--remote local')).toBe(hostPlatform === 'darwin');
+    expect(h.calls).toEqual([]);
   });
 
   test('permission and push refuse when no app is recorded for the device', async () => {

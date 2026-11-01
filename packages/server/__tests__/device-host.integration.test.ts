@@ -25,6 +25,8 @@ import {
   deviceHostArea,
   deviceHostRoot,
   readHostedAppMetadata,
+  hostedAppArea,
+  hostedAppBlobs,
   readHostedApp,
   readHostedSessions,
   readHostedMacosApp,
@@ -68,8 +70,9 @@ for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
 const localCount = () => { const value = JSON.parse(process.env.LOCAL_COUNT ?? '0'); return typeof value === 'number' ? { ios: value, android: 0 } : value; };
 if(input.mode === 'count') {
+  if(process.env.LOCAL_COUNT === 'hang') process.on('SIGTERM',()=>{});
   writeFileSync(join(process.env.STIM_HOME,'count-entered'),String(process.pid));
-  if(process.env.LOCAL_COUNT === 'hang') { process.on('SIGTERM',()=>{}); await new Promise(()=>setInterval(()=>{},1000)); }
+  if(process.env.LOCAL_COUNT === 'hang') await new Promise(()=>setInterval(()=>{},1000));
   else {
     if(process.env.COUNT_GATE) while(!existsSync(process.env.COUNT_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
     process.stdout.write(JSON.stringify(localCount()));
@@ -144,12 +147,20 @@ if(input.mode === 'inspect') {
     else if(input.deviceType === 'lost') { process.exitCode=1; }
     else out({state:'ready',device});
   }
+} else if(input.mode === 'app-state') {
+  writeFileSync(join(home,'app-state-entered'),String(process.pid));
+  while(existsSync(join(home,'app-state-wait'))) await new Promise(resolve=>setTimeout(resolve,20));
+  out({state:existsSync(join(home,'app-exited'))?'stopped':'running'});
 } else if(input.mode === 'logs') {
   writeFileSync(join(home,'logs-entered'),String(process.pid));
   if((input.deviceType ?? input.deviceProfile) === 'logs-hang') { process.on('SIGTERM',()=>{}); setInterval(()=>{},1000); }
   else {
     if((input.deviceType ?? input.deviceProfile) === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
     const logs=join(home,input.platform+'-logs');mkdirSync(logs,{recursive:true});
+    if(existsSync(join(home,'fail-console'))) {
+      appendFileSync(join(logs,'native-crashes.ndjson'),JSON.stringify({ts:2,src:'device',platform:input.platform,level:'fatal',event:'native_crash',msg:'owned crash'})+'\\n');
+      throw new Error('Console unavailable');
+    }
     appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:input.platform,level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
     out({more:input.deviceType === 'logs-backlog' && !input.final});
   }
@@ -2035,6 +2046,12 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
   await vi.waitFor(() => expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed'), {
     timeout: 5000,
   });
+  const previousArea = hostedAppArea(session.id, app.params.attempt);
+  mkdirSync(join(previousArea, 'App.app'));
+  const unused = join(hostedAppBlobs(session.id), createHash('sha256').update('old bytes').digest('hex'));
+  writeFileSync(unused, 'old bytes');
+  const pendingBlob = `${unused}.part`;
+  writeFileSync(pendingBlob, 'partial');
   const query = { session: session.id };
   expect(await host.logsQuery('other', query)).toHaveProperty('error.code', 'unknown-session');
   const pending = host.logsQuery('client', query);
@@ -2058,10 +2075,40 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     'result.records',
     [],
   );
+  const workerHome = join(deviceHostArea(session.id), 'home');
+  const failedConsole = join(workerHome, 'fail-console');
+  writeFileSync(failedConsole, '');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 4000);
+  try {
+    expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    clock.mockReturnValue(Date.now() + 4000);
+    const entered = join(workerHome, 'logs-entered');
+    rmSync(entered);
+    expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+      'result.records.0.event',
+      'native_crash',
+    );
+    expect(existsSync(entered)).toBe(false);
+  } finally {
+    clock.mockRestore();
+    rmSync(failedConsole);
+  }
+  const currentBundle = join(hostedAppArea(session.id, rerun.attempt), 'App.app');
+  mkdirSync(currentBundle);
+  writeFileSync(join(currentBundle, 'current'), 'current app');
+  expect(existsSync(previousArea)).toBe(true);
   expect(host.appLaunch('client', rerun)).toHaveProperty('result.state', 'installing');
   await vi.waitFor(() => expect(host.appAttach('client', rerun)).toHaveProperty('result.state', 'installed'), {
     timeout: 5000,
   });
+  expect(existsSync(previousArea)).toBe(false);
+  expect(readFileSync(join(currentBundle, 'current'), 'utf8')).toBe('current app');
+  expect(existsSync(join(hostedAppBlobs(session.id), app.sha256))).toBe(true);
+  expect(existsSync(unused)).toBe(false);
+  expect(readFileSync(pendingBlob, 'utf8')).toBe('partial');
   host.stop('client', query);
   await state(session.id, 'stopped');
   expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
@@ -2863,7 +2910,8 @@ test('runtime installs require hosting approval and a version, and preserve Xcod
 
 test('disconnect cancellation settles a runtime install worker before returning', async () => {
   await host.close();
-  hostEnv.RUNTIME_GATE = join(home, 'runtime-release');
+  const gate = join(home, 'runtime-release');
+  hostEnv.RUNTIME_GATE = gate;
   host = new DeviceHost({
     worker: join(home, 'worker.mjs'),
     env: hostEnv,
@@ -2875,7 +2923,39 @@ test('disconnect cancellation settles a runtime install worker before returning'
   const pending = host.installRuntime('client', { runtime: '26.5' }, abort.signal);
   await vi.waitFor(() => expect(existsSync(join(home, 'runtime-entered'))).toBe(true));
   const pid = await readPid(join(home, 'runtime-entered'));
+  const worker = { pid, processToken: processIdentity.captureProcessToken(pid) };
+  expect(worker.processToken).toEqual(expect.any(String));
   abort.abort();
+  if (process.platform === 'win32') writeFileSync(gate, '');
   expect(await pending).toHaveProperty('error.code', 'action-failed');
   await groupGone(pid);
+  await vi.waitFor(() => expect(['gone', 'different']).toContain(processIdentity.inspectProcessIdentity(worker)));
 });
+
+test.each(['ios', 'android'])(
+  'app state checks the current %s attempt, serializes native work and refuses revoked ownership',
+  async (platform) => {
+    const { id, params } = await installApp(platform);
+    const area = join(deviceHostArea(id), 'home');
+    for (const [client, input] of [
+      ['other', params],
+      ['client', { ...params, attempt: 'not-installed' }],
+    ] as const)
+      expect(await host.appState(client, input)).toHaveProperty('error');
+    expect(existsSync(join(area, 'app-state-entered'))).toBe(false);
+    expect(await host.appState('client', params)).toEqual({ result: { state: 'running' } });
+    writeFileSync(join(area, 'app-exited'), '');
+    expect(await host.appState('client', params)).toEqual({ result: { state: 'stopped' } });
+    rmSync(join(area, 'app-state-entered'));
+    writeFileSync(join(area, 'app-state-wait'), '');
+    const pending = host.appState('client', params);
+    await vi.waitFor(() => expect(existsSync(join(area, 'app-state-entered'))).toBe(true));
+    expect(await host.appState('client', params)).toHaveProperty('error.message', expect.stringContaining('operation'));
+    allowed.delete('client');
+    host.revoke();
+    if (process.platform === 'win32') rmSync(join(area, 'app-state-wait'));
+    expect(await pending).toHaveProperty('error.code', 'forbidden');
+    await state(id, 'stopped');
+    expect(readClaimSet(join(deviceHostRoot(), `${id}.claims.input`)).live).toEqual([]);
+  },
+);

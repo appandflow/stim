@@ -25,11 +25,13 @@ struct MachineResourceSummary: View {
             .font(.stim(.title)).monospacedDigit()
             .foregroundStyle(isLow ? Palette.warning : Palette.text)
           if let volume, volume.totalBytes > 0 {
-            ProgressView(value: min(1, max(0, Double(volume.freeBytes) / Double(volume.totalBytes))))
-              .tint(isLow ? Palette.warning : Palette.primary)
-              .accessibilityLabel("Available disk space")
-              .accessibilityValue(
-                "\(Format.fileSize(volume.freeBytes)) of \(Format.fileSize(volume.totalBytes)) on \(volume.name)")
+            StimProgressBar(
+              value: min(1, max(0, Double(volume.freeBytes) / Double(volume.totalBytes))),
+              tint: isLow ? Palette.warning : Palette.primary
+            )
+            .accessibilityLabel("Available disk space")
+            .accessibilityValue(
+              "\(Format.fileSize(volume.freeBytes)) of \(Format.fileSize(volume.totalBytes)) on \(volume.name)")
           }
           Text(minimumFreeBytes.map { "\(Format.fileSize($0)) minimum free" } ?? "No minimum free space set")
             .font(.stim(.caption)).foregroundStyle(isLow ? Palette.warning : Palette.secondary)
@@ -73,8 +75,7 @@ struct NowBand: View {
   @State private var showsMeasurementInfo = false
 
   private static let valueWidth: CGFloat = 64
-  private static let actionWidth: CGFloat = 88
-  private static let reclaimWidth: CGFloat = 140
+  private static let actionWidth: CGFloat = 28
 
   var body: some View {
     Card {
@@ -152,21 +153,21 @@ struct NowBand: View {
       .frame(maxWidth: .infinity, alignment: .leading)
     }
     .confirmationDialog(
-      "Reclaim Memory?", isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
+      reclaiming.map { "\($0.offer.title)?" } ?? "Reclaim Memory?",
+      isPresented: Binding(get: { reclaiming != nil }, set: { if !$0 { reclaiming = nil } }),
       titleVisibility: .visible, presenting: reclaiming
     ) { item in
-      Button("Run stim gc --delete --cache \(item.offer.cacheKind)", role: .destructive) {
+      Button(item.offer.title, role: .destructive) {
         actions.run(
           "Reclaim \(item.title) memory", item.offer.command(cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
       }
     } message: { item in
-      Text(item.offer.consequence)
+      Text(item.offer.consequence + "\n\nCommand: " + item.offer.command(cwd: NSHomeDirectory()).displayLine())
     }
   }
 
   private func actionWidth(_ owners: [MachineOwner]) -> CGFloat {
-    if owners.contains(where: { GcReport.reclaim(for: $0, in: gc.report) != nil }) { return Self.reclaimWidth }
-    return owners.contains { $0.stopCommand != nil } ? Self.actionWidth : 0
+    owners.contains { $0.stopCommand != nil || GcReport.reclaim(for: $0, in: gc.report) != nil } ? Self.actionWidth : 0
   }
 
   private func culpritRow(_ culprit: MaintenanceStatus.MemoryCulprit) -> some View {
@@ -237,33 +238,46 @@ struct NowBand: View {
   }
 
   @ViewBuilder private func action(_ owner: MachineOwner) -> some View {
-    if let command = owner.stopCommand, let title = owner.stopTitle, let workspace = owner.workspace {
-      Button(title) {
-        actions.run(
-          "\(title) \(owner.kind == .metro ? status.names(ofPath: workspace).title : owner.name)", steps: [command],
-          present: false)
+    let command = owner.stopCommand
+    let offer = command == nil ? GcReport.reclaim(for: owner, in: gc.report) : nil
+    if command != nil || offer != nil {
+      Menu(
+        owner.workspace.map { "Actions for \(owner.name), \(status.names(ofPath: $0).title)" }
+          ?? "Actions for \(owner.name)", systemImage: "ellipsis.circle"
+      ) {
+        if let command, let title = owner.stopTitle, let workspace = owner.workspace {
+          Button(
+            owner.kind == .metro ? "Stop workspace" : "Stop devices in slot \(owner.slot ?? "default")",
+            systemImage: "stop.circle", role: .destructive
+          ) {
+            actions.run(
+              "\(title) \(owner.kind == .metro ? status.names(ofPath: workspace).title : owner.name)", steps: [command],
+              present: false)
+          }
+          .disabled(actions.active(for: workspace) != nil)
+          .help(
+            owner.kind == .metro
+              ? "stim stop: stops this workspace's dev server and its devices"
+              : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running"
+          )
+        } else if let offer {
+          Button(
+            offer.cacheKind == "watchman"
+              ? "Reclaim unused Watchman resources\u{2026}" : "Reclaim unused Gradle and Kotlin memory\u{2026}",
+            systemImage: "memorychip"
+          ) { reclaiming = (owner.name, offer) }
+          .disabled(!offer.isAvailable || actions.active(for: ActionCenter.machineKey) != nil)
+          .help(
+            offer.unavailableReason.map { abbreviatingHome($0) }
+              ?? "stim gc --delete --cache \(offer.cacheKind): stops only what gc proves unused")
+        }
       }
-      .buttonStyle(.stim(.destructive))
-      .fixedSize()
-      .disabled(actions.active(for: workspace) != nil)
-      .accessibilityLabel(
-        owner.kind == .metro
-          ? "\(title) \(status.names(ofPath: workspace).title)"
-          : "\(title) \(owner.name), \(status.names(ofPath: workspace).title)"
-      )
-      .help(
-        owner.kind == .metro
-          ? "stim stop: stops this workspace's dev server and its devices"
-          : "stim stop --slot \(owner.slot ?? "default"): stops every device in this slot, keeping the shared server and other slots running"
-      )
-    } else if let offer = GcReport.reclaim(for: owner, in: gc.report) {
-      Button(offer.title) { reclaiming = (owner.name, offer) }
-        .buttonStyle(.stim())
-        .fixedSize()
-        .disabled(!offer.isAvailable || actions.active(for: ActionCenter.machineKey) != nil)
-        .help(
-          offer.unavailableReason.map { abbreviatingHome($0) }
-            ?? "stim gc --delete --cache \(offer.cacheKind): stops only what gc proves unused")
+      .labelStyle(.iconOnly)
+      .iconFont(IconSize.control)
+      .frame(width: Self.actionWidth, height: 24)
+      .menuStyle(.borderlessButton)
+      .menuIndicator(.hidden)
+      .hoverHighlight()
     } else {
       Color.clear.frame(height: 1)
     }

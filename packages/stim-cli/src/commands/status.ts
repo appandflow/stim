@@ -61,6 +61,7 @@ import { createStatusMeasurer, type StatusMeasurer } from '../status-measures.ts
 import { parkedMaxSetting, POOL_SETTING_REMEDY, readParked } from '../devices/sim-pool.ts';
 import type { EnvironmentState, VolumeInfo, WorktreeFacts } from '../status.ts';
 import { physicalDeviceLine } from '../physical-devices.ts';
+import { hostedAgentLine } from '../device-host/hosted-agent.ts';
 
 interface StatusOptions {
   json?: boolean;
@@ -91,8 +92,7 @@ function iosStatusLines(record: EnvironmentState['ios'], slotLabel: string): str
     out.push(
       `  ios${slotLabel}: ${chalk.cyan(iosStatusName(ios))} ${booted}${owned}${activitySuffix(ios.activity)}${appSuffix(ios.app)}${idleShutdownSuffix(ios.idleShutdown)}`,
     );
-    if (!ios.udid && ios.host && 'command' in ios.host.agent)
-      out.push(chalk.dim(`    agent: ${ios.host.agent.command}`));
+    if (!ios.udid && ios.host) out.push(chalk.dim(`    agent: ${hostedAgentLine(ios.host.agent, ios.host.machine)}`));
   }
   return out;
 }
@@ -117,7 +117,7 @@ function androidStatusLines(record: EnvironmentState['android'], slotLabel: stri
       );
     }
   }
-  if (record?.host && 'command' in record.host.agent) out.push(chalk.dim(`    agent: ${record.host.agent.command}`));
+  if (record?.host) out.push(chalk.dim(`    agent: ${hostedAgentLine(record.host.agent, record.host.machine)}`));
   return out;
 }
 
@@ -281,7 +281,7 @@ function renderStatus(
           ? ''
           : `; build placement ${build.buildMachine}, built on ${build.builtOn ?? 'none'}`;
       out.push(`  macOS ${state.macos.product}: ${state.macos.state}${where}; build ${build.state}${placement}`);
-      if (host && 'command' in host.agent) out.push(chalk.dim(`    agent: ${host.agent.command}`));
+      if (host) out.push(chalk.dim(`    agent: ${hostedAgentLine(host.agent, host.machine)}`));
     }
     if (state.web) {
       const browser = state.web.running

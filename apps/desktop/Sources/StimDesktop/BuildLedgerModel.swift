@@ -7,19 +7,18 @@ final class BuildLedgerModel: ObservableObject {
   @Published private(set) var error: String?
   @Published private(set) var loaded = false
 
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
 
   private let polls: Bool
 
-  init(cli: Task<StimCLI, Never>) {
-    self.cli = cli
+  init(environment: Task<[String: String], Never>) {
+    self.environment = environment
     polls = true
   }
 
   #if DEBUG
-    /// A model that shows `items` and never runs the CLI, for fixtures.
     init(items: [LedgerBuild]) {
-      cli = Task { StimCLI(environment: [:]) }
+      environment = Task { [:] }
       polls = false
       self.items = items
       loaded = true
@@ -34,8 +33,11 @@ final class BuildLedgerModel: ObservableObject {
   }
 
   private func refresh() async {
-    let cli = await cli.value
-    let result = await Result.awaiting { try await cli.buildLedger() }
+    let environment = await environment.value
+    let result = await Result.awaiting {
+      try await BuildLedger.read(
+        stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection)
+    }
     guard !Task.isCancelled else { return }
     switch result {
     case .success(let items):

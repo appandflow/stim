@@ -131,7 +131,7 @@ export function isKotlinDaemonCommand(command: string): boolean {
  */
 export function offloadClientOf(command: string, workerRoot: string, gradleHome: string | null): string | null {
   const root = resolve(workerRoot).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const home = new RegExp(`${root}/([^/\\s]+)/cache/gradle(/|$)`);
+  const home = new RegExp(`${root}/([^/\\s]+)/(?:repos/[^/\\s]+/)?cache/gradle(/|$)`);
   return home.exec(command)?.[1] ?? (gradleHome ? (home.exec(gradleHome)?.[1] ?? null) : null);
 }
 

@@ -42,8 +42,7 @@ function commit(repo: string, file: string, content: string, message = content, 
   git(repo, `commit -q -m "${message}"`, env);
 }
 
-// Quarantined on Windows: https://github.com/appandflow/stim/issues/3877
-describe.skipIf(process.platform === 'win32')('merge state', () => {
+describe('merge state', () => {
   for (const inspect of [mergeState, mergeStateAsync]) {
     test(`${inspect.name}: keeps a branch far past the merge base as unknown, naming the commit count`, async () => {
       const repo = initRepo('far-ahead');

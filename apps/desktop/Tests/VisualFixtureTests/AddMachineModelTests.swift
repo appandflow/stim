@@ -69,13 +69,13 @@ final class AddMachineModelTests: XCTestCase {
         ]))
     }
     func machinesModel() -> BuildMachinesModel {
-      let cli = Task { StimCLI(environment: [:], override: "/usr/bin/false") }
+      let environment = Task { [String: String]() }
       return BuildMachinesModel(
-        cli: cli,
+        environment: environment,
         settings: MachineSettingsStore(
           read: { try await self.payload() },
           write: { _, _, _, _ in throw Failure.refused }),
-        statsReader: StatsReader(cli: cli, server: { nil }),
+        statsReader: StatsReader(environment: environment, server: { nil }),
         machineAccess: { _, _ in try self.report() })
     }
     var version = "1.21.0"
@@ -257,11 +257,11 @@ final class AddMachineModelTests: XCTestCase {
     defer { client.stop() }
     await waitUntil { client.isOpen }
     let home = "/tmp/add-machine-home"
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
-    let reader = MachineAccessReader(cli: cli) { (client, home) }
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": home] }
+    let reader = MachineAccessReader(environment: environment) { (client, home) }
     harness.readServer = (
       doctor: { try await reader.report(cwd: $0, ask: false) },
-      settings: { try await readServerSettings(cli: await cli.value, connection: (client, home), cwd: "/tmp") }
+      settings: { try await readServerSettings(stimHome: home, connection: (client, home), cwd: "/tmp") }
     )
     let model = harness.make()
     await model.start()

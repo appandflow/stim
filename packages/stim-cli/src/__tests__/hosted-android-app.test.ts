@@ -1,3 +1,4 @@
+import { hostedAppState } from '../device-host/app-state.ts';
 import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -207,4 +208,28 @@ test.each([true, false])('native hosted readiness requires a live app process: %
   expect(native.runFile.mock.calls.some(([, args]) => args?.includes('reverse') || args?.includes('run-as'))).toBe(
     false,
   );
+});
+
+test('an app that exits after its first process sighting is not a verified release launch', async () => {
+  receipt();
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('start')));
+  setTimeout(() => {
+    launched = false;
+  }, 300);
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe('unverified');
+});
+
+test('app state requires an installed receipt and probes only its ledger-owned android target', async () => {
+  receipt();
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('installed');
+  const file = join(area, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state: 'installed' }));
+  launched = true;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'running' });
+  launched = false;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'stopped' });
+  running = 'foreign-avd';
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('identity changed');
 });

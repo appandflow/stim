@@ -13,6 +13,8 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 type ToolPlatform = 'ios' | 'android';
 
 export interface ToolOptions {
+  cwd?: string;
+  beforeTool?: (workspace: string) => void;
   slot?: string;
   json?: boolean;
   set?: string;
@@ -81,6 +83,7 @@ interface ToolTarget {
 }
 
 export interface ToolDeps {
+  hostPlatform: NodeJS.Platform;
   findProjectRoot: typeof findProjectRoot;
   getProject: (root: string) => ProjectRecord | null;
   hostedSlots: (root: string, platform: ToolPlatform) => string[];
@@ -95,6 +98,7 @@ export interface ToolDeps {
 }
 
 const DEFAULT_DEPS: ToolDeps = {
+  hostPlatform: process.platform,
   findProjectRoot,
   getProject,
   hostedSlots: (root, platform) => Object.keys(hostedNativeRecords(readWorkspaceState(root), platform)),
@@ -262,6 +266,10 @@ async function resolveToolTarget(
 ): Promise<ToolTarget | ToolFailure> {
   const slotText = slot === 'default' ? '' : ` --slot ${slot}`;
   const runCommand = `stim ${platform}${slotText}`;
+  const localRemedy =
+    platform === 'ios' && d.hostPlatform !== 'darwin'
+      ? 'Run device tools on a Mac with a local Stim-owned iOS simulator.'
+      : `Run \`${runCommand} --remote local\` to use a local device.`;
   const project = d.getProject(root);
   if (!project) {
     return failure('STIM_NO_PROJECT', `No Stim environment is registered for ${root}.`, 'Run `stim start` first.');
@@ -270,7 +278,7 @@ async function resolveToolTarget(
     return failure(
       TARGET,
       `This workspace's ${platform} device${slotText ? ` in slot ${slot}` : ''} is hosted on another Mac, and device tools act only on the workspace's own local simulator or emulator.`,
-      `Run \`${runCommand} --remote local\` to use a local device.`,
+      localRemedy,
     );
   }
   const remote = d.readRemotePlatform(root);
@@ -278,7 +286,7 @@ async function resolveToolTarget(
     return failure(
       TARGET,
       `This workspace's remote device is EAS Simulator session ${remote.sessionId}, and device tools act only on the workspace's own local simulator or emulator.`,
-      `Run \`${runCommand} --remote local\` to use a local device.`,
+      localRemedy,
     );
   }
   const records = deviceSlotPlatforms(project, slot);
@@ -541,7 +549,7 @@ export async function runDeviceTool(
     return problem;
   };
   if ('code' in request) return report(request);
-  const root = d.findProjectRoot(process.cwd());
+  const root = d.findProjectRoot(opts.cwd ?? process.cwd());
   if (!root) return report(NO_PROJECT_REFUSAL);
   let target: Awaited<ReturnType<typeof resolveToolTarget>>;
   try {
@@ -556,6 +564,7 @@ export async function runDeviceTool(
     );
   }
   if ('code' in target) return report(target);
+  opts.beforeTool?.(root);
   let result: ToolResult | ToolFailure;
   try {
     result = request.platform === 'ios' ? await runIos(request, target, d) : await runAndroid(request, target, d);
