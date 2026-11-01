@@ -1560,6 +1560,7 @@ export class BuildHost {
     await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
+    await Promise.all(this.removals.values());
   }
 }
 
