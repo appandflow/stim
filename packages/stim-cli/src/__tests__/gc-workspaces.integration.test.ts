@@ -1418,8 +1418,8 @@ function gitRepoWithWorktrees(names: string[], repoName = 'repo', files: Record<
   const remote = join(projects, `${repoName}-remote.git`);
   mkdirSync(repo, { recursive: true });
   const git = (args: string, cwd = repo) => execSync(`git ${args}`, { cwd, encoding: 'utf-8', timeout: 15_000 });
-  git(`init -q --bare "${remote}"`, projects);
-  git('init -q');
+  git(`init -q --bare -b main "${remote}"`, projects);
+  git('init -q -b main');
   git('config user.email test@example.com');
   git('config user.name test');
   git(`remote add origin "${remote}"`);
