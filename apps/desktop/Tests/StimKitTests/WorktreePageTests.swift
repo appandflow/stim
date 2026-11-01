@@ -18,8 +18,10 @@ struct WorktreePageTests {
       var buildEntries: [WorktreePage.Entry]
     }
     struct DesktopExpected: Decodable {
-      var buildEntries: [WorktreePage.Entry]
-      var subtitles: [String?]
+      var buildEntries: [WorktreePage.Entry]?
+      var subtitles: [String?]?
+      var identity: String?
+      var title: String?
     }
     struct Case: Decodable {
       var name: String
@@ -48,6 +50,14 @@ struct WorktreePageTests {
     #expect(group.apps.map(\.path) == c.expected.apps)
     #expect(groups.flatMap { $0.apps.map(\.path) }.sorted() == c.input.environments.map(\.path).sorted())
     #expect(page.projects == c.expected.projects)
+    if let identity = c.desktopExpected?.identity {
+      #expect(page.identity == identity)
+      #expect(page.apps.allSatisfy { $0.worktreeActionKey == page.actionKey })
+    }
+    if let title = c.desktopExpected?.title {
+      #expect(page.apps.map { $0.names.title } == page.apps.map { _ in title })
+      #expect(page.apps.map { $0.names.inCheckout } == c.expected.projects.map(Optional.some))
+    }
     #expect(page.lead(now: now).path == c.expected.lead)
     let entries = page.buildEntries
     #expect(page.buildEntries == (c.desktopExpected?.buildEntries ?? c.expected.buildEntries))
@@ -87,7 +97,7 @@ struct WorktreePageTests {
     let page = try #require(WorktreePage(path: "/w/apps/b", environments: environments))
     let usage = page.usage(machine: nil, sampled: ["/w/apps/a": .init(cpuPercent: 5), "/w/apps/b": .init(cpuPercent: 7)])
     #expect(usage == WorkspaceUsage(cpuPercent: 12, memoryMb: 300, diskBytes: 1700))
-    #expect(page.diskBreakdown?.parts.map(\.bytes) == [700, 500, 500])
+    #expect(page.diskBreakdown?.parts.map(\.bytes) == [1200, 500])
     #expect(page.errors == 5)
     #expect(WorktreePage.summedHistory([[1, 2, 3], [10, 20]]) == [1, 12, 23])
     #expect(WorktreePage.summedHistory([[], [4]]) == [4])

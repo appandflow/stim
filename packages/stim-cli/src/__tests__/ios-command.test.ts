@@ -1,3 +1,4 @@
+import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
@@ -4030,6 +4031,7 @@ describe('--remote', () => {
     const stats = sharedState.readStats().record;
     expect(stats?.machine.ios?.runs).toBe(1);
     expect(stats?.history).toBeUndefined();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
     expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
@@ -8591,6 +8593,7 @@ describe('--plan', () => {
 });
 
 describe('iOS placement on a hosting Mac', () => {
+  afterEach(() => vi.restoreAllMocks());
   const hostedDevice = {
     udid: '12345678-1234-1234-1234-123456789abc',
     name: 'iPhone 17 Pro',
@@ -9035,6 +9038,9 @@ describe('iOS placement on a hosting Mac', () => {
     'builds %s for the offered architecture before reservation and never touches a local device',
     async (configuration) => {
       reserve();
+      const links = { desktop: 'https://stim.appandflow.com/open?v=1&machine=fixture&workspace=fixture' };
+      vi.spyOn(desktopLinks, 'workspaceLinks').mockResolvedValue(links);
+      const delivered = { ...placement, device: { ...hostedDevice, name: 'stim-fixture-remote' } };
       const order: string[] = [];
       const close = vi.fn<() => void>();
       const prepare: LooseDeps['prepareHostedIos'] = async () => {
@@ -9062,8 +9068,8 @@ describe('iOS placement on a hosting Mac', () => {
           placeHostedIos: async (_target, args) => {
             order.push('reserve');
             expect(args.selectors).toEqual({ deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' });
-            args.reserved(placement);
-            return { placement, launched: args.release ? true : 'unverified' };
+            args.reserved(delivered);
+            return { placement: delivered, launched: args.release ? true : 'unverified' };
           },
         },
       );
@@ -9071,10 +9077,14 @@ describe('iOS placement on a hosting Mac', () => {
       expect(order).toEqual(['offer', 'build', 'reserve']);
       const facts = parseFirst(logs);
       expect(logs).toHaveLength(1);
-      expect(facts.udid).toBe('');
+      expect(facts.udid).toBeNull();
+      expect(facts.deviceName).toBe('stim-fixture-remote');
+      expect(facts.agentDevice).toBeUndefined();
+      expect(facts.devicePlacement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+      expect(facts.links).toEqual(links);
       expect(facts.host).toMatchObject({
         machine: 'mini',
-        device: { name: 'iPhone 17 Pro', runtime: '27.0' },
+        device: { name: 'stim-fixture-remote', runtime: '27.0' },
         agent: { driver: 'none' },
       });
       expect(facts.cacheKey).toContain('x86-64');
@@ -9209,11 +9219,21 @@ describe('iOS placement on a hosting Mac', () => {
       code: 'STIM_HOSTING_REFUSED',
       remedy: 'Run stim stop; stim start, then retry.',
     });
-    expect(readWorkspaceState(root)?.ios).toBeUndefined();
+    expect(readWorkspaceState(root)?.ios).toEqual({
+      devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'selected explicitly' },
+    });
   });
 
   test('hosted plain output labels a bare runtime as iOS version', async () => {
     reserve();
+    const delivered = {
+      ...placement,
+      agent: {
+        driver: 'agent-device',
+        remoteConfig: '/tmp/host-config',
+        command: 'agent-device <command> --remote-config /tmp/host-config',
+      },
+    };
     const { logs, stderr } = await run(
       { remote: 'mini', configuration: 'Release' },
       {
@@ -9223,13 +9243,15 @@ describe('iOS placement on a hosting Mac', () => {
           session: null,
         }),
         placeHostedIos: async (_target, args) => {
-          args.reserved(placement);
-          return { placement, launched: true };
+          args.reserved(delivered);
+          return { placement: delivered, launched: true };
         },
       },
     );
     expect(logs.join('\n') + stderr).toContain('(iOS 27.0) on mini');
     expect(logs.join('\n') + stderr).not.toContain('(iOS iOS');
+    expect(logs.join('\n')).toContain(delivered.agent.command);
+    expect(logs.join('\n')).not.toContain('AGENT_DEVICE_STATE_DIR=');
   });
 
   test("a hosted Debug launch waits for the app's readiness in the host's copied device log and checks its process", async () => {

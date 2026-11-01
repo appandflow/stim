@@ -108,6 +108,10 @@ other apps or other workspaces' devices.
   stim start
   stim ios                             # or: stim android, or: stim web
 
+Some Linux command runners reap detached descendants when a call ends, killing
+Metro after stim start succeeds. If that happens, read guide metro, LINUX
+RUNNERS THAT REAP BACKGROUND PROCESSES, for the user-systemd service recipe.
+
 When Stim Desktop is installed, worktree warm, start, ios, android and web
 print "Open in Stim: <link>" on stderr (links.desktop in JSON). The
 first time one prints it in a workspace, tell the user once: "You can watch

@@ -205,9 +205,13 @@ tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with an active, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
-worktree's branch, else the worktree's folder, else its project for a main
-checkout. The second line is where it sits inside its checkout, such as
-`apps/mobile`. The view options button next to the logo opens a menu:
+worktree's branch, else the verified checkout's folder, else its project.
+Apps sharing a reported checkout appear together, including primary checkouts;
+older servers retain linked-worktree grouping. Each app keeps its own commands,
+devices and log routes. Primary checkout groups have no Remove Worktree action.
+Resources shows each app's dependency disk breakdown separately.
+The second line is where the app sits inside its checkout, such as `apps/mobile`.
+The view options button next to the logo opens a menu:
 
 - **Status**: select any combination of Active, Idle, Not set up and Archived. The
   default is Active + Idle. All selects all four states, Archived included, and

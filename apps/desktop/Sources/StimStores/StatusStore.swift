@@ -115,7 +115,7 @@ public final class StatusStore: ObservableObject {
       for i in payload.environments.indices {
         let env = payload.environments[i]
         payload.environments[i].project =
-          env.worktree?.repository.map { Project(root: $0) } ?? Project(fallbackFor: env.path)
+          (env.worktree?.repository ?? env.checkout).map { Project(root: $0) } ?? Project(fallbackFor: env.path)
       }
       paired[id] = PairedStatus(payload: payload, error: nil, updatedAt: Date(), delivering: paired[id]?.delivering ?? false)
     case .failure(let failure):

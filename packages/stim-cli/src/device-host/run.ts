@@ -118,13 +118,19 @@ async function main(): Promise<void> {
       !Number.isFinite(input.since)
     )
       throw new Error('Invalid hosted native log request.');
-    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
-      process.env.STIM_HOME,
-      input.session as string,
-      input.attempt as string,
-      input.since,
-      input.final === true,
-    );
+    const session = input.session as string;
+    const attempt = input.attempt as string;
+    const more =
+      input.platform === 'ios'
+        ? await collectHostedIosLogs(
+            process.env.STIM_HOME,
+            session,
+            attempt,
+            input.since,
+            process.env,
+            input.final === true,
+          )
+        : await collectHostedAndroidLogs(process.env.STIM_HOME, session, attempt, input.since, input.final === true);
     process.stdout.write(`${JSON.stringify({ more })}\n`);
     return;
   }
