@@ -38,7 +38,7 @@ import {
   fingerprintProject,
   refingerprintAfterMutation,
 } from '../cache/build-cache.ts';
-import { buildIos, buildAndroid } from '../integrations/react-native-build.ts';
+import { buildIos, buildAndroid, gradlewPath } from '../integrations/react-native-build.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../cache/compilation-cache-corruption.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../engine/deps.ts';
 import { planPrebuild, recordPrebuild, runPrebuild } from '../engine/prebuild.ts';
@@ -1047,6 +1047,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   for (const key of ['compilerCache', 'pch', 'gradleBuildCache'] as const)
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
   removeLegacyDaemonIdleLimit();
+  const stop = stopGradleOnCancel(join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew'));
   const logFile = join(workspaceLogsDir(root), 'build-android.ndjson');
   let cacheArtifact: { identity: { hash: string; key: string }; receipt: NativeGradleArtifactReceipt } | undefined;
   note('build', `native Gradle ${options.variant ?? 'debug'}`);
@@ -1107,6 +1108,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
       message: (error as Error).message,
     };
   } finally {
+    process.off('SIGTERM', stop);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -1247,6 +1249,21 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
   return { ok: true, path: built.appPath, cache: built.compilationCache };
 }
 
+/**
+ * A Gradle daemon calls setsid, so it leaves the build's process group. On cancel it keeps running the build in
+ * the checkout until it finishes cancelling, so the worker stops this client's daemons before it exits and the
+ * host releases the checkout only after that.
+ */
+function stopGradleOnCancel(gradlew: string): () => void {
+  const stop = () => {
+    if (existsSync(gradlew))
+      getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs: 4000 });
+    process.exit(143);
+  };
+  process.once('SIGTERM', stop);
+  return stop;
+}
+
 function removeLegacyDaemonIdleLimit(): void {
   const home = process.env.GRADLE_USER_HOME;
   if (!home) return;
@@ -1267,34 +1284,39 @@ async function compileAndroid(
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
   removeLegacyDaemonIdleLimit();
   const onNote = (line: string) => note('build', line);
+  const stop = stopGradleOnCancel(gradlewPath(layout));
   note(
     'build',
     `gradle ${layout.custom ? `${layout.module}:` : ''}${assembleTaskFor(options.variant)} for ${options.abi ?? 'every ABI'}`,
   );
-  const built = await time('buildMs', () =>
-    buildAndroid(
-      { root, logWriter: log, variant: options.variant, abi: options.abi, layout },
-      {
-        buildCache: options.gradleBuildCache,
-        pch: options.pch,
-        compilerCacheDisabled: options.compilerCache === 'none',
-        ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
-        onHeartbeat: onNote,
-        onNote,
-      },
-    ),
-  );
-  if (!built.ok) {
-    const first = built.diagnostics[0]?.message;
-    return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
+  try {
+    const built = await time('buildMs', () =>
+      buildAndroid(
+        { root, logWriter: log, variant: options.variant, abi: options.abi, layout },
+        {
+          buildCache: options.gradleBuildCache,
+          pch: options.pch,
+          compilerCacheDisabled: options.compilerCache === 'none',
+          ccache: options.compilerCache === 'ccache' ? resolveCcache({ root, layout, onNote }) : null,
+          onHeartbeat: onNote,
+          onNote,
+        },
+      ),
+    );
+    if (!built.ok) {
+      const first = built.diagnostics[0]?.message;
+      return { ok: false, code: built.code, message: first ?? (built.lastLines.slice(-3).join(' | ') || built.reason) };
+    }
+    const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
+    return {
+      ok: true,
+      path: built.apkPath,
+      cache: built.ccache ?? CCACHE_UNAVAILABLE,
+      ...(androidPackage ? { androidPackage } : {}),
+    };
+  } finally {
+    process.off('SIGTERM', stop);
   }
-  const androidPackage = built.androidPackage ?? apkPackage(await dumpApkManifest(built.apkPath));
-  return {
-    ok: true,
-    path: built.apkPath,
-    cache: built.ccache ?? CCACHE_UNAVAILABLE,
-    ...(androidPackage ? { androidPackage } : {}),
-  };
 }
 
 async function main(): Promise<void> {

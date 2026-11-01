@@ -652,8 +652,8 @@ with none gets the install command as the fix. Start stim-server with
 stays warm for Gradle's own idle timeout (3 hours), so the client's next build
 skips a JVM start of about 15 seconds. The daemon never holds a build slot.
 stim-server stops it sooner only while no offloaded build runs and the remote
-machine has less than 2 GB of memory available. Deleting the client's
-directory under the worker root stops it too.
+machine has less than 2 GB of memory available. A cancelled build stops it,
+and deleting the client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
 `stim-server service install --serve` there. It installs a per-user LaunchAgent
