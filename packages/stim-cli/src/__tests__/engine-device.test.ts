@@ -12,7 +12,7 @@ import {
   countLiveOwnedDevices,
   withDeviceBootAdmission,
 } from '../engine/device-capacity.ts';
-import { ClaimRefusedError } from '../ownership-claim.ts';
+import { ClaimRefusedError, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { enforceBudget } from '../budget.ts';
 import {
@@ -1318,7 +1318,14 @@ describe('ensureOwnedDevice: ios', () => {
     async (when) => {
       const root = projectDir();
       process.env.STIM_MAX_DEVICES = '1';
+      const blocker = tryAcquireClaim({
+        root: join(tmpHome, 'device-boots'),
+        mode: 'shared',
+        label: 'device boot',
+        details: { platform: 'ios', key: 'OTHER' },
+      });
       try {
+        assert(blocker.acquired);
         const sim = {
           udid: 'U1',
           name: when === 'before setup' ? 'Renamed-By-User' : 'stim-app (iPhone 17 Pro 26.2)',
@@ -1358,6 +1365,7 @@ describe('ensureOwnedDevice: ios', () => {
                 waits++;
                 if (when === 'during admission') sim.name = 'Renamed-By-User';
                 holder.state = 'Shutdown';
+                releaseClaim(blocker.acquired);
               },
             },
           },
@@ -1380,6 +1388,7 @@ describe('ensureOwnedDevice: ios', () => {
         );
         expect(files.some((call) => call.includes('U1') && call.includes('keychain'))).toBe(false);
       } finally {
+        releaseClaim(blocker.acquired);
         delete process.env.STIM_MAX_DEVICES;
         rmSync(root, { recursive: true, force: true });
       }
