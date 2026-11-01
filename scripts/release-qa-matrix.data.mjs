@@ -77,6 +77,7 @@ export const pathRules = [
   { path: 'packages/agent-driver-agent-device', rows: ['loop'] },
   { path: 'packages/transport', rows: ['loop'] },
   { path: 'packages/transport-tailscale', rows: ['loop'] },
+  { path: 'packages/transport-local', rows: ['loop'] },
   { path: 'packages/server/README.md', exempt: 'documentation' },
   { path: 'packages/server/__tests__', exempt: 'unit tests, run by the section 2 preflight' },
   { path: 'packages/ci', rows: ['loop'] },
@@ -341,7 +342,7 @@ export const pathRules = [
   },
   { path: 'scripts', exempt: 'repository tooling, not published behavior' },
   { path: '.claude', exempt: 'local agent configuration, not published behavior' },
-  { path: '.github', exempt: 'CI configuration, covered by the exact-commit CI in section 4' },
+  { path: '.github', exempt: 'CI configuration, covered by the release gate in section 4' },
   { path: '.gitignore', exempt: 'repository tooling, not published behavior' },
   { path: '.gitattributes', exempt: 'repository tooling, not published behavior' },
   { path: '.watchmanconfig', exempt: 'repository tooling, not published behavior' },
@@ -366,6 +367,7 @@ export const pathRules = [
   { path: 'vitest.compat.config.ts', exempt: 'test configuration, covered by the unit suite' },
   { path: 'vitest.setup.ts', exempt: 'test configuration, covered by the unit suite' },
   { path: 'vitest.reap-children.ts', exempt: 'test configuration, covered by the unit suite' },
+  { path: 'vitest.global-tmpdir.ts', exempt: 'test configuration, covered by the unit suite' },
 ];
 
 export const defaultMapping = { rows: qaRows, rules: pathRules };

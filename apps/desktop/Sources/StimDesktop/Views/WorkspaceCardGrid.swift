@@ -155,7 +155,7 @@ struct WorkspaceCardView: View {
     switch option.kind {
     case .device(let device):
       Button("Open Device Viewer", systemImage: "rectangle.expand.vertical") { openDevice(env.path, device.id) }
-      if DeviceTileMenu.applies(to: device) {
+      if DeviceTileMenu.applies(to: device, owner: .local) {
         Divider()
         DeviceTileMenuItems(
           device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: nil,

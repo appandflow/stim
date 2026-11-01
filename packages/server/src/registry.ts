@@ -489,13 +489,16 @@ export function spendSecret(
   });
 }
 
-/** Notes that a record's key authenticated now. */
+const TOUCH_INTERVAL_MS = 60_000;
+
+/** Notes that a record's key authenticated now, at most once per `TOUCH_INTERVAL_MS`. */
 export function touchDevice(id: string, now: number = Date.now()): void {
   transaction(() => {
     for (const file of [devicesFile(), clientsFile('build'), clientsFile('device-host')]) {
       const records = readRecords(file);
       const found = records.find((entry) => entry.id === id);
       if (!found) continue;
+      if (found.lastSeenAt !== null && Math.abs(now - Date.parse(found.lastSeenAt)) < TOUCH_INTERVAL_MS) return;
       found.lastSeenAt = new Date(now).toISOString();
       writeRecords(file, records);
       return;

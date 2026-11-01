@@ -289,6 +289,15 @@ PATH).
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 
+- **`post-release.yml`** -- "Post-release validation": a pushed `v*` tag runs
+  the full Windows unit suite (`windows-full.yml`). It is a separate workflow
+  from `release.yml`, so the suite never delays or fails the npm publish, and a
+  failure shows as its own red run on the tag. The release gate in RELEASE.md
+  section 4 is the merge queue's `Merge gate` plus the `test (node 22)`,
+  `test (node 24)` and `published runtime (node 22.12.0)` jobs of the push `CI`
+  run on the release commit; the Windows, macOS and native jobs are checked
+  after publishing (RELEASE.md section 5).
+
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 
@@ -323,9 +332,10 @@ PATH).
   `reactivecircus/android-emulator-runner`; Windows Android runs bare on
   `windows-latest` with a WHPX-accelerated emulator, its fixture under `D:\e`
   to stay under the 260-character path cap. Framework and suite are matrix
-  axes, so variants run as parallel, isolated jobs. Linux Android runs both
-  frameworks; **iOS runs `expo` only** -- a matrix `exclude` drops the bare
-  variant, whose template cannot launch on iOS 27. `~/.stim`'s shared build cache
+  axes, so variants run as parallel, isolated jobs. iOS and Linux Android run
+  both frameworks for loop and caches, and iOS also runs both for pool. Smoke
+  keeps one framework per platform: Expo on iOS and Linux, bare on Windows.
+  `~/.stim`'s shared build cache
   (`STIM_BUILD_CACHE`) is persisted across runs with `actions/cache` for the
   smoke and loop suites on every platform, so the cross-run cache path is
   itself exercised and a smoke whose native fingerprint is unchanged installs
@@ -383,16 +393,11 @@ other path-filtered check leaves pull requests that skip it waiting forever.
   harness default nor the Android lane moves. The default SDK 57 iOS fixture
   enables scene support with `expo-build-properties` before prebuild so it can
   launch on iOS 27.
-- **The bare iOS variant is excluded from the matrix**, so the iOS lane has no
-  bare job at all. Swift caching needs the fixture's `react-native` to be 0.87 or
-  newer as well as the Swift 6.4 toolchain, and `@react-native-community/cli@latest init`
-  satisfies that -- its build does report `Swift on`. Its template does not adopt
-  the UIScene lifecycle, though: `@react-native-community/template` 0.88.0-rc.1
-  still has no `SceneDelegate` and no `UIApplicationSceneManifest`, so the app
-  builds and then traps at launch on iOS 27. Excluding it keeps the nightly
-  honest rather than permanently red. Remove the `exclude` when the React Native
-  template adopts scenes; that restores bare iOS coverage, including the
-  `bare-inproc` Metro path, which only Android exercises until then.
+- **The iOS bare fixture pins React Native 0.88.1** through
+  `STIM_E2E_BARE_INIT`. Its tagged template includes `SceneDelegate.swift` and
+  `UIApplicationSceneManifest`, so it adopts the scene lifecycle iOS 27 requires.
+  It also clears the React Native 0.87 floor for Swift compilation caching.
+  The Android bare fixture keeps the harness default.
 - `xcode-cas` prints which half of the Swift gate decided, in its evidence and
   its PASS message. A PASS with `Swift caching OFF` is not Swift coverage.
 - The Android job's `api-level` / `target` / `arch` have a matching system image

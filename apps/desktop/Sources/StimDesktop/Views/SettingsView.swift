@@ -19,16 +19,17 @@ struct SettingsView: View {
   private let actions: ActionCenter
 
   init(
-    cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel,
+    environment: Task<[String: String], Never>, store: StatusStore, machine: MachineSettingsStore,
+    buildMachines: BuildMachinesModel,
     actions: ActionCenter
   ) {
     self.store = store
     self.actions = actions
     self.machine = machine
     self.buildMachines = buildMachines
-    _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
-    _history = StateObject(wrappedValue: GcHistoryModel(cli: cli))
-    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
+    _model = StateObject(wrappedValue: SettingsModel(environment: environment, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(environment: environment))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(environment: environment))
   }
 
   var body: some View {
@@ -38,8 +39,13 @@ struct SettingsView: View {
         .tag("app")
       if flags.phoneApp {
         PhonesView(server: ServerController.shared, stimHome: store.stimHome)
-          .tabItem { Label("Phones", systemImage: "iphone.gen3.radiowaves.left.and.right") }
+          .tabItem { Label("Paired Devices", systemImage: "iphone.gen3.radiowaves.left.and.right") }
           .tag("phones")
+      }
+      if flags.pairedMachines {
+        PairedMachinesView(servers: .shared)
+          .tabItem { Label("Paired Machines", systemImage: "server.rack") }
+          .tag("paired-machines")
       }
       BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Machines", systemImage: "hammer") }
@@ -57,6 +63,7 @@ struct SettingsView: View {
     .tint(Palette.primary)
     .onAppear {
       if tab == "phones", !flags.phoneApp { tab = "app" }
+      if tab == "paired-machines", !flags.pairedMachines { tab = "app" }
       if SettingScope(rawValue: tab) != nil {
         scope = tab
         tab = "stim-settings"

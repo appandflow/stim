@@ -1,11 +1,15 @@
+import { ensureIosRuntime } from '../devices/ios-runtime.ts';
 import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { collectHostedAndroidLogs } from './android-logs.ts';
 import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
+import { hostedAppState } from './app-state.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
 import { inspectHostedDevice } from './offer.ts';
-import { countLiveOwnedDevices, type DeviceCountExclusion } from '../engine/device-capacity.ts';
+import { androidImageInstallPolicy, ensureSystemImage } from '../devices/android-image.ts';
+import { loadConfig } from '../workspace/config.ts';
+import { countLiveOwnedDevicesByPlatform, type DeviceCountExclusion } from '../engine/device-capacity.ts';
 
 async function main(): Promise<void> {
   const chunks: Buffer[] = [];
@@ -18,9 +22,21 @@ async function main(): Promise<void> {
   const input: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   if (
     !isJsonObject(input) ||
-    !['prepare', 'stop', 'install', 'offer', 'count', 'logs', 'reverse', 'park', 'inspect', 'adopt'].includes(
-      String(input.mode),
-    )
+    ![
+      'prepare',
+      'stop',
+      'install',
+      'app-state',
+      'offer',
+      'runtime',
+      'count',
+      'image',
+      'logs',
+      'reverse',
+      'park',
+      'inspect',
+      'adopt',
+    ].includes(String(input.mode))
   )
     throw new Error('Invalid hosted worker request.');
   let exclude: DeviceCountExclusion[] | undefined;
@@ -37,8 +53,15 @@ async function main(): Promise<void> {
       throw new Error('Invalid hosted device exclusions.');
     exclude = input.exclude as DeviceCountExclusion[];
   }
+  if (input.mode === 'runtime') {
+    if (typeof input.runtime !== 'string' || !/^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(input.runtime))
+      throw new Error('Invalid iOS runtime version.');
+    const result = await ensureIosRuntime({ requested: input.runtime, workerProcessGroup: true, note: () => {} });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    return;
+  }
   if (input.mode === 'count') {
-    process.stdout.write(`${JSON.stringify(countLiveOwnedDevices({}, { exclude }))}\n`);
+    process.stdout.write(`${JSON.stringify(countLiveOwnedDevicesByPlatform({}, { exclude }))}\n`);
     return;
   }
   if (input.mode === 'offer') {
@@ -47,17 +70,37 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify(await inspectHostedDevice(request, exclude ? { exclude } : undefined))}\n`);
     return;
   }
+  if (input.mode === 'image') {
+    if (input.systemImage !== undefined && typeof input.systemImage !== 'string')
+      throw new Error('Invalid hosted image request.');
+    const image = await ensureSystemImage({
+      requested: input.systemImage ?? null,
+      policy: androidImageInstallPolicy(loadConfig()),
+      env: process.env,
+      note: () => {},
+    });
+    process.stdout.write(
+      `${JSON.stringify(image.ok ? { state: 'ready' } : { state: 'refused', notice: `${image.message} ${image.remedy}` })}\n`,
+    );
+    return;
+  }
   if (process.platform !== 'darwin') {
     process.stdout.write(
       `${JSON.stringify({ state: input.mode === 'prepare' ? 'stopped' : 'unknown', device: null, notice: 'Hosted device sessions require a Mac.' })}\n`,
     );
     return;
   }
-  if (
-    (input.mode === 'install' || input.mode === 'logs' || input.mode === 'reverse') &&
-    (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
-  )
-    throw new Error('Invalid hosted app request.');
+  if (['install', 'app-state', 'logs', 'reverse'].includes(String(input.mode))) {
+    if (typeof input.session !== 'string' || !/^[a-f0-9-]{36}$/.test(input.session) || !hostedAppAttempt(input.attempt))
+      throw new Error('Invalid hosted app request.');
+    if (input.mode === 'app-state') {
+      if ((input.platform !== 'ios' && input.platform !== 'android') || !process.env.STIM_HOME)
+        throw new Error('App state requires a hosted iOS or Android session.');
+      const result = await hostedAppState(process.env.STIM_HOME, input.session, input.attempt, input.platform);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      return;
+    }
+  }
   for (const port of [input.metroPort, input.clientMetroPort]) {
     if (port !== undefined && (typeof port !== 'number' || !Number.isInteger(port) || port < 1 || port > 65535))
       throw new Error('Invalid hosted Metro port.');
@@ -75,13 +118,19 @@ async function main(): Promise<void> {
       !Number.isFinite(input.since)
     )
       throw new Error('Invalid hosted native log request.');
-    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
-      process.env.STIM_HOME,
-      input.session as string,
-      input.attempt as string,
-      input.since,
-      input.final === true,
-    );
+    const session = input.session as string;
+    const attempt = input.attempt as string;
+    const more =
+      input.platform === 'ios'
+        ? await collectHostedIosLogs(
+            process.env.STIM_HOME,
+            session,
+            attempt,
+            input.since,
+            process.env,
+            input.final === true,
+          )
+        : await collectHostedAndroidLogs(process.env.STIM_HOME, session, attempt, input.since, input.final === true);
     process.stdout.write(`${JSON.stringify({ more })}\n`);
     return;
   }

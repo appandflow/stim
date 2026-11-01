@@ -46,10 +46,16 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 import { idleShutdownMinutes } from './devices.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
 
 export interface ActionOutcome {
   status: 'done' | 'kept' | 'failed';
@@ -62,6 +68,7 @@ export interface ActContext {
   settings: MaintenanceSettings;
   budget: Budget;
   protectedRoot: string;
+  background?: boolean;
   worktreeSweep?: WorktreeSweep;
   pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
@@ -152,13 +159,11 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
 }
 
 async function emptyCompilationCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const floor = action.level === 3 ? levelFloors(context.budget, context.settings)[3] : context.budget.hardFloorDiskMb;
-  if (!measureDisk().some((disk) => disk.freeMb < floor))
-    return kept(
-      action.level === 3
-        ? 'free disk is back above the level 3 floor, and this cache can only be emptied whole'
-        : 'free disk is above budget.hardFloorDiskGb, and this cache can only be emptied whole',
-    );
+  if (action.level === 3) {
+    const floor = levelFloors(context.budget, context.settings)[3];
+    if (!measureDisk().some((disk) => disk.freeMb < floor))
+      return kept('free disk is back above the level 3 floor, and this cache can only be emptied whole');
+  }
   const dir = sharedCompilationCache();
   const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' });
   if (blocked) return kept(blocked);
@@ -476,9 +481,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
         ? kept('automatic maintenance does not stop devices or dev servers for disk')
         : shutDownIdleDevice(action);
     case 'would-stop-workspace':
-      return action.level === 3
-        ? stopWorkspace(action, context)
-        : kept('automatic maintenance stops dev servers only at disk pressure level 3');
+      if (action.level === 3) return stopWorkspace(action, context);
+      return action.check === 'idle'
+        ? stopIdleWorkspace(action, {
+            protectedRoot: context.background ? '' : context.protectedRoot,
+            devices: () => cachedDeviceActivity(Date.now()),
+          })
+        : kept(
+            'automatic maintenance stops dev servers only at disk pressure level 3 or after maintenance.idleStopHours',
+          );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);

@@ -3,7 +3,7 @@ import Foundation
 /// What the phone app flag decides, one function per place that shows something about phones. A view asks here
 /// instead of testing the flag itself, so each entry point has one tested answer.
 public enum PhoneApp {
-  /// The sidebar footer button that shows the phone server's state and opens the Phones page.
+  /// The sidebar footer button that shows the phone server's state and opens the Paired Devices page.
   public static func showsSidebarButton(phoneApp: Bool, servesPhones: Bool) -> Bool { phoneApp && servesPhones }
 
   /// Whether the server Desktop starts also listens on this Mac's Tailscale addresses. Only the phone app serving

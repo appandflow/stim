@@ -160,7 +160,26 @@ export async function selectIosPlacement(
   | { failure: FailArgs }
 > {
   const selection = selectIosTarget(args);
-  if ('failure' in selection || selection.machine !== 'auto') return selection;
+  if ('failure' in selection) return selection;
+  if (selection.machine !== 'auto') {
+    const machine = selection.machine ?? (selection.backend === 'eas' ? 'eas' : null);
+    if (!machine) return selection;
+    const placement: DevicePlacement = {
+      decision: selection.backend === 'eas' ? 'eas' : 'hosted',
+      machine,
+      reason: 'selected explicitly',
+    };
+    args.phase('placement:', devicePlacementLine(placement, []));
+    args.log?.(
+      devicePlacementRecord({
+        platform: 'ios',
+        selected: machine,
+        fromFlag: args.opts.remote !== undefined,
+        placed: { placement, code: 'selected', skipped: [] },
+      }),
+    );
+    return { ...selection, devicePlacement: placement };
+  }
   const { root, slot, d, opts, deviceType, runtime, noWait, waitMs, phase, log, release, appMode, metroCheck } = args;
   const signal = runCancellationSignal(args.operation) ?? args.operation?.signal;
   const viewer = resolveSimulatorAppFlag(opts.simulatorApp, args.physical, null);
@@ -329,7 +348,7 @@ export function hostedIosMetroNote(
       chalk.dim(
         phaseLine(
           'metro',
-          'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses the private tailnet bridge.',
+          'metro.publicUrl and metro.tunnel are ignored on a hosting Mac; Metro uses links this machine opens to the host.',
         ),
       ),
     );

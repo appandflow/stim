@@ -6,7 +6,6 @@ import StimKit
 final class TutorialModel: ObservableObject {
   @Published private(set) var snapshot: TutorialSnapshot?
   @Published private(set) var isOpen = false
-  @Published private(set) var cliFailure: String?
   @Published private(set) var workspace: Workspace?
   @Published private(set) var archiveEnabled: Bool?
   private var progress = TutorialProgress()
@@ -27,7 +26,7 @@ final class TutorialModel: ObservableObject {
   private var missingSince: Date?
   private var followedPath: String?
   private var followTask: Task<Void, Never>?
-  private var cli: Task<StimCLI, Never>?
+  private var environment: Task<[String: String], Never>?
   private lazy var follower = LogFollower { [weak self] in self?.receive($0) }
   private lazy var agentFollower = LogFollower { [weak self] in self?.receive($0) }
   private static let seenKey = "tutorial.openedPaths"
@@ -69,7 +68,6 @@ final class TutorialModel: ObservableObject {
   }
 
   var notice: TutorialNotice? {
-    if let cliFailure { return TutorialNotice(cliFailure, action: .updateCLI) }
     if let notice = workspace?.tutorial.flatMap({ TutorialNotice.version($0.version) }) { return notice }
     if workspace == nil, tourPath != nil, snapshot?.isComplete == false, snapshot?.currentStep != "delete",
       !workspaces.contains(where: { $0.path == snapshot?.record.secondPath })
@@ -82,11 +80,10 @@ final class TutorialModel: ObservableObject {
     return nil
   }
 
-  func configure(cli: Task<StimCLI, Never>) {
-    self.cli = cli
+  func configure(environment: Task<[String: String], Never>) {
+    self.environment = environment
     followedPath = nil
     syncFollowers()
-    if isOpen { checkCLI() }
   }
 
   func update(
@@ -123,10 +120,10 @@ final class TutorialModel: ObservableObject {
     let offered = AppPreferences.offersTutorial(defaults)
     if launchPending, let saved, offered {
       if let path = saved.tourPath, workspace != nil || archivedRoots.contains(path) {
-        openPending = saved.step != "done"
+        openPending = saved.reopensAtLaunch
         launchPending = false
       } else if saved.tourPath == nil, saved.step != "done" {
-        openPending = true
+        openPending = saved.reopensAtLaunch
         launchPending = false
       }
     } else if offered, let candidate, !seen.contains(candidate.path), saved == nil || saved?.step == "done" {
@@ -141,10 +138,8 @@ final class TutorialModel: ObservableObject {
       launchPending = false
     }
     if openPending, offered, !sheetOpen {
-      let opening = !isOpen
       isOpen = true
       openPending = false
-      if opening { checkCLI() }
     }
     guard isOpen || progress.record != nil || records.record != nil else { return }
     if workspace == nil, tourPath != nil {
@@ -182,21 +177,21 @@ final class TutorialModel: ObservableObject {
       logs = []
       viewerEventSequence = viewerEvents.last?.sequence ?? 0
     }
+    setDismissed(false)
     isOpen = true
     launchPending = false
     refresh(now: now)
     syncFollowers()
-    checkCLI()
   }
 
   func restart() {
-    guard let cli else { return open(beginning: true) }
+    guard let environment else { return open(beginning: true) }
     guard !restarting, restartDialog == nil else { return }
     restarting = true
     let base = records.record?.clonePath ?? cloneBase
     Task {
       defer { restarting = false }
-      let cleanup = tutorialCleanup(cli: await cli.value)
+      let cleanup = tutorialCleanup(environment: await environment.value)
       do {
         guard let plan = try await cleanup.plan(base: base) else { return open(beginning: true) }
         switch plan {
@@ -207,38 +202,45 @@ final class TutorialModel: ObservableObject {
     }
   }
 
-  private func tutorialCleanup(cli: StimCLI) -> TutorialCleanup {
+  private func tutorialCleanup(environment: [String: String]) -> TutorialCleanup {
     TutorialCleanup(
       stop: { path in
         let result = try await runServerStop(
-          StimCommand(["stop"], cwd: path), cli: cli, connection: await ServerSession.shared.localActionConnection)
-        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+          StimCommand(["stop"], cwd: path), stimHome: StimHome.path(environment: environment),
+          connection: await ServerSession.shared.localActionConnection)
+        guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
       },
       removeWorktree: { path, base in
         let result = try await runServerWorktreeRemove(
-          StimCommand(["worktree", "remove", path], cwd: base), cli: cli,
+          StimCommand(["worktree", "remove", path], cwd: base), stimHome: StimHome.path(environment: environment),
           connection: await ServerSession.shared.localActionConnection)
-        guard result.exitStatus == 0 else { throw StimCLI.Failure.exited(result.exitStatus, stderr: result.message) }
+        guard result.exitStatus == 0 else { throw CommandFailure.exited(result.exitStatus, stderr: result.message) }
       })
   }
 
   func confirmRestart(base: String, worktrees: [String]) {
-    guard let cli, !restarting else { return }
+    guard let environment, !restarting else { return }
     restartDialog = nil
     restarting = true
     Task {
       defer { restarting = false }
       do {
-        try await tutorialCleanup(cli: await cli.value).remove(base: base, worktrees: worktrees)
+        try await tutorialCleanup(environment: await environment.value).remove(base: base, worktrees: worktrees)
         open(beginning: true)
       } catch { restartDialog = .blocked(error.localizedDescription) }
     }
   }
 
   func close() {
+    setDismissed(true)
     isOpen = false
     openPending = false
     syncFollowers()
+  }
+
+  private func setDismissed(_ dismissed: Bool) {
+    progress.setDismissed(dismissed)
+    records.record?.dismissed = dismissed ? true : nil
   }
 
   func next() {
@@ -268,24 +270,26 @@ final class TutorialModel: ObservableObject {
     follower.stop()
     agentFollower.stop()
     followedPath = path
-    guard let path, let cli else { return }
+    guard let path, let environment else { return }
     followTask = Task {
-      let cli = await cli.value
+      let environment = await environment.value
       guard !Task.isCancelled, followedPath == path else { return }
       var query = LogQuery()
       query.search = "\\[stim:tutorial\\]"
-      follower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
+      follower.start(
+        query, stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection, cwd: path)
       query.search = ""
       query.sources = [.agent]
-      agentFollower.start(query, cli: cli, connection: ServerSession.shared.statsConnection, cwd: path)
+      agentFollower.start(
+        query, stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection, cwd: path)
       await refreshSettings()
     }
   }
 
   func refreshSettings() async {
-    guard let path = followedPath, let cli else { return }
+    guard let path = followedPath, let environment else { return }
     let settings = try? await readServerSettings(
-      cli: await cli.value, connection: ServerSession.shared.statsConnection, cwd: path)
+      stimHome: StimHome.path(environment: await environment.value), connection: ServerSession.shared.statsConnection, cwd: path)
     guard !Task.isCancelled, followedPath == path else { return }
     if let value = settings?.entry("archive.enabled")?.value {
       switch value {
@@ -314,18 +318,4 @@ final class TutorialModel: ObservableObject {
     refresh()
   }
 
-  private func checkCLI() {
-    guard let cli else { return }
-    Task {
-      let cli = await cli.value
-      guard await cli.versionOutput() != nil else {
-        cliFailure = "Update the Stim CLI to run the tutorial"
-        return
-      }
-      do {
-        try await cli.tutorialGuide()
-        cliFailure = nil
-      } catch { cliFailure = "Update the Stim CLI to run the tutorial" }
-    }
-  }
 }

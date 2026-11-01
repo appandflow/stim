@@ -25,7 +25,7 @@ export interface NdjsonWriter {
 
 const ROTATE_CHECK_MS = 1000;
 
-export function formatNdjsonLine(record: unknown): string | null {
+function formatNdjsonLine(record: unknown): string | null {
   try {
     return `${JSON.stringify(record)}\n`;
   } catch {

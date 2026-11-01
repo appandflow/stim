@@ -9,7 +9,9 @@ struct Sidebar: View {
   let actions: ActionCenter
   @Binding var selection: SidebarItem?
   var openLogs: (String) -> Void
-  @ObservedObject var tips: TipCoordinator
+  @ObservedObject private var openRequests = OpenRequests.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
+  @ObservedObject private var pairedState = PairedViewState.shared
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -63,6 +65,11 @@ struct Sidebar: View {
         SectionLabel(title: options.grouping == .project ? "Projects" : "Workspaces")
           .background(PlainSelectionHighlight())
       }
+      ForEach(pairedSessions.entries) { entry in
+        PairedSidebarSection(
+          entry: entry, session: pairedSessions.sessions[entry.id], status: store.paired[entry.id], options: options,
+          selection: rowSelection.wrappedValue, state: pairedState)
+      }
     }
     .scrollContentBackground(.hidden)
     .background(Palette.sidebar)
@@ -75,16 +82,18 @@ struct Sidebar: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: 0) {
-        if let topic = tips.topic {
-          TipCard(
-            topic: topic, prompt: TipPrompts.byTopic[topic.rawValue], hasNext: tips.hasNext,
-            perform: {
-              if topic == .hideWorkspaces || topic == .statusFilter { showsViewOptions = true }
-              tips.perform()
-            }, next: tips.next, close: tips.close
-          )
-          .padding(Space.md)
+        Button {
+          selection = .discover
+        } label: {
+          Label("Explore Stim's features", systemImage: "sparkles")
+            .font(.stim(.callout))
+            .foregroundStyle(Palette.primary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.hoverRow(outset: Space.sm))
+        .padding(Space.lg)
+        .accessibilityAddTraits(selection == .discover ? .isSelected : [])
         HiddenWorkspacesFooter(
           count: store.sidebarStatusCounts(options)[.hidden] ?? 0, showing: options.statuses.contains(.hidden)
         ) {
@@ -102,6 +111,11 @@ struct Sidebar: View {
       .background(Palette.sidebar)
     }
     .onAppear { forgetStaleHidden() }
+    .onReceive(openRequests.$showsViewOptions) { requested in
+      guard requested else { return }
+      showsViewOptions = true
+      openRequests.showsViewOptions = false
+    }
     .onChange(of: staleHidden) { forgetStaleHidden() }
     .onChange(of: store.payload == nil, initial: true) { _, missing in
       if !missing { LaunchMilestones.reach("sidebar-rows") }
@@ -375,7 +389,7 @@ struct WorkspaceRowContent: View {
   var now: Date
   var place: [String]
   var showsGit: Bool
-  var openLogs: (String) -> Void
+  var openLogs: ((String) -> Void)?
   var archive: ArchivedPage? = nil
   var isHidden = false
 
@@ -424,7 +438,7 @@ struct WorkspaceRowContent: View {
         ?? env.rowLabel(now: now, folder: place.isEmpty ? nil : place.joined(separator: ", "), showsGit: showsGit)
     )
     .accessibilityActions {
-      if archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
+      if let openLogs, archive == nil && (env.logs?.errorsSinceMarker ?? 0) > 0 {
         Button("Show Errors") { openLogs(env.path) }
       }
     }
@@ -432,6 +446,9 @@ struct WorkspaceRowContent: View {
 
   private func context(_ devices: RowDevices) -> Text? {
     var parts: [Text] = []
+    if env.pathMissing == true, !env.isActive {
+      parts.append(Text("Run \(env.removalCommand) to drop it").foregroundStyle(Palette.warning))
+    }
     if let names = devices.names { parts.append(Text(names).foregroundStyle(Palette.secondary)) }
     if let drivers = devices.drivers {
       parts.append(Text("\(Image(systemName: "cursorarrow.rays")) \(drivers)").foregroundStyle(Palette.primary))
@@ -594,24 +611,6 @@ struct SidebarFooter: View {
 
   @ViewBuilder private var leftStatus: some View {
     switch status {
-    case .stimUnavailable(let compatibility):
-      let text = compatibility == .missing ? "Install stim" : "stim update available"
-      if onboarding.installCLICommand == nil {
-        statusLabel(dot: Palette.warning, text: text)
-          .help(
-            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from"
-          )
-      } else {
-        Button(action: onboarding.installStim) {
-          statusLabel(dot: Palette.warning, text: text)
-        }
-        .buttonStyle(.hoverRow(outset: Space.sm))
-        .help(
-          compatibility == .missing
-            ? "Stim Desktop cannot find stim \u{2014} click to install it with \(onboarding.installer.rawValue)"
-            : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
-        )
-      }
     case .stimUpdateAvailable(let installed, let latest):
       Button(action: onboarding.installStim) {
         statusLabel(dot: Palette.primary, text: "stim \(latest.description) available")
@@ -644,7 +643,7 @@ struct SidebarFooter: View {
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
       let help: String =
-        version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim"
+        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses its bundled server"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
         .help(help)
     }
@@ -690,11 +689,11 @@ struct SidebarFooter: View {
 
   private var phonesTooltip: String {
     switch server.state {
-    case .off: return "Phone server is off \u{2014} click to open Phones settings"
-    case .starting, .notReady(.pending, _): return "Phone server is starting \u{2014} click to open Phones settings"
+    case .off: return "Phone server is off \u{2014} click to open Paired Devices settings"
+    case .starting, .notReady(.pending, _): return "Phone server is starting \u{2014} click to open Paired Devices settings"
     case .notReady(.degraded(let reason), _):
-      return "Phone server is degraded: \(abbreviatingHome(reason)) \u{2014} click to open Phones settings"
-    case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Phones settings"
+      return "Phone server is degraded: \(abbreviatingHome(reason)) \u{2014} click to open Paired Devices settings"
+    case .failed(let message): return "Phone server failed: \(message) \u{2014} click to open Paired Devices settings"
     case .running(let health, _):
       guard let route = health.route, let dnsName = health.tailscale.dnsName else {
         return "Phone server is running, but phones cannot reach it over Tailscale yet \u{2014} click to pair a phone"

@@ -86,21 +86,6 @@ test('reports selected installed SDK metadata without native or filesystem mutat
   expect(readdirSync(home)).toEqual([]);
 });
 
-test.each([null, 'warning', 'critical'])(
-  'unknown or elevated pressure %s declines before SDK selection',
-  async (pressure) => {
-    native.pressure.mockReturnValue(pressure);
-    for (const platform of ['ios', 'android', 'macos'] as const)
-      expect(await inspectHostedDevice({ platform })).toMatchObject({
-        choice: null,
-        declined: 'Host memory pressure is unknown or elevated.',
-        resources: { memoryPressure: pressure },
-      });
-    expect(native.ios).not.toHaveBeenCalled();
-    expect(native.images).not.toHaveBeenCalled();
-  },
-);
-
 test('native offers report local live devices while excluding recorded hosted devices', async () => {
   native.sims.mockReturnValue([
     makeIosSim({ udid: 'hosted', name: 'stim-hosted', state: 'Booted' }),

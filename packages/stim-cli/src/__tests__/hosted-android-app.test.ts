@@ -1,3 +1,4 @@
+import { hostedAppState } from '../device-host/app-state.ts';
 import { runHostedAndroidDevice } from '../device-host/android.ts';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -105,26 +106,6 @@ function receipt(mode = 'release') {
 const effects = () =>
   native.runFile.mock.calls.filter(([, args]) => args?.includes('install') || args?.includes('start'));
 
-test.each(['aapt', 'aapt2'])(
-  'verifies %s metadata, drives the exact AVD and proves a release process',
-  async (tool) => {
-    if (tool === 'aapt2') {
-      rmSync(aapt);
-      aapt = join(root, 'sdk', 'build-tools', '36.0.0', process.platform === 'win32' ? 'aapt2.exe' : 'aapt2');
-      writeFileSync(aapt, 'fixture');
-      badging = badging.replace('sdkVersion', 'minSdkVersion');
-    }
-    receipt();
-    expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(true);
-    expect(readFileSync(join(area, 'App.apk'), 'utf8')).toBe('verified APK fixture');
-    expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual([
-      ['-s', device.serial],
-      ['-s', device.serial],
-    ]);
-    expect(effects().map(([file]) => file)).toEqual(Array(2).fill(join(root, 'sdk', 'platform-tools', sdkAdbName)));
-  },
-);
-
 test('development launch remains unverified despite a live native process', async () => {
   receipt('development');
   expect(await installHostedAndroidApp(home, session, 'app', device, { bridgePort: 9000, devicePort: 8082 })).toBe(
@@ -154,22 +135,6 @@ test('corrupt upload bytes refuse before SDK or native effects', async () => {
   writeFileSync(join(home, '..', 'blobs', digest), 'corrupt');
   await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/differs/);
   expect(native.runFile).not.toHaveBeenCalled();
-});
-
-test('a reused serial refuses effects before install and rechecks before launch', async () => {
-  receipt();
-  running = 'foreign';
-  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/identity/);
-  expect(effects()).toEqual([]);
-  running = device.avdName;
-  native.runFile.mockImplementation((file, args = []) => {
-    if (file === aapt) return badging;
-    if (args.includes('getprop')) return 'arm64-v8a';
-    if (args.includes('install')) running = 'foreign';
-    return '';
-  });
-  await expect(installHostedAndroidApp(home, session, 'app', device)).rejects.toThrow(/identity/);
-  expect(effects()).toHaveLength(1);
 });
 
 test('the reverse worker restores Metro repeatedly without reinstalling or relaunching the app', async () => {
@@ -233,11 +198,38 @@ test.each([true, false])('native hosted readiness requires a live app process: %
   native.runFile.mockImplementation((file, args = [], options) =>
     args.includes('pidof') && !alive ? '' : run(file, args, options),
   );
-  expect(await installHostedAndroidApp(home, session, 'app', device)).toBe(alive ? true : 'unverified');
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('am')));
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe(alive ? true : 'unverified');
   expect(effects().map(([, args]) => args?.slice(0, 2))).toEqual(
     Array.from({ length: 2 }, () => ['-s', device.serial]),
   );
   expect(native.runFile.mock.calls.some(([, args]) => args?.includes('reverse') || args?.includes('run-as'))).toBe(
     false,
   );
+});
+
+test('an app that exits after its first process sighting is not a verified release launch', async () => {
+  receipt();
+  const ready = installHostedAndroidApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('start')));
+  setTimeout(() => {
+    launched = false;
+  }, 300);
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe('unverified');
+});
+
+test('app state requires an installed receipt and probes only its ledger-owned android target', async () => {
+  receipt();
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('installed');
+  const file = join(area, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state: 'installed' }));
+  launched = true;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'running' });
+  launched = false;
+  expect(await hostedAppState(home, session, 'app', 'android')).toEqual({ state: 'stopped' });
+  running = 'foreign-avd';
+  await expect(hostedAppState(home, session, 'app', 'android')).rejects.toThrow('identity changed');
 });

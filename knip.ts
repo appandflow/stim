@@ -22,6 +22,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ignoreBinaries: ['adb'],
       entry: [
         'apps/desktop/scripts/*.mjs!',
+        'apps/desktop/Tests/StimKitTests/Fixtures/noise-responder.mjs',
         'packaging/store/assemble.mjs',
         'scripts/ci/app-smoke.mjs',
         'scripts/perf/bench.mjs',

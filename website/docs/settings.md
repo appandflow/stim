@@ -158,6 +158,17 @@ The setting only changes the prefetch, not the app. Setting
 }
 ```
 
+### Installing a missing iOS runtime
+
+`ios.autoInstallRuntime` defaults to `false`. Set it to `true` to install an
+explicitly requested `ios.runtime` or `--runtime` version on the local or named
+approved Mac before running the app. `--install-runtime` opts in for one run.
+Choose `--remote local` or `--remote <mac>`; automatic placement, EAS, proxy and
+physical phones do not install runtimes. An install typically downloads 8–10 GB
+and requires 20 GB free on the simulator volume for download and unpacking.
+Runtimes are shared Xcode components. List available versions and remove unused
+ones manually in Xcode Settings > Components; Stim does not prune them.
+
 ### Default simulator model and runtime
 
 `ios.deviceType`, `ios.runtime`, `android.systemImage`, and
@@ -176,7 +187,36 @@ stim settings set android.systemImage "system-images;android-36;google_apis;arm6
 A model or runtime the machine value names that no installed toolchain offers
 refuses with `STIM_BAD_ARG`, the same way an unresolvable per-project or
 per-invocation value does, and the message names the machine layer so it is
-clear where to fix it.
+clear where to fix it. An Android system image is the exception while
+`android.installImages` is `auto`: see below.
+
+### Installing a missing Android system image
+
+When no installed system image matches the request, `stim android` installs one
+before it creates the owned emulator: the image `--system-image` or
+`android.systemImage` names, else `system-images;android-36;google_apis;<host ABI>`.
+It runs the SDK's own `cmdline-tools/latest/bin/sdkmanager --install` and prints
+an `image` line while it downloads (about 2 GB).
+
+- A slot whose owned emulator already finished a boot keeps that emulator and
+  installs nothing.
+- It installs only images for this machine's ABI.
+- It never accepts an SDK license. With unaccepted licenses it refuses and names
+  the `sdkmanager --licenses` command to run.
+- It needs 8 GB free on the SDK volume and the SDK command-line tools.
+- One install runs per SDK root and Stim home; a second run waits for it.
+- `stim doctor` notes a missing image, and `stim doctor --fix --platform android`
+  installs it right away.
+- `stim gc` marks the images Stim installed with `stimInstalled`, next to the
+  `sdkmanager --uninstall` command that removes them.
+
+Set `android.installImages` to `never` to refuse with the install command
+instead, for example on a metered connection or a Mac short on disk. For a
+hosted run the host's machine value decides:
+
+```sh
+stim settings set android.installImages never --scope machine
+```
 
 ### SimSlim for every owned simulator
 
@@ -273,6 +313,28 @@ booting its device. Status adds `build.waitingFor`, and
 stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 `0` or an unset cap means unlimited devices.
 
+`concurrency.maxIosDevices`, `concurrency.maxAndroidDevices` and
+`concurrency.maxMacosApps` cap one platform each: booted owned iOS simulators,
+booted owned Android emulators and hosted macOS apps on a worker. They default
+to `0`, no per-platform limit, and they only tighten. A run must fit its
+platform's cap and `concurrency.maxDevices`: `maxDevices` counts simulators and
+emulators together, local and hosted, and counts hosted macOS apps as a pool of
+their own, so a macOS app is bounded by both `maxMacosApps` and `maxDevices`
+and never adds to the simulator and emulator total. With the new settings unset,
+nothing changes for an existing `maxDevices`. Local admission queues and
+reclaims for a platform cap the way it does for `maxDevices`, and a run held
+back only by its own platform's cap does not hold up a run on the other
+platform; reclaim for a full platform cap shuts down only devices of that
+platform. A stim-server worker applies all three caps when it offers and
+reserves a hosted session, counting its own local simulators and emulators.
+Local `stim macos` runs are not counted, so `maxMacosApps` limits hosted macOS
+apps only. A refusal names the full limit with its count and cap, such as
+`1 Stim iOS simulator(s) are already booted and concurrency.maxIosDevices is 1`.
+
+```bash
+stim settings set concurrency.maxIosDevices 2 --scope machine
+```
+
 With a cap set, queue reclaim uses the waiting workspace's effective setting:
 `devices.reclaimIdleMinutes` defaults to 10. The queue head shuts down the
 longest-idle eligible owned device in another workspace of this Stim home,
@@ -364,12 +426,19 @@ the account plan's session limit. A run reuses a live session without checking h
 much of the cap is left.
 
 `remote.machines` names the remote machines this machine may build on and host owned
-simulator sessions on, by MagicDNS name and optional serve port (default 7443).
-Name each node and port once. Set it with
-`stim settings set remote.machines '["janics-mac-mini"]'`, then run
-`stim doctor --fix` in an app directory. Build and device-host approvals are
+simulator sessions on, by MagicDNS name and optional serve port (default 7443),
+or, for a machine on the local network without Tailscale, as `local:` and its
+private IPv4 address or host name with an optional stim-server port (default
+7787); that machine lists where it listens in `server.lanAddresses`, which is
+empty by default. See [Local network, without Tailscale](./remote-machines.md#local-network-without-tailscale).
+Name each node and port once. Add one with `stim remote add janics-mac-mini`
+from any directory: it appends the machine to the list, keeping the entries
+already there, and asks it for approval. `stim remote list` reports each
+machine's approvals, and `stim remote remove <machine>` drops an entry and
+forgets its credentials. `stim settings set remote.machines` replaces the whole
+list. Build and device-host approvals are
 separate, and a remote machine is used only for what it approved; a listed machine that
-never granted one is not used for it, and doctor reports it. Doctor makes a setup
+never granted one is not used for it, and `stim remote list` reports it. `stim remote add` makes a setup
 ticket and prints the `stim-server setup` command a person runs on the remote
 machine to approve this one; one ticket covers builds and hosting. Hosting approval grants no
 read, control or build access. [`stim macos --remote <placement>`](./macos.md#run-it-on-another-mac)
@@ -384,9 +453,10 @@ reports approval under `deviceHosts` in JSON. The first connection after
 approval pins the remote machine's stim-server key, and every later connection
 must prove that key; a different key reports `key-changed` and refuses access.
 Uncertain replies or unreadable credentials preserve the pin. To approve a
-replaced machine, remove the name, run `stim doctor --fix` to forget it, then
-re-add it and run `--fix` again. Only `--fix` makes a setup ticket, asks again
-after a revoked or `lapsed` request, or forgets names removed from the setting.
+replaced machine, run `stim remote remove <machine>`, then
+`stim remote add <machine>`. Only `stim remote add` and `stim doctor --fix` make a
+setup ticket or ask again after a revoked or `lapsed` request; `stim remote remove`
+and `stim doctor --fix` forget the credentials of names removed from the setting.
 A pending request reports its ticket's `expiresAt`. A concurrent approval
 inspection reports `busy` instead of replacing a pending ticket.
 
@@ -396,16 +466,17 @@ coding agent can drive the macOS apps, iOS simulators and Android emulators it h
 can lease a single app (its `macos-app` lease backend);
 otherwise agent control reports `none` with a notice, and no client is handed
 the Mac's desktop. `STIM_AGENT_DEVICE_BIN` in `stim-server`'s environment names
-an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Both machines need agent-device 0.21.20 or later. Hosted Android uses one daemon per session pinned to the emulator serial, with agent-device 0.21.22 or later on both machines. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. Argent and other automation tools work with the devices Stim runs on the same Mac, but are not hosted drivers: Argent changes every booted simulator on its Mac and cannot be confined to one session's device, so a remote client gets agent-device or nothing. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
+an agent-device binary to use instead of `~/.local/bin/agent-device`. Hosted iOS uses one daemon per session, pinned to its simulator UDID by the daemon policy. Hosted Android uses one daemon per session pinned to the emulator serial. Both machines need agent-device 0.21.30 or later. `doctor` counts installed hosted iOS, Android and macOS apps with no driver. Argent and other automation tools work with the devices Stim runs on the same Mac, but are not hosted drivers: Argent changes every booted simulator on its Mac and cannot be confined to one session's device, so a remote client gets agent-device or nothing. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac) and [hosted Android](./remote-machines.md).
 
 For a setup walkthrough covering build and hosting approvals, see [Remote machines](./remote-machines.md).
 
 For builds, the same `remote.machines` list names the machines on your tailnet
 that may build for this one, optionally with the port of their
 `tailscale serve` route (`janics-mac-mini:7444`; default 7443).
-`stim doctor --fix` in any app directory makes a setup ticket for each named
+`stim remote add <machine>`, from any directory, makes a setup ticket for that
 machine and prints the `stim-server setup` command a person runs there to
-approve this one. The next doctor run pins that machine's stim-server key, and
+approve this one; `stim doctor --fix` in an app directory does the same for every
+named machine. The next `stim remote list` or doctor run pins that machine's stim-server key, and
 Stim connects only to a server that proves it holds that key. Doctor reports each remote machine's build pairing state under `remoteMachines`.
 
 The order of `remote.machines` is the priority order for every workload. A
@@ -447,14 +518,17 @@ back locally. Missing configuration/pairing, denied or pending approval,
 unreachability or a changed server key, incompatible toolchain/CPU/runtime,
 low disk, busy workers, sync/build failures, artifact fetch/store failures and
 a checkout changing during the build fail with `STIM_OFFLOAD_REFUSED`. The
-message names the worker and the concrete reason. Run `stim doctor --fix` to
-ask for build access if not paired. Check `stim settings get remote.machines`;
+message names the worker and the concrete reason. Run `stim remote add <machine>` to
+ask for build access if not approved. Check `stim remote list`;
 a person on the worker approves this machine by running the `stim-server setup`
-command doctor printed. To change placement,
+command it printed. To change placement,
 rerun with `--remote-build auto`, `remote` or `local`.
 
-Device, Release/non-Debug, `--remote`, Android CAS compiler, build-cache-off
-and unknown simulator runtime builds refuse a named worker on a cache miss.
+Device, Android release variant, `--remote`, Android CAS compiler,
+build-cache-off and unknown simulator runtime builds refuse a named worker on a
+cache miss, with a remedy to rerun with `--remote-build local` or `auto`. An iOS
+simulator Release or other non-Debug build can build on a worker, which bundles
+the JS of the synced checkout into the app.
 Invalid values, unlisted names and unpaired names refuse at setup before the
 cache is consulted, without a build record or failed-run stats. A listed paired
 name with a cache hit needs no build and contacts no worker. Prebuild and pod
@@ -474,7 +548,7 @@ A build that leaves this machine goes to the first machine in `remote.machines`
 order that accepts it: a free slot (`concurrency.maxBuilds`), at least 10 GB free,
 a matching toolchain and a load per core under its own `server.maxLoadPerCore`.
 A machine that already holds the exact completed artifact goes ahead of the
-order. Where `stim ios` compiles a simulator Debug build, `stim android` an
+order. Where `stim ios` compiles a simulator build, `stim android` an
 emulator debug build and `stim macos` a SwiftPM Debug build depends on the
 selection:
 
@@ -493,9 +567,9 @@ iOS, Android and macOS placement. It is the load per core at which a machine
 counts as saturated: each machine applies its own value, a remote machine
 declines offloaded builds past it, and automatic placement skips it.
 
-Device, Release and
+Device builds, Android release variants,
 `--remote eas|proxy` builds, Android builds with the Apple Clang CAS compiler cache, and
-iOS/Android runs with the build cache off, always build here. Hosted iOS Debug
+iOS/Android runs with the build cache off, always build here. Hosted iOS
 builds can use a separate `--remote-build`, targeting the hosting Mac's
 architecture and runtime.
 
@@ -759,8 +833,8 @@ stim settings set workspace.hidden true
 
 `workspace.hidden` is false by default and lives only in the workspace layer, so
 it takes no `--scope`. `stim status --json` reports `hidden: true` on that
-environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload` or
-`worktree warm` in the workspace clears it, so a workspace in use is never
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `logs`
+or `worktree warm` in the workspace clears it, so a workspace in use is never
 hidden. `stim settings unset workspace.hidden` shows it again, and
 `worktree remove` drops it with the workspace.
 
@@ -834,7 +908,10 @@ measures, plans and logs and deletes nothing, and `off` disables passes.
 `STIM_HOME` and `CI` make the mode `off` unless `STIM_MAINTENANCE` is set.
 All of these settings have machine scope except `maintenance.keep`, a project
 setting that pins a workspace: automatic passes never clear its build outputs,
-delete its owned devices or remove its worktree. GB and MB below mean GiB and MiB.
+delete its owned devices or remove its worktree. `maintenance.idleStopHours`
+takes machine and project layers; see
+[idle workspace stop](./dev-server-and-logs.md#idle-workspace-stop). On a hosting Mac, stim-server reads its
+machine value to stop a hosted session whose client has been gone that long. GB and MB below mean GiB and MiB.
 
 <MaintenanceSettings />
 
@@ -843,9 +920,10 @@ On macOS the memory signal is the sysctl pressure level, with no signal when
 sysctl fails. `os.freemem()` and `maintenance.minAvailableMemoryGb` apply only
 on other platforms.
 Caps act toward `maintenance.capTargetPercent` of the limit. The Swift
-compilation cache can only be emptied whole, so a pass empties it only below
-`budget.hardFloorDiskGb` or at disk pressure level 3, and never while an iOS
-build holds its claim on it or that claim is unresolved.
+compilation cache can only be emptied whole, so a pass empties it once it is
+over `caches.swiftCompilationCacheMaxGb` or at disk pressure level 3, and never
+while an iOS build holds its claim on it or that claim is unresolved. Plain
+`stim gc --delete` applies the same cap.
 `maintenance.urgentFreeDiskGb`, `maintenance.criticalFreeDiskGb` and
 `maintenance.pressureProtectMinutes` set the
 [disk pressure levels](./build-caches.md#disk-pressure-levels). `caches.ccacheMaxGb` is
@@ -857,7 +935,7 @@ worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `mainte
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass never stops a dev server (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

@@ -147,6 +147,11 @@ repair: its cache-lock check cannot detect uncached, release-swap fallback, or
 direct Gradle builds. The next build recreates these files; source, custom launcher settings,
 and shared ccache entries are preserved. See `stim guide lifecycle options`.
 
+When no Android system image matches the project and `android.installImages`
+is `auto`, doctor reports it as a note, and `--fix` installs the image
+`stim android` would install on its first emulator run (about 2 GB). See
+[installing a missing Android system image](./settings.md#installing-a-missing-android-system-image).
+
 Doctor reports a checkout that holds linked worktrees inside it, such as
 `.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
 `ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started
@@ -165,8 +170,9 @@ free its memory now. Doctor never runs either command.
 
 When [`remote.machines`](./settings.md#machine-settings) names remote machines,
 doctor reports their separate device-host approval in `deviceHosts`. Only
-`--fix` requests approval, retries a revoked or lapsed request, and
-forgets names removed from the setting. It makes a setup ticket and prints the
+`--fix` requests approval, retries a revoked or lapsed request, and forgets
+names removed from the setting; [`stim remote add`](#remote) also requests and
+retries approval, outside an app. It makes a setup ticket and prints the
 `stim-server setup` command a person on the hosting Mac runs. Setup tickets stay
 private. The first connection after approval pins the Mac's stim-server key,
 and a Mac that cannot prove that key is refused; unreadable credentials and
@@ -189,9 +195,9 @@ stim-server too old to speak protocol 2 (`outdated`, with the
 that never granted an approval is not used for it. `--fix` makes one setup
 ticket for each named machine without a pairing, covering build and device-host
 access, asks again one that revoked or let the request lapse, and forgets the
-pairing of a machine no longer named. It never accepts a different key: remove
-the machine from `remote.machines` and run `--fix` to forget the old pairing,
-then add it back. `--json` lists
+pairing of a machine no longer named. It never accepts a different key: run
+`stim remote remove <machine>` to forget the old pairing, then
+`stim remote add <machine>`. `--json` lists
 each named machine's build approval under `remoteMachines`, and its device-host
 approval under `deviceHosts`, with a `state`: `approved`, `pending`, `not-asked`,
 `revoked`, `lapsed`, `key-changed`, `outdated`, `not-on-tailnet`, `tailscale-off`, `unreachable` or
@@ -319,15 +325,15 @@ same way when it is not running, so running `start` first is optional.
 ## `ios`
 
 ```text
-stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>]
+stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>] [--install-runtime]
          [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
 Builds or restores the iOS app. Stim then boots an owned simulator, installs the
 app, opens it, and checks launch logs. Native builds run locally by default;
-`--eas-profile` downloads an existing EAS development build. A simulator Debug
-build can compile on a paired remote machine instead: see `remote.build` in
+`--eas-profile` downloads an existing EAS development build. A simulator build
+can compile on a paired remote machine instead: see `remote.build` in
 [machine settings](./settings.md#machine-settings).
 
 - `--configuration <name>` selects an Xcode configuration. The default is Debug.
@@ -337,8 +343,8 @@ build can compile on a paired remote machine instead: see `remote.build` in
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install run on this machine before
   a named offload, after a check of the worker's toolchain. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
-  Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker approves it by running the `stim-server setup` command doctor
+  Run `stim remote add <machine>` to ask for build access if not approved; a person on
+  the worker approves it by running the `stim-server setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--scheme <name>` selects an exact shared Xcode scheme when the automatic
@@ -353,6 +359,22 @@ build can compile on a paired remote machine instead: see `remote.build` in
   installed version, `stim ios` refuses instead of booting it: remove the
   simulator with `stim worktree remove` or `stim gc --delete`, or pass
   `--slot <name>` to create one beside it.
+- `--install-runtime` opts in to installing the explicitly requested missing
+  runtime with Xcode before continuing. Use `--remote local` or one named
+  approved Mac; automatic placement, EAS, proxy and physical phones do not
+  install runtimes. The `ios.autoInstallRuntime` setting enables the same policy
+  and defaults to `false`. Downloads are typically 8–10 GB, with a 20 GB free-space
+  requirement for download and unpacking. Stim serializes installs in the Mac's
+  Stim home, uses a build slot, and verifies the installed version with `simctl`.
+  Xcode progress appears locally; remote installs print periodic waiting messages
+  and `stim status` shows the install phase. Xcode Settings > Components lists
+  available versions and removes shared runtimes when no workspace needs them.
+  Stim does not prune runtimes or replace Xcode's availability checks.
+
+  To try it with an agent: “Run this app on iOS 26.5 on my approved Mac. Use
+  `stim ios --remote <mac> --runtime 26.5 --install-runtime` and report any Xcode
+  or disk-space refusal.”
+
 - On an eas/proxy run (`--remote` or `ios.remote`), `--runtime` refuses
   with `STIM_BAD_ARG` because the remote backend chooses the iOS version, and so
   does `--device-type` on the proxy backend. `--remote eas` honors
@@ -387,7 +409,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
   `auto` places on an approved Mac when this machine is full or busy, falling back
   to the local device queue when no host admits. `remote` tries the approved Macs first, in
   `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
-  With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.20 or later on both machines,
+  With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.30 or later on both machines,
   `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
   from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
   uploads, device selectors, shutdown and host paths are refused. `stim stop` closes its connection and removes the config.
@@ -399,7 +421,7 @@ build can compile on a paired remote machine instead: see `remote.build` in
   be combined with `--scheme`, `--configuration`, or `--no-build-cache`.
 - `--no-metro-check` skips the Debug dev-server check and does not start the
   dev server. Hosted Debug iOS refuses this flag with `STIM_BAD_ARG`; it requires
-  the local supervisor's private gateway support.
+  the local supervisor, which carries Metro to the host.
 - `--no-build-cache` ignores cached artifacts and replaces the matching entry.
 - `--plan` predicts the next build instead of running it. See
   [Predict the next build](#predict-the-next-build).
@@ -617,14 +639,16 @@ can compile on a paired remote machine instead: see `remote.build` in
   a build record or failed-run stats. A listed paired name with a cache hit
   contacts no worker. Prebuild and pod install still run on this machine before
   a named offload. A refusal starts no local xcodebuild, Gradle or SwiftPM compile.
-  Run `stim doctor --fix` to ask for build access if not paired; a person on
-  the worker approves it by running the `stim-server setup` command doctor
+  Run `stim remote add <machine>` to ask for build access if not approved; a person on
+  the worker approves it by running the `stim-server setup` command it
   printed, with its ticket and expiry.
   See [machine settings](./settings.md#machine-settings) for supported builds and remedies.
 - `--variant <name>` selects a Gradle variant. The default is `debug`.
 - `--system-image <id>` creates this workspace's owned AVD from that sdkmanager
-  package id, overriding `android.systemImage` for one invocation; an id this
-  SDK has not installed refuses with `STIM_BAD_ARG` and prints the installed
+  package id, overriding `android.systemImage` for one invocation. An id this
+  SDK has not installed is installed first with `sdkmanager --install` when it
+  matches this machine's ABI and `android.installImages` is `auto` (the
+  default); otherwise it refuses with `STIM_BAD_ARG` and prints the installed
   ids. When the workspace already owns an AVD made from another image, Stim
   refuses with the same remedy as a profile change, unless that AVD never
   finished a boot: Stim then deletes it through owned-device teardown and
@@ -1065,6 +1089,61 @@ its own for the length of the run, so `lock` is for holding a device across
 runs, such as a device-tool session. `stim status` lists every lease on the
 machine.
 
+## `device location`, `permission`, `push` and `network`
+
+```text
+stim device location <ios|android> (--set <lat,lng> | --clear) [--slot <name>] [--json]
+stim device permission <ios|android> <grant|revoke|reset> <service> [--slot <name>] [--json]
+stim device push ios --payload <json> [--slot <name>] [--json]
+stim device network android <on|off> [--slot <name>] [--json]
+```
+
+Change this workspace's own simulator or emulator without looking up its UDID
+or serial, and without the risk of aiming `simctl` or `adb` at a device Stim
+does not own.
+
+- `location --set 45.5,-73.6` simulates a coordinate. Latitude and longitude
+  are one value, so a negative latitude is not read as a flag. `--clear` stops
+  simulating on iOS; the Android emulator has no way to clear one and refuses.
+- `permission` grants, revokes or resets one service for the app. The app is the
+  slot's last launch, else the project's bundle id or Android package.
+  iOS services are the ones `simctl privacy` lists: `all`, `calendar`,
+  `contacts`, `contacts-limited`, `location`, `location-always`,
+  `media-library`, `microphone`, `motion`, `photos`, `photos-add`, `reminders`
+  and `siri`. Android services are `calendar`, `camera`, `contacts`, `location`,
+  `microphone`, `motion`, `notifications` and `photos`. A permission the app
+  does not declare in its manifest cannot be changed; Android lists it under
+  `skipped` and succeeds when the app declares at least one permission of the
+  service, and refuses with `STIM_DEVICE_TOOL_FAILED` when it declares none. `reset` on Android revokes the permission and clears its user-set
+  flags so the app asks again; the call fails if the device still reports a
+  granted permission or a user flag. Changing a permission can terminate the
+  running app on both platforms.
+- `push ios --payload '{"aps":{"alert":"Hello"}}'` sends a test push to the
+  app. The payload is a JSON object with an `aps` key, at most 4096 bytes. The app must
+  already hold notification permission on the simulator, which `simctl privacy`
+  cannot grant; otherwise `simctl` answers "Source is not authorized".
+- `network android off` turns Wi-Fi and mobile data off and `on` turns them back
+  on.
+
+The target is the slot's owned, booted simulator or emulator, checked the way
+`reload` checks it. A hosted device, an EAS Simulator session, a physical device
+and a device Stim does not own refuse with `STIM_DEVICE_TOOL_TARGET` and run
+nothing. A non-Mac client cannot run a local iOS simulator; use these iOS tools
+on a Mac with a local Stim-owned simulator. An action the platform lacks refuses with
+`STIM_DEVICE_TOOL_UNSUPPORTED`, and a tool call that fails, or a device that does
+not report the change afterwards, with `STIM_DEVICE_TOOL_FAILED`.
+
+`--json` prints one line: `platform`, `slot`, `deviceId`, `deviceName`, `tool`,
+the parameters, and `readBack`. `readBack` is what the device reported after the
+change: `{ "permissions": [{ "name", "granted" }] }` for Android permissions and
+`{ "wifi", "data" }` for Android network. It is `null` where the platform has no
+read: iOS location, permissions and push, and Android location. There the exit
+status of `simctl` or `adb` is the only confirmation.
+
+```text
+Set this workspace's simulator to Montreal, grant the app photos access, and show me the JSON that stim device printed for each.
+```
+
 ## `device provision`
 
 ```text
@@ -1186,6 +1265,50 @@ prints as `********`, and `committed` accepts only an `env:` or `file:`
 reference for it. `set` and `unset --json` print the layer written, its file,
 and the setting's entry after the write.
 
+## `remote`
+
+```text
+stim remote add <machine> [--json]
+stim remote list [--json]
+stim remote remove <machine> [--json]
+```
+
+Manages [`remote.machines`](./settings.md#machine-settings), the remote
+machines this machine builds on and hosts devices on, from any directory; no
+app checkout is needed. `<machine>` is a tailnet name, optionally with
+`:<port>` of its serve route (default 7443), or `local:<host>` with an
+optional stim-server port (default 7787).
+
+- `add` appends the machine to the machine-scope list, keeping the entries
+  already there, and asks it for build and device-host approval. It prints the
+  `stim-server setup` command, with a setup ticket, that a person runs on that
+  machine to approve this one. Adding a machine already in the list asks it
+  again when its request lapsed or was revoked, and otherwise reports its state.
+  A name that is not a tailnet name or `local:` address refuses with
+  `STIM_BAD_ARG` and writes nothing.
+- `list` contacts every listed machine, in placement order, and reports its
+  build and device-host approval. It asks nothing new; it completes the
+  connection to a machine that approved since the last contact. For a
+  `local:` machine, run it in a terminal to confirm the server key fingerprint.
+- `remove` drops the entry and forgets this machine's credentials for it. The
+  remote machine keeps its approval until a person there runs the
+  `stim-server devices revoke <id>` command `remove` prints.
+
+```bash
+stim remote add janics-mac-mini
+stim remote list
+stim remote remove janics-mac-mini
+```
+
+The states are the ones `stim doctor --json` reports under `remoteMachines`
+(`build` here) and `deviceHosts` (`deviceHost` here). `list --json` prints
+`{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
+--json` prints `{ machine, added, machines, build, deviceHost, findings }`,
+where `machines` is the list after the change; `remove --json` prints
+`{ machine, removed, forgot, machines, revoke, pending }`, where `pending` means a request
+was still unanswered here, so the worker may hold an approval `revoke` cannot name. `stim settings set
+remote.machines` replaces the whole list; use it to change the order.
+
 ## `status`
 
 ```text
@@ -1211,6 +1334,13 @@ or `[idle]`. An active workspace (phase `live`) has no marker. In `--json`, each
 carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
+
+A workspace whose folder was deleted outside Stim, for example with
+`git worktree remove` or `rm -rf`, stays registered, so status marks it
+`[folder missing]` and `--json` sets `pathMissing: true` with a phase that is
+never `warming` or `ready`. Status only reports it; `stim worktree remove <path>`
+or `stim gc --delete` removes the entry. A folder on a volume that is not mounted is not reported, since the
+volume may come back.
 
 Each environment also carries `stage`, the conclusion Stim Desktop and the
 phone app show beside the git chip: `{ kind, since, platform, closedApps }`.
@@ -1305,7 +1435,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
@@ -1359,6 +1489,13 @@ the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
 it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
 devices could not be listed. With neither cap set, neither field appears.
+
+`concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an
+`iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,
+`capacity.platformDevices.ios` or `.android`: `max` and `inUse`, with `unknown`
+saying why `inUse` is `null`. Each appears only while its cap is set, whether or
+not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits hosted macOS
+apps only and has no status line.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
@@ -1571,7 +1708,7 @@ Each booted simulator and detected emulator also shows who is using it:
 ```
 
 In `--json`, those devices carry
-`activity: { state, driver?, lastActivityAt?, basis }`. `state` is `driven`
+`activity: { state, driver?, lastActivityAt?, basis, unknown? }`, where `unknown` lists the checks a `driven` device could not read. `state` is `driven`
 when a tool holds the device now, `active` when it had activity in the last 10
 minutes, `idle` otherwise, and `unknown` when a claim or driver check could not
 be read. Stim counts as drivers a live agent-device session (its recorded
@@ -1685,7 +1822,7 @@ Recording is best effort.
 The optional top-level JSON `capacityRefusals` lists the last 50 device
 refusals from the last 7 days, newest first, and is omitted when empty. Each
 entry carries `at` (ISO timestamp), `kind: "device"`, `platform` (`ios` or
-`android`), `max` (`concurrency.maxDevices`), and `workspace` (the workspace
+`android`), `max` (the cap of the limit that was full: `concurrency.maxDevices`, or the platform's `concurrency.maxIosDevices` or `concurrency.maxAndroidDevices`), and `workspace` (the workspace
 id used by status and Desktop). Only `STIM_AT_CAPACITY` device refusals are
 recorded; build caps wait. Recording is best effort and does not change the
 refusal or the plain stats output. Desktop uses events within 6 hours for
@@ -1778,7 +1915,9 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--idle <duration>] [--json]
 ```
 
-Reports stale workspace entries, orphaned workspace directories, clean linked
+Reports stale workspace entries, orphaned workspace directories (including a
+directory with no `workspace.json` that holds only logs or lock files left by a
+removed workspace), clean linked
 worktrees whose branch is merged or whose pull request was merged or closed,
 orphaned owned devices and remote sessions,
 stale locks, shared cache sizes, and the memory of the watchman daemon and the
@@ -1805,8 +1944,15 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
-`stim status` caches each folder's size and each worktree's pull request under
-`$STIM_HOME/disk-usage` and `$STIM_HOME/pull-requests`. `worktree remove` drops
+Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other than the one it runs in, that has had no real activity for
+[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop)
+(6 by default), as `stim stop` does: its dev server stops and its owned
+devices shut down, never deleted. The dry run lists those stops in its
+maintenance plan.
+
+`stim status` caches each folder's size, each worktree's pull request and each
+worktree's merge verdict under `$STIM_HOME/disk-usage`,
+`$STIM_HOME/pull-requests` and `$STIM_HOME/git-merge`. `worktree remove` drops
 the entries of the worktree it removes, but not the size entries of its owned
 devices' data folders. `gc` lists the entries of a folder or
 worktree that is gone from a mounted volume under "Stale status cache entries",
@@ -1846,7 +1992,7 @@ is free, whether or not the worktree exists. See [remove a worktree](./worktrees
 `stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
 its dev server running or its simulator booted. It clears the build outputs
 (`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
-`macos/build`, staged `macos/<Product>.app` and interrupted-build
+`js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app` and interrupted-build
 `macos/staging-*` directories) and the project's git-ignored
 `android/app/build`, `android/build`, `android/.gradle` and `.build`, and
 prints the bytes freed per workspace. A running, building, unverified or hosted
@@ -1864,13 +2010,16 @@ The Memory section lists long-lived helpers that grow while they run: the
 shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
-the memory that can be reclaimed. A plain `--delete` and `--cache all` never
-stop them; each kind has its own `--cache` value:
+the memory that can be reclaimed. A plain `--delete` stops watchman, and
+`--cache watchman` does the same on its own. `--cache all` does not touch
+watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
 
-- `stim gc --delete --cache watchman` removes the stale roots (a directory that
-  is gone, or a linked worktree git pruned) that no subscription or trigger
-  uses. It then shuts watchman down only when no other client is connected and no root has a trigger;
-  otherwise it keeps the daemon and names each client, such as the Stim
+- `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
+  roots (a directory that is gone, or a linked worktree git pruned) that no
+  subscription or trigger uses. They then shut watchman down only when no other
+  client is connected, every root's subscriptions and triggers were readable
+  and no root has a trigger;
+  otherwise they keep the daemon and name each client, such as the Stim
   workspace whose Metro uses it. Removing roots does not shrink watchman; only a
   restart does, and the next client that needs watchman starts it again.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
@@ -2224,7 +2373,8 @@ home did not create, or `user`. It also lists the iOS simulator runtimes and
 Android system images with how many devices use each (a runtime that
 `simctl runtime list` does not show has no size), and the
 `xcrun simctl runtime delete` or `sdkmanager --uninstall` command that removes
-it. `inventory.notices` says why a listing is missing or partial, such as an
+it. A system image with `stimInstalled: true` is one this Stim home installed
+under `android.installImages`. `inventory.notices` says why a listing is missing or partial, such as an
 AVD or system image folder Stim cannot read. When macOS privacy protection
 blocks the read, for example for AVDs on an external disk, the notice names the
 Privacy & Security setting that allows the app running Stim.
@@ -2242,7 +2392,8 @@ how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
 ```text
 Run `stim gc` and show me how much memory watchman and the Gradle and Kotlin
 daemons use and what is reclaimable. If watchman has no clients, run
-`stim gc --delete --cache watchman`; then run
+`stim gc --delete --cache watchman` (a plain `stim gc --delete` also stops it);
+then run
 `stim gc --delete --cache gradle-daemons` to stop the idle daemons.
 ```
 
@@ -2306,8 +2457,8 @@ archive usage line. See [archived workspaces](./worktrees.md#archived-workspaces
 A person on the worker machine runs `stim-server setup` to set it up and approve
 build and/or device-host access for the machine holding one setup ticket, until
 one expiry. The requesting machine makes the ticket: Stim Desktop's Add Machine
-flow shows the command, and `stim doctor --fix` prints it on a machine without
-Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
+flow shows the command, and `stim remote add <machine>` or `stim doctor --fix`
+prints it on a machine without Desktop. Each grant asks Y/n in a terminal (Enter approves); `--yes` is
 required to approve without a terminal. Agents never run setup
 or approve requests.
 Setup reuses Desktop's server when it already answers and has a tailnet route.

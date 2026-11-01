@@ -417,10 +417,12 @@ export function releaseWorkspaceLeases(
 export async function releaseWorkspaceLeasesAsync(
   root: string,
   options: Parameters<typeof releaseWorkspaceLeases>[1] = {},
+  signal?: AbortSignal,
 ): Promise<ReleasedLease[]> {
   const released: ReleasedLease[] = [];
-  const lockOptions = { ensureParent: () => mkdirSync(deviceLocksDir(), { recursive: true }) };
+  const lockOptions = { signal, ensureParent: () => mkdirSync(deviceLocksDir(), { recursive: true }) };
   for (;;) {
+    signal?.throwIfAborted();
     const attempt: { blocked?: { path: string; error: unknown } } = {};
     const io: LeaseIo = {
       ...fileLeaseIo,
@@ -440,13 +442,17 @@ export async function releaseWorkspaceLeasesAsync(
         }
       },
     };
-    await withWorkspaceStateLockAsync(root, () => {
-      try {
-        releaseWorkspaceLeases(root, options, io);
-      } catch (error) {
-        if (error !== attempt.blocked?.error) throw error;
-      }
-    });
+    await withWorkspaceStateLockAsync(
+      root,
+      () => {
+        try {
+          releaseWorkspaceLeases(root, options, io);
+        } catch (error) {
+          if (error !== attempt.blocked?.error) throw error;
+        }
+      },
+      signal,
+    );
     const blocked = attempt.blocked;
     if (!blocked) return released;
     await withDirLockAsync(blocked.path, () => undefined, lockOptions);

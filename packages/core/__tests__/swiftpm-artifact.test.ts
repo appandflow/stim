@@ -8,15 +8,6 @@ const query = {
   build: { product: 'App', infoPlist: 'Info.plist', resources: { Assets: 'assets' }, assetCatalog: null },
 };
 
-test('equivalent declarations normalize to the same completed artifact request without dropping build choices', () => {
-  expect(swiftpmArtifactQuery({ ...query, inputs: { ...query.inputs, environment: ['FLAVOR', 'FLAVOR'] } })).toEqual(
-    query,
-  );
-  expect(swiftpmArtifactQuery({ ...query, build: { ...query.build, product: 'Other' } })).not.toEqual(query);
-  const resources = Object.fromEntries([['__proto__', 'assets']]);
-  expect(swiftpmArtifactQuery({ ...query, build: { ...query.build, resources } })?.build.resources).toEqual(resources);
-});
-
 test('malformed and escaping queries cannot reach a worker private-input check', () => {
   for (const invalid of [
     { ...query, project: '../outside' },

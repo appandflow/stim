@@ -8,7 +8,7 @@ public enum OffloadResult: Equatable, Sendable {
   public static func parse(_ data: Data, machine: String, exit: Int32, stderr: String = "") throws -> Self {
     if let refusal = try? JSONDecoder().decode(CommandRefusal.self, from: data) { return .refused(refusal) }
     guard let facts = try? JSONDecoder().decode([String: JSONValue].self, from: data) else {
-      throw StimCLI.Failure.exited(exit, stderr: stderr)
+      throw CommandFailure.exited(exit, stderr: stderr)
     }
     guard exit == 0, facts["offloadedTo"]?.string == machine,
       facts["launched"] == .bool(true) || facts["launched"] == .string("bundling")
@@ -162,7 +162,7 @@ public struct BuildTest: Equatable, Sendable {
 }
 
 public func sampleDuration(_ ms: Double) -> String {
-  let seconds = max(0, Int(ms / 1000))
+  let seconds = max(0, Format.int(ms / 1000))
   return String(format: "%d:%02d", seconds / 60, seconds % 60)
 }
 

@@ -32,12 +32,14 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  grouped by repo. Each repo is a heading with how many of its workspaces are
+  grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
+  list; select Hidden in the Home filters to see them. Starting or warming the
+  workspace clears that shared flag. Each repo is a heading with how many of its workspaces are
   active and idle; repos with an active workspace come first, then by name. In a
   repo, active workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns active or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as active. When status identifies a linked Git checkout, its app projects
+  counts as active. When status identifies a Git checkout, including a primary checkout, its app projects
   share one row, with the branch and git state shown once. The row shows the
   status of the app that needs attention most (failed, building, running, idle),
   error and warning counts summed across the apps, the agent sessions of all of
@@ -45,9 +47,9 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   Web), as in Stim Desktop's sidebar. Tapping the row opens the unified workspace
   page at the app that leads the row. Filters still apply per app. Repo active/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
-  and checkouts stay separate even when they share a branch name. Primary checkouts
-  and older servers without an explicit checkout identity retain separate app rows;
-  [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  and checkouts stay separate even when they share a branch name. Older servers without
+  an explicit checkout identity retain separate app rows for primary checkouts.
+  The identity groups display rows only; each app keeps its own routes, commands, ports and devices.
   Source-only worktrees share their repo's section and count as idle. **Not set up**,
   **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
@@ -66,10 +68,11 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   build while the workspace is active or for a day after, a closed app, **CI
   failing**, and warning or issue counts); while building, the build step with
   its counts, the cache outcome and the elapsed time against the estimate over
-  a bar of the planned phases; while warming, the step with an activity
+  a bar of the planned phases, with the build machine beside the step when the
+  build was offloaded; while warming, the step with an activity
   indicator; the running devices by kind (`2 iOS, Android`) with the tools
-  driving them, or how long they have been idle once that is 10 minutes, and
-  remote EAS sessions; and the git state: the pull request number colored by
+  driving them, or how long they have been idle once that is 10 minutes, the
+  machines hosted devices run on, and remote EAS sessions; and the git state: the pull request number colored by
   its state, commits ahead and behind, changed files, **merged into** and **no
   upstream**. The machine's name shows only when more than one machine is
   paired, and the app's folder in its checkout only when a repo's workspaces
@@ -160,7 +163,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
 - **Machine Status**: tapping a chip shows that machine's page, laid out like
   Stim Desktop's Machine page, read-only. **Now** has the CPU, memory used and
   startup-volume free space charts over the last hour, the active workspaces and
-  Stim's share of memory, then **CPU and Memory**, the status `machine` owners
+  Stim's share of memory, the Mac's load per core, and the **Devices** and **Builds** slot meters while their caps are set (a full device meter lists the devices holding the slots), then **CPU and Memory**, the status `machine` owners
   by memory. **Disk** shows the lowest free space against Stim's disk budget
   and a bar of what uses it: Stim devices, Stim caches and outputs,
   `node_modules`, other simulators and AVDs, and runtimes and system images. A
@@ -326,7 +329,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   time against the estimate with the miss reason, a checklist of phases with
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
-  Otherwise it shows the last build with when it ran, a failed build's compiler
+  Otherwise it shows the last build's selected destination and recorded compilation machine,
+  omitting the compilation line for cache hits or absent compilation data.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
+  It shows when the last build ran, a failed build's compiler
   errors, why it missed the cache with the changed fingerprint sources, its
   phase times, and a **Build Logs** row (marked Failed for a failed build) that
   opens Logs on the build source for that build's slot, limited to the lines
@@ -1031,6 +1037,12 @@ one Mac that built here. The `a4-offloading`, `a4-offloaded` and
 `a4-offload-fallback` workspaces show an iOS build running on
 `janics-mac-mini`, a last build that machine compiled, and a local build after
 it was busy.
+`linux-owner.json` adds two workspaces a Linux `stim-server` could report, which
+has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
+`janics-mac-mini-2` and driven by Claude Code, and `bot/upgrade-pods`, an iOS build
+running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
+lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
+the machine's usage, `machine.details` and notifications stay the captured Mac's.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.
@@ -1073,6 +1085,12 @@ To screenshot slot waits, run `pnpm run mock-server --slot-waits` and pair with
 slot wait during compilation, or `a4-offloading` to see a build slot wait during
 pods. Both wait timers start at 0:42 and count up. The optional state lives in
 `mock-server/fixtures/slot-waits.json`; the default captured fixtures stay unchanged.
+
+To screenshot the machine's load and slot meters, run `pnpm run mock-server --capacity`. The Mac status
+sheet then shows a Load row and `Devices 6 / 6` and `Builds 2 / 2` meters, with the devices holding the
+slots listed because they are full. Without the flag the capture carries none of these fields, which is what
+a Mac running an older `stim` sends; the sheet shows only the memory line. The added state lives in
+`mock-server/fixtures/capacity.json`.
 
 To try the home screen with two Macs, run two mock servers on different ports.
 `--workspaces <regex>` keeps only the app workspaces and source-only worktrees whose path matches, and

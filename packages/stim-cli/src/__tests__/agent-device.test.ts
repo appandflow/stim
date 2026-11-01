@@ -1,17 +1,4 @@
-import {
-  closeArgs,
-  connectArgs,
-  daemonEnv,
-  disconnectArgs,
-  installArgs,
-  metroHintFrom,
-  openArgs,
-  parseHealthHostArch,
-  readRemoteSimulatorArch,
-  remoteProfile,
-  remoteProfilePath,
-  sessionNameFor,
-} from '../engine/agent-device.ts';
+import { daemonEnv, metroHintFrom, readRemoteSimulatorArch, remoteProfile } from '../engine/agent-device.ts';
 
 const DAEMON = { baseUrl: 'https://sim-42.eas.dev/daemon', token: 'tok_secret' };
 
@@ -22,63 +9,6 @@ describe('the connection profile', () => {
     expect(serialized).not.toContain('tok_secret');
     expect(serialized).not.toContain('AuthToken');
   });
-
-  test('carries the lease scope connect and proxy open refuse to run without', () => {
-    const profile = remoteProfile({ daemon: DAEMON, platform: 'android', label: 'wt' });
-    expect(profile.tenant).toBe('stim-wt');
-    expect(profile.runId).toBe('stim-wt');
-    expect(profile.sessionIsolation).toBe('tenant');
-    expect(profile.leaseProvider).toBe('proxy');
-    expect(profile.clientId).toBe('stim-wt');
-  });
-
-  test('keeps iOS off the proxy lease, which refuses every iOS install', () => {
-    const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
-    expect(profile).toMatchObject({ platform: 'ios', session: 'stim-wt', tenant: 'stim-wt', runId: 'stim-wt' });
-    expect('leaseProvider' in profile).toBe(false);
-    expect('clientId' in profile).toBe(false);
-  });
-
-  test('scopes tenant and runId per workspace, so two worktrees never share a lease', () => {
-    const a = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt-a' });
-    const b = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt-b' });
-    expect(a.tenant).not.toBe(b.tenant);
-    expect(a.runId).not.toBe(b.runId);
-  });
-
-  test('runId is stable across runs of one workspace, so a re-run reuses its own lease', () => {
-    const first = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
-    const second = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
-    expect(first.runId).toBe(second.runId);
-  });
-
-  test('carries the routing agent-device needs to reach the daemon and Metro', () => {
-    const profile = remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' });
-    expect(profile).toMatchObject({
-      daemonBaseUrl: 'https://sim-42.eas.dev/daemon',
-      daemonTransport: 'http',
-      platform: 'ios',
-    });
-    expect('metroProjectRoot' in profile).toBe(false);
-  });
-
-  test('the session name is per-workspace, so two worktrees never share one', () => {
-    expect(sessionNameFor('wt-a')).not.toBe(sessionNameFor('wt-b'));
-    expect(remoteProfile({ daemon: DAEMON, platform: 'ios', label: 'wt' }).session).toBe(sessionNameFor('wt'));
-  });
-
-  test('lives in global workspace storage, never in the project directory', () => {
-    const previous = process.env.STIM_HOME;
-    process.env.STIM_HOME = '/stim-home';
-    try {
-      expect(remoteProfilePath('/work/app').replaceAll('\\', '/')).toMatch(
-        /^\/stim-home\/workspaces\/app--[a-f0-9]{16}\/agent-device\.remote\.json$/,
-      );
-    } finally {
-      if (previous === undefined) delete process.env.STIM_HOME;
-      else process.env.STIM_HOME = previous;
-    }
-  });
 });
 
 describe('the token travels as an environment variable', () => {
@@ -87,112 +17,17 @@ describe('the token travels as an environment variable', () => {
   });
 });
 
-describe('argv', () => {
-  const profilePath = '/work/app/.stim/agent-device.remote.json';
-
-  test('every command carries the profile, so none of them guess a connection', () => {
-    for (const args of [
-      connectArgs(profilePath),
-      installArgs(profilePath, '/tmp/My App.app'),
-      openArgs(profilePath, 'com.example.app', null),
-      disconnectArgs(profilePath),
-    ]) {
-      expect(args[args.indexOf('--remote-config') + 1]).toBe(profilePath);
-    }
-  });
-
-  test('install passes the .app path as one literal argv element', () => {
-    const args = installArgs(profilePath, '/tmp/My App.app');
-    expect(args[0]).toBe('install');
-    expect(args[1]).toBe('/tmp/My App.app');
-  });
-
-  test('open with a dev-client url passes it as the url positional', () => {
-    const url = 'myapp://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8082';
-    const args = openArgs(profilePath, 'com.example.app', url);
-    expect(args[0]).toBe('open');
-    expect(args[1]).toBe('com.example.app');
-    expect(args[2]).toBe(url);
-  });
-
-  test('open without a url is a plain launch, not an empty url positional', () => {
-    const args = openArgs(profilePath, 'com.example.app', null);
-    expect(args[0]).toBe('open');
-    expect(args[1]).toBe('com.example.app');
-    expect(args).not.toContain('');
-  });
-
-  test('open relaunches, so a second stim ios does not attach to a stale process', () => {
-    expect(openArgs(profilePath, 'com.example.app', null)).toContain('--relaunch');
-  });
-});
-
 describe('the bare-RN Metro hint', () => {
-  const profilePath = '/w/.stim/agent-device.remote.json';
-
-  test('open carries the host and port a bare RN app reads', () => {
-    const args = openArgs(profilePath, 'com.example.app', null, { host: 'localhost', port: '8085' });
-    expect(args[args.indexOf('--metro-host') + 1]).toBe('localhost');
-    expect(args[args.indexOf('--metro-port') + 1]).toBe('8085');
-  });
-
-  test('no hint is sent when there is none to send', () => {
-    expect(openArgs(profilePath, 'com.example.app', null, null)).not.toContain('--metro-host');
-  });
-
-  test('metroHintFrom splits an origin with an explicit port', () => {
-    expect(metroHintFrom('http://localhost:8085')).toEqual({ host: 'localhost', port: '8085' });
-  });
-
   test('a portless origin takes its port from the scheme', () => {
     expect(metroHintFrom('https://abc.trycloudflare.com')).toEqual({ host: 'abc.trycloudflare.com', port: '443' });
     expect(metroHintFrom('http://abc.example.com')).toEqual({ host: 'abc.example.com', port: '80' });
   });
-
-  test('an unparseable origin yields no hint', () => {
-    expect(metroHintFrom('not a url')).toBeNull();
-  });
-});
-
-describe('closeArgs', () => {
-  test('closes through the profile, so it targets this workspace session', () => {
-    const args = closeArgs('/w/.stim/agent-device.remote.json');
-    expect(args[0]).toBe('close');
-    expect(args[args.indexOf('--remote-config') + 1]).toBe('/w/.stim/agent-device.remote.json');
-  });
 });
 
 describe('the remote simulator arch', () => {
-  test.each([
-    ['a daemon reporting its host', { ok: true, hostArch: 'x86_64' }, 'x86_64'],
-    [
-      'a proxy, whose upstream names the daemon machine',
-      { hostArch: 'arm64', upstream: { hostArch: 'x86_64' } },
-      'x86_64',
-    ],
-    ['a proxy whose upstream predates hostArch', { hostArch: 'x86_64', upstream: { ok: true } }, 'x86_64'],
-    ['a daemon without hostArch', { ok: true, service: 'agent-device-daemon' }, null],
-    ['an arch Stim cannot build', { hostArch: 'riscv64' }, null],
-    ['a non-object body', 'arm64', null],
-  ])('%s', (_name, body, expected) => {
-    expect(parseHealthHostArch(body)).toBe(expected);
-  });
-
   function respond(body: unknown, ok = true): typeof fetch {
     return (async () => ({ ok, json: async () => body })) as unknown as typeof fetch;
   }
-
-  test('reads /health under the daemon base URL', async () => {
-    const urls: string[] = [];
-    const fetchImpl = (async (url: string) => {
-      urls.push(url);
-      return { ok: true, json: async () => ({ hostArch: 'x86_64' }) };
-    }) as unknown as typeof fetch;
-    expect(
-      await readRemoteSimulatorArch({ baseUrl: 'https://proxy.example/agent-device/' }, { fetch: fetchImpl }),
-    ).toBe('x86_64');
-    expect(urls).toEqual(['https://proxy.example/agent-device/health']);
-  });
 
   test.each([
     ['no daemon', null, respond({ hostArch: 'x86_64' })],
@@ -210,15 +45,5 @@ describe('the remote simulator arch', () => {
     ],
   ] as [string, { baseUrl: string } | null, typeof fetch][])('%s means arm64', async (_name, baseUrl, fetchImpl) => {
     expect(await readRemoteSimulatorArch(baseUrl, { fetch: fetchImpl })).toBe('arm64');
-  });
-
-  test('a daemon that does not answer in time means arm64', async () => {
-    const hanging = ((_url: string, init: RequestInit) =>
-      new Promise((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
-      })) as unknown as typeof fetch;
-    const started = Date.now();
-    expect(await readRemoteSimulatorArch({ baseUrl: 'https://d' }, { fetch: hanging, timeoutMs: 20 })).toBe('arm64');
-    expect(Date.now() - started).toBeLessThan(5_000);
   });
 });

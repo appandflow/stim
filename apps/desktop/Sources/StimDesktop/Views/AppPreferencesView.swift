@@ -12,6 +12,7 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.defaultView) private var defaultView = DefaultView.overview
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @AppStorage(AppPreferences.Key.maxFramesPerSecond) private var framesPerSecond = 60.0
+  @AppStorage(AppPreferences.Key.streamQuality) private var streamQuality = StreamQuality.standard
   @AppStorage(AppPreferences.Key.pausesHiddenFrames) private var pausesHidden = true
   @AppStorage(AppPreferences.Key.editorBundleID) private var editor = ""
   @AppStorage(AppPreferences.Key.diffViewer) private var diffViewer = DiffViewer.builtIn
@@ -20,7 +21,6 @@ struct AppPreferencesView: View {
   @AppStorage(AppPreferences.Key.showsWorkspaceCards) private var showsWorkspaceCards = true
   @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
   @AppStorage(AppPreferences.Key.showsMenuBarExtra) private var showsMenuBarExtra = false
-  @AppStorage(AppPreferences.Key.stimExecutable) private var stimExecutable = ""
   @AppStorage(AppPreferences.Key.remoteSessionMinutes) private var remoteMinutes = 30
   @AppStorage(AppPreferences.Key.notifiesDiskPressure) private var notifiesPressure = true
   @AppStorage(NotificationSettings.stuckMinutesKey) private var stuckMinutes = Oversight.defaultStuckMinutes
@@ -89,6 +89,13 @@ struct AppPreferencesView: View {
         Picker("Live frame rate", selection: $framesPerSecond) {
           ForEach(AppPreferences.frameRates, id: \.self) { Text("\(Int($0)) fps").tag($0) }
         }
+        Picker("Stream quality", selection: $streamQuality) {
+          ForEach(StreamQuality.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Text(
+          "High streams hosted, remote and physical devices in a device's viewer at 60 fps and a larger size. It uses more bandwidth. Tiles stay Standard."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.secondary)
         Toggle("Pause frames while the window is hidden", isOn: $pausesHidden)
       }
 
@@ -149,6 +156,9 @@ struct AppPreferencesView: View {
         LabeledContent("Setup guide") {
           Button("Open Setup Guide\u{2026}") { OpenRequests.shared.showSetupGuide() }.buttonStyle(.stim())
         }
+        LabeledContent("Features") {
+          Button("Discover Stim") { OpenRequests.shared.showDiscover() }.buttonStyle(.stim())
+        }
         Toggle("Show in the menu bar", isOn: $showsMenuBarExtra)
         Toggle("Launch at login", isOn: $launchesAtLogin)
           .onChange(of: launchesAtLogin) { _, enabled in setLaunchAtLogin(enabled) }
@@ -183,7 +193,7 @@ struct AppPreferencesView: View {
         }
       }
 
-      Section("Stim CLI") {
+      Section("Stim") {
         LabeledContent("Stim home") {
           Text(abbreviatingHome(stimHome))
             .font(.stim(.body, mono: true))
@@ -194,12 +204,6 @@ struct AppPreferencesView: View {
             .foregroundStyle(Palette.tertiary)
         }
         stimVersionRow
-        HStack {
-          TextField("stim from Stim Desktop's PATH", text: $stimExecutable)
-          Button("Choose\u{2026}", action: chooseExecutable).buttonStyle(.stim())
-        }
-        Text("Overrides STIM_BIN and PATH. Takes effect the next time Stim Desktop starts.")
-          .foregroundStyle(Palette.tertiary)
       }
     }
     .formStyle(.grouped)
@@ -247,14 +251,6 @@ struct AppPreferencesView: View {
       loginError = "Could not change the login item: \(error.localizedDescription)"
       launchesAtLogin = SMAppService.mainApp.status == .enabled
     }
-  }
-
-  private func chooseExecutable() {
-    let panel = NSOpenPanel()
-    panel.canChooseFiles = true
-    panel.canChooseDirectories = false
-    panel.prompt = "Choose"
-    if panel.runModal() == .OK, let url = panel.url { stimExecutable = url.path }
   }
 }
 

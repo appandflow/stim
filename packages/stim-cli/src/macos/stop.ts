@@ -4,7 +4,7 @@ import { inspectProcessIdentity, waitForProcessExit } from '../process-identity.
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { withWorkspaceStateLockAsync, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { runningBundleInstancesAsync } from './instances.ts';
+import { hostedBundleDirs, runningBundleInstancesAsync, runningInstancesInAsync } from './instances.ts';
 import { macosRuntimeClaim, requiredMacosRecord } from './state.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import type { StimContext } from '@stim-cli/core';
@@ -20,9 +20,9 @@ function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
-async function stopProcesses(
+export async function stopProcesses(
   records: readonly MacosProcess[],
-  waitMs = APP_EXIT_MS,
+  waitMs: number = APP_EXIT_MS,
   operation?: StimContext,
 ): Promise<void> {
   let live = [...new Map(records.map((record) => [record.pid, record])).values()];
@@ -54,6 +54,11 @@ export async function stopBundleInstances(root: string, operation?: StimContext)
   const instances = await runningBundleInstancesAsync(root, operation);
   await stopProcesses(instances, undefined, operation);
   return instances.length > 0;
+}
+
+/** Stops every running copy of a hosted session's app bundles, including copies LaunchServices started from an earlier attempt. */
+export async function stopHostedBundleInstances(area: string, operation?: StimContext): Promise<void> {
+  await stopProcesses(await runningInstancesInAsync(hostedBundleDirs(area), operation), undefined, operation);
 }
 
 export async function stopMacosAppHeld(root: string, operation?: StimContext): Promise<boolean> {

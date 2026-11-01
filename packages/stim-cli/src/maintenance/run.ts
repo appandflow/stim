@@ -167,7 +167,9 @@ function describeDone(action: MaintenanceAction): string {
     case 'would-delete-gradle-version':
       return `Deleted the unpinned Gradle ${action.target} caches and distributions`;
     case 'would-stop-workspace':
-      return `Stopped ${name} and deleted its owned devices`;
+      return action.check === 'idle'
+        ? `Stopped ${name} and shut down its owned devices`
+        : `Stopped ${name} and deleted its owned devices`;
     case 'would-shutdown-device':
       return `Shut down the idle device ${action.target} of ${name}`;
     default:
@@ -179,6 +181,8 @@ const actionKey = (action: MaintenanceState['plan'][number]) => JSON.stringify([
 const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
+
+const BACKGROUND_TRIGGERS = new Set(['supervisor', 'status-watch']);
 
 export async function runMaintenance(trigger: string): Promise<void> {
   const startedAt = Date.now();
@@ -206,6 +210,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
     };
     const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
+    const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
     const noteWriteError = (error: unknown) => {
       writeError ??= error instanceof Error ? error.message : String(error);
@@ -333,6 +338,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
         idle: ran.has('idle'),
+        background,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -350,6 +356,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       const context = {
         settings,
         budget,
+        background,
         protectedRoot: triggeringRoot(),
         worktreeSweep: result.worktreeSweep,
         pressureSweep: result.pressureSweep,
@@ -410,7 +417,8 @@ export async function runMaintenance(trigger: string): Promise<void> {
       (action) =>
         (action.check === 'sweep' && !ran.has('sweep')) ||
         (action.check === 'worktree' && !plannedWorktrees) ||
-        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')),
+        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')) ||
+        (action.check === 'idle' && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);

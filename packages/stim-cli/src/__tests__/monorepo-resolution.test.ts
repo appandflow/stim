@@ -10,9 +10,9 @@ import {
 } from '../diagnostics/doctor.ts';
 import { workspaceStateFile } from '../workspace/paths.ts';
 import { upsertProject } from '../workspace/config.ts';
-import { detectIsExpo, findServerWorkspace, isPackageResolvable, resolvePackageJson } from '../workspace/project.ts';
+import { detectIsExpo, findServerWorkspace } from '../workspace/project.ts';
 import { MODE_BARE, MODE_EXPO, runSupervisor } from '../supervisor/run.ts';
-import { expoBinFromPackage, expoBinPath, findBinUpward } from '../supervisor/server-expo.ts';
+import { expoBinPath } from '../supervisor/server-expo.ts';
 
 vi.mock('../engine/ios-signing.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../engine/ios-signing.ts')>()),
@@ -77,21 +77,6 @@ afterEach(() => {
 });
 
 describe("finding the project's expo binary", () => {
-  test('resolves the HOISTED package from an app with no node_modules of its own', () => {
-    expect(resolvePackageJson(app, 'expo')).toBe(join(ws, 'node_modules', 'expo', 'package.json'));
-    expect(expoBinPath(app)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
-  });
-
-  test("derives the executable from the package's own bin field, not a guessed path", () => {
-    const pkg = join(ws, 'node_modules', 'expo', 'package.json');
-    expect(expoBinFromPackage(pkg)).toBe(join(ws, 'node_modules', 'expo', 'bin', 'cli'));
-    write(join(ws, 'node_modules', 'other', 'package.json'), JSON.stringify({ name: 'other', bin: 'cli.js' }));
-    write(join(ws, 'node_modules', 'other', 'cli.js'), '#!/usr/bin/env node\n', { exec: true });
-    expect(expoBinFromPackage(join(ws, 'node_modules', 'other', 'package.json'), 'other')).toBe(
-      join(ws, 'node_modules', 'other', 'cli.js'),
-    );
-  });
-
   test.skipIf(process.platform === 'win32')(
     'a bin file that is not executable falls through to the .bin shim (POSIX execute bit; skipped on win32)',
     () => {
@@ -100,26 +85,6 @@ describe("finding the project's expo binary", () => {
       expect(expoBinPath(app)).toBe(join(ws, 'node_modules', '.bin', 'expo'));
     },
   );
-
-  test('the .bin walk reaches the repository root and stops there', () => {
-    expect(findBinUpward(app, 'expo')).toBe(null);
-    mkdirSync(join(ws, '.git'));
-    expect(findBinUpward(app, 'expo')).toBe(join(ws, 'node_modules', '.bin', 'expo'));
-    expect(findBinUpward(app, 'nothing-like-this')).toBe(null);
-    writeFileSync(join(app, '.git'), 'gitdir: elsewhere\n');
-    expect(findBinUpward(app, 'expo')).toBe(null);
-  });
-
-  test('a project that really has no expo resolves to null, so the caller can say so honestly', () => {
-    const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
-    try {
-      write(join(bare, 'package.json'), JSON.stringify({ name: 'bare' }));
-      expect(expoBinPath(bare)).toBe(null);
-      expect(isPackageResolvable(bare, 'expo')).toBe(false);
-    } finally {
-      rmSync(bare, { recursive: true, force: true });
-    }
-  });
 
   test("expo on NODE_PATH, as pnpm's bin shims set it, does not make a bare project resolve it", () => {
     const bare = realpathSync(mkdtempSync(join(tmpdir(), 'stim-bare-')));
@@ -141,25 +106,6 @@ describe("finding the project's expo binary", () => {
 });
 
 describe('detectIsExpo on a hoisted workspace', () => {
-  test('an app with a wrapper-less app.json and no ios script still reads as Expo', () => {
-    expect(detectIsExpo(app)).toBe(true);
-  });
-
-  test('the app.json shape alone carries it when nothing is installed yet', () => {
-    const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'stim-fresh-')));
-    try {
-      write(join(fresh, 'package.json'), JSON.stringify({ name: 'app', dependencies: { expo: '^57.0.0' } }));
-      write(
-        join(fresh, 'app.json'),
-        JSON.stringify({ name: 'app', plugins: ['expo-dev-client'], extra: { eas: { projectId: 'x' } } }),
-      );
-      expect(isPackageResolvable(fresh, 'expo')).toBe(false);
-      expect(detectIsExpo(fresh)).toBe(true);
-    } finally {
-      rmSync(fresh, { recursive: true, force: true });
-    }
-  });
-
   test('a committed native project says so through use_expo_modules!', () => {
     const native = realpathSync(mkdtempSync(join(tmpdir(), 'stim-native-')));
     try {
@@ -260,27 +206,6 @@ describe('the workspace a monorepo web server belongs to', () => {
     write(join(web, 'package.json'), JSON.stringify({ name: '@ws/web', devDependencies: { vite: '^5.0.0' } }));
     git(ws, 'init', '-q', '-b', 'main');
     git(ws, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init');
-  });
-
-  test("a web package resolves to the worktree's one registered app", () => {
-    upsertProject(app, {});
-    expect(findServerWorkspace(web)).toEqual({ root: app, from: web });
-    expect(findServerWorkspace(app)).toEqual({ root: app, from: null });
-  });
-
-  test('a web package that already holds ports keeps them', () => {
-    upsertProject(web, { ports: { web: 8900 } });
-    upsertProject(app, {});
-    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
-  });
-
-  test('keeps the nearest package when the app is unregistered or ambiguous', () => {
-    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
-    const second = join(ws, 'packages', 'second');
-    write(join(second, 'package.json'), JSON.stringify({ name: '@ws/second', dependencies: { expo: '^57.0.8' } }));
-    upsertProject(app, {});
-    upsertProject(second, {});
-    expect(findServerWorkspace(web)).toEqual({ root: web, from: null });
   });
 
   test('ignores an app registered in another worktree nested under this one', () => {

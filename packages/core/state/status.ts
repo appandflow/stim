@@ -258,6 +258,8 @@ export interface BuildPlanPayload {
   refusal?: { code: string; message: string; remedy: string };
   /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this machine; auto may use janics-mac-mini`. */
   placement?: string;
+  /** Resolved build preference; automatic worker availability and compatibility are checked at run time. */
+  buildPlacement?: { preference: string; reason: string };
 }
 
 /** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
@@ -304,6 +306,8 @@ export interface DeviceActivity {
   /** The newest time of each kind of evidence behind `lastActivityAt`, so a reader can leave out app log chatter. */
   recent?: Partial<Record<ActivityRecencyBasis, string>>;
   basis: string[];
+  /** For a driven device, the probes that could not be read, which `basis` leaves out. */
+  unknown?: string[];
 }
 
 /** Every state a device's app process can report. */
@@ -651,6 +655,12 @@ export interface EnvironmentState {
   doctorRuns?: Partial<Record<'ios' | 'android', { at: string }>>;
   live: boolean;
   phase?: WorkspacePhase;
+  /**
+   * Present when the workspace's folder no longer exists on a mounted volume, for example after `git worktree remove`
+   * or `rm -rf`; `phase` is then never `warming` or `ready`. The entry stays registered until `stim gc --delete`. A
+   * folder on a volume that is not mounted is not reported.
+   */
+  pathMissing?: true;
   /** When the warm started (`warming`) or finished (`ready`); null for `live` and `idle`. */
   phaseSince?: string | null;
   /** Whether stim-server may record this workspace's device screens, from `recording.enabled`. */
@@ -691,6 +701,8 @@ export interface EnvironmentState {
   logs?: { dir: string; errorsSinceMarker: number } | null;
   /** `installed` is whether the agent-device executable is on the PATH of the process that ran status. */
   agentDevice?: { stateDir: string; installed?: boolean };
+  /** The verified canonical Git checkout root, including primary checkouts; null outside Git or when unreadable. This does not imply removable worktree ownership. */
+  checkout?: string | null;
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */
@@ -716,6 +728,8 @@ export interface StatusCapacity {
   builds?: StatusBuildSlots;
   /** `concurrency.maxDevices` usage; present only while that cap is set. */
   devices?: StatusDeviceSlots;
+  /** `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set. */
+  platformDevices?: Partial<Record<'ios' | 'android', StatusPlatformDeviceSlots>>;
   /** This machine's load. Optional only so payloads from releases that predate it still decode. */
   load?: StatusCapacityLoad;
 }
@@ -775,6 +789,13 @@ export interface StatusDeviceSlots {
   inUse: number | null;
   unknown?: string;
   holders: StatusDeviceSlotHolder[];
+}
+
+/** `inUse` is null, with `unknown` saying why, when Stim cannot count the owned devices. */
+export interface StatusPlatformDeviceSlots {
+  max: number;
+  inUse: number | null;
+  unknown?: string;
 }
 
 export interface DeviceLeaseState {

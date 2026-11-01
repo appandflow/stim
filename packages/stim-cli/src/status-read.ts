@@ -6,10 +6,11 @@ import { inspectProcessIdentity } from './process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
 import { existsSync } from 'fs';
 import { homedir } from 'os';
+import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 import { basename, dirname, join } from 'path';
-import { getConcurrencyLimits, loadConfig } from './workspace/config.ts';
+import { getConcurrencyLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
-import { deviceSlotUsage } from './engine/device-capacity.ts';
+import { deviceSlotUsages } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
 import { getExecutor } from './exec.ts';
 import { isMetroRunning } from './ports.ts';
@@ -39,7 +40,15 @@ import {
   type ResolvedAvdSerial,
 } from './devices/android.ts';
 import type { IosSimRecord } from './devices/ios.ts';
-import { gitCommonDir, gitCommonDirOnDisk, linkedWorktreesOnDisk, repoRoot } from './workspace/worktree.ts';
+import {
+  gitCommonDir,
+  gitCommonDirOnDisk,
+  gitLocationOnDisk,
+  linkedWorktreesOnDisk,
+  nativeCanonicalPath,
+  repoRoot,
+  repoRootAsync,
+} from './workspace/worktree.ts';
 import { inPrivacyProtectedFolder, readWorktreeGit } from './workspace/git-summary.ts';
 import { readWorkspaceState, type WorkspaceState } from './workspace/workspace-state.ts';
 import { readStats, statsProjectKey, type RunHistory } from './engine/stats.ts';
@@ -183,7 +192,7 @@ export interface StatusSnapshot {
   cwdRoot: string | null;
   tables: DeviceProcessTables;
   machine: MachineUsageState | null;
-  slotUsage: Pick<StatusCapacity, 'builds' | 'devices'>;
+  slotUsage: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>;
   roots: WorkspaceProcessRoots[];
   simNames: Record<string, string>;
   probes: StatusProbes;
@@ -226,7 +235,11 @@ export function liveProbes({
   const androidRuntimeOf = androidRuntimeReader();
   return {
     simulators: () =>
-      simctlListing === null ? listAllIosSimsAsync() : Promise.resolve().then(() => parseSimctlList(simctlListing)),
+      process.platform !== 'darwin'
+        ? Promise.resolve([])
+        : simctlListing === null
+          ? listAllIosSimsAsync()
+          : Promise.resolve().then(() => parseSimctlList(simctlListing)),
     metro: readMetroFacts,
     hostedIos: readHostedIosStatus,
     hostedAndroid: readHostedAndroidStatus,
@@ -240,6 +253,16 @@ export function liveProbes({
     footprints: readFootprints,
     archives: () => archives ?? readArchives(),
   };
+}
+
+function applyCheckout(
+  state: EnvironmentState,
+  candidate: string | undefined,
+  verified: ReadonlySet<string | null>,
+): void {
+  state.checkout = candidate && verified.has(candidate) ? candidate : null;
+  if (state.worktree && (!state.checkout || nativeCanonicalPath(state.worktree.path) !== state.checkout))
+    state.worktree = null;
 }
 
 type GitScope = 'all' | 'live' | 'none';
@@ -265,7 +288,14 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   );
   const macosReads = projects.map(([path]) => probes.hostedMacos(readMacosRecord(path)));
   const cwdRoot = findServerWorkspace(cwd)?.root ?? null;
-  const { worktrees, commonDirs } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
+  const { worktrees, commonDirs, checkouts } = linkedWorktrees([cwd, ...projects.map(([path]) => path)]);
+  const checkoutRead = Promise.all(
+    [...new Set(checkouts.values())].map(async (path) => {
+      const root = await repoRootAsync(path);
+      return root && nativeCanonicalPath(root) === path ? path : null;
+    }),
+  );
+  checkoutRead.catch(() => {});
   const orphanWorktrees = unprovisionedWorktrees(
     worktrees,
     projects.map(([p]) => p),
@@ -323,8 +353,10 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   }));
   await gitRead;
 
+  const verifiedCheckouts = new Set(await checkoutRead);
   const history = readStats().record?.history;
   const states: EnvironmentState[] = [];
+  let mountedVolumes: string[] | undefined;
   const labelOnlyRoots: boolean[] = [];
   const launchesByState: ReturnType<typeof readWorkspaceLaunches>[] = [];
   const easLedger = readEasSessionLedger();
@@ -393,6 +425,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     );
     const state = states[states.length - 1];
     if (state) {
+      applyCheckout(state, checkouts.get(path), verifiedCheckouts);
       for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
         if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
       }
@@ -424,7 +457,10 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
-      Object.assign(state, builds, workspacePhase(state.live, saved, { now: leaseNow }), {
+      const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
+      const phase = workspacePhase(state.live, saved, { now: leaseNow });
+      Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {
+        ...(missing ? { pathMissing: true as const } : {}),
         platforms: (() => {
           const context = {
             projectPath: path,
@@ -476,23 +512,22 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
   const { maxBuilds, maxDevices } = getConcurrencyLimits();
+  const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
     ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),
-    ...(maxDevices > 0
-      ? {
-          devices: await deviceSlotUsage(maxDevices, {
-            config: cfg,
-            sims:
-              process.platform !== 'darwin'
-                ? []
-                : simsAvailable
-                  ? sims
-                  : () => {
-                      throw simctlFailure;
-                    },
-            adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
-          }),
-        }
+    ...(maxDevices > 0 || platformLimits.ios > 0 || platformLimits.android > 0
+      ? await deviceSlotUsages(maxDevices, platformLimits, {
+          config: cfg,
+          sims:
+            process.platform !== 'darwin'
+              ? []
+              : simsAvailable
+                ? sims
+                : () => {
+                    throw simctlFailure;
+                  },
+          adb: () => listAdbDevicesAsync({ timeoutMs: PHYSICAL_DEVICE_LIST_TIMEOUT_MS }),
+        })
       : {}),
   };
   const archives = probes.archives();
@@ -711,13 +746,21 @@ function readMetroReverses(
   }
 }
 
-function linkedWorktrees(paths: string[]): { worktrees: WorktreeFacts[]; commonDirs: string[] } {
-  const commonDirs = [...new Set(paths.flatMap((path) => gitCommonDirOnDisk(path) ?? []))];
+function linkedWorktrees(paths: string[]): {
+  worktrees: WorktreeFacts[];
+  commonDirs: string[];
+  checkouts: Map<string, string>;
+} {
+  const locations = paths.map((path) => ({ path, location: gitLocationOnDisk(path) }));
+  const commonDirs = [...new Set(locations.flatMap(({ location }) => location?.commonDir ?? []))];
+  const checkouts = new Map(
+    locations.flatMap(({ path, location }) => (location ? [[path, location.path] as const] : [])),
+  );
   const worktrees = commonDirs.flatMap((common) => {
     const repository = basename(common) === '.git' ? dirname(common) : common;
     return linkedWorktreesOnDisk(common).map((entry) => Object.assign(entry, { repository }));
   });
-  return { worktrees, commonDirs };
+  return { worktrees, commonDirs, checkouts };
 }
 
 function workspaceBuilds(

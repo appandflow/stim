@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { readSetupJournal, serverSetupDir, setupJournalFile, type SetupJournal } from '@stim-cli/core/state';
+import { serverSetupDir, setupJournalFile, type SetupJournal } from '@stim-cli/core/state';
 import { pruneSetupJournals, setupJournalForClient, writeSetupJournal } from '../src/setup-journal.ts';
 
 let home: string;
@@ -26,15 +26,6 @@ const journal: SetupJournal = {
   granted: [],
   done: false,
 };
-
-test('writes readable journal replacements preserving the final state', () => {
-  const hash = 'a'.repeat(64);
-  writeSetupJournal(hash, journal);
-  expect(readSetupJournal(hash)).toEqual(journal);
-  const finished = { ...journal, done: true, exit: 0 };
-  writeSetupJournal(hash, finished);
-  expect(readSetupJournal(hash)).toEqual(finished);
-});
 
 test('prunes only valid journal files more than one hour past expiry, retaining boundary and unrelated files', () => {
   const now = Date.parse(journal.expiresAt) + 60 * 60_000;

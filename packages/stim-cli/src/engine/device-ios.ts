@@ -14,7 +14,7 @@ import {
   withConfigLockAsync,
 } from '../workspace/config.ts';
 import { configuredIosSimulatorViewer, type IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, isTimeoutError } from '../exec.ts';
 import { hostMemoryPressureAdvice, readHostMemoryPressure, reportMemoryCulprits } from '../host-memory.ts';
 import {
   bootIosSim,
@@ -67,6 +67,16 @@ export interface IosBoot {
 
 type IosBootOrigin = 'adopted' | 'created' | 'existing' | 'restart';
 
+async function requireOwnedIosSim(udid: string, listed?: SimRecord[]): Promise<SimRecord> {
+  const current = resolveOwnedIosSim(udid, listed ?? (await listAllIosSimsAsync({ includeUnavailable: true })));
+  if (current.notOwned)
+    throw new Error(
+      `Simulator ${udid} is now named "${current.notOwned}" and is not Stim-owned; refusing to change it.`,
+    );
+  if (!current.sim) throw new Error(`Simulator ${udid} no longer exists. Run \`stim ios\` again.`);
+  return current.sim;
+}
+
 function recordBootPhase(record: IosBootRecorder, udid: string, origin?: IosBootOrigin) {
   return (event: IosBootEvent) => {
     const pid = 'pid' in event ? event.pid : undefined;
@@ -94,6 +104,7 @@ function startIosBoot(
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
     async () => {
+      await requireOwnedIosSim(udid);
       out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
       await bootIosSim(udid, {
         label,
@@ -116,7 +127,7 @@ const SPRINGBOARD_MUTE_WAIT_MS = 60000;
 // SpringBoard publishes the default volume, 60, every time it starts, and SimSlim
 // reboots the simulator when it applies or removes a profile (#4229). Mute last,
 // once SpringBoard is running again.
-async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
+export async function muteBootedSimulator(udid: string, out: Notify): Promise<void> {
   try {
     const springBoard = await waitForSpringBoard(udid, Date.now() + SPRINGBOARD_MUTE_WAIT_MS);
     if (springBoard.state === 'unreadable') throw new Error(springBoard.reason);
@@ -411,7 +422,9 @@ function ownedIosName(sim: SimRecord, label: string, model: SimModel, projectPat
 }
 
 async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel, projectPath: string): Promise<string> {
-  const wanted = ownedIosName(sim, label, model, projectPath, await listAllIosSimsAsync({ includeUnavailable: true }));
+  const listed = await listAllIosSimsAsync({ includeUnavailable: true });
+  sim = await requireOwnedIosSim(sim.udid, listed);
+  const wanted = ownedIosName(sim, label, model, projectPath, listed);
   if (sim.name === wanted) return wanted;
   try {
     await renameIosSim(sim.udid, wanted);
@@ -423,7 +436,9 @@ async function renameToOwnedName(sim: SimRecord, label: string, model: SimModel,
 
 async function resetAdoptedSim(udid: string, out: Notify): Promise<void> {
   out(chalk.dim(phaseLine('device', `resetting privacy grants and the keychain on ${udid}`)));
+  await requireOwnedIosSim(udid);
   await resetIosPrivacy(udid);
+  await requireOwnedIosSim(udid);
   await resetIosKeychain(udid);
 }
 
@@ -499,6 +514,7 @@ async function takeParkedIosSim({
     };
     const adopted = await adoptParked({ platform: 'ios', projectPath, slot, udid: parked.udid, device });
     if (!adopted) continue;
+    await requireOwnedIosSim(parked.udid);
     try {
       await renameIosSim(parked.udid, name);
     } catch {}
@@ -626,6 +642,7 @@ type IosBootArgs = {
 type IosBootAttempt = BootResult & { springBoardDown?: true };
 
 const SPRINGBOARD_RESPAWN_POLLS = 20;
+const SPAWN_STALL_TOLERANCE_MS = 180000;
 
 export async function ensureIosBooted(args: IosBootArgs): Promise<BootResult> {
   const { springBoardDown, ...first } = await bootOwnedIosSim(args);
@@ -712,8 +729,20 @@ async function bootOwnedIosSim({
   const ready = async (): Promise<IosBootAttempt> => {
     try {
       // Apple simctl spawn searches the device PATH for bare names; absolute paths use the host root.
-      const listSpringBoard = () =>
-        getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], { timeoutMs: 30000 });
+      const stallDeadline = Date.now() + SPAWN_STALL_TOLERANCE_MS;
+      const listSpringBoard = async (): Promise<string> => {
+        for (;;) {
+          try {
+            return await getExecutor().runFileAsync('xcrun', ['simctl', 'spawn', udid, 'launchctl', 'list'], {
+              timeoutMs: 30000,
+            });
+          } catch (error) {
+            if (!isTimeoutError(error) || Date.now() >= stallDeadline) throw error;
+            const sims = await listAllIosSimsAsync().catch(() => null);
+            if (sims && sims.find((s) => s.udid === udid)?.state !== 'Booted') throw error;
+          }
+        }
+      };
       let listing = await listSpringBoard();
       for (let poll = 0; !springBoardRunning(listing) && poll < SPRINGBOARD_RESPAWN_POLLS; poll++) {
         await cancellableSleep(pollMs);
@@ -779,6 +808,7 @@ async function bootOwnedIosSim({
     await withDeviceBootAdmission(
       { platform: 'ios', key: udid },
       async () => {
+        await requireOwnedIosSim(udid);
         out(chalk.dim(phaseLine('device', `booting ${sim.name} (${udid})`)));
         await bootIosSim(udid, {
           timeoutMs,

@@ -19,6 +19,7 @@ const defaultPackages = [
   'packages/stim-cli',
   'packages/transport',
   'packages/transport-tailscale',
+  'packages/transport-local',
 ];
 const named = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 const packages = named.length > 0 ? named : defaultPackages;

@@ -18,7 +18,7 @@ const EMPTY_INPUT_SHA256 = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
-export function parseInstalledApkPath(text: unknown): string | null {
+function parseInstalledApkPath(text: unknown): string | null {
   if (typeof text !== 'string') return null;
   const paths: string[] = [];
   for (const raw of text.split('\n')) {
@@ -36,18 +36,18 @@ export function parseDeviceSha256(text: unknown): string | null {
   return SHA256_HEX.test(first) ? first : null;
 }
 
-export function deviceTailProbeScript(packageName: string, tailBytes: number): string {
+function deviceTailProbeScript(packageName: string, tailBytes: number): string {
   return (
     `for p in $(pm path ${packageName} | sed -n "s/^package://p"); do ` +
     `echo "path $p"; stat -c "size %s" "$p"; tail -c ${tailBytes} "$p" | sha256sum; done`
   );
 }
 
-export type DeviceTailProbe = { installs: 0 | 'split' } | { installs: 1; size: number; tailSha256: string };
+type DeviceTailProbe = { installs: 0 | 'split' } | { installs: 1; size: number; tailSha256: string };
 
 const TAIL_PROBE = /^path \/.*\nsize (\d+)\n(\S+) {2}-$/gm;
 
-export function parseDeviceTailProbe(text: unknown): DeviceTailProbe | null {
+function parseDeviceTailProbe(text: unknown): DeviceTailProbe | null {
   if (typeof text !== 'string') return null;
   const lines = text
     .split('\n')
@@ -74,7 +74,7 @@ export function parseAppContainerPath(text: unknown): string | null {
   return lines.length === 1 && isAbsolute(lines[0]!) ? lines[0]! : null;
 }
 
-export function artifactsMatch(local: string | null, installed: string | null): boolean {
+function artifactsMatch(local: string | null, installed: string | null): boolean {
   return Boolean(local) && local === installed;
 }
 

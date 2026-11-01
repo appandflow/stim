@@ -163,6 +163,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
   { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
+    key: 'ios.autoInstallRuntime',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description: 'Install an explicitly requested missing iOS simulator runtime on the selected Mac',
+  },
+  {
     key: 'ios.configuration',
     type: STRING,
     scopes: PROJECT,
@@ -252,6 +259,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: "Address a phone uses to reach this workspace's Metro",
   },
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
+  {
+    key: 'android.installImages',
+    type: { kind: 'choice', choices: ['auto', 'never'] },
+    scopes: EVERY,
+    default: 'auto',
+    description: 'Whether Stim installs a missing system image with sdkmanager before creating an owned AVD',
+  },
   {
     key: 'android.deviceProfile',
     type: {
@@ -602,7 +616,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_DEVICES',
-    description: 'Booted owned devices; 0 means no limit',
+    description:
+      'Booted owned iOS simulators and Android emulators together, and, separately, hosted macOS apps; 0 means no limit',
+  },
+  {
+    key: 'concurrency.maxIosDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_IOS_DEVICES',
+    description: 'Booted owned iOS simulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxAndroidDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_ANDROID_DEVICES',
+    description:
+      'Booted owned Android emulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxMacosApps',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_MACOS_APPS',
+    description: 'Hosted macOS apps, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'budget.minFreeDiskGb',
@@ -744,7 +784,16 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 5,
     env: 'STIM_MAINTENANCE_IDLE_CHECK_MINUTES',
     description:
-      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running',
+      'Interval in minutes of the check that shuts down owned simulators and emulators idle for devices.idleShutdownMinutes, also with no dev server running, and stops workspaces idle for maintenance.idleStopHours',
+  },
+  {
+    key: 'maintenance.idleStopHours',
+    type: { kind: 'number', minimum: 0 },
+    scopes: EVERY,
+    default: 6,
+    env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
+    description:
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view of a local device before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned or hosted simulators and emulators, as stim stop does, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
   },
   {
     key: 'maintenance.sweepHours',
@@ -870,9 +919,10 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'caches.swiftCompilationCacheMaxGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
-    default: 15,
+    default: 0,
     env: 'STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB',
-    description: 'Swift compilation-cache cap in GiB; planned emptying is whole; 0 means no cap',
+    description:
+      'Swift compilation-cache cap in GiB; above it the cache is emptied whole, while no build holds it; 0 means no cap',
   },
   {
     key: 'caches.ccacheMaxGb',
@@ -951,11 +1001,19 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
   },
   {
+    key: 'server.lanAddresses',
+    type: { kind: 'strings' },
+    scopes: MACHINE,
+    default: [],
+    description:
+      "IPv4 addresses or network interface names (such as en0) on which stim-server also accepts machines and phones on the local network, without Tailscale, on its own port. Empty listens on no local network address. Wildcard addresses are refused. Connections there run protocol 2's Noise authentication and encryption, without TLS",
+  },
+  {
     key: 'remote.machines',
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'Tailscale names of the remote machines this machine may build on and host owned simulators, emulators and macOS apps on, each optionally with :<port> of its tailscale serve route (default 7443). The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key stim remote add pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which stim remote add asks for separately. Change the list with stim remote add and stim remote remove',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -979,7 +1037,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
+      'When ios.remote or android.remote is auto or remote, this machine is at a device cap (concurrency.maxDevices or a per-platform cap) and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',

@@ -16,7 +16,7 @@ export async function collectHostedAndroidLogs(
 ): Promise<boolean> {
   const deadline = Date.now() + 10_000;
   const device = readHostedDevice(home, 'android');
-  assertHostedAndroidSerial(home, device);
+  await assertHostedAndroidSerial(home, device);
   const app = readHostedAppMetadata(session, attempt, home);
   if (app.state !== 'installed') return false;
   const exec = getExecutor();

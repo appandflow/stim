@@ -1,3 +1,5 @@
+import { ensureIosRuntime } from '../../devices/ios-runtime.ts';
+import { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import type { IosRuntimePlan } from './launch.ts';
@@ -32,12 +34,14 @@ import { verifyLaunch, verifyReleaseLaunch } from '../../engine/launch-verify.ts
 import { acquireBuildLock, releaseBuildLock, waitForBuild } from '../../engine/build-lock.ts';
 import { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
 import { readPodState, podsAreStale, runPodInstall } from '../../engine/deps.ts';
+import { iosToolchainAsync } from '../../offload/toolchain.ts';
 import { checkDeviceCapacity } from '../../engine/device-capacity.ts';
 import { budgetGate } from '../../budget.ts';
 import { clearIosAdoptionPending } from '../../engine/device-ios.ts';
 import { ensureBooted, ensureOwnedDevice } from '../../engine/device.ts';
 import {
   clearIosAppData,
+  resetIosKeychain,
   listIosRuntimesAsync,
   listIosRuntimes,
   listAllIosSims,
@@ -96,6 +100,8 @@ import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../d
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  ensureIosRuntime: typeof ensureIosRuntime;
+  installHostedIosRuntime: typeof installHostedIosRuntime;
   projectRegistry: Pick<ProjectRegistry, 'selectIos'>;
   runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
@@ -165,6 +171,7 @@ export interface IosDeps {
   readPodState: typeof readPodState;
   podsAreStale: typeof podsAreStale;
   runPodInstall: typeof runPodInstall;
+  iosToolchain: typeof iosToolchainAsync;
   buildIos: typeof buildIos;
   discoverXcodeProject: typeof discoverXcodeProject;
   resolveScheme: typeof resolveScheme;
@@ -191,6 +198,7 @@ export interface IosDeps {
   installIosApp: typeof installIosApp;
   clearOtherUserApps: typeof clearOtherUserApps;
   clearIosAppData: typeof clearIosAppData;
+  resetIosKeychain: typeof resetIosKeychain;
   clearIosAdoptionPending: typeof clearIosAdoptionPending;
   launchIosApp: typeof launchIosApp;
   verifyLaunch: typeof verifyLaunch;
@@ -209,6 +217,8 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  ensureIosRuntime,
+  installHostedIosRuntime,
   projectRegistry,
   automaticDevicePlacement,
   checkEasFallback,
@@ -274,6 +284,7 @@ export const DEFAULT_DEPS: IosDeps = {
   readPodState,
   podsAreStale,
   runPodInstall,
+  iosToolchain: iosToolchainAsync,
   buildIos,
   discoverXcodeProject,
   resolveScheme,
@@ -296,6 +307,7 @@ export const DEFAULT_DEPS: IosDeps = {
   installIosApp,
   clearOtherUserApps,
   clearIosAppData,
+  resetIosKeychain,
   clearIosAdoptionPending,
   launchIosApp,
   verifyLaunch,

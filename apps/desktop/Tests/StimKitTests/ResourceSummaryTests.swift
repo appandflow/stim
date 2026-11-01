@@ -23,4 +23,11 @@ import Testing
       ResourceSummary.entries(cpu: true, memory: true, disk: true)
         == [.item(.cpu), .divider, .item(.memory), .divider, .item(.disk)])
   }
+
+  @Test func loadSitsNextToCpuAndIsOptional() {
+    #expect(
+      ResourceSummary.entries(cpu: true, load: true, memory: true, disk: false)
+        == [.item(.cpu), .divider, .item(.load), .divider, .item(.memory)])
+    #expect(ResourceSummary.entries(cpu: false, load: true, memory: false, disk: true) == [.item(.load), .divider, .item(.disk)])
+  }
 }

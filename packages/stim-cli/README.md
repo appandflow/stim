@@ -104,7 +104,9 @@ Build-only preserves existing sessions and uses the same cache and build locks.
 Successful builds include `result.facts.links.workspace`, an HTTPS workspace link
 agents can share with an already-paired phone or Desktop, including when the
 build machine has no Desktop app installed.
-Each result is a separate copy kept in the workspace until `stim worktree remove`.
+Each result is a separate copy in the workspace. It lasts until a build replaces
+its recorded build (for macOS, until the next macOS build) or `stim worktree remove`;
+copy or export a result you need to keep before the next build.
 Run results preserve the CLI's launch evidence, including `'bundling'` and
 `'unverified'` results.
 
@@ -164,7 +166,13 @@ its config, workspace-state, and lease lock waits are asynchronous.
 `plan({ platform: 'ios' | 'android' | 'macos', signal? })` predicts the next
 configured native build, as the CLI's `--plan --json` reports it, without building
 or launching. iOS and Android also accept `slot`; build and device selectors
-come from the project's settings. Plans use the report execution and cleanup
+come from the project's settings. iOS and Android plans report device `placement` separately
+from `buildPlacement`, whose `preference` follows `--remote-build`, `STIM_REMOTE_BUILD`,
+and `remote.build` in that order. Its `reason` distinguishes cache reuse from compilation.
+Automatic build preferences remain policies: the run checks worker availability and
+compatibility and applies its normal fallback. CLI plans accept `--remote` to override
+the device setting without reserving or starting a device. EAS-profile plans leave device
+placement unknown until the run. Plans use the report execution and cleanup
 budgets below. Fingerprinting uses the existing cancellable report helper;
 native probes and cache downloads finish cleanup before the report settles.
 Cache providers must settle after cancellation. If cleanup cannot finish within

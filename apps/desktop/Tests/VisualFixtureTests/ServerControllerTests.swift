@@ -5,6 +5,49 @@ import XCTest
 @testable import StimDesktop
 
 @MainActor final class ServerControllerTests: XCTestCase {
+  func testOnlyAnUnconfiguredLoopbackServerMovesAsideForAnotherStimHome() throws {
+    let health = try JSONDecoder().decode(
+      ServerHealth.self,
+      from: Data(
+        #"{"server":"stim-server","name":"Mac","version":"1","stim":"1","protocol":2,"stimHome":"/server/stim","tailscale":{"state":"running"}}"#
+          .utf8))
+    let probes = [
+      ServerHealthProbe.ready(health), .notReady(.pending, stimHome: "/server/stim"),
+      .notReady(.degraded("Volume is stalled."), stimHome: "/server/stim"),
+    ]
+    for probe in probes {
+      XCTAssertTrue(
+        ServerController.needsAutomaticPort(
+          probe: probe, resolvedHome: "/custom/stim", loopbackOnly: true, explicitPort: false))
+      XCTAssertFalse(
+        ServerController.needsAutomaticPort(
+          probe: probe, resolvedHome: "/server/stim", loopbackOnly: true, explicitPort: false))
+      XCTAssertFalse(
+        ServerController.needsAutomaticPort(
+          probe: probe, resolvedHome: "\(NSHomeDirectory())/.stim", loopbackOnly: true, explicitPort: false))
+      XCTAssertFalse(
+        ServerController.needsAutomaticPort(
+          probe: probe, resolvedHome: "/custom/stim", loopbackOnly: false, explicitPort: false))
+      XCTAssertFalse(
+        ServerController.needsAutomaticPort(
+          probe: probe, resolvedHome: "/custom/stim", loopbackOnly: true, explicitPort: true))
+    }
+    XCTAssertFalse(
+      ServerController.needsAutomaticPort(
+        probe: .notReady(.pending, stimHome: nil), resolvedHome: "/custom/stim", loopbackOnly: true, explicitPort: false))
+  }
+
+  func testAnAutomaticPortUsesOnlyTheChildsLoopbackListenerAnnouncement() {
+    XCTAssertEqual(ServerController.announcedLoopbackPort(OutputLine(.stdout, "listening on ws://127.0.0.1:49152")), 49152)
+    XCTAssertNil(ServerController.announcedLoopbackPort(OutputLine(.stderr, "listening on ws://127.0.0.1:49152")))
+    for line in [
+      "listening on ws://100.72.66.29:49152", "listening on ws://127.0.0.1:0",
+      "listening on ws://127.0.0.1:65536", "listening on ws://127.0.0.1:49152/health",
+    ] {
+      XCTAssertNil(ServerController.announcedLoopbackPort(OutputLine(.stdout, line)))
+    }
+  }
+
   func testNotReadyExternalServerRequiresTheResolvedHomeWhenKnown() {
     for startup in [ServerStartup.pending, .degraded("Volume is stalled.")] {
       let matching = ServerController.State(

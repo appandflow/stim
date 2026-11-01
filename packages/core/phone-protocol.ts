@@ -431,6 +431,8 @@ export type PhoneServerEvent =
       | Wire.DesktopReportEvent
       | Wire.DesktopStopProgressEvent
       | Wire.DesktopStopEndedEvent
+      | Wire.DesktopRemedyProgressEvent
+      | Wire.DesktopRemedyEndedEvent
       | Wire.DesktopReloadProgressEvent
       | Wire.DesktopReloadEndedEvent
       | Wire.DesktopStartProgressEvent
@@ -484,6 +486,7 @@ export type PhoneMethods = Omit<
   | 'desktop.settings.write'
   | 'desktop.logs.subscribe'
   | 'desktop.doctor.run'
+  | 'desktop.remedy.subscribe'
   | 'desktop.stop.subscribe'
   | 'desktop.reload.subscribe'
   | 'desktop.start.subscribe'

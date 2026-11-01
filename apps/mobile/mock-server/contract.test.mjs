@@ -4,10 +4,14 @@ import { test } from 'node:test';
 import { event, responses } from '../../../packages/core/receive-validators.mjs';
 import { loadFixtures } from './fixtures.mjs';
 
-for (const slotWaits of [false, true]) {
-  const fixtures = loadFixtures({ slotWaits });
+for (const [slotWaits, capacity] of [
+  [false, false],
+  [true, false],
+  [false, true],
+]) {
+  const fixtures = loadFixtures({ slotWaits, capacity });
 
-  test(`every status environment passes the phone validator (slot waits ${slotWaits})`, () => {
+  test(`every status environment passes the phone validator (slot waits ${slotWaits}, capacity ${capacity})`, () => {
     const statusEvent = (environments) => ({
       event: 'status',
       subscription: 'mock',

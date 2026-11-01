@@ -12,11 +12,10 @@ import Foundation
     case failed(String)
   }
 
-  static let fps = 30.0
-
   public let target: ReplayTarget
   /// False for a hosted simulator or macOS app, which stim-server relays rather than reading a leased device.
   public let physical: Bool
+  public private(set) var quality: StreamQuality
   /// Why no frames arrive: a refused or failed subscription, or the server's `frame-delayed` reason.
   @Published public private(set) var problem: String?
   @Published public private(set) var control = Control.off(ended: nil)
@@ -35,10 +34,39 @@ import Foundation
   private var generation = 0
   private var beginGeneration = 0
   private var pressed: (x: Double, y: Double)?
+  private var keyframeRequest: Task<Void, Never>?
+  private var fellBack = false
 
-  public init(target: ReplayTarget, physical: Bool = true) {
+  public init(target: ReplayTarget, physical: Bool = true, quality: StreamQuality = .standard) {
     self.target = target
     self.physical = physical
+    self.quality = quality
+  }
+
+  /// Resubscribes to the frames at `quality` without ending a control session.
+  public func setQuality(_ quality: StreamQuality) {
+    guard quality != self.quality else { return }
+    self.quality = quality
+    fellBack = false
+    resubscribe()
+  }
+
+  private func fallBackToStandard() -> Bool {
+    guard quality == .high, !fellBack else { return false }
+    fellBack = true
+    resubscribe()
+    return true
+  }
+
+  private func resubscribe() {
+    guard let server else { return }
+    unsubscribe?()
+    keyframeRequest?.cancel()
+    keyframeRequest = nil
+    subscriptionID = nil
+    receiving = false
+    problem = nil
+    subscribeFrames(server)
   }
 
   /// Subscribes to the device's frames on `server`, or with nil stops. A new server ends the control session.
@@ -51,11 +79,9 @@ import Foundation
     case .off, .failed: break
     }
     pressed = nil
+    fellBack = false
     self.server = server
     guard let server else { return }
-    generation += 1
-    let current = generation
-    DebugLog.info(.stream, "frames subscribe \(target.params)")
     unobserve = server.observeControlEnded { [weak self] ended in
       guard let self, case .on(let session) = self.control, ended.session == nil || ended.session == session else {
         return
@@ -63,17 +89,27 @@ import Foundation
       self.pressed = nil
       self.control = .off(ended: ended.message)
     }
+    subscribeFrames(server)
+  }
+
+  private func subscribeFrames(_ server: DeviceServer) {
+    generation += 1
+    let current = generation
+    DebugLog.info(.stream, "frames subscribe \(target.params) \(quality.rawValue)")
     unsubscribe = server.subscribe(
       "frames.subscribe",
-      params: { [target, physical] in
+      params: { [weak self, target, physical] in
+        let quality = self.map { $0.fellBack ? .standard : $0.quality } ?? .standard
         var params = target.params
         if physical { params["physical"] = .bool(true) }
         params["video"] = .array([.string("h264")])
-        params["fps"] = .number(Self.fps)
+        params["fps"] = .number(quality.fps)
+        if let maxEdge = quality.maxEdge { params["maxEdge"] = .number(maxEdge) }
         return params
       },
       onSubscribed: { [weak self] result in
         guard let self, current == self.generation else { return }
+        if result["video"]?.string != "h264", self.fallBackToStandard() { return }
         self.subscriptionID = result["subscription"]?.string
         self.problem = nil
       },
@@ -90,6 +126,9 @@ import Foundation
             event.fields["delayed"] == .bool(true)
             ? event.fields["reason"]?.string ?? "The device's screen is slow to arrive." : nil
         case "error":
+          if event.subscription.isEmpty, ["bad-request", "frames-failed"].contains(event.error?.code), self.fallBackToStandard() {
+            return
+          }
           self.subscriptionID = nil
           self.problem = event.error?.message
           DebugLog.error(.stream, "frames error \(target.params): \(event.error?.message ?? "unknown")")
@@ -109,10 +148,16 @@ import Foundation
     connect(nil)
   }
 
-  /// Asks for a keyframe after the decoder lost its state.
+  /// Asks for a keyframe after the decoder lost its state, while no earlier request is still unanswered, so a server
+  /// that sends undecodable keyframes and never answers holds at most one request.
   public func requestKeyframe() {
-    guard let server, let subscriptionID else { return }
-    Task { _ = try? await server.request("frames.keyframe", ["subscription": .string(subscriptionID)]) }
+    guard keyframeRequest == nil, let server, let subscriptionID else { return }
+    let current = generation
+    keyframeRequest = Task { [weak self] in
+      _ = try? await server.request("frames.keyframe", ["subscription": .string(subscriptionID)])
+      guard let self, current == self.generation else { return }
+      self.keyframeRequest = nil
+    }
   }
 
   /// Starts driving the device, taking it over from an agent that drives it. The server refuses a workspace that
@@ -195,6 +240,8 @@ import Foundation
 
   private func close() {
     generation += 1
+    keyframeRequest?.cancel()
+    keyframeRequest = nil
     unsubscribe?()
     unsubscribe = nil
     unobserve?()
@@ -220,15 +267,25 @@ public struct MacosWindows: Equatable, Sendable {
   }
 
   public var current: Int?
+  /// The captured window's size in points, when the host includes its logical frame.
+  public var currentPointSize: CGSize?
   public var windows: [Window]
   public var pinned: Bool
 
   init(_ fields: [String: JSONValue]) {
     let window = { (value: JSONValue?) -> Window? in
-      guard case .object(let object)? = value, case .number(let id)? = object["id"] else { return nil }
-      return Window(id: Int(id), title: object["title"]?.string ?? "")
+      guard case .object(let object)? = value, let id = object["id"]?.number.flatMap(ServerProtocol.exactInteger) else {
+        return nil
+      }
+      return Window(id: id, title: object["title"]?.string ?? "")
     }
     current = window(fields["current"])?.id
+    if current != nil, case .object(let value)? = fields["current"], case .object(let frame)? = value["frame"],
+      let width = frame["width"]?.number, let height = frame["height"]?.number,
+      width.isFinite, height.isFinite, width > 0, height > 0
+    {
+      currentPointSize = CGSize(width: width, height: height)
+    }
     if case .array(let list)? = fields["windows"] { windows = list.compactMap(window) } else { windows = [] }
     pinned = fields["pinned"] == .bool(true)
   }

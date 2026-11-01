@@ -4,6 +4,7 @@ import {
   clientIdentity,
   isJsonObject,
   machineEndpoint,
+  parseMachine,
   readDeviceHostMachines,
   type Endpoint,
 } from '@stim-cli/core/state';
@@ -274,7 +275,10 @@ export class HostConnections {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
       if (!credential || credential.state !== 'approved' || !credential.serverKey)
         throw new Error('no approved device-host credential');
-      const found = machineEndpoint(credential.machine, await this.options.status());
+      const found = machineEndpoint(
+        credential.machine,
+        parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
+      );
       if (typeof found === 'string') throw new Error(found);
       const endpoint = this.options.endpoint?.(found) ?? found;
       const key = JSON.stringify([

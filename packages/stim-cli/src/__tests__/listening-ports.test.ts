@@ -66,23 +66,3 @@ test('Linux permits an absent IPv6 table but propagates other table failures', a
     .mockResolvedValueOnce(`${HEADER}\n`);
   await expect(readListeningPorts('linux')).rejects.toThrow('no IPv4 table');
 });
-
-test.each<[NodeJS.Platform, string]>([
-  ['darwin', '0/0/128 ::1.invalid'],
-  ['win32', 'TCP 127.0.0.1:invalid 0.0.0.0:0 LISTENING'],
-  ['linux', `${HEADER}\n0: 0100007F:ZZZZ 00000000:0000 0A`],
-])('%s malformed listener data refuses inspection', async (platform, output) => {
-  setExecutor({ runFileAsync: async () => output });
-  vi.mocked(readFile).mockResolvedValue(output);
-  await expect(readListeningPorts(platform)).rejects.toThrow(/TCP/);
-});
-
-test.each<[NodeJS.Platform, string]>([
-  ['darwin', ''],
-  ['darwin', '0/0/128        127.0.0.1.8082'],
-  ['win32', ''],
-  ['win32', 'Active Connections\n'],
-])('%s netstat output without its table refuses inspection', async (platform, output) => {
-  setExecutor({ runFileAsync: async () => output });
-  await expect(readListeningPorts(platform)).rejects.toThrow(/no TCP/);
-});

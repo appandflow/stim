@@ -1,3 +1,4 @@
+import type { HostedAppStorage } from './hosted-apps.ts';
 import type { ParkedHostedDeviceReport } from './hosted-devices.ts';
 import type { MaintenancePreview } from '../../maintenance/preview.ts';
 import { archiveLines, type ArchiveSelection } from './archives.ts';
@@ -69,6 +70,7 @@ export interface GcReport {
   parkedSims: ParkedSimReport[];
   parkedAvds: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
+  hostedAppStorage?: HostedAppStorage[];
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
   staleDevices: StaleProjectDevice[];
@@ -173,6 +175,17 @@ function formatParkedHostedDeviceReport(devices: readonly ParkedHostedDeviceRepo
   return lines;
 }
 
+function hostedAppStorageLines(areas: readonly HostedAppStorage[] = []): string[] {
+  if (!areas.length) return [];
+  return [
+    'Hosted app storage (report only):',
+    ...areas.map(
+      (area) =>
+        `  ${area.platform} session ${area.session} client ${area.client} (${area.state}) ${area.path}: apps ${area.appsBytes === null ? 'unknown' : formatBytes(area.appsBytes)}, blobs ${area.blobsBytes === null ? 'unknown' : formatBytes(area.blobsBytes)}`,
+    ),
+  ];
+}
+
 function projectEntryLines(header: string, paths: string[]): string[] {
   return paths.length ? [header, ...paths.map((path) => `  ${path}`)] : [];
 }
@@ -232,6 +245,7 @@ export function formatGcReport(
     parkedSims = [],
     parkedAvds = [],
     parkedHostedDevices,
+    hostedAppStorage,
     orphanedDevices = [],
     unverifiedDevices = [],
     staleDevices = [],
@@ -334,6 +348,7 @@ export function formatGcReport(
   lines.push(...formatParkedSimReport(parkedSims, now, cacheScope !== null));
   lines.push(...formatParkedAvdReport(parkedAvds, now, cacheScope !== null));
   lines.push(...parkedHostedLines);
+  lines.push(...hostedAppStorageLines(hostedAppStorage));
 
   if (orphanedDevices.length) {
     lines.push(`Orphaned devices (${orphanedDevices.length}):`);
@@ -523,7 +538,11 @@ function orphanedWorkspaceLines(orphaned: readonly OrphanedWorkspace[]): string[
   const lines = [`Orphaned workspace directories (${orphaned.length}):`];
   for (const entry of orphaned) {
     lines.push(`  ${entry.dir}${entry.bytes === undefined ? '' : ` - ${sizeText(entry.bytes)}`}`);
-    lines.push(`              recorded project root ${entry.projectRoot} is gone and no registry entry names it`);
+    lines.push(
+      entry.projectRoot === null
+        ? '              it is empty and has no workspace.json'
+        : `              ${entry.residue ? 'the project root its logs name' : 'recorded project root'} ${entry.projectRoot} is gone and no registry entry names it`,
+    );
   }
   lines.push('              --delete re-checks each directory, then removes it whole.');
   return lines;
@@ -693,7 +712,7 @@ export interface GcJsonSections {
   deadProjects: { path: string }[];
   invalidProjects: { path: string }[];
   orphanedPorts: { project: string; label: string; port: number }[];
-  orphanedWorkspaces: { dir: string; projectRoot: string; bytes: number | null }[];
+  orphanedWorkspaces: { dir: string; projectRoot: string | null; bytes: number | null }[];
   linkedWorktrees: {
     path: string;
     idleDays: number | null;
@@ -710,6 +729,7 @@ export interface GcJsonSections {
   parkedSimulators: ParkedSimReport[];
   parkedEmulators: ParkedAvdReport[];
   parkedHostedDevices: ParkedHostedDeviceReport[];
+  hostedAppStorage: HostedAppStorage[];
   orphanedDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -740,7 +760,7 @@ export interface GcJsonSections {
   staleDeviceRecords: { kind: 'ios' | 'android'; id: string; project: string; slot: string | null }[];
   staleLedgerEntries: { kind: 'ios' | 'android' | 'web'; id: string }[];
   staleEasLedgerEntries: { id: string; workspaceRoot: string }[];
-  staleStatusCaches: { kind: 'disk-usage' | 'pull-request'; path: string; file: string; bytes: number }[];
+  staleStatusCaches: { kind: 'disk-usage' | 'pull-request' | 'git-merge'; path: string; file: string; bytes: number }[];
   idleDevices: IdleDevice[];
   orphanedEasSessions: {
     id: string;
@@ -827,6 +847,7 @@ export function gcReportSections({
   parkedSims = [],
   parkedAvds = [],
   parkedHostedDevices = [],
+  hostedAppStorage = [],
   orphanedDevices = [],
   unverifiedDevices = [],
   staleDevices = [],
@@ -892,6 +913,7 @@ export function gcReportSections({
       listed,
     })),
     parkedHostedDevices,
+    hostedAppStorage,
     orphanedDevices: orphanedDevices.map((d) => ({
       kind: d.kind,
       id: d.id,

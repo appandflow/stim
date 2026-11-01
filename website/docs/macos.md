@@ -83,7 +83,9 @@ LaunchServices with `open` or `agent-device open`. `stim macos`, `stim stop`,
 `stim worktree remove` and `stim gc --delete` stop all of them: SIGTERM, up to
 5 seconds, then SIGKILL. Stop reports success only after each copy has exited;
 when one cannot be verified or does not exit, it reports the failure and removal
-keeps the workspace. It does not start Metro. Local `stim macos` starts the app in
+keeps the workspace. For a hosted session the same rule covers every app bundle the
+session received, so stop and a replacement launch also end a copy that LaunchServices
+started from an earlier attempt. It does not start Metro. Local `stim macos` starts the app in
 the background without activating it or changing focus: it sets
 `STIM_BACKGROUND_LAUNCH=1` in the app's environment, which Stim Desktop honors, including for reopen events from `open -g`.
 An app that activates itself at launch or on reopen still takes focus. Hosted launches
@@ -187,9 +189,9 @@ Runtime locks, state, logs and the project's own `.build` stay; the next
 machine setting `remote.build` (default `auto`). `local` builds here. A name
 requires the matching configured and paired worker, ignoring this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
 reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
-`stim settings get remote.machines`. Run `stim doctor --fix` to ask for build
-access if not paired; a person on the worker approves it by running the
-`stim-server setup` command doctor printed.
+`stim remote list`. Run `stim remote add <machine>` to ask for build
+access if not approved; a person on the worker approves it by running the
+`stim-server setup` command it printed.
 Invalid, unlisted or unpaired selections refuse before stopping the running app
 or changing its build record. To change placement, rerun with `--remote-build auto`,
 `remote` or `local`.
@@ -375,9 +377,9 @@ available.
 
 `stim macos --remote <placement>` (or `macos.remote`) builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
-[`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
+[`remote.machines`](./settings.md#machine-settings) with `stim remote add <machine>`;
 a person on that Mac runs the `stim-server setup` command it printed, then run
-`stim doctor` once more. Stim connects only to the stim-server that proves it
+`stim remote list`. Stim connects only to the stim-server that proves it
 holds the key pinned at approval. If the host refuses or is
 unreachable, the command fails; with a named Mac it never launches the app locally instead.
 
@@ -415,6 +417,7 @@ Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. Hosted iOS simulators use the same relay
 and show the machine's name in their device tiles. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
+Desktop sizes the hosted macOS preview from the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the stream's pixel limit.
 
 <StimTabs
 code={`stim macos --remote janics-mac-mini
@@ -495,12 +498,29 @@ session directories under its own state directory. Start with
 `agent-device open <host bundleId> --remote-config <path>`; the lease allows only
 commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
 `scroll`, `screenshot` and similar), and the agent-device on the client needs the
-`macos-app` lease backend. On the hosting Mac, `stim-server service install --env
+`macos-app` lease backend. `record` is refused, because agent-device's `macos-app`
+lease does not allow screen recording. On the hosting Mac, `stim-server service install --env
 STIM_AGENT_DEVICE_BIN=<path>` points stim-server at a specific agent-device.
 A request outside the allowed commands, or a method the relay does not forward,
 is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is
 `STIM_AGENT_REQUEST_REFUSED` and whose message names the refused command or
 method; do not retry it.
+
+`longpress`, `swipe`, `back` and the other gestures are not allowed; the `longpress`
+and `swipe` that `stim guide lifecycle` lists belong to hosted Android and iOS
+sessions. `click <ref> --button secondary` reaches agent-device, but its native
+macOS backend, which the lease requires, answers `UNSUPPORTED_OPERATION`, so a
+hosted macOS app has no right click or context menu yet.
+
+On macOS 27, `agent-device screenshot` of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app window.
+macOS adds that small window to the app while something captures the app, and
+agent-device picks it as the front window
+([callstack/agent-device#3961](https://github.com/callstack/agent-device/issues/3961)).
+`snapshot -i` lists it as an `axdialog` named "Window" with a
+`WindowSharingSessionButton` before the real window. Read the UI with `snapshot`
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as `scroll`, may also target the indicator.
 
 Copy this prompt:
 
@@ -523,11 +543,13 @@ stim macos
 stim logs --source build
 stim stop`} />
 
-For an unreleased CLI, run `pnpm run build` at the repository root first. Set
-`STIM_BIN` to the absolute `packages/stim-cli/dist/cli.mjs` path and run that
-executable's `macos` command from `apps/desktop`. The development app inherits
-the override without changing the installed app's CLI preference or restarting
-its server.
+For an unreleased CLI, run `pnpm run build` at the repository root first. Run
+`node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local` from
+`apps/desktop`. This alone does not bundle a server runtime. To test private
+Desktop actions with an unreleased server, follow the repository's
+[`apps/desktop/README.md`](https://github.com/appandflow/stim/blob/main/apps/desktop/README.md#native-macos-development-prototype):
+stage the server, add its resource, and use a private Stim home and unused port.
+Restore those local settings afterward.
 
 Copy this prompt:
 

@@ -460,7 +460,7 @@ async function bootOwnedAvdOnFreshPort({
   );
 }
 
-async function muteBootedEmulator(serial: string, avdName: string, out: Notify): Promise<void> {
+export async function muteBootedEmulator(serial: string, avdName: string, out: Notify): Promise<void> {
   const exec = getExecutor();
   try {
     const helper = ['../shim/android-audio.jar', '../../shim/android-audio.jar']

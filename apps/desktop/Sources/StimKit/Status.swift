@@ -43,6 +43,79 @@ public struct Capacity: Decodable, Sendable {
   public var committedMb: Int
   public var totalMemoryMb: Int
   public var overCapacity: Bool
+  /// `concurrency.maxBuilds` usage; present only while that cap is set.
+  public var builds: BuildSlots?
+  /// `concurrency.maxDevices` usage; present only while that cap is set.
+  public var devices: DeviceSlots?
+  /// `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set.
+  public var platformDevices: PlatformDeviceSlots?
+  /// Absent from a `stim` that predates it.
+  public var load: CapacityLoad?
+}
+
+public struct PlatformDeviceSlots: Decodable, Hashable, Sendable {
+  public var ios: PlatformSlots?
+  public var android: PlatformSlots?
+}
+
+public struct PlatformSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+}
+
+/// The Mac's 5-minute load average per core, and the state `stim` placed it in.
+public struct CapacityLoad: Decodable, Hashable, Sendable {
+  public enum State: String, Decodable, Hashable, Sendable {
+    case free, busy, holding, other
+
+    public init(from decoder: Decoder) throws {
+      self = State(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .other
+    }
+  }
+
+  public var cpus: Int
+  public var loadPerCore: Double
+  /// `server.maxLoadPerCore`: at or over it, placement prefers another machine.
+  public var busyAt: Double
+  /// The load per core at which new local native work waits; nil while no limit is configured.
+  public var limit: Double?
+  public var state: State
+}
+
+public struct BuildSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  public var inUse: Int
+  public var holders: [BuildSlotHolder]
+}
+
+public struct BuildSlotHolder: Decodable, Hashable, Sendable {
+  public var slot: Int
+  /// The root of the local build holding the slot.
+  public var workspace: String?
+  /// The device id of the client whose offloaded build this Mac runs in the slot.
+  public var client: String?
+  public var since: String?
+  /// A slot whose holder `stim` cannot read; `workspace` and `client` are nil.
+  public var unresolved: Bool?
+}
+
+public struct DeviceSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
+  public var holders: [DeviceSlotHolder]
+}
+
+public struct DeviceSlotHolder: Decodable, Hashable, Sendable {
+  public var platform: String
+  /// The label of the workspace that records the device, or the device's name when none does.
+  public var label: String
+  public var workspace: String?
+  public var slot: String?
+  public var booting: Bool?
 }
 
 public struct UnprovisionedWorktree: Decodable, Hashable, Sendable {
@@ -70,6 +143,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
+  /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
+  public var pathMissing: Bool?
   /// When the warm started (`warming`) or finished (`ready`).
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
@@ -96,6 +171,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var lastBuilds: LastBuilds?
   /// Each platform's last runs, newest first.
   public var builds: BuildHistory?
+  /// Verified Git checkout identity, including primary checkouts without linked-worktree ownership facts.
+  public var checkout: String?
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
@@ -113,8 +190,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   enum CodingKeys: String, CodingKey {
     case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
       web, metro
-    case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
-    case lastBuilds, builds, worktree, recording
+    case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
+    case lastBuilds, builds, checkout, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
     case stageFacts = "stage"
   }
@@ -127,6 +204,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var replayOff: Bool { recording?.enabled == false }
 
   public var id: String { path }
+  public var checkoutPath: String? { checkout ?? worktree?.path }
 
   /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
   public var footprintBytes: Int64? {
@@ -137,7 +215,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var isWarming: Bool { phase == "warming" }
 
   /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
-  public var isSettingUp: Bool { isWarming || phase == "ready" }
+  public var isSettingUp: Bool { pathMissing != true && (isWarming || phase == "ready") }
 
   /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
   /// held, or it is being set up.
@@ -183,7 +261,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   }
 
   public var names: PathNames {
-    var names = PathNames(path: path, branch: worktree?.branch, worktree: worktree?.path, project: project)
+    var names = PathNames(path: path, branch: worktree?.branch, worktree: checkoutPath, project: project)
     if let titleOverride { names.title = titleOverride }
     return names
   }
@@ -305,7 +383,7 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   }
 
   /// Changed and untracked files together: what a commit would still have to pick up.
-  public var uncommitted: Int { changed + untracked }
+  public var uncommitted: Int { Format.sum([changed, untracked]) }
 
   /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
   public var arrows: String? { Self.arrows(ahead: ahead ?? 0, behind: behind ?? 0) }

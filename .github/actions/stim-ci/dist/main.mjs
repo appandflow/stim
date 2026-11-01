@@ -19,9 +19,9 @@ import { createHmac, randomUUID } from "node:crypto";
 import "child_process";
 import "timers";
 import { spawn } from "node:child_process";
-import fs, { lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, rmSync } from "node:fs";
+import fs, { cpSync, existsSync as existsSync$1, lstatSync, mkdirSync, mkdtempSync, readFileSync as readFileSync$1, readdirSync, realpathSync, renameSync, rmSync } from "node:fs";
 import os$1, { EOL as EOL$1, tmpdir } from "node:os";
-import { join, resolve as resolve$1 } from "node:path";
+import { dirname, join, resolve as resolve$1 } from "node:path";
 import process$1 from "node:process";
 import https from "node:https";
 import * as stream$2 from "stream";
@@ -97550,12 +97550,24 @@ async function diagnosticArtifactFiles(artifactsDir) {
 }
 //#endregion
 //#region src/action.ts
+const SELECTOR_INPUTS = [
+	"scheme",
+	"configuration",
+	"variant"
+];
+const BUILD_ONLY_INPUTS = [
+	"arch",
+	"abi",
+	"eas-profile"
+];
+function flags(input, names) {
+	return names.flatMap((name) => input(name) ? [`--${name}`, input(name)] : []);
+}
 function readInputs(input, root, host = process.platform) {
 	if (host !== "darwin" && host !== "linux") throw new Error("Stim CI action supports macOS and Linux runners with Bash.");
 	const platform = input("platform");
 	if (platform !== "ios" && platform !== "android" && platform !== "macos" && platform !== "web") throw new Error("platform must be ios, android, macos, or web.");
-	const command = input("command");
-	if (!command.trim()) throw new Error("command is required.");
+	const command = input("command").trim() ? input("command") : "";
 	const cli = input("cli-path");
 	const version = input("version");
 	if (!cli && !/^\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?$/.test(version)) throw new Error("version must be an exact published version when cli-path is absent.");
@@ -97563,6 +97575,10 @@ function readInputs(input, root, host = process.platform) {
 	if (!/^\d+$/.test(timeout) || !Number.isSafeInteger(Number(timeout) * 1e3) || Number(timeout) <= 0) throw new Error("timeout must be a positive whole number of seconds.");
 	const upload = input("upload-artifacts") || "true";
 	if (upload !== "true" && upload !== "false") throw new Error("upload-artifacts must be true or false.");
+	if (input("export") && platform === "web") throw new Error("export does not apply to web projects, which have no native build.");
+	const builds = platform === "ios" || platform === "android" || Boolean(input("export"));
+	const ignored = BUILD_ONLY_INPUTS.filter((name) => input(name));
+	if (!builds && ignored.length) throw new Error(`${ignored.join(", ")} apply only when the action builds: iOS, Android, or macOS with export.`);
 	const retention = input("retention-days") || "0";
 	if (!/^\d+$/.test(retention) || !Number.isSafeInteger(Number(retention))) throw new Error("retention-days must be a non-negative whole number.");
 	return {
@@ -97571,19 +97587,30 @@ function readInputs(input, root, host = process.platform) {
 		command,
 		version,
 		cli: cli ? resolve$1(root, cli) : "",
-		artifacts: resolve$1(root, input("artifacts") || "stim-ci-results"),
+		artifacts: input("artifacts") ? resolve$1(root, input("artifacts")) : "",
+		exportPath: input("export") ? resolve$1(root, input("export")) : "",
 		home: input("home") ? resolve$1(root, input("home")) : "",
 		cache: input("build-cache") ? resolve$1(root, input("build-cache")) : "",
 		timeout,
-		upload: upload === "true",
+		upload: upload === "true" && Boolean(input("artifacts")),
 		artifactName: input("artifact-name") || `stim-ci-${platform}-${randomUUID()}`,
-		retentionDays: Number(retention)
+		retentionDays: Number(retention),
+		selectors: flags(input, SELECTOR_INPUTS),
+		buildOnly: flags(input, BUILD_ONLY_INPUTS)
 	};
 }
-async function execute(file, args, cwd) {
+async function execute(file, args, cwd, stdout) {
 	const child = spawn(file, args, {
 		cwd,
-		stdio: "inherit"
+		stdio: [
+			"inherit",
+			stdout ? "pipe" : "inherit",
+			"inherit"
+		]
+	});
+	if (stdout) child.stdout?.on("data", (chunk) => {
+		process.stdout.write(chunk);
+		stdout.push(chunk);
 	});
 	const interrupt = () => {
 		child.kill("SIGINT");
@@ -97614,84 +97641,172 @@ function currentResult(path, options, started) {
 	if (result.version !== 1 || result.platform !== options.platform || typeof result.artifactsDir !== "string" || resolve$1(result.artifactsDir) !== options.artifacts || typeof result.startedAt !== "string" || !(Date.parse(result.startedAt) >= started) || !Number.isFinite(result.durationMs) || !Number.isInteger(result.exitCode)) throw new Error("result.json does not describe this invocation; refusing stale artifacts.");
 	return result;
 }
-async function runAction() {
-	const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
-	const options = readInputs((name) => getInput(name, { trimWhitespace: name !== "command" }), root);
-	mkdirSync(options.artifacts, { recursive: true });
-	options.artifacts = realpathSync(options.artifacts);
-	const resultPath = join(options.artifacts, "result.json");
-	setOutput("result", resultPath);
-	setOutput("artifacts", options.artifacts);
-	if (readdirSync(options.artifacts).length) throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
-	let installation;
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function finalResult(stdout) {
+	const line = Buffer.concat(stdout).toString("utf8").split("\n").map((entry) => entry.trim()).findLast((entry) => entry.startsWith("{"));
+	if (!line) return null;
 	try {
-		let cli = options.cli;
-		if (!cli) {
-			installation = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-action-"));
-			const code = await execute("npm", [
-				"install",
-				"--prefix",
-				installation,
-				"--ignore-scripts",
-				"--no-audit",
-				"--no-fund",
-				`@stim-cli/ci@${options.version}`
-			], root);
-			if (code !== 0) return code;
-			cli = join(installation, "node_modules", "@stim-cli", "ci", "dist", "stim-ci.mjs");
-		}
-		const args = [
+		const parsed = JSON.parse(line);
+		return isRecord(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+function facts(result, stage) {
+	const section = result?.[stage];
+	return isRecord(section) && isRecord(section.facts) ? section.facts : {};
+}
+function setResultOutputs(build, run, setOutput) {
+	const built = facts(build, "build");
+	const ran = facts(run, "run");
+	const outputs = {
+		"app-id": ran.bundleId ?? built.bundleId ?? built.androidPackage,
+		"app-path": built.appPath ?? built.apkPath ?? built.bundle ?? ran.appPath ?? ran.bundle,
+		"export-path": build?.artifactPath,
+		"cache-hit": built.cacheHit === void 0 ? void 0 : Boolean(built.cacheHit),
+		"device-id": ran.udid ?? ran.serial,
+		"device-name": ran.deviceName
+	};
+	for (const [name, value] of Object.entries(outputs)) if (value !== void 0 && value !== null && value !== "") setOutput(name, String(value));
+}
+async function installCli(version, root) {
+	const base = join(process.env.RUNNER_TOOL_CACHE ?? process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-action", version);
+	const cli = join(base, "node_modules", "@stim-cli", "ci", "dist", "stim-ci.mjs");
+	if (existsSync$1(cli)) return {
+		cli,
+		code: 0
+	};
+	const staging = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "stim-ci-install-"));
+	try {
+		const code = await execute("npm", [
+			"install",
+			"--prefix",
+			staging,
+			"--ignore-scripts",
+			"--no-audit",
+			"--no-fund",
+			`@stim-cli/ci@${version}`
+		], root);
+		if (code !== 0) return {
 			cli,
-			"run",
-			"--platform",
-			options.platform,
-			"--project",
-			options.project,
-			"--artifacts",
-			options.artifacts,
-			"--timeout",
-			options.timeout
-		];
-		if (options.home) args.push("--home", options.home);
-		if (options.cache) args.push("--build-cache", options.cache);
-		args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
-		const started = Date.now();
-		let code = await execute(process.execPath, args, root);
-		let result;
+			code
+		};
+		mkdirSync(dirname(base), { recursive: true });
 		try {
-			result = currentResult(resultPath, options, started);
-		} catch (error) {
-			warning(String(error));
-			return code || 1;
+			renameSync(staging, base);
+		} catch {
+			if (!existsSync$1(cli)) {
+				rmSync(base, {
+					recursive: true,
+					force: true
+				});
+				cpSync(staging, base, {
+					recursive: true,
+					verbatimSymlinks: true
+				});
+			}
 		}
-		if (options.upload) try {
-			const files = await diagnosticArtifactFiles(options.artifacts);
-			if (!files.length) throw new Error("No diagnostic artifact files were produced.");
-			const uploaded = await new DefaultArtifactClient().uploadArtifact(options.artifactName, files, options.artifacts, { retentionDays: options.retentionDays });
-			if (uploaded.id === void 0) throw new Error("GitHub did not return an artifact ID.");
-			setOutput("artifact-id", uploaded.id);
-			setOutput("artifact-url", `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}/artifacts/${uploaded.id}`);
-		} catch (error) {
-			warning(`Diagnostic artifact upload failed: ${String(error)}`);
-			code ||= 1;
-		}
-		if (process.env.GITHUB_STEP_SUMMARY) try {
-			summary.addHeading("Stim CI", 2).addTable([
-				["Platform", options.platform],
-				["Exit code", String(code)],
-				["Duration", result ? `${Math.round(result.durationMs / 1e3)}s` : "Result unavailable"]
-			]);
-			await summary.write();
-		} catch (error) {
-			warning(`Could not write the job summary: ${String(error)}`);
-		}
-		return code;
+		return {
+			cli,
+			code: 0
+		};
 	} finally {
-		if (installation) rmSync(installation, {
+		rmSync(staging, {
 			recursive: true,
 			force: true
 		});
 	}
+}
+async function runAction() {
+	const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
+	const options = readInputs((name) => getInput(name, { trimWhitespace: name !== "command" }), root);
+	let resultPath = "";
+	if (options.artifacts) {
+		mkdirSync(options.artifacts, { recursive: true });
+		options.artifacts = realpathSync(options.artifacts);
+		resultPath = join(options.artifacts, "result.json");
+		setOutput("result", resultPath);
+		setOutput("artifacts", options.artifacts);
+		if (readdirSync(options.artifacts).length) throw new Error(`Artifacts directory must be empty: ${options.artifacts}. Choose a new directory for this run.`);
+	}
+	let cli = options.cli;
+	if (!cli) {
+		const installed = await installCli(options.version, root);
+		if (installed.code !== 0) return installed.code;
+		cli = installed.cli;
+	}
+	const common = [
+		"--platform",
+		options.platform,
+		"--project",
+		options.project,
+		"--timeout",
+		options.timeout
+	];
+	if (options.home) common.push("--home", options.home);
+	if (options.cache) common.push("--build-cache", options.cache);
+	const buildOutput = [];
+	let buildResult = null;
+	if ((options.platform === "ios" || options.platform === "android" || Boolean(options.exportPath)) && options.platform !== "web") {
+		const buildArgs = [
+			cli,
+			"build",
+			...common,
+			...options.selectors,
+			...options.buildOnly
+		];
+		if (options.exportPath) buildArgs.push("--export", options.exportPath);
+		const buildCode = await execute(process.execPath, buildArgs, root, buildOutput);
+		buildResult = finalResult(buildOutput);
+		if (buildCode !== 0) {
+			setResultOutputs(buildResult, null, setOutput);
+			return buildCode;
+		}
+	}
+	const args = [
+		cli,
+		"run",
+		...common,
+		...options.selectors
+	];
+	if (options.artifacts) args.push("--artifacts", options.artifacts);
+	if (options.command) args.push("--", "bash", "-e", "-o", "pipefail", "-c", options.command);
+	const started = Date.now();
+	const runOutput = [];
+	let code = await execute(process.execPath, args, root, runOutput);
+	setResultOutputs(buildResult, finalResult(runOutput), setOutput);
+	setOutput("exit-code", String(code));
+	let result = null;
+	if (options.artifacts) try {
+		result = currentResult(resultPath, options, started);
+	} catch (error) {
+		warning(String(error));
+		return code || 1;
+	}
+	if (options.upload) try {
+		const files = await diagnosticArtifactFiles(options.artifacts);
+		if (!files.length) throw new Error("No diagnostic artifact files were produced.");
+		const uploaded = await new DefaultArtifactClient().uploadArtifact(options.artifactName, files, options.artifacts, { retentionDays: options.retentionDays });
+		if (uploaded.id === void 0) throw new Error("GitHub did not return an artifact ID.");
+		setOutput("artifact-id", uploaded.id);
+		setOutput("artifact-url", `${process.env.GITHUB_SERVER_URL ?? "https://github.com"}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}/artifacts/${uploaded.id}`);
+	} catch (error) {
+		warning(`Diagnostic artifact upload failed: ${String(error)}`);
+		code ||= 1;
+	}
+	if (process.env.GITHUB_STEP_SUMMARY) try {
+		summary.addHeading("Stim CI", 2).addTable([
+			["Platform", options.platform],
+			["Exit code", String(code)],
+			["Duration", result ? `${Math.round(result.durationMs / 1e3)}s` : "Result unavailable"]
+		]);
+		await summary.write();
+	} catch (error) {
+		warning(`Could not write the job summary: ${String(error)}`);
+	}
+	return code;
 }
 //#endregion
 //#region src/main.ts

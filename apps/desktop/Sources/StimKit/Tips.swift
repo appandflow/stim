@@ -8,7 +8,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     case .buildMachine: "Build on Another Machine"
     case .phone: "See Your Workspaces on Your Phone"
     case .tutorial: "Take the Stim Tutorial"
-    case .hideWorkspaces: "Hide Workspaces You Don't Need"
+    case .hideWorkspaces: "Organize Your Workspaces"
     case .statusFilter: "Filter by Status"
     case .replay: "Replay What an Agent Did"
     case .hostedSimulators: "Run Simulators on Another Mac"
@@ -23,7 +23,7 @@ public enum TipTopic: String, CaseIterable, Codable, Sendable {
     case .buildMachine: "Send native builds to another machine on your tailnet and run the app here."
     case .phone: "The Stim phone app shows your workspaces, builds and devices while you are away from this Mac."
     case .tutorial: "A short tour in a test app: two agents make two changes at once, each on its own simulator."
-    case .hideWorkspaces: "Right-click a workspace and choose Hide to keep it out of the sidebar."
+    case .hideWorkspaces: "Hide workspaces you don't need, or use View Options to filter the sidebar by status."
     case .statusFilter: "Choose which workspaces the sidebar lists: active, idle, not set up or archived."
     case .replay: "Stim records each simulator's screen with the agent's actions marked on a timeline you can scrub."
     case .hostedSimulators: "Another Mac on your tailnet can run simulators for your workspaces when this Mac is full."
@@ -147,6 +147,8 @@ public enum BuildMachineEmptyState: CaseIterable, Sendable {
 }
 
 public enum Tips {
+  public static let coreTopics: [TipTopic] = [.tutorial, .buildMachine, .hideWorkspaces, .replay, .logs]
+
   /// Calendar days on which Desktop observed a status update.
   public static let minActiveDays = 3
   /// Distinct workspace paths observed live, as an alternative to the build threshold.
@@ -184,7 +186,9 @@ public enum Tips {
     case .buildMachine: noMacPaired(inputs) && inputs.peers?.isEmpty == false
     case .phone: inputs.phoneApp && inputs.pairedPhones == 0
     case .tutorial: inputs.tutorialOffered && !inputs.tutorialCompleted
-    case .hideWorkspaces: inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows
+    case .hideWorkspaces:
+      (inputs.sidebar.hiddenWorkspaces.isEmpty && inputs.rows > manyRows)
+        || inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .statusFilter: inputs.sidebar.statuses == StatusFilter.defaultSelection
     case .replay: replayArchive(inputs) != nil
     case .hostedSimulators: noMacPaired(inputs) && inputs.peers?.contains { !$0.buildsAndroidOnly } == true
@@ -216,7 +220,7 @@ public enum Tips {
   public static func available(
     inputs: TipInputs, state: TipState, discoveries: [DiscoveryType: DiscoveryState], now: Date, calendar: Calendar
   ) -> [TipTopic] {
-    TipTopic.allCases.filter { applicable($0, inputs: inputs) && !taken($0, states: discoveries, now: now) }
+    coreTopics.filter { applicable($0, inputs: inputs) && !taken($0, states: discoveries, now: now) }
   }
 
   public static func select(
@@ -233,7 +237,10 @@ public enum Tips {
     return topic
   }
 
-  public static func next(
+  public enum Direction { case forward, backward }
+
+  public static func move(
+    direction: Direction = .forward,
     inputs: TipInputs, state: inout TipState, discoveries: [DiscoveryType: DiscoveryState], now: Date, calendar: Calendar
   ) -> TipTopic? {
     guard state.closedDay != day(now, calendar: calendar) else { return nil }
@@ -241,10 +248,12 @@ public enum Tips {
       return select(inputs: inputs, state: &state, discoveries: discoveries, now: now, calendar: calendar)
     }
     let topics = available(inputs: inputs, state: state, discoveries: discoveries, now: now, calendar: calendar)
-    let catalog = TipTopic.allCases
-    let index = catalog.firstIndex(of: current)!
+    let catalog = coreTopics
+    guard let index = catalog.firstIndex(of: current) else {
+      return select(inputs: inputs, state: &state, discoveries: discoveries, now: now, calendar: calendar)
+    }
     for offset in 1..<catalog.count {
-      let topic = catalog[(index + offset) % catalog.count]
+      let topic = catalog[(index + (direction == .forward ? offset : -offset) + catalog.count) % catalog.count]
       if topics.contains(topic) {
         pick(topic, state: &state, now: now, calendar: calendar)
         return topic

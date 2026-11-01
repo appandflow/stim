@@ -1,9 +1,10 @@
 import CryptoKit
 import Foundation
 
-/// The client side of RFC 6455 that Stim Desktop needs on stim-server's Unix socket: the upgrade request and its
-/// answer, masked frames out, and unmasked frames in. Network.framework's WebSocket protocol needs a URL endpoint and
-/// aborts on a Unix one, so `UnixSocketTransport` frames the stream itself. No extensions are offered.
+/// The client side of RFC 6455 that Stim Desktop needs to reach stim-server: the upgrade request and its answer,
+/// masked frames out, and unmasked frames in. Network.framework's WebSocket protocol needs a URL endpoint and aborts on
+/// a Unix one, and it does not report a close frame's reason, which carries the server's refusal code, so
+/// `WebSocketStream` frames the stream itself. No extensions are offered.
 public enum WebSocketFraming {
   public enum Opcode: UInt8, Sendable {
     case continuation = 0
@@ -27,11 +28,11 @@ public enum WebSocketFraming {
   /// RFC 6455 section 1.3: the accept value is base64 of SHA-1 over the key and this GUID.
   static let acceptGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-  /// The upgrade request. Node's HTTP server answers 400 without `Host`, and stim-server refuses an `Origin` on the
-  /// socket, so it sends none.
-  public static func upgradeRequest(key: String) -> Data {
+  /// The upgrade request. Node's HTTP server answers 400 without `Host`, and stim-server refuses an `Origin`, so it
+  /// sends none.
+  public static func upgradeRequest(key: String, host: String, path: String) -> Data {
     Data(
-      ("GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+      ("GET \(path) HTTP/1.1\r\nHost: \(host)\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         + "Sec-WebSocket-Key: \(key)\r\nSec-WebSocket-Version: 13\r\n\r\n").utf8)
   }
 

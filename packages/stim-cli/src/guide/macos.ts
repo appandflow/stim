@@ -64,7 +64,10 @@ owned app, including copies opened through LaunchServices (open, agent-device
 open). stim macos, stim stop, stim worktree remove and stim gc --delete stop all
 of them: SIGTERM, up to 5 s, then SIGKILL, and success only once each has
 exited. When an app cannot be verified or does not exit, stop reports
-STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace.
+STIM_MACOS_OWNER_UNVERIFIED or a failure, and removal keeps the workspace. For
+a hosted session the same rule covers every app bundle the session received, so
+stop and a replacement launch also end a copy that LaunchServices started from
+an earlier attempt.
 Local stim macos starts the app in the background without activating it or
 changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
@@ -336,9 +339,9 @@ ON ANOTHER MAC
 
 stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
-in remote.machines and approved: stim doctor --fix makes a setup ticket, a
-person on that Mac runs stim-server setup with that ticket and expiry (guide
-settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+in remote.machines and approved: stim remote add <machine> adds it and makes a
+setup ticket, a person on that Mac runs stim-server setup with that ticket and
+expiry (guide settings), and stim remote list then pins that Mac's stim-server key. Stim goes ahead
 only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; with a named Mac it never launches here
 instead.
@@ -368,6 +371,10 @@ choice and the skipped Macs. macOS refuses eas and proxy because it has neither
 backend. Reserved names are case-insensitive and trimmed; they refuse with
 STIM_BAD_ARG before state access or a connection. The device pool switches
 (remote.devicePoolDisabled) also apply to automatic macOS placement.
+
+A hosted app is not kept forever: the idle workspace stop ends its hosted session
+after maintenance.idleStopHours without activity, and stim-server stops a session
+whose client has been gone that long (guide cleanup, IDLE STOP).
 
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same
@@ -454,6 +461,12 @@ method the relay does not forward, is refused with an agent-device UNAUTHORIZED
 error whose details.reason is STIM_AGENT_REQUEST_REFUSED and whose message names
 the refused command or method; do not retry it.
 
+longpress, swipe, back and the other gestures are not in that list; the
+longpress and swipe that stim guide lifecycle lists belong to hosted Android and
+iOS sessions. click <ref> --button secondary reaches agent-device, but its native
+macOS backend, which the lease requires, answers UNSUPPORTED_OPERATION, so a
+hosted macOS app has no right click or context menu yet.
+
 Agents that built, launched and drove test copies on another Mac with an SSH
 script such as mini-desktop.sh use these instead:
 
@@ -462,16 +475,25 @@ script such as mini-desktop.sh use these instead:
   launch                     the same command; the host launches it under the
                              session's own home
   shot <out.png>             agent-device screenshot --remote-config <path>
-  click, rclick, key, type   agent-device click, press or type --remote-config <path>
+  click, key, type           agent-device click, press or type --remote-config <path>
+  rclick                     unavailable: secondary click is not supported
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
   clean                      stim worktree remove
-  3 concurrent slots         concurrency.maxDevices on the host; one bundle id
-                             slot per session
-
-The host's own owned devices count toward concurrency.maxDevices.
+  3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
+                             on the host, counted apart from simulators and
+                             emulators; one bundle id slot per session
 
 The agent-device rows work once the host's agent field names agent-device.
+
+On macOS 27, agent-device screenshot of a hosted app can return an image of the
+window-sharing indicator (66x20 points, 132x40 pixels) instead of the app
+window. macOS adds that small window to the app while something captures the
+app, and agent-device picks it as the front window (callstack/agent-device#3961).
+snapshot -i lists it as an axdialog named "Window" with a
+WindowSharingSessionButton before the real window. Read the UI with snapshot
+until agent-device selects the app's main window. Commands that use the front
+window's frame, such as scroll, may also target the indicator.
 
 DESKTOP DOGFOOD
 
@@ -488,9 +510,11 @@ Use Window > SwiftUI Playground for in-memory production screen fixtures.
   stim stop
 
 When using an unreleased CLI from this repository, build the packages first and
-set STIM_BIN to the absolute packages/stim-cli/dist/cli.mjs path before running
-that executable's macos command. The development app inherits this CLI override;
-the installed app's CLI preference and running server remain unchanged.
+run node ../../packages/stim-cli/dist/cli.mjs macos --remote-build local from
+apps/desktop. This alone does not bundle a server runtime. To test private
+Desktop actions with an unreleased server, follow apps/desktop/README.md's
+"Native macOS development prototype" section: stage the server, add its resource, and use
+a private Stim home and unused port. Restore those local settings afterward.
 
 Ask an agent: "In my Swift Package app, configure the executable product and a
 development Info.plist for stim macos. Build and show its owned window in Stim

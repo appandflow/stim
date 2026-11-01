@@ -150,7 +150,7 @@ struct BuildMachinesView: View {
 
   private func buildsNote(_ ledger: BuildLedgerModel) -> String {
     if ledger.error != nil && ledger.items.isEmpty {
-      return "Builds could not be read. If this stim is 1.25.0 or older, update it: the build history needs a newer stim."
+      return "Builds could not be read. If this stim is 1.26.0 or older, update it: the build history needs a newer stim."
     }
     return ledger.loaded ? "No recorded build ran on this machine yet." : "Loading\u{2026}"
   }

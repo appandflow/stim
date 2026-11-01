@@ -10,6 +10,8 @@ export interface ClientSocket {
   send(data: string | Buffer): void;
   close(code?: number, reason?: string): void;
   terminate(): void;
+  pause?(): void;
+  resume?(): void;
   on(event: 'message', listener: (data: Buffer, isBinary: boolean) => void): unknown;
   once(event: 'message', listener: (data: Buffer, isBinary: boolean) => void): unknown;
 }

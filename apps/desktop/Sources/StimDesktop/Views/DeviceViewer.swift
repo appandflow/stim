@@ -6,9 +6,10 @@ import StimStores
 import SwiftUI
 
 struct DeviceViewer: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var deviceID: String
+  var owner: ServerOwner = .local
   var machine: MachineUsage?
   /// The main window's size, which caps the sheet's.
   var windowSize: CGSize
@@ -16,6 +17,7 @@ struct DeviceViewer: View {
   var revealInLogs: (_ slot: String, _ at: Double?) -> Void
   var close: () -> Void
   @State private var takenOver = false
+  @State private var agentGlowDismissed = false
   @State private var recordedInput = false
   @State private var openedAt = Date()
   @State private var escapeMonitor: Any?
@@ -29,6 +31,7 @@ struct DeviceViewer: View {
   @AppStorage(AppPreferences.Key.viewerShowsActions) private var showsActions = true
   @EnvironmentObject private var actions: ActionCenter
   @ObservedObject private var server = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
 
   static let minimumSize = CGSize(width: 560, height: 480)
   static let actionsWidth: CGFloat = 360
@@ -46,12 +49,19 @@ struct DeviceViewer: View {
     let size = Self.size(in: windowSize)
     Group {
       if let device {
-        AgentFeed(cli: cli, workspace: env.path, slot: device.slot, deviceID: device.activityKey) { agentActions in
+        AgentFeed(
+          environment: environment, workspace: env.path, slot: device.slot,
+          deviceID: OwnedDevice(owner: owner, ref: device).activityKey
+        ) { agentActions in
           if let target = replayTarget(device) {
             ReplayHost(target: target) { replay in
               ReplayingContent(
                 replay: replay,
-                onPlay: { if let udid = device.localSimulatorUDID { TutorialViewerEvents.shared.replayPlayed(udid) } }
+                onPlay: {
+                  if let udid = OwnedDevice(owner: owner, ref: device).localSimulatorUDID {
+                    TutorialViewerEvents.shared.replayPlayed(udid)
+                  }
+                }
               ) { replaying in
                 content(device, size: size, agentActions: agentActions, replay: replay, replaying: replaying)
               }
@@ -87,9 +97,9 @@ struct DeviceViewer: View {
     }
     .task(id: deviceID) {
       switch device {
-      case .ios where device?.localSimulatorUDID != nil:
-        displayMetrics = SimulatorDisplayMetrics.load(udid: device!.localSimulatorUDID!)
-      case .android(_, let avd) where !avd.physical && avd.host == nil:
+      case .ios where owned?.localSimulatorUDID != nil:
+        displayMetrics = SimulatorDisplayMetrics.load(udid: owned!.localSimulatorUDID!)
+      case .android(_, let avd) where !avd.physical && avd.host == nil && owner.isLocal:
         displayMetrics = EmulatorDisplayMetrics.load(avdName: avd.name)
       default: displayMetrics = nil
       }
@@ -98,20 +108,15 @@ struct DeviceViewer: View {
     .onAppear {
       watchEscape()
       recordedInput = false
-      if let udid = device?.localSimulatorUDID { TutorialViewerEvents.shared.opened(udid) }
-      takenOver =
-        device.map {
-          $0.isInteractive
-            && ((!$0.isPhysical && $0.hostedMachine == nil)
-              || PhysicalScreen(device: $0, link: server.link, now: Date()).canControl)
-        } ?? false
+      if let udid = owned?.localSimulatorUDID { TutorialViewerEvents.shared.opened(udid) }
+      takenOver = owner.isLocal && owned?.offersControl(link: ServerSession.link(for: owner), now: Date()) == true
       actionsFocused = !takenOver
     }
     .onDisappear(perform: unwatchEscape)
     .sheet(item: $actions.presented) { run in
       ActivitySheet(run: run).environmentObject(actions)
     }
-    .onChange(of: device?.isInteractive) { _, interactive in
+    .onChange(of: owned?.isInteractive) { _, interactive in
       if interactive != true { takenOver = false }
     }
     .onChange(of: takenOver) { _, takenOver in
@@ -120,21 +125,22 @@ struct DeviceViewer: View {
   }
 
   private var device: DeviceRef? { env.orderedDevices.first { $0.id == deviceID } }
+  private var owned: OwnedDevice? { device.map { OwnedDevice(owner: owner, ref: $0) } }
 
   private func content(
     _ device: DeviceRef, size: CGSize, agentActions: [AgentAction], replay: ReplayController?, replaying: Bool
   ) -> some View {
-    let hasActions = Self.hasActions(device)
+    let hasActions = Self.hasActions(OwnedDevice(owner: owner, ref: device))
     let fits = size.width - Self.actionsWidth - 1 >= Self.minimumCanvasWidth
     let listed = hasActions && fits && showsActions
     return VStack(spacing: 0) {
       DeviceViewerToolbar(
-        device: device, env: env, usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
+        device: device, owner: owner, env: env, usage: device.isRunning ? env.usage(of: device, machine: machine) : nil,
         takenOver: $takenOver, replaying: replaying, showsActions: hasActions && fits ? $showsActions : nil,
         scalingMode: $scalingMode, scalingModes: scalingModes(device, replaying: replaying),
         windowChoice: windowChoice, close: close)
       Rectangle().fill(Palette.border).frame(height: 1)
-      if let run = actions.latest(for: env.path) {
+      if owner.isLocal, let run = actions.latest(for: env.path) {
         ViewerRunNotice(run: run, openedAt: openedAt)
       }
       HStack(spacing: 0) {
@@ -175,16 +181,20 @@ struct DeviceViewer: View {
           )
           .tutorialAnchor(.agentActions, workspace: env.path)
           .task(id: agentActions.isEmpty) {
-            guard !agentActions.isEmpty, let udid = device.localSimulatorUDID else { return }
+            guard !agentActions.isEmpty, let udid = OwnedDevice(owner: owner, ref: device).localSimulatorUDID else { return }
             try? await Task.sleep(for: .seconds(TutorialHint.glowSeconds))
             if !Task.isCancelled { TutorialViewerEvents.shared.actionsViewed(udid) }
           }
           .frame(width: Self.actionsWidth)
           .background(Palette.sidebar)
+          .contentShape(Rectangle())
+          .simultaneousGesture(
+            TapGesture().onEnded { agentGlowDismissed = true }
+          )
         }
       }
     }
-    .tutorialHighlights(showFallback: false)
+    .tutorialHighlights(showFallback: false, agentGlowDismissed: agentGlowDismissed, includesViewerTargets: true)
   }
 
   private func canvas(_ device: DeviceRef, replay: ReplayController?, replaying: Bool) -> some View {
@@ -193,7 +203,7 @@ struct DeviceViewer: View {
       let interactive = device.isRunning && takenOver && !replaying
       ScrollView([.horizontal, .vertical]) {
         DeviceTile(
-          device: device, screenHeight: max(160, geo.size.height - padding * 2),
+          device: device, owner: owner, screenHeight: max(160, geo.size.height - padding * 2),
           interactive: interactive, workspace: env.path,
           build: env.runningBuild(for: device),
           replay: replay, replaying: replaying,
@@ -208,7 +218,7 @@ struct DeviceViewer: View {
           framePixelsPerUnit: device.platform == "ios" ? displayMetrics?.pixelsPerPoint ?? 1 : 1,
           onControlLost: { takenOver = false },
           onInput: {
-            guard !recordedInput, let udid = device.localSimulatorUDID else { return }
+            guard !recordedInput, let udid = OwnedDevice(owner: owner, ref: device).localSimulatorUDID else { return }
             recordedInput = true
             TutorialViewerEvents.shared.input(udid)
           },
@@ -229,7 +239,9 @@ struct DeviceViewer: View {
     case .ios, .android: break
     case .remote, .web, .macos: return [.fit]
     }
-    guard !replaying, device.isRunning, !device.isPhysical, device.hostedMachine == nil, device.formFactor != .dual else {
+    guard !replaying, device.isRunning, owner.isLocal, !device.isPhysical, device.hostedMachine == nil,
+      device.formFactor != .dual
+    else {
       return [.fit]
     }
     return DeviceScalingMode.allCases.filter {
@@ -263,15 +275,15 @@ struct DeviceViewer: View {
   }
 
   /// Physical and remote devices report no agent actions.
-  private static func hasActions(_ device: DeviceRef) -> Bool {
-    !device.isPhysical && device.activityKey != nil
+  private static func hasActions(_ device: OwnedDevice) -> Bool {
+    !device.ref.isPhysical && device.activityKey != nil
   }
 
   /// Physical and remote devices have no replay, as on the phone.
   private func replayTarget(_ device: DeviceRef) -> ReplayTarget? {
     switch device {
     case .remote, .macos: return nil
-    case _ where device.isPhysical || device.hostedMachine != nil: return nil
+    case _ where device.isPhysical || device.hostedMachine != nil || !owner.isLocal: return nil
     default: return ReplayTarget(workspace: env.path, platform: device.platform, slot: device.slot)
     }
   }
@@ -347,7 +359,7 @@ private struct ReplayingContent<Content: View>: View {
           .map { Shown(replaying: $0 != nil, hasFootage: !($1?.spans.isEmpty ?? true), replayable: $2) }
           .removeDuplicates()
       ) { shown = $0 }
-      .onReceive(replay.$replay.map { ($0?.rate ?? 0) > 0 }.removeDuplicates()) { if $0 { onPlay() } }
+      .onReceive(replay.playbackStarts) { onPlay() }
   }
 }
 

@@ -271,6 +271,7 @@ function closeHttpServer(httpServer: BareModule, timeoutMs: number): Promise<voi
 export interface BareServerHandle {
   mode: string;
   serverPid: null;
+  observesRequests: true;
   httpServer: BareModule;
   onExit(cb: (info: { code: number; reason?: string }) => void): void;
   close(): Promise<void>;
@@ -387,6 +388,7 @@ export async function startBareServer({
   return {
     mode: 'bare-inproc',
     serverPid: null,
+    observesRequests: true,
     httpServer,
     onExit(cb: (info: { code: number; reason?: string }) => void) {
       listeners.push(cb);

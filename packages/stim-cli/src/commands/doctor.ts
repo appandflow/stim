@@ -7,10 +7,10 @@ import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
-import { repoRoot } from '../workspace/worktree.ts';
 import { getProject } from '../workspace/config.ts';
 import {
   projectSettingsContextAsync,
+  resolveAndroidLayout,
   type ProjectSettingsContext,
   type SettingsObject,
 } from '../workspace/settings.ts';
@@ -34,7 +34,8 @@ import {
   sandboxAllowance,
   sandboxFinding,
 } from '../diagnostics/sandbox.ts';
-import { runDoctor } from '../diagnostics/doctor.ts';
+import { androidImageDecision, runDoctor } from '../diagnostics/doctor.ts';
+import { installSystemImage } from '../devices/android-image.ts';
 import { detectXcodeMajorAsync } from '../engine/xcode.ts';
 import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
@@ -42,7 +43,8 @@ import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
 import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
 import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
-import { doctorIo, type GeneratedTickets } from '../offload/tailnet.ts';
+import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
+import { confirmInTerminal } from './device-provision.ts';
 import { inspectHostedAgentDriver } from '../device-host/agent-driver.ts';
 import { configuredMachines, inspectDeviceHostMachines } from '../device-host/machines.ts';
 import { inspectWatchmanMemory, memorySweepIsScoped } from './gc/memory.ts';
@@ -229,45 +231,47 @@ export function shadowedStimFinding(report: StimVersionReport): Finding | null {
  * Status goes to stderr so `--json --fix` still prints one parseable payload
  * on stdout, and the report that follows shows what the write left.
  */
-export function applySandboxFix(root: string, env: NodeJS.ProcessEnv = process.env): void {
+export function applySandboxFix(
+  settingsRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+  note: (message: string) => void = console.error,
+): 0 | 1 {
   const harness = detectHarness(env);
   if (harness === 'codex') {
-    console.error(chalk.yellow('Nothing to apply under Codex.'));
-    console.error(
+    note(chalk.yellow('Nothing to apply under Codex.'));
+    note(
       chalk.dim(
         'Its sandbox is one setting, `sandbox_mode`, with no per-path allowance: the only value that clears Stim is `danger-full-access`, which turns the sandbox off rather than allowing these three. Run Stim with the sandbox off instead, or set it yourself.',
       ),
     );
-    process.exitCode = 1;
-    return;
+    return 1;
   }
   if (harness !== 'claude-code') {
-    console.error(chalk.dim('No sandboxing harness detected, so there is nothing to apply.'));
-    return;
+    note(chalk.dim('No sandboxing harness detected, so there is nothing to apply.'));
+    return 0;
   }
 
-  const settingsRoot = repoRoot(root) ?? root;
   const stimHome = env.STIM_HOME || '~/.stim';
   const target = claudeLocalSettingsPath(settingsRoot);
-  const missing = missingAllowance(allowanceSearchPaths(settingsRoot), stimHome);
+  const missing = missingAllowance(allowanceSearchPaths(settingsRoot, env.HOME ?? env.USERPROFILE), stimHome);
   if (missing.length === 0) {
-    console.error(chalk.green('Stim is already allowed through this sandbox. Nothing to apply.'));
-    return;
+    note(chalk.green('Stim is already allowed through this sandbox. Nothing to apply.'));
+    return 0;
   }
 
   const result = applyClaudeAllowance(target, sandboxAllowance(stimHome));
   if (result.status === 'refused') {
-    console.error(chalk.red(result.reason));
-    console.error(chalk.dim(`Nothing was written. Add ${missing.join(', ')} by hand.`));
-    process.exitCode = 1;
-    return;
+    note(chalk.red(result.reason));
+    note(chalk.dim(`Nothing was written. Add ${missing.join(', ')} by hand.`));
+    return 1;
   }
-  console.error(chalk.green(`${result.status === 'created' ? 'Wrote' : 'Updated'} ${target}`));
-  console.error(
+  note(chalk.green(`${result.status === 'created' ? 'Wrote' : 'Updated'} ${target}`));
+  note(
     chalk.dim(
       "Added writes to Stim's state directory, the simulator XPC service, and local port binding. Claude Code reads project settings from the directory a session starts in, so this file only counts for sessions rooted there. Restart the session for it to take effect.",
     ),
   );
+  return 0;
 }
 
 interface PreparedDoctor {
@@ -305,6 +309,127 @@ export interface DoctorReport {
   deviceHosts: Array<Awaited<ReturnType<typeof inspectDeviceHostMachines>>['machines'][number] & { priority?: number }>;
   toolchain: ToolchainReport | null;
   findings: Finding[];
+}
+
+async function repairDoctorProject(
+  root: string,
+  platform: DoctorPlatform | undefined,
+  prepared: PreparedDoctor,
+  env: NodeJS.ProcessEnv,
+  note: (message: string) => void,
+  operation?: StimContext,
+): Promise<0 | 1> {
+  const { settingsContext, settings, doctors } = prepared;
+  const signal = operation?.signal;
+  const settingsRoot = settingsContext.repoRoot ?? root;
+  let exitCode: 0 | 1 = 0;
+  signal?.throwIfAborted();
+  if (sandboxFinding(settingsRoot, { env, home: env.HOME ?? env.USERPROFILE, stimHome: env.STIM_HOME })) {
+    exitCode = applySandboxFix(settingsRoot, env, note);
+  }
+  for (const doctor of doctors) {
+    signal?.throwIfAborted();
+    if (!doctor.repair) continue;
+    try {
+      const repair = await doctor.repair(platform, settings, settingsContext.repoRoot, operation);
+      signal?.throwIfAborted();
+      for (const path of repair.removed) note(phaseLine('cache', `removed ${path}; next build reconfigures`));
+      for (const { path, reason } of repair.refused) note(phaseLine('cache', `kept ${path}: ${reason}`));
+      if (repair.refused.length > 0) exitCode = 1;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ('reportCleanup' in error || ('code' in error && error.code === 'STIM_CLAIM_UNAVAILABLE'))
+      )
+        throw error;
+      signal?.throwIfAborted();
+      note(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
+      exitCode = 1;
+    }
+  }
+  const image =
+    settings &&
+    androidImageDecision(
+      platform,
+      resolveAndroidLayout(settings, root, settingsContext.repoRoot ?? root),
+      settings,
+      env,
+    );
+  if (image?.kind === 'install') {
+    const installed = await installSystemImage({
+      pkg: image.pkg,
+      env,
+      signal,
+      note: (line) => note(phaseLine('image', line)),
+    });
+    signal?.throwIfAborted();
+    if (!installed.ok) {
+      note(phaseLine('image', `${installed.message} ${installed.remedy}`));
+      exitCode = 1;
+    } else if (installed.installed) note(phaseLine('image', `installed ${image.pkg}`));
+  }
+  const nestedToFix = await inspectNestedWorktrees(root);
+  signal?.throwIfAborted();
+  const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
+  for (const entry of nestedToFix) {
+    signal?.throwIfAborted();
+    let result: ReturnType<typeof writeIgnoreDirs>;
+    try {
+      result = writeIgnoreDirs(entry);
+    } catch (error) {
+      result = {
+        status: 'refused',
+        reason: `${entry.configPath} could not be written: ${(error as Error).message}`,
+      };
+    }
+    if (result.status === 'refused') {
+      note(phaseLine('checkout', `kept ${result.reason}; add ${entry.add.join(', ')} to ignore_dirs by hand`));
+      exitCode = 1;
+    } else {
+      note(phaseLine('checkout', `${result.status} ${entry.configPath}: ignore_dirs ${entry.add.join(', ')}`));
+      if (watchedToFix.has(entry.checkout))
+        note(
+          phaseLine(
+            'checkout',
+            `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
+          ),
+        );
+    }
+  }
+  return exitCode;
+}
+
+export async function repairDoctorReport(
+  operation: StimContext,
+  platform: DoctorPlatform | undefined,
+  version: string,
+  beforeRepair?: (workspace: string) => void,
+): Promise<{ report: DoctorReport; exitCode: 0 | 1 }> {
+  const root = projectRegistry.findProjectRoot(operation.projectRoot);
+  if (!root) throw Object.assign(new Error(NO_PROJECT_REFUSAL.message), NO_PROJECT_REFUSAL);
+  beforeRepair?.(root);
+  operation.signal.throwIfAborted();
+  const prepared = await prepareDoctor(root, platform, projectRegistry, operation);
+  const exitCode = await repairDoctorProject(
+    root,
+    platform,
+    prepared,
+    operation.env,
+    (message) => operation.output('stderr', `${message}\n`),
+    operation,
+  );
+  operation.signal.throwIfAborted();
+  const report = await assembleDoctorReport(
+    root,
+    { platform, fix: true },
+    version,
+    prepared,
+    (runningVersion) =>
+      inspectStimVersions(runningVersion, { operation, cwd: root, env: operation.env, runningPath: '' }),
+    process.platform,
+    operation,
+  );
+  return { report, exitCode };
 }
 
 function withPriority<T extends { machine: string }>(machines: T[]): Array<T & { priority?: number }> {
@@ -403,8 +528,11 @@ async function assembleDoctorReport(
   findings.push(...budget.findings);
   const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
   const tickets: GeneratedTickets = new Map();
+  const interactive =
+    !operation && opts.fix === true && !opts.json && process.stdin.isTTY === true && process.stderr.isTTY === true;
+  const confirmKey = keyConfirmer(interactive ? confirmInTerminal : null);
   const deviceHosts = withoutUnhandledRejection(
-    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation }, io),
+    inspectDeviceHostMachines({ fix: opts.fix === true, version, tickets, operation, confirmKey }, io),
   );
   const nestedWorktrees = await inspectNestedWorktrees(root);
   const watched = withoutUnhandledRejection(watchedCheckouts(nestedWorktrees.map((entry) => entry.checkout)));
@@ -419,6 +547,7 @@ async function assembleDoctorReport(
         version,
         tickets,
         operation,
+        confirmKey,
         check: targetInspectors.length
           ? offloadCheck(root, async () => (await Promise.all(targetInspectors.map((inspect) => inspect()))).flat())
           : null,
@@ -475,7 +604,7 @@ export default function doctorCommand(
     )
     .option(
       '--fix',
-      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
+      'repair the sandbox allowance when the report names it, and stale Android .cxx configurations in a React Native or Expo checkout; install the Android system image stim android would install on its first emulator run; add linked worktrees nested in a checkout to its .watchmanconfig ignore_dirs; ask each remote machine in remote.machines for build and device-host approval. Stop native builds first. Generated CMake output must be ignored and untracked; custom launcher settings and source files are preserved.',
     )
     .action(async (opts: DoctorOptions) => {
       const root = registry.findProjectRoot(process.cwd());
@@ -484,53 +613,10 @@ export default function doctorCommand(
         return;
       }
       const prepared = await prepareDoctor(root, opts.platform, registry);
-      const { settingsContext, settings, selected, doctors } = prepared;
+      const { selected, doctors } = prepared;
 
-      if (opts.fix) {
-        if (sandboxFinding(repoRoot(root) ?? root)) applySandboxFix(root);
-        for (const doctor of doctors) {
-          if (!doctor.repair) continue;
-          try {
-            const repair = doctor.repair(opts.platform, settings, settingsContext.repoRoot);
-            for (const path of repair.removed)
-              console.error(phaseLine('cache', `removed ${path}; next build reconfigures`));
-            for (const { path, reason } of repair.refused) console.error(phaseLine('cache', `kept ${path}: ${reason}`));
-            if (repair.refused.length > 0) process.exitCode = 1;
-          } catch (error) {
-            console.error(phaseLine('cache', `Project repair failed: ${(error as Error).message}`));
-            process.exitCode = 1;
-          }
-        }
-        const nestedToFix = await inspectNestedWorktrees(root);
-        const watchedToFix = await watchedCheckouts(nestedToFix.map((entry) => entry.checkout));
-        for (const entry of nestedToFix) {
-          let result: ReturnType<typeof writeIgnoreDirs>;
-          try {
-            result = writeIgnoreDirs(entry);
-          } catch (error) {
-            result = {
-              status: 'refused',
-              reason: `${entry.configPath} could not be written: ${(error as Error).message}`,
-            };
-          }
-          if (result.status === 'refused') {
-            console.error(
-              phaseLine('checkout', `kept ${result.reason}; add ${entry.add.join(', ')} to ignore_dirs by hand`),
-            );
-            process.exitCode = 1;
-          } else {
-            console.error(
-              phaseLine('checkout', `${result.status} ${entry.configPath}: ignore_dirs ${entry.add.join(', ')}`),
-            );
-            if (watchedToFix.has(entry.checkout))
-              console.error(
-                phaseLine(
-                  'checkout',
-                  `Watchman watches ${entry.checkout} and reads the file only when it adds a root: run \`watchman watch-del ${entry.checkout}\`, then restart watchman to free its memory`,
-                ),
-              );
-          }
-        }
+      if (opts.fix && (await repairDoctorProject(root, opts.platform, prepared, process.env, console.error))) {
+        process.exitCode = 1;
       }
 
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);

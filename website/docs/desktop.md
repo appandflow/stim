@@ -8,19 +8,22 @@ import PromptBox from '@site/src/components/PromptBox';
 
 Stim Desktop is a macOS app for watching and steering the work Stim runs:
 every workspace with its live simulators and emulators, builds, logs and the
-agents driving them. It runs `stim` for you, so it needs the CLI from
-[Getting started](./getting-started.md).
+agents driving them. It includes its local server; a separately installed CLI is optional for
+[agents and terminal use](./getting-started.md).
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
-Apps in one linked worktree share a detail page and one sidebar row, with platform
-badges for each app. Selecting the row opens the page; a link or action for one app
-scrolls to that app. The row's context menu has per-app submenus, **Stop All** and
-**Remove Worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
-subtitles only for repeated platforms. The inspector aggregates resources,
-labels each Metro and deduplicates agents. The logs drawer follows app selection
-and has an **App** picker. The actions menu keeps each app's commands plus
-**Stop All** and one **Remove Worktree** action.
+Apps sharing a reported checkout, including a primary checkout, share a detail
+page and one sidebar row, with platform badges for each app. Older servers retain
+linked-worktree grouping. Selecting the row opens the page; a link or action for
+one app scrolls to that app. Each app keeps its own commands, devices and log
+routes. The context and actions menus have per-app submenus and **Stop All**;
+**Remove Worktree** appears only for linked worktrees. The canvas combines all
+devices, with one stage and git chip. Build cards keep platform titles, adding
+project subtitles only for repeated platforms. The inspector aggregates process
+resources, shows each app's dependency disk breakdown separately, labels each
+Metro and deduplicates agents. The logs drawer follows app selection and has an
+**App** picker.
 
 ## Download
 
@@ -33,9 +36,12 @@ brew install --cask appandflow/tap/stim
 ```
 
 - macOS 14 or later, on Apple silicon or Intel.
-- The `stim` CLI, installed globally with npm, pnpm, bun or Homebrew, or set in
-  **Stim > Settings > App**. See [Install Stim](./getting-started.md#install-stim).
+- Desktop includes its local server and works without a separately installed CLI.
+  For agent and terminal commands, [install Stim](./getting-started.md#install-stim)
+  or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
+
+Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
@@ -46,7 +52,7 @@ The tile reports connecting, unavailable or stopped sessions. Android hardware
 buttons also use the relay; rotation and posture are unavailable.
 A person on a remote Mac approves another machine by running the
 `stim-server setup` command that machine's Add Machine wizard or
-`stim doctor --fix` printed.
+`stim remote add` printed.
 Placement is set by config or agents: use
 `stim settings set ios.remote auto --scope machine` (or `android.remote`; a
 workspace, repo or committed value overrides the machine default),
@@ -55,6 +61,7 @@ Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
 sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
+EAS Simulator sessions show an **EAS** placement label in those views.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop runs no login shell. It finds Node, the `stim` CLI, Homebrew, the
@@ -111,9 +118,16 @@ lists every field. Every release is listed under
 
 ## Tutorial
 
+Longer steps show a short instruction with an expandable **Why this step?**
+explanation. Waiting messages name the next action. Completed stepper segments
+are green; skipped segments stay gray. Prompt buttons briefly show **Copied**.
+The summary includes a copyable prompt to try Stim with your own app.
+
 Open **Help > Stim Tutorial…**, or choose **Take the Tutorial** on the setup
-guide's last screen. The trailing tutorial column replaces the inspector;
-**⌘⌥I** returns to the inspector. Starting the tutorial with your agent also
+guide's last screen. The tutorial opens in its own floating window.
+In full-screen mode, it docks on the right inside Stim. Leaving full screen
+restores the floating window without resetting tutorial progress.
+Starting the tutorial with your agent also
 opens the panel once for that tutorial path, after any open sheet closes.
 
 <img src="/img/desktop/tutorial-panel.png" alt="Stim Tutorial panel showing the agent actions step" width="320" />
@@ -132,14 +146,14 @@ a tiny Expo app, and shows:
 - **Make a Change:** ask your agent for a visual change, for example "Make the title purple in the Stim tutorial app and check it on the simulator." (the step has a prompt to copy). It builds in the first linked worktree of the clone with its own simulator, and checks the result on the device. The first build, usually a cache miss on a fresh Mac, takes a few minutes; the step moves on as soon as it starts.
 - **Change It Again in Parallel:** while that builds, copy the step's prompt, "While that builds, make the Tap me button green in a new worktree and check it on the simulator." The next linked worktree of the clone, made after the first change step began, has its own simulator and Metro port, and its first iOS build is a cache hit. The step moves on as soon as that build starts. The completion card's build times fill in when the builds finish, and a build that fails after its step moved on shows a warning under that step.
 - **Live View and Control (optional):** open a tutorial simulator's live view and tap the app yourself. A glow leads there: the tutorial worktree's sidebar row when you are on another page, then the device's live view, then its screen: tap **Tap me** and watch the counter. While the live view is open, a small card in it shows the step and its ticks, **Live view opened** and **Device controlled**; the step moves on once both are ticked.
-- **Agent Actions and Replay (optional):** "Open Agent Actions to see what your agent did, then press Play to replay it." A glow leads there: the tutorial worktree's sidebar row when you are on another page, then its device's live view, then the Agent Actions list, then the replay's Play button. **Open Agent Actions** in the step opens the first change's live view with Agent Actions shown, or the second change's once the first is gone. The step ticks **Agent actions viewed** and **Replay played** on either tutorial simulator and stays open so you can keep watching; **Next** then records it done. When no agent actions were recorded on the first change's simulator, the step says so.
+- **Agent Actions and Replay (optional):** "Open Agent Actions to see what your agent did, then press Play to replay it." A glow leads there: the tutorial worktree's sidebar row when you are on another page, then its device's live view, then the Agent Actions list, then the replay's Play button. **Open Agent Actions** in the step opens the first change's live view with Agent Actions shown, or the second change's once the first is gone. The step ticks **Agent actions viewed** and **Replay played** on either tutorial simulator and advances automatically once both are done. When actions are missing or replay is off, an information message explains what to do or lets you skip; it does not show a waiting spinner.
 - **App Logs (optional):** "Open Logs to see your app's output and errors." A glow leads from the tutorial worktree's sidebar row to the toolbar's Show Logs toggle; **Open Logs** in the step opens them directly. The step ticks **Logs opened** and completes when you show the Logs of either tutorial worktree while the step is current.
 - **Watch on Your Phone (optional):** **Pair a Phone** opens the Pair a Phone wizard, which turns on serving itself. An existing pairing shows **Done Already**, then "Open Stim on your phone: the tutorial workspaces are there".
 - **Share Your Finish (optional):** a prompt you may paste before finishing, while your change still exists, to fork the tutorial repo and open a public pull request with before and after screenshots of your change, a short note on how Stim verified it, and a link to Stim. It is public, needs your agent to have GitHub access (`gh`), and a bot replies and closes it. Desktop never runs it and nothing depends on it. When Stim reports a pull request for the first change's worktree, including one from your fork, the step ticks **Pull request opened**, links it and completes; Stim checks GitHub every few minutes, so the tick can take up to five minutes.
 - **Finish and Archive:** the prompt names the two worktrees; your agent stops their apps and removes only those, dropping their changes (a forced removal is allowed for exactly those two, after a plain remove refuses). The clone stays. **Open Archived** opens the same workspace page as a read-only archive, with retained build history, logs and recordings. Archived sidebar rows keep the live repository/worktree grouping and app labels.
-- **Delete the Test App (optional):** "Delete the test app's clone, or press Next to keep it." The prompt asks your agent to run `stim worktree remove` on the clone and then delete its folder. As a safety net, `stim guide tutorial delete` first removes any tutorial worktree still left, with a plain `stim worktree remove` that stops to ask if one holds changes, so simulators, Metro ports and Stim records are torn down before the files go; when worktrees were left, the step also ticks **Tutorial worktrees removed**. The step completes when Stim no longer lists the clone and its folder is gone.
+- **Delete the Test App (optional):** "Delete the test app's clone, or skip this step to keep it." The prompt asks your agent to run `stim worktree remove` on the clone and then delete its folder. As a safety net, `stim guide tutorial delete` first removes any tutorial worktree still left, with a plain `stim worktree remove` that stops to ask if one holds changes, so simulators, Metro ports and Stim records are torn down before the files go; when worktrees were left, the step also ticks **Tutorial worktrees removed**. The step completes when Stim no longer lists the clone and its folder is gone.
 
-When the tutorial ends, the panel shows a completion card: the time from clone to archive, the first build, the second build's cache hit and the time it saved, the two worktrees, the agent actions you can replay, and the space Delete freed, each only when Stim measured it. Each optional step you finished is a badge; a skipped one stays dashed.
+When the tutorial ends, the panel shows **Tutorial Complete** if all required steps were completed, or **Tutorial Ended** otherwise, with completed and skipped counts. Its summary shows time in the tutorial, the first build, the second build's cache hit and the time it saved, the two worktrees, the agent actions you can replay, and the space Delete freed, each only when Stim measured it. Each optional step you finished is a badge; a skipped one stays dashed.
 
 Your agent checks each change on its simulator with agent-device, following
 `stim guide tutorial run`: it taps **Tap me**, toggles **Dark accent**, picks a
@@ -152,7 +166,9 @@ either way; without it your agent can only check the build and logs.
 
 The panel shows one step at a time. Click a node on the progress track, use the arrows beside it, or press the left and right arrow keys to look at another step; this never changes your progress, and Desktop keeps detecting the current step meanwhile. A later step shows dimmed and read-only, **Go to Current Step** returns, and when the step you are looking at completes, the panel moves on with it. The completion card is the last slide.
 
-**Float (Experimental)** in the **…** menu moves the panel into a small window that stays above other apps without taking focus, so you can keep it beside your editor or terminal. Drag it anywhere; Desktop remembers where. The pin turns staying on top off and on, and **Dock in Sidebar** puts it back.
+The tutorial opens in a floating window beside Stim without taking focus. It uses the same window level as Stim, so other apps can cover both windows.
+While a popup is open in the Stim window, the tutorial stays visible but its controls
+and arrow-key navigation are disabled until the popup closes. It opens beside the Stim window, staying onscreen when space is limited. It stays on the same desktop Space as the Stim window. Drag it anywhere while it is open; reopening places it beside Stim again. Until you drag it, resizing Stim keeps the tutorial beside the app with a 12-point gap where screen space permits. Use the pin at the bottom right to dock it in the sidebar or float it again. In full-screen mode it docks automatically and the pin is disabled. Leaving full screen restores floating mode with the same progress. The tutorial hides during the transition and fades back in afterward, respecting Reduce Motion.
 
 The tutorial does not start the server, pair phones or
 grant access, and it runs no builds itself.
@@ -160,7 +176,10 @@ grant access, and it runs no builds itself.
 A soft glow with a short label points at the control a step needs, without
 covering the app with a dimming layer. It appears only in the active window
 and fades after a few seconds; it shows
-again when the step or page changes. On **Make a Change** and **Change It Again in
+again when the step or page changes. During **Agent Actions and Replay**, the glow
+is gold and pulses continuously while its target is active. Clicking inside the
+Agent Actions container dismisses its glow for that viewer session. With Reduce Motion,
+it stays steady. On **Make a Change** and **Change It Again in
 Parallel**, it points at the **Show** button of the "New workspace" notice for
 your first change's worktree, which reads "Building iOS" while its build runs;
 if that notice is gone, **Open the build** in the step does the same. When the
@@ -171,16 +190,18 @@ prompt shows only while it is the current step. The step lists only workspace
 issues that block it, as a sentence with its fix below; Finish and Delete hide
 the warnings that stopping the workspaces causes.
 
-Progress stays in this app's preferences. Closing the panel preserves it;
-Help reopens it. At launch an unfinished tutorial resumes when Stim still lists
-its path, and an archived tour opens at Delete the Test App. Every step has
-**Next**, which moves on without waiting for a signal. It records the step as
+Progress stays in this app's preferences. Closing the panel preserves it and
+keeps the tutorial closed at later launches; Help > Stim Tutorial, the Discover page and the
+tutorial tip reopen it where you left off. An unfinished tutorial you have not closed
+resumes at launch when Stim still lists its path, and an archived tour opens at Delete the Test App. Every step has
+**Skip step**, which moves on without waiting for a signal. It records the step as
 done when its checks are all ticked or Desktop detected it, and as skipped
-otherwise. Steps Desktop detects move on by themselves. The **…** menu
-also offers **Restart Tutorial**, which starts over at Get the Test App as on a
+otherwise. Steps Desktop detects move on by themselves; the first step explains this. The bottom-left **Restart Tutorial** control is the only restart button on the summary screen, which starts over at Get the Test App as on a
 first start; worktrees from before the restart stay and no longer count. When
 the tutorial workspace comes from an older tutorial version, the panel says so
 and offers only **Restart Tutorial**.
+
+Hover a stepper circle to see its number, title and status. The outer ring marks the step you are viewing; the purple dot marks the active step. **Open Archived** opens the newest saved archive from either tracked worktree in this run. If none is available, the summary explains whether archiving is off, worktrees still need removal, or no saved archive is available.
 
 A step that needs your agent shows a plain request to copy, with the paths
 filled in from the tour's repository. The default base is `~/stim-tutorial`.
@@ -201,11 +222,17 @@ show refusals for removals started from its own workspace actions.
 
 :::note[Phone app feature flag]
 Stim Desktop hides everything about the phone app unless the **Phone app**
-feature flag is on: the Phones page, **Serve to phones**, pairing, the phone
+feature flag is on: the Paired Devices page, **Serve to phones**, pairing, the phone
 steps of the setup guide and tutorial, and phone suggestions. Turn it on in
 **Settings > Advanced > Feature flags**. A Mac that already serves phones or has
 a paired phone starts with it on. Turning the flag off revokes no pairings;
 Desktop's own `stim-server` then listens on loopback only.
+:::
+
+:::note[Paired machines feature flag]
+**Settings > Paired Machines**, where this Mac pairs with another machine's
+`stim-server`, appears only while the **Paired machines** feature flag is on
+(**Settings > Advanced > Feature flags**). It is off by default.
 :::
 
 Desktop runs its own `stim-server` whenever it is open, on loopback only (it refuses
@@ -215,7 +242,11 @@ the server always matches the app; a Mac that serves without Desktop, such as a
 build worker, installs `@stim-cli/server` from npm instead. Replay, the diff viewer, archived logs, hosted views and recordings use it. If
 a stim-server already serves the same Stim home, for example the `stim-server
 service` LaunchAgent on a Mac that hosts for others, Desktop uses that one and never
-stops or reconfigures it. Desktop reads workspace status from that server's status
+stops or reconfigures it. If the default port belongs to another Stim home,
+a copy using an explicit separate home starts its loopback-only server on a free
+port chosen by the OS. This lets hosted Desktop test copies coexist with the
+host's server. An explicit port override or serving phones keeps the selected
+port and reports a home mismatch. Desktop reads workspace status from that server's status
 feed while the server allows reads and serves the same Stim home; the server reads status itself from the
 moment it starts. Refresh requests fresh workspace, machine and archive views. If the connection or a view fails, Desktop keeps the last good display and reports the error until the server delivers fresh data. Status never falls back to a CLI process. When the server cannot start, a warning icon in the
 sidebar footer says why; click it to retry. Serving phones over the tailnet stays
@@ -240,7 +271,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
-  screen, wrapping when space is tight.
+  screen, wrapping when space is tight. An already-running app stays visible
+  during rebuilds; take **Control** to keep using it while the next build compiles.
   Local iOS input connects in the background and drops clicks and keys while
   the screen shows **Connecting input** or **Input unavailable**. Lookups time
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's
@@ -254,8 +286,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; location,
-  VoiceOver, color filters and Liquid Glass options are not included.
+  **Unavailable**. Requires Xcode's simulator appearance API; VoiceOver,
+  color filters and Liquid Glass options are not included.
   **Sound** turns an owned simulator's output volume off or back on; turning it
   back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
@@ -269,7 +301,16 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   until it next boots. Media sound changes music and video volume only; alarms
   and ringtones keep their Android settings. It needs Android 15 or later; on
   older images startup warns that it could not mute the emulator. Your Mac's
-  volume, hosted devices and physical phones are unchanged.
+  volume and physical phones are unchanged. Hosted simulators and emulators are
+  muted when the host boots them, but the Sound toggles do not reach them.
+- **Device tools.** The options popover of a local simulator or emulator has a
+  **Tools** section while **Control** is on: set or clear a simulated location,
+  grant, revoke or reset an app permission, send a test push to an iOS app, and
+  turn an Android emulator's network off or on. Each button runs the matching
+  [`stim device`](./commands.md#device-location-permission-push-and-network)
+  command, so the same ownership checks apply, and the line under the buttons
+  shows what the device reported back where the platform can say. Hosted, remote
+  and physical devices have no Tools section.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
@@ -280,7 +321,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote machine and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. While a run boots its simulator or emulator, builds the app's first JS
+  plan. Completed runs show the selected build destination and recorded compilation
+  machine. Cache hits never claim compilation, and missing compilation data stays unknown;
+  `STIM_OFFLOAD_REFUSED` reads **Build destination refused**. While a run boots its simulator or emulator, builds the app's first JS
   bundle in Metro, or waits for the app to report ready, the progress and the
   current phase say so with that step's own elapsed time: **Booting
   simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports
@@ -312,7 +355,23 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   Stim never deletes the SwiftPM cache.
 - **Machines.** Select **This Mac** for local disk, memory and cleanup, or a
   configured remote machine for its readiness, capacity and build history.
-  Click the toolbar's CPU, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
+  **This Mac > Overview** shows compact memory, tracked-process CPU and free-disk
+  cards, the three largest process groups, and a cleanup summary. **View all
+  processes** expands the list; the information button explains the measurements.
+  **Review cleanup** opens **Storage**, where you can inspect devices, caches,
+  repositories and cleanup candidates before choosing what to free. The summary
+  includes optional caches, so it is not an amount selected for deletion.
+  **Builds** shows recent build placements and explains when history is unavailable.
+  Overview includes the latest three placements when available. Remote machine
+  choices show their reported readiness; only the selected choice uses the accent color.
+  The toolbar's **Load** figure is the 5-minute load average per core, amber at or over
+  `server.maxLoadPerCore` and red while new local work waits; CPU reads 100% from about
+  one load per core, and Load keeps counting past that. While `concurrency.maxDevices`, `concurrency.maxIosDevices`,
+  `concurrency.maxAndroidDevices` or `concurrency.maxBuilds` is set, **This Mac** shows **Devices**, **iOS simulators**, **Android emulators** and **Builds** meters, such as
+  `6 / 6`. A full device meter lists the devices holding the slots with their slot and idle
+  time, each with **Stop**, which runs `stim stop --slot` in that workspace; builds are listed
+  by workspace, or as offloaded for a client. A device no workspace records has no **Stop**.
+  Click the toolbar's CPU, load, memory or disk figure for details. While open, hover another resource figure to switch details; click outside to close. **Open Machines**
   in each popover opens the Machines page. CPU covers active workspace processes,
   while memory covers the whole Mac.
   CPU and memory popovers graph recent whole-machine usage. Each disk volume
@@ -549,6 +608,15 @@ devices, a Mac app or several apps, a row of buttons switches which one streams 
 by app when there are several); Desktop remembers the choice until it quits. A workspace
 with no running device shows its build progress, setup state or Metro status in that area.
 
+**Stream quality.** Hosted, remote-machine and physical devices stream at Standard quality by
+default: 30 frames per second at the server's default size. Set **Stream quality** to High in
+Preferences under Device Wall, or use the quality button below a device's screen in its viewer
+to switch that viewer, to request 60 frames per second at a 1600 pixel edge. High uses roughly
+double Standard's bandwidth (around 4 Mbps against 2 Mbps in our tests on mostly flat content, more for busy
+screens) and needs a server that offers H.264 video; against one that does not, the viewer streams at Standard. Device
+Wall tiles always stay Standard. **Live frame rate** is a separate display cap for local
+simulators, emulators and web pages.
+
 Click a card or its header to open the workspace (on the Active Workspaces page, the
 project), or the stream to open the workspace with that device focused. Cards that scroll out of view
 stop streaming and reconnect when you return to them.
@@ -636,7 +704,7 @@ stim ios`}
    shows in the app instead of a separate Simulator window.
 2. Click a device to open its viewer. **Take over** lets you use it; Escape
    gives it back.
-3. To use the phone app, open **Stim > Settings > Phones** and choose **Pair a
+3. To use the phone app, open **Stim > Settings > Paired Devices** and choose **Pair a
    Phone…**. The wizard checks Tailscale, turns on serving, sets up a private
    tailnet route, shows a code and waits for the phone. Setup keeps existing
    Tailscale routes and never enables Funnel. If Tailscale asks to enable HTTPS,
@@ -652,6 +720,62 @@ fails, the phone keeps the error visible until **Retry** or manual entry is
 chosen.
 
 See [Phone app](./phone-app.md) for installation, pairing, notifications and access.
+
+### Pair with another machine
+
+Desktop can pair with the `stim-server` of another machine on your tailnet, such as
+a Linux server where an agent starts workspaces, the same way a phone does. With
+the **Paired machines** flag on:
+
+1. On that machine, run `stim-server pair`. Add `--json` if you like; Desktop reads either form.
+2. In **Stim > Settings > Paired Machines**, choose **Pair with a Machine…** and paste everything
+   the command printed. The sheet shows the machine's name, endpoint and the fingerprint of its key.
+   Desktop pairs only with the machine whose key has that fingerprint. It accepts a
+   `wss://` endpoint on a `.ts.net` name, or `ws://` to a Tailscale address.
+3. The code works once, for 5 minutes. A pairing made from `stim-server pair` can only read;
+   one made from `stim-server pair --control` can also run actions and control devices.
+
+**Forget** deletes this Mac's key for the machine from the macOS Keychain, so the machine's
+record can never connect again, but it does not remove that record. Run
+`stim-server devices revoke <id>` on the machine for that. Desktop shows the command
+after Forget, or `stim-server devices` to find this Mac's record when the machine never told it the id. A key that changes on the machine is never accepted again: forget the
+pairing and pair again. A build of Desktop without the Keychain entitlement, such as a development
+copy, keeps pairings only until it quits and says so in the sheet.
+
+Once paired, the machine gets its own section in the sidebar, below this Mac's
+projects, with its name, a connection dot and **View Only**, or **View and Control**
+for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+with the devices, build, Metro and agent sections the machine reports, and a line
+under the header that names the machine controlling them, such as "Viewing floco ·
+read-only" or "Controlled by floco". Controls that need the machine's files, logs or
+`stim`, such as **Run**, **Show Logs**, build **Details** and **Review Changes**, are
+disabled with the reason as their help text.
+**Machines** lists the paired machine after your build machines, with its
+capacity, its hosted devices and its offloaded builds. When the machine is
+offline, Desktop keeps showing its last status with "Offline since" and the
+time. Hiding a paired machine's workspace lasts until Desktop quits.
+
+Select an iOS or Android device on that page, including a hosted one, to open its
+screen in the viewer. Desktop streams it through the paired machine's server,
+which relays hosted devices from the Mac that runs them, so this Mac needs no
+pairing with that Mac.
+
+A control pairing also offers what the machine's server lets a paired device run,
+the same as the phone: **Reload App** and **Stop** for the workspace, and **Control**
+in the viewer, which sends your clicks and keys to the device. Desktop never takes
+control of another machine's device on its own; choose **Control** first. With a
+read-only pairing those buttons are disabled and the page says what to run on the
+machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in
+**Settings > Paired Machines** after the grant. The machine checks its record on
+every request, so `stim-server devices grant <id> --read` ends control at once.
+
+Building, running a device, logs, replay, files, worktrees, cleanup and settings
+stay on the machine itself; Desktop does not start work there.
+
+A pairing lets this Mac see everything the machine's server shows a phone: workspace paths,
+status and logs, changed and untracked text files including `.env` files that
+Git does not ignore, the doctor report, and the live screens of every local and hosted
+device there. Pair only with machines you own.
 
 On the hosting Mac, **Stim > Settings > Remote Machines > Running here**, below
 **Macs Using This Mac**, lists the simulators, emulators and apps approved Macs run
@@ -763,37 +887,32 @@ changing system preferences. Release builds exclude it. See the [desktop develop
 
 Desktop suggests a remote machine, cache review, or phone pairing when recent builds, tailnet peers, disk pressure, or device limits make them useful. The low-disk suggestion points to the Machine page, where caches are reviewed and cleared; it does not mention another machine. Suggestions to add a remote machine (a new tailnet peer, a build that waited for a build slot, the device limit) appear only while `remote.machines` is empty. The new-peer and build-slot suggestions consider Macs, Linux and Windows machines (the build-slot one offers a Linux or Windows machine only after an Android build waited); the device-limit one offers only a Mac, since only a Mac hosts. The build-slot and device-limit ones appear once, ever, across both. Each kind shows once unless you dismiss it with the X to snooze it for 7 days, after which it may show again. Choose **Don't Suggest Again** to dismiss that kind permanently. Device-limit suggestions use refusals from Desktop commands and recent `stats --json` capacity events, including agent terminal runs, within 6 hours of the refusal. Three device waits of at least one minute each within the same 6-hour window also trigger a suggestion. A build that waited for a build slot within the last 7 days triggers one. When a Mac is already approved for hosted simulators, the device-limit suggestion offers **Use Auto** instead of the setup wizard. It runs `stim settings set ios.remote auto --scope workspace` (and `android.remote`, for the refused platform, or both when it is not known), so runs place on the hosting Mac when this Mac is full, from Desktop and from agents in a terminal. While it is set, `--device` runs ignore it, and the Next build card plans for where `auto` would place the run now, naming the Mac in its placement line; undo it with `stim settings unset ios.remote --scope workspace` (and `android.remote`). A tailnet peer already in `remote.machines` is not announced as new. Suggestions never appear during a build or install, before setup is complete, or on the first launch, and appear at most once per day. Nothing is set up until you open and follow the wizard.
 
-The **Tip** card at the bottom of the sidebar appears after setup is complete and
-Desktop has been used on at least **3 calendar days**, with either **3 distinct
-workspaces seen running** or **5 builds observed**. It stays hidden while a build
-runs, the setup guide or tutorial is open, the main window is closed, or any
-notice is showing. Only builds that start after Desktop first sees status count.
-Usage is stored locally in Desktop preferences: the latest 30 active days and,
-until the thresholds are met, the workspace paths and build IDs counted.
+**Explore Stim's features** at the bottom of the sidebar opens **Discover Stim**.
+You can also open it from **Help > Discover Stim** or **Settings > App > Features**.
+The page starts with a tutorial banner, followed by Everyday workflows,
+Use more devices, and Other workflows. Each card explains the benefit
+and opens an existing action or offers a copyable agent prompt. The full prompt appears
+in a container with a Copy button. Phone access appears only when the Phone app feature
+flag is enabled.
 
-Tips cover remote machines, phone pairing, the tutorial, hiding workspaces when
-there are more than 10 workspace rows and none are hidden, status filters, replay, and hosted
-simulators. The replay tip appears when an archived workspace still has recordings and opens it.
-Three tips offer **Copy Prompt** for your coding agent instead of a button that opens a page: EAS
-development builds when a project has an `eas.json`, `stim macos` when a project has a Swift
-package app that has not run as a macOS app yet, and `stim logs --errors` when a workspace has
-errors. Only applicable tips appear. One tip stays for the calendar day;
-the next day picks the least recently shown applicable tip, with unseen tips
-first. **Next Tip** cycles through the remaining choices. The X hides the card
-until tomorrow. Turn off **Settings > App > Show tips** to disable tips and the lightbulb suggestion
-banners in the bottom-left stack; the Machine page card stays. Turn off **Offer the tutorial** to
-remove the tutorial tip and the setup guide's **Take the Tutorial** button, and to stop the tutorial
-panel from opening on its own. **Help > Stim Tutorial…** still opens it.
+Discover is always available, without waiting for usage milestones. Replay opens
+the newest eligible archived workspace with recordings. When recordings are not
+available, the card explains why and disables its action. View Options opens the
+sidebar's existing controls for hiding and filtering workspaces. Discover replaces
+the rotating sidebar tips; opening it does not mark tips as seen or suppress
+contextual suggestions.
 
-Tips and suggestions share state for remote machines, phone pairing, and
-hosted simulators. A shown, permanently dismissed, or currently snoozed
-suggestion suppresses the matching tip. Once that tip has been shown, the
-matching suggestions (new Mac, build slot waits, away
-builds, device limit) no longer appear. Disk-pressure suggestions are
-unaffected. Suggestions keep their own once-per-day limit.
+The Machine page's remote-machine suggestion still requires completed setup and
+at least **3 calendar days** of usage, with either **3 distinct workspaces seen
+running** or **5 builds observed**. Only builds that start after Desktop first
+sees status count. This usage stays in local Desktop preferences.
+
+Turn off **Settings > App > Offer the tutorial** to hide the setup guide's
+**Take the Tutorial** button and stop the tutorial from opening automatically.
+**Help > Stim Tutorial** and Discover Stim still let you open it manually.
 
 **File > Add Remote Machine…** (**Cmd+Shift+B**) always opens the existing build
-machine wizard. After the same usage threshold, **Machines > This Mac** shows a
+machine wizard. After this usage threshold, **Machines > This Mac** shows a
 card when no remote machine is configured. With another Mac, Linux or Windows
 machine online on the tailnet it offers **Add Remote Machine…**; otherwise it
 explains how to connect both machines with Tailscale. The remote machines tip

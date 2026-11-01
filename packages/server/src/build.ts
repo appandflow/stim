@@ -52,7 +52,7 @@ import {
 import type { BuildFingerprintSource, BuildOfferParams, BuildStartParams } from '@stim-cli/core/protocol';
 import { readAvailableMemory } from './machine.ts';
 import { listCommandLines } from './processes.ts';
-import { BuildArtifactCache, validArtifactIdentity } from './build-artifact-cache.ts';
+import { BuildArtifactCache, validArtifactIdentity } from 'stim/build-artifact-cache';
 import { runArtifactQuery, type ArtifactQueryResult } from './artifact-query.ts';
 import {
   BUILD_REPO_PATTERN,
@@ -278,7 +278,8 @@ function macosBuildOptions(
 function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
   if (
     !isJsonObject(value) ||
-    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android'].includes(key))
+    Object.keys(value).some((key) => !['project', 'sourceDigest', 'inputs', 'android', 'jdk'].includes(key)) ||
+    (value.jdk !== undefined && (typeof value.jdk !== 'string' || !/^[0-9]{1,3}$/.test(value.jdk)))
   )
     return null;
   const { project, sourceDigest, inputs } = value;
@@ -301,6 +302,7 @@ function gradleArtifactQuery(value: unknown): BuildGradleArtifactQuery | null {
   return android && android.variant !== null
     ? {
         project,
+        ...(typeof value.jdk === 'string' ? { jdk: value.jdk } : {}),
         sourceDigest,
         inputs: { complete: true, ignored: inputs.ignored, outputs: inputs.outputs },
         android: { ...android, variant: android.variant },
@@ -404,6 +406,11 @@ interface Job {
 }
 
 const nowhere = (): void => {};
+
+function podsOnWorkerJob(params: Record<string, unknown>): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (params.podsOnWorker !== true) return {};
+  return { podsOnWorker: true, ...(params.reuseArtifact === true ? { reuseArtifact: true } : {}) };
+}
 
 export interface BuildHostOptions {
   /** The `offload-worker.mjs` entry of the bundled Stim. */
@@ -645,8 +652,12 @@ export class BuildHost {
     };
   }
 
+  private artifactCacheDir(client: string, repo: string): string {
+    return join(this.clientDir(client), 'repos', repo, 'artifact-cache');
+  }
+
   cache(client: string, repo: string): BuildArtifactCache {
-    return new BuildArtifactCache(join(this.clientDir(client), 'repos', repo, 'artifact-cache'));
+    return new BuildArtifactCache(this.artifactCacheDir(client, repo));
   }
 
   private workerEnvironment(clientDir: string, area: string): NodeJS.ProcessEnv {
@@ -1104,6 +1115,7 @@ export class BuildHost {
         area,
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
+        artifactCache: this.artifactCacheDir(client, repo),
         gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
@@ -1213,8 +1225,8 @@ export class BuildHost {
               query &&
               metadata &&
               isJsonObject(metadata.identity) &&
-              query.fingerprint === job.expectedFingerprint &&
-              entry.outcome.fingerprint === job.expectedFingerprint &&
+              query.fingerprint === entry.outcome.fingerprint &&
+              (entry.outcome.fingerprint === job.expectedFingerprint || job.podsOnWorker === true) &&
               query.project === job.project &&
               query.platform === job.platform
             ) {
@@ -1393,6 +1405,7 @@ function workerOutcome(value: Record<string, unknown>, native?: 'xcode' | 'gradl
         ok: true,
         artifact: { name, size, sha256 },
         fingerprint: native === 'gradle' ? null : String(value.fingerprint),
+        ...(value.reused === true ? { reused: true } : {}),
         ...(androidPackage ? { androidPackage } : {}),
         ...(typeof value.sourceDigest === 'string' ? { sourceDigest: value.sourceDigest } : {}),
         compilationCache: isJsonObject(value.compilationCache) ? value.compilationCache : {},
@@ -1656,6 +1669,7 @@ export class BuildSession {
         project: params.project,
         isExpo: params.isExpo === true,
         cacheArtifact: params.cacheArtifact === true,
+        ...podsOnWorkerJob(params),
         stimBuild: params.stimBuild,
         ...(compat !== undefined && toolchain.compat !== undefined ? { compat } : {}),
         ...(typeof params.jdk === 'string' ? { jdk: params.jdk } : {}),

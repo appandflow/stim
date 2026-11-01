@@ -8,6 +8,7 @@ import SwiftUI
 /// physical Android targets take clicks, trackpad scrolls and keys; physical iOS stays view only.
 struct PhysicalDeviceScreen: View {
   var device: DeviceRef
+  var owner: ServerOwner
   var workspace: String
   var interactive: Bool
   /// Whether the tile's build cover hides the screen; its own message then stays hidden, and lifting the cover
@@ -18,16 +19,20 @@ struct PhysicalDeviceScreen: View {
   var onControlLost: () -> Void
   /// Receives the windows of a hosted macOS app, for the tile's menu.
   var windowChoice: MacosWindowChoice?
-  @ObservedObject private var session = ServerSession.shared
+  var quality: StreamQuality
+  @ObservedObject private var localSession = ServerSession.shared
+  @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @StateObject private var stream: PhysicalStream
 
   init(
-    device: DeviceRef, workspace: String, interactive: Bool, covered: Bool = false,
+    device: DeviceRef, owner: ServerOwner = .local, workspace: String, interactive: Bool, covered: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
-    windowChoice: MacosWindowChoice? = nil
+    windowChoice: MacosWindowChoice? = nil, quality: StreamQuality = .standard
   ) {
+    self.quality = quality
     self.windowChoice = windowChoice
     self.device = device
+    self.owner = owner
     self.workspace = workspace
     self.interactive = interactive
     self.covered = covered
@@ -35,17 +40,18 @@ struct PhysicalDeviceScreen: View {
     self.onControlLost = onControlLost
     _stream = StateObject(
       wrappedValue: PhysicalStream(
-        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical))
+        target: ReplayTarget(workspace: workspace, platform: device.platform, slot: device.slot), physical: device.isPhysical,
+        quality: quality))
   }
 
   var body: some View {
     TimelineView(.periodic(from: .now, by: 15)) { context in
-      let screen = PhysicalScreen(device: device, link: session.link, now: context.date)
+      let screen = ServerSession.screen(for: owned, now: context.date)
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
-      if interactive, PhysicalScreen(device: device, link: session.link, now: Date()).canControl {
+      if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
         stream.begin()
       } else {
         stream.end()
@@ -54,7 +60,7 @@ struct PhysicalDeviceScreen: View {
     .onChange(of: covered) { _, covered in
       guard !covered, stream.problem != nil else { return }
       stream.stop()
-      follow(PhysicalScreen(device: device, link: session.link, now: Date()))
+      follow(ServerSession.screen(for: owned, now: Date()))
     }
     .onChange(of: stream.control) { _, control in
       switch control {
@@ -62,11 +68,13 @@ struct PhysicalDeviceScreen: View {
       case .starting, .on: break
       }
     }
+    .onChange(of: quality) { _, quality in stream.setQuality(quality) }
     .onChange(of: stream.windows, initial: true) { _, windows in publishWindows(windows) }
     .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
     .onDisappear {
       stream.stop()
       windowChoice?.windows = []
+      windowChoice?.currentPointSize = nil
       windowChoice?.canSelect = false
     }
   }
@@ -75,6 +83,7 @@ struct PhysicalDeviceScreen: View {
     guard let windowChoice else { return }
     windowChoice.windows = windows?.windows ?? []
     windowChoice.current = windows?.current
+    windowChoice.currentPointSize = windows?.currentPointSize
     windowChoice.pinned = windows?.pinned ?? false
     windowChoice.canSelect = isControlling
     windowChoice.select = { [stream] id in stream.selectWindow(id) }
@@ -87,7 +96,8 @@ struct PhysicalDeviceScreen: View {
     case .stream:
       VStack(spacing: Space.md) {
         PhysicalDisplay(
-          stream: stream, activityKey: device.activityKey, interactive: interactive && isControlling,
+          stream: stream, activityKey: owned.activityKey,
+          interactive: interactive && isControlling,
           onPixelSizeChange: onPixelSizeChange
         )
         .overlay {
@@ -103,6 +113,8 @@ struct PhysicalDeviceScreen: View {
       }
     }
   }
+
+  private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
 
   private var isControlling: Bool {
     if case .on = stream.control { return true }
@@ -137,7 +149,7 @@ struct PhysicalDeviceScreen: View {
   }
 
   private func follow(_ screen: PhysicalScreen) {
-    if case .stream = screen, session.isOpen {
+    if case .stream = screen, let session = ServerSession.session(for: owner), session.isOpen {
       stream.connect(session.client)
       if interactive, screen.canControl { stream.begin() } else { stream.end() }
     } else {

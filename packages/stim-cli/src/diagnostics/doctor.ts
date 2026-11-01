@@ -42,7 +42,13 @@ import {
 } from '../workspace/worktree.ts';
 import { dependencyState, hasInstalledDependencies, installedNpmTreeIsValidAsync } from '../dependency-state.ts';
 import { workspaceDerivedData } from '../workspace/paths.ts';
-import { type ConcurrencyLimits, getConcurrencyLimits, loadConfig } from '../workspace/config.ts';
+import {
+  type ConcurrencyLimits,
+  getConcurrencyLimits,
+  getPlatformDeviceLimits,
+  loadConfig,
+  type PlatformDeviceLimits,
+} from '../workspace/config.ts';
 import { ccacheInstallCommand } from '../engine/ccache.ts';
 import { ccacheEnabled } from '../integrations/react-native-build.ts';
 import { podInstallCommand } from '../engine/bundler.ts';
@@ -52,7 +58,13 @@ import { readHostMemoryPressureAsync, hostMemoryPressureAdvice, type HostMemoryP
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { COMPILATION_CACHE_MIN_XCODE } from '../engine/xcode.ts';
-import { androidHome, hostSystemImageArch } from '../devices/android.ts';
+import { androidHome, hostSystemImageArch, listInstalledSystemImages } from '../devices/android.ts';
+import {
+  androidImageInstallPolicy,
+  decideSystemImage,
+  systemImageInstallProblem,
+  type SystemImageDecision,
+} from '../devices/android-image.ts';
 import {
   type EasAuthResult,
   checkEasAuth as probeEasAuth,
@@ -724,16 +736,28 @@ export function checkEasAuth({
 export function checkConcurrency({
   maxBuilds = 0,
   maxDevices = 0,
+  platformMax = { ios: 0, android: 0, macos: 0 },
   liveDevices = 0,
   activeBuilds = 0,
 }: {
   maxBuilds?: number;
   maxDevices?: number;
+  platformMax?: PlatformDeviceLimits;
   liveDevices?: number | { unknown: string };
   activeBuilds?: number;
 } = {}): Finding | null {
-  if (!maxBuilds && !maxDevices) return null;
-  const caps = `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`;
+  const platformCaps = (
+    [
+      ['ios', 'maxIosDevices'],
+      ['android', 'maxAndroidDevices'],
+      ['macos', 'maxMacosApps'],
+    ] as const
+  ).filter(([platform]) => platformMax[platform] > 0);
+  if (!maxBuilds && !maxDevices && !platformCaps.length) return null;
+  const caps = [
+    `maxBuilds ${maxBuilds || 'unlimited'}, maxDevices ${maxDevices || 'unlimited'}`,
+    ...platformCaps.map(([platform, setting]) => `${setting} ${platformMax[platform]}`),
+  ].join(', ');
   const devices =
     typeof liveDevices === 'number'
       ? `${liveDevices} Stim device(s) are booted`
@@ -743,7 +767,10 @@ export function checkConcurrency({
     'Concurrency limits are set',
     `${caps}. Right now ${devices} and ${activeBuilds} build slot(s) are in use on this machine. ` +
       'At the device cap a new `stim ios`/`android` waits in FIFO order for 600s (--wait changes it; --no-wait refuses with STIM_AT_CAPACITY); ' +
-      'at the build cap a compile waits for a free slot.',
+      'at the build cap a compile waits for a free slot.' +
+      (platformCaps.length
+        ? ' A per-platform cap bounds its platform alone, and a boot must also fit maxDevices; maxMacosApps bounds hosted macOS apps only.'
+        : ''),
     null,
   );
 }
@@ -881,7 +908,7 @@ export function checkRemoteDevice({
   );
 }
 
-export function checkEasBuildDownload({
+function checkEasBuildDownload({
   easJson = false,
   remoteEas = false,
   easCliResolvable = false,
@@ -973,12 +1000,15 @@ function checkIosHost(platform: DoctorPlatform | undefined, host: NodeJS.Platfor
   if (platform !== 'ios' || host === 'darwin') return null;
   return finding(
     'note',
-    `iOS runs through EAS on this ${host} host`,
+    `iOS runs on a remote Mac or through EAS on this ${host} host`,
     'Xcode, CocoaPods and simctl exist only on macOS, so `stim ios` cannot build or boot a simulator here. ' +
+      '`stim ios --remote <mac> --remote-build <mac>` builds the app on a Mac approved for builds and hosted simulators, ' +
+      "with that Mac's Xcode and CocoaPods, and runs it on a simulator there; Metro stays on this machine. " +
       '`stim ios --remote eas --eas-profile <simulator profile>` downloads a finished EAS development build and runs it ' +
-      'on an EAS Simulator session driven through agent-device; Metro stays on this machine behind a tunnel.',
-    'Install eas-cli and agent-device, then run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
-      'Read `stim guide metro` for the remote device backends.',
+      'on an EAS Simulator session driven through agent-device.',
+    'Add a Mac with `stim doctor --fix` and run `stim ios --remote <mac> --remote-build <mac>`, or install eas-cli and ' +
+      'agent-device and run `stim start --remote` and `stim ios --remote eas --eas-profile <profile>`. ' +
+      'Read `stim guide settings` for remote machines and `stim guide metro` for the remote device backends.',
   );
 }
 
@@ -1093,10 +1123,17 @@ export async function runDoctor(
 
   const limits = typeof concurrency === 'function' ? concurrency() : concurrency;
   let concurrencyFinding: Finding | null = null;
-  if (limits && (limits.maxBuilds || limits.maxDevices)) {
+  const platformMax = getPlatformDeviceLimits();
+  if (
+    (limits && (limits.maxBuilds || limits.maxDevices)) ||
+    platformMax.ios ||
+    platformMax.android ||
+    platformMax.macos
+  ) {
     concurrencyFinding = checkConcurrency({
-      maxBuilds: limits.maxBuilds,
-      maxDevices: limits.maxDevices,
+      maxBuilds: limits?.maxBuilds,
+      maxDevices: limits?.maxDevices,
+      platformMax,
       liveDevices: liveDevices
         ? liveDevices()
         : options.operation
@@ -1302,9 +1339,10 @@ export async function reactNativeDoctorFindings({
     localIos && optimizations?.ios.compilationCache ? checkCcacheConflict(podfile, podfileProperties) : null,
     ...(platform === 'ios' || optimizations?.android.compilerCache !== 'ccache'
       ? []
-      : androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
+      : await androidCcacheFindings(projectRoot, platform, lookupCcache, androidLayout)),
     checkAndroidPathRoom(projectRoot, platform, host),
     checkAndroidSdk(projectRoot, platform, androidLayout),
+    checkAndroidSystemImage(androidImageDecision(platform, androidLayout, projectSettings, remoteEnv), remoteEnv),
     checkChrome({
       usesWeb: () =>
         !platform &&
@@ -1323,7 +1361,7 @@ export async function reactNativeDoctorFindings({
   ].filter((value): value is Finding => Boolean(value));
 }
 
-export function checkAndroidPathRoom(
+function checkAndroidPathRoom(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   host: NodeJS.Platform,
@@ -1348,7 +1386,7 @@ function hasAndroidProject(layout: AndroidLayout): boolean {
   return existsSync(layout.custom ? layout.moduleDir : layout.gradleRoot);
 }
 
-export function checkAndroidSdk(
+function checkAndroidSdk(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   layout: AndroidLayout = defaultAndroidLayout(projectRoot),
@@ -1374,18 +1412,56 @@ export function checkAndroidSdk(
   };
 }
 
-function androidCcacheFindings(
+/** The system image decision for this project's owned emulator, or null when doctor does not check Android here. */
+export function androidImageDecision(
+  platform: DoctorPlatform | undefined,
+  layout: AndroidLayout,
+  settings: SettingsObject | null,
+  env: NodeJS.ProcessEnv,
+): SystemImageDecision | null {
+  if (platform === 'ios' || (platform !== 'android' && !hasAndroidProject(layout))) return null;
+  if (!existsSync(androidHome(env))) return null;
+  const remote = settings ? remoteAndroidSetting(settings) : null;
+  if (remote && (remote.kind === 'backend' || remote.machine !== 'auto')) return null;
+  const requested = settingValueAt(settings, 'android.systemImage');
+  return decideSystemImage({
+    requested: typeof requested === 'string' && requested.trim() ? requested.trim() : null,
+    installed: listInstalledSystemImages(undefined, env),
+    policy: androidImageInstallPolicy(settings),
+    env,
+  });
+}
+
+function checkAndroidSystemImage(decision: SystemImageDecision | null, env: NodeJS.ProcessEnv): Finding | null {
+  if (!decision || decision.kind === 'installed') return null;
+  const title = 'No Android system image for an owned emulator is installed';
+  if (decision.kind === 'refuse')
+    return { code: 'android-system-image', ...finding('note', title, decision.message, decision.remedy) };
+  const problem = systemImageInstallProblem(decision.pkg, env);
+  return {
+    code: 'android-system-image',
+    ...finding(
+      'note',
+      title,
+      `\`stim android\` installs ${decision.pkg} with sdkmanager on its first emulator run (about 2 GB).${problem ? ` It cannot now: ${problem.message}` : ''}`,
+      problem ? problem.remedy : 'Run `stim doctor --fix --platform android` to install it now.',
+    ),
+  };
+}
+
+async function androidCcacheFindings(
   projectRoot: string,
   platform: DoctorPlatform | undefined,
   lookupCcache: (() => boolean) | null,
   layout: AndroidLayout,
-): (Finding | null)[] {
+): Promise<(Finding | null)[]> {
   if (platform !== 'android' && !hasAndroidProject(layout)) return [];
   const onPath = lookupCcache ? lookupCcache() : ccacheIsOnPath();
   let cxx: Finding | null;
   try {
-    cxx = checkCxxCompilerLauncher({ states: readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
+    cxx = checkCxxCompilerLauncher({ states: await readCxxLauncherStates(projectRoot, layout), ccacheOnPath: onPath });
   } catch (error) {
+    getExecutor().reportSignal?.()?.throwIfAborted();
     cxx = finding(
       'cost',
       'CMake launcher state could not be inspected',

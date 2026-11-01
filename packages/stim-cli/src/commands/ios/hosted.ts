@@ -1,3 +1,4 @@
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import { hostedIosStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
 import type { HostedIosTarget } from '../../device-host/hosted-ios.ts';
 import type { IosDeps } from './dependencies.ts';
@@ -8,9 +9,11 @@ import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { verifyIosMetroRun, type IosRunCompletion } from './launch.ts';
 import { LAUNCH_BUNDLING, LAUNCH_FATAL } from '../../engine/launch-verify.ts';
 import { launchOutcomeRecord } from '../native-runtime.ts';
+import type { StimContext } from '@stim-cli/core';
 
 export async function finishHostedIosRun({
   target,
+  operation,
   d,
   artifact,
   root,
@@ -51,6 +54,7 @@ export async function finishHostedIosRun({
   | 'devicePlacement'
 > & {
   target: HostedIosTarget;
+  operation?: StimContext;
   d: IosDeps;
   artifact: PreparedIosArtifact;
   isExpo: boolean;
@@ -134,10 +138,11 @@ export async function finishHostedIosRun({
   let launchWarning: string | undefined;
   let unattributed = false;
   if (appMode === 'development') {
-    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt);
+    const hostedLogs = d.followHostedLaunchLogs(root, slot, 'ios', launchedAt, operation);
     let verification;
     try {
       verification = await verifyIosMetroRun({
+        operation,
         root,
         slot,
         appPath: artifact.path,
@@ -204,9 +209,10 @@ export async function finishHostedIosRun({
     metroCheck,
     metroPort,
     logsDir,
-    device: { deviceName: device.deviceType, deviceType: device.deviceType, runtime: device.runtime },
-    udid: '',
+    device: { deviceName: device.name, deviceType: device.deviceType, runtime: device.runtime },
+    udid: null,
     host: hostedIosStatus(run.placement),
+    links: await workspaceLinks(root, { platform: 'ios', slot }),
     appPath: artifact.path,
     bundleId,
     installSkipped: false,

@@ -108,7 +108,9 @@ export function requireConfiguredMachine(selected: string, machines: unknown): s
   const entries = Array.isArray(machines) ? machines.filter((entry): entry is string => typeof entry === 'string') : [];
   const match = entries.find((entry) => {
     const candidate = parseMachine(entry);
-    return candidate?.name === parsed.name && candidate.port === parsed.port;
+    return (
+      candidate?.transport === parsed.transport && candidate.name === parsed.name && candidate.port === parsed.port
+    );
   });
   if (!match)
     throw new OffloadRefusal(selected, `not listed in remote.machines (configured: ${entries.join(', ') || 'none'})`);

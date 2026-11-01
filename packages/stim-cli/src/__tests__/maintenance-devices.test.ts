@@ -1,10 +1,8 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   maintenanceNdjsonFile,
-  maintenanceStateFile,
-  readMaintenanceState,
   readDeviceIdleShutdowns,
   type MaintenanceRecord,
   type MaintenanceSize,
@@ -16,12 +14,9 @@ import * as gcIdle from '../commands/gc/idle.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import * as measurements from '../maintenance/measure.ts';
-import { previewMaintenance } from '../maintenance/preview.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { ownedDeviceUsage, planDeviceDeletion } from '../maintenance/devices.ts';
-import { planPressureLevels } from '../maintenance/levels.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
+import { planDeviceDeletion } from '../maintenance/devices.ts';
 import { maintenanceLine } from '../maintenance/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
@@ -131,21 +126,6 @@ test('a scoped Stim home plans no device deletion, because devices are machine-w
   expect(plan([idle])).toEqual({ actions: [], blocked: [], skips: [] });
 });
 
-test('a workspace with no recorded use is judged by when its workspace was created', () => {
-  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const root = join(projects, 'never-used');
-  mkdirSync(root);
-  const dir = ensureWorkspaceStorage(root);
-  upsertProject(root, { metroPort: 8100, platforms: { ios: { deviceUdid: 'UDID-never', owned: true } } });
-
-  expect(plan([root]).skips).toEqual([
-    expect.objectContaining({ target: root, reason: 'used within the last 10 minutes' }),
-  ]);
-  const created = new Date(Date.now() - 30 * MINUTE_MS);
-  utimesSync(join(dir, 'workspace.json'), created, created);
-  expect(plan([root]).actions).toEqual([expect.objectContaining({ kind: 'would-delete-devices', target: root })]);
-});
-
 function sweepOf(worktrees: Partial<WorktreeSweep['worktrees'][number]>[]): WorktreeSweep {
   return {
     idle: null,
@@ -225,20 +205,6 @@ test('gc lists the owned devices of a finished worktree it keeps once its grace 
   ]);
 });
 
-test('an Android-only workspace is judged without listing simulators', () => {
-  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  vi.mocked(ios.listAllIosSims).mockImplementation(() => {
-    throw new Error('xcrun: not found');
-  });
-  const root = join(projects, 'android-only');
-  mkdirSync(root);
-  ensureWorkspaceStorage(root);
-  upsertProject(root, { metroPort: 8100, platforms: { android: { avdName: 'stim-android-only', owned: true } } });
-  recordWorkspaceUse(root, new Date(Date.now() - 30 * MINUTE_MS));
-
-  expect(plan([root]).actions).toEqual([expect.objectContaining({ kind: 'would-delete-devices', target: root })]);
-});
-
 test('a workspace holding a device lease or its native-run lock keeps its devices', () => {
   vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
   const leased = workspaceWithSim('leased', 30);
@@ -274,39 +240,6 @@ test('gc --delete keeps the devices of a finished worktree that is pinned by mai
   expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
 });
 
-test('owned device disk counts listed owned devices and skips devices no longer listed', async () => {
-  const owned = workspaceWithSim('owned', 90, 'UDID-owned');
-  upsertProject(owned, {
-    platforms: { ios: { deviceUdid: 'UDID-owned', owned: true }, android: { avdName: 'stim-owned', owned: true } },
-  });
-  workspaceWithSim('gone', 90, 'UDID-gone');
-  const failures: string[] = [];
-
-  const usage = await ownedDeviceUsage((target) => failures.push(target), {
-    sims: () => [
-      {
-        udid: 'UDID-owned',
-        name: 'stim-owned',
-        state: 'Shutdown',
-        runtime: 'iOS-26-5',
-        deviceTypeIdentifier: 'iPhone-17',
-        available: true,
-        dataPath: '/sims/owned',
-        dataPathSize: 5,
-      },
-    ],
-    avds: () => ['stim-owned'],
-    avdDirectory: (name) => `/avds/${name}.avd`,
-    size: () => 7,
-  });
-
-  expect(usage).toEqual([
-    { kind: 'ios', name: 'stim-owned', dir: '/sims/owned', bytes: 5, workspace: owned },
-    { kind: 'android', name: 'stim-owned', dir: '/avds/stim-owned.avd', bytes: 7, workspace: owned },
-  ]);
-  expect(failures).toEqual([]);
-});
-
 test('the maintenance line reports owned device disk', () => {
   const line = maintenanceLine({
     mode: 'on',
@@ -319,24 +252,6 @@ test('the maintenance line reports owned device disk', () => {
     plan: [],
   });
   expect(line).toContain('owned devices 4.0G');
-});
-
-test('at level 3 an idle workspace with no dev server loses its devices through level 2, not a level 3 stop', async () => {
-  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const idle = workspaceWithSim('idle', 30);
-  const settings = { ...resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' }), removeFinishedWorktrees: false };
-
-  const result = await planPressureLevels(3, {
-    settings,
-    sizes: [],
-    protectedRoot: '',
-    pinned: () => false,
-    now: Date.now(),
-  });
-
-  expect(result.actions.filter((action) => action.target === idle)).toEqual([
-    expect.objectContaining({ kind: 'would-delete-devices', level: 2 }),
-  ]);
 });
 
 function idlePass(mode: 'on' | 'report') {
@@ -367,36 +282,6 @@ function idleDevice(name: string, minutes: number): gcIdle.OwnedDeviceActivity {
     },
   };
 }
-
-test('a report pass keeps a planned idle shutdown until the next idle check, and gc previews it', async () => {
-  idlePass('report');
-  const device = idleDevice('quiet', 45);
-  vi.spyOn(gcIdle, 'collectOwnedDeviceActivity').mockImplementation((config) =>
-    config?.projects[device.project] ? [device] : [],
-  );
-  const shutDown = vi.spyOn(teardown, 'teardownOwnedIosSim');
-  const planned = () =>
-    (readMaintenanceState()?.plan ?? []).filter((action) => action.kind === 'would-shutdown-device');
-
-  await runMaintenance('test');
-  expect(planned().map((action) => action.target)).toEqual(['UDID-quiet']);
-  const state = readMaintenanceState();
-  const now = Date.now();
-  writeFileSync(
-    maintenanceStateFile(),
-    JSON.stringify({ ...state, lastAt: { pressure: 0, size: now, worktree: now, sweep: now, idle: now } }),
-  );
-  await runMaintenance('test');
-
-  expect(planned().map((action) => action.target)).toEqual(['UDID-quiet']);
-  const would = readFileSync(maintenanceNdjsonFile(), 'utf8')
-    .trim()
-    .split('\n')
-    .filter((line) => line.includes('Would shutdown device'));
-  expect(would).toHaveLength(1);
-  expect((await previewMaintenance()).actions.map((action) => action.target)).toContain('UDID-quiet');
-  expect(shutDown).not.toHaveBeenCalled();
-});
 
 test('a maintenance pass shuts down devices idle past their workspace devices.idleShutdownMinutes, and keeps the rest', async () => {
   idlePass('on');

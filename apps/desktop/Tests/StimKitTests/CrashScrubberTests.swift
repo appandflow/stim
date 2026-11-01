@@ -65,7 +65,6 @@ final class CrashScrubberTests: XCTestCase {
 
   func testKeepsTheFieldsOfAHandledFailureEventAndHangReadable() {
     let failures: [DiagnosticFailure] = [
-      .cli(command: "status", outcome: .exited(4), stimCode: "STIM_NOT_READY"),
       .decode(source: .server, type: "ProjectStats", path: "machines.<key>.sizes.[]", reason: "type-mismatch"),
       .server(.adoptionHomeMismatch),
     ]

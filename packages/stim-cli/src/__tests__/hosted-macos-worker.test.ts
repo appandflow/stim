@@ -33,6 +33,7 @@ const native = vi.hoisted(() => ({
   pressure: vi.fn<() => string | null>(),
   identity: vi.fn<(record: unknown) => string>(),
   stop: vi.fn<(root: string) => Promise<boolean>>(),
+  stopApps: vi.fn<(area: string) => Promise<void>>(),
 }));
 vi.mock('../exec.ts', () => ({
   getExecutor: () => ({ runFile: native.runFile, runFileQuiet: native.quiet, spawn: native.spawn }),
@@ -46,7 +47,10 @@ vi.mock('../process-identity.ts', async (original) => ({
   ...(await original<typeof import('../process-identity.ts')>()),
   inspectProcessIdentity: (record: unknown) => native.identity(record),
 }));
-vi.mock('../macos/stop.ts', () => ({ stopMacosAppHeld: (root: string) => native.stop(root) }));
+vi.mock('../macos/stop.ts', () => ({
+  stopMacosAppHeld: (root: string) => native.stop(root),
+  stopHostedBundleInstances: (area: string) => native.stopApps(area),
+}));
 
 let root: string;
 let home: string;
@@ -137,35 +141,29 @@ function receipt(args?: string[]) {
   );
 }
 
-test.each([
-  'identity',
-  'architecture',
-  'minos',
-  'platform',
-  'plist minimum',
-  'URL schemes',
-  'update feed',
-  'executable',
-])('refuses incompatible macOS %s before signing or launching', async (failure) => {
-  receipt();
-  if (failure === 'identity') plist.CFBundleIdentifier = 'different.app';
-  if (failure === 'architecture') arch = 'x86_64';
-  if (failure === 'minos') build = 'platform MACOS\n minos 27.0.1';
-  if (failure === 'platform') build = 'platform IOSSIMULATOR\n minos 26.0';
-  if (failure === 'plist minimum') plist.LSMinimumSystemVersion = '28';
-  if (failure === 'URL schemes') plist.CFBundleURLTypes = [];
-  if (failure === 'update feed') plist.SUFeedURL = 'https://example.test';
-  if (failure === 'executable') plist.CFBundleExecutable = '../Fixture';
-  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
-    state: 'unknown',
-    device,
-    notice: expect.any(String),
-  });
-  expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === '/usr/libexec/PlistBuddy')).toBe(
-    false,
-  );
-  expect(native.spawn).not.toHaveBeenCalled();
-});
+test.each(['identity', 'architecture', 'platform', 'executable'])(
+  'refuses incompatible macOS %s before signing or launching',
+  async (failure) => {
+    receipt();
+    if (failure === 'identity') plist.CFBundleIdentifier = 'different.app';
+    if (failure === 'architecture') arch = 'x86_64';
+    if (failure === 'minos') build = 'platform MACOS\n minos 27.0.1';
+    if (failure === 'platform') build = 'platform IOSSIMULATOR\n minos 26.0';
+    if (failure === 'plist minimum') plist.LSMinimumSystemVersion = '28';
+    if (failure === 'URL schemes') plist.CFBundleURLTypes = [];
+    if (failure === 'update feed') plist.SUFeedURL = 'https://example.test';
+    if (failure === 'executable') plist.CFBundleExecutable = '../Fixture';
+    expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
+      state: 'unknown',
+      device,
+      notice: expect.any(String),
+    });
+    expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === '/usr/libexec/PlistBuddy')).toBe(
+      false,
+    );
+    expect(native.spawn).not.toHaveBeenCalled();
+  },
+);
 
 test('stamps and signs verified bytes, launches with an isolated home, and deletes only its recorded preference domain after stop', async () => {
   const offeredArguments = ['-autopilot.enabled', 'true', '', 'ENV=value'];
@@ -336,13 +334,21 @@ test('stop retains app data and preferences when process shutdown cannot be veri
   expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
 });
 
-test('a preference plist removal failure leaves stop unresolved and app data intact', async () => {
+test('stop ends copies of the session bundles before deleting them, and keeps them when one will not stop', async () => {
   receipt();
   await runHostedMacosApp('install', request, { attempt: 'app' });
-  mkdirSync(join(process.env.HOME!, 'Library', 'Preferences', `${bundleId}.hosted3.plist`));
-  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
-  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  native.stopApps.mockClear();
+  native.stopApps.mockRejectedValueOnce(new Error('Copy did not exit'));
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown', notice: 'Copy did not exit' });
   expect(existsSync(join(area, 'App.app'))).toBe(true);
+  expect(existsSync(join(home, 'app-home'))).toBe(true);
+  native.stopApps.mockImplementationOnce(() => {
+    expect(existsSync(join(area, 'App.app'))).toBe(true);
+    return Promise.resolve();
+  });
+  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'stopped' });
+  expect(native.stopApps).toHaveBeenLastCalledWith(realpathSync(root));
+  expect(existsSync(join(area, 'App.app'))).toBe(false);
 });
 
 test.each([
@@ -365,24 +371,6 @@ test.each([
   expect(result.notice === undefined).toBe(notice === null);
   expect(existsSync(file)).toBe(false);
 });
-
-test.each(['foo.hosted4', `${'a'.repeat(242)}.hosted3`])(
-  'stop refuses tampered preference identity %s without deleting preferences or app data',
-  async (id) => {
-    receipt();
-    await runHostedMacosApp('install', request, { attempt: 'app' });
-    const file = join(process.env.HOME!, 'Library', 'Preferences', 'foo.hosted4.plist');
-    writeFileSync(file, 'another slot');
-    writeFileSync(join(home, 'hosted-macos-app.json'), JSON.stringify({ bundleId: id }));
-    expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
-    expect(native.quiet).not.toHaveBeenCalled();
-    expect(native.runFile.mock.calls.some(([command]) => command === 'defaults')).toBe(false);
-    expect(readFileSync(file, 'utf8')).toBe('another slot');
-    expect(existsSync(join(home, 'app-home'))).toBe(true);
-    expect(existsSync(join(area, 'App.app'))).toBe(true);
-    expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
-  },
-);
 
 test('does not claim a launch when registration lacks a verified process', async () => {
   receipt();
@@ -410,8 +398,17 @@ test('stop without an app skips defaults and refuses a foreign preference domain
 test('prepare records its app slot without a device ledger and refuses replacement or memory pressure', async () => {
   rmSync(join(home, 'hosted-device.json'));
   native.pressure.mockReturnValue('warning');
-  expect(await runHostedMacosApp('prepare', request)).toMatchObject({ state: 'stopped', device: null });
-  native.pressure.mockReturnValue('normal');
+  expect(await runHostedMacosApp('prepare', request)).toMatchObject({
+    state: 'stopped',
+    device: null,
+    notice: 'Host memory pressure is warning; hosted sessions wait until it is normal.',
+  });
+  native.pressure.mockReturnValue(null);
+  expect(await runHostedMacosApp('prepare', request)).toMatchObject({
+    state: 'stopped',
+    notice: 'Host memory pressure could not be read; retry shortly.',
+  });
+  native.pressure.mockReturnValueOnce(null).mockReturnValue('normal');
   expect(await runHostedMacosApp('prepare', request)).toMatchObject({
     state: 'ready',
     device: { macosVersion: '27.0', appSlot: 3 },

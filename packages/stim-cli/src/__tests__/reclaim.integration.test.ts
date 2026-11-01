@@ -1,0 +1,871 @@
+import { type ChildProcess, spawn } from 'node:child_process';
+import * as identity from '../process-identity.ts';
+import { captureProcessToken } from '../process-identity.ts';
+import { once } from 'node:events';
+import { realpathSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { setExecutor, resetExecutor } from '../exec.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { upsertProject, setDevice, getProject } from '../workspace/config.ts';
+import { describeDereferenced, reclaimProject } from '../devices/reclaim.ts';
+import { endRecordedSession } from '../engine/device-remote.ts';
+import { recordPhoneReverse } from '../devices/phone-reverses.ts';
+import {
+  ensureWorkspaceStorage,
+  workspaceAgentDeviceDir,
+  workspaceDir,
+  workspaceStateFile,
+} from '../workspace/paths.ts';
+import { liveClaimOwner, makeExecutor, plantClaim } from './_factories.ts';
+import { writeWebRecord } from '../web/state.ts';
+import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
+import { testContext } from './_context.ts';
+import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+
+let tmpHome: string;
+
+beforeEach(() => {
+  tmpHome = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = tmpHome;
+  for (const udid of ['U1']) recordCreatedDevice('ios', udid);
+  for (const name of ['stim-collector-ios', 'stim-proj', 'stim-wt']) recordCreatedDevice('android', name);
+});
+
+afterEach(() => {
+  rmSync(tmpHome, { recursive: true, force: true });
+  delete process.env.STIM_HOME;
+  resetExecutor();
+});
+
+test('describeDereferenced returns an empty list when nothing is claimed', () => {
+  expect(describeDereferenced({ platforms: {} })).toEqual([]);
+  expect(describeDereferenced({})).toEqual([]);
+});
+
+test('reclaimProject retains daemon state after a refusal and removes it after a successful stop', async () => {
+  upsertProject('/proj', { metroPort: 8082 });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1' });
+  ensureWorkspaceStorage('/proj');
+  const stateDir = workspaceAgentDeviceDir('/proj');
+  mkdirSync(stateDir);
+  const record = join(stateDir, 'daemon.json');
+  writeFileSync(record, JSON.stringify({ pid: process.pid, processStartTime: '2026-11-01T05:50:03Z' }));
+  const start = vi.spyOn(identity, 'inspectProcessStart').mockReturnValue({
+    status: 'running',
+    startedAtMs: Date.parse('2026-11-01T06:50:03Z'),
+  });
+  let refuse = true;
+  setExecutor(
+    makeExecutor({
+      findExecutable: () => '/bin/agent-device',
+      runFileAsync: async (file) => {
+        if (file === 'agent-device') {
+          if (refuse) throw new Error('agent-device could not prove daemon ownership');
+        }
+        return '';
+      },
+    }),
+  );
+
+  try {
+    const kept = await reclaimProject('/proj', { deleteOwnedDevices: false });
+    expect(kept.keptEntry).toBe(true);
+    expect(kept.failedWorkspaceDirs).toEqual([workspaceDir('/proj')]);
+    expect(existsSync(record)).toBe(true);
+    expect(getProject('/proj')?.platforms?.ios?.deviceUdid).toBe('U1');
+
+    refuse = false;
+    const result = await reclaimProject('/proj', { deleteOwnedDevices: false });
+    expect(result.path).toBe('/proj');
+    expect(result.dereferenced).toEqual(['ios sim U1']);
+    expect(getProject('/proj')).toBe(null);
+    expect(existsSync(workspaceDir('/proj'))).toBe(false);
+  } finally {
+    start.mockRestore();
+  }
+});
+
+test('reclaimProject keeps the workspace, its devices and its entry while a native run or a build uses it', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
+  ensureWorkspaceStorage('/proj');
+  const nativeRun = plantClaim(join(workspaceDir('/proj'), 'native-run.lock'), 'exclusive', liveClaimOwner());
+
+  const running = await reclaimProject('/proj', { deleteOwnedDevices: true });
+  expect(running.keptEntry).toBe(true);
+  expect(running.failedDevices[0]?.reason).toMatch(/native-run\.lock/);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')?.platforms?.ios?.deviceUdid).toBe('U1');
+
+  rmSync(nativeRun);
+  plantClaim(join(tmpHome, 'build-locks', 'ios-key.lock'), 'exclusive', liveClaimOwner(), {
+    details: { projectRoot: '/proj' },
+  });
+  const building = await reclaimProject('/proj');
+  expect(building.keptEntry).toBe(true);
+  expect(building.failedDevices[0]?.reason).toMatch(/live build lock/);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')).not.toBe(null);
+});
+
+test('reclaimProject keeps the workspace and its entry when the owned Chrome cannot be closed', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  ensureWorkspaceStorage('/proj');
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async () => ({ status: 'failed', reason: 'Chrome pid 5 did not exit' }),
+  });
+  expect(result.keptEntry).toBe(true);
+  expect(result.failedDevices).toContainEqual({ name: 'owned Chrome', reason: 'Chrome pid 5 did not exit' });
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+  expect(getProject('/proj')).not.toBeNull();
+});
+
+test('reclaimProject keeps the workspace when a browser supervisor appears after its teardown', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, runFileQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  ensureWorkspaceStorage('/proj');
+  const result = await reclaimProject('/proj', {
+    teardownBrowser: async (root) => {
+      writeWebRecord(root, {
+        pid: process.pid,
+        processToken: captureProcessToken(process.pid)!,
+        chrome: '/Chrome',
+        headless: true,
+        viewport: 'desktop',
+        ignoreCertificateErrors: false,
+        cdpPort: 8950,
+        profile: join(workspaceDir(root), 'web', 'profile'),
+        url: 'http://localhost:8900/',
+        startedAt: new Date().toISOString(),
+      });
+      return { status: 'missing' };
+    },
+  });
+  expect(result.keptEntry).toBe(true);
+  expect(existsSync(workspaceDir('/proj'))).toBe(true);
+});
+
+test('reclaimProject leaves no workspace directory behind for a project that never had one', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  upsertProject('/proj', { metroPort: 8082 });
+  plantClaim(join(tmpHome, 'build-locks', 'ios-key.lock'), 'exclusive', liveClaimOwner(), {
+    details: { projectRoot: '/proj' },
+  });
+
+  const result = await reclaimProject('/proj');
+  expect(result.keptEntry).toBe(true);
+  expect(result.removedWorkspaceDirs).toEqual([]);
+  expect(existsSync(workspaceDir('/proj'))).toBe(false);
+});
+
+test('reclaimProject scans and sizes no build output at all', async () => {
+  const calls: string[] = [];
+  setExecutor({
+    run: (cmd) => {
+      calls.push(cmd);
+      return '';
+    },
+    runQuiet: (cmd) => {
+      calls.push(cmd);
+      return null;
+    },
+    runFileQuiet: (file, args = []) => {
+      calls.push([file, ...args].join(' '));
+      return null;
+    },
+    spawn: () => {},
+  });
+  upsertProject('/proj', { metroPort: 8082 });
+
+  await reclaimProject('/proj');
+  expect(calls.some((c) => c.startsWith('du -sk'))).toBe(false);
+  expect(calls.some((c) => c.startsWith('plutil'))).toBe(false);
+});
+
+test('reclaimProject keeps the config entry when an owned device delete fails', async () => {
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
+      ],
+    },
+  });
+  setExecutor({
+    run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
+    runFile: (_file, args = []) => {
+      if (args[1] === 'delete') throw new Error('Unable to delete device');
+      return listJson;
+    },
+    runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
+    spawn: () => {},
+  });
+  upsertProject('/proj', { metroPort: 8082 });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true }, 'phone');
+
+  const result = await reclaimProject('/proj', { deleteOwnedDevices: true });
+  expect(result.keptEntry).toBe(true);
+  expect(getProject('/proj')?.deviceSlots?.phone?.ios?.deviceUdid).toBe('U1');
+  expect(result.deletedDevices.length).toBe(0);
+  expect(result.failedDevices[0]?.reason).toMatch(/Unable to delete device/);
+  expect(getProject('/proj')).toBeTruthy();
+});
+
+test('reclaimProject removes the entry when the owned device really is deleted', async () => {
+  const listJson = JSON.stringify({
+    devices: {
+      'com.apple.CoreSimulator.SimRuntime.iOS-17-4': [
+        {
+          udid: 'U1',
+          name: 'stim-proj',
+          state: 'Shutdown',
+          isAvailable: true,
+          deviceTypeIdentifier: 'iphone-15',
+        },
+      ],
+    },
+  });
+  setExecutor({
+    run: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : ''),
+    runFile: () => listJson,
+    runQuiet: (cmd) => (cmd.includes('simctl list devices --json') ? listJson : null),
+    runFileQuiet: () => null,
+    spawn: () => {},
+  });
+  upsertProject('/proj', { metroPort: 8082 });
+  setDevice('/proj', 'ios', { deviceUdid: 'U1', owned: true });
+
+  const result = await reclaimProject('/proj', { deleteOwnedDevices: true });
+  expect(result.keptEntry).toBe(false);
+  expect(result.deletedDevices).toEqual(['U1']);
+  expect(getProject('/proj')).toBe(null);
+});
+
+test('reclaimProject refuses to kill an unidentified process on the port', async () => {
+  setExecutor({
+    run: () => '',
+    runFileQuiet: (file, args = []) => (file === 'lsof' && args.includes('-sTCP:LISTEN') ? '4242' : ''),
+    spawn: () => {},
+  });
+  upsertProject('/nonexistent/project', { metroPort: 8082 });
+
+  const result = await reclaimProject('/nonexistent/project', { deleteOwnedDevices: false });
+  expect(result.killedPid).toBe(null);
+  expect(result.skippedMetro).toBeTruthy();
+  resetExecutor();
+});
+
+function workspaceWithSession(sessionId: string): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  ensureWorkspaceStorage(root);
+  writeFileSync(workspaceStateFile(root), JSON.stringify({ remoteDevice: { platform: 'ios', sessionId } }));
+  upsertProject(root, { label: 'agent-1' });
+  return root;
+}
+
+test('reclaim ends the remote session recorded for the workspace', async () => {
+  const root = workspaceWithSession('drs_42');
+  const stopped: string[] = [];
+  const r = await reclaimProject(root, {
+    stopSession: (_root, id) => {
+      stopped.push(id);
+      return { status: 'torn-down' };
+    },
+  });
+  expect(stopped).toEqual(['drs_42']);
+  expect(r.stoppedSession).toBe('drs_42');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('the session is ended even without deleteOwnedDevices', async () => {
+  const root = workspaceWithSession('drs_7');
+  let called = false;
+  await reclaimProject(root, {
+    deleteOwnedDevices: false,
+    stopSession: () => {
+      called = true;
+      return { status: 'torn-down' };
+    },
+  });
+  expect(called).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('a stopped session with an unreconciled claim keeps the workspace retry handle', async () => {
+  const root = workspaceWithSession('drs_43');
+  const result = await reclaimProject(root, {
+    stopSession: () => ({
+      status: 'torn-down',
+      reason: 'The ownership claim could not be removed. Re-run cleanup to reconcile it.',
+    }),
+  });
+
+  expect(result.stoppedSession).toBe('drs_43');
+  expect(result.keptEntry).toBe(true);
+  expect(result.failedDevices[0]?.reason).toMatch(/session is stopped/i);
+  expect(result.failedDevices[0]?.reason).toMatch(/ownership claim.*could not be removed/i);
+  expect(getProject(root)).toBeTruthy();
+  expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8')).remoteDevice.sessionId).toBe('drs_43');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('cancelling a session stop preserves its workspace and prevents later cleanup', async () => {
+  const root = workspaceWithSession('drs_cancelled');
+  const controller = new AbortController();
+  const cancelled = new Error('request cancelled');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ signal: controller.signal, projectRoot: root, cwd: root }),
+        stopSession: () => {
+          controller.abort(cancelled);
+          throw cancelled;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(cancelled);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8')).remoteDevice.sessionId).toBe('drs_cancelled');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('an unresolved session child preserves its typed cleanup refusal and stops later cleanup', async () => {
+  const root = workspaceWithSession('drs_unresolved');
+  const refusal = new WorkspaceProcessCleanupError([], 'Session child cannot be verified.', 'Inspect the child.');
+  let released = false;
+  try {
+    await expect(
+      reclaimProject(root, {
+        operation: testContext({ projectRoot: root, cwd: root }),
+        stopSession: () => {
+          throw refusal;
+        },
+        releaseLeases: () => {
+          released = true;
+          return [];
+        },
+      }),
+    ).rejects.toBe(refusal);
+    expect(released).toBe(false);
+    expect(getProject(root)).not.toBeNull();
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function realStoredSessionStop(sessionOutput: string, calls: string[]) {
+  setExecutor({
+    runFile: (_file: string, args: string[]) => {
+      calls.push(args[0] ?? '');
+      if (args[0] === 'simulator:get') return sessionOutput;
+      if (args[0] === 'simulator:stop') return JSON.stringify({ id: 'drs_42', status: 'STOPPED' });
+      return '';
+    },
+    run: () => '',
+    runQuiet: () => null,
+    spawn: () => {},
+  });
+  return (root: string, sessionId: string) =>
+    endRecordedSession({
+      root,
+      sessionId,
+      easBin: '/bin/eas',
+      lookupAgentDevice: () => '/bin/agent-device',
+      ledgerRoot: tmpHome,
+    });
+}
+
+test.each([
+  ['unowned session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'IN_PROGRESS' })],
+  ['unowned terminal session', JSON.stringify({ id: 'drs_42', name: 'other-tool', status: 'STOPPED' })],
+  ['unnamed terminal session', JSON.stringify({ id: 'drs_42', status: 'STOPPED' })],
+  ['malformed output', 'not json'],
+  ['unknown status', JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'PAUSED' })],
+])('reclaim retains the session record after an unverifiable %s', async (_name, sessionOutput) => {
+  const root = workspaceWithSession('drs_42');
+  const calls: string[] = [];
+  const result = await reclaimProject(root, { stopSession: realStoredSessionStop(sessionOutput, calls) });
+  expect(result.keptEntry).toBe(true);
+  expect(calls).not.toContain('simulator:stop');
+  const state = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
+  expect(state.remoteDevice.sessionId).toBe('drs_42');
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('reclaim clears a verified terminal record without issuing stop', async () => {
+  const root = workspaceWithSession('drs_42');
+  const calls: string[] = [];
+  const result = await reclaimProject(root, {
+    stopSession: realStoredSessionStop(JSON.stringify({ id: 'drs_42', name: 'stim-wt', status: 'STOPPED' }), calls),
+  });
+  expect(result.keptEntry).toBe(false);
+  expect(calls).not.toContain('simulator:stop');
+  expect(existsSync(workspaceStateFile(root))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+function workspaceWithManagedTunnel(pid: number, provider: 'ngrok' | 'tailscale' = 'ngrok'): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({
+      metroTunnel: {
+        kind: 'managed',
+        provider,
+        pid,
+        url: provider === 'tailscale' ? 'https://host.tail123.ts.net:8082' : 'https://abc.ngrok.app',
+        port: 8082,
+        startedAt: 'T',
+        processToken: 'linux:100',
+      },
+    }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  return root;
+}
+
+test.each(['ngrok', 'tailscale'] as const)('reclaim ends the recorded %s tunnel', async (provider) => {
+  const root = workspaceWithManagedTunnel(4242, provider);
+  const stopped: number[] = [];
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async (record) => {
+      stopped.push(record.pid);
+      return { status: 'stopped' };
+    },
+  });
+  expect(stopped).toEqual([4242]);
+  expect(r.stoppedTunnel).toBe(provider);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('reclaim clears the exact managed tunnel record after a successful stop', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  await reclaimProject(root, {
+    stopMetroTunnel: async () => ({ status: 'stopped' }),
+  });
+  expect(existsSync(workspaceStateFile(root))).toBe(false);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('reclaim preserves a replacement managed tunnel record', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  const replacement = {
+    kind: 'managed',
+    provider: 'ngrok',
+    pid: 4242,
+    url: 'https://abc.ngrok.app',
+    port: 8082,
+    startedAt: 'T',
+    processToken: 'linux:200',
+  } as const;
+  const result = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      writeFileSync(workspaceStateFile(root), JSON.stringify({ metroTunnel: replacement }));
+      return { status: 'stopped' };
+    },
+  });
+  const state = JSON.parse(readFileSync(workspaceStateFile(root), 'utf-8'));
+  expect(state.metroTunnel).toEqual(replacement);
+  expect(result.keptEntry).toBe(true);
+  expect(result.stoppedTunnel).toBeNull();
+  expect(result.failedDevices[0]?.reason).toMatch(/replacement.*retained/i);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('the tunnel is stopped even without deleteOwnedDevices', async () => {
+  const root = workspaceWithManagedTunnel(4242);
+  let called = false;
+  await reclaimProject(root, {
+    deleteOwnedDevices: false,
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('an Expo-hosted tunnel has no process of its own -- reclaim never calls stopMetroTunnel for it', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ metroTunnel: { kind: 'expo', url: 'exp://abc123.exp.direct' } }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  let called = false;
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(false);
+  expect(r.stoppedTunnel).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});
+
+test('an operator-supplied tunnel (metro.publicUrl) is never recorded, so reclaim never touches it', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  upsertProject(root, { label: 'agent-1' });
+  let called = false;
+  const r = await reclaimProject(root, {
+    stopMetroTunnel: async () => {
+      called = true;
+      return { status: 'stopped' };
+    },
+  });
+  expect(called).toBe(false);
+  expect(r.stoppedTunnel).toBeNull();
+  rmSync(root, { recursive: true, force: true });
+});
+
+function workspaceWithCollector(pid: number, platform = 'ios'): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  ensureWorkspaceStorage(root);
+  writeFileSync(
+    workspaceStateFile(root),
+    JSON.stringify({ collectors: { [platform]: { pid, startedAt: '2026-01-01T00:00:00.000Z' } } }),
+  );
+  upsertProject(root, { label: 'agent-1' });
+  return root;
+}
+
+async function spawnFakeProcess(title: string | null): Promise<ChildProcess> {
+  const rename = title ? `process.title = ${JSON.stringify(title)};` : '';
+  const child = spawn(
+    process.execPath,
+    ['-e', `${rename} process.stdout.write('ready'); setInterval(() => {}, 1000);`],
+    {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    },
+  );
+  await once(child.stdout!, 'data');
+  return child;
+}
+
+function stillRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function exits(child: ChildProcess, timeoutMs = 5_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+test('reclaim stops an owned collector regardless of its process title', async () => {
+  const child = await spawnFakeProcess('unrelated-looking-title');
+  const root = workspaceWithCollector(child.pid!);
+  try {
+    const token = captureProcessToken(child.pid!);
+    expect(token).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ collectors: { ios: { pid: child.pid, processToken: token } } }),
+    );
+    const died = exits(child);
+    const result = await reclaimProject(root);
+    expect(await died).toBe(true);
+    expect(result.keptEntry).toBe(false);
+    expect(result.failedDevices).toEqual([]);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.each(['2020-01-01T00:00:00Z', '2099-01-01T00:00:00Z'])(
+  'reclaim retains a live legacy collector regardless of wall-clock startedAt (%s)',
+  async (startedAt) => {
+    const child = await spawnFakeProcess('stim-collector-ios');
+    const root = workspaceWithCollector(child.pid!);
+    try {
+      writeFileSync(workspaceStateFile(root), JSON.stringify({ collectors: { ios: { pid: child.pid, startedAt } } }));
+      const result = await reclaimProject(root);
+      expect(stillRunning(child.pid!)).toBe(true);
+      expect(result.keptEntry).toBe(true);
+      expect(result.failedDevices[0]?.reason).toMatch(/keeping the record/);
+      expect(getProject(root)).toBeTruthy();
+    } finally {
+      child.kill('SIGKILL');
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test('reclaim drops an exited collector without signalling a replacement', async () => {
+  const child = await spawnFakeProcess(null);
+  const token = captureProcessToken(child.pid!);
+  const root = workspaceWithCollector(child.pid!);
+  const died = exits(child);
+  child.kill('SIGKILL');
+  await died;
+  try {
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ collectors: { ios: { pid: child.pid, processToken: token } } }),
+    );
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(false);
+    expect(result.failedDevices).toEqual([]);
+    expect(getProject(root)).toBeNull();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaim retains a live legacy supervisor even before any port listens', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor: { pid: child.pid, port: 8083 } }));
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(true);
+    expect(result.skippedMetro).toMatch(/identity/);
+    expect(stillRunning(child.pid!)).toBe(true);
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaim stops the dev server a dead supervisor left behind, proven by its recorded identity', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    const serverProcessToken = captureProcessToken(child.pid!);
+    expect(serverProcessToken).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({ supervisor: { pid: 99999999, port: 8083, serverPid: child.pid, serverProcessToken } }),
+    );
+    const died = exits(child);
+    const result = await reclaimProject(root);
+    expect(await died).toBe(true);
+    expect(result.killedPid).toBe(child.pid);
+    expect(result.keptEntry).toBe(false);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaim keeps the entry and leaves a recorded dev server alone when its identity cannot be verified', async () => {
+  const child = await spawnFakeProcess(null);
+  const root = workspaceWithCollector(99999999);
+  try {
+    const foreignToken = captureProcessToken(process.pid);
+    expect(foreignToken).toBeTruthy();
+    writeFileSync(
+      workspaceStateFile(root),
+      JSON.stringify({
+        supervisor: { pid: 99999999, port: 8083, serverPid: child.pid, serverProcessToken: foreignToken },
+      }),
+    );
+    const result = await reclaimProject(root);
+    expect(stillRunning(child.pid!)).toBe(true);
+    expect(result.killedPid).toBe(null);
+    expect(result.keptEntry).toBe(true);
+    expect(existsSync(workspaceStateFile(root))).toBe(true);
+  } finally {
+    child.kill('SIGKILL');
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+describe.skipIf(process.platform === 'win32')('POSIX process groups and SIGTERM handlers; skipped on win32', () => {
+  test.each(['collector', 'supervisor'] as const)(
+    'reclaim leaves a replacement %s and its device alone after awaiting supervisor exit',
+    async (kind) => {
+      const replacement = await spawnFakeProcess(null);
+      const root = workspaceWithCollector(99999999);
+      let supervisor: ChildProcess | undefined;
+      try {
+        const processToken = captureProcessToken(replacement.pid!);
+        expect(processToken).toBeTruthy();
+        const record = { pid: replacement.pid!, processToken };
+        const replacementState = kind === 'collector' ? { collectors: { ios: record } } : { supervisor: record };
+        const script = `
+          const { writeFileSync } = require('node:fs');
+          process.on('SIGTERM', () => {
+            writeFileSync(process.argv[1], process.argv[2]);
+            process.exit(0);
+          });
+          process.stdout.write('ready');
+          setInterval(() => {}, 1000);
+        `;
+        supervisor = spawn(
+          process.execPath,
+          ['-e', script, workspaceStateFile(root), JSON.stringify(replacementState)],
+          {
+            detached: true,
+            stdio: ['ignore', 'pipe', 'ignore'],
+          },
+        );
+        await once(supervisor.stdout!, 'data');
+        const supervisorToken = captureProcessToken(supervisor.pid!);
+        expect(supervisorToken).toBeTruthy();
+        const saved = { pid: supervisor.pid!, processToken: supervisorToken!, port: 8083 };
+        writeFileSync(workspaceStateFile(root), JSON.stringify({ supervisor: saved }));
+        upsertProject(root, { metroPort: 8083, supervisor: saved });
+        setDevice(root, 'ios', { deviceUdid: 'U1', owned: true });
+        const commands: string[] = [];
+        setExecutor({
+          run: (cmd) => {
+            commands.push(cmd);
+            return '';
+          },
+          runQuiet: (cmd) => {
+            commands.push(cmd);
+            return null;
+          },
+          spawn: () => {},
+        });
+
+        const result = await reclaimProject(root, { deleteOwnedDevices: true });
+
+        expect(stillRunning(replacement.pid!)).toBe(true);
+        expect(result.killedPid).toBe(supervisor.pid);
+        expect(result.keptEntry).toBe(true);
+        expect(result.skippedMetro).toMatch(/replacement/);
+        expect(commands).toEqual([]);
+        expect(JSON.parse(readFileSync(workspaceStateFile(root), 'utf8'))).toEqual(replacementState);
+        expect(getProject(root)?.platforms?.ios?.deviceUdid).toBe('U1');
+      } finally {
+        supervisor?.kill('SIGKILL');
+        replacement.kill('SIGKILL');
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+});
+
+test('reclaimProject releases the leases the workspace holds', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  try {
+    ensureWorkspaceStorage(root);
+    const taken = takeLease({ root, platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', kind: 'declared' });
+    expect(taken.status).toBe('taken');
+    const other = takeLease({ root: '/w/other', platform: 'android', id: 'R5CT', kind: 'run' });
+    expect(other.status).toBe('taken');
+
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(result.releasedLeases).toEqual([
+      { platform: 'ios', id: 'UDID-1', deviceName: 'Old iPhone', expiresAt: expect.any(String) },
+    ]);
+    expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['R5CT']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaimProject removes the adb reverses a --device run left on the phone', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  const adb: string[] = [];
+  setExecutor(
+    makeExecutor({
+      runFileQuietAsync: async (_file, args) => {
+        adb.push(args.join(' '));
+        return args.includes('--list') ? 'UsbFfs tcp:8087 tcp:8087\nUsbFfs tcp:8085 tcp:8085\n' : '';
+      },
+    }),
+  );
+  try {
+    ensureWorkspaceStorage(root);
+    await recordPhoneReverse(root, 'default', 'RFCR7081Q9L', 8087);
+
+    await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(adb).toEqual(['-s RFCR7081Q9L reverse --list', '-s RFCR7081Q9L reverse --remove tcp:8087']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reclaimProject releases a lease whose token the recreated workspace lost', async () => {
+  setExecutor({ run: () => '', runQuiet: () => null, spawn: () => {} });
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-ws-')));
+  try {
+    takeLease({ root, platform: 'ios', id: 'UDID-1', kind: 'declared' });
+    rmSync(workspaceStateFile(root), { force: true });
+
+    const result = await reclaimProject(root, { deleteOwnedDevices: false });
+
+    expect(result.releasedLeases.map((lease) => lease.id)).toEqual(['UDID-1']);
+    expect(listLeaseFiles()).toEqual([]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('worktree reclaim releases named ports without inspecting or signalling their listeners', async () => {
+  const root = join(tmpHome, 'named-project');
+  upsertProject(root, { ports: { web: 8900 } });
+  const identify = vi.spyOn(identity, 'captureProcessIdentity');
+  const realKill = process.kill.bind(process);
+  const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => pid === 41219 || realKill(pid, signal));
+  const commands: string[] = [];
+  setExecutor({
+    findExecutable: () => '/usr/sbin/lsof',
+    runFile: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return file === 'netstat'
+        ? '  TCP  127.0.0.1:8900  0.0.0.0:0  LISTENING  41219\n'
+        : file === 'lsof'
+          ? '41219'
+          : '';
+    },
+    runQuiet: (cmd: string) => {
+      commands.push(cmd);
+      return cmd.startsWith('lsof ') ? '41219' : null;
+    },
+    runFileQuiet: (file: string, args: string[]) => {
+      commands.push([file, ...args].join(' '));
+      return null;
+    },
+  });
+  try {
+    const result = await reclaimProject(root);
+    expect(result.keptEntry).toBe(false);
+    expect(getProject(root)).toBeNull();
+    expect(commands.filter((command) => /8900|41219|taskkill/.test(command))).toEqual([]);
+    expect(identify).not.toHaveBeenCalled();
+    expect(kill.mock.calls.filter(([pid]) => Math.abs(pid) === 41219)).toEqual([]);
+  } finally {
+    kill.mockRestore();
+    identify.mockRestore();
+  }
+});

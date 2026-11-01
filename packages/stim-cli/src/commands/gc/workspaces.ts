@@ -1,11 +1,13 @@
-import { existsSync, lstatSync, readdirSync, statSync } from 'fs';
+import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, rmdirSync, statSync } from 'fs';
 import { readdir, readFile, rm, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'path';
 import chalk from 'chalk';
 import { formatBytes, isOnMountedVolume, listMountedVolumes, measuredDirectorySizeAsync } from '../../fs-util.ts';
 import { isJsonObject, lastNativeUseFrom, readJsonFile } from '@stim-cli/core/state';
 import { getConfigDir, isPathPrefix, loadConfig } from '../../workspace/config.ts';
+import { agentDeviceDaemon } from '../../devices/activity.ts';
 import { teardownOwnedBrowser } from '../../devices/teardown.ts';
+import { readClaimSet } from '../../ownership-claim.ts';
 import { emptyWorkspaceDir, workspaceInUse, workspaceInUseAsync, withIdleWorkspace } from '../../workspace/in-use.ts';
 import { workspaceName } from '../../workspace/paths.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../../workspace/workspace-state.ts';
@@ -19,16 +21,99 @@ import { GC_OUTPUT, type GcOutput } from './results.ts';
 import type { StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 
+/** What a directory without `workspace.json` holds when every entry is a leftover of a removed workspace. */
+interface WorkspaceResidue {
+  projectRoot: string | null;
+  empty: boolean;
+  blocked: string | null;
+}
+
 export interface WorkspaceDirEntry {
   dir: string;
   projectRoot: string | null;
   problem: string | null;
+  residue?: WorkspaceResidue;
 }
 
 export interface OrphanedWorkspace {
   dir: string;
-  projectRoot: string;
+  projectRoot: string | null;
+  residue?: true;
   bytes?: number | null;
+}
+
+const RESIDUE_FILES: readonly string[] = ['log-error-index.json', 'ended-agents.json'];
+const RESIDUE_LOCKS: readonly string[] = ['metadata.lock', 'ended-agents.lock'];
+const MAINTENANCE_LOGS: readonly string[] = ['maintenance.ndjson', 'maintenance.ndjson.1'];
+const FIRST_RECORD_BYTES = 64 * 1024;
+
+function firstWorkspaceField(file: string): string | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(file, 'r');
+    const buffer = Buffer.alloc(FIRST_RECORD_BYTES);
+    const text = buffer.toString('utf8', 0, readSync(fd, buffer, 0, buffer.length, 0));
+    const record: unknown = JSON.parse(text.split('\n')[0] ?? '');
+    return isJsonObject(record) && typeof record.workspace === 'string' ? record.workspace : null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+const blocked = (reason: string): WorkspaceResidue => ({ projectRoot: null, empty: false, blocked: reason });
+const lockOf = (entry: string) => entry.replace(/\.claims$/, '');
+
+/**
+ * Reads the leftovers of a directory that has no `workspace.json`. `blocked` names the first thing that makes the
+ * directory something other than residue; `projectRoot` is the root its maintenance log names, only when that root
+ * maps to the directory name. `held` lists lock names the caller holds in the directory itself.
+ */
+function inspectWorkspaceResidue(dir: string, held: readonly string[] = []): WorkspaceResidue {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir).filter((entry) => !held.some((lock) => entry === lock || entry === `${lock}.claims`));
+  } catch (error) {
+    return blocked(`it cannot be listed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const locks = new Set(entries.filter((entry) => RESIDUE_LOCKS.includes(lockOf(entry))).map(lockOf));
+  for (const entry of entries) {
+    if (RESIDUE_LOCKS.includes(lockOf(entry)) || RESIDUE_FILES.includes(entry)) continue;
+    if (entry === 'agent-device') {
+      const daemon = agentDeviceDaemon(join(dir, entry));
+      if (daemon !== 'none' && daemon !== 'dead') return blocked('its agent-device daemon may be running');
+      continue;
+    }
+    if (entry === 'logs') {
+      let logs: string[];
+      try {
+        logs = readdirSync(join(dir, entry));
+      } catch {
+        return blocked('its logs directory cannot be listed');
+      }
+      const other = logs.find((log) => !MAINTENANCE_LOGS.includes(log));
+      if (other) return blocked(`its logs directory holds ${other}`);
+      continue;
+    }
+    return blocked(`it holds ${entry}`);
+  }
+  for (const lock of locks) {
+    const survey = readClaimSet(join(dir, lock));
+    if (survey.live.length) return blocked(`${lock} is held`);
+    if (survey.unresolved[0]) return blocked(`${lock} cannot be resolved: ${survey.unresolved[0].reason}`);
+  }
+  const named = new Set(
+    MAINTENANCE_LOGS.map((log) => firstWorkspaceField(join(dir, 'logs', log))).filter(
+      (root): root is string => root !== null,
+    ),
+  );
+  if (named.size > 1) return blocked('its maintenance logs name different project roots');
+  const [root] = named;
+  if (root !== undefined && (!isAbsolute(root) || workspaceName(root) !== basename(dir))) {
+    return blocked(`its maintenance log names ${root}, whose workspace directory has another name`);
+  }
+  return { projectRoot: root ?? null, empty: entries.length === 0, blocked: null };
 }
 
 function workspacesRoot(): string {
@@ -40,23 +125,25 @@ export function isInsideWorkspaces(dir: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-function readRecordedRoot(dir: string, name: string): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'> {
+function readRecordedRoot(dir: string, name: string): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem' | 'residue'> {
   let parsed: unknown;
   try {
     parsed = readJsonFile(join(dir, 'workspace.json'));
   } catch (error) {
-    return unreadableRecordedRoot(error);
+    return unreadableRecordedRoot(error, dir);
   }
   return recordedRoot(parsed, name);
 }
 
-function unreadableRecordedRoot(error: unknown): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'> {
+function unreadableRecordedRoot(
+  error: unknown,
+  dir: string,
+): Pick<WorkspaceDirEntry, 'projectRoot' | 'problem' | 'residue'> {
+  const missing = (error as NodeJS.ErrnoException)?.code === 'ENOENT';
   return {
     projectRoot: null,
-    problem:
-      (error as NodeJS.ErrnoException)?.code === 'ENOENT'
-        ? 'it has no workspace.json'
-        : 'its workspace.json does not parse',
+    problem: missing ? 'it has no workspace.json' : 'its workspace.json does not parse',
+    ...(missing ? { residue: inspectWorkspaceResidue(dir) } : {}),
   };
 }
 
@@ -116,12 +203,12 @@ async function listWorkspaceDirsAsync(signal?: AbortSignal): Promise<WorkspaceDi
       continue;
     }
     signal?.throwIfAborted();
-    let recorded: Pick<WorkspaceDirEntry, 'projectRoot' | 'problem'>;
+    let recorded: Pick<WorkspaceDirEntry, 'projectRoot' | 'problem' | 'residue'>;
     try {
       recorded = recordedRoot(JSON.parse(await readFile(join(dir, 'workspace.json'), 'utf8')), name);
     } catch (error) {
       signal?.throwIfAborted();
-      recorded = unreadableRecordedRoot(error);
+      recorded = unreadableRecordedRoot(error, dir);
     }
     signal?.throwIfAborted();
     entries.push({ dir, ...recorded });
@@ -145,9 +232,17 @@ export function classifyWorkspaceDirs(
 ): { orphaned: OrphanedWorkspace[]; skipped: GcSkip[] } {
   const orphaned: OrphanedWorkspace[] = [];
   const skipped: GcSkip[] = [];
-  for (const { dir, projectRoot, problem } of entries) {
+  for (const { dir, projectRoot: recorded, problem, residue } of entries) {
+    const leftover = recorded === null ? residue : undefined;
+    if (recorded === null && (!leftover || leftover.blocked !== null)) {
+      const why = leftover?.blocked ? `${problem}; ${leftover.blocked}` : (problem ?? 'unknown project root');
+      skipped.push({ dir, reason: `workspace directory not resolved: ${why}` });
+      continue;
+    }
+    const projectRoot = recorded ?? leftover?.projectRoot ?? null;
     if (projectRoot === null) {
-      skipped.push({ dir, reason: `workspace directory not resolved: ${problem ?? 'unknown project root'}` });
+      if (leftover?.empty) orphaned.push({ dir, projectRoot: null, residue: true });
+      else skipped.push({ dir, reason: 'workspace directory not resolved: its leftovers name no project root' });
       continue;
     }
     const present = exists(projectRoot);
@@ -166,7 +261,7 @@ export function classifyWorkspaceDirs(
       skipped.push({ dir, reason: `its project root ${projectRoot} is gone, but ${reasons.join('; ')}` });
       continue;
     }
-    orphaned.push({ dir, projectRoot });
+    orphaned.push({ dir, projectRoot, ...(leftover ? { residue: true as const } : {}) });
   }
   return { orphaned, skipped };
 }
@@ -205,6 +300,10 @@ export async function collectOrphanedWorkspaces(
     });
     classified.skipped.push(...current.skipped);
     for (const orphan of current.orphaned) {
+      if (orphan.projectRoot === null) {
+        classified.orphaned.push(orphan);
+        continue;
+      }
       const reasons = operation
         ? await workspaceInUseAsync(orphan.projectRoot, {}, operation.signal, operation)
         : workspaceInUse(orphan.projectRoot);
@@ -267,6 +366,7 @@ export const WORKSPACE_OUTPUT_DIRS: readonly string[] = [
   'gradle-build',
   'android-cas',
   'cache-provider',
+  'js-swap-tmp',
 ];
 
 /** Why a workspace whose last ios, android or macos run was at `nativeUsed` keeps its build outputs, or null. */
@@ -604,8 +704,27 @@ export async function clearWorkspaceOutputs(
   return { failures, cleared: clearedRoots };
 }
 
-function stillOrphaned({ dir, projectRoot }: OrphanedWorkspace): boolean {
-  const recorded = readRecordedRoot(dir, basename(dir));
+function residueRoot(dir: string): string | null {
+  if (existsSync(join(dir, 'workspace.json'))) return null;
+  const residue = inspectWorkspaceResidue(dir, ['native-run.lock']);
+  return residue.blocked === null ? residue.projectRoot : null;
+}
+
+function removeEmptyResidue(dir: string): boolean {
+  if (existsSync(join(dir, 'workspace.json'))) return false;
+  const residue = inspectWorkspaceResidue(dir);
+  if (residue.blocked !== null || !residue.empty) return false;
+  try {
+    rmdirSync(dir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stillOrphaned({ dir, projectRoot, residue }: OrphanedWorkspace): boolean {
+  if (projectRoot === null) return false;
+  const recorded = { projectRoot: residue ? residueRoot(dir) : readRecordedRoot(dir, basename(dir)).projectRoot };
   if (recorded.projectRoot !== projectRoot || rootPresence(projectRoot) !== false || !isOnMountedVolume(projectRoot)) {
     return false;
   }
@@ -621,13 +740,27 @@ export async function deleteOrphanedWorkspaces(
   for (const entry of orphaned) {
     operation?.signal.throwIfAborted();
     if (!existsSync(entry.dir)) continue;
+    const root = entry.projectRoot;
+    if (root === null) {
+      if (removeEmptyResidue(entry.dir)) {
+        output.log(chalk.green(`Removed the empty workspace directory ${entry.dir}`));
+        output.record('workspaceDirectory', 'done', entry.dir, { bytes: entry.bytes ?? null });
+      } else {
+        output.log(chalk.yellow(`Kept ${entry.dir}: it can no longer be confirmed orphaned.`));
+        output.record('workspaceDirectory', 'kept', entry.dir, {
+          bytes: entry.bytes ?? null,
+          detail: 'it can no longer be confirmed orphaned',
+        });
+      }
+      continue;
+    }
     let run;
     try {
       run = await withIdleWorkspace(
-        entry.projectRoot,
+        root,
         async () => {
           if (!stillOrphaned(entry)) return false;
-          const browser = await teardownOwnedBrowser(entry.projectRoot, {
+          const browser = await teardownOwnedBrowser(root, {
             deleteProfile: true,
             ...(operation ? { operation } : {}),
           });

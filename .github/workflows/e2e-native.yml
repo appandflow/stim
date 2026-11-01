@@ -39,10 +39,9 @@
 # matrix axes. iOS and Android are separate jobs because iOS needs macOS and
 # Xcode, while Android needs Linux and KVM; Windows Android proves the paths
 # the unit suite fakes (gradlew.bat through cross-spawn, netstat, taskkill).
-# Bare and Expo exercise different stim-cli Metro paths. Linux Android runs
-# both frameworks; iOS runs Expo ONLY, because the bare template cannot launch
-# on iOS 27 (see the matrix `exclude` below); Windows runs bare only, so an
-# `all` dispatch is three iOS jobs and four Linux Android jobs.
+# Bare and Expo exercise different stim-cli Metro paths. Both run on iOS and
+# Linux Android; Windows runs bare only, so an
+# `all` dispatch is six iOS jobs and four Linux Android jobs.
 #
 # THE iOS RUNNER IS `xcode-27`, NOT `macos-latest`. Automatic Swift compilation
 # caching needs Swift 6.4, which ships with Xcode 27; the macos-26 images top out
@@ -164,15 +163,9 @@ jobs:
       matrix:
         framework: [bare, expo]
         suite: ${{ fromJSON(needs.plan.outputs.ios) }}
-        # No bare variant on iOS. iOS 27 traps an app that has not adopted the
-        # UIScene lifecycle (expo/expo#46664). The 0.88.0-rc.1
-        # @react-native-community/template ships no SceneDelegate or
-        # UIApplicationSceneManifest, so its app builds but traps at launch.
-        # Expo SDK 57 opts into scenes; CI pins SDK 58 for RN 0.88 Swift caching.
-        # Drop this exclude when the React Native template adopts scenes (#882).
-        # A job-level `if:` cannot do this: the matrix context is unavailable.
         exclude:
-          - framework: bare
+          - suite: smoke
+            framework: bare
     env:
       STIM_ARCHIVE_ENABLED: '1'
       STIM_E2E_SUITE: ${{ matrix.suite }}
@@ -190,6 +183,7 @@ jobs:
       # for Xcode 27. Pin SDK 58 here to exercise RN 0.88 Swift compilation
       # caching while keeping the preview SDK out of other fixture lanes.
       STIM_E2E_EXPO_INIT: npx --yes create-expo-app@latest {dir} --template expo-template-blank@sdk-58 --no-install
+      STIM_E2E_BARE_INIT: npx --yes @react-native-community/cli@latest init StimE2E --directory {dir} --skip-git-init --install-pods false --pm npm --version 0.88.1
     steps:
       # The xcode-27 image indexes with Spotlight, and mds_stores competes with
       # each simulator's first boot for the runner's 3 vCPUs and 7 GB. Turn it off
@@ -651,6 +645,9 @@ jobs:
         run: |
           npm install --global --prefix "$HOME/.local" agent-device@0.21.22
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install SimSlim for the native fixture
+        if: inputs.native_ios_project != 'food-truck'
+        run: brew install mobai-app/tap/simslim
       - name: Monitor native fixture host memory and load
         shell: bash
         run: |
@@ -773,7 +770,7 @@ jobs:
           cache-disabled: true
       - name: Install pinned remote UI driver
         run: |
-          npm install --global --prefix "$HOME/.local" agent-device@0.21.22
+          npm install --global --prefix "$HOME/.local" agent-device@0.21.31
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Prepare native fixture and record source
         run: |

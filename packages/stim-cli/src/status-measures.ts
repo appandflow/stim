@@ -6,6 +6,7 @@ import { basename, dirname, join, sep } from 'node:path';
 import {
   agentSessionsCacheFile,
   diskUsageCacheFile,
+  gitMergeCacheFile,
   diskUsageFailureFile,
   diskUsageWalkClaims,
   pullRequestCacheFile,
@@ -19,6 +20,7 @@ import {
   readWorkspaceState,
   workspaceEndedAgentsFile,
   workspaceEndedAgentsLock,
+  workspaceMetadataFile,
   type AgentSession,
   type DiskMeasure,
   type EnvironmentDisk,
@@ -72,6 +74,7 @@ export function forgetStatusMeasures(worktree: string, workspaces: readonly stri
   const roots = [...new Set([worktree, ...workspaces])];
   const files = [
     pullRequestCacheFile(worktree),
+    gitMergeCacheFile(worktree),
     ...roots.flatMap((root) => [
       diskUsageCacheFile(root),
       diskUsageFailureFile(root),
@@ -93,6 +96,7 @@ function simulatorDataDir(udid: string): string {
 }
 
 function checkoutDir(state: EnvironmentState): string {
+  if (state.checkout) return state.checkout;
   if (state.worktree?.path) return state.worktree.path;
   const common = gitCommonDirOnDisk(state.path);
   return common && basename(common) === '.git' ? dirname(common) : state.path;
@@ -246,7 +250,7 @@ function recordEndedAgents(
   attributeAgentSessions(agentWorkspaces(states), gone, now).forEach((sessions, i) => {
     const root = states[i]!.path;
     const ended = sessions.filter((session) => goneKeys.has(agentKey(session)));
-    if (!ended.length || !existsSync(workspaceDir(root))) return;
+    if (!ended.length || !existsSync(workspaceMetadataFile(root))) return;
     try {
       withDirLock(workspaceEndedAgentsLock(root), () => {
         const kept = new Map<string, EndedAgentSession>(

@@ -27,6 +27,8 @@ public struct LastBuild: Decodable, Hashable, Sendable {
   public var startedAt: String
   public var finishedAt: String?
   public var errorCode: String?
+  public var buildMachine: String?
+  public var builtOn: String?
   public var missReason: BuildMissReason?
   /// The remote Mac that compiled the app when the build was offloaded.
   public var offloadedTo: String?

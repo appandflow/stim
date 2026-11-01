@@ -6,12 +6,13 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, type AddressInfo, type Socket } from 'node:net';
+import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
+import { duplexPair, type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { configDir } from '@stim-cli/core';
+import { configDir, type MetroLink } from '@stim-cli/core';
 import {
   archiveDir,
   serverLocalSocket,
@@ -19,6 +20,9 @@ import {
   readArchive,
   readArchiveState,
   readBuildHistory,
+  readBuildLedger,
+  readGcLog,
+  queryLogs as queryMachineLogs,
   readSetupJournal,
   isJournalExpired,
   queryJsonLogs,
@@ -56,6 +60,7 @@ import { parsePlatformBuild } from './platform-build.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
+import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -71,6 +76,7 @@ import {
   type StartupState,
 } from './startup.ts';
 import {
+  ClaimUnavailableError,
   claimRemoveCommand,
   exclusiveClaimDir,
   readClaimSet,
@@ -122,6 +128,7 @@ import {
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
+  type DeviceToolRequest,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
@@ -135,6 +142,7 @@ import {
   type PlatformBuildOptions,
   type Methods,
   type RequestId,
+  type MetroLinkOpenEvent,
   type ServerMessage,
   type VideoCodec,
 } from './protocol.ts';
@@ -275,6 +283,12 @@ export interface ServerOptions {
   authTimeoutMs?: number;
   maxAuthFailures?: number;
   failureWindowMs?: number;
+  /** Unauthenticated connections each network listener holds at once, overall and per source address. */
+  pendingConnections?: { max: number; perPeer: number };
+  /** First contacts naming an unknown secret that one address may make per failure window. */
+  maxUnknownSecrets?: number;
+  /** How long a connection to a network address has to send its request headers. */
+  headersTimeoutMs?: number;
   requestLog?: RequestLog;
   logLimits?: Partial<LogLimits>;
   commandLimits?: Partial<CommandLimits>;
@@ -306,6 +320,10 @@ export interface ServerOptions {
   /** How many offloaded builds run, and for how long; tests shorten them. */
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
+  /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
+  clientHeartbeat?: { pingMs: number; silentMs: number };
+  /** How often hosted sessions are checked for a client that is gone. */
+  hostedIdleSweepMs?: number;
   hostedRelay?: HostedRelayOptions;
   service?: {
     label: string | null;
@@ -346,6 +364,8 @@ interface ServerHealth {
   nativeViewerOpened: boolean;
   /** Present and true when the server serves this machine only, so a paired phone or another machine cannot connect. */
   loopbackOnly?: true;
+  /** The local network addresses the server listens on now, from `server.lanAddresses`; absent when there are none. */
+  lan?: { addresses: string[]; port: number };
 }
 
 function healthTailscale(tailscale: TailscaleState): ServerHealth['tailscale'] {
@@ -389,8 +409,22 @@ const LOCAL_DEVICE: PairedDevice = {
 
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
+const CLOSE_METRO_RESET = 4410;
+interface AgentLink {
+  client: string;
+  session: string;
+  busy: number;
+}
+const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
+const METRO_LINK_PING_MS = 15_000;
+const CLIENT_PING_MS = 60_000;
+const CLIENT_SILENT_MS = 180_000;
+const MAX_AGENT_LINKS = 16;
+const AGENT_LINK_IDLE_MS = 5 * 60_000;
+const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
+const METRO_LINK_BUFFERED_BYTES = 1024 * 1024;
 const MAX_SUBSCRIPTIONS = 32;
 
 const archiveCursor = (archive: ArchivedWorkspace) => `${archive.removedAt}|${archive.id}`;
@@ -414,6 +448,18 @@ function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
+
+const MACOS_ONLY_FEATURES: readonly string[] = [
+  'physical-ios',
+  'macos-window',
+  'macos-windows',
+  'macos-window-select',
+  'macos-window-control',
+  'macos-keyboard-extended',
+  'duo-frames',
+  'native-xcode-build',
+  'native-xcode-toolchain',
+];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
  * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
@@ -597,7 +643,13 @@ function reloadAction(
   };
 }
 
-type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+type StartOutcome = StopOutcome & {
+  code?: string;
+  unresolved?: boolean;
+  retainedClaimRoots?: string[];
+  cleanupComplete?: Promise<void>;
+  cleanupSettled?: () => boolean;
+};
 
 function lifecycleAction(
   cwd: string,
@@ -638,6 +690,8 @@ function lifecycleAction(
       (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        const cleanup = cause instanceof StimError ? cause.cause : undefined;
+        const settled = cleanup instanceof Error && 'cleanupSettled' in cleanup ? cleanup.cleanupSettled : undefined;
         return {
           ok: false,
           message: readFailure(cause),
@@ -645,7 +699,15 @@ function lifecycleAction(
             ? {
                 code: cause.code,
                 stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                unresolved:
+                  cause.code === 'STIM_CLAIM_UNAVAILABLE' &&
+                  !(cleanup instanceof ClaimUnavailableError && !('reportCleanup' in cleanup)),
+                ...(typeof settled === 'function' ? { cleanupSettled: () => settled() === true } : {}),
+                ...(cleanup instanceof Error &&
+                'cleanupComplete' in cleanup &&
+                cleanup.cleanupComplete instanceof Promise
+                  ? { cleanupComplete: cleanup.cleanupComplete }
+                  : {}),
                 ...(isJsonObject(details) &&
                 Array.isArray(details.retainedClaimRoots) &&
                 details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
@@ -815,6 +877,89 @@ function machineAccessAction(
   );
 }
 
+function deviceToolRequest(value: unknown): DeviceToolRequest | null {
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
+  const { platform } = value;
+  const only = (...fields: string[]) =>
+    Object.keys(value).every((key) => ['tool', 'platform', ...fields].includes(key));
+  if (value.tool === 'location') {
+    if (only('clear') && value.clear === true) return { tool: 'location', platform, clear: true };
+    if (only('set') && typeof value.set === 'string' && value.set.length <= 256)
+      return { tool: 'location', platform, set: value.set };
+  } else if (
+    value.tool === 'permission' &&
+    only('action', 'service') &&
+    (value.action === 'grant' || value.action === 'revoke' || value.action === 'reset') &&
+    typeof value.service === 'string' &&
+    value.service.length <= 1024
+  ) {
+    return { tool: 'permission', platform, action: value.action, service: value.service };
+  } else if (
+    value.tool === 'push' &&
+    platform === 'ios' &&
+    only('payload') &&
+    typeof value.payload === 'string' &&
+    value.payload.length <= 65_536
+  ) {
+    return { tool: 'push', platform, payload: value.payload };
+  } else if (
+    value.tool === 'network' &&
+    platform === 'android' &&
+    only('state') &&
+    (value.state === 'on' || value.state === 'off')
+  ) {
+    return { tool: 'network', platform, state: value.state };
+  }
+  return null;
+}
+
+function remedyAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  request: Methods['desktop.remedy.subscribe']['params'],
+  admit: (workspace: string) => void,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Desktop remedy',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => {
+      if (request.action === 'doctor-fix') {
+        const { report, exitCode } = await client.repairDoctor({
+          platform: request.platform,
+          signal,
+          beforeRepair: admit,
+        });
+        const stdout = JSON.stringify(report);
+        return exitCode === 0
+          ? { ok: true, stdout, summary: 'Doctor repair completed.' }
+          : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
+      }
+      if (request.action === 'device-tool') {
+        const result = await client.deviceTool({
+          request: request.request,
+          slot: request.slot,
+          signal,
+          beforeTool: admit,
+        });
+        return { ok: true, stdout: JSON.stringify(result), summary: 'Device change completed.' };
+      }
+      const released = await client.unlockDevice({
+        platform: request.platform,
+        slot: request.slot,
+        signal,
+        beforeUnlock: admit,
+      });
+      return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
+    },
+    onProgress,
+  );
+}
+
 function worktreeWarmAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -900,22 +1045,45 @@ function serverTransports(options: ServerOptions): { transports: Transport[]; ta
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
 
 /**
- * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
- * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback,
- * and `https:` through `tailscale serve`. SocketRocket omits the brackets of an IPv6 origin, so an iOS app on
- * `ws://[::1]` is refused.
+ * How a connection reached the server: from this machine on loopback, from a tailnet peer through `tailscale serve`
+ * (loopback with `X-Forwarded-For`), or straight to one of the server's own network addresses.
  */
-export function upgradeFromWebPage(headers: IncomingHttpHeaders, local: boolean): boolean {
+type Arrival = 'local' | 'proxied' | 'direct';
+
+function arrival(request: IncomingMessage): Arrival {
+  if (!isLoopback(request.socket.remoteAddress)) return 'direct';
+  return peerAddress(request) === null ? 'local' : 'proxied';
+}
+
+/**
+ * Whether a WebSocket upgrade comes from a web page. Browsers send `Sec-Fetch-Site` and the page's own `Origin`.
+ * React Native derives `Origin` from the ws URL, so an app's `Origin` names the requested host: over `http:` on loopback
+ * and on a local network address, and `https:` through `tailscale serve`. A DNS-rebound page names a host name, so on
+ * loopback the host must be a loopback name and on a network address an IP literal. SocketRocket omits the brackets of
+ * an IPv6 origin, so an iOS app on `ws://[::1]` is refused.
+ */
+export function upgradeFromWebPage(headers: IncomingHttpHeaders, via: Arrival): boolean {
   if (headers['sec-fetch-site'] !== undefined) return true;
   if (headers.origin === undefined) return false;
-  const scheme = local ? 'http:' : 'https:';
+  const scheme = via === 'proxied' ? 'https:' : 'http:';
   try {
     const own = new URL(`${scheme}//${headers.host ?? ''}`);
-    return new URL(headers.origin).origin !== own.origin || (local && !LOOPBACK_HOSTS.has(own.hostname));
+    if (new URL(headers.origin).origin !== own.origin) return true;
+    if (via === 'local') return !LOOPBACK_HOSTS.has(own.hostname);
+    return via === 'direct' && isIP(own.hostname.replace(/^\[|\]$/g, '')) === 0;
   } catch {
     return true;
   }
 }
+
+const MAX_PENDING_CONNECTIONS = 64;
+const MAX_PENDING_PER_PEER = 16;
+/** First contacts naming a secret this server does not hold, per address and minute, before it turns the address away. */
+const MAX_UNKNOWN_SECRETS = 60;
+const HEADERS_TIMEOUT_MS = 10_000;
+
+/** How many peers a failure limiter remembers; past it, the peer seen longest ago is forgotten first. */
+const MAX_LIMITED_PEERS = 4096;
 
 class FailureLimiter {
   private readonly failures = new Map<string, number[]>();
@@ -939,7 +1107,48 @@ class FailureLimiter {
   }
 
   record(key: string, now: number = Date.now()): void {
-    this.failures.set(key, [...this.recent(key, now), now]);
+    const kept = this.recent(key, now);
+    this.failures.delete(key);
+    const oldest = this.failures.keys().next();
+    if (this.failures.size >= MAX_LIMITED_PEERS && !oldest.done) this.failures.delete(oldest.value);
+    this.failures.set(key, [...kept, now]);
+  }
+}
+
+/**
+ * Connections to one network listener that have not authenticated yet, bounded overall and per source address, so a
+ * peer cannot hold the server's sockets open without a key, and a flood on one listener leaves the others alone.
+ * Loopback connections, which include every `tailscale serve` peer, are not counted.
+ */
+class PendingConnections {
+  private readonly peers = new Map<Socket, string>();
+  private readonly counts = new Map<string, number>();
+  private readonly max: number;
+  private readonly perPeer: number;
+
+  constructor(max: number, perPeer: number) {
+    this.max = max;
+    this.perPeer = perPeer;
+  }
+
+  admit(socket: Socket): boolean {
+    const peer = socket.remoteAddress ?? '';
+    const count = this.counts.get(peer) ?? 0;
+    if (this.peers.size >= this.max || count >= this.perPeer) return false;
+    this.peers.set(socket, peer);
+    this.counts.set(peer, count + 1);
+    socket.once('close', () => this.settle(socket));
+    return true;
+  }
+
+  /** The socket authenticated, or closed: it no longer counts. */
+  settle(socket: Socket): void {
+    const peer = this.peers.get(socket);
+    if (peer === undefined) return;
+    this.peers.delete(socket);
+    const left = (this.counts.get(peer) ?? 1) - 1;
+    if (left > 0) this.counts.set(peer, left);
+    else this.counts.delete(peer);
   }
 }
 
@@ -1120,6 +1329,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const requestLog = options.requestLog ?? createRequestLog();
   const limiter = new FailureLimiter(options.maxAuthFailures ?? 5, options.failureWindowMs ?? 60_000);
   const authTimeoutMs = options.authTimeoutMs ?? 5000;
+  const unknownSecrets = new FailureLimiter(
+    options.maxUnknownSecrets ?? MAX_UNKNOWN_SECRETS,
+    options.failureWindowMs ?? 60_000,
+  );
+  const pendingPools = new WeakMap<Socket, PendingConnections>();
   const feeds = new FeedPool(options.stimCli, options.env);
   const statusFeed = new StatusFeed({
     worker: join(dirname(options.stimCli), 'status-worker.mjs'),
@@ -1153,12 +1367,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       if (done) unsubscribe();
     });
+  const hostsDevices = options.hostsDevices ?? process.platform === 'darwin';
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
   let helperPath = options.frameHelper ?? null;
   let helperBuilding = false;
   let helperRetryAt = 0;
   const helperAbort = new AbortController();
   const buildHelper = () => {
+    if (!hostsDevices) return;
     helperBuilding = true;
     void (async () => {
       try {
@@ -1207,7 +1423,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
-    method: 'stats' | 'gc' | 'doctor',
+    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds',
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
@@ -1225,6 +1441,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     task = Promise.resolve()
       .then(async () => {
         const stim = createStim({ projectRoot: cwd, env: options.env });
+        if (method === 'gc-history' || method === 'builds')
+          return {
+            records: queryMachineLogs({
+              records: method === 'builds' ? readBuildLedger() : readGcLog(),
+              sources: [method === 'builds' ? 'builds' : 'gc'],
+              tail: method === 'builds' ? 500 : 2000,
+            }),
+          };
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
         return method === 'gc'
           ? await stim.gc({ signal: abort.signal, measureBuildState: false })
@@ -1306,10 +1530,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         deviceHostArea(app.session),
         app,
       ),
-    approved: (client, node) =>
-      node !== null &&
-      agentNodes.get(client) === node &&
+    approved: (client, from) =>
+      ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    withdrawn: (session) => {
+      for (const stream of agentStreams.get(session) ?? []) stream.destroy();
+    },
   });
   const hostedDevices = new DeviceHost({
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
@@ -1318,6 +1544,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.deviceHostLimits,
     allowed: (client) =>
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    connected: (client) => [...sessions.values()].some((entry) => entry.id === client),
     builtBundle: (client, handoff, sha256) => {
       const host = readDeviceHostClients().find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
@@ -1331,19 +1558,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
-  async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
-    const peer = peerAddress(request) ?? 'local';
+  const agentLinks = new WeakMap<object, AgentLink>();
+  const agentStreams = new Map<string, Set<Duplex>>();
+  async function answerAgent(
+    request: IncomingMessage,
+    response: ServerResponse,
+    session: string,
+    link?: AgentLink,
+  ): Promise<void> {
+    const peer = link ? `client:${link.client}:${link.session}` : (peerAddress(request) ?? 'local');
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
     if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
       return refuse(403, 'Forbidden.');
     if (agentLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    if (link && link.session !== session) {
+      agentLimiter.record(peer);
+      return refuse(403, 'Forbidden. This agent link carries another hosted session.');
+    }
     const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
-    const node = peer === 'local' ? null : await peerNode(request, peer);
-    if (agentDrivers.forward(session, token, request, response, node) === 'forbidden') agentLimiter.record(peer);
+    const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
+    const verdict = agentDrivers.forward(session, token, request, response, from);
+    if (verdict === 'forbidden') agentLimiter.record(peer);
+    else if (verdict === 'ok') hostedDevices.clientActed(session);
   }
+  const agentHttp = createServer((request, response) => {
+    const link = agentLinks.get(request.socket);
+    const session = AGENT_PATH.exec(request.url ?? '')?.[1];
+    if (!link || !session) return void response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+    link.busy++;
+    response.once('close', () => link.busy--);
+    answerAgent(request, response, session, link).catch(() => {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+    });
+  });
   const setupLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   /** The journal holds no secret, so it is served to whoever names it; failures are rate limited by peer. */
   function answerSetup(request: IncomingMessage, response: ServerResponse): void {
@@ -1506,6 +1757,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let watcher: FSWatcher | null = null;
   let revocationPoll: NodeJS.Timeout | null = null;
+  let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
@@ -1517,6 +1769,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
+    hostedIdleSweep ??= setInterval(
+      () => hostedDevices.sweepIdle(),
+      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
+    ).unref();
     push.refresh();
     retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
       process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
@@ -1577,6 +1833,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     trackers.set(socket, tracker);
     let runId: string | null = null;
     let buildSession: BuildSession | null = null;
+    let metroLink: MetroLink | null = null;
+    let metroStream: Duplex | null = null;
+    let metroPing: NodeJS.Timeout | undefined;
+    let clientPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -1613,7 +1873,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (access !== undefined && access !== 'build' && access !== 'device-host') {
         return refuse(id, 'bad-request', 'params.access is build or device-host.', CLOSE_BAD_REQUEST);
       }
-      if (access === 'device-host' && !(options.hostsDevices ?? process.platform === 'darwin')) {
+      if (access === 'device-host' && !hostsDevices) {
         return refuse(
           id,
           'forbidden',
@@ -1640,6 +1900,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       device = chosen;
       if (!local) touchDevice(device.id);
+      if (access === 'device-host' && !local) {
+        hostedDevices.clientSeen(device.id);
+        let heardAt = Date.now();
+        let late = false;
+        const hear = () => (heardAt = Date.now());
+        socket.on('pong', hear);
+        socket.on('message', hear);
+        const { pingMs, silentMs } = options.clientHeartbeat ?? { pingMs: CLIENT_PING_MS, silentMs: CLIENT_SILENT_MS };
+        clientPing = setInterval(() => {
+          if (Date.now() - heardAt > silentMs) {
+            if (late) return void socket.terminate();
+            late = true;
+          } else late = false;
+          socket.ping();
+        }, pingMs);
+        clientPing.unref();
+      }
       if (local && params.desktopBootstrap === true) desktopChallenge = options.desktopBootstrap?.challenge() ?? null;
       tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
@@ -1661,6 +1938,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
+            (hostsDevices || !MACOS_ONLY_FEATURES.includes(feature)) &&
             (![
               'desktop-settings-write',
               'desktop-reload',
@@ -1671,6 +1949,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-worktree-remove',
               'desktop-worktree-warm',
               'desktop-machine-access',
+              'desktop-remedy',
+              'desktop-device-tools',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1678,6 +1958,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ![
                 'desktop-plan',
                 'desktop-reports',
+                'desktop-machine-history',
                 'desktop-report-platform',
                 'desktop-report-invalidate-target',
                 'desktop-settings',
@@ -1694,6 +1975,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-worktree-remove',
                 'desktop-worktree-warm',
                 'desktop-machine-access',
+                'desktop-remedy',
+                'desktop-device-tools',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -3007,6 +3290,69 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
+      const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
+      if (
+        !isJsonObject(params) ||
+        (params.action !== 'doctor-fix' && params.action !== 'device-unlock' && params.action !== 'device-tool') ||
+        (params.action === 'device-tool' && tool === null) ||
+        Object.keys(params).some(
+          (key) =>
+            ![
+              'cwd',
+              'action',
+              ...(params.action === 'device-tool'
+                ? ['request', 'slot']
+                : ['platform', ...(params.action === 'device-unlock' ? ['slot'] : [])]),
+            ].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android') ||
+        (params.slot !== undefined &&
+          (typeof params.slot !== 'string' ||
+            !SLOT_NAME.test(params.slot) ||
+            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd and a supported typed doctor, device-unlock or device-tool request.',
+        );
+      const request: Methods['desktop.remedy.subscribe']['params'] =
+        params.action === 'device-tool' && tool
+          ? {
+              cwd: params.cwd,
+              action: 'device-tool',
+              request: tool,
+              slot: typeof params.slot === 'string' ? params.slot : undefined,
+            }
+          : params.action === 'doctor-fix'
+            ? { cwd: params.cwd, action: params.action, platform: params.platform }
+            : {
+                cwd: params.cwd,
+                action: 'device-unlock',
+                platform: params.platform,
+                slot: typeof params.slot === 'string' ? params.slot : undefined,
+              };
+      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
+        remedyAction(
+          cwd,
+          options.env,
+          request.action === 'device-tool'
+            ? { ...actionLimits, timeoutMs: Math.min(actionLimits.timeoutMs, 60_000) }
+            : actionLimits,
+          request,
+          admit,
+          onProgress,
+        ),
+      );
+    }
+
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -3091,7 +3437,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access' | 'remedy',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3156,7 +3502,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+        if (
+          kind === 'gc' ||
+          kind === 'worktree-remove' ||
+          kind === 'worktree-warm' ||
+          kind === 'machine-access' ||
+          kind === 'remedy'
+        )
           desktopReports.invalidate();
         const release = () => {
           releaseSlot(cancel);
@@ -3167,18 +3519,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {
           const reconcile = () => {
-            if (!roots?.length) return;
+            if (!roots?.length && !outcome.cleanupSettled) return;
             if (
-              roots.some((root) => {
+              roots?.some((root) => {
                 const claims = readClaimSet(root);
                 return claims.live.length > 0 || claims.unresolved.length > 0;
               })
             )
               return;
+            if (outcome.cleanupSettled && !outcome.cleanupSettled()) return;
             release();
             retainedLifecycles.delete(reconcile);
           };
-          retainedLifecycles.add(reconcile);
+          if (!roots?.length && !outcome.cleanupSettled && outcome.cleanupComplete) {
+            void outcome.cleanupComplete.then(release, () => {});
+          } else {
+            retainedLifecycles.add(reconcile);
+          }
         } else {
           release();
         }
@@ -3696,6 +4053,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.machine-access.subscribe',
+          'desktop.remedy.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
@@ -3837,6 +4195,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
         'desktop.machine-access.subscribe': subscribeMachineAccess,
+        'desktop.remedy.subscribe': subscribeRemedy,
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
         'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
@@ -3960,7 +4319,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        (params.report !== 'doctor' && params.report !== 'gc') ||
+        !['doctor', 'gc', 'gc-history', 'builds'].includes(String(params.report)) ||
         Object.keys(params).some(
           (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
         ) ||
@@ -3973,11 +4332,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose report gc, or report doctor with an absolute cwd and optional ios/android platform.',
+          'Choose report gc, gc-history or builds, or report doctor with an absolute cwd and optional ios/android platform.',
         );
       const target: DesktopReportTarget =
-        params.report === 'gc'
-          ? { report: 'gc' }
+        params.report === 'gc' || params.report === 'gc-history' || params.report === 'builds'
+          ? { report: params.report }
           : {
               report: 'doctor',
               cwd: resolvePath(String(params.cwd)),
@@ -4088,7 +4447,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
-    function handleBinary(frame: Buffer): void {
+    function handleBinary(frame: Buffer): Promise<void> | void {
+      if (metroStream) {
+        const stream = metroStream;
+        if (stream.destroyed || stream.write(frame)) return;
+        socket.pause();
+        return new Promise<void>((resolve) => {
+          const resume = () => {
+            stream.off('drain', resume);
+            stream.off('close', resume);
+            socket.resume();
+            resolve();
+          };
+          stream.on('drain', resume);
+          stream.on('close', resume);
+        });
+      }
       if (socket.readyState !== socket.OPEN) return;
       if (!device || !buildSession) {
         return void socket.close(CLOSE_BAD_REQUEST, 'unexpected binary frame');
@@ -4097,7 +4471,90 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    function carry(stream: Duplex): void {
+      clearInterval(metroPing);
+      metroLink = null;
+      metroStream = stream;
+      stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
+      stream.on('data', (chunk: Buffer) => {
+        socket.send(chunk, { binary: true }, () => {
+          if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
+        });
+        if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
+      });
+    }
+
+    function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already links Metro.');
+      const link: MetroLink = {
+        open: (stream) => {
+          if (socket.readyState !== socket.OPEN) return false;
+          carry(stream);
+          send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
+          stream.resume();
+          return true;
+        },
+        close: () => socket.close(1000),
+      };
+      const answer = hostedDevices.metroLink(session.id, raw, link);
+      if ('error' in answer) return send(socket, { id, error: answer.error });
+      send(socket, { id, result: answer.result });
+      if (metroStream) return;
+      metroLink = link;
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      metroPing = setInterval(() => {
+        if (!heard) return void socket.terminate();
+        heard = false;
+        socket.ping();
+      }, METRO_LINK_PING_MS);
+      metroPing.unref();
+    }
+
+    function linkAgent(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already carries a link.');
+      const hosted = isJsonObject(raw) && typeof raw.session === 'string' ? raw.session : null;
+      if (hosted === null) return error(id, 'bad-request', 'An agent link needs a session.');
+      if (agentDrivers.holder(hosted) !== session.id)
+        return error(id, 'unknown-session', 'This client has no hosted session with agent control by that id.');
+      const [inside, outside] = duplexPair();
+      const link: AgentLink = { client: session.id, session: hosted, busy: 0 };
+      agentLinks.set(inside, link);
+      const streams = agentStreams.get(hosted) ?? new Set<Duplex>();
+      agentStreams.set(hosted, streams.add(outside));
+      outside.once('close', () => {
+        streams.delete(outside);
+        if (streams.size === 0 && agentStreams.get(hosted) === streams) agentStreams.delete(hosted);
+      });
+      let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
+      for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      const idle = setTimeout(() => {
+        if (link.busy === 0 || !heard) return void outside.destroy();
+        heard = false;
+        socket.ping();
+        idle.refresh();
+      }, AGENT_LINK_IDLE_MS);
+      idle.unref();
+      const active = () => idle.refresh();
+      socket.on('message', active);
+      outside.on('data', active);
+      outside.once('close', () => clearTimeout(idle));
+      outside.once('end', () => outside.end());
+      outside.once('close', () => inside.destroy());
+      inside.once('close', () => {
+        outside.push(null);
+        outside.end();
+      });
+      send(socket, { id, result: {} });
+      carry(outside);
+      agentHttp.emit('connection', inside);
+    }
+
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
+      if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
+      if (method === 'device-host.agent.link') return linkAgent(id, raw, session);
       const params = isJsonObject(raw) ? raw : {};
       if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
         if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
@@ -4157,6 +4614,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
         return input(id, inputMethod, raw, session);
       }
+      if (method === 'device-host.runtime.install') {
+        const cancellation = new AbortController();
+        const cancel = () => cancellation.abort();
+        socket.once('close', cancel);
+        try {
+          const answer = await hostedDevices.installRuntime(session.id, raw, cancellation.signal);
+          return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+        } finally {
+          socket.off('close', cancel);
+        }
+      }
       const answer =
         method === 'device-host.offer'
           ? await hostedDevices.offer(session.id, raw)
@@ -4176,13 +4644,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                         ? hostedDevices.appLaunch(session.id, raw)
                         : method === 'device-host.app.attach'
                           ? hostedDevices.appAttach(session.id, raw)
-                          : method === 'device-host.logs.query'
-                            ? await hostedDevices.logsQuery(session.id, raw)
-                            : method === 'device-host.metro.open'
-                              ? await hostedDevices.metroOpen(session.id, raw, peer)
-                              : method === 'device-host.metro.ports'
-                                ? await hostedDevices.metroPorts(session.id, raw)
-                                : await hostedDevices.metroClose(session.id, raw);
+                          : method === 'device-host.app.state'
+                            ? await hostedDevices.appState(session.id, raw)
+                            : method === 'device-host.logs.query'
+                              ? await hostedDevices.logsQuery(session.id, raw)
+                              : method === 'device-host.metro.open'
+                                ? await hostedDevices.metroOpen(session.id, raw)
+                                : method === 'device-host.metro.ports'
+                                  ? await hostedDevices.metroPorts(session.id, raw)
+                                  : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
@@ -4375,6 +4845,28 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       queue = queue.then(() => handle(raw)).catch(() => socket.close(1011, 'internal error'));
     });
     socket.on('close', (code) => {
+      clearInterval(metroPing);
+      clearInterval(clientPing);
+      if (metroLink) hostedDevices.metroUnlink(metroLink);
+      const stream = metroStream;
+      if (stream && code === 1000 && !stream.destroyed) {
+        queue = queue.then(() => void stream.end());
+        let ending: NodeJS.Timeout | undefined;
+        const arm = () => {
+          clearTimeout(ending);
+          ending = setTimeout(() => stream.destroy(), METRO_END_MS);
+          ending.unref();
+        };
+        arm();
+        stream.on('drain', arm);
+        stream.once('close', () => {
+          clearTimeout(ending);
+          stream.off('drain', arm);
+        });
+      } else if (stream && !stream.destroyed) {
+        if (stream instanceof Socket) stream.resetAndDestroy();
+        else stream.destroy();
+      }
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
@@ -4409,11 +4901,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (upgradeFromWebPage(request.headers, peer === null)) {
+    if (upgradeFromWebPage(request.headers, arrival(request))) {
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
-    if (limiter.blocked(peer ?? 'local')) {
+    if (limiter.blocked(peer ?? 'local') || unknownSecrets.blocked(peer ?? 'local')) {
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
@@ -4445,10 +4937,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const limitKey = peer ?? 'local';
     /**
      * `unknown-secret` is not a failure: a requester polls with its setup ticket until `stim-server setup` stores it,
-     * and a 16-byte lookup reveals nothing without the PSK.
+     * and a 16-byte lookup reveals nothing without the PSK. It has its own, far higher, limit per address.
      */
     const refuse = (code: string) => {
-      if (code !== 'unknown-secret') limiter.record(limitKey);
+      (code === 'unknown-secret' ? unknownSecrets : limiter).record(limitKey);
       if (ws.readyState === ws.OPEN) ws.close(CLOSE_REFUSED, code);
     };
     try {
@@ -4465,7 +4957,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         timeoutMs: authTimeoutMs,
       });
     } catch (error) {
-      if (!(error instanceof HandshakeRefusal && error.code === 'unknown-secret')) limiter.record(limitKey);
+      (error instanceof HandshakeRefusal && error.code === 'unknown-secret' ? unknownSecrets : limiter).record(
+        limitKey,
+      );
       return;
     }
     const publicKey = accepted.clientKey.toString('base64url');
@@ -4488,6 +4982,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (!records.device && !records.build && !records['device-host']) return refuse('unauthorized');
     }
     if (ws.readyState !== ws.OPEN) return;
+    pendingPools.get(request.socket)?.settle(request.socket);
     const host = records['device-host'];
     if (host) {
       const node = peer ? await peerNode(request, peer) : null;
@@ -4519,6 +5014,16 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     protocol: PROTOCOL_VERSION,
     stimHome: configDir(),
   } as const;
+  const lanHealth = (): Pick<ServerHealth, 'lan'> => {
+    const wanted = new Set(
+      transports
+        .filter((transport) => transport.id === 'local')
+        .flatMap((transport) => transport.bindAddresses?.() ?? []),
+    );
+    const bound = addresses.filter(({ host }) => wanted.has(host));
+    const [first] = bound;
+    return first ? { lan: { addresses: bound.map(({ host }) => host), port: first.port } } : {};
+  };
   const answerHealth = async (response: ServerResponse) => {
     const { state } = tailscale.snapshot();
     const route =
@@ -4534,6 +5039,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       route,
       nativeViewerOpened,
       ...(options.loopbackOnly ? { loopbackOnly: true as const } : {}),
+      ...lanHealth(),
     };
     response
       .writeHead(startup.state === 'ready' ? 200 : 503, { 'content-type': 'application/json' })
@@ -4557,6 +5063,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
+    if (hostedIdleSweep) clearInterval(hostedIdleSweep);
     if (revocationCheck) clearTimeout(revocationCheck);
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
@@ -4590,7 +5097,22 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     if (failures.length) throw new AggregateError(failures, 'Server resources did not close cleanly.');
   };
   async function listenOn(host: string): Promise<void> {
-    const server = createServer((request, response) => {
+    const network = !isLoopback(host);
+    const headersTimeout = options.headersTimeoutMs ?? HEADERS_TIMEOUT_MS;
+    const limits = network
+      ? {
+          headersTimeout,
+          requestTimeout: headersTimeout * 3,
+          connectionsCheckingInterval: Math.min(1000, headersTimeout),
+        }
+      : {};
+    const pending = network
+      ? new PendingConnections(
+          options.pendingConnections?.max ?? MAX_PENDING_CONNECTIONS,
+          options.pendingConnections?.perPeer ?? MAX_PENDING_PER_PEER,
+        )
+      : null;
+    const server = createServer(limits, (request, response) => {
       if (options.loopbackOnly && peerAddress(request) !== null) {
         response.writeHead(403, { 'content-type': 'text/plain' }).end('This stim-server serves this machine only.\n');
         return;
@@ -4624,7 +5146,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         answerSetup(request, response);
         return;
       }
-      const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      const agent = AGENT_PATH.exec(request.url ?? '');
+      if (agent && arrival(request) === 'direct') {
+        response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+        return;
+      }
       if (agent && startup.state !== 'ready') {
         response.writeHead(503, { 'content-type': 'text/plain' }).end('stim-server is not ready.\n');
         return;
@@ -4641,6 +5167,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     server.on('upgrade', upgrade);
     const sockets = new Set<Socket>();
     server.on('connection', (socket) => {
+      if (pending) {
+        if (!pending.admit(socket)) return void socket.destroy();
+        pendingPools.set(socket, pending);
+        socket.setTimeout(headersTimeout, () => socket.destroy());
+      }
       sockets.add(socket);
       socket.once('close', () => sockets.delete(socket));
     });

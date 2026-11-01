@@ -415,8 +415,7 @@ export function startBuildProgress({
   };
 }
 
-/** `offload` with the time `placement` has spent in its current phase as of `now` added to that phase. */
-export function withOffloadPhase(
+function withOffloadPhase(
   offload: ActiveBuildRecord['offload'],
   placement: Exclude<BuildPlacement, 'local'>,
   now: number,
@@ -439,7 +438,7 @@ function phaseDurations(phases: ActiveBuildRecord['phases'], now: number): Recor
   return out;
 }
 
-export function completedPhaseDurations(phases: ActiveBuildRecord['phases']): BuildReport['completedPhaseMs'] {
+function completedPhaseDurations(phases: ActiveBuildRecord['phases']): BuildReport['completedPhaseMs'] {
   if (phases.length < 2) return undefined;
   const durations = phaseDurations(phases.slice(0, -1), Date.parse(phases.at(-1)!.startedAt));
   return Object.keys(durations).length ? durations : undefined;

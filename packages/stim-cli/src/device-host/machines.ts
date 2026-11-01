@@ -10,17 +10,25 @@ import {
   deviceHostMachinesLock,
   acceptsShape,
   cannotHost,
+  currentTailnet,
   isJsonObject,
+  localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
   readBuildMachines,
   readDeviceHostMachines,
   settingDefinition,
   type DeviceHostMachineCredential,
+  wrongTailnet,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
 import { readHostPermissions } from '../offload/access-ticket.ts';
-import { diagnosisFinding, notOnTailnetDiagnosis } from '../offload/diagnosis.ts';
+import {
+  diagnoseLocalUnreachable,
+  diagnosisFinding,
+  notOnTailnetDiagnosis,
+  unconfirmedKeyFinding,
+} from '../offload/diagnosis.ts';
 import {
   diagnoseOutcome,
   diagnoseTailscale,
@@ -33,6 +41,7 @@ import {
   setupRemedy,
   tailscaleStatusAsync,
   type GeneratedTickets,
+  type KeyConfirmer,
   type TailnetMachineIo,
 } from '../offload/tailnet.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
@@ -44,6 +53,7 @@ interface MachineReport {
     | 'tailscale-off'
     | 'not-on-tailnet'
     | 'key-changed'
+    | 'key-unconfirmed'
     | 'not-asked'
     | 'pending'
     | 'approved'
@@ -55,6 +65,8 @@ interface MachineReport {
     | 'busy';
   diagnosis?: RemoteDiagnosis;
   dnsName?: string;
+  /** For `key-unconfirmed`: the fingerprint of the key the machine answered with, for a person to compare. */
+  fingerprint?: string;
   deviceId?: string;
   requestedAt?: string;
   expiresAt?: string;
@@ -92,7 +104,7 @@ export async function hostingMachines(status?: () => unknown, signal?: AbortSign
   } catch {
     candidates = configured;
   }
-  if (!candidates.length) return candidates;
+  if (!candidates.some((machine) => parseMachine(machine)?.transport === 'tailscale')) return candidates;
   const current = await (status ? status() : tailscaleStatusAsync(signal));
   signal?.throwIfAborted();
   return candidates.filter((machine) => !cannotHost(current, machine));
@@ -119,17 +131,62 @@ async function store(machines: DeviceHostMachineCredential[], operation?: StimCo
   else withDirLock(deviceHostMachinesLock(), write, options);
 }
 
+/** Forgets this machine's hosting credential for `machine`; false when another run holds the credential claim. */
+export async function forgetDeviceHostMachine(machine: string): Promise<boolean> {
+  const claim = tryAcquireClaim({ root: deviceHostMachinesClaims(), mode: 'exclusive', label: 'device-host approval' });
+  if (!claim.acquired) {
+    releaseClaim(claim.pending);
+    return false;
+  }
+  try {
+    const credentials = readDeviceHostMachines();
+    if (credentials.some((each) => each.machine === machine))
+      await store(credentials.filter((each) => each.machine !== machine));
+    return true;
+  } finally {
+    releaseClaim(claim.acquired);
+  }
+}
+
+function notOnTailnet(
+  machine: string,
+  ambiguous: boolean,
+  stored: DeviceHostMachineCredential | undefined,
+  current: unknown,
+) {
+  const diagnosis = notOnTailnetDiagnosis(machine, ambiguous, stored ? wrongTailnet(stored, current) : null);
+  return {
+    diagnosis,
+    report: {
+      machine,
+      state: 'not-on-tailnet' as const,
+      ...(stored?.tailnet ? { tailnet: stored.tailnet } : {}),
+      diagnosis,
+    },
+  };
+}
+
 /**
- * Reports the device-host approval of each remote machine, separate from its build approval. Only --fix makes a setup
- * ticket or forgets credentials; every server key stays pinned.
+ * Reports the device-host approval of each remote machine, separate from its build approval. Only `fix` makes a setup
+ * ticket, and only `forget`, which defaults to `fix`, forgets the credentials of machines not in `entries`; every
+ * server key stays pinned.
  */
 export async function inspectDeviceHostMachines(
   {
     fix,
+    forget = fix,
     version = '<version>',
     tickets = new Map(),
     operation,
-  }: { fix: boolean; version?: string; tickets?: GeneratedTickets; operation?: StimContext },
+    confirmKey,
+  }: {
+    fix: boolean;
+    forget?: boolean;
+    version?: string;
+    tickets?: GeneratedTickets;
+    operation?: StimContext;
+    confirmKey?: KeyConfirmer;
+  },
   io: TailnetMachineIo = realIo,
   entries: string[] | null = configuredMachines(),
 ): Promise<Inspection> {
@@ -159,7 +216,7 @@ export async function inspectDeviceHostMachines(
       ),
     );
   if (!entries.length) {
-    if (!fix) return { findings: [], machines: [] };
+    if (!forget) return { findings: [], machines: [] };
     try {
       if (!readDeviceHostMachines().length) return { findings: [], machines: [] };
     } catch {
@@ -188,7 +245,7 @@ export async function inspectDeviceHostMachines(
     } catch {
       return unreadable();
     }
-    if (fix) {
+    if (forget) {
       const kept = credentials.filter((each) => entries.includes(each.machine));
       if (kept.length !== credentials.length) {
         await store(kept, operation);
@@ -196,55 +253,66 @@ export async function inspectDeviceHostMachines(
       }
     }
     if (!entries.length) return { findings: [], machines: [] };
-    const status = await io.status();
-    if (!isJsonObject(status)) {
-      const diagnosis = await diagnoseTailscale(io);
-      return {
-        findings: [
-          note(
-            'Remote machines are unreachable',
-            `remote.machines names remote machines. ${diagnosis.message}`,
-            diagnosis.remedy,
-          ),
-        ],
-        machines: entries.map((machine) => ({ machine, state: 'tailscale-off', diagnosis })),
-      };
+    const tailnet = entries.some((entry) => parseMachine(entry)?.transport !== 'local');
+    const status = tailnet ? await io.status() : null;
+    const inspected: Inspection = { findings: [], machines: [] };
+    let off: RemoteDiagnosis | null = null;
+    if (tailnet && !isJsonObject(status)) {
+      off = await diagnoseTailscale(io);
+      inspected.findings.push(
+        note('Remote machines are unreachable', `remote.machines names remote machines. ${off.message}`, off.remedy),
+      );
     }
-    const self = isJsonObject(status.Self) ? status.Self : {};
+    const self = isJsonObject(status) && isJsonObject(status.Self) ? status.Self : {};
     const raw = typeof self.HostName === 'string' && self.HostName ? self.HostName : hostname();
     const deviceName =
       raw
         .replace(/[\p{Cc}\p{Cf}]/gu, '')
         .trim()
         .slice(0, 64) || 'Mac';
-    const inspected: Inspection = { findings: [], machines: [] };
     const namedNodes = new Set<string>();
     for (const machine of new Set(entries)) {
       const parsed = parseMachine(machine);
       if (!parsed) {
         inspected.machines.push({ machine, state: 'invalid' });
         inspected.findings.push(
-          note(`Remote machine ${machine} is not a tailnet name`, 'Expected `name` or `name:port`.'),
+          note(
+            `Remote machine ${machine} is not a tailnet name or local: address`,
+            'Expected `name`, `name:port`, `local:<host>` or `local:<host>:port`.',
+          ),
         );
         continue;
       }
-      const current = await io.status();
-      if (!isJsonObject(current)) {
+      const local = parsed.transport === 'local';
+      if (!local && off) {
+        inspected.machines.push({ machine, state: 'tailscale-off', diagnosis: off });
+        continue;
+      }
+      const current = local ? null : await io.status();
+      if (!local && !isJsonObject(current)) {
         const diagnosis = await diagnoseTailscale(io);
         inspected.machines.push({ machine, state: 'tailscale-off', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
-      const peer = findPeer(current, parsed.name);
+      const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
-        inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
+        const { report, diagnosis } = notOnTailnet(
+          machine,
+          peer === 'ambiguous',
+          credentials.find((each) => each.machine === machine),
+          current,
+        );
+        inspected.machines.push(report);
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
-      const nodeRoute = `${peer.nodeId}:${parsed.port}`;
+      const signedIn = local ? null : currentTailnet(current);
+      const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
+      const dnsName = peer ? { dnsName: peer.dnsName } : {};
+      const nodeRoute = peer ? `${peer.nodeId}:${parsed.port}` : `local:${parsed.name}:${parsed.port}`;
       if (namedNodes.has(nodeRoute)) {
-        inspected.machines.push({ machine, dnsName: peer.dnsName, state: 'invalid' });
+        inspected.machines.push({ machine, ...dnsName, state: 'invalid' });
         inspected.findings.push(
           note(
             `Remote machine ${machine} repeats a named node`,
@@ -255,7 +323,7 @@ export async function inspectDeviceHostMachines(
       }
       namedNodes.add(nodeRoute);
       if (cannotHost(current, machine)) {
-        inspected.machines.push({ machine, dnsName: peer.dnsName, state: 'not-asked' });
+        inspected.machines.push({ machine, ...dnsName, state: 'not-asked' });
         continue;
       }
       const credential = credentials.find((each) => each.machine === machine);
@@ -263,8 +331,9 @@ export async function inspectDeviceHostMachines(
       const outcome = await reachMachine({
         machine,
         access: 'device-host',
-        endpoint: endpoint(peer, parsed.port),
-        address: peer.dnsName,
+        endpoint: target,
+        address: peer?.dnsName ?? parsed.name,
+        ...(signedIn ? { tailnet: signedIn } : {}),
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: async (next) => {
@@ -277,6 +346,9 @@ export async function inspectDeviceHostMachines(
         serverVersion: version,
         io,
         tickets,
+        ...(local
+          ? { confirmKey: (serverKey: string) => confirmKey?.(machine, serverKey) ?? Promise.resolve(false) }
+          : {}),
       });
       reportSignal(operation)?.throwIfAborted();
       if (outcome.state !== 'not-asked' && outcome.credential) {
@@ -289,8 +361,9 @@ export async function inspectDeviceHostMachines(
       const saved = outcome.state !== 'not-asked' ? outcome.credential : undefined;
       const known = {
         machine,
-        dnsName: peer.dnsName,
+        ...dnsName,
         ...(saved?.deviceId ? { deviceId: saved.deviceId } : {}),
+        ...(saved?.tailnet ? { tailnet: saved.tailnet } : {}),
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
       if (outcome.state === 'approved') {
@@ -340,7 +413,7 @@ export async function inspectDeviceHostMachines(
           note(
             `Remote machine ${machine} has not approved this machine for device hosting`,
             'This machine has not asked for hosting access.',
-            'Run `stim doctor --fix` to make a setup ticket and print the command to run there.',
+            `Run \`stim remote add ${machine}\` to make a setup ticket and print the command to run there.`,
           ),
         );
         continue;
@@ -361,15 +434,26 @@ export async function inspectDeviceHostMachines(
         inspected.findings.push(note(outdated.title, outdated.detail, outdated.fix));
         continue;
       }
+      if (outcome.state === 'unconfirmed') {
+        inspected.machines.push({ ...known, state: 'key-unconfirmed', fingerprint: outcome.fingerprint });
+        inspected.findings.push(unconfirmedKeyFinding('device-host-machine', machine, outcome.fingerprint));
+        continue;
+      }
       if (outcome.state === 'unreachable') {
-        const diagnosis = await diagnoseOutcome(io, {
+        const failure = {
           entry: machine,
-          peer,
           port: parsed.port,
-          target: endpoint(peer, parsed.port),
+          target,
           reason: outcome.reason,
           transport: outcome.transport,
-        });
+        };
+        const startup =
+          !peer && outcome.transport?.kind === 'http' && outcome.transport.status === 503
+            ? await io.startup?.(target)
+            : null;
+        const diagnosis = peer
+          ? await diagnoseOutcome(io, { ...failure, peer })
+          : diagnoseLocalUnreachable({ ...failure, startup });
         inspected.machines.push({ ...known, state: 'unreachable', diagnosis });
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
@@ -380,18 +464,18 @@ export async function inspectDeviceHostMachines(
           ? note(
               `Remote machine ${machine} answered with a different server key`,
               'Stim refuses to connect to a stim-server that does not prove it holds the key pinned at approval.',
-              `If that machine or its Stim home was replaced, remove ${machine} from remote.machines, run \`stim doctor --fix\`, then add it back and run \`stim doctor --fix\` again.`,
+              `If that machine or its Stim home was replaced, run \`stim remote remove ${machine}\`, then \`stim remote add ${machine}\`.`,
             )
           : outcome.state === 'lapsed'
             ? note(
                 `Hosting request to ${machine} lapsed`,
                 `${machine} did not approve this machine before its setup ticket expired at ${outcome.credential.expiresAt}.`,
-                'Run `stim doctor --fix` to make a new ticket.',
+                `Run \`stim remote add ${machine}\` to make a new ticket.`,
               )
             : note(
                 `Remote machine ${machine} no longer accepts this machine for device hosting`,
                 `${outcome.reason} The pinned key is preserved.`,
-                'Run `stim doctor --fix` to ask again.',
+                `Run \`stim remote add ${machine}\` to ask again.`,
               ),
       );
     }

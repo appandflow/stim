@@ -81,7 +81,7 @@ struct PhonesView: View {
         }
       } header: {
         HStack {
-          Text("Paired phones")
+          Text("Paired devices")
           Spacer()
           Button("Pair a Phone\u{2026}", action: pair).buttonStyle(.stim(.primary))
         }

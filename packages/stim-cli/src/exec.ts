@@ -12,10 +12,11 @@ import { spawnDeclared } from './engine/spawn-claims.ts';
 import { operationState } from './engine/operation-state.ts';
 import { WorkspaceProcessCleanupError } from './engine/workspace-process-lock.ts';
 import { groupExitBudgetMs, waitForGroupExit } from './process-group-exit.ts';
-import { redactArgv, redactCommandLine, trace } from '@stim-cli/core/state';
+import { redactArgv, redactCommandLine, tailscaleEnv, trace } from '@stim-cli/core/state';
 import { debugLog } from './debug-log.ts';
 import { reportSignal, trackReportResource } from './report-runtime.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from './process-identity.ts';
+import { processGroupAlive } from './ownership-claim.ts';
 
 export interface ExecOptions {
   /** Milliseconds before the child is killed, or 'unbounded' for a call that may legitimately run as long as it needs, such as a native build. */
@@ -137,6 +138,7 @@ function reportChild(
   child: ChildProcess,
   signal?: AbortSignal,
   failed?: (error: Error) => Error,
+  contained = false,
 ): { cancel: () => Promise<void>; closed: Promise<void> } | undefined {
   const context = ambientContext();
   const report = reportSignal(context);
@@ -157,6 +159,8 @@ function reportChild(
     });
   });
   const pid = child.pid;
+  const cleanupSettled = () =>
+    ended && (pid === undefined || (process.platform === 'win32' ? contained : !processGroupAlive(pid)));
   const captured = pid === undefined ? null : captureProcessIdentity(pid);
   const observe = () => {
     if (pid === undefined) return 'gone';
@@ -175,7 +179,7 @@ function reportChild(
       reportCleanup: true,
       remedy: `Check whether the report child${pid === undefined ? '' : ` ${pid}${process.platform === 'win32' ? '' : ` (\`ps -p ${pid}\`)`}`} and its descendants are still running and stop them if they are`,
     });
-    const error = failed?.(failure) ?? failure;
+    const error = Object.assign(failed?.(failure) ?? failure, { reportResourceSettled: cleanupSettled });
     child.stdin?.destroy();
     child.stdout?.destroy();
     child.stderr?.destroy();
@@ -248,7 +252,7 @@ function reportChild(
       )
         refuse(`Report child ${pid} still has descendants after cleanup.`);
     })());
-  if (report) trackReportResource(context, closed, cancel, signal);
+  if (report) trackReportResource(context, closed, cancel, signal, undefined, cleanupSettled);
   else {
     const abort = () => {
       void cancel().catch(() => {});
@@ -345,6 +349,10 @@ function redactError<T>(error: T, values: readonly string[] | undefined): T {
   return error;
 }
 
+function tailscaleEnvironment(file: string, env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+  return basename(file).toLowerCase() === 'tailscale' ? tailscaleEnv(env ?? ambientEnv()) : env;
+}
+
 const defaultExecutor: Executor = {
   reportSignal: () => reportSignal(ambientContext()),
   run(cmd, { timeoutMs, killSignal, cwd, env }) {
@@ -391,6 +399,7 @@ const defaultExecutor: Executor = {
       for (const key of omitEnv ?? []) delete childEnv[key];
       opts.env = childEnv;
     }
+    opts.env = tailscaleEnvironment(file, opts.env);
     refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
     const result = spawn.sync(file, args, opts);
     if (result.error) {
@@ -441,6 +450,7 @@ const defaultExecutor: Executor = {
         for (const key of omitEnv ?? []) delete childEnv[key];
         opts.env = childEnv;
       }
+      opts.env = tailscaleEnvironment(file, opts.env);
       refuseUnsafeBatchArguments(file, args, opts.env, opts.cwd);
       const claims = declareFor ? [...operationState(declareFor).declaring] : [];
       let clearDeclaration: (() => void) | undefined;
@@ -473,20 +483,25 @@ const defaultExecutor: Executor = {
         }
       };
       try {
-        lifetime = reportChild(child, report, (error) => {
-          const failure = claims.length
-            ? Object.assign(
-                new WorkspaceProcessCleanupError(
-                  claims,
-                  error.message,
-                  'Verify the child and its descendants have stopped.',
-                ),
-                { reportCleanup: true },
-              )
-            : error;
-          stopTimers();
-          return failure;
-        });
+        lifetime = reportChild(
+          child,
+          report,
+          (error) => {
+            const failure = claims.length
+              ? Object.assign(
+                  new WorkspaceProcessCleanupError(
+                    claims,
+                    error.message,
+                    'Verify the child and its descendants have stopped.',
+                  ),
+                  { reportCleanup: true },
+                )
+              : error;
+            stopTimers();
+            return failure;
+          },
+          contained,
+        );
         cancel = lifetime?.cancel;
         if (cleanupOnExit && cancel)
           child.once('exit', () => {
@@ -635,21 +650,27 @@ const defaultExecutor: Executor = {
     report?.throwIfAborted();
     const context = ambientContext();
     const childOpts = context ? { ...opts, cwd: opts.cwd ?? context.cwd, env: opts.env ?? context.env } : opts;
+    childOpts.env = tailscaleEnvironment(cmd, childOpts.env);
     if (report && process.platform !== 'win32') childOpts.detached = true;
     refuseUnsafeBatchArguments(cmd, args, childOpts.env ?? ambientEnv(), childOpts.cwd);
     const claims = report ? [...operationState(context).declaring] : [];
+    const contained = startsInReportJob(cmd, childOpts, false);
     const child = spawnReportProbe(cmd, args, childOpts);
-    reportChild(child, undefined, (error) =>
-      claims.length
-        ? Object.assign(
-            new WorkspaceProcessCleanupError(
-              claims,
-              error.message,
-              'Verify the child and its descendants have stopped.',
-            ),
-            { reportCleanup: true },
-          )
-        : error,
+    reportChild(
+      child,
+      undefined,
+      (error) =>
+        claims.length
+          ? Object.assign(
+              new WorkspaceProcessCleanupError(
+                claims,
+                error.message,
+                'Verify the child and its descendants have stopped.',
+              ),
+              { reportCleanup: true },
+            )
+          : error,
+      contained,
     );
     return child;
   },

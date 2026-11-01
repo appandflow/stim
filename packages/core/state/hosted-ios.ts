@@ -11,7 +11,7 @@ import type { WorkspaceState } from './workspace-state.ts';
 /** A workspace slot's placement; null device means its reservation has not reached ready yet. */
 export interface HostedIosPlacement extends HostedNativePlacement<HostedIosDevice> {}
 
-/** Public hosting facts; the host's UDID and private Metro gateway are excluded. */
+/** Public hosting facts; the host's UDID and private Metro links are excluded. */
 export type HostedIosStatus = {
   machine: string;
   session: string;
@@ -34,7 +34,7 @@ export function hostedIosStatus(placement: HostedIosPlacement): HostedIosStatus 
     selected: placement.selected,
     ...(placement.reason ? { reason: placement.reason } : {}),
     agent: placement.agent,
-    device: placement.device ? { name: placement.device.deviceType, runtime: placement.device.runtime } : null,
+    device: placement.device ? { name: placement.device.name, runtime: placement.device.runtime } : null,
   };
 }
 

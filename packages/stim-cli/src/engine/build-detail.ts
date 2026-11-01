@@ -71,7 +71,7 @@ function shortXcodeAction(action: string, args: string, target: string): string 
   return clip(`${action}${subject ? ` ${subject}` : ''} (${target})`);
 }
 
-export type BuildToolLine =
+type BuildToolLine =
   | { kind: 'total'; unit: 'targets'; total: number }
   | { kind: 'configure' }
   | { kind: 'count'; done: number; total: number; step: NativeBuildStep; line: string | null }
@@ -88,8 +88,7 @@ function swiftpmStep(text: string): NativeBuildStep {
   return /^Linking\b|-product$/.test(text) ? 'link' : 'compile';
 }
 
-/** What one line of xcodebuild, Gradle or SwiftPM output says about the build's progress, or null for any other line. */
-export function parseBuildToolLine(msg: string): BuildToolLine | null {
+function parseBuildToolLine(msg: string): BuildToolLine | null {
   const counted = SWIFTPM_PROGRESS.exec(msg);
   if (counted) {
     const text = counted[3]?.trim() ?? '';

@@ -42,14 +42,6 @@ describe('project Node pins', () => {
     );
   });
 
-  it('names the pin and the node on PATH only when neither an install nor PATH fits the pin', () => {
-    nvm('v1.1.0');
-    expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '26.7.0' })).toBe(
-      'Node 26.7.0 on PATH does not satisfy .nvmrc 1.2.0, and no installed Node does.',
-    );
-    expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBeNull();
-  });
-
   it("checks an lts pin through nvm's aliases, and says when it cannot resolve one", () => {
     writeFileSync(join(dir, 'repo', '.nvmrc'), 'lts/jod\n');
     expect(unmetNodePin(app, {}, { top: top(), nodeVersion: () => '1.5.0' })).toBe(

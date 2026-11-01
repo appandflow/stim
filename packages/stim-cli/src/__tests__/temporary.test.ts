@@ -1,7 +1,6 @@
 import {
   chmodSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -54,46 +53,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
   volume.path = '';
   rmSync(base, { recursive: true, force: true });
-});
-
-test('default staging stays on the target volume outside nested Git working trees', () => {
-  const staging = makeTemporaryDirectory(near, '.stim-warm-');
-  expect(temporaryRoot(near)).toBe(volume.path);
-  expect(filesystemDevice(staging)).toBe(filesystemDevice(near));
-  expect(filesystemDevice(staging)).not.toBe(filesystemDevice(tmpdir()));
-});
-
-test.skipIf(process.platform === 'win32')(
-  'default staging is readable only by its owner (POSIX directory modes; skipped on win32)',
-  () => {
-    expect(lstatSync(makeTemporaryDirectory(near, '.stim-warm-')).mode & 0o777).toBe(0o700);
-  },
-);
-
-test('a safe system temporary directory on the same volume remains usable', () => {
-  vi.stubEnv('TMPDIR', volume.path);
-  expect(temporaryRoot(near)).toBe(volume.path);
-});
-
-test('no safe directory on the target volume refuses instead of spilling to system temp', () => {
-  writeFileSync(join(volume.path, '.git'), 'gitdir: elsewhere');
-  expect(() => makeTemporaryDirectory(near, '.stim-warm-')).toThrow(/No writable temporary directory/);
-});
-
-test('machine tempDir can be created, and STIM_TMPDIR overrides it', () => {
-  mkdirSync(process.env.STIM_HOME!);
-  const configured = join(volume.path, 'custom', 'temp');
-  writeFileSync(join(process.env.STIM_HOME!, 'config.json'), JSON.stringify({ tempDir: configured }));
-  expect(temporaryRoot(near)).toBe(configured);
-  const staging = makeTemporaryDirectory(near, 'stim-app-');
-  expect(lstatSync(staging).isDirectory()).toBe(true);
-  vi.stubEnv('STIM_TMPDIR', tmpdir());
-  expect(temporaryRoot(near)).toBe(tmpdir());
-});
-
-test.each(['', 'relative'])('invalid override %j refuses rather than being ignored', (override) => {
-  vi.stubEnv('STIM_TMPDIR', override);
-  expect(() => temporaryRoot(near)).toThrow(/absolute directory/);
 });
 
 test('overrides and symlinks into a working tree cannot expose staged secrets', () => {

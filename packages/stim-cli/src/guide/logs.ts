@@ -443,7 +443,9 @@ WHAT WRITES WHAT
                        and, on Expo, one per dev-client manifest
                        request (manifest_request_started, _finished,
                        _failed: debug level, with platform and requestId;
-                       launch verification reads them as progress)
+                       launch verification reads them as progress), and
+                       an hmr_update debug record, at most once a minute,
+                       when Metro pushes a Fast Refresh change to the app
   client.ndjson        in-app console logs and redboxes -- BARE PROJECTS ONLY.
                        In expo-child and command-child mode everything the
                        dev server prints lands in metro.ndjson with raw: true,
@@ -614,6 +616,11 @@ WHAT WRITES WHAT
                        the run that pointed you at it. A build from the API's
                        build() writes build-artifact-<platform>.ndjson
                        instead, so it never replaces a run's transcript.
+                       A failed build also leaves a copy of its transcript next
+                       to the log, named <log>.failed (build-ios.ndjson.failed);
+                       the failure's log line points at it, and the next
+                       failed build of that log replaces it. \`logs\` does not
+                       read it.
 
   Only a dev server Stim hosted is captured. If you started the bundler
   yourself, the metro and client sources stay empty -- which is not a sign of a

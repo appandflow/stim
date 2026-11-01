@@ -22,7 +22,13 @@ export { artifactIn, resolveArtifact, storeArtifact, type StoreArtifactOptions }
 export { storeArtifactAsync, type AsyncStoreArtifactOptions } from './artifact-store-async.ts';
 export { compiledHelper } from './compiled-helper.ts';
 export { dependencyInstall, dependencyLockfile, reusableDependencies } from './dependency-install.ts';
-export { createMetroGateway, createMetroBridge, type MetroBridge } from './metro-bridge.ts';
+export {
+  createMetroBridge,
+  createMetroLinks,
+  type MetroBridge,
+  type MetroLink,
+  type MetroLinks,
+} from './metro-bridge.ts';
 
 const warnedRelative = new Set<string>();
 

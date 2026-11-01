@@ -5,14 +5,15 @@ import type { ProjectPlanResult } from '../../integrations/project-plan.ts';
 import { NO_PROJECT_REFUSAL } from '../../workspace/project.ts';
 import { projectSettingsContextAsync } from '../../workspace/settings.ts';
 import { unsupportedPlan } from '../../integrations/project-plan.ts';
-import { planFlagRefusal, printPlan, refusePlan } from '../build-plan.ts';
+import { planFlagRefusal, plannedBuildPlacement, printPlan, refusePlan } from '../build-plan.ts';
+import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { isPhysicalDeviceRequest } from '../native-runtime.ts';
 import type { IosDeps } from './dependencies.ts';
 import type { IosCommandOptions } from './types.ts';
 
 function runOnlyFlag(opts: IosCommandOptions): string | null {
   if (isPhysicalDeviceRequest(opts.device)) return '--device';
-  if (opts.remote) return '--remote';
+  if (opts.installRuntime) return '--install-runtime';
   if (opts.wait !== undefined) return opts.wait === false ? '--no-wait' : '--wait';
   if (opts.simulatorApp !== undefined) return '--simulator-app';
   if (opts.metroCheck === false) return '--no-metro-check';
@@ -35,7 +36,10 @@ export async function readIosBuildPlan(
   const project = await selected.load(settings);
   if (!project.plan) return { refusal: unsupportedPlan('ios') };
   operation.signal.throwIfAborted();
-  return project.plan(opts, { context, settings }, operation);
+  const build = resolveBuildPlacement(opts.remoteBuild);
+  if (build.failure) return { refusal: build.failure };
+  const plan = await project.plan({ ...opts, remoteBuild: build.selected }, { context, settings }, operation);
+  return 'platform' in plan ? plannedBuildPlacement(plan, build.selected, opts.easProfile !== undefined) : plan;
 }
 
 export async function planIos(opts: IosCommandOptions, d: IosDeps): Promise<void> {

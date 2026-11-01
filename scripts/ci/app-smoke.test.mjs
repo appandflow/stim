@@ -102,9 +102,9 @@ it.each(['get_app_container', 'launchctl'])(
 it('fails persistent unavailable observations within the shared deadline and retains their errors', async () => {
   execFileSync.mockImplementation(timeout);
   await expect(import('./app-smoke.mjs')).rejects.toThrow('simulator observations unavailable');
-  expect(clock.now).toBeLessThanOrEqual(60_000);
-  expect(execFileSync).toHaveBeenCalledTimes(3);
-  expect(console.error).toHaveBeenCalledTimes(3);
+  expect(clock.now).toBeLessThanOrEqual(180_000);
+  expect(execFileSync).toHaveBeenCalledTimes(11);
+  expect(console.error).toHaveBeenCalledTimes(11);
   expect(sleep).not.toHaveBeenCalledWith(5000);
 });
 
@@ -135,11 +135,9 @@ it('shares the observation deadline across both installed-app and process sample
     .mockImplementationOnce(timeout)
     .mockReturnValueOnce('/installed/app')
     .mockReturnValueOnce('21 0 UIKitApplication:com.example.app[abc]')
-    .mockImplementationOnce(timeout)
-    .mockImplementationOnce(timeout)
-    .mockReturnValue('21 0 UIKitApplication:com.example.app[abc]');
+    .mockImplementation(timeout);
   await expect(import('./app-smoke.mjs')).rejects.toThrow('simulator observations unavailable');
   expect(sleep).toHaveBeenCalledWith(5000);
-  expect(clock.now).toBeLessThanOrEqual(60_000);
-  expect(execFileSync).toHaveBeenCalledTimes(5);
+  expect(clock.now).toBeLessThanOrEqual(181_000);
+  expect(execFileSync).toHaveBeenCalledTimes(13);
 });

@@ -42,6 +42,26 @@ const requestId: JsonSchema = { type: ['integer', 'string'] };
 
 const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
 const runSelector = { oneOf: [runText, { type: 'boolean' }] };
+const deviceToolRequest = {
+  oneOf: (
+    [
+      ['location', ['ios', 'android'], { set: { type: 'string', maxLength: 256 } }],
+      ['location', ['ios', 'android'], { clear: { const: true } }],
+      [
+        'permission',
+        ['ios', 'android'],
+        { action: { enum: ['grant', 'revoke', 'reset'] }, service: { type: 'string', maxLength: 1024 } },
+      ],
+      ['push', ['ios'], { payload: { type: 'string', maxLength: 65_536 } }],
+      ['network', ['android'], { state: { enum: ['on', 'off'] } }],
+    ] satisfies Array<[string, string[], Record<string, JsonSchema>]>
+  ).map(([tool, platforms, fields]) => ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['tool', 'platform', ...Object.keys(fields)],
+    properties: { tool: { const: tool }, platform: { enum: platforms }, ...fields },
+  })),
+};
 const nativeRunProperties = {
   slot: runText,
   remote: runText,
@@ -163,6 +183,7 @@ const gradleArtifactQuery: JsonSchema = {
   additionalProperties: false,
   properties: {
     project: { type: 'string' },
+    jdk: { type: 'string', pattern: '^[0-9]{1,3}$' },
     sourceDigest: sha256,
     inputs: {
       type: 'object',
@@ -570,6 +591,7 @@ export function protocolJsonSchema(): JsonSchema {
         properties: {
           platform: { enum: ['ios', 'android', 'macos'] },
           choice: {},
+          installImage: { type: 'string', pattern: '^system-images;' },
           declined: { type: ['string', 'null'], minLength: 1 },
           resources: {
             type: 'object',
@@ -1153,7 +1175,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['report'],
             additionalProperties: false,
-            properties: { report: { const: 'gc' } },
+            properties: { report: { enum: ['gc', 'gc-history', 'builds'] } },
           },
           {
             type: 'object',
@@ -1302,6 +1324,12 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.runtime.install', {
+            type: 'object',
+            required: ['runtime'],
+            additionalProperties: false,
+            properties: { runtime: { type: 'string', pattern: '^(iOS )?[0-9]+[.][0-9]+([.][0-9]+)?$', maxLength: 64 } },
+          }),
           request('device-host.offer', {
             type: 'object',
             required: ['platform'],
@@ -1440,6 +1468,7 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request('device-host.app.state', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
             'device-host.logs.query',
             session({
@@ -1452,14 +1481,7 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request(
             'device-host.metro.open',
-            session(
-              {
-                gatewayPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 },
-                secret: { type: 'string', pattern: '^[a-f0-9]{64}$' },
-              },
-              ['gatewayPort', 'secret'],
-            ),
+            session({ clientMetroPort: { type: 'integer', minimum: 1, maximum: 65535 } }),
           ),
           request('device-host.metro.ports', {
             type: 'object',
@@ -1470,6 +1492,8 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('device-host.metro.close', session({})),
+          request('device-host.metro.link', session({})),
+          request('device-host.agent.link', session({})),
           request(
             'device-host.frames.subscribe',
             session({
@@ -1608,6 +1632,44 @@ export function protocolJsonSchema(): JsonSchema {
                 not: { enum: ['constructor', 'prototype', '__proto__'] },
               },
             },
+          }),
+          request('desktop.remedy.subscribe', {
+            oneOf: [
+              ...['doctor-fix', 'device-unlock'].map((action) => ({
+                type: 'object',
+                required: ['cwd', 'action'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  action: { const: action },
+                  platform: { enum: ['ios', 'android'] },
+                  ...(action === 'device-unlock'
+                    ? {
+                        slot: {
+                          type: 'string',
+                          pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                          not: { enum: ['constructor', 'prototype', '__proto__'] },
+                        },
+                      }
+                    : {}),
+                },
+              })),
+              {
+                type: 'object',
+                required: ['cwd', 'action', 'request'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  action: { const: 'device-tool' },
+                  request: deviceToolRequest,
+                  slot: {
+                    type: 'string',
+                    pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                    not: { enum: ['constructor', 'prototype', '__proto__'] },
+                  },
+                },
+              },
+            ],
           }),
           request('desktop.machine-access.subscribe', {
             type: 'object',
@@ -1993,6 +2055,7 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: ['ios', 'android', 'macos'] },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
+              iosProjectPath: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
               fingerprintSources: {
@@ -2009,6 +2072,8 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+              podsOnWorker: { type: 'boolean' },
+              reuseArtifact: { type: 'boolean' },
               fingerprintIgnored: {
                 type: 'array',
                 maxItems: 20000,
@@ -2084,6 +2149,8 @@ export function protocolJsonSchema(): JsonSchema {
                   gradleBuildCache: { type: 'boolean' },
                   pch: { enum: ['auto', 'on', 'off'] },
                   compilerCache: { enum: ['ccache', 'none'] },
+                  gradleRoot: { type: ['string', 'null'] },
+                  module: { type: ['string', 'null'] },
                 },
               },
               macos: {
@@ -2342,6 +2409,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-worktree-remove-progress',
                   'desktop-worktree-warm-progress',
                   'desktop-machine-access-progress',
+                  'desktop-remedy-progress',
                 ],
               },
               subscription: { type: 'string' },
@@ -2365,6 +2433,7 @@ export function protocolJsonSchema(): JsonSchema {
                   'desktop-worktree-remove-ended',
                   'desktop-worktree-warm-ended',
                   'desktop-machine-access-ended',
+                  'desktop-remedy-ended',
                 ],
               },
               subscription: { type: 'string' },

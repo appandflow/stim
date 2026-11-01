@@ -55,10 +55,12 @@ import {
 import { nativeGradleTransfer, type GradleTransfer } from '../integrations/native-gradle-inputs.ts';
 import type { NativeInputSnapshot } from '../integrations/native-inputs.ts';
 import type { FingerprintSource } from '@expo/fingerprint';
+import { isReleaseConfiguration } from '../commands/ios/support.ts';
 import { reactNativeBuildQuery } from './react-native-artifact.ts';
 import { namedBuildMachine, OffloadRefusal, workerFailureReason } from './selection.ts';
 import type { PlacementCandidate } from '../placement-log.ts';
 import {
+  buildsOnlyOnWorker,
   toolchainMismatches,
   toolchainNotes,
   cocoapodsDifference,
@@ -132,6 +134,9 @@ export function placementLoad(choice: { offer: BuildOffer }): string {
   return `; ${capacityText({ loadPerCore, builds, maxBuilds: maxBuilds ?? 0 })} there`;
 }
 
+const UNSUPPORTED_OFFLOAD_REMEDY =
+  'This build cannot leave this machine. Build it here with --remote-build local or auto where this machine can build it; stim guide settings lists what keeps a build here.';
+
 /**
  * Whether a build may go to a remote machine at all, before any machine is asked. `auto` keeps the build here while
  * this machine has a free `concurrency.maxBuilds` slot and its load per core is under `server.maxLoadPerCore`.
@@ -153,7 +158,12 @@ export function offloadPlacement({
 }): { offload: boolean; code: string; reason: string } {
   const word = placementWord(selected);
   if (word === null) {
-    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}, so a named remote machine cannot take it`);
+    if (unsupported)
+      throw new OffloadRefusal(
+        selected,
+        `${unsupported}, so a named remote machine cannot take it`,
+        UNSUPPORTED_OFFLOAD_REMEDY,
+      );
     if (machines === 0) throw new OffloadRefusal(selected, 'no remote machine is paired');
     return { offload: true, code: 'named', reason: `selected with --remote-build ${selected}` };
   }
@@ -161,8 +171,8 @@ export function offloadPlacement({
   if (!localEnabled || !mayRunHere(word)) {
     const why =
       word === 'remote-only' ? 'remote-only never builds here' : 'local is disabled in remote.buildPoolDisabled';
-    const reason = unsupported ?? (machines === 0 ? 'no enabled remote machine is paired' : null);
-    if (reason) throw new OffloadRefusal(selected, `${reason}; ${why}`);
+    if (unsupported) throw new OffloadRefusal(selected, `${unsupported}; ${why}`, UNSUPPORTED_OFFLOAD_REMEDY);
+    if (machines === 0) throw new OffloadRefusal(selected, `no enabled remote machine is paired; ${why}`);
     return { offload: true, code: word === 'remote-only' ? 'remote-only' : 'local-disabled', reason: why };
   }
   if (machines === 0) return { offload: false, code: 'no-remote-mac', reason: 'no remote machine is paired' };
@@ -386,7 +396,10 @@ export class BuildConnection {
   private readonly writeWaiters = new Set<() => void>();
   private progress: ((event: ProgressEvent) => void) | null = null;
   private binary: ((frame: Buffer) => void) | null = null;
+  private event: ((event: Record<string, unknown>) => void) | null = null;
+  private dropped: ((code: number) => void) | null = null;
   private closed: string | null = null;
+  private lastWrite: Promise<void> = Promise.resolve();
   private heard = Date.now();
   private watched = false;
   private ended = false;
@@ -419,6 +432,7 @@ export class BuildConnection {
       }
       if (!isJsonObject(message)) return;
       if (message.event === 'build.progress') return this.progress?.(message as unknown as ProgressEvent);
+      if (typeof message.event === 'string') return this.event?.(message);
       const resolve = typeof message.id === 'number' ? this.pending.get(message.id) : undefined;
       if (resolve) {
         this.pending.delete(message.id as number);
@@ -433,6 +447,7 @@ export class BuildConnection {
       this.pending.clear();
       const dropped = code === CLOSE_ABNORMAL;
       this.progress?.({ job: '', outcome: { ok: false, code: dropped ? 'dropped' : 'closed', message: this.closed } });
+      this.dropped?.(code);
     });
     socket.on('error', () => {});
   }
@@ -546,8 +561,11 @@ export class BuildConnection {
     if (this.closed) return;
     let completed = false;
     let resume: (() => void) | undefined;
+    let written: (() => void) | undefined;
+    this.lastWrite = new Promise((resolve) => (written = resolve));
     this.socket.send(frame, { binary: true }, () => {
       completed = true;
+      written?.();
       resume?.();
     });
     if (completed || this.closed || this.socket.bufferedAmount <= MAX_BUFFERED) return;
@@ -561,12 +579,36 @@ export class BuildConnection {
     });
   }
 
+  /** Resolves once the last binary frame left this process, or at once when the connection has ended. */
+  flushed(): Promise<void> {
+    return this.closed ? Promise.resolve() : this.lastWrite;
+  }
+
+  /** Stops reading frames from the machine until `resume()`, so the machine's sends wait on the network. */
+  pause(): void {
+    this.socket.pause();
+  }
+
+  resume(): void {
+    this.socket.resume();
+  }
+
   onProgress(listener: ((event: ProgressEvent) => void) | null): void {
     this.progress = listener;
   }
 
   onBinary(listener: ((frame: Buffer) => void) | null): void {
     this.binary = listener;
+  }
+
+  /** Server events other than `build.progress`, such as `device-host.metro.link.open`. */
+  onEvent(listener: ((event: Record<string, unknown>) => void) | null): void {
+    this.event = listener;
+  }
+
+  /** Called once with the close code when the machine or the network ends the connection; never after `close()` or `drop()`. */
+  onDropped(listener: ((code: number) => void) | null): void {
+    this.dropped = listener;
   }
 
   get failure(): string | null {
@@ -582,14 +624,19 @@ export class BuildConnection {
     this.watched = true;
   }
 
+  /** Stops treating silence as a dropped connection, as before `watch()`. */
+  unwatch(): void {
+    this.watched = false;
+  }
+
   /** Closes with a close frame, which tells the machine to cancel this connection's jobs. */
-  close(): void {
+  close(code = 1000): void {
     if (this.ended) return;
     this.forget();
     if (this.socket.readyState === WebSocket.CLOSED) return;
     const timer = setTimeout(() => this.socket.terminate(), CLOSE_TIMEOUT_MS);
     this.socket.once('close', () => clearTimeout(timer));
-    this.socket.close(1000);
+    this.socket.close(code);
   }
 
   /** Ends the connection without a close frame, which leaves its jobs on the machine for a new connection. */
@@ -607,6 +654,8 @@ export class BuildConnection {
     this.pending.clear();
     this.progress = null;
     this.binary = null;
+    this.event = null;
+    this.dropped = null;
     clearInterval(this.keepalive);
     this.socket.removeAllListeners('close');
     this.unregisterExitCleanup?.();
@@ -708,6 +757,8 @@ export type OffloadOutcome =
       /** The `.app` directory or the `.apk` file, under the staging directory. */
       artifactPath: string;
       cacheHit?: boolean;
+      /** The fingerprint the machine built under after its own pod install, when it differs from the requested one. */
+      builtFingerprint?: string;
       androidPackage?: string;
       compilationCache: CompilationCacheActivity;
       ccache: CcacheActivity;
@@ -759,6 +810,7 @@ const unsupportedNative = (provider: 'xcode' | 'gradle'): string =>
   `This worker does not support native ${provider === 'xcode' ? 'Xcode' : 'Gradle'} builds.`;
 
 const ANDROID_PACKAGE = /^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+$/;
+const FINGERPRINT = /^[0-9a-f]{40,128}$/;
 
 function nativeTransferInput(
   native: Extract<BuildRequest, { platform: 'ios' | 'android' }>['native'],
@@ -820,7 +872,7 @@ async function probeMachine(
       ...(identity.reactNativeArtifact && queriesPeerCache(connection, 'react-native-peer-cache')
         ? { reactNativeArtifact: identity.reactNativeArtifact }
         : {}),
-      ...(native === 'gradle' && identity.gradleArtifact && connection.supports('native-gradle-peer-cache')
+      ...(native === 'gradle' && identity.gradleArtifact && queriesGradlePeerCache(connection, identity.gradleArtifact)
         ? { gradleArtifact: identity.gradleArtifact }
         : {}),
     },
@@ -848,7 +900,8 @@ async function probeMachine(
     offer:
       (identity.swiftpmArtifact && !queriesPeerCache(connection, 'swiftpm-peer-cache')) ||
       (identity.reactNativeArtifact && !queriesPeerCache(connection, 'react-native-peer-cache')) ||
-      (native === 'gradle' && (!identity.gradleArtifact || !connection.supports('native-gradle-peer-cache')))
+      (native === 'gradle' &&
+        (!identity.gradleArtifact || !queriesGradlePeerCache(connection, identity.gradleArtifact)))
         ? { ...offer, artifact: null }
         : offer,
   };
@@ -895,7 +948,13 @@ export async function chooseBuildMachine({
   if (namedBuildMachine(selected)) machines = machines.filter((each) => each.machine === selected).slice(0, 1);
   else machines = machines.filter((each) => automaticMachineEnabled('build', each.machine));
   const rubyVersion = readRubyVersion(projectRoot) ?? undefined;
-  const gradleQuery = gradleArtifact ? { ...gradleArtifact, project: identity.project } : undefined;
+  const gradleQuery = gradleArtifact
+    ? {
+        ...gradleArtifact,
+        project: identity.project,
+        ...(target.platform === 'android' && target.local.jdk ? { jdk: target.local.jdk } : {}),
+      }
+    : undefined;
   const reactNativeQuery = reactNativeArtifact
     ? reactNativeBuildQuery(
         reactNativeArtifact.request,
@@ -1003,6 +1062,7 @@ export type BuildRequest =
   | {
       platform: 'ios';
       cacheArtifact?: boolean;
+      reuseArtifact?: boolean;
       native?: { provider: 'xcode'; snapshot: NativeInputSnapshot; cacheKey: string; arch: 'arm64' | 'x86_64' | null };
       runtime: string;
       configuration: string | null;
@@ -1044,12 +1104,51 @@ function startCompat(choice: OffloadChoice): { compat?: number } {
   return choice.connection.supports('build-compat') ? { compat: choice.target.local.compat } : {};
 }
 
+function leavesPodsToWorker(choice: OffloadChoice, request: BuildRequest): boolean {
+  const { target } = choice;
+  return request.platform === 'ios' && !request.native && target.platform === 'ios' && buildsOnlyOnWorker(target.local);
+}
+
+function startPods(choice: OffloadChoice, request: BuildRequest): { podsOnWorker?: true; reuseArtifact?: true } {
+  if (request.platform !== 'ios' || !leavesPodsToWorker(choice, request)) return {};
+  return {
+    podsOnWorker: true,
+    ...(request.reuseArtifact === true &&
+    choice.connection.supports('build-reuse-artifact') &&
+    !isReleaseConfiguration(request.configuration)
+      ? { reuseArtifact: true }
+      : {}),
+  };
+}
+
+/**
+ * The fingerprint the machine built under after its own pod install, when it differs from the requested one; null
+ * when it reports another fingerprint it may not.
+ */
+function rebuiltFingerprint(
+  choice: OffloadChoice,
+  request: BuildRequest,
+  fingerprint: unknown,
+  expected: string | null | undefined,
+): string | null | undefined {
+  if (request.platform === 'macos' || fingerprint === expected) return undefined;
+  return leavesPodsToWorker(choice, request) && typeof fingerprint === 'string' && FINGERPRINT.test(fingerprint)
+    ? fingerprint
+    : null;
+}
+
 /** Peer artifact queries carry `compat`, which a stim-server without `build-compat` refuses. */
 function queriesPeerCache(
   connection: BuildConnection,
   feature: 'swiftpm-peer-cache' | 'react-native-peer-cache',
 ): boolean {
   return connection.supports(feature) && connection.supports('build-compat');
+}
+
+function queriesGradlePeerCache(connection: BuildConnection, query: BuildGradleArtifactQuery): boolean {
+  return (
+    connection.supports('native-gradle-peer-cache') && (!query.jdk || connection.supports('native-gradle-peer-jdk'))
+  );
 }
 
 function macosBuildParameters(request: Extract<BuildRequest, { platform: 'macos' }>, peerCache: boolean) {
@@ -1139,9 +1238,7 @@ async function peerArtifact(
       !isDeepStrictEqual(query.android, request.android)
     )
       throw new Error('The Gradle artifact query does not match the build request.');
-    return choice.connection.supports('native-gradle-peer-cache')
-      ? matchingArtifact(choice.offer, 'native-gradle')
-      : null;
+    return queriesGradlePeerCache(choice.connection, query) ? matchingArtifact(choice.offer, 'native-gradle') : null;
   }
   if (
     request.platform === 'ios' &&
@@ -1364,7 +1461,7 @@ async function fetchArtifact({
   }
   if (cacheHit) {
     const members = (await getExecutor().runFileAsync('tar', ['-tf', archive], { timeoutMs: 600_000 }))
-      .split('\n')
+      .split(/\r?\n/)
       .filter(Boolean);
     if (
       members.some((member) => {
@@ -1679,6 +1776,7 @@ export async function offloadBuild(
         stimBuild: choice.target.local.stimBuild,
         ...startCompat(choice),
         ...startJdk(choice),
+        ...startPods(choice, request),
       });
       checkCancelled();
       if ('result' in reply) {
@@ -1705,6 +1803,8 @@ export async function offloadBuild(
       return keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
     if (!cacheHit && native && (result.sourceDigest !== sourceDigest || result.fingerprint !== expectedFingerprint))
       return fail('The worker returned a different native source or artifact identity.');
+    const rebuilt = rebuiltFingerprint(choice, request, result.fingerprint, expectedFingerprint);
+    if (rebuilt === null) return fail('The worker returned a different fingerprint.');
     if (native?.provider === 'gradle' && !ANDROID_PACKAGE.test(String(result.androidPackage ?? '')))
       return fail('The worker returned no verified native APK package.');
     const artifact = result.artifact as { name?: unknown; size?: unknown; sha256?: unknown };
@@ -1749,13 +1849,13 @@ export async function offloadBuild(
     keepStaging = true;
     return {
       ok: true,
-      ...(cacheHit ? { cacheHit: true } : {}),
+      ...(rebuilt ? { builtFingerprint: rebuilt } : {}),
       machine,
       artifactPath,
       ...(typeof declared.handoff === 'string' && /^[0-9a-f]{64}$/.test(declared.handoff)
         ? { handoff: { serverKey: choice.credential.serverKey!, token: declared.handoff, sha256: digest } }
         : {}),
-      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit),
+      ...offloadCacheActivity(request.platform, result.compilationCache, cacheHit || result.reused === true),
       ...(native?.provider === 'gradle' ? { androidPackage: result.androidPackage as string } : {}),
       timings: {
         offerMs: choice.offerMs,
@@ -1782,8 +1882,8 @@ function offloadCacheActivity(
   platform: BuildRequest['platform'],
   activity: unknown,
   cacheHit: boolean,
-): Pick<Extract<OffloadOutcome, { ok: true }>, 'compilationCache' | 'ccache'> {
-  if (cacheHit) return { compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
+): Pick<Extract<OffloadOutcome, { ok: true }>, 'cacheHit' | 'compilationCache' | 'ccache'> {
+  if (cacheHit) return { cacheHit: true, compilationCache: COMPILATION_CACHE_NOT_RUN, ccache: CCACHE_NOT_RUN };
   return {
     compilationCache: platform === 'ios' ? compilationActivity(activity) : COMPILATION_CACHE_UNAVAILABLE,
     ccache: platform === 'android' ? ccacheActivity(activity) : CCACHE_UNAVAILABLE,

@@ -1,3 +1,4 @@
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import chalk from 'chalk';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
@@ -13,9 +14,11 @@ import { persistLastBuild, reportAndroidResult, finishAndroidUpload, type Report
 import { androidDevClientScheme } from './support.ts';
 import type { RunAndroidResult, FailExtra } from './types.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
+import type { StimContext } from '@stim-cli/core';
 
 export async function finishHostedAndroidRun({
   target,
+  operation,
   artifact,
   root,
   slot = 'default',
@@ -57,6 +60,7 @@ export async function finishHostedAndroidRun({
   | 'durationMs'
 > & {
   target: HostedAndroidTarget;
+  operation?: StimContext;
   artifact: PreparedAndroidArtifact;
   isExpo: boolean;
   appMode?: HostedAppOffer['mode'];
@@ -143,10 +147,11 @@ export async function finishHostedAndroidRun({
     let launchWarning: string | undefined;
     let unattributed = false;
     if (appMode === 'development') {
-      const hostedLogs = followLogs(root, slot, 'android', launchedAt);
+      const hostedLogs = followLogs(root, slot, 'android', launchedAt, operation);
       let verification;
       try {
         verification = await verifyAndroidMetroRun({
+          operation,
           root,
           slot,
           remoteDevice: false,
@@ -217,6 +222,7 @@ export async function finishHostedAndroidRun({
       (entry) => report.writer.write(entry),
     );
     const facts = reportAndroidResult({
+      links: await workspaceLinks(root, { platform: 'android', slot }),
       ...report,
       out,
       ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),

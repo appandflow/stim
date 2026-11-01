@@ -54,7 +54,7 @@ export function Menu({ onClose }: { onClose: () => void }) {
     const connection = connections.find((c) => c.mac.id === recent.macId);
     if (!connection) return [];
     const apps = worktreeApps(recent.path, connection.status?.environments ?? []);
-    const checkout = `${recent.macId}\n${apps[0]?.worktree?.path ?? recent.path}`;
+    const checkout = `${recent.macId}\n${apps[0]?.checkout ?? apps[0]?.worktree?.path ?? recent.path}`;
     if (shownCheckouts.has(checkout)) return [];
     shownCheckouts.add(checkout);
     return [{ ...recent, title: workspaceTitleAt(recent.path, connection.status), live: apps.some(isShownLive) }];

@@ -39,6 +39,7 @@ export async function planHostedDevice({
   slot,
   platform,
   machine,
+  buildMachine,
   placement = 'auto',
   selectors,
   sameKey,
@@ -51,6 +52,7 @@ export async function planHostedDevice({
   slot: string;
   platform: 'ios' | 'android';
   machine: string;
+  buildMachine?: string;
   placement?: AutomaticPlacement;
   selectors: HostedDeviceSelectors;
   /** Whether the choice keys the build as this machine's own device would; null when this machine's key is unknown. */
@@ -84,7 +86,10 @@ export async function planHostedDevice({
   try {
     const recorded = readHostedNative(root, platform, slot)[slot];
     if (recorded) return await named(recorded.machine);
-    const invalid = buildPreferenceRefusal((operation ?? processContext(root)).env, loadConfig()?.remote?.build);
+    const invalid =
+      buildMachine === undefined
+        ? buildPreferenceRefusal((operation ?? processContext(root)).env, loadConfig()?.remote?.build)
+        : null;
     if (invalid)
       return { kind: 'refused', code: invalid.code, message: invalid.message, remedy: invalid.remedy ?? DOCTOR_REMEDY };
     const placed = await automatic(
@@ -94,6 +99,7 @@ export async function planHostedDevice({
         platform,
         placement,
         selectors,
+        buildMachine,
         noWait: false,
         waitMs: 0,
         signal: operation?.signal,

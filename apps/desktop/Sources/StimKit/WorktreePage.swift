@@ -23,7 +23,7 @@ public struct WorktreePage: Hashable, Sendable {
 
   public var apps: [Workspace]
   public var id: String { apps[0].path }
-  public var identity: String { apps[0].worktree?.path ?? apps[0].path }
+  public var identity: String { apps[0].checkoutPath ?? apps[0].path }
   public var isUnified: Bool { apps.count > 1 }
   public var actionKey: String { "worktree:\(identity)" }
 
@@ -42,7 +42,7 @@ public struct WorktreePage: Hashable, Sendable {
     var groups: [[Workspace]] = []
     var roots: [String: Int] = [:]
     for app in environments {
-      if let root = app.worktree?.path, !root.isEmpty {
+      if let root = app.checkoutPath, !root.isEmpty {
         if let index = roots[root] {
           groups[index].append(app)
         } else {
@@ -64,7 +64,7 @@ public struct WorktreePage: Hashable, Sendable {
   public var projects: [String] { apps.map(Self.project) }
 
   public static func project(_ app: Workspace) -> String {
-    if let root = app.worktree?.path, !root.isEmpty, app.path.hasPrefix(root + "/") {
+    if let root = app.checkoutPath, !root.isEmpty, app.path.hasPrefix(root + "/") {
       return String(app.path.dropFirst(root.count + 1))
     }
     return (app.path as NSString).lastPathComponent
@@ -163,7 +163,7 @@ public struct WorktreePage: Hashable, Sendable {
 
   public var errors: Int? {
     let counts = apps.compactMap { $0.logs?.errorsSinceMarker }
-    return counts.isEmpty ? nil : counts.reduce(0, +)
+    return counts.isEmpty ? nil : Format.sum(counts)
   }
 
   public var agents: [AgentSession] {
@@ -188,7 +188,7 @@ public struct WorktreePage: Hashable, Sendable {
 
   public var diskBreakdown: DiskBreakdown? {
     let worktree = apps.compactMap { $0.disk?.worktreeBytes }.max()
-    let modules = apps.compactMap { $0.disk?.nodeModulesBytes }.max()
+    let modules = isUnified ? nil : apps[0].disk?.nodeModulesBytes
     let build = Self.sum(apps.map { $0.disk?.buildBytes })
     var parts: [DiskBreakdown.Part] = []
     if let worktree {

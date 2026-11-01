@@ -33,7 +33,7 @@ import {
 import { errorDiagnostics } from '../diagnostics/error-diagnostics.ts';
 import { launchErrorPreview } from '../diagnostics/launch-error-preview.ts';
 import { followHostedLogs } from '../device-host/hosted-logs-sync.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
 
 const MACHINE_SOURCES = ['gc', 'builds'];
 
@@ -224,6 +224,7 @@ export default function logsCommand(program: Command): void {
       const { sources, minLevel, tail } = validateOptions(opts);
 
       requireLogsWorkspace(root, dir);
+      recordWorkspaceUse(root);
 
       const query = {
         slot: opts.slot,

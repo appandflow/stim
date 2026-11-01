@@ -6,13 +6,14 @@ import SwiftUI
 /// macOS app its window and build logs.
 struct DeviceTileMenu: View {
   var device: DeviceRef
+  var owner: ServerOwner
   var workspace: String
   var building: Bool
   @ObservedObject var choice: MacosWindowChoice
   var openBuildLogs: (() -> Void)?
 
-  static func applies(to device: DeviceRef) -> Bool {
-    if device.isPhysical { return false }
+  static func applies(to device: DeviceRef, owner: ServerOwner) -> Bool {
+    if device.isPhysical || !owner.isLocal { return false }
     switch device {
     case .ios, .android, .macos: return true
     case .remote, .web: return false
@@ -20,6 +21,10 @@ struct DeviceTileMenu: View {
   }
 
   var body: some View {
+    if Self.applies(to: device, owner: owner) { menu }
+  }
+
+  private var menu: some View {
     Menu {
       DeviceTileMenuItems(
         device: device, workspace: workspace, building: building, choice: choice, openBuildLogs: openBuildLogs)

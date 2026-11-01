@@ -1,0 +1,12 @@
+name: Post-release validation
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows-full:
+    uses: ./.github/workflows/windows-full.yml

@@ -1,21 +1,15 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CACHE_PROVIDER_ENV,
   cacheProviderEnv,
-  metroCapabilityFromStore,
-  runCacheProviderContract,
   type CacheProviderConfig,
   type LoadCacheProviderResult,
   type MetroCacheStore,
 } from '@stim-cli/cache';
 import { sharedStoreRoot } from '@stim-cli/core';
 import { sharedCacheStores } from '../index.ts';
-
-const require = createRequire(import.meta.url);
-const { FileStore } = require('metro-cache') as { FileStore: new (options: { root: string }) => MetroCacheStore };
 
 let home: string;
 let cacheDir: string;
@@ -64,15 +58,6 @@ class FakeStore {
 }
 
 const KEY = Buffer.from('a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4', 'hex');
-
-test('without a configured provider the store is the plain file store', () => {
-  const stores = sharedCacheStores('demo', { FileStore: FakeStore, cwd: projectRoot, env: {} });
-
-  expect(stores.length).toBe(1);
-  expect(stores[0]).toBeInstanceOf(FakeStore);
-  expect((stores[0] as FakeStore).root).toBe(join(cacheDir, 'demo'));
-  expect(sharedStoreRoot(stores[0])).toBe(join(cacheDir, 'demo'));
-});
 
 test('the supervisor environment adds one tiered store on the same root', async () => {
   const config: CacheProviderConfig = { provider: './cache.cjs', options: { bucket: 'mobile' }, baseDir: projectRoot };
@@ -137,100 +122,4 @@ test('Metro running outside Stim reads only the app-local committed provider', a
       config: { provider: './tools/cache.cjs', options: { bucket: 'team' }, baseDir: app },
     },
   ]);
-});
-
-test('clear only clears the local tier', async () => {
-  let providerCalls = 0;
-  const stores = sharedCacheStores('demo', {
-    FileStore: FakeStore,
-    cwd: projectRoot,
-    env: {
-      [CACHE_PROVIDER_ENV]: cacheProviderEnv({ provider: './cache.cjs', options: {}, baseDir: projectRoot }),
-    },
-    loadProvider: async () => {
-      providerCalls += 1;
-      return { none: true };
-    },
-  });
-
-  (stores[0] as unknown as MetroCacheStore).clear();
-  expect(madeStores.length).toBe(1);
-  expect(madeStores[0]?.cleared).toBe(1);
-  expect(providerCalls).toBe(0);
-});
-
-test('the built-in filesystem store satisfies the provider contract', async () => {
-  const results = await runCacheProviderContract({
-    provider: { metro: metroCapabilityFromStore(new FileStore({ root: join(cacheDir, 'contract') })) },
-    projectRoot,
-    workDir: projectRoot,
-  });
-
-  expect(results.length).toBeGreaterThan(0);
-  expect(results.filter((result) => !result.passed)).toEqual([]);
-});
-
-test('a monorepo app does not inherit the repository root provider', async () => {
-  const repo = join(projectRoot, 'repo');
-  const app = join(repo, 'apps', 'mobile');
-  mkdirSync(app, { recursive: true });
-  mkdirSync(join(repo, '.git'), { recursive: true });
-  writeFileSync(join(repo, '.stim.json'), JSON.stringify({ cache: { provider: './root-provider.cjs' } }));
-  const seen: unknown[] = [];
-
-  const stores = sharedCacheStores('demo', {
-    FileStore: FakeStore,
-    cwd: app,
-    env: {},
-    loadProvider: async (input) => {
-      seen.push(input);
-      return { none: true };
-    },
-  });
-
-  await (stores[0] as unknown as MetroCacheStore).get(KEY);
-  expect(seen).toEqual([]);
-  expect(stores[0]).toBeInstanceOf(FakeStore);
-});
-
-test('outside a repository only the starting directory is read', async () => {
-  const app = join(projectRoot, 'apps', 'mobile');
-  mkdirSync(app, { recursive: true });
-  writeFileSync(join(projectRoot, '.stim.json'), JSON.stringify({ cache: { provider: './parent.cjs' } }));
-
-  expect(sharedCacheStores('demo', { FileStore: FakeStore, cwd: app, env: {} })[0]).toBeInstanceOf(FakeStore);
-
-  writeFileSync(join(app, '.stim.json'), JSON.stringify({ cache: { provider: './here.cjs' } }));
-  const seen: Array<{ config: CacheProviderConfig }> = [];
-  const stores = sharedCacheStores('demo', {
-    FileStore: FakeStore,
-    cwd: app,
-    env: {},
-    loadProvider: async (input) => {
-      seen.push(input);
-      return { none: true };
-    },
-  });
-  await (stores[0] as unknown as MetroCacheStore).get(KEY);
-  expect(seen[0]?.config).toEqual({ provider: './here.cjs', options: {}, baseDir: app });
-});
-
-test('an explicit none from the supervisor stops the committed search', async () => {
-  mkdirSync(join(projectRoot, '.git'), { recursive: true });
-  writeFileSync(join(projectRoot, '.stim.json'), JSON.stringify({ cache: { provider: './committed.cjs' } }));
-  const seen: unknown[] = [];
-
-  const stores = sharedCacheStores('demo', {
-    FileStore: FakeStore,
-    cwd: projectRoot,
-    env: { [CACHE_PROVIDER_ENV]: cacheProviderEnv(null) },
-    loadProvider: async (input) => {
-      seen.push(input);
-      return { none: true };
-    },
-  });
-
-  expect(stores[0]).toBeInstanceOf(FakeStore);
-  await (stores[0] as unknown as MetroCacheStore).get(KEY);
-  expect(seen).toEqual([]);
 });

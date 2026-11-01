@@ -14,13 +14,13 @@ import type { FingerprintSource } from '@expo/fingerprint';
 import { expoConfigContents } from '../cache/build-cache.ts';
 import { remoteCommand } from './node-cli.ts';
 
-export const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
+const EAS_PROVIDER_PACKAGE = 'eas-build-cache-provider';
 
-export const LOCAL_PROVIDER_PACKAGE = '@stim-cli/expo-build-cache';
+const LOCAL_PROVIDER_PACKAGE = '@stim-cli/expo-build-cache';
 
 export const RESOLVE_TIMEOUT_MS = 30_000;
 export const UPLOAD_TIMEOUT_MS = 60_000;
-export const CONFIG_TIMEOUT_MS = 30_000;
+const CONFIG_TIMEOUT_MS = 30_000;
 
 const DYNAMIC_CONFIG_FILES = ['app.config.ts', 'app.config.js', 'app.config.mjs', 'app.config.cjs'];
 
@@ -99,7 +99,7 @@ export interface RemoteCacheUploadResult {
   skipped?: true;
 }
 
-export function dynamicConfigFile(root: string): string | null {
+function dynamicConfigFile(root: string): string | null {
   for (const name of DYNAMIC_CONFIG_FILES) {
     if (existsSync(join(root, name))) return name;
   }
@@ -140,7 +140,7 @@ export function normalizeProvider(raw: unknown): NormalizedProvider | null {
   return { invalid: typeof raw === 'string' ? `"${raw}"` : JSON.stringify(raw) };
 }
 
-export function runOptionsFor(platform?: string | null): { variant: string } | { configuration: string } {
+function runOptionsFor(platform?: string | null): { variant: string } | { configuration: string } {
   return platform === 'android' ? { variant: 'debug' } : { configuration: 'Debug' };
 }
 
@@ -282,7 +282,7 @@ export async function loadProjectProvider(
   }
 }
 
-export const WHOAMI_TIMEOUT_MS = 15_000;
+const WHOAMI_TIMEOUT_MS = 15_000;
 
 const EAS_CLI_PACKAGE = 'eas-cli';
 const EAS_CLI_BIN = 'eas';

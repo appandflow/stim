@@ -5,13 +5,14 @@ import SwiftUI
 /// The top of a workspace page, one line: the stage, the running build's progress, the git chip and the workspace
 /// actions. The inspector holds the details.
 struct WorkspaceHeaderLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var page: WorktreePage? = nil
   var openAppLogs: ((Workspace) -> Void)? = nil
   var openLogs: () -> Void
   var openBuild: (BuildSheetSelection) -> Void
   @EnvironmentObject private var actions: ActionCenter
+  @Environment(\.workspaceAccess) private var access
 
   #if DEBUG
     @Environment(\.fixtureDate) private var fixtureDate
@@ -21,7 +22,9 @@ struct WorkspaceHeaderLine: View {
 
   var body: some View {
     let apps = page?.apps ?? [env]
-    let active = page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first
+    let active =
+      access.isLocal
+      ? page.flatMap { actions.active(for: $0.actionKey) } ?? apps.compactMap { actions.active(for: $0.path) }.first : nil
     let buildingApp = apps.first { $0.build?.isRunning == true }
     let running = buildingApp?.build
     HStack(spacing: Space.md) {
@@ -31,7 +34,7 @@ struct WorkspaceHeaderLine: View {
         let now = fixtureDate ?? context.date
         let lead = page?.lead(now: now) ?? env
         StageLine(
-          cli: cli, env: lead, now: now,
+          environment: environment, env: lead, now: now,
           inlineBuild: page == nil ? nil : (lead.build?.isRunning == true ? lead.build : running),
           inlineWorkspace: page == nil ? nil : (lead.build?.isRunning == true ? lead.path : buildingApp?.path),
           gitWorkspace: page?.apps[0].path,
@@ -47,7 +50,9 @@ struct WorkspaceHeaderLine: View {
         Text(active.title).font(.stim(.footnote)).foregroundStyle(Palette.secondary).lineLimit(1)
         Button("Show Output") { actions.presented = active }.buttonStyle(.stim(.plain)).fixedSize()
       }
-      if let page {
+      if !access.isLocal {
+        PairedWorkspaceActions(env: env)
+      } else if let page {
         WorktreeActionsButton(page: page, openLogs: { app in openAppLogs?(app) })
           .padding(.trailing, -PageInset.menuGlyphOverhang)
       } else {
@@ -61,7 +66,7 @@ struct WorkspaceHeaderLine: View {
 /// The top of an archived workspace page, laid out like the live page's: an Archived state, when it was removed, the
 /// git chip and the actions menu.
 struct ArchivedHeaderLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var page: ArchivedPage
   var delete: () -> Void
   @EnvironmentObject private var actions: ActionCenter
@@ -84,7 +89,8 @@ struct ArchivedHeaderLine: View {
       if let chip = GitChip(page.workspace.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
         GitChipButton(
-          cli: cli, chip: chip, worktree: page.workspace.worktree!, workspace: page.record.projectRoot, readOnly: true
+          environment: environment, chip: chip, worktree: page.workspace.worktree!, workspace: page.record.projectRoot,
+          readOnly: true
         )
         .layoutPriority(1)
       }
@@ -169,13 +175,14 @@ struct BuildInlineProgress: View {
 }
 
 struct StageLine: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var now: Date
   var inlineBuild: Build? = nil
   var inlineWorkspace: String? = nil
   var gitWorkspace: String? = nil
   var openBuild: (BuildSheetSelection) -> Void
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     let stage = env.stage(now: now)
@@ -200,12 +207,14 @@ struct StageLine: View {
           BuildInlineProgress(build: build, now: now)
         }
         .buttonStyle(.hoverRow())
-        .help("Open build details")
+        .disabled(!access.isLocal)
+        .help(access.unavailableReason ?? "Open build details")
         .accessibilityHint("Opens the running build's details")
       }
       if let chip = GitChip(env.worktree) {
         Rectangle().fill(Palette.border).frame(width: 1, height: 14)
-        GitChipButton(cli: cli, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path).layoutPriority(1)
+        GitChipButton(environment: environment, chip: chip, worktree: env.worktree!, workspace: gitWorkspace ?? env.path)
+          .layoutPriority(1)
       }
     }
   }
@@ -224,11 +233,12 @@ struct ChecksMark: View {
 }
 
 struct GitChipButton: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var chip: GitChip
   var worktree: WorktreeInfo
   var workspace: String
   var readOnly = false
+  @Environment(\.workspaceAccess) private var access
   @State private var shown = false
   @State private var reviewing = false
   @State private var openError: String?
@@ -261,10 +271,12 @@ struct GitChipButton: View {
     .help("\(chip.label). Click for the branch and pull request.")
     .accessibilityLabel(chip.label)
     .popover(isPresented: $shown, arrowEdge: .bottom) {
-      GitPopover(worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly)
-        .presentationBackground(Palette.surface)
+      GitPopover(
+        worktree: worktree, reviewChanges: reviewChanges, readOnly: readOnly, reviewUnavailable: access.unavailableReason
+      )
+      .presentationBackground(Palette.surface)
     }
-    .sheet(isPresented: $reviewing) { WorkspaceDiffView(cli: cli, workspace: workspace) }
+    .sheet(isPresented: $reviewing) { WorkspaceDiffView(environment: environment, workspace: workspace) }
     .alert("Could Not Open Changes", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
       Button("OK") { openError = nil }
     } message: {
@@ -296,6 +308,7 @@ struct GitPopover: View {
   var reviewChanges: () -> Void
   var readOnly = false
   var branchFallback = "Detached HEAD"
+  var reviewUnavailable: String? = nil
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -310,6 +323,8 @@ struct GitPopover: View {
       if !readOnly {
         Button("Review Changes", systemImage: "doc.text.magnifyingglass", action: reviewChanges)
           .buttonStyle(.stim())
+          .disabled(reviewUnavailable != nil)
+          .help(reviewUnavailable ?? "")
       }
       if let pull = worktree.pullRequest {
         Rectangle().fill(Palette.border).frame(height: 1)
@@ -352,7 +367,7 @@ struct UsageFigures: View {
       figure("memorychip", Format.memoryMb(memory), help: "Memory, as Activity Monitor counts it")
     }
     if let disk = usage.diskBytes {
-      figure("internaldrive", Format.fileSize(Int64(disk)), help: "Disk: the worktree and Stim's build folder", minor: true)
+      figure("internaldrive", Format.fileSize(reported: disk), help: "Disk: the worktree and Stim's build folder", minor: true)
     }
   }
 

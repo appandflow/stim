@@ -79,6 +79,8 @@ export type BuildTarget =
       local: IosToolchain;
       runtime: string | null;
       cocoapodsPinned: boolean;
+      /** No CPU comparison: doctor's target for a client without Xcode, whose app runs on a simulator of the Mac that builds it. */
+      runsOnWorker?: true;
     }
   | { platform: 'android'; native?: 'gradle'; local: AndroidToolchain; requires: AndroidRequirements }
   | { platform: 'macos'; local: MacosToolchain; runsOnWorker?: true };
@@ -91,7 +93,7 @@ const distDir = dirname(fileURLToPath(import.meta.url));
  * build, because `@stim-cli/core` is a ranged dependency that can resolve newer than the installed `stim`.
  * `scripts/build-compat.json` records the files a change to which needs a bump or a recorded no-bump.
  */
-const STIM_BUILD_COMPAT = 2;
+const STIM_BUILD_COMPAT = 3;
 
 function quiet(file: string, args: string[]): string | null {
   return getExecutor().runFileQuiet(file, args, { timeoutMs: 20_000 });
@@ -205,7 +207,7 @@ function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): 
 }
 
 /** The major version in a JDK's `release` file, as `JAVA_VERSION="17.0.19"` (or `"1.8.0_402"` for Java 8) gives it. */
-export function jdkMajor(release: string): string | null {
+function jdkMajor(release: string): string | null {
   return /^JAVA_VERSION="(?:1\.)?(\d+)/m.exec(release)?.[1] ?? null;
 }
 
@@ -324,7 +326,7 @@ export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */
-export function parseAndroidRequirements(catalog: string): AndroidRequirements {
+function parseAndroidRequirements(catalog: string): AndroidRequirements {
   const value = (key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm').exec(catalog)?.[1] ?? null;
   return { ndk: value('ndkVersion'), buildTools: value('buildTools'), compileSdk: value('compileSdk') };
 }
@@ -358,7 +360,7 @@ export function androidRequirements(
 }
 
 /** Runtime identifiers that have at least one available iPhone simulator, from `simctl list devices -j`. */
-export function iphoneRuntimes(listed: unknown): string[] {
+function iphoneRuntimes(listed: unknown): string[] {
   const devices = (
     listed as { devices?: Record<string, Array<{ deviceTypeIdentifier?: unknown; isAvailable?: unknown }>> }
   )?.devices;
@@ -588,11 +590,14 @@ function androidMismatches(
   worker: WorkerToolchain,
 ): OffloadProblem[] {
   const out: OffloadProblem[] = [];
-  if ((!local.jdk || worker.jdk !== local.jdk) && !(local.jdk && worker.jdks?.includes(local.jdk))) {
+  if (!local.jdk) {
+    // React Native's Gradle builds need JDK 17; the worker builds on its own default JDK.
+    if (!worker.jdk) out.push({ code: 'jdk', reason: 'no JDK there', ...jdkInstall('17', worker.os) });
+  } else if (worker.jdk !== local.jdk && !worker.jdks?.includes(local.jdk)) {
     out.push({
       code: 'jdk',
-      reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here`,
-      ...(local.jdk && worker.jdks ? jdkInstall(local.jdk, worker.os) : {}),
+      reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk} here`,
+      ...(worker.jdks ? jdkInstall(local.jdk, worker.os) : {}),
     });
   }
   const sdk = worker.androidSdk;
@@ -631,6 +636,14 @@ export function cocoapodsInstall(here: string | null): Required<Pick<OffloadProb
   };
 }
 
+/**
+ * Whether this machine has no Xcode and no simulator SDK, so an iOS app it asks for can only be built, and only run,
+ * on a remote Mac: that Mac's own Xcode, simulator SDK and CocoaPods are the build's toolchain.
+ */
+export function buildsOnlyOnWorker(local: Pick<IosToolchain, 'xcode' | 'simulatorSdk'>): boolean {
+  return !local.xcode && !local.simulatorSdk;
+}
+
 export function cocoapodsDifference(
   target: Extract<BuildTarget, { platform: 'ios' }>,
   worker: WorkerToolchain,
@@ -639,7 +652,11 @@ export function cocoapodsDifference(
   if (worker.os !== undefined && worker.os !== 'darwin') return null;
   const here = target.local.cocoapods;
   if (!worker.cocoapods) {
-    return { code: 'cocoapods', reason: versionMismatch('CocoaPods', null, here), ...cocoapodsInstall(here) };
+    return {
+      code: 'cocoapods',
+      reason: buildsOnlyOnWorker(target.local) ? 'no CocoaPods there' : versionMismatch('CocoaPods', null, here),
+      ...cocoapodsInstall(here),
+    };
   }
   return here && worker.cocoapods !== here
     ? { code: 'cocoapods', reason: versionMismatch('CocoaPods', worker.cocoapods, here) }
@@ -648,22 +665,31 @@ export function cocoapodsDifference(
 
 /**
  * What a build on the worker does beyond the match: the SDK packages it lacks and Gradle downloads on the first build,
- * because its SDK licenses are accepted and the project allows the download. None of them stops the build. For iOS, the
- * CocoaPods difference a named machine is sent the build despite.
+ * because its SDK licenses are accepted and the project allows the download, and the JDK it builds on for a client with
+ * none. None of them stops the build. For iOS, the CocoaPods difference a named machine is sent the build despite.
  */
 export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   if (target.platform === 'ios') {
     const pods = cocoapodsDifference(target, worker);
     return pods ? [{ ...pods, reason: `${pods.reason}; its pod install runs anyway and a failure is reported` }] : [];
   }
-  if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
+  if (target.platform !== 'android') return [];
+  // A client with no JDK sends no JDK major, so the worker's own JDK is the build's JDK.
+  const jdk: OffloadProblem[] =
+    !target.local.jdk && worker.jdk
+      ? [{ code: 'jdk', reason: `this machine has no JDK, so the build runs on JDK ${worker.jdk} there` }]
+      : [];
+  if (!worker.androidSdk || !gradleDownloads(target.requires, worker)) return jdk;
   const sdkManager = sdkManagerPath(worker);
-  return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
-    code: gap.code,
-    reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
-    commands: [`${sdkManager} "${gap.id}"`],
-    lead: 'install the package now so the first build does not download it',
-  }));
+  return [
+    ...jdk,
+    ...sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
+      code: gap.code,
+      reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
+      commands: [`${sdkManager} "${gap.id}"`],
+      lead: 'install the package now so the first build does not download it',
+    })),
+  ];
 }
 
 function versionMismatch(tool: string, there: string | null, here: string | null): string {
@@ -815,7 +841,8 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     if (!worker.macosSdk) out.push({ code: 'macos-sdk', reason: 'no macOS SDK there' });
     return out;
   }
-  if (worker.arch !== local.arch) out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
+  if (worker.arch !== local.arch && !(target.platform === 'ios' && target.runsOnWorker))
+    out.push({ code: 'arch', reason: `CPU ${worker.arch} there, ${local.arch} here` });
   if (target.platform === 'macos') {
     const macos = target.local;
     const xcode = !macos.xcode || worker.xcode !== macos.xcode ? xcodeProblem(macos, worker) : null;
@@ -825,13 +852,23 @@ export function toolchainMismatches(target: BuildTarget, worker: WorkerToolchain
     return out;
   }
   const ios = target.local;
-  const xcode = !ios.xcode || worker.xcode !== ios.xcode ? xcodeProblem(ios, worker) : null;
+  const onWorker = buildsOnlyOnWorker(ios);
+  const xcode = onWorker
+    ? worker.xcode
+      ? null
+      : xcodeProblem(ios, worker, true)
+    : !ios.xcode || worker.xcode !== ios.xcode
+      ? xcodeProblem(ios, worker)
+      : null;
   if (xcode) out.push(xcode);
-  const selection = xcode !== null && diagnosesXcode(ios, worker);
-  if ((!ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk) && !selection) {
+  const selection = xcode !== null && (onWorker ? worker.developerDir !== undefined : diagnosesXcode(ios, worker));
+  const sdkDiffers = onWorker ? !worker.simulatorSdk : !ios.simulatorSdk || worker.simulatorSdk !== ios.simulatorSdk;
+  if (sdkDiffers && !selection) {
     out.push({
       code: 'simulator-sdk',
-      reason: versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
+      reason: onWorker
+        ? 'no simulator SDK there'
+        : versionMismatch('simulator SDK', worker.simulatorSdk, ios.simulatorSdk),
     });
   }
   if (!target.native && target.cocoapodsPinned && !worker.bundler) {

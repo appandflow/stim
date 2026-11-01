@@ -64,7 +64,7 @@ test('real SwiftPM app reuse survives worker checkout and output removal without
         'Package.swift',
         `// swift-tools-version: 6.0
 import PackageDescription
-let package = Package(name: "PeerCacheApp", platforms: [.macOS(.v14)], products: [.executable(name: "PeerCacheApp", targets: ["PeerCacheApp"])], targets: [.executableTarget(name: "PeerCacheApp", swiftSettings: [.unsafeFlags(["-j2"])], linkerSettings: [.unsafeFlags(["-Xlinker", "-headerpad_max_install_names"])])])
+let package = Package(name: "PeerCacheApp", platforms: [.macOS(.v14)], products: [.executable(name: "PeerCacheApp", targets: ["PeerCacheApp"])], targets: [.executableTarget(name: "PeerCacheApp", swiftSettings: [.unsafeFlags(["-j2"])])])
 `,
       ],
       [

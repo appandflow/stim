@@ -1,11 +1,20 @@
 import captured from '../../mock-server/fixtures/status.json';
-import { mergeArchives } from '@/lib/home';
+import { mergeArchives, mergeWorkspaces } from '@/lib/home';
+import { worktreeApps } from '@/lib/worktree-page';
 import type { StatusPayload } from '@/protocol/types';
 import vectors from '../../../desktop/Tests/StimKitTests/Fixtures/workspace-row-vectors.json';
 
 import type { HomeItem, HomeWorktree } from '@/lib/home';
-import { checkoutProjects, homeSections, rowDevices, rowLabel, rowProblems, rowStatus } from '@/lib/home-list';
-import type { BuildReport, DeviceActivity, EnvironmentState } from '@/protocol/types';
+import {
+  checkoutProjects,
+  homeSections,
+  rowDevices,
+  rowHosts,
+  rowLabel,
+  rowProblems,
+  rowStatus,
+} from '@/lib/home-list';
+import type { BuildReport, DeviceActivity, EnvironmentState, SimState } from '@/protocol/types';
 
 const NOW = Date.parse('2026-09-30T12:00:00Z');
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -176,14 +185,48 @@ describe('monorepo workspace grouping', () => {
     expect(sections[0].data[0]).toMatchObject({ apps: [desktop, mobile] });
   });
 
+  it('groups primary checkout apps using server identity while retaining each app route', () => {
+    const primary = [
+      env('/repo/apps/mobile', { checkout: '/repo' }),
+      env('/repo/apps/desktop', { checkout: '/repo', live: true }),
+    ];
+    const items = mergeWorkspaces([
+      {
+        id: 'mac',
+        name: 'Mac',
+        status: {
+          environments: primary,
+          capacity: captured.payload.capacity,
+          deviceLeases: [],
+          unprovisionedWorktrees: [],
+          simctlAvailable: true,
+          machine: null,
+        },
+      },
+    ]);
+    expect(items.map((app) => [app.project, app.title, app.inCheckout])).toEqual([
+      ['repo', 'repo', 'apps/mobile'],
+      ['repo', 'repo', 'apps/desktop'],
+    ]);
+    const sections = homeSections(items);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]).toMatchObject({ project: 'repo', live: 1, idle: 0 });
+    expect(sections[0].data).toHaveLength(1);
+    expect(sections[0].data[0]).toMatchObject({ apps: [items[1], items[0]] });
+    expect(worktreeApps('/repo/apps/mobile', primary)).toEqual([primary[1], primary[0]]);
+  });
+
   it('keeps other checkouts, machines and unknown checkout identities separate', () => {
     const first = item('repo', 'feat/shared', linked('/one/apps/mobile', '/one'), 'apps/mobile');
     const anotherCheckout = item('repo', 'feat/shared', linked('/two/apps/mobile', '/two'), 'apps/mobile');
     const anotherMac = { ...first, key: 'other\n/one/apps/mobile', macId: 'other' };
+    const primary = item('repo', 'repo', env('/repo/apps/mobile', { checkout: '/repo' }));
     const noIdentity = item('repo', 'feat/shared', env('/one'));
     const oldNested = item('repo', 'feat/shared', env('/one/apps/desktop'), 'apps/desktop');
     const nested = item('repo', 'feat/shared', linked('/one/nested/app', '/one/nested'), 'app');
-    expect(homeSections([first, anotherCheckout, anotherMac, noIdentity, oldNested, nested])[0].data).toHaveLength(6);
+    expect(
+      homeSections([first, anotherCheckout, anotherMac, primary, noIdentity, oldNested, nested])[0].data,
+    ).toHaveLength(7);
   });
 });
 
@@ -222,7 +265,67 @@ describe('workspace row vectors', () => {
   });
 });
 
+const hostedSim = (machine: string, extra: Partial<SimState> = {}): SimState => ({
+  udid: '',
+  name: 'stim-hosted (iPhone 18 27.0)',
+  owned: false,
+  state: 'ready',
+  host: {
+    machine,
+    session: 's',
+    selected: machine,
+    agent: { driver: 'none', setting: 'hosting.agentDriver' },
+    device: { name: 'iPhone 18', runtime: 'iOS 27.0' },
+  },
+  ...extra,
+});
+const offloaded = (host: string) =>
+  build({ phase: 'pods', placement: { host, phase: 'pods', startedAt: ago(MIN), phaseStartedAt: ago(MIN / 2) } });
+
+describe('rowHosts', () => {
+  it('names the machine of an offloaded build and of running hosted devices, each once, without the entry port', () => {
+    const e = env('/w', {
+      live: true,
+      build: offloaded('janics-mac-mini-2:7443'),
+      ios: hostedSim('janics-mac-mini-2:7443'),
+      slots: [{ slot: 'ipad', ios: hostedSim('janics-mac-mini:7443') }],
+    });
+    expect(rowHosts(e)).toEqual({ build: 'janics-mac-mini-2', devices: ['janics-mac-mini-2', 'janics-mac-mini'] });
+  });
+
+  it('names nothing for work that runs on the reporting machine, or for a hosted device that is not ready', () => {
+    const e = env('/w', {
+      live: true,
+      build: build(),
+      ios: booted(),
+      slots: [{ slot: 'ipad', ios: hostedSim('janics-mac-mini-2:7443', { state: 'stopped' }) }],
+    });
+    expect(rowHosts(e)).toEqual({ build: null, devices: [] });
+  });
+});
+
 describe('rowLabel', () => {
+  it('speaks where an offloaded build and a hosted device run', () => {
+    const e = env('/w', {
+      live: true,
+      build: offloaded('janics-mac-mini-2:7443'),
+      ios: hostedSim('janics-mac-mini-2:7443', { activity: driven('Claude Code', 5 * MIN) }),
+    });
+    expect(
+      rowLabel({
+        item: item('stim', 'feat/x', e),
+        now: NOW,
+        status: rowStatus(e, NOW, null),
+        problems: [],
+        sessions: [],
+        folder: false,
+        showsMachine: false,
+      }),
+    ).toBe(
+      'feat/x, Building iOS on janics-mac-mini-2, pods, 1 minute elapsed, Cold build, iOS on janics-mac-mini-2, driven by Claude Code for 5 minutes',
+    );
+  });
+
   it('speaks the state, errors, build step and driven devices, and the machine only when it tells rows apart', () => {
     const e = env('/w', {
       live: true,

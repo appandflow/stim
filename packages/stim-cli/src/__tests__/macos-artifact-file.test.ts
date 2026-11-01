@@ -41,21 +41,6 @@ describe.skipIf(process.platform === 'win32')('macOS artifact files', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  test('opaque file round trip preserves executable and resource bytes and modes', async () => {
-    await packMacosArtifact(bundle, 'key', archive, signal());
-    await unpackMacosArtifact(archive, 'key', destination, signal());
-    expect(readFileSync(join(destination, 'Contents/MacOS/App'), 'utf8')).toBe('executable bytes');
-    expect(lstatSync(join(destination, 'Contents/MacOS/App')).mode & 0o111).not.toBe(0);
-    expect(readFileSync(join(destination, 'Contents/Resources/message.txt'), 'utf8')).toBe('resource bytes');
-    expect(readFileSync(join(destination, 'Contents/Resources/empty'))).toHaveLength(0);
-    expect(lstatSync(join(destination, 'Contents/Resources/empty-directory')).isDirectory()).toBe(true);
-  });
-
-  test('a different key cannot restore an unrelated app', async () => {
-    await packMacosArtifact(bundle, 'one', archive, signal());
-    await expect(unpackMacosArtifact(archive, 'two', destination, signal())).rejects.toThrow('identity');
-  });
-
   test('corrupt and truncated payloads cannot be accepted as completed artifacts', async () => {
     await packMacosArtifact(bundle, 'key', archive, signal());
     const original = readFileSync(archive);

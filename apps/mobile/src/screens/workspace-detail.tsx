@@ -182,8 +182,8 @@ function ArchivedDetail({ archive: id }: { archive: string }) {
           >
             <Stack.Toolbar.MenuAction
               icon="doc.on.doc"
-              subtitle={tildeHome(env.worktree?.path ?? env.path, home)}
-              onPress={() => void Clipboard.setStringAsync(env.worktree?.path ?? env.path)}
+              subtitle={tildeHome(env.checkout ?? env.worktree?.path ?? env.path, home)}
+              onPress={() => void Clipboard.setStringAsync(env.checkout ?? env.worktree?.path ?? env.path)}
             >{t`Copy Path`}</Stack.Toolbar.MenuAction>
             {pr && isGitHubPullUrl(pr.url) ? (
               <Stack.Toolbar.MenuAction
@@ -484,7 +484,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
       })),
     );
   };
-  const copyPath = multi ? (env?.worktree?.path ?? path) : path;
+  const copyPath = multi ? (env?.checkout ?? env?.worktree?.path ?? path) : path;
 
   const header = (
     <>

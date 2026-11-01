@@ -134,6 +134,10 @@ msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits
 msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 
+#: src/lib/worktree-row.ts
+msgid "{building} on {buildHost}"
+msgstr "{building} on {buildHost}"
+
 #: src/screens/mac-status.tsx
 msgid "{builds} in all"
 msgstr "{builds} in all"
@@ -214,6 +218,10 @@ msgstr "{freeGb} GB free"
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}"
+msgstr "{heading} {size}: {summary}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -292,6 +300,10 @@ msgstr "{live} · Stim holds {held} of {total} GB{over}"
 #: src/screens/home.tsx
 msgid "{live} active"
 msgstr "{live} active"
+
+#: src/lib/capacity.ts
+msgid "{loadPerCore} per core"
+msgstr "{loadPerCore} per core"
 
 #: src/intl/format.ts
 msgid "{mb} MB"
@@ -420,9 +432,17 @@ msgid "{name} no build"
 msgstr "{name} no build"
 
 #: src/lib/home-list.ts
+msgid "{name} on {host}, {activity}"
+msgstr "{name} on {host}, {activity}"
+
+#: src/lib/home-list.ts
 #: src/lib/worktree-row.ts
 msgid "{name} running"
 msgstr "{name} running"
+
+#: src/lib/home-list.ts
+msgid "{name} running on {host}"
+msgstr "{name} running on {host}"
 
 #: src/lib/workspace-view.ts
 msgid "{name} simulator"
@@ -569,6 +589,10 @@ msgstr "{time}, {msg}"
 #: src/screens/mac-status.tsx
 msgid "{title} — {remedy}"
 msgstr "{title} — {remedy}"
+
+#: src/lib/spoken-status.ts
+msgid "{title} on {host}"
+msgstr "{title} on {host}"
 
 #: src/screens/inbox.tsx
 msgid "{title}, {body}, {detail}, {ago} ago"
@@ -869,6 +893,10 @@ msgstr "Android emulator"
 msgid "Android Emulator"
 msgstr "Android Emulator"
 
+#: src/lib/capacity.ts
+msgid "Android emulators"
+msgstr "Android emulators"
+
 #: src/lib/build-machines.ts
 msgid "Android platform missing"
 msgstr "Android platform missing"
@@ -933,6 +961,10 @@ msgstr "Archived Workspaces"
 msgid "Auto"
 msgstr "Auto"
 
+#: src/screens/build-details.tsx
+msgid "Automatic"
+msgstr "Automatic"
+
 #: src/lib/archived.ts
 msgid "automatic maintenance"
 msgstr "automatic maintenance"
@@ -971,6 +1003,10 @@ msgstr "billable"
 msgid "Binary file: preview unavailable."
 msgstr "Binary file: preview unavailable."
 
+#: src/lib/capacity.ts
+msgid "Booting"
+msgstr "Booting"
+
 #: src/lib/workspace-view.ts
 msgid "Booting emulator"
 msgstr "Booting emulator"
@@ -1001,6 +1037,10 @@ msgstr "Budgets"
 #: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
+
+#: src/screens/build-details.tsx
+msgid "Build destination refused"
+msgstr "Build destination refused"
 
 #: src/lib/device-tile.ts
 #: src/lib/format.ts
@@ -1065,6 +1105,7 @@ msgstr "Building now"
 msgid "Building on {host}"
 msgstr "Building on {host}"
 
+#: src/lib/capacity.ts
 #: src/screens/workspace-resources.tsx
 msgid "Builds"
 msgstr "Builds"
@@ -1136,6 +1177,7 @@ msgid "Bundling JS"
 msgstr "Bundling JS"
 
 #: src/lib/build-machines.ts
+#: src/lib/capacity.ts
 msgid "Busy"
 msgstr "Busy"
 
@@ -1422,6 +1464,10 @@ msgstr "Compared with {fingerprint}, the last build of this project in another w
 msgid "Compile"
 msgstr "Compile"
 
+#: src/screens/build-details.tsx
+msgid "Compiled on {actualName}"
+msgstr "Compiled on {actualName}"
+
 #: src/lib/workspace-view.ts
 msgid "Compiling"
 msgstr "Compiling"
@@ -1578,6 +1624,7 @@ msgstr "Device Frame"
 msgid "Device View"
 msgstr "Device View"
 
+#: src/lib/capacity.ts
 #: src/lib/settings-options.ts
 #: src/screens/home.tsx
 #: src/screens/menu.tsx
@@ -1612,10 +1659,6 @@ msgstr "disk"
 #: src/screens/workspace-resources.tsx
 msgid "Disk"
 msgstr "Disk"
-
-#: src/screens/workspace-resources.tsx
-msgid "Disk {size}: {summary}"
-msgstr "Disk {size}: {summary}"
 
 #: src/screens/mac-status.tsx
 msgid "Disk details are unavailable: {message}"
@@ -1889,6 +1932,10 @@ msgstr "Frames are only served for devices Stim owns."
 msgid "free"
 msgstr "free"
 
+#: src/lib/capacity.ts
+msgid "Free"
+msgstr "Free"
+
 #: src/screens/mac-status.tsx
 msgid "free on {mount} of {totalSize}"
 msgstr "free on {mount} of {totalSize}"
@@ -1946,6 +1993,10 @@ msgstr "healthy"
 msgid "Held outside a listed workspace"
 msgstr "Held outside a listed workspace"
 
+#: src/screens/filters.tsx
+msgid "Hidden"
+msgstr "Hidden"
+
 #: src/screens/device-view.tsx
 msgid "Hide Keyboard"
 msgstr "Hide Keyboard"
@@ -1963,6 +2014,10 @@ msgstr "High"
 #: src/screens/build-details.tsx
 msgid "hit"
 msgstr "hit"
+
+#: src/lib/capacity.ts
+msgid "Holding new builds"
+msgstr "Holding new builds"
 
 #: src/screens/device-view.tsx
 #: src/screens/device-view.tsx
@@ -2079,6 +2134,10 @@ msgstr "iOS device"
 #: src/screens/device-view.tsx
 msgid "iOS Simulator"
 msgstr "iOS Simulator"
+
+#: src/lib/capacity.ts
+msgid "iOS simulators"
+msgstr "iOS simulators"
 
 #: src/lib/machine-report.ts
 msgid "Its pull request is finished"
@@ -2215,6 +2274,10 @@ msgstr "Live screen of {label}"
 msgid "Live, device stopped"
 msgstr "Live, device stopped"
 
+#: src/screens/mac-status.tsx
+msgid "Load"
+msgstr "Load"
+
 #: src/screens/logs.tsx
 msgid "Load Older Logs"
 msgstr "Load Older Logs"
@@ -2260,9 +2323,21 @@ msgstr "logs {logs}"
 msgid "Logs for Which App?"
 msgstr "Logs for Which App?"
 
+#: src/screens/logs.tsx
+msgid "Logs from {windowStart} to {windowEnd}"
+msgstr "Logs from {windowStart} to {windowEnd}"
+
 #: src/lib/machine-report.ts
 msgid "Logs of {workspace}"
 msgstr "Logs of {workspace}"
+
+#: src/screens/logs.tsx
+msgid "Logs since {windowStart}"
+msgstr "Logs since {windowStart}"
+
+#: src/screens/logs.tsx
+msgid "Logs until {windowEnd}"
+msgstr "Logs until {windowEnd}"
 
 #: src/lib/format.ts
 msgid "longer than usual"
@@ -2618,6 +2693,10 @@ msgstr "No recording for this device."
 msgid "No records match these filters."
 msgstr "No records match these filters."
 
+#: src/screens/logs.tsx
+msgid "No records match this time window and these filters."
+msgstr "No records match this time window and these filters."
+
 #: src/screens/mac-status.tsx
 msgid "No shared cache was found."
 msgstr "No shared cache was found."
@@ -2713,6 +2792,10 @@ msgstr "Not on the tailnet"
 #: src/components/mac-chip.tsx
 msgid "Not paired"
 msgstr "Not paired"
+
+#: src/lib/capacity.ts
+msgid "Not recorded by a workspace"
+msgstr "Not recorded by a workspace"
 
 #: src/lib/device-tile.ts
 #: src/lib/workspaces.ts
@@ -3075,6 +3158,10 @@ msgstr "PR #{number} open"
 msgid "Prebuild"
 msgstr "Prebuild"
 
+#: src/screens/build-details.tsx
+msgid "Prefer remote"
+msgstr "Prefer remote"
+
 #: src/lib/workspace-view.ts
 msgid "Prepare"
 msgstr "Prepare"
@@ -3272,6 +3359,10 @@ msgstr "Reloading the web page"
 msgid "Remote Machines"
 msgstr "Remote Machines"
 
+#: src/screens/build-details.tsx
+msgid "Remote only"
+msgstr "Remote only"
+
 #: src/screens/workspace-resources.tsx
 msgid "Removal"
 msgstr "Removal"
@@ -3399,6 +3490,10 @@ msgstr "running"
 msgid "Running"
 msgstr "Running"
 
+#: src/lib/worktree-row.ts
+msgid "running on {deviceHosts}"
+msgstr "running on {deviceHosts}"
+
 #: src/components/device-grid-tile.tsx
 #: src/components/host-label.tsx
 msgid "Running on {host}"
@@ -3479,6 +3574,10 @@ msgstr "Select any combination. Not set up shows worktrees Stim has not warmed; 
 msgid "select the same Xcode on both"
 msgstr "select the same Xcode on both"
 
+#: src/screens/build-details.tsx
+msgid "Selected: {selectedName}"
+msgstr "Selected: {selectedName}"
+
 #: src/screens/settings.tsx
 msgid "Set by STIM_RECORDING on the Mac"
 msgstr "Set by STIM_RECORDING on the Mac"
@@ -3527,6 +3626,10 @@ msgstr "Show All {count}"
 #: src/components/collapsible-section.tsx
 msgid "Show all {count} {title}"
 msgstr "Show all {count} {title}"
+
+#: src/screens/logs.tsx
+msgid "Show All Times"
+msgstr "Show All Times"
 
 #: src/components/workspace-row.tsx
 #: src/screens/workspace-detail.tsx
@@ -3965,6 +4068,8 @@ msgstr "This device is not running."
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 
+#: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 msgid "This Mac"
 msgstr "This Mac"

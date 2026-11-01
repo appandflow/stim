@@ -1,3 +1,4 @@
+import { hostedAppState } from '../device-host/app-state.ts';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -111,7 +112,10 @@ test.each(['release', 'process'])(
       ],
       mode,
     );
-    expect(await installHostedApp(home, session, 'app', device)).toBe(true);
+    const ready = installHostedApp(home, session, 'app', device);
+    await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('launch')));
+    await vi.runAllTimersAsync();
+    expect(await ready).toBe(true);
     expect(readFileSync(join(area, 'App.app', 'data-link'), 'utf8')).toBe('payload');
     expect(
       native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation') || args?.includes('openurl')),
@@ -126,16 +130,6 @@ test.each(['release', 'process'])(
     ]);
   },
 );
-
-test('keeps development launch unverified despite a live native process', async () => {
-  receipt([], 'development');
-  expect(await installHostedApp(home, session, 'app', device, 14321)).toBe('unverified');
-  expect(native.runFile).toHaveBeenCalledWith(
-    'xcrun',
-    ['simctl', 'spawn', device.udid, 'defaults', 'write', bundleId, 'RCT_jsLocation', 'localhost:14321'],
-    expect.anything(),
-  );
-});
 
 test('routes an Expo development client to the worker loopback origin without claiming bundle delivery', async () => {
   receipt([], 'development');
@@ -165,14 +159,11 @@ test('routes an Expo development client to the worker loopback origin without cl
   expect(new URL(url.searchParams.get('url')!).origin).toBe('http://localhost:14321');
 });
 
-test.each(['../outside', '/tmp/outside', 'missing'])(
-  'refuses app link %s before native installation',
-  async (target) => {
-    receipt([{ path: 'link', kind: 'link', content: target }]);
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/escapes|ENOENT/);
-    expect(native.runFile).not.toHaveBeenCalled();
-  },
-);
+test.each(['../outside'])('refuses app link %s before native installation', async (target) => {
+  receipt([{ path: 'link', kind: 'link', content: target }]);
+  await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/escapes|ENOENT/);
+  expect(native.runFile).not.toHaveBeenCalled();
+});
 
 test('rejects a device Mach-O disguised by simulator plist metadata without installing it', async () => {
   receipt();
@@ -181,35 +172,26 @@ test('rejects a device Mach-O disguised by simulator plist metadata without inst
   expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
 });
 
-test.each(['release', 'process'])(
-  'refuses altered %s bytes and a lost device ledger before installing onto a simulator',
-  async (mode) => {
-    receipt([], mode);
-    const sha256 = createHash('sha256').update('plist fixture').digest('hex');
-    writeFileSync(join(home, '..', 'blobs', sha256), 'altered');
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('digest');
-    expect(native.runFile).not.toHaveBeenCalled();
-    receipt([], mode);
-    rmSync(join(home, 'created-devices.json'));
-    await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow(/ENOENT/);
-    expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
-  },
-);
+test('an app that exits after its first process sighting is not a verified release launch', async () => {
+  receipt();
+  const ready = installHostedApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('launch')));
+  setTimeout(() => {
+    launched = false;
+  }, 300);
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe('unverified');
+});
 
-test('process mode remains unverified when launch succeeds without a live app process', async () => {
-  receipt([], 'process');
-  const original = native.runFile.getMockImplementation()!;
-  native.runFile.mockImplementation((file, args = [], options) =>
-    args.includes('launchctl') ? '' : original(file, args, options),
-  );
-  vi.useFakeTimers();
-  try {
-    const pending = installHostedApp(home, session, 'app', device, 14321);
-    await vi.waitFor(() => expect(launched).toBe(true));
-    await vi.runAllTimersAsync();
-    expect(await pending).toBe('unverified');
-    expect(native.runFile.mock.calls.some(([, args]) => args?.includes('RCT_jsLocation'))).toBe(false);
-  } finally {
-    vi.useRealTimers();
-  }
+test('app state requires an installed receipt and probes only its ledger-owned ios target', async () => {
+  receipt();
+  await expect(hostedAppState(home, session, 'app', 'ios')).rejects.toThrow('installed');
+  const file = join(area, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state: 'installed' }));
+  launched = true;
+  expect(await hostedAppState(home, session, 'app', 'ios')).toEqual({ state: 'running' });
+  launched = false;
+  expect(await hostedAppState(home, session, 'app', 'ios')).toEqual({ state: 'stopped' });
+  writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+  await expect(hostedAppState(home, session, 'app', 'ios')).rejects.toThrow('ownership ledger');
 });

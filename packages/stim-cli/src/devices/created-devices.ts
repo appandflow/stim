@@ -11,7 +11,7 @@ import { getConfigDir } from '../workspace/config.ts';
 
 export { readCreatedDevices, type CreatedDevicePlatform } from '@stim-cli/core/state';
 
-function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) => boolean): void {
+function update(platform: CreatedDevicePlatform | 'systemImages', change: (entries: Set<string>) => boolean): void {
   const dir = getConfigDir();
   withDirLock(
     createdDevicesLock(),
@@ -24,6 +24,7 @@ function update(platform: CreatedDevicePlatform, change: (entries: Set<string>) 
         ios: [...current.ios],
         android: [...current.android],
         web: [...current.web],
+        ...(current.systemImages.size ? { systemImages: [...current.systemImages] } : {}),
         [platform]: [...entries],
       };
       const file = createdDevicesFile();
@@ -69,4 +70,13 @@ export function forgetCreatedDeviceAsync(
     ensureParent: () => ensurePrivateDir(getConfigDir()),
     signal,
   });
+}
+
+/** Waits asynchronously for the ledger lock, then records an Android system image directory Stim installed. */
+export function recordInstalledSystemImageAsync(directory: string): Promise<void> {
+  return withDirLockAsync(
+    createdDevicesLock(),
+    () => update('systemImages', (entries) => entries.size !== entries.add(directory).size),
+    { ensureParent: () => ensurePrivateDir(getConfigDir()) },
+  );
 }

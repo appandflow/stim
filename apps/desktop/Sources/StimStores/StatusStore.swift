@@ -18,6 +18,7 @@ public final class StatusStore: ObservableObject {
     }
   }
   private var projectTitleMap: [String: String] = [:]
+  private var resolvedExistence: [String: Bool] = [:]
   private var newestArchiveCache: [ArchivedWorkspace]?
   private var sidebarCache: SidebarCache?
   @Published public private(set) var watching = false
@@ -25,11 +26,15 @@ public final class StatusStore: ObservableObject {
     didSet { syncServerFeed() }
   }
   @Published public private(set) var doctor: [String: Fetched<DoctorReport>] = [:]
+  /// Each paired server's status, by `PairedServer.id`. It stays in memory, and none of its paths reach a local file,
+  /// process or git command.
+  @Published public private(set) var paired: [String: PairedStatus] = [:]
 
   private var started = false
   private var payloadSource: (client: ServerClient, generation: Int, payload: StatusPayload)?
   private var serverConnection: (client: ServerClient, home: String)?
-  private var shownWorkspace: String?
+  private var pairedFeeds: [String: (client: ServerClient, feed: ServerStatusFeed)] = [:]
+  private var shownWorkspace: WorkspaceKey?
   private lazy var serverFeed = ServerStatusFeed(
     onPayload: { [weak self] result, client, generation in self?.accept(result, source: (client, generation)) },
     onDelivering: { [weak self] in self?.serverDelivering($0) })
@@ -42,11 +47,11 @@ public final class StatusStore: ObservableObject {
   private static let doctorCheckInterval: TimeInterval = 60
 
   /// `stimHome` is the home to expect until the CLI environment resolves, so its server feed can show first.
-  public init(cli: Task<StimCLI, Never>, stimHome expected: String? = nil) {
+  public init(environment: Task<[String: String], Never>, stimHome expected: String? = nil) {
     if let expected { self.stimHome = expected }
     Task {
-      stimHome = await cli.value.stimHome
-      LaunchMilestones.reach("cli-ready")
+      stimHome = StimHome.path(environment: await environment.value)
+      LaunchMilestones.reach("environment-ready")
     }
   }
 
@@ -56,7 +61,12 @@ public final class StatusStore: ObservableObject {
     syncServerFeed()
   }
 
-  public func refresh() {
+  /// Reads `owner`'s status again; a paired server's read waits for its connection.
+  public func refresh(_ owner: ServerOwner = .local) {
+    if case .paired(let id) = owner {
+      pairedFeeds[id]?.feed.refresh()
+      return
+    }
     guard readCapableServer(serverConnection, stimHome: stimHome) != nil else {
       accept(.failure(connectionError))
       return
@@ -67,6 +77,68 @@ public final class StatusStore: ObservableObject {
   public func useServer(_ connection: (client: ServerClient, home: String)?) {
     serverConnection = connection
     syncServerFeed()
+  }
+
+  /// Follows the status of each paired server's client, by `PairedServer.id`, while that client is open with `read`, and
+  /// drops the status of any other. A closed client keeps its last payload, no longer delivering. A client of this
+  /// Mac's Unix socket is never followed as a paired server. Call it again whenever a paired client's state changes.
+  public func usePairedServers(_ clients: [String: ServerClient]) {
+    for (id, followed) in pairedFeeds where clients[id] !== followed.client {
+      pairedFeeds[id] = nil
+      followed.feed.use(nil)
+      if clients[id] == nil { paired[id] = nil } else { paired[id]?.delivering = false }
+    }
+    for (id, client) in clients where client.isRemote {
+      if pairedFeeds[id] == nil {
+        let feed = ServerStatusFeed(
+          onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
+          onDelivering: { [weak self, weak client] delivering in
+            guard let self, let client, self.pairedFeeds[id]?.client === client else { return }
+            self.paired[id]?.delivering = delivering
+          })
+        pairedFeeds[id] = (client, feed)
+        if paired[id] == nil { paired[id] = PairedStatus() }
+        if case .paired(id) = shownWorkspace?.owner, let path = shownWorkspace?.path { feed.follow([path]) }
+      }
+      guard case .open(let hello) = client.state, hello.capabilities.contains("read") else {
+        pairedFeeds[id]?.feed.use(nil)
+        continue
+      }
+      pairedFeeds[id]?.feed.use(client)
+    }
+  }
+
+  private func acceptPaired(_ result: Result<StatusPayload, Error>, id: String, client: ServerClient) {
+    guard pairedFeeds[id]?.client === client else { return }
+    switch result {
+    case .success(var payload):
+      for i in payload.environments.indices {
+        let env = payload.environments[i]
+        payload.environments[i].project =
+          (env.worktree?.repository ?? env.checkout).map { Project(root: $0) } ?? Project(fallbackFor: env.path)
+      }
+      paired[id] = PairedStatus(payload: payload, error: nil, updatedAt: Date(), delivering: paired[id]?.delivering ?? false)
+    case .failure(let failure):
+      paired[id, default: PairedStatus()].error = failure.localizedDescription
+    }
+  }
+
+  /// This Mac's workspaces, then each paired server's, in pairing id order.
+  public var ownedEnvironments: [OwnedWorkspace] {
+    (payload?.environments ?? []).map { OwnedWorkspace(owner: .local, workspace: $0) }
+      + paired.keys.sorted().flatMap { id in
+        (paired[id]?.payload?.environments ?? []).map { OwnedWorkspace(owner: .paired(id), workspace: $0) }
+      }
+  }
+
+  /// The workspace `key` names, as its own server last reported it.
+  public func workspace(_ key: WorkspaceKey) -> OwnedWorkspace? {
+    let environments: [Workspace]?
+    switch key.owner {
+    case .local: environments = payload?.environments
+    case .paired(let id): environments = paired[id]?.payload?.environments
+    }
+    return environments?.first { $0.path == key.path }.map { OwnedWorkspace(owner: key.owner, workspace: $0) }
   }
 
   private var connectionError: ServerError {
@@ -128,24 +200,34 @@ public final class StatusStore: ObservableObject {
       return
     }
     let known = projects
+    let existed = resolvedExistence
     let reported = Dictionary(
       (payload.unprovisionedWorktrees ?? []).compactMap { w in w.repository.map { (w.path, Project(root: $0)) } },
       uniquingKeysWith: { first, _ in first })
-    let paths = payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path)
-    let missing = paths.filter { known[$0] == nil && reported[$0] == nil }
+    let paths = Set(payload.environments.map(\.path) + (payload.unprovisionedWorktrees ?? []).map(\.path))
     Task.detached {
-      let resolved = await withTaskGroup(of: (String, Project).self) { group in
-        for path in Set(missing) { group.addTask { (path, Project.resolve(workspace: path)) } }
-        return await group.reduce(into: [String: Project]()) { $0[$1.0] = $1.1 }
+      let resolved = await withTaskGroup(of: (String, Project, Bool).self) { group in
+        for path in paths where reported[path] == nil {
+          guard known[path] == nil || existed[path] != nil else { continue }
+          let exists = FileManager.default.fileExists(atPath: path)
+          guard known[path] == nil || existed[path] != exists else { continue }
+          group.addTask { (path, Project.resolve(workspace: path), exists) }
+        }
+        return await group.reduce(into: [String: (project: Project, exists: Bool)]()) { $0[$1.0] = ($1.1, $1.2) }
       }
       await MainActor.run {
         DebugLog.debug(
           .server,
-          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(missing.count)"
+          "status payload environments=\(payload.environments.count) unprovisioned=\(payload.unprovisionedWorktrees?.count ?? 0) archived=\(payload.archived?.count ?? 0) resolvedProjects=\(resolved.count)"
         )
-        var additions = reported.filter { self.projects[$0.key] == nil }
-        additions.merge(resolved.filter { self.projects[$0.key] == nil }) { first, _ in first }
-        if !additions.isEmpty { self.projects.merge(additions) { old, _ in old } }
+        var next = self.projects
+        for (path, project) in reported where next[path] == nil { next[path] = project }
+        for (path, fact) in resolved where self.resolvedExistence[path] == existed[path] {
+          if existed[path] == nil, next[path] != nil { continue }
+          next[path] = fact.project
+          self.resolvedExistence[path] = fact.exists
+        }
+        if next != self.projects { self.projects = next }
         guard sequence > self.shown else { return }
         self.shown = sequence
         var payload = payload
@@ -164,16 +246,20 @@ public final class StatusStore: ObservableObject {
     }
   }
 
-  /// Follows the full environment of `path`, the workspace a screen shows, instead of its summary; nil for none.
-  public func show(workspace path: String?) {
-    guard path != shownWorkspace else { return }
-    shownWorkspace = path
+  /// Follows the full environment of `key`, the workspace a screen shows, on its own server instead of its summary;
+  /// nil for none.
+  public func show(workspace key: WorkspaceKey?) {
+    guard key != shownWorkspace else { return }
+    shownWorkspace = key
     followShown()
+    for (id, followed) in pairedFeeds {
+      if case .paired(id) = key?.owner, let path = key?.path { followed.feed.follow([path]) } else { followed.feed.follow([]) }
+    }
   }
 
   private func followShown() {
     var paths = Set(payload?.environments.filter { $0.tutorial != nil }.map(\.path) ?? [])
-    if let shownWorkspace { paths.insert(shownWorkspace) }
+    if let shownWorkspace, shownWorkspace.owner == .local { paths.insert(shownWorkspace.path) }
     serverFeed.follow(paths)
   }
 
@@ -322,6 +408,22 @@ public final class StatusStore: ObservableObject {
     return needsAttention(
       payload?.environments ?? [], volumes: lowestVolume.map { [Double($0.freeBytes)] }, now: Date(),
       stuckMinutes: 15, easSessionMinutes: minutes > 0 ? minutes : 30) + setup
+  }
+}
+
+/// What a paired server last reported. `payload` stays after a failure or a dropped connection, as that server's last
+/// known status.
+public struct PairedStatus: Sendable {
+  public var payload: StatusPayload?
+  public var error: String?
+  public var updatedAt: Date?
+  public var delivering = false
+
+  public init(payload: StatusPayload? = nil, error: String? = nil, updatedAt: Date? = nil, delivering: Bool = false) {
+    self.payload = payload
+    self.error = error
+    self.updatedAt = updatedAt
+    self.delivering = delivering
   }
 }
 

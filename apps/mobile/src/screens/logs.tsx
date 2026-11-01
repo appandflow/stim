@@ -42,6 +42,7 @@ import {
   type Severity,
 } from '@/lib/logs';
 import { archivedPage } from '@/lib/archived-page';
+import { clockTime } from '@/lib/format';
 import { workspaceTitleAt } from '@/lib/workspace-names';
 import type { Theme } from '@/design/theme';
 import type { EnvironmentState, LogRecord } from '@/protocol/types';
@@ -71,8 +72,18 @@ export function Logs({
   const [records, setRecords] = useState<LogRecord[]>([]);
   const [tail, setTail] = useState(params.at || params.since ? MAX_RECORDS : LOG_WINDOW_STEP);
   const retained = useRef(0);
-  const since = params.since ? Number(params.since) : -Infinity;
-  const until = params.until ? Number(params.until) : Infinity;
+  const [windowCleared, setWindowCleared] = useState(false);
+  const since = !windowCleared && params.since ? Number(params.since) : -Infinity;
+  const until = !windowCleared && params.until ? Number(params.until) : Infinity;
+  const windowStart = since === -Infinity ? null : clockTime(since);
+  const windowEnd = until === Infinity ? null : clockTime(until);
+  const windowLabel = windowStart
+    ? windowEnd
+      ? t`Logs from ${windowStart} to ${windowEnd}`
+      : t`Logs since ${windowStart}`
+    : windowEnd
+      ? t`Logs until ${windowEnd}`
+      : null;
   const opened = params.at ? `${params.at}:0` : null;
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(opened ? [opened] : []));
   const [fetched, setFetched] = useState<Map<string, string[]>>(new Map());
@@ -185,11 +196,27 @@ export function Logs({
       <ConnectionBanner state={state} />
       <View style={styles.filters}>
         <MetroLine metro={env?.metro} bundleMs={bundleMs} />
+        {windowLabel ? (
+          <View style={styles.row}>
+            <Text variant="footnote" tone="secondary" selectable>
+              {windowLabel}
+            </Text>
+            <Button
+              title={t`Show All Times`}
+              variant="plain"
+              size="small"
+              onPress={() => {
+                setWindowCleared(true);
+                setFollowing(true);
+              }}
+            />
+          </View>
+        ) : null}
         <View style={styles.row}>
           <Toggle label={t`All`} on={filter.severity === 'all'} onPress={severity('all')} />
           <Toggle
             label={t`Errors`}
-            count={env?.logs?.errorsSinceMarker}
+            count={windowLabel ? undefined : env?.logs?.errorsSinceMarker}
             countTone="error"
             on={filter.severity === 'errors'}
             onPress={severity('errors')}
@@ -289,7 +316,11 @@ export function Logs({
         }}
         ListEmptyComponent={
           <Text tone="tertiary" style={styles.empty}>
-            <Trans>No records match these filters.</Trans>
+            {windowLabel ? (
+              <Trans>No records match this time window and these filters.</Trans>
+            ) : (
+              <Trans>No records match these filters.</Trans>
+            )}
           </Text>
         }
         renderItem={({ item }) => {

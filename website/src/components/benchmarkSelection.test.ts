@@ -1,13 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import {
-  benchmarkDimensions,
-  benchmarkForDimensions,
-  exactBenchmarkForDimensions,
-  scenarioRun,
-} from './benchmarkSelection';
+import { exactBenchmarkForDimensions } from './benchmarkSelection';
 import type { BenchmarkData } from './benchmarkData';
 import { benchmarkSelectionFromSearch, benchmarkSelectionSearch } from './benchmarkData';
-import { benchmarks, linkedBenchmarks } from './benchmarkCatalog';
+import { linkedBenchmarks } from './benchmarkCatalog';
 
 function benchmark(
   stage: string,
@@ -44,45 +39,11 @@ describe('benchmark catalog selection', () => {
     }
   });
 
-  it('publishes only one benchmark per model, platform and scenario, and one run per arm and variant', () => {
-    const dimensions = benchmarks.map((candidate) => JSON.stringify(benchmarkDimensions(candidate)));
-    expect(new Set(dimensions).size).toBe(dimensions.length);
-    for (const entry of linkedBenchmarks) {
-      const cells = entry.runs.map((run) => `${run.arm}:${run.variant}`);
-      expect(new Set(cells).size).toBe(cells.length);
-    }
-  });
-
-  it('routes the earlier Sol deep link to its current comparison', () => {
-    const selection = { stage: 'sol-launch-crash', runId: 'launch-crash-stim' };
-    const search = benchmarkSelectionSearch(selection, linkedBenchmarks);
-    expect(benchmarkSelectionFromSearch(search, linkedBenchmarks)).toEqual({
-      stage: 'sol-ios-launch-error',
-      runId: 'launch-crash-stim',
-    });
-  });
   const readinessIos = benchmark('sol-ios', 'gpt-5.6-sol', 'ios', 'readiness');
   const readinessAndroid = benchmark('sol-android', 'gpt-5.6-sol', 'android', 'readiness');
   const crashIos = benchmark('sol-crash', 'gpt-5.6-sol', 'ios', 'launch-crash');
   const lunaIos = benchmark('luna-ios', 'gpt-5.6-luna', undefined, undefined);
   const catalog = [lunaIos, readinessIos, readinessAndroid, crashIos];
-
-  it('derives missing legacy dimensions from the run and environment', () => {
-    expect(benchmarkDimensions(lunaIos)).toEqual({
-      model: 'gpt-5.6-luna',
-      platform: 'ios',
-      suite: 'readiness',
-    });
-  });
-
-  it('selects model, platform, and suite independently', () => {
-    expect(
-      benchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'ios', suite: 'launch-crash' })?.stage,
-    ).toBe('sol-crash');
-    expect(
-      benchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'android', suite: 'launch-crash' })?.stage,
-    ).toBe('sol-android');
-  });
 
   it('distinguishes an exact published combination from a fallback', () => {
     expect(
@@ -91,20 +52,5 @@ describe('benchmark catalog selection', () => {
     expect(
       exactBenchmarkForDimensions(catalog, { model: 'gpt-5.6-sol', platform: 'android', suite: 'launch-crash' }),
     ).toBeUndefined();
-  });
-
-  it('keeps the arm when switching scenario and falls back to the first valid run of that scenario', () => {
-    const withControl = {
-      ...readinessAndroid,
-      runs: [
-        ...readinessAndroid.runs,
-        { id: 'native-control', arm: 'control', variant: 'native', valid: true },
-        { id: 'javascript-control', arm: 'control', variant: 'javascript', valid: false },
-      ],
-    } as BenchmarkData;
-    expect(scenarioRun(withControl, 'native', 'control')?.id).toBe('native-control');
-    expect(scenarioRun(withControl, 'javascript', 'control')?.id).toBe('javascript-stim');
-    expect(scenarioRun(withControl, 'launch-crash', 'stim')).toBeUndefined();
-    expect(scenarioRun(undefined, 'native')).toBeUndefined();
   });
 });

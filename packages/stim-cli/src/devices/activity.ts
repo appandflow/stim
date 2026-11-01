@@ -24,13 +24,13 @@ export type { DeviceActivity } from '@stim-cli/core/state';
 const ACTIVE_WINDOW_MS = 10 * 60 * 1000;
 const LOG_TAIL_BYTES = 256 * 1024;
 
-export interface ActivityEvidence {
+interface ActivityEvidence {
   drivers: (ActivityDriver & { basis: string })[];
   unknown: string[];
   recency: { basis: ActivityRecencyBasis; at: number }[];
 }
 
-export function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
+function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
   const last = evidence.recency.reduce<{ basis: string; at: number } | null>(
     (best, entry) => (Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best),
     null,
@@ -48,6 +48,7 @@ export function classifyActivity(evidence: ActivityEvidence, now: number): Devic
       driver,
       ...lastActivityAt,
       basis: [...new Set(evidence.drivers.map((entry) => entry.basis))],
+      ...(evidence.unknown.length ? { unknown: [...new Set(evidence.unknown)] } : {}),
     };
   }
   if (evidence.unknown.length) return { state: 'unknown', ...lastActivityAt, basis: [...new Set(evidence.unknown)] };
@@ -143,7 +144,14 @@ export function processMatches(entry: PidStart, startOf: (pid: number) => Proces
   if (start.status === 'unknown') return 'unknown';
   const recorded = Date.parse(entry.startTime);
   if (!Number.isFinite(recorded)) return 'unknown';
-  return Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000) ? 'live' : 'dead';
+  if (Math.floor(start.startedAtMs / 1000) === Math.floor(recorded / 1000)) return 'live';
+  // agent-device's zone-less ps lstart cannot distinguish repeated local seconds: https://github.com/appandflow/stim/issues/4729
+  if (
+    /^\w{3}\s+\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(entry.startTime) &&
+    new Date(start.startedAtMs).toLocaleString('en-US') === new Date(recorded).toLocaleString('en-US')
+  )
+    return 'unknown';
+  return 'dead';
 }
 
 export function agentDeviceDaemon(

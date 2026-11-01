@@ -1,9 +1,16 @@
 import { isJsonObject } from './json-file.ts';
 
 const DEFAULT_SERVE_PORT = 7443;
+/** stim-server's own port, which a machine on the local network connects to directly. */
+export const DEFAULT_SERVER_PORT = 7787;
+const LOCAL_PREFIX = 'local:';
 
+/**
+ * A `remote.machines` entry: a tailnet name, or `local:` and a host name or IPv4 address on the local network, each
+ * optionally with `:<port>`.
+ */
 export const TAILNET_MACHINE_PATTERN: string =
-  '^[A-Za-z0-9][A-Za-z0-9.-]*(?::(?!0+$)(?:[0-5]?[0-9]{1,4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$';
+  '^(?:local:)?[A-Za-z0-9][A-Za-z0-9.-]*(?::(?!0+$)(?:[0-5]?[0-9]{1,4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5]))?$';
 
 export interface TailnetPeer {
   nodeId: string;
@@ -26,10 +33,87 @@ function peerPresence(peer: Record<string, unknown>): Pick<TailnetPeer, 'online'
   };
 }
 
-export function parseMachine(entry: string): { name: string; port: number } | null {
-  if (!new RegExp(TAILNET_MACHINE_PATTERN).test(entry.trim())) return null;
-  const [name, port] = entry.trim().split(':');
-  return { name: name!.toLowerCase(), port: port === undefined ? DEFAULT_SERVE_PORT : Number(port) };
+/**
+ * The environment to run the Tailscale CLI with. The macOS Tailscale.app CLI prints "The Tailscale GUI failed to start"
+ * instead of its output when `TERM` is unset, as under launchd (https://github.com/appandflow/stim/issues/4500).
+ */
+export function tailscaleEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return env.TERM ? env : { ...env, TERM: 'dumb' };
+}
+
+/**
+ * The tailnet a Mac was signed in to, from `tailscale status --json` `CurrentTailnet`: `name` is its account name,
+ * `suffix` its MagicDNS suffix when MagicDNS is on, `id` its StableID.
+ */
+export interface TailnetIdentity {
+  name: string;
+  suffix?: string;
+  id?: string;
+}
+
+/** The tailnet a `tailscale status --json` reading is signed in to, or null when the status does not name one. */
+export function currentTailnet(status: unknown): TailnetIdentity | null {
+  const current = isJsonObject(status) && isJsonObject(status.CurrentTailnet) ? status.CurrentTailnet : null;
+  if (!current) return null;
+  return parseTailnetIdentity({ name: current.Name, suffix: current.MagicDNSSuffix, id: current.StableID }) ?? null;
+}
+
+/** A stored `TailnetIdentity`, or undefined when it is malformed. */
+export function parseTailnetIdentity(value: unknown): TailnetIdentity | undefined {
+  if (!isJsonObject(value) || typeof value.name !== 'string' || !value.name) return undefined;
+  const { name, suffix, id } = value;
+  return {
+    name,
+    ...(typeof suffix === 'string' && suffix ? { suffix: suffix.toLowerCase() } : {}),
+    ...(typeof id === 'string' && id ? { id } : {}),
+  };
+}
+
+/** Whether two identities name one tailnet: by StableID, else MagicDNS suffix, else account name. */
+export function sameTailnet(a: TailnetIdentity, b: TailnetIdentity): boolean {
+  if (a.id && b.id) return a.id === b.id;
+  if (a.suffix && b.suffix) return a.suffix === b.suffix;
+  return a.name === b.name;
+}
+
+export interface WrongTailnet {
+  recorded: TailnetIdentity;
+  current: TailnetIdentity;
+  /** The MagicDNS suffix of the tailnet that owns the machine, when it differs from the recorded one (shared in). */
+  owner?: string;
+}
+
+/**
+ * Whether this Mac is signed in to another tailnet than the one it was on when a machine approved it. Null for a
+ * credential with no recorded tailnet, a status that names none, or the same tailnet.
+ */
+export function wrongTailnet(
+  credential: { address?: string; tailnet?: TailnetIdentity },
+  status: unknown,
+): WrongTailnet | null {
+  const recorded = credential.tailnet;
+  const current = currentTailnet(status);
+  if (!recorded || !current || sameTailnet(recorded, current)) return null;
+  const owner = credential.address?.split('.').slice(1).join('.').toLowerCase();
+  return { recorded, current, ...(owner && recorded.suffix && owner !== recorded.suffix ? { owner } : {}) };
+}
+
+export type MachineTransport = 'tailscale' | 'local';
+
+/**
+ * A `remote.machines` entry's parts. A `tailscale` entry names a tailnet peer and the port of its `tailscale serve`
+ * route; a `local` entry names a host on the local network and stim-server's own port there.
+ */
+export function parseMachine(entry: string): { transport: MachineTransport; name: string; port: number } | null {
+  const trimmed = entry.trim();
+  if (!new RegExp(TAILNET_MACHINE_PATTERN).test(trimmed)) return null;
+  const local = trimmed.startsWith(LOCAL_PREFIX);
+  const [name, port] = (local ? trimmed.slice(LOCAL_PREFIX.length) : trimmed).split(':');
+  return {
+    transport: local ? 'local' : 'tailscale',
+    name: name!.toLowerCase(),
+    port: port !== undefined ? Number(port) : local ? DEFAULT_SERVER_PORT : DEFAULT_SERVE_PORT,
+  };
 }
 
 /**
@@ -64,7 +148,7 @@ export function findPeer(status: unknown, name: string): TailnetPeer | 'missing'
  */
 export function cannotHost(status: unknown, entry: string): boolean {
   const parsed = parseMachine(entry);
-  const peer = parsed ? findPeer(status, parsed.name) : 'missing';
+  const peer = parsed?.transport === 'tailscale' ? findPeer(status, parsed.name) : 'missing';
   return typeof peer === 'object' && peer.os !== undefined && peer.os !== 'macOS';
 }
 
@@ -81,17 +165,34 @@ export interface Endpoint {
 export function endpoint(peer: TailnetPeer, port: number): Endpoint {
   const address = peer.address.includes(':') ? `[${peer.address}]` : peer.address;
   const suffix = port === 443 ? '' : `:${port}`;
-  return { url: `wss://${address}${suffix}`, servername: peer.dnsName, host: `${peer.dnsName}${suffix}` };
+  return {
+    url: `wss://${address}${suffix}`,
+    servername: peer.dnsName,
+    host: `${peer.dnsName}${suffix}`,
+  };
 }
 
 /**
- * Where to reach a `remote.machines` entry now, or why Stim cannot. The tailnet only carries the bytes: the Noise
- * handshake, pinned to the worker's server key, decides whether the machine answering is the one this machine paired
- * with.
+ * A `local` entry's stim-server, reached directly with plain WebSocket: protocol 2's Noise session authenticates and
+ * encrypts it, so it needs no TLS.
+ */
+export function localEndpoint(name: string, port: number): Endpoint {
+  return {
+    url: `ws://${name}:${port}`,
+    servername: name,
+    host: `${name}:${port}`,
+  };
+}
+
+/**
+ * Where to reach a `remote.machines` entry now, or why Stim cannot. The tailnet or local network only carries the
+ * bytes: the Noise handshake, pinned to the worker's server key, decides whether the machine answering is the one this
+ * machine paired with. `current` is `tailscale status --json`, which a `local` entry does not need.
  */
 export function machineEndpoint(machine: string, current: unknown): Endpoint | string {
   const parsed = parseMachine(machine);
-  if (!parsed) return `${machine} is not a tailnet name`;
+  if (!parsed) return `${machine} is not a tailnet name or local: address`;
+  if (parsed.transport === 'local') return localEndpoint(parsed.name, parsed.port);
   if (!isJsonObject(current)) return 'Tailscale is not running';
   const peer = findPeer(current, parsed.name);
   if (peer === 'missing') return `no peer on this tailnet is named ${parsed.name}`;

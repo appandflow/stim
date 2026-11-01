@@ -3,7 +3,7 @@ import SwiftUI
 
 /// The workspace page's details, beside the devices: build, resources, Metro and logs, agents and the build cache.
 struct Inspector: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var stats: Fetched<ProjectStats>
   var machine: MachineUsage?
@@ -13,6 +13,7 @@ struct Inspector: View {
   var openLogs: (LogQuery) -> Void
   var openBuild: (BuildSheetSelection) -> Void
   var archive: ArchivedPage? = nil
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     ScrollView {
@@ -22,14 +23,16 @@ struct Inspector: View {
         }
         if archive != nil || env.runPlatforms.contains(where: { ["ios", "android", "macos"].contains($0) }) || env.macos != nil {
           BuildSection(
-            cli: cli, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
+            environment: environment, env: env, openLogs: openLogs, openBuild: openBuild, readOnly: archive != nil,
             totals: archive?.buildTotalsLine
           )
           .id(env.path)
         }
 
         if archive == nil {
-          ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
+          if access.isLocal || !env.usage(machine: nil).isEmpty {
+            ResourcesSection(env: env, machine: machine, history: history, sampled: usage)
+          }
 
           MetroLogsSection(
             env: env, reportsBundles: reportsBundles,
@@ -49,7 +52,10 @@ struct Inspector: View {
                 var query = LogQuery()
                 if archive == nil { query.sources = [.client, .device] }
                 openLogs(query)
-              }.buttonStyle(.stim()).fixedSize()
+              }
+              .buttonStyle(.stim()).fixedSize()
+              .disabled(!access.isLocal)
+              .help(access.unavailableReason ?? "")
             }
           }
           if archive?.logsExpired == true {
@@ -120,7 +126,7 @@ struct BuildCacheStatCard: View {
       VStack(alignment: .leading, spacing: Space.sm) {
         Text(title).foregroundStyle(Palette.secondary)
         if let subtitle { Text(subtitle).font(.stim(.footnote)).foregroundStyle(Palette.tertiary) }
-        Text("\(Int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
+        Text("\(Format.int((platform.hitRate * 100).rounded()))%").font(.stim(.title))
         StimProgressBar(value: platform.hitRate)
         Text(countLabel(platform.hits, "hit")).foregroundStyle(Palette.secondary)
         Text(countLabel(platform.misses, "miss", plural: "misses")).foregroundStyle(Palette.secondary)
@@ -176,7 +182,13 @@ struct ResourcesSection: View {
       if !rows.isEmpty {
         ProcessRowsTable(rows: rows)
       }
-      if let disk = page == nil ? env.diskBreakdown : page?.diskBreakdown {
+      if let page, page.isUnified {
+        ForEach(page.apps) { app in
+          if let disk = app.diskBreakdown {
+            DiskCard(breakdown: disk, title: WorktreePage.project(app))
+          }
+        }
+      } else if let disk = env.diskBreakdown {
         DiskCard(breakdown: disk)
       }
     }
@@ -222,6 +234,7 @@ struct ResourcesSection: View {
 
 private struct DiskCard: View {
   var breakdown: DiskBreakdown
+  var title = "Disk"
 
   private func color(_ part: DiskBreakdown.Part) -> Color {
     switch part.kind {
@@ -234,7 +247,7 @@ private struct DiskCard: View {
   var body: some View {
     Card(radius: Radius.control, border: nil, clipsContent: false) {
       VStack(alignment: .leading, spacing: Space.sm) {
-        Label("Disk", systemImage: "internaldrive").foregroundStyle(Palette.secondary)
+        Label(title, systemImage: "internaldrive").foregroundStyle(Palette.secondary)
         Text(Format.fileSize(Int64(breakdown.total))).font(.stim(.headline)).monospacedDigit()
         GeometryReader { geo in
           HStack(spacing: 1) {
@@ -275,6 +288,7 @@ struct MetroLogsSection: View {
   var showsHeading = true
   var appLabel: String? = nil
   var openLogs: () -> Void
+  @Environment(\.workspaceAccess) private var access
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -285,7 +299,8 @@ struct MetroLogsSection: View {
           Button("Show Logs", action: openLogs)
             .buttonStyle(.stim())
             .fixedSize()
-            .help("Open Metro logs in the workspace log viewer")
+            .disabled(!access.isLocal)
+            .help(access.unavailableReason ?? "Open Metro logs in the workspace log viewer")
         }
       }
       if let metro = env.metro, let health = env.metroHealth {
@@ -300,6 +315,7 @@ struct MetroLogsSection: View {
           if !showsHeading {
             Spacer(minLength: Space.sm)
             Button("Show Logs", action: openLogs).buttonStyle(.stim()).fixedSize()
+              .disabled(!access.isLocal).help(access.unavailableReason ?? "")
           }
         }
         .help(env.supervisor.map { "\($0.mode ?? "supervisor") \u{00B7} \(health.rawValue)" } ?? "Metro \(health.rawValue)")
@@ -320,7 +336,7 @@ struct MetroLogsSection: View {
 }
 
 struct WorktreeInspector: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var page: WorktreePage
   var stats: [String: Fetched<ProjectStats>]
   var machine: MachineUsage?
@@ -421,7 +437,7 @@ struct WorktreeInspector: View {
 
   @ViewBuilder private func buildEntry(_ entry: WorktreePage.Entry, app: Workspace) -> some View {
     BuildSection(
-      cli: cli, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
+      environment: environment, env: app, openLogs: { openLogs(app, $0) }, openBuild: openBuild, onlyPlatform: entry.platform,
       projectSubtitle: page.subtitle(for: entry, among: page.buildEntries))
   }
 }

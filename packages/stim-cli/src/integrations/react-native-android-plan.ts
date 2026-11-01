@@ -9,13 +9,16 @@ import { buildCacheKey, fingerprintProject } from '../cache/build-cache.ts';
 import { phaseLine } from '../command-output.ts';
 import {
   androidSystemImageAbi,
-  hostSystemImageArch,
   listAvdsAsync,
   listInstalledSystemImages,
   ownedAvdDirectory,
   ownedAvdSystemImage,
-  pickDefaultSystemImage,
 } from '../devices/android.ts';
+import {
+  androidImageInstallPolicy,
+  decideSystemImage,
+  type AndroidImageInstallPolicy,
+} from '../devices/android-image.ts';
 import { deviceSlotPlatforms, validateDeviceSlot } from '../devices/device-slots.ts';
 import { planEasDevelopmentBuild } from '../engine/eas-build.ts';
 import { planPrebuildAsync, type PrebuildAction } from '../engine/prebuild.ts';
@@ -105,6 +108,7 @@ async function emulatorImage(
   slot: string,
   requested: string | null,
   replaces: boolean,
+  policy: AndroidImageInstallPolicy,
   deps: Pick<AndroidPlanDeps, 'listSystemImages' | 'avdSystemImage' | 'avdDirectory' | 'listAvds'>,
   signal?: AbortSignal,
 ): Promise<EmulatorImage> {
@@ -125,16 +129,9 @@ async function emulatorImage(
       },
     };
   }
-  const picked = pickDefaultSystemImage(images, requested ? { systemImage: requested } : {});
-  if (picked) return { systemImage: picked.pkg };
-  const arch = hostSystemImageArch();
-  return {
-    refusal: {
-      code: NO_DEVICE,
-      message: `No ${arch} Android system image is installed, so the emulator build's ABI and cache key are unknown.`,
-      remedy: `Install one, e.g.: sdkmanager "system-images;android-36;google_apis;${arch}", then try again.`,
-    },
-  };
+  const decided = decideSystemImage({ requested, installed: images, policy });
+  if (decided.kind !== 'refuse') return { systemImage: decided.pkg };
+  return { refusal: { code: decided.code, message: decided.message, remedy: decided.remedy } };
 }
 
 async function avdListed(avdName: string, list: AndroidPlanDeps['listAvds'], signal?: AbortSignal): Promise<boolean> {
@@ -172,7 +169,8 @@ export async function planReactNativeAndroid(
       device: null,
       wait: undefined,
       waitConflict: false,
-      remote: null,
+      remote: opts.remote ?? null,
+      buildMachine: opts.remoteBuild,
       buildCache: opts.buildCache !== false,
     },
     {
@@ -241,7 +239,15 @@ export async function planReactNativeAndroid(
   let localImageRead: Promise<EmulatorImage> | undefined;
   const localImage = () =>
     (localImageRead ??= abiKeyed
-      ? emulatorImage(root, slot, target.systemImage, replacement.replaces, deps, operation.signal)
+      ? emulatorImage(
+          root,
+          slot,
+          target.systemImage,
+          replacement.replaces,
+          androidImageInstallPolicy(settings),
+          deps,
+          operation.signal,
+        )
       : Promise.resolve({ systemImage: null }));
   let image: EmulatorImage;
   let hostedAbi: string | null = null;
@@ -253,6 +259,7 @@ export async function planReactNativeAndroid(
       slot,
       platform: 'android',
       machine: target.machine,
+      buildMachine: opts.remoteBuild,
       ...(target.placement ? { placement: target.placement } : {}),
       selectors: {
         ...(target.systemImage ? { systemImage: target.systemImage } : {}),
@@ -307,12 +314,12 @@ export async function planReactNativeAndroid(
         : await localImage();
   } else image = await localImage();
   if ('refusal' in image) return refuse(image.refusal);
-  const { abi, runOptions, remoteRunOptions } = androidBuildOptions({
+  const { abi, runOptions, remoteRunOptions } = await androidBuildOptions({
     release: build.release,
     physical: false,
     device: { systemImage: image.systemImage },
     variant: build.variant,
-    deviceAbi: () => null,
+    deviceAbi: async () => null,
     gradleProject: androidGradleProject(layout),
     buildProfile: build.profile,
     targetAbiOnly: build.targetAbiOnly,

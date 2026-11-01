@@ -139,6 +139,8 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     ]
     #expect(idle.orderedDevices.map(\.id) == order)
     #expect(driven.orderedDevices.map(\.id) == order)
+    #expect(idle.orderedDevices.first(where: { $0.id == "remote:S" })?.placement?.machine == "EAS")
+    #expect(idle.orderedDevices.first?.placement == nil)
   }
 }
 
@@ -473,6 +475,11 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let c = try #require(Self.vectors.bundleLine.first { $0.name == name })
     let line = c.workspace.bundleLine(now: Self.now, reportsBundles: c.reportsBundles)
     #expect(line.map { Vectors.Line(text: $0.text, tone: String(describing: $0.tone)) } == c.line)
+  }
+
+  @Test func aBundlePercentPastIntsRangeDoesNotTrap() throws {
+    let reported = try workspace(#""metro":{"port":8081,"running":true,"bundle":{"bundling":true,"percent":1e300}}"#)
+    #expect(reported.bundleLine(now: Self.now, reportsBundles: true)?.text == "Bundling \u{00B7} 9223372036854775807%")
   }
 
   @Test(arguments: vectors.diskParts.map(\.name))

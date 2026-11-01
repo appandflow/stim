@@ -38,19 +38,25 @@ public final class MachineSettingsStore {
   }
 
   public convenience init(
-    cli: Task<StimCLI, Never>, server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?,
+    environment: Task<[String: String], Never>, diagnostics: Diagnostics = .shared,
+    server: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?,
     actions: @escaping @MainActor @Sendable () -> (client: ServerClient, home: String)?
   ) {
     self.init(
       read: {
-        let cli = await cli.value
+        let environment = await environment.value
         let connection = await server()
-        return try await readServerSettings(cli: cli, connection: connection, cwd: NSHomeDirectory())
+        return try await readServerSettings(
+          stimHome: StimHome.path(environment: environment), diagnostics: diagnostics, connection: connection,
+          cwd: NSHomeDirectory())
       },
       write: { key, value, scope, cwd in
-        let cli = await cli.value
+        let environment = await environment.value
         let connection = await actions()
-        return try await writeServerSetting(key, value: value, scope: scope, cwd: cwd, cli: cli, connection: connection).result
+        return try await writeServerSetting(
+          key, value: value, scope: scope, cwd: cwd, stimHome: StimHome.path(environment: environment), diagnostics: diagnostics,
+          connection: connection
+        ).result
       })
   }
 

@@ -12,8 +12,8 @@ private func payload(live: Int) -> StatusPayload {
 
 @MainActor
 private func makeStore() -> StatusStore {
-  let cli = Task { StimCLI(environment: ["PATH": "/nonexistent"]) }
-  return StatusStore(cli: cli)
+  let environment = Task { ["PATH": "/nonexistent"] }
+  return StatusStore(environment: environment)
 }
 
 @MainActor
@@ -43,8 +43,8 @@ struct StatusStoreTests {
   @Test func doctorReadsTheMatchingServerWithoutCLIAndKeepsLastGoodOnFailure() async throws {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": directory.path] }
+    let store = StatusStore(environment: environment, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
@@ -86,8 +86,8 @@ struct StatusStoreTests {
   @Test func anActionDuringDoctorDiscardsTheEarlierReplyAndRefreshesAgain() async throws {
     let directory = try doctorWorkspace()
     defer { try? FileManager.default.removeItem(at: directory) }
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": directory.path]) }
-    let store = StatusStore(cli: cli, stimHome: directory.path)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": directory.path] }
+    let store = StatusStore(environment: environment, stimHome: directory.path)
     var socket: IdentityTransport!
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/doctor-test.sock"), clientName: "test", clientVersion: "1",
@@ -151,6 +151,37 @@ struct StatusStoreTests {
     #expect(store.title(of: Project(root: "/two/app")) == "app (two)")
   }
 
+  @Test func aWorkspacesProjectFollowsItsFolderAppearingAndDisappearing() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("refresh-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let app = root.appendingPathComponent("apps/mobile").path
+    let store = makeStore()
+    func show(_ live: Int) async throws {
+      let data = try JSONSerialization.data(withJSONObject: [
+        "environments": [["path": app, "live": false, "warnings": [], "memoryMb": 0]],
+        "capacity": ["liveCount": live, "committedMb": 0, "totalMemoryMb": 0, "overCapacity": false],
+      ])
+      store.accept(.success(try JSONDecoder().decode(StatusPayload.self, from: data)))
+      #expect(await until { store.payload?.capacity?.liveCount == live })
+    }
+
+    try await show(1)
+    #expect(store.projects[app] == Project(fallbackFor: app))
+
+    try FileManager.default.createDirectory(atPath: app, withIntermediateDirectories: true)
+    let git = Process()
+    git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    git.arguments = ["init", "-q", root.path]
+    try git.run()
+    git.waitUntilExit()
+    try await show(2)
+    #expect(await until { store.projects[app]?.root == (root.path as NSString).resolvingSymlinksInPath })
+
+    try FileManager.default.removeItem(at: root)
+    try await show(3)
+    #expect(await until { store.projects[app] == Project(fallbackFor: app) })
+  }
+
   @Test func aFailedServerReadKeepsThePayloadUntilTheNextSuccess() async {
     let store = makeStore()
     store.accept(.success(payload(live: 1)))
@@ -205,8 +236,8 @@ struct StatusStoreTests {
         from: URL(
           string:
             "https://stim.appandflow.com/open?v=1&machine=\(home)&workspace=\(workspace)")!))
-    let cli = StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/home-a"])
-    let store = StatusStore(cli: Task { cli }, stimHome: "/home-a")
+    let environment = ["PATH": "/nonexistent", "STIM_HOME": "/home-a"]
+    let store = StatusStore(environment: Task { environment }, stimHome: "/home-a")
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in IdentityTransport(home: home, onEvent: onEvent) })
@@ -235,7 +266,7 @@ struct StatusStoreTests {
     #expect(store.target(for: link, connection: (client, "/home-a")) == nil)
   }
 
-  private func watchingCLI(in directory: URL) throws -> StimCLI {
+  private func watchingEnvironment(in directory: URL) throws -> [String: String] {
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     let executable = directory.appendingPathComponent("stim")
     let script = """
@@ -247,7 +278,7 @@ struct StatusStoreTests {
       """
     try Data(script.utf8).write(to: executable)
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
-    return StimCLI(environment: ["PATH": "/usr/bin:/bin", "STIM_HOME": directory.path], override: executable.path)
+    return ["PATH": "\(directory.path):/usr/bin:/bin", "STIM_HOME": directory.path]
   }
 
   private func watcherPIDs(in directory: URL) -> [Int32] {
@@ -257,8 +288,8 @@ struct StatusStoreTests {
 
   @Test(arguments: [false, true]) func socketPathRefusalsShowTheRemedyOnlyForTheMatchingHome(matchingHome: Bool) async {
     let home = "/tmp/stim-status-test"
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": home]) }
-    let store = StatusStore(cli: cli, stimHome: home)
+    let environment = Task { ["PATH": "/nonexistent", "STIM_HOME": home] }
+    let store = StatusStore(environment: environment, stimHome: home)
     let client = ServerClient(
       endpoint: URL(fileURLWithPath: "/" + String(repeating: "x", count: 103)), clientName: "test", clientVersion: "1")
     defer { client.stop() }
@@ -282,8 +313,8 @@ struct StatusStoreTests {
 
   @Test func unavailableStatusNeverStartsACommandAndKeepsTheLastPayload() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("watch-\(UUID().uuidString)")
-    let cli = try watchingCLI(in: directory)
-    let store = StatusStore(cli: Task { cli })
+    let environment = try watchingEnvironment(in: directory)
+    let store = StatusStore(environment: Task { environment })
     defer {
       store.serverDelivering(true)
       for pid in watcherPIDs(in: directory) { kill(pid, SIGKILL) }
@@ -297,6 +328,90 @@ struct StatusStoreTests {
     #expect(!store.watching)
     #expect(watcherPIDs(in: directory).isEmpty)
     #expect(store.payload?.capacity?.liveCount == 7)
+  }
+
+  private func pairedClient(_ host: String, memoryMb: Int, path: String, udid: String, checkout: String? = nil) -> ServerClient {
+    ServerClient(
+      endpoint: URL(string: "ws://\(host):7787")!, clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in
+        PairedStatusTransport(
+          workspace: .object([
+            "path": .string(path), "live": .bool(true), "warnings": .array([]), "issues": .array([]),
+            "checkout": checkout.map(JSONValue.string) ?? .null,
+            "memoryMb": .number(Double(memoryMb)),
+            "ios": .object([
+              "name": .string("stim-app (iPhone 17 26.0)"), "udid": .string(udid), "owned": .bool(true),
+              "state": .string("Booted"),
+            ]),
+          ]), onEvent: onEvent)
+      })
+  }
+
+  @Test func twoPairedServersAndThisMacReportingTheSamePathAndUDIDStayApart() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("owners-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let checkout = root.appendingPathComponent("apps/mobile").path
+    let git = Process()
+    git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    git.arguments = ["init", "-q", checkout]
+    try git.run()
+    git.waitUntilExit()
+    let store = makeStore()
+    let local = try JSONDecoder().decode(
+      StatusPayload.self,
+      from: Data(
+        #"{"environments":[{"path":"\#(checkout)","live":true,"warnings":[],"memoryMb":1,"ios":{"name":"stim-app (iPhone 17 26.0)","udid":"1A2B","owned":true,"state":"Booted"}}]}"#
+          .utf8))
+    store.accept(.success(local))
+    #expect(await until { store.payload != nil })
+    let floco = pairedClient("100.64.0.2", memoryMb: 2, path: checkout, udid: "1A2B", checkout: root.path)
+    let mini = pairedClient("100.64.0.3", memoryMb: 3, path: checkout, udid: "1A2B", checkout: root.path)
+    let socket = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
+      transport: { _, onEvent in IdentityTransport(home: "home", onEvent: onEvent) })
+    for client in [floco, mini, socket] { client.start() }
+    defer { for client in [floco, mini, socket] { client.stop() } }
+
+    let clients = ["floco": floco, "mini": mini, "socket": socket]
+    #expect(await until { floco.isOpen && mini.isOpen && socket.isOpen })
+    store.usePairedServers(clients)
+    #expect(await until { store.paired["floco"]?.delivering == true && store.paired["mini"]?.delivering == true })
+    #expect(store.paired["socket"] == nil)
+
+    let owned = store.ownedEnvironments
+    #expect(owned.map(\.owner) == [.local, .paired("floco"), .paired("mini")])
+    #expect(Set(owned.map(\.id)).count == 3)
+    #expect(Set(owned.flatMap(\.devices).map(\.id)).count == 3)
+    #expect(owned.flatMap(\.devices).map(\.localSimulatorUDID) == ["1A2B", nil, nil])
+    for (owner, memory) in [(ServerOwner.local, 1), (.paired("floco"), 2), (.paired("mini"), 3)] {
+      #expect(store.workspace(WorkspaceKey(owner: owner, path: checkout))?.workspace.memoryMb == memory)
+    }
+    #expect(store.paired["floco"]?.payload?.environments.first?.project == Project(root: root.path))
+    #expect(await until { store.projects[checkout] != nil })
+    #expect(store.projects[checkout] != Project(root: root.path))
+
+    floco.stop()
+    store.usePairedServers(clients)
+    #expect(store.paired["floco"]?.delivering == false)
+    #expect(store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 2)
+    floco.start()
+    #expect(await until { floco.isOpen })
+    store.usePairedServers(clients)
+    #expect(await until { store.paired["floco"]?.delivering == true })
+
+    let replacement = pairedClient("100.64.0.2", memoryMb: 4, path: checkout, udid: "1A2B")
+    defer { replacement.stop() }
+    store.usePairedServers(["floco": replacement, "mini": mini])
+    #expect(store.paired["floco"]?.delivering == false)
+    #expect(store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 2)
+    replacement.start()
+    #expect(await until { replacement.isOpen })
+    store.usePairedServers(["floco": replacement, "mini": mini])
+    #expect(await until { store.workspace(WorkspaceKey(owner: .paired("floco"), path: checkout))?.workspace.memoryMb == 4 })
+
+    store.usePairedServers(["mini": mini])
+    #expect(store.paired["floco"] == nil)
+    #expect(store.ownedEnvironments.map(\.owner) == [.local, .paired("mini")])
   }
 
 }
@@ -364,5 +479,71 @@ struct StatusStoreTests {
   private func reply(_ id: JSONValue, _ result: JSONValue) {
     guard let data = try? JSONEncoder().encode(JSONValue.object(["id": id, "result": result])) else { return }
     onEvent(.text(String(decoding: data, as: UTF8.self)))
+  }
+}
+
+/// A paired server that reports one workspace and an idle machine.
+@MainActor private final class PairedStatusTransport: ServerTransport {
+  let workspace: JSONValue
+  let onEvent: @MainActor (ServerTransportEvent) -> Void
+
+  init(workspace: JSONValue, onEvent: @escaping @MainActor (ServerTransportEvent) -> Void) {
+    self.workspace = workspace
+    self.onEvent = onEvent
+  }
+
+  func close() {}
+
+  func send(_ text: String) {
+    guard case .object(let request)? = try? JSONDecoder().decode(JSONValue.self, from: Data(text.utf8)),
+      let id = request["id"], case .string(let method)? = request["method"]
+    else { return }
+    switch method {
+    case "hello":
+      reply([
+        "id": id,
+        "result": .object([
+          "protocol": .number(2),
+          "server": .object(["name": .string("Mac"), "version": .string("1"), "stim": .string("1")]),
+          "capabilities": .array([.string("read")]),
+        ]),
+      ])
+    case "workspaces.subscribe":
+      reply(["id": id, "result": .object(["subscription": .string("s1")])])
+      event([
+        "event": .string("workspaces"), "subscription": .string("s1"), "seq": .number(0),
+        "snapshot": .object([
+          "workspaces": .array([workspace]), "worktrees": .array([]),
+          "archived": .object(["count": .number(0), "bytes": .number(0), "newest": .array([])]),
+        ]),
+      ])
+    case "machine.subscribe":
+      reply(["id": id, "result": .object(["subscription": .string("s2")])])
+      event([
+        "event": .string("machine"), "subscription": .string("s2"), "seq": .number(0),
+        "machine": .object([
+          "capacity": .object([
+            "liveCount": .number(1), "committedMb": .number(0), "totalMemoryMb": .number(0),
+            "overCapacity": .bool(false),
+          ]),
+          "machine": .null, "deviceLeases": .array([]), "simctlAvailable": .bool(true), "maintenance": .null,
+        ]),
+      ])
+    default: break
+    }
+  }
+
+  private func reply(_ message: [String: JSONValue]) {
+    let text = String(decoding: try! JSONEncoder().encode(JSONValue.object(message)), as: UTF8.self)
+    Task { @MainActor in self.onEvent(.text(text)) }
+  }
+
+  /// Sends a subscription's event once the client has read the reply that names the subscription.
+  private func event(_ message: [String: JSONValue]) {
+    let text = String(decoding: try! JSONEncoder().encode(JSONValue.object(message)), as: UTF8.self)
+    Task { @MainActor in
+      try? await Task.sleep(for: .milliseconds(50))
+      self.onEvent(.text(text))
+    }
   }
 }

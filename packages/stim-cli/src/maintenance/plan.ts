@@ -49,7 +49,6 @@ export function plan({
     return true;
   };
   const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
-  const emergency = pressure?.disk.some((disk) => disk.freeMb < budget.hardFloorDiskMb) ?? false;
   const low = pressure?.disk.filter((disk) => disk.freeMb < floor) ?? [];
   const reason = low
     .map(
@@ -102,14 +101,9 @@ export function plan({
     if (cap === 0 || total <= cap) continue;
     let remaining = total;
     const targetBytes = (cap * settings.capTargetPercent) / 100;
-    const why = `${category} ${(total / 1024 ** 3).toFixed(1)}G over the ${capGb}G cap; target ${(targetBytes / 1024 ** 3).toFixed(1)}G`;
-    if (category === 'compilation-cache' && !emergency) {
-      skips.push({
-        target: entries[0]?.dir ?? category,
-        reason: `${why}; it can only be emptied whole, which runs only below the ${(budget.hardFloorDiskMb / 1024).toFixed(1)}G hard floor`,
-      });
-      continue;
-    }
+    const why = `${category} ${(total / 1024 ** 3).toFixed(1)}G over the ${capGb}G cap; ${
+      category === 'compilation-cache' ? 'emptied whole' : `target ${(targetBytes / 1024 ** 3).toFixed(1)}G`
+    }`;
     for (const size of entries.toSorted((a, b) => (b.idleDays ?? 0) - (a.idleDays ?? 0))) {
       if (remaining <= targetBytes) break;
       const kept = size.workspace === protectedRoot ? 'the triggering workspace is protected' : size.blocked;

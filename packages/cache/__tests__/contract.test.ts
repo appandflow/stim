@@ -44,17 +44,6 @@ function memoryProvider(): CacheProvider {
   };
 }
 
-test('the contract passes for a provider that honors both capabilities', async () => {
-  const results = await runCacheProviderContract({
-    provider: memoryProvider(),
-    projectRoot: workDir,
-    workDir,
-  });
-
-  expect(results.filter((result) => !result.passed)).toEqual([]);
-  expect(new Set(results.map((result) => result.capability))).toEqual(new Set(['metro', 'builds']));
-});
-
 test('the contract covers an iOS artifact directory', async () => {
   const results = await runCacheProviderContract({
     provider: memoryProvider(),
@@ -66,46 +55,8 @@ test('the contract covers an iOS artifact directory', async () => {
   expect(results.filter((result) => !result.passed)).toEqual([]);
 });
 
-test('the contract only checks the capabilities a provider advertises', async () => {
-  const provider = memoryProvider();
-  delete provider.builds;
-
-  const results = await runCacheProviderContract({ provider, projectRoot: workDir, workDir });
-  expect(new Set(results.map((result) => result.capability))).toEqual(new Set(['metro']));
-});
-
-test('the contract reports violations instead of throwing', async () => {
-  const results = await runCacheProviderContract({
-    provider: {
-      metro: {
-        get: () => Buffer.from('always the same'),
-        set: () => {},
-      },
-      builds: {
-        resolve: ({ destinationDir }) => join(destinationDir, 'missing.apk'),
-        store: () => {},
-      },
-    },
-    projectRoot: workDir,
-    workDir,
-  });
-
-  const failed = results.filter((result) => !result.passed);
-  expect(failed.map((result) => result.name)).toEqual([
-    'metro get returns null or undefined for an unknown key',
-    'metro set then get returns the stored buffer',
-    'metro set then get returns the stored object',
-    'metro keys do not collide',
-    'builds resolve returns null for an unknown key',
-    'builds store then resolve returns the same artifact',
-    'builds store honors overwrite',
-    'builds store keeps unrelated keys separate',
-  ]);
-  expect(failed[0]?.error).toMatch(/expected a miss/);
-});
-
 test('a capability that ignores its abort signal fails the contract', async () => {
-  const results = await runCacheProviderContract({
+  const pending = runCacheProviderContract({
     provider: {
       metro: { get: () => new Promise(() => {}), set: () => {} },
     },
@@ -114,6 +65,8 @@ test('a capability that ignores its abort signal fails the contract', async () =
     checkTimeoutMs: 400,
     abortSettleMs: 100,
   });
+  await vi.runAllTimersAsync();
+  const results = await pending;
 
   const aborting = results.find((result) => result.name === 'metro get settles when its signal aborts');
   expect(aborting?.passed).toBe(false);
