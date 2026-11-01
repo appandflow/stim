@@ -1448,6 +1448,7 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request('device-host.app.state', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
             'device-host.logs.query',
             session({

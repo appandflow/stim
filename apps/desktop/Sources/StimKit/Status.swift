@@ -171,6 +171,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var lastBuilds: LastBuilds?
   /// Each platform's last runs, newest first.
   public var builds: BuildHistory?
+  /// Verified Git checkout identity, including primary checkouts without linked-worktree ownership facts.
+  public var checkout: String?
   public var worktree: WorktreeInfo?
   /// The coding-agent sessions working in the workspace, most recently active first; absent when none.
   public var agents: [AgentSession]?
@@ -189,7 +191,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
     case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
       web, metro
     case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
-    case lastBuilds, builds, worktree, recording
+    case lastBuilds, builds, checkout, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
     case stageFacts = "stage"
   }
@@ -202,6 +204,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var replayOff: Bool { recording?.enabled == false }
 
   public var id: String { path }
+  public var checkoutPath: String? { checkout ?? worktree?.path }
 
   /// The physical footprint of the workspace's processes in bytes, when `stim status` measured it.
   public var footprintBytes: Int64? {
@@ -258,7 +261,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   }
 
   public var names: PathNames {
-    var names = PathNames(path: path, branch: worktree?.branch, worktree: worktree?.path, project: project)
+    var names = PathNames(path: path, branch: worktree?.branch, worktree: checkoutPath, project: project)
     if let titleOverride { names.title = titleOverride }
     return names
   }

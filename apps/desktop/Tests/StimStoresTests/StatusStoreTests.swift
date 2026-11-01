@@ -330,13 +330,14 @@ struct StatusStoreTests {
     #expect(store.payload?.capacity?.liveCount == 7)
   }
 
-  private func pairedClient(_ host: String, memoryMb: Int, path: String, udid: String) -> ServerClient {
+  private func pairedClient(_ host: String, memoryMb: Int, path: String, udid: String, checkout: String? = nil) -> ServerClient {
     ServerClient(
       endpoint: URL(string: "ws://\(host):7787")!, clientName: "test", clientVersion: "1",
       transport: { _, onEvent in
         PairedStatusTransport(
           workspace: .object([
             "path": .string(path), "live": .bool(true), "warnings": .array([]), "issues": .array([]),
+            "checkout": checkout.map(JSONValue.string) ?? .null,
             "memoryMb": .number(Double(memoryMb)),
             "ios": .object([
               "name": .string("stim-app (iPhone 17 26.0)"), "udid": .string(udid), "owned": .bool(true),
@@ -349,7 +350,7 @@ struct StatusStoreTests {
   @Test func twoPairedServersAndThisMacReportingTheSamePathAndUDIDStayApart() async throws {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent("owners-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: root) }
-    let checkout = root.appendingPathComponent(".worktrees/app").path
+    let checkout = root.appendingPathComponent("apps/mobile").path
     let git = Process()
     git.executableURL = URL(fileURLWithPath: "/usr/bin/git")
     git.arguments = ["init", "-q", checkout]
@@ -363,8 +364,8 @@ struct StatusStoreTests {
           .utf8))
     store.accept(.success(local))
     #expect(await until { store.payload != nil })
-    let floco = pairedClient("100.64.0.2", memoryMb: 2, path: checkout, udid: "1A2B")
-    let mini = pairedClient("100.64.0.3", memoryMb: 3, path: checkout, udid: "1A2B")
+    let floco = pairedClient("100.64.0.2", memoryMb: 2, path: checkout, udid: "1A2B", checkout: root.path)
+    let mini = pairedClient("100.64.0.3", memoryMb: 3, path: checkout, udid: "1A2B", checkout: root.path)
     let socket = ServerClient(
       endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "test", clientVersion: "1",
       transport: { _, onEvent in IdentityTransport(home: "home", onEvent: onEvent) })

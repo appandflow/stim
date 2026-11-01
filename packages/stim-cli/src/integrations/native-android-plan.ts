@@ -44,7 +44,8 @@ export async function planNativeAndroid(
         device: null,
         wait: undefined,
         waitConflict: false,
-        remote: null,
+        remote: options.remote ?? null,
+        buildMachine: options.remoteBuild,
         buildCache: options.buildCache !== false,
       },
       {

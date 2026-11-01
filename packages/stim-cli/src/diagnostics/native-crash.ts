@@ -420,6 +420,34 @@ export async function androidCrashClockOffset(deviceId: string, signal?: AbortSi
   return Math.round((before + after) / 2) - Number(clock);
 }
 
+/** Reads only iOS reports attributable to the requested app, simulator and capture window. */
+export async function readIosCrashReports(
+  target: CrashTarget,
+  deadline: number,
+  signal?: AbortSignal,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<NdjsonRecord[]> {
+  const directory = join(env.HOME || homedir(), 'Library/Logs/DiagnosticReports');
+  const reports: { path: string; time: number }[] = [];
+  for (const name of await readdir(directory)) {
+    signal?.throwIfAborted();
+    if (!name.endsWith('.ips')) continue;
+    const path = join(directory, name);
+    const time = (await stat(path)).mtimeMs;
+    if (time >= target.since) reports.push({ path, time });
+  }
+  reports.sort((a, b) => b.time - a.time);
+  const nativeReports: NdjsonRecord[] = [];
+  for (const { path } of reports.slice(0, 50)) {
+    if (Date.now() >= deadline) break;
+    if ((await stat(path)).size > 8 * 1024 * 1024) continue;
+    const parsed = parseIosCrash(await readFile(path, { encoding: 'utf8', signal }), target);
+    if (parsed)
+      nativeReports.push(await symbolicateIos(parsed.record, parsed.report, target.appPath, deadline, signal));
+  }
+  return nativeReports;
+}
+
 /** Reads platform crash evidence without starting, stopping or modifying a device. */
 export async function captureNativeCrashes(
   target: CrashTarget,
@@ -433,24 +461,7 @@ export async function captureNativeCrashes(
     if (target.platform === 'ios' && !target.physical && process.platform === 'darwin') {
       const deadline = Date.now() + 4000;
       records = await simulatorFatalConsole(target, signal);
-      const directory = join(env.HOME || homedir(), 'Library/Logs/DiagnosticReports');
-      const reports: { path: string; time: number }[] = [];
-      for (const name of await readdir(directory)) {
-        signal?.throwIfAborted();
-        if (!name.endsWith('.ips')) continue;
-        const path = join(directory, name);
-        const time = (await stat(path)).mtimeMs;
-        if (time >= target.since) reports.push({ path, time });
-      }
-      reports.sort((a, b) => b.time - a.time);
-      const nativeReports: NdjsonRecord[] = [];
-      for (const { path } of reports.slice(0, 50)) {
-        if (Date.now() >= deadline) break;
-        if ((await stat(path)).size > 8 * 1024 * 1024) continue;
-        const parsed = parseIosCrash(await readFile(path, { encoding: 'utf8', signal }), target);
-        if (parsed)
-          nativeReports.push(await symbolicateIos(parsed.record, parsed.report, target.appPath, deadline, signal));
-      }
+      const nativeReports = await readIosCrashReports(target, deadline, signal, env);
       if (nativeReports.length) records = nativeReports;
     } else if (target.platform === 'android') {
       const offset =

@@ -374,7 +374,11 @@ export function reportAndroidResult({
         phaseLine('cache', cacheResult),
         ...(ccache.status === 'not-run' ? [phaseLine('compilation cache', ccacheActivityLine(ccache))] : []),
         phaseLine('logs', logsDir || 'unavailable (remote device)'),
-        ...(!host ? [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)] : []),
+        ...(host
+          ? 'command' in host.agent
+            ? [phaseLine('agent-device', host.agent.command)]
+            : []
+          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
       ].join('\n'),
     );
     if (links) out(chalk.dim(workspaceLinkLine(links)));

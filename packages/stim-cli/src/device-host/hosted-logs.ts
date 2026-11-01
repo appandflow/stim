@@ -73,7 +73,8 @@ async function commitPage(
                     src: 'device',
                     platform: target.platform,
                     slot: target.slot,
-                    event: crashes.has(record) ? 'native_crash' : 'hosted_native_log',
+                    event:
+                      record.event === 'native_crash' || crashes.has(record) ? 'native_crash' : 'hosted_native_log',
                   }
                 : record,
             );

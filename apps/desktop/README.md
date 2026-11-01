@@ -205,9 +205,13 @@ tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with an active, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
-worktree's branch, else the worktree's folder, else its project for a main
-checkout. The second line is where it sits inside its checkout, such as
-`apps/mobile`. The view options button next to the logo opens a menu:
+worktree's branch, else the verified checkout's folder, else its project.
+Apps sharing a reported checkout appear together, including primary checkouts;
+older servers retain linked-worktree grouping. Each app keeps its own commands,
+devices and log routes. Primary checkout groups have no Remove Worktree action.
+Resources shows each app's dependency disk breakdown separately.
+The second line is where the app sits inside its checkout, such as `apps/mobile`.
+The view options button next to the logo opens a menu:
 
 - **Status**: select any combination of Active, Idle, Not set up and Archived. The
   default is Active + Idle. All selects all four states, Archived included, and
@@ -447,7 +451,9 @@ outer padding. A tile is a preview: the device's name and state, its activity, i
 CPU, memory and disk (from the machine owner matched by slot and kind, and the
 device's `disk`) and its screen, which takes no input. A device whose build is
 running shows "Waiting for the iOS build" over its frame with the phase, a
-thin bar and the elapsed time over the estimate. One whose app process is gone
+thin bar and the elapsed time over the estimate until its app is running.
+An already-running app stays visible during later builds, so you can open
+**Control** and keep using it while the next build compiles. One whose app process is gone
 shows **App not running**, and one whose platform never built here and last
 failed shows **No app installed** over its frame instead. A workspace that is
 warming with no device yet shows a warming placeholder. Stopped-device cards use a

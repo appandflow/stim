@@ -5,7 +5,13 @@ import type { Command } from 'commander';
 import { phaseLine } from '../command-output.ts';
 import { LOG_ROTATE_BYTES, ambientEnv, type StimContext } from '@stim-cli/core';
 import { processContext, runProcessOperation } from '../cli-operation.ts';
-import { placementWord, validHostedAppArguments, type MacosAppRecord, type MacosBuild } from '@stim-cli/core/state';
+import {
+  placementWord,
+  validHostedAppArguments,
+  type MacosAppRecord,
+  type MacosBuild,
+  type MacosProcess,
+} from '@stim-cli/core/state';
 import { automaticDevicePlacement, devicePlacementLine } from '../device-host/auto-placement.ts';
 import { connectHost, placeHostedMacos } from '../device-host/hosted-macos.ts';
 import {
@@ -19,7 +25,8 @@ import {
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
-import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
+import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
+import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
@@ -29,7 +36,7 @@ import { waitForMacosRegistration } from '../macos/registration.ts';
 import type { BuildHandoff } from '../offload/client.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
-import { stopBundleInstances, stopMacosAppHeld } from '../macos/stop.ts';
+import { stopBundleInstances, stopMacosAppHeld, stopProcesses as stopMacosProcesses } from '../macos/stop.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { resolveBuildPlacement, parseBuildMachineOption } from '../offload/selection.ts';
 import { spawnEntry } from '../spawn-entry.ts';
@@ -350,29 +357,50 @@ async function launchHere(
   await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   let child;
+  let supervisor: MacosProcess | undefined;
   try {
-    child = spawnDeclared(context, () =>
-      getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
-        cwd: root,
-        detached: true,
-        stdio: ['ignore', fd, fd, 'ipc'],
-        env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1' },
-      }),
-    );
-    child.unref();
-  } finally {
-    closeSync(fd);
-  }
-  const deadline = Date.now() + 20_000;
-  const current = await waitForMacosRegistration(root, record.launchId, child, deadline);
-  if (current) {
-    if ((await waitForLaunchServices(current, deadline)) === 'timeout')
-      note(
-        'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+    try {
+      child = spawnDeclared(context, () =>
+        getExecutor().spawn(process.execPath, [spawnEntry('macos-run'), root, record.launchId], {
+          cwd: root,
+          detached: true,
+          stdio: ['ignore', fd, fd, 'ipc'],
+          env: { ...ambientEnv(), STIM_BACKGROUND_LAUNCH: '1' },
+        }),
       );
-    return current;
+      if (child.pid !== undefined) supervisor = macosProcess(child.pid);
+      child.unref();
+    } finally {
+      closeSync(fd);
+    }
+    const deadline = Date.now() + 20_000;
+    const current = await waitForMacosRegistration(root, record.launchId, child, deadline);
+    if (current) {
+      if ((await waitForLaunchServices(current, deadline)) === 'timeout')
+        note(
+          'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+        );
+      return current;
+    }
+    throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
+  } catch (error) {
+    try {
+      if (supervisor) await stopMacosProcesses([supervisor]);
+      else if (child?.pid !== undefined && child.exitCode === null && child.signalCode === null)
+        throw new Error('The spawned macOS supervisor identity could not be verified.', { cause: error });
+      await stopBundleInstances(root);
+      await writeWorkspaceStateAsync(root, { macos: { ...record, supervisor: undefined, app: undefined } });
+    } catch (cleanupError) {
+      const failure = new WorkspaceProcessCleanupError(
+        [...operationState(context).declaring],
+        `Could not drain the failed macOS launch: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+        'Verify that the workspace supervisor and app have stopped before retrying.',
+      );
+      failure.cause = cleanupError;
+      throw failure;
+    }
+    throw error;
   }
-  throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
 }
 
 function launchPayload(root: string, record: MacosAppRecord): Record<string, unknown> {

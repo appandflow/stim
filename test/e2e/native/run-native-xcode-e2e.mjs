@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { createCleanupTracker, createHarness, workspaceLogsDir } from './harness.mjs';
+import { createCleanupTracker, createHarness, prepareIosDevices, workspaceLogsDir } from './harness.mjs';
 
 assert(process.env.CI === 'true' || process.env.CI === '1', 'This acceptance driver runs only in CI.');
 assert.equal(process.platform, 'darwin', 'Native Xcode acceptance requires a hosted macOS runner.');
@@ -297,8 +297,12 @@ try {
     cpSync(fileURLToPath(new URL('./fixtures/xcode', import.meta.url)), source, { recursive: true });
     writeFileSync(
       join(source, '.stim.json'),
-      JSON.stringify({ ios: { configuration: 'Staging' }, optimizations: { releaseBundleSwap: false } }) + '\n',
+      JSON.stringify({
+        ios: { configuration: 'Staging', simslimProfile: '.stim-simslim.json' },
+        optimizations: { releaseBundleSwap: false },
+      }) + '\n',
     );
+    cpSync(fileURLToPath(new URL('./simslim-profile.json', import.meta.url)), join(source, '.stim-simslim.json'));
     for (const args of [
       ['init', '-b', 'main'],
       ['config', 'user.name', 'Stim native acceptance'],
@@ -323,6 +327,11 @@ try {
   const initialDevices = (await inventory('initial-devices')).map((device) => device.udid).toSorted();
   await readPlan('read-only-plan', 'Debug');
   assert.deepEqual((await inventory('after-plan-devices')).map((device) => device.udid).toSorted(), initialDevices);
+  if (!foodTruck) {
+    const preparationStarted = Date.now();
+    prepareIosDevices({ h: harness, platform: 'ios', targets: [{ cwd: app }], cleanup, shutdown: false });
+    summary.simulatorPreparationMs = Date.now() - preparationStarted;
+  }
   if (foodTruck) {
     await lifecycle('Debug', 'cold', 'Truck', false);
     await lifecycle('Debug', 'unchanged', 'Truck', false);

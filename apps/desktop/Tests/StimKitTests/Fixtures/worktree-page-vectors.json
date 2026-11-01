@@ -807,6 +807,34 @@
           }
         ]
       }
+    },
+    {
+      "name": "primary checkout apps group without linked worktree facts",
+      "input": {
+        "now": "2026-10-05T12:00:00.000Z",
+        "path": "/repo/apps/b",
+        "environments": [
+          { "path": "/repo/apps/a", "checkout": "/repo", "platforms": ["ios"], "live": false, "warnings": [] },
+          { "path": "/repo/apps/b", "checkout": "/repo", "platforms": ["android"], "live": false, "warnings": [] },
+          { "path": "/other/apps/c", "checkout": "/other", "platforms": ["ios"], "live": false, "warnings": [] },
+          { "path": "/repo/unknown", "platforms": ["ios"], "live": false, "warnings": [] }
+        ]
+      },
+      "expected": {
+        "apps": ["/repo/apps/a", "/repo/apps/b"],
+        "projects": ["apps/a", "apps/b"],
+        "lead": "/repo/apps/a",
+        "subtitles": [null, null],
+        "appLabels": ["React Native \u00b7 apps/a", "React Native \u00b7 apps/b"],
+        "buildEntries": [
+          { "path": "/repo/apps/a", "platform": "ios" },
+          { "path": "/repo/apps/b", "platform": "android" }
+        ]
+      },
+      "desktopExpected": {
+        "identity": "/repo",
+        "title": "repo"
+      }
     }
   ]
 }

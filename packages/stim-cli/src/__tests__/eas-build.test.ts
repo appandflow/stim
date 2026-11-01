@@ -1,7 +1,10 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
+import { withAmbientContext } from '@stim-cli/core';
+import { readIosBuildPlan } from '../commands/ios/next-build.ts';
+import { testContext } from './_context.ts';
 import { planEasDevelopmentBuild, resolveEasDevelopmentBuild } from '../engine/eas-build.ts';
 import * as locks from '../engine/build-lock.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -61,7 +64,9 @@ function fixture({
     runQuiet: () => '/eas',
     findExecutable: () => '/eas',
     runFile: (file, args, options) => {
+      if (file === 'git') throw new Error('Fixture is not a Git checkout.');
       expect(file).toBe('/eas');
+      if (args[0] === '--version') return easCliVersion ?? '';
       expect(options.cwd).toBe(root);
       expect(args).toContain('--json');
       expect(args).toContain('--non-interactive');
@@ -208,14 +213,22 @@ function planFixture(builds: unknown[]) {
   return { calls, plan };
 }
 
-test('a plan finds the EAS build without downloading it or taking a claim', async () => {
-  const { calls, plan } = planFixture([build]);
-  expect(await plan).toEqual({
-    ok: true,
+test('a remote-device plan finds the EAS build without downloading, claiming or asserting a local device', async () => {
+  writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { expo: '55.0.0' } }));
+  writeFileSync(join(root, 'app.json'), JSON.stringify({ expo: { name: 'fixture', slug: 'fixture' } }));
+  root = realpathSync(root);
+  const { calls } = fixture({ builds: [build] });
+  const context = testContext({ projectRoot: root, output: () => {} });
+  const plan = await withAmbientContext(context, () =>
+    readIosBuildPlan(context, { easProfile: profile, remote: 'build-mini' }),
+  );
+  expect(plan).toMatchObject({
     fingerprint,
-    buildId: 'build-1',
     cacheKey: expect.stringMatching(/^eas-[a-f0-9]{64}-debug-sim$/),
-    missing: null,
+    cacheHit: 'remote',
+    provider: 'eas',
+    placement: 'unknown; device placement is selected when the command runs',
+    buildPlacement: { preference: 'auto', reason: 'cache hit; no compilation expected' },
   });
   expect(calls.map((args) => args[0])).toEqual(['config', 'fingerprint:generate', 'build:list']);
   expect(locks.acquireBuildLock).not.toHaveBeenCalled();

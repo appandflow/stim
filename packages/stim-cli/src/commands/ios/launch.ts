@@ -300,15 +300,17 @@ export async function verifyIosMetroRun({
           readNativeCrashes,
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           deviceLogsThrough: hostedLogs?.deviceLogsThrough,
-          processAlive: remoteDevice
-            ? null
-            : physical
-              ? deviceProcess
-              : async () => {
-                  if (launched?.pid) return d.pidExists(launched.pid);
-                  const running = await iosAppProcess(udid, bundleId);
-                  return running.state === 'unknown' ? null : running.state === 'running';
-                },
+          processAlive: hostedLogs
+            ? hostedLogs.processAlive
+            : remoteDevice
+              ? null
+              : physical
+                ? deviceProcess
+                : async () => {
+                    if (launched?.pid) return d.pidExists(launched.pid);
+                    const running = await iosAppProcess(udid, bundleId);
+                    return running.state === 'unknown' ? null : running.state === 'running';
+                  },
         }),
       )
     : { verified: false, skipped: true };
