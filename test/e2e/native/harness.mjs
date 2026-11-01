@@ -290,7 +290,7 @@ export function teardownWorkspaces({ h, created, removeWorktrees = true, timeout
   }
 }
 
-export function prepareIosDevices({ h, platform, targets, cleanup }) {
+export function prepareIosDevices({ h, platform, targets, cleanup, shutdown = true }) {
   if (platform !== 'ios') return;
   const script = fileURLToPath(new URL('./prepare-ios-device.mjs', import.meta.url));
   try {
@@ -305,15 +305,19 @@ export function prepareIosDevices({ h, platform, targets, cleanup }) {
         allowFail: true,
       });
       cleanup.recordWorkspace(cwd);
-      const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
-      assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
+      if (shutdown) {
+        const stopped = h.cli(['stop', '--slot', slot, '--json'], { cwd, allowFail: true });
+        assert(stopped.code === 0, `could not stop prepared simulator ${slot}: ${stopped.stderr}`);
+      }
       assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
       const { udid } = JSON.parse(result.stdout);
-      const inventory = JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
+      const listed = h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000, allowFail: true });
+      assert(listed.code === 0, `could not inspect prepared simulator ${slot}: ${listed.stderr}`);
+      const inventory = JSON.parse(listed.stdout);
       const sim = Object.values(inventory.devices)
         .flat()
         .find((device) => device.udid === udid);
-      assert(sim?.state === 'Shutdown', `prepared simulator ${slot} was not shut down`);
+      assert(sim?.state === (shutdown ? 'Shutdown' : 'Booted'), `prepared simulator ${slot} has the wrong state`);
     }
   } catch (error) {
     error.preserveNativeState = true;
