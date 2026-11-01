@@ -139,7 +139,7 @@ if (process.argv[2] !== 'build') {
   },
 );
 
-async function gradleWorkerFixture() {
+async function gradleWorkerFixture(gradleCancelDrainMs = 0) {
   const worker = join(root, 'gradle-worker.mjs');
   await writeFile(
     worker,
@@ -199,7 +199,7 @@ if (mode === 'offer-native-gradle') {
     worker,
     env: process.env,
     allowed: () => allowed,
-    limits: { killGraceMs: 50, gradleCancelDrainMs: 0 },
+    limits: { killGraceMs: 50, gradleCancelDrainMs },
   });
   const frames: Buffer[] = [];
   const socket = {
@@ -399,6 +399,36 @@ test('revocation cancels connected builds even when another repository query can
   } finally {
     job.cancel();
     await job.done;
+    session.close(false);
+    await host.close();
+  }
+});
+
+test('removing a client waits for a cancelled Gradle build to release its repository, then deletes its area', async () => {
+  const { host, session, query } = await gradleWorkerFixture(300);
+  const area = join(host.clientDir('builder'), 'repos', 'app-2');
+  await mkdir(area, { recursive: true });
+  await writeFile(join(area, 'hold-build'), '');
+  const job = host.launch({
+    client: 'builder',
+    repo: 'app-2',
+    session,
+    send: () => {},
+    job: {
+      platform: 'android',
+      project: '',
+      expectedFingerprint: null,
+      android: query.android,
+      native: { provider: 'gradle', sourceDigest: query.sourceDigest, inputs: query.inputs },
+    },
+  });
+  if ('error' in job) throw new Error(job.error.message);
+  try {
+    await vi.waitFor(() => expect(existsSync(join(area, 'build-pid'))).toBe(true));
+    await host.remove('builder');
+    expect(job.outcome).toMatchObject({ ok: false, code: 'cancelled' });
+    expect(existsSync(host.clientDir('builder'))).toBe(false);
+  } finally {
     session.close(false);
     await host.close();
   }
