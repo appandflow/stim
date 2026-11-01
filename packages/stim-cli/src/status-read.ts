@@ -255,6 +255,16 @@ export function liveProbes({
   };
 }
 
+function applyCheckout(
+  state: EnvironmentState,
+  candidate: string | undefined,
+  verified: ReadonlySet<string | null>,
+): void {
+  state.checkout = candidate && verified.has(candidate) ? candidate : null;
+  if (state.worktree && (!state.checkout || nativeCanonicalPath(state.worktree.path) !== state.checkout))
+    state.worktree = null;
+}
+
 type GitScope = 'all' | 'live' | 'none';
 
 /**
@@ -415,10 +425,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     );
     const state = states[states.length - 1];
     if (state) {
-      const checkout = checkouts.get(path);
-      state.checkout = checkout && verifiedCheckouts.has(checkout) ? checkout : null;
-      if (state.worktree && (!state.checkout || nativeCanonicalPath(state.worktree.path) !== state.checkout))
-        state.worktree = null;
+      applyCheckout(state, checkouts.get(path), verifiedCheckouts);
       for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
         if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
       }

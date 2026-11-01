@@ -1148,6 +1148,9 @@ test('status lists worktrees with no environment for every registered repository
     const first = repo('first');
     const second = repo('second');
     const inner = repo('first/vendor/inner');
+    const separate = repo('separate');
+    git(separate, 'init', '-q', '--separate-git-dir', join(base, 'separate-metadata'));
+    mkdirSync(join(separate, 'apps', 'desktop'));
     const alias = join(base, 'first-alias');
     symlinkSync(first, alias, process.platform === 'win32' ? 'junction' : 'dir');
     const bogusGit = join(base, 'bogus-git');
@@ -1198,6 +1201,8 @@ test('status lists worktrees with no environment for every registered repository
           [join(alias, 'apps', 'mobile')]: { label: 'alias', platforms: {} },
           [join(inner, 'apps', 'mobile')]: { label: 'inner', platforms: {} },
           [join(nestedRepo, 'apps', 'mobile')]: { label: 'nested-repo', platforms: {} },
+          [join(separate, 'apps', 'mobile')]: { label: 'separate-mobile', platforms: {} },
+          [join(separate, 'apps', 'desktop')]: { label: 'separate-desktop', platforms: {} },
           [standalone]: { label: 'standalone', platforms: {} },
           [bogusGit]: { label: 'bogus', platforms: {} },
           [join(nested, 'apps', 'mobile')]: {
@@ -1254,7 +1259,7 @@ test('status lists worktrees with no environment for every registered repository
     checkoutReads.length = 0;
     const payload = await runStatusJson();
     expect(checkoutReads.toSorted()).toEqual(
-      [first, second, inner, nested, nestedRepo, loose, idleWorktree, bogusGit].toSorted(),
+      [first, second, inner, separate, nested, nestedRepo, loose, idleWorktree, bogusGit].toSorted(),
     );
     const checkout = (path: string) => payload.environments.find((e: { path: string }) => e.path === path);
     for (const path of [
@@ -1268,6 +1273,8 @@ test('status lists worktrees with no environment for every registered repository
     expect(checkout(join(nestedRepo, 'apps', 'mobile'))).toMatchObject({ checkout: nestedRepo, worktree: null });
     expect(checkout(join(second, 'apps', 'mobile'))).toMatchObject({ checkout: second, worktree: null });
     expect(checkout(join(nested, 'apps', 'mobile'))).toMatchObject({ checkout: nested });
+    for (const name of ['mobile', 'desktop'])
+      expect(checkout(join(separate, 'apps', name))).toMatchObject({ checkout: separate, worktree: null });
     expect(checkout(standalone)?.checkout).toBeNull();
     expect(checkout(bogusGit)?.checkout).toBeNull();
     expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
