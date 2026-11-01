@@ -76,6 +76,7 @@ export function Filters() {
     { value: 'idle', label: t`Idle` },
     { value: 'notSetUp', label: t`Not set up` },
     { value: 'archived', label: t`Archived` },
+    { value: 'hidden', label: t`Hidden` },
   ];
   const sorts: { value: HomeFilters['sort']; label: string }[] = [
     { value: 'recent', label: t`Last Used` },

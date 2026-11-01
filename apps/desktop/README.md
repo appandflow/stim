@@ -144,6 +144,7 @@ in the workspace directory:
   its tile, workspace page, viewer toolbar and sidebar row show the machine's name
   with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
   with the placement reason as hover text. Local devices show no placement label. The
+  same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
@@ -407,6 +408,9 @@ It holds the workspace's details, in this order:
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
+  Completed runs show the selected build destination and recorded compilation machine;
+  cache hits never claim compilation, and an absent compilation destination stays unknown.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
   history and logs use the selected app. macOS uses the same card layout and Run
@@ -998,7 +1002,17 @@ Reduce transparency or Show button borders. Each change reads the device back;
 **Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
-location, VoiceOver, color filters and Liquid Glass controls are not included.
+VoiceOver, color filters and Liquid Glass controls are not included.
+
+The options popover's **Tools** section runs `stim device location|permission|push|network`
+through the CLI for the workspace's own local simulator or emulator, only while **Control** is on
+and outside replay. **Location** sets `latitude, longitude` (or a preset place) and, on iOS, clears
+it. **Permission** grants, revokes or resets one service for the workspace's app. **Test push**
+sends a title and message to the iOS app. **Network** turns an Android emulator's Wi-Fi and mobile
+data off or on. The line under the buttons shows what the CLI printed: Android permissions and
+network read the state back from the device, and iOS location, permissions and push report only
+that the command succeeded. A hosted, remote, EAS or physical device has no Tools section, and a CLI
+refusal shows its message there. Desktop never calls `simctl` or `adb` for these.
 
 The panel's **Development** section offers **Slow animations** and **Shake**
 on supported iOS simulators. Slow animations changes UIKit's animation speed
@@ -2378,6 +2392,7 @@ When the app has more than one window, a **Window** menu above the preview offer
 front window** or one window by title; picking a window raises it among the app's windows
 and pins the preview to it until it closes or the menu follows the front window again. The
 hosted viewer has the same menu during Control, sent as `input.window`.
+Hosted macOS previews use the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the encoded frame's pixel limit.
 The viewer skips its own process to prevent recursive previews.
 **Open app** verifies and activates that owned app using existing Device Control and
 Data Access permission (Accessibility on macOS 26 and earlier) for normal native input;

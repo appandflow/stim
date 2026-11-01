@@ -103,9 +103,10 @@ test('cancelling startup drains dynamic Expo config and its helper before releas
     bin,
     `#!/usr/bin/env node
 const {spawn} = require('node:child_process');
-const {writeFileSync} = require('node:fs');
+const {writeFileSync, renameSync} = require('node:fs');
 const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {stdio:'ignore'});
-writeFileSync(${JSON.stringify(ready)}, JSON.stringify({ parent: process.pid, child: child.pid }));
+writeFileSync(${JSON.stringify(`${ready}.tmp`)}, JSON.stringify({ parent: process.pid, child: child.pid }));
+renameSync(${JSON.stringify(`${ready}.tmp`)}, ${JSON.stringify(ready)});
 setInterval(() => {}, 1000);
 `,
   );

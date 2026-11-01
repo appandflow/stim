@@ -1,13 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('units advance fake deadlines, integration exceptions keep real clocks, and lint rejects unit opt-outs', () => {
-  const fixture = mkdtempSync(join(tmpdir(), 'stim-clock-policy-'));
+  // Vite cannot load these fixture paths across Windows drives: https://github.com/appandflow/stim/issues/4709
+  const fixture = mkdtempSync(join(root, '.stim-clock-policy-'));
   const source = join(fixture, 'packages', 'clock', '__tests__');
   mkdirSync(source, { recursive: true });
   const unit = join(source, 'clock.test.ts');
@@ -57,8 +57,9 @@ test('units advance fake deadlines, integration exceptions keep real clocks, and
         timeout: 15_000,
       },
     );
-    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
-    expect(JSON.parse(readFileSync(report, 'utf8'))).toMatchObject({ numPassedTests: 2, numFailedTests: 0 });
+    const result = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : null;
+    expect(run.status, `${run.stdout}\n${run.stderr}\n${JSON.stringify(result)}`).toBe(0);
+    expect(result).toMatchObject({ numPassedTests: 2, numFailedTests: 0 });
 
     writeFileSync(
       unit,

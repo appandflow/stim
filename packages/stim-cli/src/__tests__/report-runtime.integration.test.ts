@@ -67,41 +67,37 @@ function reapFixtureChild(record: { pid: number; processToken: string } | undefi
   }
 }
 
-// https://github.com/appandflow/stim/issues/3865
-test.skipIf(process.platform === 'win32' && Boolean(process.env.CI))(
-  'cancelling a report reaps its child and leaves another client running',
-  async () => {
-    const controller = new AbortController();
-    let pid: number | undefined;
-    const one = runReport(context(controller.signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
-        timeoutMs: 10_000,
-        onSpawn: (child) => {
-          pid = child.pid;
-          child.stdout?.once('data', () => controller.abort());
-        },
-      }),
-    );
-    const failure = one.then(
-      () => null,
-      (error: unknown) => error,
-    );
-    const other = runReport(context(new AbortController().signal), async () =>
-      getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
-        timeoutMs: 10_000,
-      }),
-    );
-    const otherResult = other.then(
-      (value) => value,
-      (error: unknown) => error,
-    );
-    expect(await failure).toBe(controller.signal.reason);
-    if (pid === undefined) throw new Error('The controlled child did not start');
-    const ownPid = pid;
-    expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-    expect(await otherResult).toBe('other client');
-  },
-);
+test('cancelling a report reaps its child and leaves another client running', async () => {
+  const controller = new AbortController();
+  let pid: number | undefined;
+  const one = runReport(context(controller.signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'console.log("ready"); setTimeout(() => {}, 3000)'], {
+      timeoutMs: 10_000,
+      onSpawn: (child) => {
+        pid = child.pid;
+        child.stdout?.once('data', () => controller.abort());
+      },
+    }),
+  );
+  const failure = one.then(
+    () => null,
+    (error: unknown) => error,
+  );
+  const other = runReport(context(new AbortController().signal), async () =>
+    getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
+      timeoutMs: 10_000,
+    }),
+  );
+  const otherResult = other.then(
+    (value) => value,
+    (error: unknown) => error,
+  );
+  expect(await failure).toBe(controller.signal.reason);
+  if (pid === undefined) throw new Error('The controlled child did not start');
+  const ownPid = pid;
+  expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
+  expect(await otherResult).toBe('other client');
+});
 
 test.each(['caller', 'deadline'])('a %s cancellation rejects while a read remains pending', async (kind) => {
   vi.useFakeTimers();
@@ -492,6 +488,8 @@ test.each([true, false])(
   async (boundedReport) => {
     let owned: { pid: number; processToken: string } | undefined;
     let declaredAtExit: boolean | undefined;
+    let ready = Promise.resolve();
+    const releaseLauncher = join(scratch, 'release-launcher');
     const scope = context(new AbortController().signal);
     try {
       const work = async (operation: StimContext) =>
@@ -504,9 +502,12 @@ test.each([true, false])(
               [
                 '-e',
                 `
+          const fs = require('node:fs');
+          fs.watch(${JSON.stringify(scratch)}, () => {
+            if (fs.existsSync(${JSON.stringify(releaseLauncher)})) process.exit(0);
+          });
           const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { stdio: 'ignore' });
           console.log(c.pid);
-          setTimeout(() => process.exit(0), 100);
         `,
               ],
               {
@@ -514,18 +515,29 @@ test.each([true, false])(
                 declareFor: operation,
                 signal: operation.signal,
                 onSpawn: (child) => {
-                  child.stdout?.once('data', (chunk) => {
-                    const pid = Number(String(chunk).trim());
-                    const identity = captureProcessIdentity(pid);
-                    if (!identity.ok) throw new Error(identity.reason);
-                    owned = { pid, processToken: identity.token };
+                  ready = new Promise<void>((resolve, reject) => {
+                    child.stdout?.once('data', (chunk) => {
+                      try {
+                        const pid = Number(String(chunk).trim());
+                        const identity = captureProcessIdentity(pid);
+                        if (!identity.ok) throw new Error(identity.reason);
+                        owned = { pid, processToken: identity.token };
+                        writeFileSync(releaseLauncher, '');
+                        resolve();
+                      } catch (error) {
+                        reject(error);
+                      }
+                    });
+                    child.once('exit', () => {
+                      declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
+                      if (!owned) reject(new Error('The controlled descendant did not start'));
+                    });
                   });
-                  child.once('exit', () => {
-                    declaredAtExit = readClaimSet(claim.root).live[0]?.childDeclared;
-                  });
+                  void ready.catch((error: unknown) => fixtureAbort.abort(error));
                 },
               },
             );
+            await ready;
             expect(declaredAtExit).toBe(true);
             if (!owned) throw new Error('The controlled descendant did not start');
             expect(inspectProcessIdentity(owned)).toBe('gone');

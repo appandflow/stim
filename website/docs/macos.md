@@ -417,6 +417,7 @@ Phones and Stim Desktop view and control the hosted app through this Mac's
 stim-server, which relays to the host. Hosted iOS simulators use the same relay
 and show the machine's name in their device tiles. The phone sends clicks, scrolls,
 text and keys; Stim Desktop's Control sends clicks, drags and typed text.
+Desktop sizes the hosted macOS preview from the captured window's point size when the host supplies it, shrinking only to fit the card rather than with the stream's pixel limit.
 
 <StimTabs
 code={`stim macos --remote janics-mac-mini

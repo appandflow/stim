@@ -102,7 +102,7 @@ public struct StimCLI: Sendable {
     return .exited(status, stderr: stderr)
   }
 
-  private func execute(
+  func execute(
     _ args: [String], cwd: String?, timeout: TimeInterval? = nil
   ) async throws -> (
     Int32, Data, String
