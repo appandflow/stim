@@ -289,7 +289,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
 
 /**
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
- * client's Gradle home is made private too; an area whose `src` is a directory keeps it.
+ * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
@@ -300,7 +300,7 @@ function ensureCheckout(area: string, src: string): void {
     const gradleHome = process.env.GRADLE_USER_HOME;
     const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
     if (linked) dirs.push([target, windowsShortDirKey('checkout', realArea)]);
-    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', dirname(dirname(area)))]);
+    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', area)]);
     makePrivateWindowsDirs(dirs);
     if (!linked) return;
     let current: string | null = null;
@@ -1287,7 +1287,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
 }
 
 /**
- * Stops the Gradle daemons of this client's Gradle home. A daemon calls setsid, so it leaves the build's
+ * Stops the Gradle daemons of this repository's Gradle home. A daemon calls setsid, so it leaves the build's
  * process group and would outlive the job and its claim.
  */
 function stopGradleDaemons(gradlew: string, timeoutMs: number): void {

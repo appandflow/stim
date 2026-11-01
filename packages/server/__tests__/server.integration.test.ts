@@ -2846,7 +2846,7 @@ describe('offloaded builds', () => {
   });
 
   test.skipIf(!fakeTailscale)(
-    "builds an Android job with its Gradle options in the client's own Gradle home",
+    "builds an Android job with its Gradle options in the repository's own Gradle home",
     async () => {
       const port = await start();
       const { client, id } = await buildClient(port);
@@ -2868,7 +2868,7 @@ describe('offloaded builds', () => {
       await progress(client);
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android: { ...android, ...layout } });
-      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
+      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'cache', 'gradle'));
     },
   );
 
@@ -3359,10 +3359,18 @@ describe('offloaded builds', () => {
 
   describe('warm Gradle daemons', () => {
     const daemons: ChildProcess[] = [];
-    const gradleHome = (client: string) => join(process.env.STIM_HOME!, 'build-worker', client, 'cache', 'gradle');
-    const daemonOf = (client: string) => {
-      const jar = join(gradleHome(client), 'wrapper', 'dists', 'gradle-9.4.1', 'lib', 'gradle-daemon-main-9.4.1.jar');
-      mkdirSync(gradleHome(client), { recursive: true });
+    const gradleHome = (client: string, repo?: string) =>
+      join(process.env.STIM_HOME!, 'build-worker', client, ...(repo ? ['repos', repo] : []), 'cache', 'gradle');
+    const daemonOf = (client: string, repo?: string) => {
+      const jar = join(
+        gradleHome(client, repo),
+        'wrapper',
+        'dists',
+        'gradle-9.4.1',
+        'lib',
+        'gradle-daemon-main-9.4.1.jar',
+      );
+      mkdirSync(gradleHome(client, repo), { recursive: true });
       const daemon = spawn(
         process.execPath,
         ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
@@ -3428,17 +3436,19 @@ describe('offloaded builds', () => {
       },
     );
 
-    test.skipIf(!fakeTailscale)("stops the client's daemon when its build is cancelled", async () => {
+    test.skipIf(!fakeTailscale)("stops only the cancelled repository's daemon", async () => {
       const port = await start({
         env: { FAKE_WORKER_HANG: '1' },
         buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
       });
       const { client, id } = await buildClient(port);
       const job = await launch(client);
-      const daemon = daemonOf(id);
+      const daemon = daemonOf(id, 'app-1');
+      const sibling = daemonOf(id, 'another-repo');
       expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
       expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
       await eventually(() => !running(daemon));
+      expect(running(sibling)).toBe(true);
     });
   });
 });
