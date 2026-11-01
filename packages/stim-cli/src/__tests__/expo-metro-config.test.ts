@@ -34,8 +34,8 @@ describe('the Expo Metro config adapter', () => {
     'observes delivery without replacing project settings (shared store: %s)',
     (storeRoot) => {
       writeFileSync(
-        join(project, 'metro.config.cjs'),
-        `module.exports = { cacheStores: [{ _root: '/project/store' }], server: {
+        join(project, 'metro.config.mjs'),
+        `await Promise.resolve(); export default { cacheStores: [{ _root: '/project/store' }], server: {
       port: 8123,
       enhanceMiddleware(middleware) { return (req, res, next) => {
         res.setHeader('x-project', 'kept'); return middleware(req, res, next);

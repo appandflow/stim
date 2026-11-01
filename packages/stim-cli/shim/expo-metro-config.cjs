@@ -105,8 +105,13 @@ function loadProjectConfig(file) {
   try {
     return unwrap(file, require(file));
   } catch (error) {
-    if (error && (error.code === 'ERR_REQUIRE_ESM' || error.code === 'ERR_UNKNOWN_FILE_EXTENSION')) {
-      return import(pathToFileURL(file).href).then((module) => unwrap(file, module));
+    if (
+      error &&
+      (error.code === 'ERR_REQUIRE_ESM' ||
+        error.code === 'ERR_UNKNOWN_FILE_EXTENSION' ||
+        error.code === 'ERR_REQUIRE_ASYNC_MODULE')
+    ) {
+      return import(pathToFileURL(file).href).then((module) => unwrap(file, module.default));
     }
     throw error;
   }
