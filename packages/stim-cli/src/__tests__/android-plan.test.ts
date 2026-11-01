@@ -191,7 +191,7 @@ describe('planAndroid', () => {
     expect(payload).toMatchObject({
       placement: 'this machine',
       buildPlacement: { preference: 'local', reason: 'builds on this machine' },
-      cacheKey: buildCacheKey('android', HASH, { variant: 'debug', abi: ARM.arch }),
+      cacheKey: buildCacheKey('android', HASH, { variant: 'debug', abi: hostSystemImageArch() }),
     });
     expect(getProject(app)?.platforms).toBeUndefined();
   });
