@@ -32,6 +32,10 @@ for (const provider of ['xcode', 'gradle'])
         const src = join(area, 'src');
         const blobs = join(area, 'blobs');
         mkdirSync(src);
+        if (provider === 'xcode') {
+          const initialized = spawnSync('git', ['init', '--quiet'], { cwd: src });
+          assert.equal(initialized.status, 0);
+        }
         writeFileSync(join(src, '.gitignore'), 'ignored*\n');
         writeFileSync(join(src, 'ignored-secret'), 'stale private bytes');
         mkdirSync(join(src, 'ignored-output'));
@@ -99,12 +103,14 @@ for (const provider of ['xcode', 'gradle'])
                   arch: 'arm64',
                 },
         };
-        const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-          input: JSON.stringify(job),
-          encoding: 'utf8',
-          timeout: 15000,
-          env: { ...process.env, STIM_HOME: join(area, 'home') },
-        });
+        const runWorker = () =>
+          spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+            input: JSON.stringify(job),
+            encoding: 'utf8',
+            timeout: 15000,
+            env: { ...process.env, STIM_HOME: join(area, 'home') },
+          });
+        const result = runWorker();
         assert.equal(result.error, undefined);
         assert.equal(result.status, 0, result.stderr);
         const records = result.stdout
@@ -126,6 +132,16 @@ for (const provider of ['xcode', 'gradle'])
           records.some((record) => record.phase === 'build'),
           false,
         );
+        if (provider === 'xcode') {
+          const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: src, encoding: 'utf8' });
+          assert.equal(head.status, 0, head.stderr);
+          assert.equal(spawnSync('git', ['ls-tree', 'HEAD'], { cwd: src, encoding: 'utf8' }).stdout, '');
+          writeFileSync(join(src, 'Main.swift'), 'previous build mutation');
+          const repeated = runWorker();
+          assert.equal(repeated.status, 0, repeated.stderr);
+          assert.equal(readFileSync(join(src, 'Main.swift'), 'utf8'), 'new');
+          assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: src, encoding: 'utf8' }).stdout, head.stdout);
+        }
       } finally {
         rmSync(area, { recursive: true, force: true });
       }

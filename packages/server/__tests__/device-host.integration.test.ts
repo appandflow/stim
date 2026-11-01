@@ -156,6 +156,10 @@ if(input.mode === 'inspect') {
   else {
     if((input.deviceType ?? input.deviceProfile) === 'logs-delayed') await new Promise(resolve=>setTimeout(resolve,150));
     const logs=join(home,input.platform+'-logs');mkdirSync(logs,{recursive:true});
+    if(existsSync(join(home,'fail-console'))) {
+      appendFileSync(join(logs,'native-crashes.ndjson'),JSON.stringify({ts:2,src:'device',platform:input.platform,level:'fatal',event:'native_crash',msg:'owned crash'})+'\\n');
+      throw new Error('Console unavailable');
+    }
     appendFileSync(join(logs,'device.ndjson'),JSON.stringify({ts:1,src:'device',platform:input.platform,level:'error',msg:existsSync(join(logs,'device.ndjson'))?'final native tail':'native failure'})+'\\n');
     out({more:input.deviceType === 'logs-backlog' && !input.final});
   }
@@ -2070,6 +2074,27 @@ test('iOS followers coalesce and throttle without blocking rerun offers, chunks,
     'result.records',
     [],
   );
+  const workerHome = join(deviceHostArea(session.id), 'home');
+  const failedConsole = join(workerHome, 'fail-console');
+  writeFileSync(failedConsole, '');
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 4000);
+  try {
+    expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+      'error.code',
+      'action-failed',
+    );
+    clock.mockReturnValue(Date.now() + 4000);
+    const entered = join(workerHome, 'logs-entered');
+    rmSync(entered);
+    expect(await host.logsQuery('client', { ...query, cursor: first.result.cursor })).toHaveProperty(
+      'result.records.0.event',
+      'native_crash',
+    );
+    expect(existsSync(entered)).toBe(false);
+  } finally {
+    clock.mockRestore();
+    rmSync(failedConsole);
+  }
   const currentBundle = join(hostedAppArea(session.id, rerun.attempt), 'App.app');
   mkdirSync(currentBundle);
   writeFileSync(join(currentBundle, 'current'), 'current app');

@@ -398,7 +398,13 @@ test('cancelling a hosted stop preserves both placements and never stops the sib
 
 test('cancelling stim stop during the final log copy keeps the placement, and a rerun copies each record once', async () => {
   writeHostedIos(root, 'default', placement());
-  logRecords = [1, 2, 3, 4, 5].map((ts) => ({ ts, src: 'device', level: 'info', msg: `native ${ts}` }));
+  logRecords = [1, 2, 3, 4, 5].map((ts) => ({
+    ts,
+    src: 'device',
+    level: ts === 4 ? 'fatal' : 'info',
+    event: ts === 4 ? 'native_crash' : 'log',
+    msg: `native ${ts}`,
+  }));
   const controller = new AbortController();
   const cancelled = new Error('cancel stim stop');
   const request = fixtureConnection.request.bind(fixtureConnection);
@@ -421,6 +427,13 @@ test('cancelling stim stop during the final log copy keeps the placement, and a 
   expect(readHostedNativeLogs(root, 'ios', 'default').map((record) => record.msg)).toEqual(
     logRecords.map((record) => record.msg),
   );
+  expect(readHostedNativeLogs(root, 'ios', 'default').map((record) => record.event)).toEqual([
+    'hosted_native_log',
+    'hosted_native_log',
+    'hosted_native_log',
+    'native_crash',
+    'hosted_native_log',
+  ]);
 });
 
 test.each([

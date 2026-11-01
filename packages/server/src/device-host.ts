@@ -1247,7 +1247,8 @@ export class DeviceHost {
         record.state === 'ready' &&
         attempt &&
         readHostedAppMetadata(record.id, attempt).state === 'installed' &&
-        !saved.more
+        !saved.more &&
+        !saved.records.some((entry) => entry.event === 'native_crash')
       ) {
         if (!owned) throw new Error('The hosted log owner is unavailable. Stop this session before retrying.');
         if (!owned.stopping && !owned.installing) {
