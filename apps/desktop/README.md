@@ -2299,23 +2299,18 @@ The fixture test skips without the variable and never starts the CLI or a device
 - stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
 - `Sources/StimDesktop`: the SwiftUI app. `Design/` holds the generated tokens, the theme layer over them (`.textStyle(_:)`, `Font.stim(_:)` and the dynamic colors), and the component kit that mirrors the phone's: `.buttonStyle(.stim(_:_:))`, `IconButton`, `Pill`, `Banner`, `ListSection`/`ListRow`, `Card`, `HoverRowStyle`, `StatusDot`, `StimProgressBar`, `InlineEmpty` and the `IconSize` scale. A debug build has **Window > SwiftUI Playground** for production screen fixtures and design tokens.
 
-### Native visual fixture pilot
+### Native visual fixture exports
 
-`swift test --filter VisualFixtureTests` compares production playground bodies
-for long-text Notifications at the detail's 440-point minimum, simulator controls
-in dark appearance, and the simulator error message in light appearance. It also
-compares a failed build history row collapsed and expanded, including its wrapped
-diagnostic, at the inspector's 320-point default width.
-Archived sidebar and workspace pages have light and dark fixtures with native 1x references; their comparisons skip on 2x until matching references are captured.
-To render the complete live and archived workspace pages, including all inspector cards,
-empty/expired archives and the build history sheet in light and dark, run:
+The production playgrounds remain available for visual review. To render the live
+and archived workspace pages, including inspector cards, empty and expired
+archives, and build-history sheets in light and dark, run:
 
 ```sh
 STIM_WORKSPACE_SHOTS=/tmp/stim-workspace-shots swift test --filter VisualFixtureTests.testWorkspaceCardScreenshots
 ```
 
-On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export the four
-archive comparison captures at their reference dimensions. Inspect them before replacing references.
+On a native 1x window, add `STIM_ARCHIVE_REFERENCE_SHOTS=1` to also export archive
+sidebar and workspace captures at 320- and 900-point widths.
 
 To render the toolbar status pill with a status error inside a real window toolbar item, in light and dark:
 
@@ -2323,39 +2318,21 @@ To render the toolbar status pill with a status error inside a real window toolb
 STIM_TOOLBAR_STATUS_SHOTS=/tmp/stim-toolbar-status swift test --filter ToolbarStatusErrorScreenshotTests
 ```
 
-The test skips without the variable. A toolbar draws a `Label` as its icon only, so check that the images show the message beside the icon.
+These opt-in exports skip without their environment variables. A toolbar draws a
+`Label` as its icon only, so inspect the captures for the message beside the icon.
+Native Settings tabs move into window chrome; a hosting-view bitmap does not
+faithfully capture that strip. Use an owned app window for that review.
 
-These fixtures use failed iOS and successful Android build history with phase timings,
-a merged PR, ended agents, expired logs and two recording slots. The real archive sidebar,
-workspace and build-sheet screens load the sanitized `Fixtures/real-archive` case, including
-all five iOS builds, local/remote placement, diagnostics and phase timings, and the
-`ios-default` recording spans. These DEBUG screens require the source checkout. They run no backend reads.
+The workspace fixtures use failed iOS and successful Android build history with
+phase timings, a merged PR, ended agents, expired logs and two recording slots.
+Real archive screens load the sanitized `Fixtures/real-archive` data. Captures use
+a fixed date, en_US, UTC, InterVariable and the native 1x or 2x backing scale.
+They open only fixture windows, without starting the CLI, server or devices.
+The DEBUG screens require the source checkout and run no backend reads.
 
-The DEBUG fixtures use a fixed date. Captures pin en_US, UTC, InterVariable,
-320/380/440 by 640 points and arm64 on macOS 27.0 build 26A428. Native 1x and
-2x windows use separate references; Retina reference names end in `.2x.png`.
-The three playground bodies retain their 1x references. The two build row cases
-currently have only 2x references and explicitly skip on 1x; no downsampled image
-stands in for native 1x coverage.
-They open only a fixture window, without starting the CLI, server or devices.
-The notification view reads its calendar, timezone and locale from the SwiftUI
-environment; fixtures supply UTC explicitly, independent of the process `TZ`.
-
-The current macOS 15 CI runner has no matching references and explicitly skips
-these image comparisons. This is a local pilot, not CI visual regression coverage.
-Issue [#2342](https://github.com/appandflow/stim/issues/2342) tracks matching CI
-references, native 1x build rows, Settings window chrome and the remaining
-representative cases.
-Native Settings tabs move into window chrome; a hosting-view bitmap cannot
-faithfully compare that strip. Compact 380-point Notifications is a stress case
-below the production detail minimum and is not an accepted reference.
-
-Normal runs never create or update references. To deliberately replace them on
-the matching machine, use
-`STIM_RECORD_VISUAL_FIXTURES=1 swift test --filter VisualFixtureTests`, then inspect
-every changed PNG under `Tests/VisualFixtureTests/__Snapshots__` and rerun without
-the variable. SnapshotTesting reports failures with reference, result and difference
-images. Its dependency belongs only to the visual test target.
+The whole-image comparison pilot tracked in [#2342](https://github.com/appandflow/stim/issues/2342)
+is retired. The exports support deliberate visual inspection; they provide no
+CI image-comparison coverage and do not record or approve golden images.
 
 ## Native macOS development prototype
 
