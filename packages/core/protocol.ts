@@ -90,6 +90,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
  * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
@@ -147,6 +148,7 @@ export const FEATURES = [
   'build-reuse-artifact',
   'status-views',
   'desktop-reports',
+  'desktop-machine-history',
   'desktop-report-platform',
   'desktop-report-invalidate-target',
   'desktop-settings',
@@ -155,6 +157,8 @@ export const FEATURES = [
   'desktop-full-logs',
   'desktop-doctor-run',
   'desktop-machine-access',
+  'desktop-remedy',
+  'desktop-device-tools',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
@@ -180,6 +184,7 @@ export const METHODS = [
   'desktop.logs.subscribe',
   'desktop.doctor.run',
   'desktop.machine-access.subscribe',
+  'desktop.remedy.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
@@ -491,7 +496,9 @@ export interface DesktopPlanRefusal {
   remedy: string | null;
 }
 
-export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
+export type DesktopReportTarget =
+  | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
+  | { report: 'gc' | 'gc-history' | 'builds' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1699,6 +1706,14 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.remedy.subscribe': {
+    params: { cwd: string } & (
+      | { action: 'doctor-fix'; platform?: 'ios' | 'android' }
+      | { action: 'device-unlock'; platform?: 'ios' | 'android'; slot?: string }
+      | { action: 'device-tool'; request: DeviceToolRequest; slot?: string }
+    );
+    result: SubscribeResult;
+  };
   'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
@@ -2185,6 +2200,28 @@ export interface DesktopMachineAccessEndedEvent {
   message: string;
 }
 
+export type DeviceToolRequest =
+  | { tool: 'location'; platform: 'ios' | 'android'; set: string }
+  | { tool: 'location'; platform: 'ios' | 'android'; clear: true }
+  | { tool: 'permission'; platform: 'ios' | 'android'; action: 'grant' | 'revoke' | 'reset'; service: string }
+  | { tool: 'push'; platform: 'ios'; payload: string }
+  | { tool: 'network'; platform: 'android'; state: 'on' | 'off' };
+
+export interface DesktopRemedyProgressEvent {
+  event: 'desktop-remedy-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+export interface DesktopRemedyEndedEvent {
+  event: 'desktop-remedy-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 /**
  * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
  * Only device-host links receive it, so it is not a `ServerEvent`.
@@ -2194,6 +2231,8 @@ export interface MetroLinkOpenEvent {
 }
 
 export type ServerEvent =
+  | DesktopRemedyProgressEvent
+  | DesktopRemedyEndedEvent
   | DesktopMachineAccessProgressEvent
   | DesktopMachineAccessEndedEvent
   | DesktopWorktreeWarmProgressEvent

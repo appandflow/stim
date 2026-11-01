@@ -261,8 +261,10 @@ public enum BuildLedger {
   }
 }
 
-extension StimCLI {
-  public func buildLedger(limit: Int = 500) async throws -> [LedgerBuild] {
-    BuildLedger.parse(try await run(["logs", "--source", "builds", "--json", "--tail", String(limit)], cwd: NSHomeDirectory()))
+extension BuildLedger {
+  @MainActor public static func read(stimHome: String, connection: (client: ServerClient, home: String)?) async throws
+    -> [LedgerBuild]
+  {
+    parse(try await readServerMachineHistory(report: "builds", stimHome: stimHome, connection: connection))
   }
 }

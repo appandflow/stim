@@ -10,11 +10,11 @@ public struct ServerReloadResult: Sendable {
 /// Requests reload through the same-home bundled server. Cancellation unsubscribes; a dropped connection
 /// never retries a reload whose dispatch may already have happened.
 @MainActor public func runServerReload(
-  _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+  _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerReloadResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to reload this workspace for this Stim home.")
   }

@@ -4,7 +4,7 @@ import Testing
 @testable import StimKit
 
 @MainActor @Suite(.serialized) struct LogFollowerTests {
-  private let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim"], override: "/does-not-exist/stim")
+  private let environment = ["STIM_HOME": "/tmp/stim"]
 
   private func connection(scheduler: @escaping ServerScheduler = ServerClient.dispatchAfter) async throws -> (
     ServerClient, FakeTransport
@@ -49,12 +49,13 @@ import Testing
     defer { client.stop() }
     var messages: [String] = []
     let follower = LogFollower { if case .records(let records) = $0 { messages += records.map(\.msg) } }
-    follower.start(LogQuery(), cli: cli, connection: (client, "/tmp/stim"), cwd: "/app")
+    follower.start(LogQuery(), stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/app")
     await settle()
     socket.answer("logs.subscribe", .object(["subscription": .string("s1")]))
     await settle()
     logs(socket, "s1", "old")
-    follower.start(LogQuery(), cli: cli, connection: (client, "/tmp/stim"), cwd: "/other")
+    follower.start(
+      LogQuery(), stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/other")
     await settle()
     socket.answer("unsubscribe", .object([:]))
     socket.answer("logs.subscribe", .object(["subscription": .string("s2")]))
@@ -88,7 +89,7 @@ import Testing
       }
       if case .records(let records) = $0 { shown += records.map(\.msg) }
     }
-    follower.start(LogQuery(), cli: cli, connection: (client, "/tmp/stim"), cwd: "/app")
+    follower.start(LogQuery(), stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/app")
     await settle()
     socket.answer("logs.subscribe", .object(["subscription": .string("s1")]))
     await settle()
@@ -122,10 +123,11 @@ import Testing
     let follower = LogFollower { if case .failed(let reason) = $0 { failure = reason } }
     var query = try #require(LogQuery.build(platform: "ios", slot: "ipad", startedAt: "2026-10-02T12:00:00Z"))
     query.sources.insert(.agent)
-    follower.start(query, cli: cli, connection: (client, "/tmp/another-home"), cwd: "/app")
+    follower.start(
+      query, stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/another-home"), cwd: "/app")
     #expect(failure != nil)
     #expect(socket.sent.count == 1)
-    follower.start(query, cli: cli, connection: (client, "/tmp/stim"), cwd: "/app")
+    follower.start(query, stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/app")
     await settle()
     let request = try #require(socket.sent.last)
     #expect(request["method"] == .string("desktop.logs.subscribe"))
@@ -151,7 +153,7 @@ import Testing
     let (client, socket) = try await connection()
     defer { client.stop() }
     var follower: LogFollower? = LogFollower { _ in }
-    follower?.start(LogQuery(), cli: cli, connection: (client, "/tmp/stim"), cwd: "/app")
+    follower?.start(LogQuery(), stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/app")
     await settle()
     socket.answer("logs.subscribe", .object(["subscription": .string("s1")]))
     await settle()
@@ -161,7 +163,7 @@ import Testing
     socket.answer("unsubscribe", .object([:]))
     let others = [LogFollower { _ in }, LogFollower { _ in }]
     for (index, other) in others.enumerated() {
-      other.start(LogQuery(), cli: cli, connection: (client, "/tmp/stim"), cwd: "/app")
+      other.start(LogQuery(), stimHome: StimHome.path(environment: environment), connection: (client, "/tmp/stim"), cwd: "/app")
       await settle()
       socket.answer("logs.subscribe", .object(["subscription": .string("s\(index + 2)")]))
       await settle()

@@ -201,3 +201,34 @@ private final class CancellableRun: @unchecked Sendable {
     }
   }
 }
+
+public enum CommandFailure: LocalizedError {
+  case exited(Int32, stderr: String = "")
+
+  public var errorDescription: String? {
+    switch self {
+    case .exited(let status, let stderr):
+      return stderr.isEmpty ? "Command exited with status \(status)." : "Command exited with status \(status): \(stderr)"
+    }
+  }
+}
+
+/// The last three non-empty lines of `text`.
+func stderrTail(_ text: String) -> String {
+  text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    .suffix(3).joined(separator: "\n")
+}
+
+/// The override, or the first `name` on the environment's `PATH`.
+func resolveExecutable(_ name: String, override: String?, environment: inout [String: String]) -> String? {
+  let executable =
+    override.flatMap { $0.isEmpty ? nil : $0 }
+    ?? (environment["PATH"] ?? "").split(separator: ":").lazy
+    .map { "\($0)/\(name)" }
+    .first { FileManager.default.isExecutableFile(atPath: $0) }
+  if let executable {
+    let binDir = (executable as NSString).deletingLastPathComponent
+    environment["PATH"] = "\(binDir):\(environment["PATH"] ?? "/usr/bin:/bin")"
+  }
+  return executable
+}

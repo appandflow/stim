@@ -20,6 +20,9 @@ import {
   readArchive,
   readArchiveState,
   readBuildHistory,
+  readBuildLedger,
+  readGcLog,
+  queryLogs as queryMachineLogs,
   readSetupJournal,
   isJournalExpired,
   queryJsonLogs,
@@ -73,6 +76,7 @@ import {
   type StartupState,
 } from './startup.ts';
 import {
+  ClaimUnavailableError,
   claimRemoveCommand,
   exclusiveClaimDir,
   readClaimSet,
@@ -124,6 +128,7 @@ import {
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
+  type DeviceToolRequest,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
@@ -638,7 +643,13 @@ function reloadAction(
   };
 }
 
-type StartOutcome = StopOutcome & { code?: string; unresolved?: boolean; retainedClaimRoots?: string[] };
+type StartOutcome = StopOutcome & {
+  code?: string;
+  unresolved?: boolean;
+  retainedClaimRoots?: string[];
+  cleanupComplete?: Promise<void>;
+  cleanupSettled?: () => boolean;
+};
 
 function lifecycleAction(
   cwd: string,
@@ -679,6 +690,8 @@ function lifecycleAction(
       (result): StartOutcome => result,
       (cause: unknown): StartOutcome => {
         const details = cause instanceof StimError && isJsonObject(cause.details) ? cause.details.cause : undefined;
+        const cleanup = cause instanceof StimError ? cause.cause : undefined;
+        const settled = cleanup instanceof Error && 'cleanupSettled' in cleanup ? cleanup.cleanupSettled : undefined;
         return {
           ok: false,
           message: readFailure(cause),
@@ -686,7 +699,15 @@ function lifecycleAction(
             ? {
                 code: cause.code,
                 stdout: JSON.stringify({ code: cause.code, message: cause.message, remedy: cause.remedy }),
-                unresolved: cause.code === 'STIM_CLAIM_UNAVAILABLE',
+                unresolved:
+                  cause.code === 'STIM_CLAIM_UNAVAILABLE' &&
+                  !(cleanup instanceof ClaimUnavailableError && !('reportCleanup' in cleanup)),
+                ...(typeof settled === 'function' ? { cleanupSettled: () => settled() === true } : {}),
+                ...(cleanup instanceof Error &&
+                'cleanupComplete' in cleanup &&
+                cleanup.cleanupComplete instanceof Promise
+                  ? { cleanupComplete: cleanup.cleanupComplete }
+                  : {}),
                 ...(isJsonObject(details) &&
                 Array.isArray(details.retainedClaimRoots) &&
                 details.retainedClaimRoots.every((root) => typeof root === 'string' && isAbsolute(root))
@@ -852,6 +873,89 @@ function machineAccessAction(
       stdout: JSON.stringify(await client.requestMachineAccess({ ticket, signal })),
       summary: 'Machine access report completed.',
     }),
+    onProgress,
+  );
+}
+
+function deviceToolRequest(value: unknown): DeviceToolRequest | null {
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
+  const { platform } = value;
+  const only = (...fields: string[]) =>
+    Object.keys(value).every((key) => ['tool', 'platform', ...fields].includes(key));
+  if (value.tool === 'location') {
+    if (only('clear') && value.clear === true) return { tool: 'location', platform, clear: true };
+    if (only('set') && typeof value.set === 'string' && value.set.length <= 256)
+      return { tool: 'location', platform, set: value.set };
+  } else if (
+    value.tool === 'permission' &&
+    only('action', 'service') &&
+    (value.action === 'grant' || value.action === 'revoke' || value.action === 'reset') &&
+    typeof value.service === 'string' &&
+    value.service.length <= 1024
+  ) {
+    return { tool: 'permission', platform, action: value.action, service: value.service };
+  } else if (
+    value.tool === 'push' &&
+    platform === 'ios' &&
+    only('payload') &&
+    typeof value.payload === 'string' &&
+    value.payload.length <= 65_536
+  ) {
+    return { tool: 'push', platform, payload: value.payload };
+  } else if (
+    value.tool === 'network' &&
+    platform === 'android' &&
+    only('state') &&
+    (value.state === 'on' || value.state === 'off')
+  ) {
+    return { tool: 'network', platform, state: value.state };
+  }
+  return null;
+}
+
+function remedyAction(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  limits: CommandLimits,
+  request: Methods['desktop.remedy.subscribe']['params'],
+  admit: (workspace: string) => void,
+  onProgress: (progress: StimProgress) => void,
+) {
+  return lifecycleAction(
+    cwd,
+    env,
+    limits,
+    'Desktop remedy',
+    'STIM_REPORT_TIMEOUT',
+    async (client, signal) => {
+      if (request.action === 'doctor-fix') {
+        const { report, exitCode } = await client.repairDoctor({
+          platform: request.platform,
+          signal,
+          beforeRepair: admit,
+        });
+        const stdout = JSON.stringify(report);
+        return exitCode === 0
+          ? { ok: true, stdout, summary: 'Doctor repair completed.' }
+          : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
+      }
+      if (request.action === 'device-tool') {
+        const result = await client.deviceTool({
+          request: request.request,
+          slot: request.slot,
+          signal,
+          beforeTool: admit,
+        });
+        return { ok: true, stdout: JSON.stringify(result), summary: 'Device change completed.' };
+      }
+      const released = await client.unlockDevice({
+        platform: request.platform,
+        slot: request.slot,
+        signal,
+        beforeUnlock: admit,
+      });
+      return { ok: true, stdout: JSON.stringify(released), summary: `Released ${released.length} device lease(s).` };
+    },
     onProgress,
   );
 }
@@ -1319,7 +1423,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const retainedLifecycles = new Set<() => void>();
   const planQueues = new Map<string, Promise<void>>();
   const readDetailsReport = (
-    method: 'stats' | 'gc' | 'doctor',
+    method: 'stats' | 'gc' | 'doctor' | 'gc-history' | 'builds',
     cwd = homedir(),
     platform?: 'ios' | 'android',
     signal?: AbortSignal,
@@ -1337,6 +1441,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     task = Promise.resolve()
       .then(async () => {
         const stim = createStim({ projectRoot: cwd, env: options.env });
+        if (method === 'gc-history' || method === 'builds')
+          return {
+            records: queryMachineLogs({
+              records: method === 'builds' ? readBuildLedger() : readGcLog(),
+              sources: [method === 'builds' ? 'builds' : 'gc'],
+              tail: method === 'builds' ? 500 : 2000,
+            }),
+          };
         if (method === 'doctor') return await stim.doctor({ signal: abort.signal, platform });
         return method === 'gc'
           ? await stim.gc({ signal: abort.signal, measureBuildState: false })
@@ -1837,6 +1949,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-worktree-remove',
               'desktop-worktree-warm',
               'desktop-machine-access',
+              'desktop-remedy',
+              'desktop-device-tools',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1844,6 +1958,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               ![
                 'desktop-plan',
                 'desktop-reports',
+                'desktop-machine-history',
                 'desktop-report-platform',
                 'desktop-report-invalidate-target',
                 'desktop-settings',
@@ -1860,6 +1975,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-worktree-remove',
                 'desktop-worktree-warm',
                 'desktop-machine-access',
+                'desktop-remedy',
+                'desktop-device-tools',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -3173,6 +3290,69 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       );
     }
 
+    function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
+      if (!desktopSessions.has(socket))
+        return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
+      const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
+      if (
+        !isJsonObject(params) ||
+        (params.action !== 'doctor-fix' && params.action !== 'device-unlock' && params.action !== 'device-tool') ||
+        (params.action === 'device-tool' && tool === null) ||
+        Object.keys(params).some(
+          (key) =>
+            ![
+              'cwd',
+              'action',
+              ...(params.action === 'device-tool'
+                ? ['request', 'slot']
+                : ['platform', ...(params.action === 'device-unlock' ? ['slot'] : [])]),
+            ].includes(key),
+        ) ||
+        typeof params.cwd !== 'string' ||
+        params.cwd.length > 4096 ||
+        params.cwd.includes('\0') ||
+        !isAbsolute(params.cwd) ||
+        (params.platform !== undefined && params.platform !== 'ios' && params.platform !== 'android') ||
+        (params.slot !== undefined &&
+          (typeof params.slot !== 'string' ||
+            !SLOT_NAME.test(params.slot) ||
+            ['constructor', 'prototype', '__proto__'].includes(params.slot)))
+      )
+        return error(
+          id,
+          'bad-request',
+          'Choose an absolute cwd and a supported typed doctor, device-unlock or device-tool request.',
+        );
+      const request: Methods['desktop.remedy.subscribe']['params'] =
+        params.action === 'device-tool' && tool
+          ? {
+              cwd: params.cwd,
+              action: 'device-tool',
+              request: tool,
+              slot: typeof params.slot === 'string' ? params.slot : undefined,
+            }
+          : params.action === 'doctor-fix'
+            ? { cwd: params.cwd, action: params.action, platform: params.platform }
+            : {
+                cwd: params.cwd,
+                action: 'device-unlock',
+                platform: params.platform,
+                slot: typeof params.slot === 'string' ? params.slot : undefined,
+              };
+      subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
+        remedyAction(
+          cwd,
+          options.env,
+          request.action === 'device-tool'
+            ? { ...actionLimits, timeoutMs: Math.min(actionLimits.timeoutMs, 60_000) }
+            : actionLimits,
+          request,
+          admit,
+          onProgress,
+        ),
+      );
+    }
+
     function subscribeMachineAccess(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(
@@ -3257,7 +3437,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       id: RequestId,
       requestedCwd: string,
       owner: PairedDevice,
-      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access',
+      kind: 'start' | 'run' | 'build' | 'gc' | 'worktree-remove' | 'worktree-warm' | 'machine-access' | 'remedy',
       begin: (
         cwd: string,
         admit: (workspace: string) => void,
@@ -3322,7 +3502,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       void run.outcome.then(finish);
       void run.drained.then((outcome) => {
-        if (kind === 'gc' || kind === 'worktree-remove' || kind === 'worktree-warm' || kind === 'machine-access')
+        if (
+          kind === 'gc' ||
+          kind === 'worktree-remove' ||
+          kind === 'worktree-warm' ||
+          kind === 'machine-access' ||
+          kind === 'remedy'
+        )
           desktopReports.invalidate();
         const release = () => {
           releaseSlot(cancel);
@@ -3333,18 +3519,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const roots = outcome.retainedClaimRoots;
         if (outcome.unresolved) {
           const reconcile = () => {
-            if (!roots?.length) return;
+            if (!roots?.length && !outcome.cleanupSettled) return;
             if (
-              roots.some((root) => {
+              roots?.some((root) => {
                 const claims = readClaimSet(root);
                 return claims.live.length > 0 || claims.unresolved.length > 0;
               })
             )
               return;
+            if (outcome.cleanupSettled && !outcome.cleanupSettled()) return;
             release();
             retainedLifecycles.delete(reconcile);
           };
-          retainedLifecycles.add(reconcile);
+          if (!roots?.length && !outcome.cleanupSettled && outcome.cleanupComplete) {
+            void outcome.cleanupComplete.then(release, () => {});
+          } else {
+            retainedLifecycles.add(reconcile);
+          }
         } else {
           release();
         }
@@ -3862,6 +4053,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           'desktop.logs.subscribe',
           'desktop.doctor.run',
           'desktop.machine-access.subscribe',
+          'desktop.remedy.subscribe',
           'desktop.stop.subscribe',
           'desktop.reload.subscribe',
           'desktop.start.subscribe',
@@ -4003,6 +4195,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const cleanupSubscriptions: Record<string, typeof subscribeGc> = {
         'desktop.machine-access.subscribe': subscribeMachineAccess,
+        'desktop.remedy.subscribe': subscribeRemedy,
         'desktop.gc.subscribe': subscribeGc,
         'desktop.worktree.remove.subscribe': subscribeWorktreeRemove,
         'desktop.worktree.warm.subscribe': subscribeWorktreeWarm,
@@ -4126,7 +4319,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       if (
         !isJsonObject(params) ||
-        (params.report !== 'doctor' && params.report !== 'gc') ||
+        !['doctor', 'gc', 'gc-history', 'builds'].includes(String(params.report)) ||
         Object.keys(params).some(
           (key) => key !== 'report' && (params.report !== 'doctor' || (key !== 'cwd' && key !== 'platform')),
         ) ||
@@ -4139,11 +4332,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose report gc, or report doctor with an absolute cwd and optional ios/android platform.',
+          'Choose report gc, gc-history or builds, or report doctor with an absolute cwd and optional ios/android platform.',
         );
       const target: DesktopReportTarget =
-        params.report === 'gc'
-          ? { report: 'gc' }
+        params.report === 'gc' || params.report === 'gc-history' || params.report === 'builds'
+          ? { report: params.report }
           : {
               report: 'doctor',
               cwd: resolvePath(String(params.cwd)),

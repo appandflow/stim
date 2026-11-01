@@ -21,9 +21,8 @@ import Testing
     let server = BusyServer(refusals: ["desktop.settings.get": 2])
     let client = await open(server)
     defer { client.stop() }
-    let cli = Task { StimCLI(environment: ["PATH": "/nonexistent", "STIM_HOME": "/tmp/server-reads-home"]) }
     let payload = try await readServerSettings(
-      cli: await cli.value, connection: (client, "/tmp/server-reads-home"), cwd: "/tmp")
+      stimHome: "/tmp/server-reads-home", connection: (client, "/tmp/server-reads-home"), cwd: "/tmp")
     #expect(payload.entry("remote.machines")?.value.strings == [])
     #expect(server.sent.filter { $0.method == "desktop.settings.get" }.count == 3)
   }
