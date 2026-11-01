@@ -1,5 +1,8 @@
 import Foundation
-import StimKit
+
+#if canImport(StimKit)
+  import StimKit
+#endif
 
 public struct DevToolsError: Error, CustomStringConvertible {
   public let description: String

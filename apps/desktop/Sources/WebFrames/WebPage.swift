@@ -1,5 +1,8 @@
 import Foundation
-import StimKit
+
+#if canImport(StimKit)
+  import StimKit
+#endif
 
 /// One `Page.screencastFrame`: Chrome's JPEG, the page area it shows in CSS pixels, and when Chrome drew it,
 /// in milliseconds since the epoch.
