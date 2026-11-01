@@ -17,12 +17,22 @@ afterEach(() => {
 });
 
 function git(repo: string, args: string, env: NodeJS.ProcessEnv = {}): string {
-  return execSync(`git ${args}`, {
-    cwd: repo,
-    encoding: 'utf-8',
-    stdio: 'pipe',
-    env: { ...process.env, ...env },
-  }).trim();
+  console.error(`[merge-state] Git started: ${args}`);
+  try {
+    const output = execSync(`git ${args}`, {
+      cwd: repo,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+      env: { ...process.env, ...env },
+    }).trim();
+    console.error(`[merge-state] Git completed: ${args}`);
+    return output;
+  } catch (error) {
+    console.error(`[merge-state] Git failed: ${args}`, error);
+    if (error && typeof error === 'object' && 'stderr' in error)
+      console.error(`[merge-state] Git stderr: ${String(error.stderr)}`);
+    throw error;
+  }
 }
 
 function initRepo(name: string): string {
@@ -42,8 +52,7 @@ function commit(repo: string, file: string, content: string, message = content, 
   git(repo, `commit -q -m "${message}"`, env);
 }
 
-// Quarantined on Windows: https://github.com/appandflow/stim/issues/3877
-describe.skipIf(process.platform === 'win32')('merge state', () => {
+describe('merge state', () => {
   for (const inspect of [mergeState, mergeStateAsync]) {
     test(`${inspect.name}: keeps a branch far past the merge base as unknown, naming the commit count`, async () => {
       const repo = initRepo('far-ahead');

@@ -1,0 +1,30 @@
+name: Probe merge state on Windows
+
+on:
+  push:
+    branches: [codex/3877-windows-merge-state]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-stim
+        with:
+          node: '22'
+      - name: Existing whole-file merge-state contracts
+        env:
+          NODE_OPTIONS: --trace-uncaught
+        run: pnpm test packages/stim-cli/src/__tests__/merge-state.test.ts --reporter=verbose --reporter=json --outputFile.json=merge-state-3877-results.json
+      - name: Retain probe results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: merge-state-3877-windows
+          path: merge-state-3877-results.json
+          if-no-files-found: ignore
+          retention-days: 7
