@@ -791,8 +791,15 @@ ORPHANED WORKSPACE DIRECTORIES
   "Orphaned workspace directories" when the recorded project root is gone,
   its volume is mounted, no registry key equals it or sits under it, and the
   workspace is not in use. \`gc --delete\` re-checks each one, then removes
-  it. A directory with a missing or unparseable workspace.json, or a root on
-  an unmounted volume, is reported under Skipped and never deleted.
+  it. A directory with an unparseable workspace.json, or a root on an
+  unmounted volume, is reported under Skipped and never deleted.
+  A directory with no workspace.json that holds only leftovers of a removed
+  workspace is reported the same way: maintenance.ndjson, log-error-index.json,
+  ended-agents.json, empty lock files and an agent-device directory with no
+  running daemon. It counts as gone when it is empty, or when the project
+  root its maintenance log names maps to the directory name and is gone. Any
+  other file (state.json, for one), a held lock or a log naming no root keeps
+  it under Skipped. The empty directory report has no project root.
 
 DELETED WORKTREES STILL REGISTERED
   A worktree deleted outside Stim keeps its registry entry; \`stim status\`

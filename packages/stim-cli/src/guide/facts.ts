@@ -918,7 +918,8 @@ RULES
     invalidProjects         { path }  the registry key is not absolute
     orphanedPorts           { project, label, port }
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
-                              whole workspace directory
+                              whole workspace directory; projectRoot is null
+                              for an empty directory with no workspace.json
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
                               pullRequestUnknown, willRemove, reason,
                               detail, eligibleAt, buildState }  mergedInto is the

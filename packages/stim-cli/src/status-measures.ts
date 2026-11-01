@@ -20,6 +20,7 @@ import {
   readWorkspaceState,
   workspaceEndedAgentsFile,
   workspaceEndedAgentsLock,
+  workspaceMetadataFile,
   type AgentSession,
   type DiskMeasure,
   type EnvironmentDisk,
@@ -248,7 +249,7 @@ function recordEndedAgents(
   attributeAgentSessions(agentWorkspaces(states), gone, now).forEach((sessions, i) => {
     const root = states[i]!.path;
     const ended = sessions.filter((session) => goneKeys.has(agentKey(session)));
-    if (!ended.length || !existsSync(workspaceDir(root))) return;
+    if (!ended.length || !existsSync(workspaceMetadataFile(root))) return;
     try {
       withDirLock(workspaceEndedAgentsLock(root), () => {
         const kept = new Map<string, EndedAgentSession>(

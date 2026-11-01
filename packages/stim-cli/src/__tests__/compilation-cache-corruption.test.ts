@@ -1,3 +1,4 @@
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -43,6 +44,7 @@ const liveParent = () => {
 };
 
 test('a corrupt cache is emptied and the build fails asking for a rerun, recorded in the maintenance log', async () => {
+  ensureWorkspaceStorage(project);
   plantClaim(buildLockPath('ios', 'other'), 'exclusive', liveParent(), { details: { projectRoot: '/elsewhere' } });
   const result = await clearCorruptCompilationCache({ dir: cas, line: LINE }, project);
   expect(result.code).toBe('STIM_COMPILATION_CACHE_CORRUPT');

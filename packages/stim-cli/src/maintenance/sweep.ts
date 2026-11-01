@@ -95,7 +95,10 @@ export async function planSweep({
         kind: 'would-remove-orphan',
         target: orphan.dir,
         bytes: orphan.bytes ?? 0,
-        reason: `its project ${orphan.projectRoot} no longer exists`,
+        reason:
+          orphan.projectRoot === null
+            ? 'it is empty and has no workspace.json'
+            : `its project ${orphan.projectRoot} no longer exists`,
         check: 'sweep',
       });
     for (const kept of orphans.skipped) skips.push({ target: kept.dir, reason: kept.reason });
