@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
-import { collectHostedIosLogs } from '../device-host/ios-logs.ts';
+import { collectHostedIosLogs, collectHostedIosCrashes } from '../device-host/ios-logs.ts';
 
 const native = vi.hoisted(() => ({ runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>() }));
 vi.mock('../exec.ts', () => ({ getExecutor: () => native }));
@@ -156,4 +156,57 @@ test('final collection shrinks toward the recent tail instead of spending its bo
     '--end',
     '2026-10-06 12:04:01+0000',
   ]);
+});
+
+test('hosted iOS crash collection keeps one bounded exact-device summary and leaves raw reports host-side', async () => {
+  const directory = join(root, 'Library', 'Logs', 'DiagnosticReports');
+  mkdirSync(directory, { recursive: true });
+  const report = {
+    captureTime: new Date(start + 1000).toISOString(),
+    coalitionName: `com.apple.CoreSimulator.SimDevice.${udid}`,
+    incident: 'owned-incident',
+    bundleInfo: { CFBundleIdentifier: 'dev.fixture' },
+    exception: { type: 'EXC_CRASH', signal: 'SIGABRT' },
+    termination: { namespace: 'SIGNAL', reasons: [`${root}/${udid}/App.app crashed ` + 'x'.repeat(1024 * 1024)] },
+    threads: [
+      {
+        triggered: true,
+        frames: Array.from({ length: 64 }, () => ({
+          sourceFile: `${root}/${udid}/Fixture.m`,
+          sourceLine: 12,
+          symbol: 'abort',
+        })),
+      },
+    ],
+  };
+  for (const [name, value] of [
+    ['owned', report],
+    [
+      'foreign-device',
+      { ...report, incident: 'foreign-device', coalitionName: 'com.apple.CoreSimulator.SimDevice.OTHER' },
+    ],
+    ['foreign-app', { ...report, incident: 'foreign-app', bundleInfo: { CFBundleIdentifier: 'another.app' } }],
+    ['old', { ...report, incident: 'old', captureTime: new Date(start - 1000).toISOString() }],
+  ])
+    writeFileSync(join(directory, `${name}.ips`), '{}\n' + JSON.stringify(value));
+  vi.setSystemTime(start + 10_000);
+  for (let i = 0; i < 2; i++)
+    await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  const page = readLogsSince(hostedNativeLogsDir(home, 'ios'), {});
+  expect(page.more).toBe(false);
+  expect(page.records).toHaveLength(1);
+  expect(page.records[0]).toMatchObject({
+    ts: start + 1000,
+    event: 'native_crash',
+    incident: 'owned-incident',
+    appId: 'dev.fixture',
+    level: 'fatal',
+  });
+  expect(page.records[0]).not.toHaveProperty('deviceId');
+  expect(page.records[0]).not.toHaveProperty('rawReport');
+  const serialized = JSON.stringify(page.records[0]);
+  expect(serialized).not.toContain(udid);
+  expect(serialized).not.toContain(root);
+  expect(Buffer.byteLength(serialized)).toBeLessThan(256 * 1024);
+  expect(readFileSync(join(directory, 'owned.ips'), 'utf8')).toBe('{}\n' + JSON.stringify(report));
 });
