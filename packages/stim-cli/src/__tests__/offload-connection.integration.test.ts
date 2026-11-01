@@ -274,6 +274,45 @@ async function run(names: string[], note: (line: string) => void) {
   });
 }
 
+test('linked checkouts offer separate areas while projects in one checkout reuse their area', async () => {
+  execFileSync('git', ['add', 'package.json'], { cwd: repo });
+  execFileSync(
+    'git',
+    [
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'fixture',
+    ],
+    { cwd: repo },
+  );
+  const linked = join(home, 'linked');
+  execFileSync('git', ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: repo, stdio: 'pipe' });
+  const project = join(linked, 'app');
+  mkdirSync(project);
+  const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'unused' } });
+  machines.push(machine);
+  for (const projectRoot of [repo, linked, project, linked]) {
+    const choice = await chooseBuildMachine({
+      projectRoot,
+      target: TARGET,
+      here: HERE,
+      note: () => {},
+      machines: [credential('mini')],
+    });
+    assert(typeof choice !== 'string');
+    choice.connection.close();
+  }
+  const areas = machine.requests.filter(({ method }) => method === 'build.offer').map(({ params }) => params.repo);
+  expect(areas[0]).not.toBe(areas[1]);
+  expect(areas.slice(1)).toEqual([areas[1], areas[1], areas[1]]);
+});
+
 describe('offloadBuild', () => {
   it.each(['build.sync', 'build.start', 'build.progress', 'build.attach', 'build.artifact'])(
     'cancels a stopped workspace while waiting for %s without fallback or further requests',

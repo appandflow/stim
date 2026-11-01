@@ -2001,12 +2001,13 @@ The worker root is `server.workerRoot` in this machine's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
 blobs and shared CocoaPods, pnpm and SwiftPM caches. Each area under
 `repos/<repo>/` contains its checkout, Stim home, compilation cache, output and
-`cache/gradle` (`GRADLE_USER_HOME`). Separate repositories repeat Gradle
-wrapper/dependency/transform caches and their first build starts cold. Repository
-identity is the Git common directory: worktrees of one repository still share
-one mirror and serialize, while different repositories can build concurrently
-within the configured admission limits. This does not change the current
-single offload-job default.
+`cache/gradle` (`GRADLE_USER_HOME`). Each canonical Git checkout has its own
+area, including linked worktrees of one repository. Separate checkouts repeat
+Gradle wrapper/dependency/transform caches and their first build starts cold.
+Different checkouts can build concurrently within the configured admission
+limits; projects in the same checkout share one mirror and serialize. Moving
+a checkout changes its area identity. Existing areas stay on the worker until
+the client is removed.
 
 A build never reads or writes this machine's own Stim home. Each source mirror
 has an initial empty Git commit so development podspecs can resolve `HEAD`;
