@@ -88,6 +88,11 @@ if(input.mode === 'count') {
   writeFileSync(join(process.env.STIM_HOME,'offer-exclude.json'),JSON.stringify(input.exclude ?? null));
   process.stdout.write(JSON.stringify({platform:request.platform,choice:declined?null:choice,declined,resources:{cpus:4,loadPerCore:0.5,memoryFreeBytes:1000,memoryPressure:'normal',workerDiskFreeBytes:null,...(input.exclude ? {localDevices:'unknown' in localCount() ? localCount() : localCount().ios + localCount().android,localPlatforms:localCount()} : {})}}));
   process.exit(0);
+} else if(input.mode === 'runtime') {
+  writeFileSync(join(process.env.STIM_HOME,'runtime-entered'),String(process.pid));
+  if(process.env.RUNTIME_GATE) while(!existsSync(process.env.RUNTIME_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
+  process.stdout.write(JSON.stringify(input.runtime === '0.0' ? {ok:false,message:'Xcode runtime unavailable',remedy:'Choose a supported Xcode runtime.'} : {ok:true}));
+  process.exit(0);
 } else if(input.mode === 'image') {
   const image=input.systemImage ?? 'default';
   appendFileSync(join(process.env.STIM_HOME,'image-requests'),image+'\\n');
@@ -2842,4 +2847,35 @@ test('a different client cannot adopt an identically selected parked device', as
   expect(hostedModes(parked.id)).toEqual([]);
   expect(readHostedSessions().find((record) => record.id === parked.id)?.parked).toBeDefined();
   expect(hostedModes(answer.result.id)).toEqual(['prepare']);
+});
+
+test('runtime installs require hosting approval and a version, and preserve Xcode refusals', async () => {
+  expect(await host.installRuntime('unapproved', { runtime: '26.5' })).toHaveProperty('error.code', 'forbidden');
+  expect(await host.installRuntime('client', { runtime: 'latest' })).toHaveProperty('error.code', 'bad-request');
+  expect(existsSync(join(home, 'runtime-entered'))).toBe(false);
+  expect(await host.installRuntime('client', { runtime: '26.5' })).toEqual({ result: { ok: true } });
+  expect(await host.installRuntime('client', { runtime: '0.0' })).toHaveProperty(
+    'error.message',
+    'Xcode runtime unavailable Choose a supported Xcode runtime.',
+  );
+  expect(readHostedSessions()).toEqual([]);
+});
+
+test('disconnect cancellation settles a runtime install worker before returning', async () => {
+  await host.close();
+  hostEnv.RUNTIME_GATE = join(home, 'runtime-release');
+  host = new DeviceHost({
+    worker: join(home, 'worker.mjs'),
+    env: hostEnv,
+    agents: noAgents,
+    allowed: () => true,
+    limits: { killGraceMs: 100 },
+  });
+  const abort = new AbortController();
+  const pending = host.installRuntime('client', { runtime: '26.5' }, abort.signal);
+  await vi.waitFor(() => expect(existsSync(join(home, 'runtime-entered'))).toBe(true));
+  const pid = await readPid(join(home, 'runtime-entered'));
+  abort.abort();
+  expect(await pending).toHaveProperty('error.code', 'action-failed');
+  await groupGone(pid);
 });
