@@ -35,7 +35,7 @@ let package = Package(
     .target(
       name: "EmulatorFrames", dependencies: ["StimKit"], resources: [.copy("Resources/android-audio.b64")],
       swiftSettings: [.swiftLanguageMode(.v5)]),
-    .target(name: "WebFrames", dependencies: ["StimKit"], swiftSettings: [.swiftLanguageMode(.v5)]),
+    .target(name: "WebFrames", dependencies: ["StimKit"]),
     .executableTarget(
       name: "StimDesktop",
       dependencies: [
