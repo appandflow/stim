@@ -128,14 +128,26 @@ import Testing
     #expect(StatusFilter.summary(StatusFilter.all.union([.hidden])) == "All + Hidden")
   }
 
-  @Test func knownLocalPathsRemainUntilTheirSharedWritesSucceed() throws {
+  @Test func knownLocalPathsWaitForTheirReportedSharedState() throws {
     let envs = try environments()
     let hidden = HiddenWorkspaces(paths: [envs[0].path, envs[1].path, "/unknown"])
     let kept = hidden.reconciled(environments: envs, unprovisioned: nil, archived: nil, isBusy: { _ in false })
-    #expect(kept == hidden)
+    #expect(kept.paths == [envs[0].path, "/unknown"])
     let migration = kept.migrations(environments: envs)
-    #expect(migration.map(\.path) == [envs[0].path, envs[1].path])
-    #expect(migration.map(\.hidden) == [true, false])
+    #expect(migration.map(\.path) == [envs[0].path])
+    #expect(migration.map(\.hidden) == [true])
+    var missing = envs[0]
+    missing.pathMissing = true
+    missing.checkout = nil
+    missing.worktree = nil
+    let local = HiddenWorkspaces(paths: [missing.path])
+    #expect(local.migrations(environments: [missing]).isEmpty)
+    #expect(local.reconciled(environments: [missing], unprovisioned: nil, archived: nil, isBusy: { _ in false }) == local)
+    for busyKey in [missing.path, missing.worktreeActionKey] {
+      #expect(local.reconciled(environments: [missing], unprovisioned: nil, archived: nil, isBusy: { $0 == busyKey }).isEmpty)
+    }
+    missing.live = true
+    #expect(local.reconciled(environments: [missing], unprovisioned: nil, archived: nil, isBusy: { _ in false }).isEmpty)
   }
 
   @Test func eachKindOfRealActivityMigratesAsVisible() throws {
@@ -167,6 +179,17 @@ import Testing
     let hidden = HiddenWorkspaces(paths: [envs[2].path])
     let idle = try #require(hidden.migrations(environments: envs).first)
     #expect(idle.apps.map(\.path) == [envs[2].path, envs[3].path] && idle.hidden)
+    func reconciled(_ value: HiddenWorkspaces) -> HiddenWorkspaces {
+      value.reconciled(environments: envs, unprovisioned: nil, archived: nil, isBusy: { _ in false })
+    }
+    envs[2].hidden = true
+    #expect(reconciled(hidden) == hidden)
+    envs[3].hidden = true
+    let completed = reconciled(hidden)
+    #expect(completed.isEmpty)
+    envs[2].hidden = nil
+    envs[3].hidden = nil
+    #expect(!reconciled(completed).contains(.workspace(envs[2])))
     envs[3].live = true
     let active = try #require(hidden.migrations(environments: envs).first)
     #expect(active.apps.map(\.path) == idle.apps.map(\.path) && !active.hidden)

@@ -59,7 +59,7 @@ public struct HiddenWorkspaces: Codable, Equatable, Sendable {
     let pages = WorktreePage.groups(environments: environments)
     return paths.sorted().compactMap { path in
       let apps = pages.first(where: { $0.id == path })?.apps ?? environments.filter { $0.path == path }
-      guard !apps.isEmpty else { return nil }
+      guard !apps.isEmpty, !apps.contains(where: { $0.pathMissing == true }) else { return nil }
       return (path, apps, !apps.contains(where: \.isActive))
     }
   }
@@ -70,8 +70,18 @@ public struct HiddenWorkspaces: Codable, Equatable, Sendable {
   ) -> HiddenWorkspaces {
     let pages = WorktreePage.groups(environments: environments)
     var kept = self
+    for item in migrations(environments: environments)
+    where item.apps.allSatisfy({ ($0.hidden == true) == item.hidden }) {
+      kept.paths.remove(item.path)
+    }
     for path in paths {
-      if pages.contains(where: { $0.id == path }) || environments.contains(where: { $0.path == path }) {
+      let apps = pages.first(where: { $0.id == path })?.apps ?? environments.filter { $0.path == path }
+      if !apps.isEmpty {
+        if apps.count == 1, let app = apps.first, app.pathMissing == true,
+          app.isActive || isBusy(app.path) || isBusy(app.worktreeActionKey)
+        {
+          kept.paths.remove(path)
+        }
         continue
       } else if let unprovisioned {
         if unprovisioned.contains(where: { $0.path == path }) {

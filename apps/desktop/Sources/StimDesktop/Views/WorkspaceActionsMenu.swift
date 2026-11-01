@@ -26,6 +26,7 @@ struct WorkspaceActionsMenu: View {
   var hidden = false
   var canHide = true
   var hidePending = false
+  var unhideUnavailable: String?
   var onToggleHidden: (() -> Void)?
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
@@ -104,8 +105,8 @@ struct WorkspaceActionsMenu: View {
     case .toggleHidden:
       if let onToggleHidden {
         Button(hidden ? "Unhide" : "Hide", systemImage: hidden ? "eye" : "eye.slash", action: onToggleHidden)
-          .disabled(hidePending || (!hidden && !canHide))
-          .help(!hidden && !canHide ? "A workspace in use cannot be hidden." : "")
+          .disabled(hidePending || (hidden && unhideUnavailable != nil) || (!hidden && !canHide))
+          .help(hidden ? unhideUnavailable ?? "" : !canHide ? "A workspace in use cannot be hidden." : "")
       }
     case .removeWorktree:
       if let onRemoveWorktree {
@@ -161,6 +162,8 @@ struct WorkspaceActions<Content: View>: View {
         hidden: isHidden,
         canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
         hidePending: actions.active(for: env.path) != nil || actions.active(for: env.worktreeActionKey) != nil,
+        unhideUnavailable: env.pathMissing == true && env.hidden == true
+          ? "Restore the workspace folder to change shared visibility." : nil,
         onToggleHidden: showsHide ? { prefs.setHidden(!isHidden, apps: [env], actions: actions) } : nil)
     )
     .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {

@@ -268,9 +268,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   apps use the shared `workspace.hidden` setting, so the CLI and phone agree;
   a multi-app row changes each represented app. Mixed checkouts show only the
   apps selected by the filters. Starting, reloading or warming clears the
-  setting. Old Desktop hides migrate after successful local writes, with
+  setting. Old Desktop hides migrate after every app reports the intended shared state, including retries, with
   progress and failures in Activity. Archives, Not Set Up worktrees and paired
-  row masks keep their existing Desktop-local behavior.
+  row masks keep their existing Desktop-local behavior. A missing-folder row stays local until its
+  folder returns; Unhide requires restoring that folder when the row is already shared-hidden.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the

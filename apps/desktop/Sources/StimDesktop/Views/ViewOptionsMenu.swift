@@ -37,6 +37,12 @@ struct SidebarPreferences: DynamicProperty {
     guard let first = apps.first,
       !apps.contains(where: { actions.active(for: $0.path) != nil || actions.active(for: $0.worktreeActionKey) != nil })
     else { return nil }
+    if apps.count == 1, first.pathMissing == true {
+      // https://github.com/appandflow/stim/issues/2817: settings writes require an existing cwd; a missing-folder row stays local.
+      guard hidden || first.hidden != true else { return nil }
+      setHidden(hidden, path: first.path)
+      return nil
+    }
     return actions.run(
       hidden ? "Hide workspace" : "Unhide workspace",
       steps: apps.map {

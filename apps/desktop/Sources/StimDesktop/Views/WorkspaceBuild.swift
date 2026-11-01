@@ -170,6 +170,8 @@ struct WorkspaceActionsButton: View {
         onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
         hidden: isHidden, canHide: !busy && !env.isActive && actions.active(for: env.worktreeActionKey) == nil,
         hidePending: busy || actions.active(for: env.worktreeActionKey) != nil,
+        unhideUnavailable: env.pathMissing == true && env.hidden == true
+          ? "Restore the workspace folder to change shared visibility." : nil,
         onToggleHidden: { prefs.setHidden(!isHidden, apps: [env], actions: actions) })
     } label: {
       Image(systemName: "ellipsis")

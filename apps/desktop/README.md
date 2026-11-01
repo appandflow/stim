@@ -326,9 +326,14 @@ filters; Hidden shows those apps, and selecting both keeps one checkout row. Sta
 a workspace clears its shared hidden setting in the CLI. A workspace in use cannot be hidden.
 
 Desktop migrates matching old preference paths through the same local server setting writes. Progress and
-refusals appear in Activity; the old entry stays until every matching write succeeds. Archived and Not Set Up
+refusals appear in Activity; the old entry stays until every app reports the intended shared state, including
+after a retry. Archived and Not Set Up
 hides stay in this Desktop's preferences, as do the separate in-memory masks for paired rows. Stale local
 entries are dropped when the server no longer reports them.
+
+A missing-folder row keeps local hiding until its folder returns. Unhide is disabled if that row is
+already shared-hidden: restore the folder to change shared visibility. This avoids writing settings
+from a nonexistent folder or masking a shared hide locally.
 
 ## Archived workspaces
 
