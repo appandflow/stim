@@ -21,7 +21,6 @@ let package = Package(
   ],
   dependencies: [
     .package(url: "https://github.com/cpisciotta/xcbeautify.git", exact: "3.2.1"),
-    .package(url: "https://github.com/pointfreeco/swift-snapshot-testing.git", exact: "1.19.6"),
     .package(url: "https://github.com/airbnb/lottie-spm.git", exact: "4.6.1"),
     .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     // 9.29.2, pinned by revision: its Package@swift-6.1 manifest depends on KSCrash by revision, which Swift 6.1's
@@ -52,8 +51,7 @@ let package = Package(
     ),
     .testTarget(
       name: "VisualFixtureTests",
-      dependencies: ["StimDesktop", .product(name: "SnapshotTesting", package: "swift-snapshot-testing")],
-      exclude: ["__Snapshots__"],
+      dependencies: ["StimDesktop"],
       resources: [.copy("Fixtures")],
       swiftSettings: [.swiftLanguageMode(.v5)]
     ),
