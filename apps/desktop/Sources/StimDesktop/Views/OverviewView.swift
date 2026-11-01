@@ -152,6 +152,11 @@ struct OverviewView: View {
     }
     .buttonStyle(CardPressStyle())
     .hoverHighlight(radius: Radius.card)
+    .contextMenu {
+      Button("Open Project", systemImage: "arrow.up.right.square") { openIdleProject(item.project) }
+      Divider()
+      WorkspaceActionsMenu(kind: .idleProject, path: item.project.root, busy: false, removalAllowed: true)
+    }
     .accessibilityHint("Open project")
   }
 
