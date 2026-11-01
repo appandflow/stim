@@ -1991,13 +1991,16 @@ The Memory section lists long-lived helpers that grow while they run: the
 shared watchman daemon with its watched roots, Gradle daemons with their Gradle
 version and Gradle home, and Kotlin compile daemons. Each shows its pid,
 physical footprint, uptime and whether it is idle, and the section ends with
-the memory that can be reclaimed. A plain `--delete` and `--cache all` never
-stop them; each kind has its own `--cache` value:
+the memory that can be reclaimed. A plain `--delete` stops watchman, and
+`--cache watchman` does the same on its own. `--cache all` does not touch
+watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
 
-- `stim gc --delete --cache watchman` removes the stale roots (a directory that
-  is gone, or a linked worktree git pruned) that no subscription or trigger
-  uses. It then shuts watchman down only when no other client is connected and no root has a trigger;
-  otherwise it keeps the daemon and names each client, such as the Stim
+- `stim gc --delete` and `stim gc --delete --cache watchman` remove the stale
+  roots (a directory that is gone, or a linked worktree git pruned) that no
+  subscription or trigger uses. They then shut watchman down only when no other
+  client is connected, every root's subscriptions and triggers were readable
+  and no root has a trigger;
+  otherwise they keep the daemon and name each client, such as the Stim
   workspace whose Metro uses it. Removing roots does not shrink watchman; only a
   restart does, and the next client that needs watchman starts it again.
 - `stim gc --delete --cache gradle-daemons` stops each Gradle daemon that its
@@ -2370,7 +2373,8 @@ how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
 ```text
 Run `stim gc` and show me how much memory watchman and the Gradle and Kotlin
 daemons use and what is reclaimable. If watchman has no clients, run
-`stim gc --delete --cache watchman`; then run
+`stim gc --delete --cache watchman` (a plain `stim gc --delete` also stops it);
+then run
 `stim gc --delete --cache gradle-daemons` to stop the idle daemons.
 ```
 

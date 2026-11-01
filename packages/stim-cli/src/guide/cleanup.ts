@@ -315,8 +315,9 @@ WHAT RECLAIMS AN OWNED DEVICE
                             shuts DOWN (never deletes) owned devices with no
                             driver, claim or activity for that long
 
-\`gc --delete --cache watchman\` and \`gc --delete --cache gradle-daemons\`
-stop shared helper processes, not devices (\`guide cleanup memory\`).
+\`gc --delete\` also shuts down an unused watchman daemon, and \`gc --delete
+--cache gradle-daemons\` stops idle Gradle and Kotlin daemons. They are shared
+helper processes, not devices (\`guide cleanup memory\`).
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
 \`gc --delete\` deletes worktrees only through \`worktree remove\`. \`gc
@@ -1066,7 +1067,7 @@ THE ONE CASE GC WILL NOT REAP
     },
     memory: {
       summary:
-        'watchman and Gradle and Kotlin daemon memory in gc, and when gc --delete --cache watchman or gradle-daemons stops them',
+        'watchman and Gradle and Kotlin daemon memory in gc, and when gc --delete and gc --delete --cache gradle-daemons stop them',
       body: () => `MEMORY
   Every \`gc\` without --cache, and \`gc --cache watchman\` or
   \`gc --cache gradle-daemons\`, reports the long-lived helpers that grow while
@@ -1074,19 +1075,22 @@ THE ONE CASE GC WILL NOT REAP
   daemons. Each line gives the pid, physical footprint (the measure status
   uses; resident size when the footprint cannot be read), uptime and whether
   it is idle, and a kept one says why. The reclaimable line totals what
-  the two commands below would free now.
+  the commands below would free now.
 
-  Only these two commands stop anything, and each acts only on its own kind.
-  Neither a plain \`gc --delete\` nor \`--cache all\` touches them:
-    stim gc --delete --cache watchman
+  Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
+  watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
+  The Gradle and Kotlin daemons are stopped only by \`--cache gradle-daemons\`:
+    stim gc --delete              (or: stim gc --delete --cache watchman)
                                   runs \`watchman watch-del\` on each stale root
                                   with no subscription or trigger, then
                                   \`watchman shutdown-server\` only when
                                   \`debug-status\` lists no client but gc's own
-                                  call and no root has a trigger; otherwise
-                                  the daemon is kept and the report names
-                                  each client, as the Stim workspace whose
-                                  dev server it belongs to where it can
+                                  call, every root's subscriptions and
+                                  triggers were readable and no root has a
+                                  trigger; otherwise the daemon is kept and
+                                  the report names each client, as the Stim
+                                  workspace whose dev server it belongs to
+                                  where it can
     stim gc --delete --cache gradle-daemons
                                   stops each Gradle daemon its own
                                   \`gradle --status\` reports IDLE, then each
