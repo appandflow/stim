@@ -1,3 +1,5 @@
+import { ensureIosRuntime } from '../../devices/ios-runtime.ts';
+import { installHostedIosRuntime } from '../../device-host/ios-runtime.ts';
 import { projectRegistry } from '../../integrations/projects.ts';
 import type { ProjectRegistry } from '../../integrations/project-registry.ts';
 import type { IosRuntimePlan } from './launch.ts';
@@ -98,6 +100,8 @@ import { devClientScheme, devClientTakesDevMenuParams, hasDevClient } from '../d
 import { stopPreviousCollector, replaceCollector } from './collector.ts';
 
 export interface IosDeps {
+  ensureIosRuntime: typeof ensureIosRuntime;
+  installHostedIosRuntime: typeof installHostedIosRuntime;
   projectRegistry: Pick<ProjectRegistry, 'selectIos'>;
   runtimePlan?: IosRuntimePlan;
   automaticDevicePlacement: typeof automaticDevicePlacement;
@@ -213,6 +217,8 @@ export interface IosDeps {
 }
 
 export const DEFAULT_DEPS: IosDeps = {
+  ensureIosRuntime,
+  installHostedIosRuntime,
   projectRegistry,
   automaticDevicePlacement,
   checkEasFallback,

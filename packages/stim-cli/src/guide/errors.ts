@@ -175,7 +175,8 @@ Branch on the code, never on the message.`,
   the first diagnostics are the phase names and the last error lines the
   script printed, ahead of the compiler diagnostics.
   Three Android refusals share this code without gradle itself failing:
-  - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
+  - NO ANDROID SDK, before gradle starts: local React Native emulator runs
+    refuse before Metro or device setup. Nothing exists at the SDK path
     Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
     location), and there is no android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
     into android/local.properties; \`stim doctor --platform android\` reports
@@ -914,7 +915,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   owned by this Stim home, or it is not booted or running. Permission and push
   also refuse when no app is recorded for the device. Run the platform command
   the remedy names (\`stim ios\` or \`stim android\`, with \`--slot\` for a named
-  slot) and retry. No tool runs before this refusal.`,
+  slot) and retry. A non-Mac client cannot run a local iOS simulator; run the
+  iOS tool on a Mac with a local Stim-owned simulator. No tool runs before this refusal.`,
     },
     STIM_DEVICE_TOOL_UNSUPPORTED: {
       summary: 'that device tool has no equivalent on that platform',

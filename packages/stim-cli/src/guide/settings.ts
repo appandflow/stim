@@ -103,6 +103,15 @@ KEYS STIM READS
                         The \`--runtime\` flag overrides this per invocation,
                         and an uninstalled version refuses the same way,
                         naming the layer the value came from
+  ios.autoInstallRuntime false (default). With true and an explicit ios.runtime
+                        or --runtime version, install a missing iOS runtime
+                        with Xcode on the local or named approved Mac before
+                        continuing. --install-runtime opts in for one run.
+                        Requires 20 GB free for download and unpacking;
+                        typically downloads 8-10 GB (actual size varies).
+                        Automatic placement, eas/proxy and physical phones
+                        do not install runtimes. Shared runtimes are removed
+                        manually in Xcode Settings > Components.
   ios.scheme            e.g. "RNTester" -- the shared Xcode scheme to build
                         when the workspace lists several and none matches
                         its name, which otherwise refuses with

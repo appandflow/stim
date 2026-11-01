@@ -23,7 +23,7 @@ function server() {
   };
   const answer = async () => {
     waiting.shift()?.();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
   };
   return { calls, waiting, request, answer };
 }
@@ -36,7 +36,7 @@ describe('PlanChecks', () => {
     checks.check('/w', { ios: 'a', android: 'b' });
     checks.check('/w', { ios: 'a', android: 'b' });
     checks.check('/other', { ios: 'c' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
     expect(mac.calls).toEqual(['/w ios', '/other ios']);
     await mac.answer();
     expect(mac.calls).toEqual(['/w ios', '/other ios', '/w android']);
@@ -66,11 +66,11 @@ describe('PlanChecks', () => {
       return plan(platform);
     });
     checks.check('/w', { ios: 'a' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
     expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toEqual({ kind: 'failed', message: 'Not connected.' });
     fail = false;
     checks.check('/w', { ios: 'a' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
     expect(calls).toEqual(['ios', 'ios']);
     expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toEqual({ kind: 'done', plan: plan('ios') });
   });
@@ -79,12 +79,12 @@ describe('PlanChecks', () => {
     const mac = server();
     const checks = new PlanChecks(mac.request);
     checks.check('/w', { ios: 'a', android: 'b' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
     checks.cancel('/w');
     expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toBeUndefined();
 
     checks.check('/w', { ios: 'a' });
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await jest.advanceTimersByTimeAsync(0);
     expect(mac.calls).toEqual(['/w ios']);
     await mac.answer();
     expect(PlanChecks.state(checks.snapshot(), '/w', 'ios')).toEqual({ kind: 'checking' });

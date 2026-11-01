@@ -78,6 +78,14 @@ describe('line parsing', () => {
 });
 
 describe('startExpoServer', () => {
+  test('missing Expo dependencies in a linked worktree point to worktree warm', async () => {
+    writeFileSync(join(root, '.git'), 'gitdir: /repo/.git/worktrees/mobile\n');
+    await expect(startExpoServer({ root, port: 8115, logsDir: join(root, 'logs') })).rejects.toMatchObject({
+      code: 'STIM_EXPO_BIN',
+      remedy: expect.stringContaining('stim worktree warm'),
+    });
+  });
+
   test('bundle responses that start and finish within a second are all logged and leave the idle tracker with no open request', async () => {
     fakeBin();
     const child = fakeChild();
