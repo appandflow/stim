@@ -60,6 +60,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
+ * `hosted-app-state` queries the current process state of an installed iOS or Android app attempt.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
@@ -121,6 +122,7 @@ export const FEATURES = [
   'hosted-congestion',
   'hosted-ios-data',
   'hosted-ios-process',
+  'hosted-app-state',
   'native-xcode-build',
   'native-xcode-toolchain',
   'build-artifact-cache',
@@ -248,6 +250,7 @@ export const METHODS = [
   'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.app.state',
   'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.ports',
@@ -306,6 +309,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.app.state',
   'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.ports',
@@ -1652,6 +1656,10 @@ export interface Methods {
   };
   'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.app.state': {
+    params: { session: string; attempt: string };
+    result: { state: 'running' | 'stopped' | 'unknown' };
+  };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
     params: { session: string; clientMetroPort?: number };

@@ -27,7 +27,12 @@ import { probeHostedSession } from '../device-host/hosted-client.ts';
 import { getConfigPath, getProject, upsertProject, writeConfigSetting } from '../workspace/config.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { pullHostedNativeLogs, readHostedNativeLogs } from '../device-host/hosted-logs.ts';
-import { followHostedMacosLogs, followHostedLogs, syncHostedLogs } from '../device-host/hosted-logs-sync.ts';
+import {
+  followHostedMacosLogs,
+  followHostedLogs,
+  syncHostedLogs,
+  followHostedLaunchLogs,
+} from '../device-host/hosted-logs-sync.ts';
 import { workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { workspaceIdleProbe } from '../supervisor/idle-stop.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
@@ -106,6 +111,7 @@ let hostBusy: number[];
 let agentGrant: unknown;
 let features: boolean;
 let appLaunched: true | 'unverified';
+let appProcessState: 'running' | 'stopped' | 'unknown';
 let logRecords: Record<string, unknown>[];
 let retained: Map<string, Buffer> | null;
 
@@ -121,6 +127,7 @@ beforeEach(async () => {
   blobs = new Map();
   features = true;
   appLaunched = true;
+  appProcessState = 'running';
   logRecords = [];
   retained = null;
   sessionState = 'ready';
@@ -132,13 +139,15 @@ beforeEach(async () => {
   capacity = 1;
   pressure = 'normal';
   tailnet.changed = false;
-  hostFeatures = [];
+  hostFeatures = ['hosted-app-state'];
   hostBusy = [];
   agentGrant = undefined;
   fixtureConnection = Object.create(BuildConnection.prototype) as BuildConnection;
   fixtureConnection.close = vi.fn<() => void>();
   fixtureConnection.supports = (feature) =>
-    feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' ? hostFeatures.includes(feature) : features;
+    feature === 'hosted-ios-agent' || feature === 'hosted-ios-process' || feature === 'hosted-app-state'
+      ? hostFeatures.includes(feature)
+      : features;
   fixtureConnection.request = async (method, raw) => {
     const params = raw as Record<string, unknown> & {
       manifest: { sha256: string; size: number };
@@ -194,6 +203,7 @@ beforeEach(async () => {
       blobs.set(params.sha256, bytes);
       return reply({ offset: bytes.length });
     }
+    if (method === 'device-host.app.state') return reply({ state: appProcessState });
     if (method === 'device-host.app.launch' || method === 'device-host.app.attach')
       return reply({ state: 'installed', launched: appLaunched, ...(agentGrant ? { agent: agentGrant } : {}) });
     throw new Error(`Unexpected fixture method ${method}`);
@@ -992,4 +1002,32 @@ test('automatic device exclusion skips offers, preserves a live session, and blo
   expect(methods.some((entry) => entry.method === 'device-host.reserve')).toBe(false);
   writeHostedIos(root, 'default', placement());
   expect((await autoPlacement()).placement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+});
+
+test('hosted launch process checks stay pinned to the attempt and report unsupported older hosts', async () => {
+  const original = placement();
+  writeHostedIos(root, 'default', original);
+  const output: string[] = [];
+  const context = testContext({ output: (_stream, text) => output.push(text) });
+  const logs = followHostedLaunchLogs(root, 'default', 'ios', Date.now(), context);
+  try {
+    writeHostedIos(root, 'default', { ...original, appAttempt: 'replacement' });
+    expect(await logs.processAlive()).toBe(true);
+    appProcessState = 'stopped';
+    expect(await logs.processAlive()).toBe(false);
+    expect(methods.filter(({ method }) => method === 'device-host.app.state').map(({ params }) => params)).toEqual([
+      { session: original.session, attempt: original.appAttempt },
+      { session: original.session, attempt: original.appAttempt },
+    ]);
+    appProcessState = 'unknown';
+    expect(await logs.processAlive()).toBeNull();
+    hostFeatures = [];
+    const queried = methods.length;
+    expect(await logs.processAlive()).toBeNull();
+    expect(methods).toHaveLength(queried);
+    expect(output.join('')).toContain('Update stim-server on mini');
+    expect((await deliver(true)).launched).toBe('unverified');
+  } finally {
+    logs.stop();
+  }
 });

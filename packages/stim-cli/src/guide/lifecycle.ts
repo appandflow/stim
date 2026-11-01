@@ -401,7 +401,12 @@ but an existing session stays on its recorded host until stim stop. Debug,
 Release and custom configurations use the offered simulator architecture,
 report metroPort: null, and close any previous session Metro bridge. Logs,
 view/control, agent access and scoped stop use the existing hosted-ios services.
-Verify UI and interaction separately from the host's live process evidence.
+A host advertising hosted-app-state checks the current installed app attempt's
+process when Debug verifies its bundle. Release and native process launches
+wait three seconds before requiring a live process. Older hosts print an update
+hint and their release/process result stays unverified. A failed process query
+is unknown; it does not establish a crash. Verify UI and interaction separately
+from the host's live process evidence.
 
 Unbounded native build offload, hosted --plan, eas/proxy devices and EAS artifact
 profiles remain unsupported for native Xcode apps. These limits do not change React Native or
@@ -609,6 +614,9 @@ hosted-android-process; older hosts refuse before admission or APK upload.
 Native runs close any previous Metro bridge, launch the signed APK and require
 a live app process for launched=true. --no-metro-check is allowed, and reload
 refuses because there is no Metro runtime. Re-run stim android after an edit.
+Hosted Android uses the same hosted-app-state liveness check and three-second
+release/process wait as hosted iOS. Update older hosts to verify process state;
+an unknown query does not establish a crash.
 Native EAS/proxy targets remain unsupported. Build offload requires the complete
 android.offloadInputs declaration; see stim guide lifecycle native-android.
 

@@ -565,6 +565,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       readDeviceRecords: () => [],
       readNativeCrashes: () => [],
       deviceLogsThrough: () => null,
+      processAlive: async () => null,
       stop: () => {},
     }),
     ensureStorage: async (dir: string) => {
@@ -8219,10 +8220,11 @@ describe('named Android hosting placement', () => {
     },
   );
 
-  test("a hosted debug launch waits for the app's readiness in the host's copied device log", async () => {
+  test("a hosted debug launch waits for the app's readiness in the host's copied device log and checks its process", async () => {
     let at = 1000;
     const copied = () => at - 3000;
     const stop = vi.fn<() => void>();
+    const processAlive = vi.fn<() => Promise<boolean>>(async () => true);
     const readiness = (ts: number, state: string) => ({
       ts,
       src: 'device',
@@ -8243,6 +8245,7 @@ describe('named Android hosting placement', () => {
         readDeviceRecords: () => [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
         readNativeCrashes: () => [],
         deviceLogsThrough: copied,
+        processAlive,
         stop,
       }),
       verifyLaunched: (args: Parameters<typeof verifyLaunch>[0]) =>
@@ -8264,6 +8267,7 @@ describe('named Android hosting placement', () => {
     expect(h.stderr.join('\n')).toContain('app reported ready');
     expect(result.facts?.launched).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
+    expect(processAlive).toHaveBeenCalled();
   });
 
   test.each([
