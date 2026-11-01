@@ -1,4 +1,4 @@
-name: Probe merge state on Windows
+name: Probe merge state classification
 
 on:
   push:
@@ -8,23 +8,41 @@ permissions:
   contents: read
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  contracts:
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: '22'
+          - os: ubuntu-latest
+            node: '24'
+          - os: windows-latest
+            node: '22'
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-stim
         with:
-          node: '22'
+          node: ${{ matrix.node }}
+      - name: Verify expanded suite discovery
+        shell: bash
+        run: |
+          probe_test_file=packages/stim-cli/src/__tests__/merge-state.integration.test.ts
+          pnpm exec vitest list "$probe_test_file" --json --no-staticParse > merge-state-default.json
+          pnpm exec vitest list --config vitest.integration.config.ts "$probe_test_file" --json --no-staticParse > merge-state-integration.json
+          pnpm exec vitest list --config vitest.unit.config.ts "$probe_test_file" --json --no-staticParse --passWithNoTests > merge-state-unit.json
+          node --input-type=module -e 'import fs from "node:fs"; for (const [name, expected] of [["default", 11], ["integration", 11], ["unit", 0]]) { const cases = JSON.parse(fs.readFileSync(`merge-state-${name}.json`, "utf8")); console.log(name, cases.length); if (cases.length !== expected) throw new Error(`${name} discovery mismatch`); }'
       - name: Existing whole-file merge-state contracts
         env:
           NODE_OPTIONS: --trace-uncaught
-        run: pnpm test packages/stim-cli/src/__tests__/merge-state.test.ts --reporter=verbose --reporter=json --outputFile.json=merge-state-3877-results.json
+        run: pnpm run test:integration packages/stim-cli/src/__tests__/merge-state.integration.test.ts --reporter=verbose --reporter=json --reporter=./.github/diagnostics/3877-budget-reporter.mjs --outputFile.json=merge-state-3877-results.json
       - name: Retain probe results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: merge-state-3877-windows
-          path: merge-state-3877-results.json
+          name: merge-state-3877-${{ runner.os }}-node-${{ matrix.node }}
+          path: merge-state-*.json
           if-no-files-found: ignore
           retention-days: 7

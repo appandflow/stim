@@ -17,22 +17,12 @@ afterEach(() => {
 });
 
 function git(repo: string, args: string, env: NodeJS.ProcessEnv = {}): string {
-  console.error(`[merge-state] Git started: ${args}`);
-  try {
-    const output = execSync(`git ${args}`, {
-      cwd: repo,
-      encoding: 'utf-8',
-      stdio: 'pipe',
-      env: { ...process.env, ...env },
-    }).trim();
-    console.error(`[merge-state] Git completed: ${args}`);
-    return output;
-  } catch (error) {
-    console.error(`[merge-state] Git failed: ${args}`, error);
-    if (error && typeof error === 'object' && 'stderr' in error)
-      console.error(`[merge-state] Git stderr: ${String(error.stderr)}`);
-    throw error;
-  }
+  return execSync(`git ${args}`, {
+    cwd: repo,
+    encoding: 'utf-8',
+    stdio: 'pipe',
+    env: { ...process.env, ...env },
+  }).trim();
 }
 
 function initRepo(name: string): string {
