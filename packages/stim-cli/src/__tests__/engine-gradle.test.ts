@@ -233,14 +233,29 @@ describe('buildAndroid', () => {
 
   test('a failing build comes back as data with the diagnostics extracted, never a throw', async () => {
     makeAndroidProject();
+    const expo = join(root, 'node_modules', 'expo');
+    mkdirSync(expo, { recursive: true });
+    writeFileSync(join(expo, 'package.json'), JSON.stringify({ name: 'expo', version: '57.0.24' }));
+    const env = { ...process.env, TMPDIR: root, EXPO_OVERRIDE_METRO_CONFIG: '/project/metro.cjs' };
+    let store: string | undefined;
     const transcript = readFileSync(join(import.meta.dirname, 'fixtures', 'gradle-compile-failure.txt'), 'utf-8').split(
       '\n',
     );
     const writer = recordingWriter();
     const result = await buildAndroid(
-      { root, logWriter: writer },
+      { root, logWriter: writer, variant: 'release' },
       {
-        spawnFn: () => fakeChild({ lines: transcript, code: 1 }),
+        env,
+        spawnFn: (_command, _args, options) => {
+          const childEnv = options.env as NodeJS.ProcessEnv;
+          store = childEnv.STIM_METRO_STORE;
+          assert(store);
+          expect(existsSync(store)).toBe(true);
+          expect(childEnv.TMPDIR).toBe(root);
+          expect(childEnv.STIM_EXPO_METRO_CONFIG).toBe('/project/metro.cjs');
+          expect(childEnv.STIM_METRO_ISOLATED).toBe('1');
+          return fakeChild({ lines: transcript, code: 1 });
+        },
         now: (() => {
           let t = 0;
           return () => (t += 2000);
@@ -248,6 +263,9 @@ describe('buildAndroid', () => {
       },
     );
 
+    assert(store);
+    expect(existsSync(store)).toBe(false);
+    expect(env.EXPO_OVERRIDE_METRO_CONFIG).toBe('/project/metro.cjs');
     assert(!result.ok);
     expect(result.code).toBe(BUILD_ERROR);
     expect(result.reason).toMatch(/exit code 1/);

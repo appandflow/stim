@@ -286,6 +286,15 @@ from another build on the same machine. A `metro.config.js` that sets its own
 If that swap fails, it builds fresh. iOS physical-device Release
 runs always build fresh.
 
+When a native Release build executes its bundling task on Expo SDK 54–57,
+Stim replaces all Metro transform stores with a fresh build-private store,
+then removes it when the build ends. Project Metro configuration still loads,
+including an existing `EXPO_OVERRIDE_METRO_CONFIG`; native tools keep their
+ambient `TMPDIR`. This prevents stale `EXPO_PUBLIC_` transforms in CI. SDK 53
+and earlier lack Expo's config override and are not isolated; SDK 58 and later
+include Expo's transform cache fix. This does not fix Gradle skipping its bundle
+task when environment values change ([upstream PR](https://github.com/expo/expo/pull/49839)).
+
 ### Generated dependency output and cache misses
 
 A build that misses the cache says why before it compiles:
