@@ -173,9 +173,11 @@ struct MachineSummary: View {
           value: Format.memoryPair(usedBytes: memory.usedBytes, totalBytes: memory.totalBytes),
           tone: UsageThresholds.memory(memory.pressure))
         if showsBar {
-          ProgressView(value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))))
-            .tint(Color(UsageThresholds.memory(memory.pressure)))
-            .frame(width: 50)
+          StimProgressBar(
+            value: min(1, Double(memory.usedBytes) / Double(max(1, memory.totalBytes))),
+            tint: Color(UsageThresholds.memory(memory.pressure))
+          )
+          .frame(width: 50)
         }
       }
       .padding(Space.sm)
