@@ -552,7 +552,11 @@ function useProjectNode(root: string, src: string, platform: WorkerJob['platform
       },
     );
     // Gradle retains the JDK's original executable PATH: https://github.com/gradle/gradle/issues/28110.
-    process.env.GRADLE_USER_HOME = join(home, `n${createHash('sha256').update(identity).digest('hex').slice(0, 12)}`);
+    process.env.PATH = [dirname(JSON.parse(identity)[0]), process.env.PATH].join(delimiter);
+    process.env.GRADLE_USER_HOME = join(
+      home,
+      `n${createHash('sha256').update('canonical-node-path\0').update(identity).digest('hex').slice(0, 12)}`,
+    );
   }
 }
 

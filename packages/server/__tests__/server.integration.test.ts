@@ -3822,7 +3822,7 @@ describe('offloaded builds', () => {
 
   describe('warm Gradle daemons', () => {
     const daemons: ChildProcess[] = [];
-    const gradleHome = (client: string, repo?: string) =>
+    const gradleHome = (client: string, repo?: string, node = 'n0123456789ab') =>
       join(
         process.env.STIM_HOME!,
         'build-worker',
@@ -3830,18 +3830,18 @@ describe('offloaded builds', () => {
         ...(repo ? ['repos', repo] : []),
         'cache',
         'gradle',
-        ...(repo ? ['n0123456789ab'] : []),
+        ...(repo ? [node] : []),
       );
-    const daemonOf = (client: string, repo?: string) => {
+    const daemonOf = (client: string, repo?: string, node?: string) => {
       const jar = join(
-        gradleHome(client, repo),
+        gradleHome(client, repo, node),
         'wrapper',
         'dists',
         'gradle-9.4.1',
         'lib',
         'gradle-daemon-main-9.4.1.jar',
       );
-      mkdirSync(gradleHome(client, repo), { recursive: true });
+      mkdirSync(gradleHome(client, repo, node), { recursive: true });
       const daemon = spawn(
         process.execPath,
         ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
@@ -3920,6 +3920,7 @@ describe('offloaded builds', () => {
         const { client, id } = await buildClient(port);
         const job = await launch(client);
         const daemon = daemonOf(id, 'app-1');
+        const priorNode = daemonOf(id, 'app-1', 'nfedcba987654');
         const sibling = daemonOf(id, 'another-repo');
         if (reason === 'cancelled') {
           const response = await client.request('build.cancel', { job });
@@ -3928,6 +3929,7 @@ describe('offloaded builds', () => {
         } else writeFileSync(gate, '');
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
         await eventually(() => !running(daemon));
+        expect(running(priorNode)).toBe(false);
         expect(running(sibling)).toBe(true);
         if (reason === 'worker-crashed') {
           const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
