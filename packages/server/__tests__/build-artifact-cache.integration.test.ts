@@ -404,35 +404,42 @@ test('revocation cancels connected builds even when another repository query can
   }
 });
 
-test('removing a client waits for a cancelled Gradle build to release its repository, then deletes its area', async () => {
-  const { host, session, query } = await gradleWorkerFixture(300);
-  const area = join(host.clientDir('builder'), 'repos', 'app-2');
-  await mkdir(area, { recursive: true });
-  await writeFile(join(area, 'hold-build'), '');
-  const job = host.launch({
-    client: 'builder',
-    repo: 'app-2',
-    session,
-    send: () => {},
-    job: {
-      platform: 'android',
-      project: '',
-      expectedFingerprint: null,
-      android: query.android,
-      native: { provider: 'gradle', sourceDigest: query.sourceDigest, inputs: query.inputs },
-    },
-  });
-  if ('error' in job) throw new Error(job.error.message);
-  try {
-    await vi.waitFor(() => expect(existsSync(join(area, 'build-pid'))).toBe(true));
-    await host.remove('builder');
-    expect(job.outcome).toMatchObject({ ok: false, code: 'cancelled' });
-    expect(existsSync(host.clientDir('builder'))).toBe(false);
-  } finally {
-    session.close(false);
-    await host.close();
-  }
-});
+test.each([false, true])(
+  'removing a client waits for a cancelled Gradle build to release its repository, then deletes its area (cancelled first: %s)',
+  async (cancelFirst) => {
+    const { host, session, query } = await gradleWorkerFixture(300);
+    const area = join(host.clientDir('builder'), 'repos', 'app-2');
+    await mkdir(area, { recursive: true });
+    await writeFile(join(area, 'hold-build'), '');
+    const job = host.launch({
+      client: 'builder',
+      repo: 'app-2',
+      session,
+      send: () => {},
+      job: {
+        platform: 'android',
+        project: '',
+        expectedFingerprint: null,
+        android: query.android,
+        native: { provider: 'gradle', sourceDigest: query.sourceDigest, inputs: query.inputs },
+      },
+    });
+    if ('error' in job) throw new Error(job.error.message);
+    try {
+      await vi.waitFor(() => expect(existsSync(join(area, 'build-pid'))).toBe(true));
+      if (cancelFirst) {
+        job.cancel();
+        await job.done;
+      }
+      await host.remove('builder');
+      expect(job.outcome).toMatchObject({ ok: false, code: 'cancelled' });
+      expect(existsSync(host.clientDir('builder'))).toBe(false);
+    } finally {
+      session.close(false);
+      await host.close();
+    }
+  },
+);
 
 test('React Native offers distinguish an exact cache miss from malformed or mixed queries', async () => {
   const worker = join(root, 'offer-worker.mjs');

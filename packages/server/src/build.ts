@@ -398,8 +398,6 @@ interface Job {
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
-  /** Settles once its repository claim is released, which can trail `done` while Gradle finishes cancelling. */
-  released: Promise<void>;
   send: (event: BuildProgressEvent) => void;
   session: BuildSession | null;
   grace: NodeJS.Timeout | null;
@@ -431,6 +429,7 @@ export interface BuildHostOptions {
 export class BuildHost {
   readonly limits: BuildLimits;
   private readonly jobs = new Set<Job>();
+  private readonly holds = new Map<string, Set<Promise<void>>>();
   private readonly owned = new Map<string, Job>();
   private readonly sessions = new Map<BuildSession, string>();
   private readonly served = new Set<string>();
@@ -941,7 +940,8 @@ export class BuildHost {
     const jobs = [...this.jobs].filter((job) => job.client === client);
     for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
-    await Promise.all(jobs.map((job) => job.done.then(() => job.released)));
+    await Promise.all(jobs.map((job) => job.done));
+    await Promise.all(this.holds.get(client) ?? []);
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
@@ -1133,7 +1133,6 @@ export class BuildHost {
       settled: false,
       cancel,
       done: Promise.resolve(),
-      released: Promise.resolve(),
       send,
       session,
       grace: null,
@@ -1187,12 +1186,17 @@ export class BuildHost {
           const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
           if (gradle && (cancelled || (!outcome.ok && outcome.code === 'worker-exited'))) {
             releaseClaim(slot);
-            entry.released = new Promise<void>((released) =>
+            const holds = this.holds.get(client) ?? new Set<Promise<void>>();
+            this.holds.set(client, holds);
+            const hold = new Promise<void>((released) =>
               setTimeout(() => {
                 releaseClaim(claim);
+                holds.delete(hold);
+                if (holds.size === 0 && this.holds.get(client) === holds) this.holds.delete(client);
                 released();
               }, this.limits.gradleCancelDrainMs).unref(),
             );
+            holds.add(hold);
           } else releaseClaims();
           if (
             entry.outcome?.ok &&
