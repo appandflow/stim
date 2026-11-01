@@ -673,7 +673,6 @@ interface RepoIdentity {
   lockfile: string | null;
 }
 
-/** The repository on the remote machine: one area per git common dir, shared by all its worktrees. */
 function repoIdentity(projectRoot: string): RepoIdentity {
   const repoRoot = realpathSync(git(projectRoot, ['rev-parse', '--show-toplevel']));
   const common = realpathSync(git(repoRoot, ['rev-parse', '--path-format=absolute', '--git-common-dir']));
@@ -681,7 +680,7 @@ function repoIdentity(projectRoot: string): RepoIdentity {
 }
 
 function repositoryIdentity(projectRoot: string, repoRoot: string, common: string): RepoIdentity {
-  const digest = createHash('sha256').update(common).digest('hex').slice(0, 12);
+  const digest = createHash('sha256').update(repoRoot).digest('hex').slice(0, 12);
   const name = (basename(dirname(common)) || 'repo').replace(/[^A-Za-z0-9._-]/g, '_').replace(/^[^A-Za-z0-9]+/, '');
   const project = relative(repoRoot, realpathSync(projectRoot));
   const lock = dependencyLockfile(repoRoot, project);
