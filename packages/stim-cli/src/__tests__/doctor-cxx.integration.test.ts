@@ -210,7 +210,14 @@ test.skipIf(process.platform === 'win32')(
     const cwd = process.cwd();
     const environment = { ...process.env };
     const exit = process.exitCode;
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, STIM_MAINTENANCE: 'off' };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      ANDROID_HOME: join(home, 'missing-sdk'),
+      ANDROID_SDK_ROOT: join(home, 'missing-sdk'),
+      STIM_MAINTENANCE: 'off',
+    };
     for (const key of Object.keys(env)) if (key.startsWith('CODEX_') || key.startsWith('CLAUDE')) delete env[key];
     const progress: string[] = [];
     const result = await createStim({
@@ -235,7 +242,14 @@ test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
   async () => {
     writeFileSync(join(root, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '0.81.0' } }));
     const target = cache('android/app', null);
-    const env: NodeJS.ProcessEnv = { ...process.env, HOME: home, USERPROFILE: home, STIM_MAINTENANCE: 'off' };
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      HOME: home,
+      USERPROFILE: home,
+      ANDROID_HOME: join(home, 'missing-sdk'),
+      ANDROID_SDK_ROOT: join(home, 'missing-sdk'),
+      STIM_MAINTENANCE: 'off',
+    };
     for (const key of Object.keys(env)) if (key.startsWith('CODEX_') || key.startsWith('CLAUDE')) delete env[key];
     const progress: string[] = [];
     chmodSync(dirname(target), 0o555);
