@@ -304,7 +304,9 @@ export function prepareIosDevices({ h, platform, targets, cleanup, shutdown = tr
       }
       assert(result.code === 0, `simulator preparation failed for ${slot}: ${result.stderr}`);
       const { udid } = JSON.parse(result.stdout);
-      const inventory = JSON.parse(h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000 }).stdout);
+      const listed = h.sh('xcrun', ['simctl', 'list', 'devices', '--json'], { timeout: 30000, allowFail: true });
+      assert(listed.code === 0, `could not inspect prepared simulator ${slot}: ${listed.stderr}`);
+      const inventory = JSON.parse(listed.stdout);
       const sim = Object.values(inventory.devices)
         .flat()
         .find((device) => device.udid === udid);

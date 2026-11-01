@@ -228,26 +228,30 @@ test('native preparation controls simulator shutdown and stops after a failed pr
     writeFileSync(join(cwd, '.stim.json'), JSON.stringify({ ios: { simslimProfile: 'profile.json' } }));
   }
   for (const { failure, shutdown } of [
-    { failure: false, shutdown: true },
-    { failure: true, shutdown: true },
-    { failure: false, shutdown: false },
+    { failure: null, shutdown: true },
+    { failure: 'prepare', shutdown: true },
+    { failure: null, shutdown: false },
+    { failure: 'inventory', shutdown: false },
   ]) {
     const events = [];
     const h = {
       log() {},
-      sh(file, args, { cwd } = {}) {
-        if (file === 'xcrun')
+      sh(file, args, { cwd, allowFail } = {}) {
+        if (file === 'xcrun') {
+          assert.equal(allowFail, true);
+          if (failure === 'inventory') return { code: 1, stdout: '', stderr: 'inventory timed out' };
           return {
             code: 0,
             stdout: JSON.stringify({ devices: { ios: [{ udid: 'owned', state: shutdown ? 'Shutdown' : 'Booted' }] } }),
           };
+        }
         assert.equal(file, process.execPath);
         assert.equal(args[2], cwd);
         events.push(['prepare', cwd]);
         return {
-          code: failure ? 1 : 0,
+          code: failure === 'prepare' ? 1 : 0,
           stdout: JSON.stringify({ udid: 'owned' }),
-          stderr: failure ? 'boot timed out' : '',
+          stderr: failure === 'prepare' ? 'boot timed out' : '',
         };
       },
       cli(args, { cwd }) {
@@ -275,7 +279,7 @@ test('native preparation controls simulator shutdown and stops after a failed pr
       } catch (error) {
         observed = error;
       }
-      assert.match(observed.message, /boot timed out/);
+      assert.match(observed.message, failure === 'prepare' ? /boot timed out/ : /inventory timed out/);
       assert.equal(observed.preserveNativeState, true);
       cleanupTmp(homes, observed);
       assert.ok(homes.every((cwd) => existsSync(join(cwd, '.stim.json'))));
