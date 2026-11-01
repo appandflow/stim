@@ -2653,8 +2653,9 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('the grace period of a dirty finished worktree counts changes to its uncommitted files', async () => {
-  const { worktrees } = repoWithMergedBranches();
-  const dirty = worktrees.dirty ?? '';
+  const { worktrees } = repoWithTwoBranches();
+  const dirty = worktrees.merged ?? '';
+  writeFileSync(join(dirty, 'notes.txt'), 'wip');
   process.env.STIM_ARCHIVE_ENABLED = 'true';
   onTestFinished(() => {
     delete process.env.STIM_ARCHIVE_ENABLED;
@@ -2675,7 +2676,7 @@ test('the grace period of a dirty finished worktree counts changes to its uncomm
 }, 240_000);
 
 test('gc --delete removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
-  const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
+  const { worktrees, git } = repoWithTwoBranches({ registerWorktrees: false });
   const baseline = join(projects, 'baseline');
   git(`worktree add -q --detach "${baseline}" origin/main`);
   backdateWorktreeActivity(baseline, new Date(Date.now() - 3 * 60 * 60_000));
@@ -2689,7 +2690,7 @@ test('gc --delete removes a clean detached worktree on the default branch once i
     /Removed the worktree .*baseline \(no commits of its own beyond origin\/main, inactive for 3h/,
   );
   expect(existsSync(fresh)).toBe(true);
-  for (const name of ['open', 'evil', 'dirty']) expect(existsSync(worktrees[name] ?? '')).toBe(true);
+  expect(existsSync(worktrees.open ?? '')).toBe(true);
 }, 240_000);
 
 test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
@@ -2791,7 +2792,10 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
-  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+  const { repo, worktrees, git } = gitRepoWithWorktrees(['fresh']);
+  git('remote set-head origin --auto');
+  upsertProject(repo, { metroPort: null });
+  recordWorkspaceUse(repo);
   const at = (name: string) => worktrees[name] ?? name;
   backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
   const pressured = await planWorktrees({
