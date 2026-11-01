@@ -112,7 +112,7 @@ public struct StatusViews: Sendable {
 
   /// Applies one `machine` event.
   public mutating func applyMachine(_ fields: [String: JSONValue]) -> Outcome {
-    guard case .object(let view)? = fields["machine"] else { return .unchanged }
+    guard case .object(let view)? = fields["machine"], view != machine else { return .unchanged }
     machine = view
     return .changed
   }
