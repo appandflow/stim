@@ -121,6 +121,10 @@ public struct ResourceSampler: Sendable {
   public mutating func sample(
     _ workspaces: [Workspace], processes: [ProcessEntry], at now: Date
   ) -> [String: ResourceUsage] {
+    guard !workspaces.isEmpty else {
+      previous = nil
+      return [:]
+    }
     let byPid = Dictionary(processes.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
     let prior = previous
     let elapsed = prior.map { now.timeIntervalSince($0.at) } ?? 0
