@@ -82,6 +82,7 @@ import { planHostedIdleStops } from './hosted-idle.ts';
 import { adbPath } from './frame-helper.ts';
 import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
+import { pruneHostedApps } from './prune-hosted-apps.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
 
 interface WorkerRun {
@@ -1372,6 +1373,15 @@ export class DeviceHost {
               ? value.notice
               : 'The install or launch outcome is unresolved; stop this hosted session before retrying.');
       });
+      if (installed) {
+        try {
+          pruneHostedApps(record.id, attempt);
+        } catch (error) {
+          process.stderr.write(
+            `Hosted app cleanup incomplete for ${record.id}: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
       if (!installed && !owned.stopping)
         this.change(record.id, (current) => {
           current.state = 'unknown';
