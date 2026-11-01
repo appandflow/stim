@@ -258,6 +258,8 @@ export interface BuildPlanPayload {
   refusal?: { code: string; message: string; remedy: string };
   /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this machine; auto may use janics-mac-mini`. */
   placement?: string;
+  /** Resolved build preference; automatic worker availability and compatibility are checked at run time. */
+  buildPlacement?: { preference: string; reason: string };
 }
 
 /** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */

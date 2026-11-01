@@ -825,7 +825,10 @@ describe('macOS build placement and promotion', () => {
     const controller = new AbortController();
     const context = testContext({ projectRoot: root, cwd: root, signal: controller.signal });
     const copy = fs.cp;
-    let copied = false;
+    let signalCopied!: () => void;
+    const copied = new Promise<void>((resolve) => {
+      signalCopied = resolve;
+    });
     let stagedResource = '';
     let complete!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -835,7 +838,7 @@ describe('macOS build placement and promotion', () => {
       await copy(source, target, options);
       if (source === join(root, 'branding')) {
         stagedResource = join(String(target), 'wordmark.svg');
-        copied = true;
+        signalCopied();
         await gate;
       }
     });
@@ -848,7 +851,7 @@ describe('macOS build placement and promotion', () => {
     });
     observed.catch(() => {});
     try {
-      await vi.waitFor(() => expect(copied).toBe(true), { timeout: 200 });
+      await Promise.race([copied, observed]);
       controller.abort('SIGINT');
       await new Promise((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);

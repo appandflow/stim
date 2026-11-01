@@ -88,7 +88,7 @@ try {
     `import { createStim, type StimPlatform, type StimRunOptions, type StimRunResult, type StimStopResult } from 'stim';
 const stim = createStim({ projectRoot: '.' });
 const ios = await stim.run({ platform: 'ios', scheme: 'App' });
-const udid: string = ios.facts.udid;
+const udid: string | null = ios.facts.udid;
 const iosPlatform: 'ios' = ios.platform;
 const android = await stim.run({ platform: 'android', variant: 'debug' });
 const serial: string | null = android.facts.serial;
@@ -103,7 +103,7 @@ declare const platform: 'ios' | 'android';
 const native = await stim.run({ platform });
 const nativePlatform: 'ios' | 'android' = native.platform;
 if (native.platform === 'ios') {
-  const nativeUdid: string = native.facts.udid;
+  const nativeUdid: string | null = native.facts.udid;
 } else {
   const nativeSerial: string | null = native.facts.serial;
 }

@@ -4451,13 +4451,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                         ? hostedDevices.appLaunch(session.id, raw)
                         : method === 'device-host.app.attach'
                           ? hostedDevices.appAttach(session.id, raw)
-                          : method === 'device-host.logs.query'
-                            ? await hostedDevices.logsQuery(session.id, raw)
-                            : method === 'device-host.metro.open'
-                              ? await hostedDevices.metroOpen(session.id, raw)
-                              : method === 'device-host.metro.ports'
-                                ? await hostedDevices.metroPorts(session.id, raw)
-                                : await hostedDevices.metroClose(session.id, raw);
+                          : method === 'device-host.app.state'
+                            ? await hostedDevices.appState(session.id, raw)
+                            : method === 'device-host.logs.query'
+                              ? await hostedDevices.logsQuery(session.id, raw)
+                              : method === 'device-host.metro.open'
+                                ? await hostedDevices.metroOpen(session.id, raw)
+                                : method === 'device-host.metro.ports'
+                                  ? await hostedDevices.metroPorts(session.id, raw)
+                                  : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

@@ -1267,6 +1267,7 @@ describe('pairing', () => {
           'hosted-congestion',
           'hosted-ios-data',
           'hosted-ios-process',
+          'hosted-app-state',
           'native-xcode-build',
           'native-xcode-toolchain',
           'build-artifact-cache',
@@ -1852,6 +1853,7 @@ describe('hosted device sessions', () => {
         process.exit(0);
       }
 
+      if(input.mode==='app-state') { process.stdout.write(JSON.stringify({state:'stopped'})); process.exit(0); }
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
       writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
       writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
@@ -1966,6 +1968,13 @@ describe('hosted device sessions', () => {
       expect(await reattached.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
         'result.launched',
         'unverified',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.state',
+        'stopped',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: 'foreign' })).toHaveProperty(
+        'error',
       );
       expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
       expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);
