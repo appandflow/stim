@@ -219,6 +219,15 @@ export function createFixture({ framework, platform, workDir, h }) {
     }
   }
 
+  if (platform === 'ios') {
+    const settingsPath = join(appDir, '.stim.json');
+    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
+    settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
+    copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
+    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+    h.log('generated iOS fixture uses the native QA SimSlim profile');
+  }
+
   if (framework === 'expo' && platform === 'ios') {
     const expoVersion = JSON.parse(readFileSync(join(appDir, 'package.json'), 'utf8')).dependencies.expo;
     if (/^[~^]?57\./.test(expoVersion)) {
@@ -244,16 +253,14 @@ export function createFixture({ framework, platform, workDir, h }) {
     assertMatchingPods(appDir);
   }
 
-  if (platform === 'ios') {
-    const settingsPath = join(appDir, '.stim.json');
-    const settings = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf8')) : {};
-    settings.ios = { ...settings.ios, simslimProfile: '.stim-simslim.json' };
-    copyFileSync(new URL('./simslim-profile.json', import.meta.url), join(appDir, '.stim-simslim.json'));
-    writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
-    h.log('generated iOS fixture uses the native QA SimSlim profile');
-  }
-
   gitInitWithRemote({ appDir, workDir, framework, h });
+  if (framework === 'expo' && platform === 'ios') {
+    h.sh(
+      process.execPath,
+      ['--experimental-strip-types', fileURLToPath(new URL('./record-fixture-prebuild.mjs', import.meta.url)), appDir],
+      { cwd: appDir },
+    );
+  }
   return appDir;
 }
 
