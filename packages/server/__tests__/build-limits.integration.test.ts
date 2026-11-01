@@ -76,6 +76,7 @@ setInterval(() => {}, 1000);`,
       ],
       { stdio: ['ignore', 'pipe', 'ignore'] },
     );
+    const daemonClosed = once(daemon, 'close');
     let childPid: number | null = null;
     try {
       assert(daemon.stdout);
@@ -100,6 +101,7 @@ setInterval(() => {}, 1000);`,
       writeFileSync(gate, '');
       await launched.done;
       const unresolved = scenario === 'foreign-owner';
+      if (!unresolved) await daemonClosed;
       expect(launched.outcome).toHaveProperty('code', unresolved ? 'cleanup-unresolved' : 'worker-crashed');
       expect(daemon.exitCode === null && daemon.signalCode === null).toBe(unresolved);
       expect(readClaimSet(`${area}.claims`).live).toHaveLength(unresolved ? 1 : 0);
@@ -112,9 +114,8 @@ setInterval(() => {}, 1000);`,
         } catch {}
       }
       if (daemon.exitCode === null && daemon.signalCode === null) {
-        const closed = once(daemon, 'close');
         daemon.kill();
-        await closed;
+        await daemonClosed;
       }
       vi.unstubAllEnvs();
     }
