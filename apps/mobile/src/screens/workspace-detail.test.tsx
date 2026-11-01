@@ -38,6 +38,7 @@ jest.mock('expo-router', () => {
 });
 jest.mock('@/hooks/machines', () => ({
   useArchives: () => mockArchivesPending,
+  useArchivesPending: () => mockArchivesPending,
   useHasCurrentStatus: () => true,
   useMacConnection: () => ({
     mac: { id: 'mac', name: 'Mac' },

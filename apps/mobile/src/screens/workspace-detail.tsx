@@ -45,6 +45,7 @@ import { isGitHubPullUrl } from '@/lib/github';
 import { useWorkspaceBuildPlans } from '@/hooks/build-plans';
 import {
   useArchives,
+  useArchivesPending,
   useHasCurrentStatus,
   useHasStatus,
   useMacConnection,
@@ -278,6 +279,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
   const env = item?.env;
   const current = useHasCurrentStatus(macId);
   useArchives(current && !env, macId);
+  const archivesPending = useArchivesPending(macId);
   const title = item?.title ?? workspaceTitleAt(path, null);
   const project = item?.project ?? null;
   const inCheckout = item?.inCheckout ?? null;
@@ -599,7 +601,7 @@ function LiveWorkspaceDetail({ path, scrollsToApp = true }: { path: string; scro
     </>
   );
 
-  if (!hasStatus || (!env && archiveDecision.kind === 'wait')) {
+  if (!hasStatus || (!env && (!current || archivesPending || archiveDecision.kind === 'wait'))) {
     return (
       <>
         <ScrollView

@@ -4,6 +4,7 @@ import { ReservedRegionsProvider } from 'react-native-reserved-regions';
 
 import {
   useArchives,
+  useArchivesPending,
   useHasCurrentStatus,
   useHasStatus,
   useMachinePresence,
@@ -38,6 +39,7 @@ export default function DeviceRoute() {
   const item = useWorkspace(id, path);
   const current = useHasCurrentStatus(id);
   useArchives(current && !item, id);
+  const archivesPending = useArchivesPending(id);
   const redirect = archivedDeviceRoute({
     macId: id,
     path,
@@ -45,7 +47,7 @@ export default function DeviceRoute() {
     slot,
     physical: physical === '1',
     at,
-    hasStatus,
+    hasStatus: hasStatus && current && !archivesPending,
     workspaceListed: item !== undefined,
     archives: status?.archived ?? [],
   });

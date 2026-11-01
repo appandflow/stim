@@ -14,6 +14,7 @@ import statusFixture from '../mock-server/fixtures/status.json';
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
 // Reanimated 4.7 and leaves an empty module, so the mock it loads is replaced.
 jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
+jest.mock('react-native-hinges', () => ({ useHinges: () => [] }));
 
 jest.mock('react-native-reanimated/mock', () => {
   const inert: () => unknown = () =>
@@ -314,9 +315,10 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
 
   const path = statusFixture.payload.environments[0]!.path;
   MockSocket.holdMachine = true;
-  const rendered = await renderRouter('./src/app', {
+  const route = renderRouter('./src/app', {
     initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(path)}`,
   });
+  const rendered = await route;
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
   await act(() => jest.advanceTimersByTimeAsync(0));
   expect(readyLogs()).toBe(0);
@@ -470,6 +472,45 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   await act(() => router.push('/filters'));
   await fireEvent.press(screen.getByText('Reset'));
   await act(() => router.back());
+  let previous = archived;
+  for (const destination of ['workspace', 'device'] as const) {
+    const newer = {
+      ...previous,
+      id: `${previous.id}-${destination}`,
+      removedAt: '2026-11-02T12:00:00.000Z',
+    };
+    let refreshed: ((result: object) => void) | undefined;
+    MockSocket.archiveReply = (_before, reply) => {
+      pages.push(undefined);
+      refreshed = reply;
+    };
+    await act(async () => {
+      changed();
+      await jest.advanceTimersByTimeAsync(100);
+      router.push({
+        pathname: `/mac/[id]/${destination}`,
+        params: { id: MAC_ID, path: previous.projectRoot, platform: 'ios', slot: 'duo' },
+      });
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(5100));
+    expect(route.getPathname()).toBe(`/mac/${MAC_ID}/${destination}`);
+    expect(screen.queryByText('Workspace Not Found')).toBeNull();
+    expect(refreshed).toBeDefined();
+    await act(async () => {
+      refreshed?.({ archived: [newer], usage, next: null });
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(100));
+    expect(route.getPathname()).toBe(`/mac/${MAC_ID}/archived`);
+    expect(route.getSearchParams().archive).toBe(newer.id);
+    await act(async () => {
+      router.replace('/');
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(100));
+    previous = newer;
+  }
   await rendered.unmount();
   mockStore('secure-store').set('stim.macs', paired);
 }, 60_000);
