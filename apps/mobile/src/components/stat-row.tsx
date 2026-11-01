@@ -53,7 +53,7 @@ export function StatRow({
             weight={weight}
             tone={stat.tone ?? valueTone}
             style={[styles.value, styles.shrink]}
-            numberOfLines={1}
+            numberOfLines={wrap ? undefined : 1}
           >
             {stat.value}
           </Text>

@@ -319,7 +319,7 @@ export async function verifyAndroidMetroRun({
           readDeviceRecords: hostedLogs?.readDeviceRecords,
           deviceLogsThrough: hostedLogs?.deviceLogsThrough,
           processAlive: hostedLogs
-            ? null
+            ? hostedLogs.processAlive
             : async () => {
                 const running = await androidAppProcess(serial, androidPackage);
                 return running.state === 'unknown' ? null : running.state === 'running';

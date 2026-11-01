@@ -140,3 +140,31 @@ test('remote-only with no remote machines plans the STIM_HOSTING_REFUSED a run g
     remedy: 'Add an approved Mac to remote.machines (stim guide settings), or select a placement that may run here.',
   });
 });
+
+test('planned automatic placement favors the selected build Mac among available device offers', async () => {
+  let selected: string | undefined;
+  await planHostedDevice({
+    ...base,
+    machine: 'auto',
+    placement: 'remote',
+    buildMachine: 'mini-b',
+    sameKey: () => true,
+    deps: {
+      machines: () => [],
+      automatic: async (args, deps) => {
+        const result = await automaticDevicePlacement(args, {
+          ...deps,
+          machines: () => ['mini-a', 'mini-b'],
+          peek: () => ({ count: 0, max: 3, queued: 0, localLive: false }),
+          capacity: () => ({ cpus: 4, loadPerCore: 0, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+          memory: () => 'normal',
+          budget: async () => null,
+          probe: async (machine) => offer(machine, iosChoice('arm64')),
+        });
+        selected = result.placement.machine;
+        return result;
+      },
+    },
+  });
+  expect(selected).toBe('mini-b');
+});

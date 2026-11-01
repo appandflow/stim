@@ -18,7 +18,6 @@ import { basename, dirname, join, sep } from 'node:path';
 import { Command } from 'commander';
 import { workspaceName } from '@stim-cli/core';
 import { registerWarm } from '../commands/worktree.ts';
-import { workspaceLinks } from '../devices/stim-desktop.ts';
 import { acquireWarmClaim, warmClaimPath, warmClaimsDir } from '../engine/warm-claim.ts';
 import {
   exclusiveClaimDir,
@@ -43,11 +42,6 @@ import {
   podsPlan,
 } from '../workspace/worktree-refresh.ts';
 import { goneClaimOwner, makeChildProcess, makeExitingChild, plantClaim } from './_factories.ts';
-
-vi.mock('../devices/stim-desktop.ts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../devices/stim-desktop.ts')>();
-  return { ...actual, workspaceLinks: vi.fn<typeof actual.workspaceLinks>(actual.workspaceLinks) };
-});
 
 let base: string;
 let root: string;
@@ -291,22 +285,6 @@ test('--refresh fast-forwards the source checkout, then copies', async () => {
   expect(git(root, 'rev-parse', 'HEAD')).toBe(published);
   expect(git(target, 'branch', '--show-current')).toBe('linked');
   expect(readFileSync(join(target, '.env'), 'utf-8')).toBe('main env');
-}, 120_000);
-
-test('a warm that registers an app ends with the Stim Desktop link on stderr, also when the refresh had nothing to do', async () => {
-  write(target, 'package.json', '{"name":"app","dependencies":{"react-native":"0.80.0"}}\n');
-  vi.mocked(workspaceLinks).mockResolvedValue({ desktop: 'stim-desktop://workspace?path=/w' });
-  try {
-    for (const args of [[], ['--refresh']]) {
-      const result = await runWarm(target, ...args);
-      expect(result.code).toBe(0);
-      expect(result.stdout).toEqual([]);
-      expect(result.stderr).toContain('Open in Stim: stim-desktop://workspace?path=/w');
-    }
-    expect(vi.mocked(workspaceLinks)).toHaveBeenLastCalledWith(target);
-  } finally {
-    vi.mocked(workspaceLinks).mockReset();
-  }
 }, 120_000);
 
 test('a current refresh copies under its shared claim while a sibling copy still holds the seed', async () => {

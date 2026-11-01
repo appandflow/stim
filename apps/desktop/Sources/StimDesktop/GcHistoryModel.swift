@@ -7,10 +7,10 @@ final class GcHistoryModel: ObservableObject {
   @Published private(set) var error: String?
   @Published private(set) var loaded = false
 
-  private let cli: Task<StimCLI, Never>
+  private let environment: Task<[String: String], Never>
 
-  init(cli: Task<StimCLI, Never>) {
-    self.cli = cli
+  init(environment: Task<[String: String], Never>) {
+    self.environment = environment
   }
 
   func poll() async {
@@ -21,8 +21,11 @@ final class GcHistoryModel: ObservableObject {
   }
 
   private func refresh() async {
-    let cli = await cli.value
-    let result = await Result.awaiting { try await cli.gcHistory() }
+    let environment = await environment.value
+    let result = await Result.awaiting {
+      try await GcHistory.read(
+        stimHome: StimHome.path(environment: environment), connection: ServerSession.shared.statsConnection)
+    }
     guard !Task.isCancelled else { return }
     switch result {
     case .success(let items):

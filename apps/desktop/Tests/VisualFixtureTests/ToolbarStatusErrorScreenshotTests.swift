@@ -9,7 +9,7 @@
 
   final class ToolbarStatusErrorScreenshotTests: XCTestCase {
     @MainActor private func errorSummary() -> MachineSummary {
-      let status = StatusStore(cli: Task { StimCLI(environment: ["PATH": "/nonexistent"]) })
+      let status = StatusStore(environment: Task { ["PATH": "/nonexistent"] })
       let gc = GcReportStore(run: { throw CancellationError() })
       let metrics = MetricsStore(status: status, gc: gc, disks: DiskVolumeStore(status: status))
       status.refresh()

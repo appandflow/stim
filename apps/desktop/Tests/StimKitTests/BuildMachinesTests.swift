@@ -137,6 +137,9 @@ import Testing
       BuildMachineStatus.Capacity.self,
       from: Data(#"{"loadPerCore":0.3,"maxLoadPerCore":2,"cpus":10,"running":0,"max":1,"diskFreeBytes":812e9}"#.utf8))
     #expect(full.line == "load 0.3/core of 2 \u{00B7} 10 cores \u{00B7} 0 of 1 offloaded builds \u{00B7} 812 GB free")
+    let unlimited = try JSONDecoder().decode(
+      BuildMachineStatus.Capacity.self, from: Data(#"{"cpus":12,"running":2,"max":0}"#.utf8))
+    #expect(unlimited.line == "12 cores \u{00B7} 2 offloaded builds")
     let old = try JSONDecoder().decode(BuildMachineStatus.Capacity.self, from: Data(#"{"loadPerCore":1.5}"#.utf8))
     #expect(old.line == "load 1.5/core")
   }

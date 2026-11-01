@@ -1,5 +1,5 @@
 {
-  "compat": 2,
+  "compat": 3,
   "files": [
     "packages/core/dependency-install.ts",
     "packages/core/react-native-artifact.ts",
@@ -9,6 +9,7 @@
     "packages/stim-cli/shim/android-cas.gradle",
     "packages/stim-cli/shim/android-cas.toolchain.cmake",
     "packages/stim-cli/shim/android-optimizations.gradle",
+    "packages/stim-cli/shim/expo-metro-config.cjs",
     "packages/stim-cli/shim/native-android.gradle",
     "packages/stim-cli/src/cache/build-cache.ts",
     "packages/stim-cli/src/commands/android/build.ts",
@@ -21,6 +22,7 @@
     "packages/stim-cli/src/engine/deps.ts",
     "packages/stim-cli/src/engine/gradle.ts",
     "packages/stim-cli/src/engine/prebuild.ts",
+    "packages/stim-cli/src/engine/release-metro.ts",
     "packages/stim-cli/src/engine/xcode.ts",
     "packages/stim-cli/src/integrations/",
     "packages/stim-cli/src/macos/stage.ts",
@@ -34,5 +36,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "7c3ce186a49784da0f7585783a59abc1a32e5e8be7d43b6158b781170da69d58"
+  "digest": "5c5ece91b06089bd9a3dc1be2bc4537809d205d252412ef7f16b5a57f08f4ab8"
 }

@@ -34,6 +34,7 @@ import { statsProjectKey } from '../engine/stats.ts';
 import { sharedCompilationCache } from '../workspace/paths.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 import {
+  parseIosRemote,
   remoteIosSetting,
   resolveCacheProviderConfig,
   type ResolvedProjectSettings,
@@ -405,7 +406,7 @@ async function planNativeXcode(
     const { context, settings } = resolved;
     const errors = settingShapeErrors(settings);
     if (errors.length) throw new NativeXcodeError(errors.join('; '), 'Correct the project settings and retry.');
-    if (remoteIosSetting(settings))
+    if (options.remote !== undefined ? parseIosRemote(options.remote) : remoteIosSetting(settings))
       throw new NativeXcodeError(
         'Native Xcode planning does not resolve hosted placement.',
         'Unset ios.remote to plan a local build, or run stim ios without --plan.',

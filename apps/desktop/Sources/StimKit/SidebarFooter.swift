@@ -1,9 +1,7 @@
 import Foundation
 
-/// The sidebar footer shows one status line at a time. Priority, highest first: `stim` missing or
-/// outdated, critical low disk, a Desktop update, warning-level low disk, a newer `stim`, then normal.
+/// The sidebar footer prioritizes disk pressure and Desktop updates over optional agent CLI updates.
 public enum SidebarFooterStatus: Equatable, Sendable {
-  case stimUnavailable(CLICompatibility)
   case diskCritical(freeBytes: Int64)
   case desktopUpdateAvailable
   case diskWarning(freeBytes: Int64)
@@ -14,7 +12,6 @@ public enum SidebarFooterStatus: Equatable, Sendable {
   public static func decide(
     stim: CLICompatibility?, pressure: PressurePlan?, desktopUpdateAvailable: Bool, stimUpdate: SemanticVersion? = nil
   ) -> SidebarFooterStatus {
-    if let stim, !stim.isCompatible { return .stimUnavailable(stim) }
     if let pressure, pressure.belowHardFloor { return .diskCritical(freeBytes: pressure.freeBytes) }
     if desktopUpdateAvailable { return .desktopUpdateAvailable }
     if let pressure { return .diskWarning(freeBytes: pressure.freeBytes) }

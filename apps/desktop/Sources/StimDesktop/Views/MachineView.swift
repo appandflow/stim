@@ -25,7 +25,7 @@ struct MachineView: View {
   @State private var selectedPairing: String?
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @State private var selection: Set<FreeAction>?
-  @State private var confirming: [StimCommand]?
+  @State private var confirming: (commands: [StimCommand], items: [String])?
   @State private var removing: WorkspaceStorage?
   @State private var expanded: Set<String> = []
   @State private var width: CGFloat = 1000
@@ -137,28 +137,33 @@ struct MachineView: View {
     .confirmationDialog(
       "Free This Space?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
       titleVisibility: .visible, presenting: confirming
-    ) { commands in
+    ) { confirmation in
       Button("Free Disk Space", role: .destructive) {
-        actions.run("Free Disk Space", steps: commands, key: ActionCenter.machineKey)
+        actions.run("Free Disk Space", steps: confirmation.commands, key: ActionCenter.machineKey)
       }
-    } message: { commands in
-      Text(
-        commands.map { "stim " + $0.arguments.filter { $0 != "--json" }.joined(separator: " ") }.joined(separator: "\n")
-          + "\n\nstim worktree remove refuses a worktree with uncommitted or unpushed work, and stim gc checks each entry again before it acts."
-      )
+    } message: { confirmation in
+      let commands: String = confirmation.commands.map {
+        "stim " + $0.arguments.filter { $0 != "--json" }.joined(separator: " ")
+      }.joined(separator: "\n")
+      let message: String =
+        confirmation.items.joined(separator: "\n\n")
+        + "\n\nstim worktree remove refuses a worktree with uncommitted or unpushed work, and stim gc checks each entry again before it acts."
+        + "\n\nCommands:\n"
+        + commands
+      Text(message)
     }
     .confirmationDialog(
-      "Remove This Worktree?",
+      removing.map { "Remove \(status.names(ofPath: $0.path).title)?" } ?? "Remove worktree?",
       isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
       titleVisibility: .visible, presenting: removing
     ) { workspace in
-      Button("Run stim worktree remove", role: .destructive) {
+      Button("Remove worktree", role: .destructive) {
         actions.run(
           "Remove \(status.names(ofPath: workspace.path).title)", StimCommand(["worktree", "remove"], cwd: workspace.path))
       }
     } message: { workspace in
       Text(
-        "Stim reclaims its build outputs, owned devices and Metro port, then removes a linked worktree's checkout\(workspace.branch.map { " of \($0)" } ?? ""); a source checkout keeps its tree. It refuses when the worktree has uncommitted or unpushed work."
+        "Stim reclaims its build outputs, owned devices and Metro port, then removes a linked worktree's checkout\(workspace.branch.map { " of \($0)" } ?? ""); a source checkout keeps its tree. It refuses when the worktree has uncommitted or unpushed work.\n\nCommand: stim worktree remove"
       )
     }
   }
@@ -188,7 +193,7 @@ struct MachineView: View {
         } label: {
           machineLabel("This Mac", subtitle: "Local", tone: nil, selected: machine == nil && pairing == nil)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.hoverRow(radius: Radius.control, selected: machine == nil && pairing == nil))
         .accessibilityAddTraits(machine == nil && pairing == nil ? .isSelected : [])
         #if DEBUG
           ForEach(previewMachineNames, id: \.self) { name in
@@ -196,7 +201,7 @@ struct MachineView: View {
             } label: {
               machineLabel(name, subtitle: "Preview", tone: .tertiary, selected: false)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.hoverRow(radius: Radius.control))
             .disabled(true)
             .help("Visual preview only. This machine is not connected.")
           }
@@ -211,7 +216,7 @@ struct MachineView: View {
               machineName(entry), subtitle: readiness?.title ?? "Not checked", tone: readiness?.tone ?? .neutral,
               selected: machine == entry && pairing == nil)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.hoverRow(radius: Radius.control, selected: machine == entry && pairing == nil))
           .accessibilityAddTraits(machine == entry && pairing == nil ? .isSelected : [])
           .help(entry)
         }
@@ -222,7 +227,7 @@ struct MachineView: View {
             machineLabel(
               pairedName(entry), subtitle: entry.status.title, tone: entry.status.tone, selected: pairing?.id == entry.id)
           }
-          .buttonStyle(.plain)
+          .buttonStyle(.hoverRow(radius: Radius.control, selected: pairing?.id == entry.id))
           .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
           .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
         }
@@ -250,7 +255,7 @@ struct MachineView: View {
   private func machineLabel(_ title: String, subtitle: String, tone: Tone?, selected: Bool) -> some View {
     HStack(spacing: Space.lg) {
       if let tone {
-        Circle().fill(Color(tone)).frame(width: 7, height: 7)
+        StatusDot(color: Color(tone))
           .padding(2)
           .background(Circle().fill(selected ? Palette.onBrand : Color.clear))
           .accessibilityHidden(true)
@@ -423,58 +428,58 @@ struct MachineView: View {
     let categories: [(DiskCategory, CategoryTotal)] = DiskCategory.allCases.map { ($0, report.total($0)) }
     let total = max(1, categories.map { $0.1.bytes }.reduce(0, +))
     let under = lowest.flatMap { volume in budget.map { volume.freeBytes < $0 } } ?? false
-    return VStack(alignment: .leading, spacing: Space.lg) {
-      HStack(alignment: .firstTextBaseline, spacing: Space.md) {
-        Text(lowest.map { Format.fileSize($0.freeBytes) } ?? "\u{2014}")
-          .font(.stim(.title))
-          .foregroundStyle(under ? Palette.warning : Palette.text)
-        VStack(alignment: .leading, spacing: Space.xxs) {
-          Text(lowest.map { "free on \($0.name) of \(Format.fileSize($0.totalBytes))" } ?? "free")
-            .foregroundStyle(Palette.secondary)
-          Text(
-            budget.map { under ? "Under the \(Format.fileSize($0)) Stim budget" : "Stim budget \(Format.fileSize($0)) free" }
-              ?? "No Stim disk budget set"
-          )
-          .font(.stim(.footnote))
-          .foregroundStyle(under ? Palette.warning : Palette.tertiary)
+    return Card(clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.lg) {
+        HStack(alignment: .firstTextBaseline, spacing: Space.md) {
+          Text(lowest.map { Format.fileSize($0.freeBytes) } ?? "\u{2014}")
+            .font(.stim(.title))
+            .foregroundStyle(under ? Palette.warning : Palette.text)
+          VStack(alignment: .leading, spacing: Space.xxs) {
+            Text(lowest.map { "free on \($0.name) of \(Format.fileSize($0.totalBytes))" } ?? "free")
+              .foregroundStyle(Palette.secondary)
+            Text(
+              budget.map { under ? "Under the \(Format.fileSize($0)) Stim budget" : "Stim budget \(Format.fileSize($0)) free" }
+                ?? "No Stim disk budget set"
+            )
+            .font(.stim(.footnote))
+            .foregroundStyle(under ? Palette.warning : Palette.tertiary)
+          }
+          Spacer()
         }
-        Spacer()
-      }
-      GeometryReader { proxy in
-        HStack(spacing: Space.xxs) {
+        GeometryReader { proxy in
+          HStack(spacing: Space.xxs) {
+            ForEach(categories, id: \.0) { category, value in
+              if value.bytes > 0 {
+                Rectangle()
+                  .fill(Self.color(category))
+                  .frame(width: max(2, (proxy.size.width - 12) * CGFloat(value.bytes) / CGFloat(total)))
+                  .help("\(category.title): \(Format.fileSize(value.bytes))")
+              }
+            }
+          }
+          .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(height: 14)
+        .clipShape(RoundedRectangle(cornerRadius: Radius.small))
+        FlowLayout(spacing: Space.xl) {
           ForEach(categories, id: \.0) { category, value in
-            if value.bytes > 0 {
-              Rectangle()
-                .fill(Self.color(category))
-                .frame(width: max(2, (proxy.size.width - 12) * CGFloat(value.bytes) / CGFloat(total)))
-                .help("\(category.title): \(Format.fileSize(value.bytes))")
+            HStack(spacing: Space.sm) {
+              RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
+              Text(category.title).foregroundStyle(Palette.secondary)
+              Text(
+                value.complete
+                  ? Format.fileSize(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + Format.fileSize(value.bytes)
+              )
+              .font(.stim(.footnote, mono: true))
+              .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
+              .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
             }
           }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .font(.stim(.callout))
       }
-      .frame(height: 14)
-      .clipShape(RoundedRectangle(cornerRadius: Radius.small))
-      FlowLayout(spacing: Space.xl) {
-        ForEach(categories, id: \.0) { category, value in
-          HStack(spacing: Space.sm) {
-            RoundedRectangle(cornerRadius: 2).fill(Self.color(category)).frame(width: 9, height: 9)
-            Text(category.title).foregroundStyle(Palette.secondary)
-            Text(
-              value.complete
-                ? Format.fileSize(value.bytes) : value.bytes == 0 ? "\u{2014}" : "\u{2265} " + Format.fileSize(value.bytes)
-            )
-            .font(.stim(.footnote, mono: true))
-            .foregroundStyle(value.complete ? Palette.text : Palette.tertiary)
-            .help(value.complete ? "" : "Some of it is still being measured or could not be sized")
-          }
-        }
-      }
-      .font(.stim(.callout))
+      .padding(Space.xl)
     }
-    .padding(Space.xl)
-    .background(RoundedRectangle(cornerRadius: Radius.card).fill(Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: Radius.card).strokeBorder(Palette.border))
   }
 
   @ViewBuilder private var gcMissing: some View {
@@ -499,12 +504,15 @@ struct MachineView: View {
     let selected = FreePlan.effective(selection ?? FreePlan.defaultSelection(report.free), items: report.free)
     let commands = FreePlan.commands(selected, home: NSHomeDirectory())
     let bytes = FreePlan.bytes(report.free, selected: selected)
+    let items = report.free.filter { FreePlan.frees($0.action, selected: selected) }
     return CollapsibleSection("machine.free", title: "Free Disk Space", items: report.free, capped: false) {
       Image(systemName: "trash")
         .iconFont(IconSize.small)
         .foregroundStyle(Palette.tertiary)
         .accessibilityHidden(true)
       Spacer()
+      Text("\(items.count) selected")
+        .font(.stim(.caption)).foregroundStyle(Palette.secondary)
       if let active = actions.active(for: ActionCenter.machineKey) {
         Button {
           actions.presented = active
@@ -516,14 +524,16 @@ struct MachineView: View {
         }
         .buttonStyle(.stim())
       } else {
-        Button(bytes > 0 ? "Free \(Format.fileSize(bytes))\u{2026}" : "Free space\u{2026}") { free(commands) }
-          .buttonStyle(.stim(commands.isEmpty ? .secondary : .primary))
-          .saturation(commands.isEmpty ? 0 : 1)
-          .disabled(commands.isEmpty)
-          .help(
-            commands.isEmpty
-              ? "Select items to free space."
-              : commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
+        Button(bytes > 0 ? "Free \(Format.fileSize(bytes))\u{2026}" : "Free space\u{2026}") {
+          free(commands, items: items.map { "\(freeTitle($0)): \(abbreviatingHome($0.detail))" })
+        }
+        .buttonStyle(.stim(commands.isEmpty ? .secondary : .primary))
+        .saturation(commands.isEmpty ? 0 : 1)
+        .disabled(commands.isEmpty)
+        .help(
+          commands.isEmpty
+            ? "Select items to free space."
+            : commands.map { "stim " + $0.arguments.joined(separator: " ") }.joined(separator: "\n"))
       }
     } content: { shown in
       if gc.report == nil {
@@ -585,6 +595,7 @@ struct MachineView: View {
       ) { EmptyView() }
       .toggleStyle(.checkbox)
       .labelsHidden()
+      .accessibilityLabel("Select \(freeTitle(item))")
       .disabled(!enabled)
       .help(enabled ? "" : "stim gc --delete frees this too; uncheck the stim gc rows to choose it alone")
       VStack(alignment: .leading, spacing: Space.xxs) {
@@ -617,11 +628,11 @@ struct MachineView: View {
     }
   }
 
-  private func free(_ commands: [StimCommand]) {
+  private func free(_ commands: [StimCommand], items: [String]) {
     if let preview = FreePlan.preview(commands) {
       actions.run("Preview Disk Cleanup", StimCommand(preview, cwd: NSHomeDirectory()), key: ActionCenter.machineKey)
     } else {
-      confirming = commands
+      confirming = (commands, items)
     }
   }
 
@@ -758,7 +769,7 @@ struct MachineView: View {
           }
       }
       totalText(workspace.total, complete: workspace.totalComplete)
-      Menu {
+      Menu("Actions for worktree \(title)", systemImage: "ellipsis.circle") {
         Button("Reveal in Finder") { reveal(workspace.worktreePath) }
         Divider()
         Button(
@@ -766,13 +777,13 @@ struct MachineView: View {
             + "\u{2026}", role: .destructive
         ) { removing = workspace }
         .disabled(actions.active(for: workspace.path) != nil || workspace.missing || workspace.unprovisioned)
-      } label: {
-        Image(systemName: "ellipsis.circle")
       }
+      .labelStyle(.iconOnly)
+      .iconFont(IconSize.control)
+      .frame(width: 28, height: 24)
       .menuStyle(.borderlessButton)
       .menuIndicator(.hidden)
-      .frame(width: 28)
-      .accessibilityLabel("Worktree actions")
+      .hoverHighlight()
     }
     .padding(.horizontal, Space.xl)
     .padding(.vertical, Space.md)

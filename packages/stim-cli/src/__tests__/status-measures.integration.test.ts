@@ -185,6 +185,30 @@ test('a checkout is measured without the linked worktrees nested under it', asyn
     [join(root, '.git'), join(root, '.worktrees', 'plain'), join(root, 'node_modules'), join(root, 'src')].toSorted(),
   );
   expect(readDiskUsage(app)?.bytes).toBe(4 * 1024);
+
+  const checkout = join(home, 'separate-checkout');
+  const metadata = join(home, 'separate-metadata');
+  mkdirSync(metadata);
+  mkdirSync(checkout);
+  writeFileSync(join(checkout, '.git'), `gitdir: ${metadata}\n`);
+  kilobytes[checkout] = 3000;
+  const siblings = ['one', 'two'].map((name, index) => {
+    const path = join(checkout, 'apps', name);
+    mkdirSync(path, { recursive: true });
+    kilobytes[path] = (index + 1) * 1000;
+    const sibling = environment();
+    sibling.path = path;
+    sibling.checkout = checkout;
+    sibling.worktree = null;
+    sibling.android = null;
+    return sibling;
+  });
+  createStatusMeasurer({ updated: () => {}, now: () => clock }).schedule(siblings, []);
+  await vi.waitFor(() => {
+    applyStatusMeasures(siblings, []);
+    expect(siblings.map((sibling) => sibling.disk?.worktreeBytes)).toEqual([3000 * 1024, 3000 * 1024]);
+  });
+  expect(duWalks().filter((targets) => targets.includes(checkout))).toHaveLength(1);
 });
 
 test('the walk claim records the du process while it runs and drops it afterwards', async () => {

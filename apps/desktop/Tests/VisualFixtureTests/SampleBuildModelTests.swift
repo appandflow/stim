@@ -6,8 +6,8 @@ import XCTest
 
 final class SampleBuildModelTests: XCTestCase {
   @MainActor func testProductionRemovalRefusesWithoutPrivateServerInsteadOfLaunchingCLI() async {
-    let cli = StimCLI(environment: ["STIM_HOME": "/tmp/stim-sample-removal-test"], override: "/does-not-exist/stim")
-    let model = SampleBuildModel(cli: Task { cli })
+    let environment = ["STIM_HOME": "/tmp/stim-sample-removal-test"]
+    let model = SampleBuildModel(environment: Task { environment })
     do {
       _ = try await model.dependencies.run(StimCommand(["worktree", "remove", "/sample"], cwd: "/fixture"), { _ in })
       XCTFail("Removal requires the private server")

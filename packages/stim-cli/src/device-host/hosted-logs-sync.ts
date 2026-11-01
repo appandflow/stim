@@ -13,6 +13,7 @@ import { readHostedIos, readHostedAndroid } from './ios-state.ts';
 import { pullHostedNativeLogs, pullHostedMacosLogs, readHostedNativeLogs } from './hosted-logs.ts';
 import type { NdjsonRecord } from '../ndjson.ts';
 import { connectHost, type HostConnection } from './hosted-macos.ts';
+import { call } from './hosted-client.ts';
 
 const WATCH_RECHECK_MS = 100;
 
@@ -165,6 +166,7 @@ export interface HostedLaunchLogs {
   readDeviceRecords: () => NdjsonRecord[];
   readNativeCrashes: () => NdjsonRecord[];
   deviceLogsThrough: () => number | null;
+  processAlive: () => Promise<boolean | null>;
   stop: () => void;
 }
 
@@ -191,11 +193,44 @@ export function followHostedLaunchLogs(
     },
   });
   const records = () => readHostedNativeLogs(root, platform, slot);
+  const placement = (platform === 'ios' ? readHostedIos(root) : readHostedAndroid(root))[slot];
+  let processWarning = false;
+  const processAlive = async (): Promise<boolean | null> => {
+    let host: HostConnection | undefined;
+    const cancel = () => host?.connection.close();
+    context?.signal.addEventListener('abort', cancel, { once: true });
+    try {
+      if (!placement) throw new Error('The hosted app placement is unavailable.');
+      host = await connectHost(placement.machine, undefined, false, context?.signal);
+      if (!host.connection.supports('hosted-app-state'))
+        throw new Error(`Update stim-server on ${placement.machine} to verify hosted app process liveness.`);
+      const result = await call(host, 'device-host.app.state', {
+        session: placement.session,
+        attempt: placement.appAttempt,
+      });
+      if (!['running', 'stopped', 'unknown'].includes(String(result.state)))
+        throw new Error('The host returned no valid app process state.');
+      return result.state === 'unknown' ? null : result.state === 'running';
+    } catch (error) {
+      context?.signal.throwIfAborted();
+      if (!processWarning) {
+        const text = `${phaseLine('device', `Could not verify the hosted app process: ${error instanceof Error ? error.message : String(error)}`)}\n`;
+        if (context) context.output('stderr', text);
+        else ambientWrite('stderr', text);
+        processWarning = true;
+      }
+      return null;
+    } finally {
+      context?.signal.removeEventListener('abort', cancel);
+      host?.connection.close();
+    }
+  };
   return {
     readDeviceRecords: records,
     readNativeCrashes: () =>
       records().filter((record) => record.event === 'native_crash' && Number(record.ts) >= since),
     deviceLogsThrough: () => (failed ? Number.POSITIVE_INFINITY : through),
+    processAlive,
     stop,
   };
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import { makeExecutor } from './_factories.ts';
 import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resetExecutor, setExecutor } from '../exec.ts';
@@ -352,25 +352,38 @@ describe('buildIos with a mocked executor', () => {
   }
 
   test('an injected set of settings lands on the argv, after the action', async () => {
+    const expo = join(tmp, 'node_modules', 'expo');
+    mkdirSync(expo, { recursive: true });
+    writeFileSync(join(expo, 'package.json'), JSON.stringify({ name: 'expo', version: '57.0.24' }));
     const child = fakeChild();
     const spawnCalls = harness(tmp, { child });
+    const env = { ...process.env, TMPDIR: tmp, EXPO_PUBLIC_VALUE: 'current' };
     const promise = buildIos({
       root: tmp,
       iosDir: join(tmp, 'ios'),
       udid: 'BF2A-1111-2222',
       logWriter: recordingWriter(),
+      configuration: 'Release',
+      env,
       compilationCache: ['COMPILATION_CACHE_ENABLE_CACHING=YES', `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`],
     });
     await child.started;
-    expect(spawnCalls[0]?.args?.slice(-4)).toEqual([
+    expect(spawnCalls[0]?.args?.slice(-3)).toEqual([
       'build',
       'COMPILATION_CACHE_ENABLE_CACHING=YES',
       `COMPILATION_CACHE_CAS_PATH=${join(tmp, 'cas')}`,
-      'DEBUG_INFORMATION_FORMAT=dwarf',
     ]);
-    makeProduct(workspaceDerivedData(tmp));
+    const childEnv = spawnCalls[0]?.opts?.env;
+    const store = childEnv?.STIM_METRO_STORE;
+    const existedDuringBuild = store !== undefined && existsSync(store);
+    makeProduct(workspaceDerivedData(tmp), 'App', { configuration: 'Release' });
     child.emit('close', 0, null);
     await promise;
+    assert(store);
+    expect(existedDuringBuild).toBe(true);
+    expect(childEnv).toMatchObject({ TMPDIR: tmp, EXPO_PUBLIC_VALUE: 'current', STIM_METRO_ISOLATED: '1' });
+    expect(env).not.toHaveProperty('STIM_METRO_STORE');
+    expect(existsSync(store)).toBe(false);
   });
 
   test('the resolved settings produce ONE stderr note naming the CAS path, and land on the argv', async () => {
@@ -402,6 +415,7 @@ describe('buildIos with a mocked executor', () => {
     child.emit('close', 0, null);
     await promise;
     expect(notes.length).toBe(1);
+    expect(spawnCalls[0]?.args).toContain('DEBUG_INFORMATION_FORMAT=dwarf');
     expect(notes[0]).toMatch(
       /^ {2}cache {7}compilation cache on \(CAS at .*compilation-cache, Swift off, 6\.3 < 6\.4\)$/,
     );

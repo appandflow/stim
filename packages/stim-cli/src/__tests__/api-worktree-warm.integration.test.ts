@@ -4,7 +4,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFi
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createStim } from '../api.ts';
+import { createStim, StimError } from '../api.ts';
+import * as identities from '../process-identity.ts';
+import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import { upsertProject } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { warmClaimPath } from '../engine/warm-claim.ts';
@@ -53,6 +55,58 @@ async function fixture(name: string) {
 }
 
 const isCarriedCopy = (file: string) => file === 'cp' || file.includes('stim-clonefile-');
+
+test('a failed warm keeps cleanup proof after its retained claims are removed', async () => {
+  const item = await fixture('cleanup-proof');
+  const executor = getExecutor();
+  const runFile = executor.runFileAsync.bind(executor);
+  const controller = new AbortController();
+  let owned: { pid: number; processToken: string } | undefined;
+  const inspect = vi
+    .spyOn(identities, 'inspectProcessIdentity')
+    .mockImplementation((record) => (record?.pid === owned?.pid ? 'unknown' : inspectProcessIdentity(record)));
+  const copy = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
+    if (!isCarriedCopy(file)) return runFile(file, args, options);
+    return runFile(process.execPath, ['-e', 'console.log("ready"); setInterval(() => {}, 1000)'], {
+      ...options,
+      onSpawn: (child) => {
+        options.onSpawn?.(child);
+        const identity = child.pid === undefined ? null : captureProcessIdentity(child.pid);
+        assert(child.pid !== undefined && identity?.ok);
+        owned = { pid: child.pid, processToken: identity.token };
+        child.stdout?.once('data', () => controller.abort());
+      },
+    });
+  });
+  try {
+    const failure = await createStim({ projectRoot: item.linked, home: item.home, env: item.env })
+      .warmWorktree({ signal: controller.signal })
+      .catch((error: unknown) => error);
+    assert(failure instanceof StimError && failure.cause instanceof Error);
+    const cause = failure.cause;
+    assert('cleanupSettled' in cause && typeof cause.cleanupSettled === 'function');
+    expect(failure.code).toBe('STIM_CLAIM_UNAVAILABLE');
+    expect(cause.cleanupSettled()).toBe(false);
+    vi.stubEnv('STIM_HOME', item.home);
+    for (const root of [warmClaimPath(item.root), warmClaimPath(item.linked)]) {
+      const claims = readClaimSet(root);
+      expect(claims.live.length).toBeGreaterThan(0);
+      for (const claim of claims.live) await rm(claim.path);
+    }
+    expect(cause.cleanupSettled()).toBe(false);
+    assert(owned && inspectProcessIdentity(owned) === 'same');
+    process.kill(owned.pid, 'SIGKILL');
+    expect(await waitForProcessExit(owned, 2000)).toBe(true);
+    const settled = cause.cleanupSettled;
+    await vi.waitFor(() => expect(settled()).toBe(true));
+  } finally {
+    controller.abort();
+    copy.mockRestore();
+    inspect.mockRestore();
+    if (owned && inspectProcessIdentity(owned) === 'same') process.kill(owned.pid, 'SIGKILL');
+    if (owned) await waitForProcessExit(owned, 2000);
+  }
+}, 30_000);
 
 test('concurrent warm clients copy real ignored files with isolated homes and progress', async () => {
   const first = await fixture('first');

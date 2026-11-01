@@ -10,11 +10,11 @@ public struct ServerWorktreeRemoveResult: Sendable {
 /// Removes a worktree through the same-home bundled server. Cancellation awaits cleanup acknowledgement;
 /// reconnect never repeats a mutation whose dispatch may already have happened.
 @MainActor public func runServerWorktreeRemove(
-  _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+  _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerWorktreeRemoveResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to remove worktrees from this Stim home.")
   }

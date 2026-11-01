@@ -24,6 +24,7 @@ import { resolveOptimizations, type Optimizations } from '../optimizations.ts';
 import { ambientContext, type StimContext } from '@stim-cli/core';
 import { killOnAbort } from '../workspace/git-read.ts';
 import { readPlistFile } from './app-schemes.ts';
+import { withReleaseMetroCache } from './release-metro.ts';
 
 export interface XcodeProject {
   kind?: string;
@@ -599,8 +600,19 @@ export function compilationCacheActivityLine(activity: CompilationCacheActivity)
   return 'unavailable; Xcode did not report reliable statistics';
 }
 
-export async function buildXcode({
+export function buildXcode(input: Parameters<typeof buildXcodeWithEnv>[0]): Promise<BuildIosResult> {
+  const context = input.context ?? ambientContext();
+  return withReleaseMetroCache(
+    input.root,
+    (input.configuration ?? 'Debug') !== 'Debug',
+    input.env ?? context?.env ?? process.env,
+    (env) => buildXcodeWithEnv({ ...input, context, env }),
+  );
+}
+
+async function buildXcodeWithEnv({
   context = ambientContext(),
+  env = context?.env ?? process.env,
   root,
   udid = null,
   logWriter,
@@ -622,6 +634,7 @@ export async function buildXcode({
   onHeartbeat = (line: string) => console.error(line),
 }: {
   context?: StimContext;
+  env?: NodeJS.ProcessEnv;
   root: string;
   udid?: string | null;
   logWriter: NdjsonWriter;
@@ -793,7 +806,7 @@ export async function buildXcode({
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
         env: {
-          ...(context?.env ?? process.env),
+          ...env,
           NSUnbufferedIO: 'YES',
           FORCE_COLOR: '0',
         },

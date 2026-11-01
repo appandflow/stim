@@ -915,7 +915,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   owned by this Stim home, or it is not booted or running. Permission and push
   also refuse when no app is recorded for the device. Run the platform command
   the remedy names (\`stim ios\` or \`stim android\`, with \`--slot\` for a named
-  slot) and retry. No tool runs before this refusal.`,
+  slot) and retry. A non-Mac client cannot run a local iOS simulator; run the
+  iOS tool on a Mac with a local Stim-owned simulator. No tool runs before this refusal.`,
     },
     STIM_DEVICE_TOOL_UNSUPPORTED: {
       summary: 'that device tool has no equivalent on that platform',

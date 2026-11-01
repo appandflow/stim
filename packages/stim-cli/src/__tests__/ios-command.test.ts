@@ -1,3 +1,4 @@
+import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
@@ -471,6 +472,7 @@ function harness(overrides: LooseDeps = {}) {
       readDeviceRecords: () => [],
       readNativeCrashes: () => [],
       deviceLogsThrough: () => null,
+      processAlive: async () => null,
       stop: () => {},
     }),
     hostLanCandidates: () => [{ interfaceName: 'en0', address: '192.168.1.5' }],
@@ -4015,8 +4017,21 @@ describe('--remote', () => {
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    const { calls, exitCode } = await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        fingerprintProject: async () => {
+          vi.advanceTimersByTime(1000);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
     expect(exitCode).toBeFalsy();
+    const stats = sharedState.readStats().record;
+    expect(stats?.machine.ios?.runs).toBe(1);
+    expect(stats?.history).toBeUndefined();
+    expect(readWorkspaceState(root)?.ios).toMatchObject({ devicePlacement: { decision: 'eas', machine: 'eas' } });
     expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
@@ -8323,9 +8338,9 @@ describe('--plan', () => {
       expect(exitCode).toBe(1);
       const refusal = parseFirst(logs);
       expect(refusal).toMatchObject({ code: 'STIM_BAD_ARG' });
-      expect(refusal.message).toContain('Invalid STIM_REMOTE_BUILD value "bad word"');
+      expect(refusal.message).toContain('--remote-build / remote.build');
       expect(refusal.message).not.toContain('ios.remote');
-      expect(refusal.remedy).toContain('stim settings set remote.build');
+      expect(refusal.remedy).toContain('remote-build local');
     } finally {
       delete process.env.STIM_REMOTE_BUILD;
     }
@@ -8367,6 +8382,21 @@ describe('--plan', () => {
     'ensureWorkspaceStorage',
   ];
 
+  test('explicit local device and build flags override remote settings in the read-only plan', async () => {
+    const { logs, exitCode, calls } = await run(
+      { plan: true, json: true, remote: 'local', remoteBuild: 'local' },
+      { resolveSettings: () => ({ ios: { remote: 'unreachable-mini' } }) },
+    );
+    expect(exitCode).toBeNull();
+    expect(parseFirst(logs)).toMatchObject({
+      cacheKey: debugKey,
+      placement: 'this machine',
+      buildPlacement: { preference: 'local', reason: 'builds on this machine' },
+    });
+    expect(calls.order.filter((name) => RUN_ONLY.includes(name))).toEqual([]);
+    expect(existsSync(workspaceStateFile(root))).toBe(false);
+  });
+
   test('a miss predicts a cold build from the cold history and touches no device, build or workspace state', async () => {
     reserve();
     recordRuns('cold', [300_000, 420_000, 400_000]);
@@ -8386,6 +8416,11 @@ describe('--plan', () => {
       outcome: 'cold',
       expectedMs: 400_000,
       basis: 3,
+      placement: 'this machine',
+      buildPlacement: {
+        preference: 'auto',
+        reason: 'chooses among enabled build machines at run time, after capacity and compatibility checks',
+      },
       missReason: {
         kind: 'no-baseline',
         summary: 'no earlier build of this project in the cache to compare with',
@@ -8430,14 +8465,21 @@ describe('--plan', () => {
     const { logs } = await run(
       { plan: true, json: true },
       {
-        loadProjectProvider: async () => ({ name: 'probe', provider: { easCli: '/fixture/eas' } }),
+        loadProjectProvider: async () => ({ name: 'eas', provider: { easCli: '/fixture/eas' } }),
         resolveRemote: async (args) => {
           asked.push(args);
           return { appPath: join(root, 'remote', 'Fixture.app') };
         },
       },
     );
-    expect(parseFirst(logs)).toMatchObject({ cacheHit: 'remote', provider: 'probe', outcome: 'hit', prebuild: null });
+    expect(parseFirst(logs)).toMatchObject({
+      cacheHit: 'remote',
+      provider: 'eas',
+      outcome: 'hit',
+      prebuild: null,
+      placement: 'this machine',
+      buildPlacement: { preference: 'auto', reason: 'cache hit; no compilation expected' },
+    });
     expect(asked).toEqual([
       expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: { configuration: 'Debug', arch: 'arm64' } }),
     ]);
@@ -8533,7 +8575,6 @@ describe('--plan', () => {
 
   test.each([
     [{ device: true }, '--device'],
-    [{ remote: 'proxy' }, '--remote'],
     [{ installRuntime: true }, '--install-runtime'],
     [{ simulatorApp: 'xcode' }, '--simulator-app'],
   ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
@@ -8552,6 +8593,7 @@ describe('--plan', () => {
 });
 
 describe('iOS placement on a hosting Mac', () => {
+  afterEach(() => vi.restoreAllMocks());
   const hostedDevice = {
     udid: '12345678-1234-1234-1234-123456789abc',
     name: 'iPhone 17 Pro',
@@ -8996,6 +9038,9 @@ describe('iOS placement on a hosting Mac', () => {
     'builds %s for the offered architecture before reservation and never touches a local device',
     async (configuration) => {
       reserve();
+      const links = { desktop: 'https://stim.appandflow.com/open?v=1&machine=fixture&workspace=fixture' };
+      vi.spyOn(desktopLinks, 'workspaceLinks').mockResolvedValue(links);
+      const delivered = { ...placement, device: { ...hostedDevice, name: 'stim-fixture-remote' } };
       const order: string[] = [];
       const close = vi.fn<() => void>();
       const prepare: LooseDeps['prepareHostedIos'] = async () => {
@@ -9015,6 +9060,7 @@ describe('iOS placement on a hosting Mac', () => {
           hostSimulatorArch: () => 'arm64',
           buildIos: async (args) => {
             order.push('build');
+            vi.advanceTimersByTime(1000);
             expect(args.destination).toBe('generic/platform=iOS Simulator');
             expect(args.arch).toBe('x86_64');
             return makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
@@ -9022,8 +9068,8 @@ describe('iOS placement on a hosting Mac', () => {
           placeHostedIos: async (_target, args) => {
             order.push('reserve');
             expect(args.selectors).toEqual({ deviceType: 'iPhone 17 Pro', runtime: 'iOS 27.0' });
-            args.reserved(placement);
-            return { placement, launched: args.release ? true : 'unverified' };
+            args.reserved(delivered);
+            return { placement: delivered, launched: args.release ? true : 'unverified' };
           },
         },
       );
@@ -9031,13 +9077,20 @@ describe('iOS placement on a hosting Mac', () => {
       expect(order).toEqual(['offer', 'build', 'reserve']);
       const facts = parseFirst(logs);
       expect(logs).toHaveLength(1);
-      expect(facts.udid).toBe('');
+      expect(facts.udid).toBeNull();
+      expect(facts.deviceName).toBe('stim-fixture-remote');
+      expect(facts.agentDevice).toBeUndefined();
+      expect(facts.devicePlacement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+      expect(facts.links).toEqual(links);
       expect(facts.host).toMatchObject({
         machine: 'mini',
-        device: { name: 'iPhone 17 Pro', runtime: '27.0' },
+        device: { name: 'stim-fixture-remote', runtime: '27.0' },
         agent: { driver: 'none' },
       });
       expect(facts.cacheKey).toContain('x86-64');
+      const stats = sharedState.readStats().record;
+      expect(stats?.machine.ios?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(JSON.stringify(facts).includes(hostedDevice.udid)).toBe(false);
       for (const native of ['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp', 'replaceCollector'])
         expect(calls.order).not.toContain(native);
@@ -9166,11 +9219,21 @@ describe('iOS placement on a hosting Mac', () => {
       code: 'STIM_HOSTING_REFUSED',
       remedy: 'Run stim stop; stim start, then retry.',
     });
-    expect(readWorkspaceState(root)?.ios).toBeUndefined();
+    expect(readWorkspaceState(root)?.ios).toEqual({
+      devicePlacement: { decision: 'hosted', machine: 'mini', reason: 'selected explicitly' },
+    });
   });
 
   test('hosted plain output labels a bare runtime as iOS version', async () => {
     reserve();
+    const delivered = {
+      ...placement,
+      agent: {
+        driver: 'agent-device',
+        remoteConfig: '/tmp/host-config',
+        command: 'agent-device <command> --remote-config /tmp/host-config',
+      },
+    };
     const { logs, stderr } = await run(
       { remote: 'mini', configuration: 'Release' },
       {
@@ -9180,20 +9243,23 @@ describe('iOS placement on a hosting Mac', () => {
           session: null,
         }),
         placeHostedIos: async (_target, args) => {
-          args.reserved(placement);
-          return { placement, launched: true };
+          args.reserved(delivered);
+          return { placement: delivered, launched: true };
         },
       },
     );
     expect(logs.join('\n') + stderr).toContain('(iOS 27.0) on mini');
     expect(logs.join('\n') + stderr).not.toContain('(iOS iOS');
+    expect(logs.join('\n')).toContain(delivered.agent.command);
+    expect(logs.join('\n')).not.toContain('AGENT_DEVICE_STATE_DIR=');
   });
 
-  test("a hosted Debug launch waits for the app's readiness in the host's copied device log", async () => {
+  test("a hosted Debug launch waits for the app's readiness in the host's copied device log and checks its process", async () => {
     reserve();
     let at = 1000;
     const copied = () => at - 3000;
     const stop = vi.fn<() => void>();
+    const processAlive = vi.fn<() => Promise<boolean>>(async () => true);
     const readiness = (ts: number, state: string) => ({
       ts,
       src: 'device',
@@ -9218,6 +9284,7 @@ describe('iOS placement on a hosting Mac', () => {
             [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
           readNativeCrashes: () => [],
           deviceLogsThrough: copied,
+          processAlive,
           stop,
         }),
         verifyLaunch: (args) =>
@@ -9239,6 +9306,7 @@ describe('iOS placement on a hosting Mac', () => {
     expect(stderr).toContain('app reported ready');
     expect(parseFirst(logs).launched).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
+    expect(processAlive).toHaveBeenCalled();
   });
 
   test('hosted intent starts Metro locally even when tunnel settings are configured', async () => {
