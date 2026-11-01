@@ -1,3 +1,4 @@
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import chalk from 'chalk';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
@@ -146,7 +147,7 @@ export async function finishHostedAndroidRun({
     let launchWarning: string | undefined;
     let unattributed = false;
     if (appMode === 'development') {
-      const hostedLogs = followLogs(root, slot, 'android', launchedAt);
+      const hostedLogs = followLogs(root, slot, 'android', launchedAt, operation);
       let verification;
       try {
         verification = await verifyAndroidMetroRun({
@@ -221,6 +222,7 @@ export async function finishHostedAndroidRun({
       (entry) => report.writer.write(entry),
     );
     const facts = reportAndroidResult({
+      links: await workspaceLinks(root, { platform: 'android', slot }),
       ...report,
       out,
       ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),

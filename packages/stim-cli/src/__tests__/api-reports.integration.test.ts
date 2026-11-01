@@ -30,6 +30,7 @@ import { testContext } from './_context.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
 import { macosDir } from '../macos/state.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
+import * as androidDevices from '../devices/android.ts';
 import { decodeSecret } from '@stim-cli/core/noise-session';
 import { listLeaseFiles, takeLease } from '../engine/device-lease.ts';
 
@@ -134,6 +135,91 @@ test.each(['repairDoctor', 'unlockDevice'] as const)(
     ]);
   },
 );
+
+test('device tools refuse before admission and complete an admitted multi-step change after caller cancellation', async () => {
+  const item = fixture('device-tool');
+  writeFileSync(
+    join(item.home, 'config.json'),
+    JSON.stringify({
+      version: 2,
+      projects: {
+        [item.root]: { platforms: { android: { owned: true, avdName: 'stim-fixture', serial: 'emulator-5554' } } },
+      },
+    }),
+  );
+  const inventory = vi
+    .spyOn(androidDevices, 'resolveOwnedAvdSerialAsync')
+    .mockResolvedValue({ serial: 'emulator-5554' });
+  const calls: string[][] = [];
+  let release = () => {};
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const executor = vi.spyOn(getExecutor(), 'runFileAsync').mockImplementation(async (_file, args) => {
+    calls.push(args);
+    if (args.includes('wifi') && args.includes('disable')) await blocked;
+    return args.includes('get') ? '0' : '';
+  });
+  const client = createStim({ projectRoot: item.root, home: item.home, env: item.env });
+  const request = { tool: 'network', platform: 'android', state: 'off' } as const;
+  const signal = new AbortController();
+  try {
+    const refusal = Object.assign(new Error('Workspace is busy.'), { code: 'STIM_ACTION_BUSY' });
+    await expect(
+      client.deviceTool({
+        request,
+        beforeTool: () => {
+          throw refusal;
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_ACTION_BUSY', message: refusal.message });
+    expect(calls).toEqual([]);
+    signal.abort();
+    expect(() => client.deviceTool({ request, signal: signal.signal })).toThrow(/abort/i);
+    expect(calls).toEqual([]);
+    const probing = new AbortController();
+    const admission = vi.fn<(workspace: string) => void>();
+    inventory.mockImplementationOnce(async () => {
+      probing.abort();
+      return { serial: 'emulator-5554' };
+    });
+    await expect(client.deviceTool({ request, signal: probing.signal, beforeTool: admission })).rejects.toThrow(
+      /abort/i,
+    );
+    expect(admission).not.toHaveBeenCalled();
+    expect(calls).toEqual([]);
+    const admitted = new AbortController();
+    let completed = false;
+    const changing = client
+      .deviceTool({
+        request,
+        signal: admitted.signal,
+        beforeTool: (root) => {
+          expect(root).toBe(item.root);
+          admitted.abort();
+        },
+      })
+      .then((result) => {
+        completed = true;
+        return result;
+      });
+    activeReports.add(changing);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(completed).toBe(false);
+    release();
+    expect(await changing).toMatchObject({ tool: 'network', enabled: false, readBack: { wifi: false, data: false } });
+    expect(calls.map((args) => args.slice(2))).toEqual([
+      ['shell', 'svc', 'wifi', 'disable'],
+      ['shell', 'svc', 'data', 'disable'],
+      ['shell', 'settings', 'get', 'global', 'wifi_on'],
+      ['shell', 'settings', 'get', 'global', 'mobile_data'],
+    ]);
+  } finally {
+    release();
+    inventory.mockRestore();
+    executor.mockRestore();
+  }
+});
 
 test('concurrent GC clients isolate homes, output and results without changing process context', async () => {
   const first = fixture('first');

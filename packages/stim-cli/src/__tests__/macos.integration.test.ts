@@ -9,6 +9,7 @@ import {
   constants,
   promises as fs,
   copyFileSync,
+  chmodSync,
   existsSync,
   mkdtempSync,
   mkdirSync,
@@ -43,7 +44,9 @@ import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
-import { macosDir, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
+import * as registration from '../macos/registration.ts';
+import { spawnEntry } from '../spawn-entry.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
 import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
@@ -488,6 +491,85 @@ describe('macOS build placement and promotion', () => {
     });
   });
 
+  describe.skipIf(process.platform !== 'darwin')('failed launch registration', () => {
+    test.each(['delayed supervisor', 'unrecorded app'])('drains the %s', async (mode) => {
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      const resumed = join(dir, 'resume-supervisor');
+      const marker = join(dir, 'late-app-started');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.arguments', [
+        '-e',
+        `require('node:fs').writeFileSync(${JSON.stringify(marker)},'ready');setInterval(()=>{},1000)`,
+      ]);
+      const cached = remoteBundle();
+      copyFileSync(process.execPath, join(cached, 'Contents', 'MacOS', 'Sample'));
+      chmodSync(join(cached, 'Contents', 'MacOS', 'Sample'), 0o755);
+      vi.spyOn(artifactCache, 'swiftpmArtifactCache').mockReturnValue({
+        identity: async () => ({ hash: 'fingerprint', key: 'cache-key' }),
+        has: async () => true,
+        restore: async () => ({ bundle: cached, tier: 'local' }),
+        store: async () => {},
+      });
+      const mocked = getExecutor();
+      resetExecutor();
+      const real = getExecutor();
+      let supervisor: MacosProcess | undefined;
+      let app: MacosProcess | undefined;
+      const wait = registration.waitForMacosRegistration;
+      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(async (project, launchId, child) => {
+        const [message] = await once(child, 'message');
+        if (message.error) throw new Error(message.error);
+        if (!message.gated) app = macosProcess(message.pid);
+        return wait(project, launchId, child, Date.now() + 20);
+      });
+      setExecutor({
+        ...mocked,
+        runFile: (file, args, options) => {
+          if (file === 'plutil' && args[0] === '-replace') {
+            const path = args.at(-1) ?? '';
+            const value = JSON.parse(readFileSync(path, 'utf8'));
+            value[args[1] ?? ''] = args[3];
+            writeFileSync(path, JSON.stringify(value));
+            return '';
+          }
+          return mocked.runFile(file, args, options);
+        },
+        runFileAsync: (file, args, options) =>
+          file === 'ps' || file === 'lsof'
+            ? real.runFileAsync(file, args, options)
+            : Promise.resolve().then(() => getExecutor().runFile(file, args, options)),
+        spawn: (file, args, options) => {
+          if (args[0] !== spawnEntry('macos-run')) return mocked.spawn(file, args, options);
+          const executable = join(macosDir(root), 'Sample.app', 'Contents', 'MacOS', 'Sample');
+          const entry = new URL('../../dist/macos-run.mjs', import.meta.url).href;
+          const script =
+            mode === 'delayed supervisor'
+              ? `import{watch,existsSync}from'node:fs';await new Promise(r=>{const w=watch(${JSON.stringify(dir)},()=>{if(existsSync(${JSON.stringify(resumed)})){w.close();r()}});process.send({gated:true})});const{runMacosSupervisor}=await import(${JSON.stringify(entry)});await runMacosSupervisor(${JSON.stringify(root)},${JSON.stringify(args[2])});`
+              : `import{spawn}from'node:child_process';const app=spawn(${JSON.stringify(executable)},['-e','process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','inherit','ipc']});app.once('error',e=>process.send({error:e.message}));app.once('message',()=>process.send({pid:app.pid}));setInterval(()=>{},1000);`;
+          const child = real.spawn(process.execPath, ['--input-type=module', '-e', script], {
+            ...options,
+            env: { ...options?.env, DYLD_LIBRARY_PATH: join(dirname(process.execPath), '..', 'lib') },
+          });
+          children.push(child);
+          if (child.pid === undefined) throw new Error('Supervisor fixture did not start');
+          supervisor = macosProcess(child.pid);
+          return child;
+        },
+      });
+      try {
+        await expect(runMacos(testContext(), root, () => {}, undefined, 'local')).rejects.toThrow('did not register');
+        expect(inspectProcessIdentity(supervisor)).toBe('gone');
+        expect(app ? inspectProcessIdentity(app) : null).toBe(mode === 'unrecorded app' ? 'gone' : null);
+        writeFileSync(resumed, 'resume');
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        const owners = [app, supervisor].filter((owner) => owner !== undefined);
+        for (const owner of owners) if (inspectProcessIdentity(owner) === 'same') process.kill(owner.pid, 'SIGKILL');
+        expect(await Promise.all(owners.map((owner) => waitForProcessExit(owner, 1000)))).not.toContain(false);
+      }
+    });
+  });
+
   it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
     const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();
     let reads = 0;
@@ -825,7 +907,10 @@ describe('macOS build placement and promotion', () => {
     const controller = new AbortController();
     const context = testContext({ projectRoot: root, cwd: root, signal: controller.signal });
     const copy = fs.cp;
-    let copied = false;
+    let signalCopied!: () => void;
+    const copied = new Promise<void>((resolve) => {
+      signalCopied = resolve;
+    });
     let stagedResource = '';
     let complete!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -835,7 +920,7 @@ describe('macOS build placement and promotion', () => {
       await copy(source, target, options);
       if (source === join(root, 'branding')) {
         stagedResource = join(String(target), 'wordmark.svg');
-        copied = true;
+        signalCopied();
         await gate;
       }
     });
@@ -848,7 +933,7 @@ describe('macOS build placement and promotion', () => {
     });
     observed.catch(() => {});
     try {
-      await vi.waitFor(() => expect(copied).toBe(true), { timeout: 200 });
+      await Promise.race([copied, observed]);
       controller.abort('SIGINT');
       await new Promise((resolve) => setImmediate(resolve));
       expect(settled).toBe(false);

@@ -218,6 +218,10 @@ msgstr "{freeGb} GB free"
 msgid "{gb} GB"
 msgstr "{gb} GB"
 
+#: src/screens/workspace-resources.tsx
+msgid "{heading} {size}: {summary}"
+msgstr "{heading} {size}: {summary}"
+
 #: src/screens/build-details.tsx
 msgid "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
 msgstr "{hidden, plural, one {# more source changed.} other {# more sources changed.}}"
@@ -957,6 +961,10 @@ msgstr "Archived Workspaces"
 msgid "Auto"
 msgstr "Auto"
 
+#: src/screens/build-details.tsx
+msgid "Automatic"
+msgstr "Automatic"
+
 #: src/lib/archived.ts
 msgid "automatic maintenance"
 msgstr "automatic maintenance"
@@ -1029,6 +1037,10 @@ msgstr "Budgets"
 #: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
+
+#: src/screens/build-details.tsx
+msgid "Build destination refused"
+msgstr "Build destination refused"
 
 #: src/lib/device-tile.ts
 #: src/lib/format.ts
@@ -1452,6 +1464,10 @@ msgstr "Compared with {fingerprint}, the last build of this project in another w
 msgid "Compile"
 msgstr "Compile"
 
+#: src/screens/build-details.tsx
+msgid "Compiled on {actualName}"
+msgstr "Compiled on {actualName}"
+
 #: src/lib/workspace-view.ts
 msgid "Compiling"
 msgstr "Compiling"
@@ -1643,10 +1659,6 @@ msgstr "disk"
 #: src/screens/workspace-resources.tsx
 msgid "Disk"
 msgstr "Disk"
-
-#: src/screens/workspace-resources.tsx
-msgid "Disk {size}: {summary}"
-msgstr "Disk {size}: {summary}"
 
 #: src/screens/mac-status.tsx
 msgid "Disk details are unavailable: {message}"
@@ -3142,6 +3154,10 @@ msgstr "PR #{number} open"
 msgid "Prebuild"
 msgstr "Prebuild"
 
+#: src/screens/build-details.tsx
+msgid "Prefer remote"
+msgstr "Prefer remote"
+
 #: src/lib/workspace-view.ts
 msgid "Prepare"
 msgstr "Prepare"
@@ -3338,6 +3354,10 @@ msgstr "Reloading the web page"
 #: src/screens/mac-status.tsx
 msgid "Remote Machines"
 msgstr "Remote Machines"
+
+#: src/screens/build-details.tsx
+msgid "Remote only"
+msgstr "Remote only"
 
 #: src/screens/workspace-resources.tsx
 msgid "Removal"
@@ -3549,6 +3569,10 @@ msgstr "Select any combination. Not set up shows worktrees Stim has not warmed; 
 #: src/lib/build-machines.ts
 msgid "select the same Xcode on both"
 msgstr "select the same Xcode on both"
+
+#: src/screens/build-details.tsx
+msgid "Selected: {selectedName}"
+msgstr "Selected: {selectedName}"
 
 #: src/screens/settings.tsx
 msgid "Set by STIM_RECORDING on the Mac"
@@ -4040,6 +4064,8 @@ msgstr "This device is not running."
 msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 
+#: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 #: src/screens/build-details.tsx
 msgid "This Mac"
 msgstr "This Mac"

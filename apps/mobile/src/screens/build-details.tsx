@@ -31,6 +31,7 @@ import {
   historyDetail,
   historyTitle,
   lastBuildSummary,
+  machineName,
   nextBuild,
   planDetail,
   buildTiming,
@@ -236,6 +237,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
             </Text>
             <Text tone={app.build.state === 'failed' ? 'error' : 'secondary'}>{state}</Text>
             {app.build.durationMs === undefined ? null : <Note>{formatDuration(app.build.durationMs)}</Note>}
+            <BuildDestination build={app.build} />
             {app.build.error ? (
               <Text tone="error" selectable>
                 {app.build.error}
@@ -687,10 +689,45 @@ function LastBuildDetails({
         {lastBuildSummary(last, now, false)}
       </Text>
       <Note>{when}</Note>
+      <BuildDestination build={last} />
       <Fallback build={last} />
       {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
       {last.missReason ? <MissReason reason={last.missReason} /> : null}
       <BuildLogsLink build={last} failed={failed} root={root} archive={archive} slot={slot} />
+    </>
+  );
+}
+
+function BuildDestination({
+  build,
+}: {
+  build: Pick<LastBuild, 'buildMachine' | 'builtOn' | 'errorCode'> & { cacheHit?: LastBuild['cacheHit'] | boolean };
+}) {
+  const selected = build.buildMachine;
+  const selectedName =
+    selected === 'auto'
+      ? t`Automatic`
+      : selected === 'local'
+        ? t`This Mac`
+        : selected === 'remote'
+          ? t`Prefer remote`
+          : selected === 'remote-only'
+            ? t`Remote only`
+            : selected
+              ? machineName(selected)
+              : null;
+  const actualName = build.cacheHit
+    ? null
+    : build.builtOn === 'here'
+      ? t`This Mac`
+      : build.builtOn
+        ? machineName(build.builtOn)
+        : null;
+  return (
+    <>
+      {selectedName ? <Note>{t`Selected: ${selectedName}`}</Note> : null}
+      {actualName ? <Note>{t`Compiled on ${actualName}`}</Note> : null}
+      {build.errorCode === 'STIM_OFFLOAD_REFUSED' ? <Text tone="error">{t`Build destination refused`}</Text> : null}
     </>
   );
 }

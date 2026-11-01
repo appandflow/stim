@@ -128,6 +128,7 @@ import {
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
+  type DeviceToolRequest,
   type ArchiveDetailResult,
   type DeviceFrameArtwork,
   type MacosWindow,
@@ -876,6 +877,42 @@ function machineAccessAction(
   );
 }
 
+function deviceToolRequest(value: unknown): DeviceToolRequest | null {
+  if (!isJsonObject(value) || (value.platform !== 'ios' && value.platform !== 'android')) return null;
+  const { platform } = value;
+  const only = (...fields: string[]) =>
+    Object.keys(value).every((key) => ['tool', 'platform', ...fields].includes(key));
+  if (value.tool === 'location') {
+    if (only('clear') && value.clear === true) return { tool: 'location', platform, clear: true };
+    if (only('set') && typeof value.set === 'string' && value.set.length <= 256)
+      return { tool: 'location', platform, set: value.set };
+  } else if (
+    value.tool === 'permission' &&
+    only('action', 'service') &&
+    (value.action === 'grant' || value.action === 'revoke' || value.action === 'reset') &&
+    typeof value.service === 'string' &&
+    value.service.length <= 1024
+  ) {
+    return { tool: 'permission', platform, action: value.action, service: value.service };
+  } else if (
+    value.tool === 'push' &&
+    platform === 'ios' &&
+    only('payload') &&
+    typeof value.payload === 'string' &&
+    value.payload.length <= 65_536
+  ) {
+    return { tool: 'push', platform, payload: value.payload };
+  } else if (
+    value.tool === 'network' &&
+    platform === 'android' &&
+    only('state') &&
+    (value.state === 'on' || value.state === 'off')
+  ) {
+    return { tool: 'network', platform, state: value.state };
+  }
+  return null;
+}
+
 function remedyAction(
   cwd: string,
   env: NodeJS.ProcessEnv,
@@ -901,6 +938,15 @@ function remedyAction(
         return exitCode === 0
           ? { ok: true, stdout, summary: 'Doctor repair completed.' }
           : { ok: false, stdout, code: 'STIM_DOCTOR_REPAIR_FAILED', message: 'Doctor reported repair refusals.' };
+      }
+      if (request.action === 'device-tool') {
+        const result = await client.deviceTool({
+          request: request.request,
+          slot: request.slot,
+          signal,
+          beforeTool: admit,
+        });
+        return { ok: true, stdout: JSON.stringify(result), summary: 'Device change completed.' };
       }
       const released = await client.unlockDevice({
         platform: request.platform,
@@ -1904,6 +1950,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
               'desktop-worktree-warm',
               'desktop-machine-access',
               'desktop-remedy',
+              'desktop-device-tools',
               'desktop-plan',
             ].includes(feature) ||
               options.desktopBootstrap !== undefined) &&
@@ -1929,6 +1976,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                 'desktop-worktree-warm',
                 'desktop-machine-access',
                 'desktop-remedy',
+                'desktop-device-tools',
               ].includes(feature)),
         ),
         actions: device.capabilities.includes('control') ? [...ACTIONS] : [],
@@ -3245,11 +3293,20 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     function subscribeRemedy(id: RequestId, params: unknown, owner: PairedDevice): void {
       if (!desktopSessions.has(socket))
         return error(id, 'forbidden', 'Repairs require the connection of the Stim Desktop that started this server.');
+      const tool = isJsonObject(params) && params.action === 'device-tool' ? deviceToolRequest(params.request) : null;
       if (
         !isJsonObject(params) ||
-        (params.action !== 'doctor-fix' && params.action !== 'device-unlock') ||
+        (params.action !== 'doctor-fix' && params.action !== 'device-unlock' && params.action !== 'device-tool') ||
+        (params.action === 'device-tool' && tool === null) ||
         Object.keys(params).some(
-          (key) => !['cwd', 'action', 'platform', ...(params.action === 'device-unlock' ? ['slot'] : [])].includes(key),
+          (key) =>
+            ![
+              'cwd',
+              'action',
+              ...(params.action === 'device-tool'
+                ? ['request', 'slot']
+                : ['platform', ...(params.action === 'device-unlock' ? ['slot'] : [])]),
+            ].includes(key),
         ) ||
         typeof params.cwd !== 'string' ||
         params.cwd.length > 4096 ||
@@ -3264,19 +3321,35 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         return error(
           id,
           'bad-request',
-          'Choose an absolute cwd, doctor-fix or device-unlock, and an optional ios/android platform; slot applies only to device-unlock.',
+          'Choose an absolute cwd and a supported typed doctor, device-unlock or device-tool request.',
         );
       const request: Methods['desktop.remedy.subscribe']['params'] =
-        params.action === 'doctor-fix'
-          ? { cwd: params.cwd, action: params.action, platform: params.platform }
-          : {
+        params.action === 'device-tool' && tool
+          ? {
               cwd: params.cwd,
-              action: params.action,
-              platform: params.platform,
+              action: 'device-tool',
+              request: tool,
               slot: typeof params.slot === 'string' ? params.slot : undefined,
-            };
+            }
+          : params.action === 'doctor-fix'
+            ? { cwd: params.cwd, action: params.action, platform: params.platform }
+            : {
+                cwd: params.cwd,
+                action: 'device-unlock',
+                platform: params.platform,
+                slot: typeof params.slot === 'string' ? params.slot : undefined,
+              };
       subscribeLifecycle(id, params.cwd, owner, 'remedy', (cwd, admit, onProgress) =>
-        remedyAction(cwd, options.env, actionLimits, request, admit, onProgress),
+        remedyAction(
+          cwd,
+          options.env,
+          request.action === 'device-tool'
+            ? { ...actionLimits, timeoutMs: Math.min(actionLimits.timeoutMs, 60_000) }
+            : actionLimits,
+          request,
+          admit,
+          onProgress,
+        ),
       );
     }
 
@@ -4571,13 +4644,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
                         ? hostedDevices.appLaunch(session.id, raw)
                         : method === 'device-host.app.attach'
                           ? hostedDevices.appAttach(session.id, raw)
-                          : method === 'device-host.logs.query'
-                            ? await hostedDevices.logsQuery(session.id, raw)
-                            : method === 'device-host.metro.open'
-                              ? await hostedDevices.metroOpen(session.id, raw)
-                              : method === 'device-host.metro.ports'
-                                ? await hostedDevices.metroPorts(session.id, raw)
-                                : await hostedDevices.metroClose(session.id, raw);
+                          : method === 'device-host.app.state'
+                            ? await hostedDevices.appState(session.id, raw)
+                            : method === 'device-host.logs.query'
+                              ? await hostedDevices.logsQuery(session.id, raw)
+                              : method === 'device-host.metro.open'
+                                ? await hostedDevices.metroOpen(session.id, raw)
+                                : method === 'device-host.metro.ports'
+                                  ? await hostedDevices.metroPorts(session.id, raw)
+                                  : await hostedDevices.metroClose(session.id, raw);
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 

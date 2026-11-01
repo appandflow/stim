@@ -1116,6 +1116,14 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
+    expect(
+      await client.request('desktop.remedy.subscribe', {
+        cwd: workspace,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+      }),
+    ).toHaveProperty('error.code', 'forbidden');
     expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -1269,6 +1277,7 @@ describe('pairing', () => {
           'hosted-congestion',
           'hosted-ios-data',
           'hosted-ios-process',
+          'hosted-app-state',
           'native-xcode-build',
           'native-xcode-toolchain',
           'build-artifact-cache',
@@ -1443,8 +1452,11 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
     expect(hello).toMatchObject({
-      result: { features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']) },
+      result: {
+        features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']),
+      },
     });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
     assert(server?.localSocket);
@@ -1678,7 +1690,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     },
   );
 
-  it('runs private doctor repairs and device unlock remedies without a CLI and rejects unsupported scopes', async () => {
+  it('runs private typed remedies without a CLI and rejects unsupported scopes', async () => {
     const selected = join(root, 'selected');
     mkdirSync(selected);
     writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
@@ -1699,6 +1711,20 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       { cwd: selected, action: 'doctor-fix', slot: 'default' },
       { cwd: selected, action: 'device-unlock', slot: '__proto__' },
       { cwd: selected, action: 'device-unlock', platform: 'web' },
+      { cwd: selected, action: 'device-tool', request: { tool: 'exec', platform: 'ios', args: ['rm'] } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'push', platform: 'android', payload: '{"aps":{}}' } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'location', platform: 'ios', clear: true, set: '1,2' } },
+      {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'network', platform: 'android', state: 'off', args: [] },
+      },
+      {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+        slot: '__proto__',
+      },
     ])
       expect(await client.request('desktop.remedy.subscribe', params)).toHaveProperty('error.code', 'bad-request');
     const expected = {
@@ -1721,6 +1747,24 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       const output = JSON.parse(ended.stdout);
       expect(output).toEqual(expected[action]);
     }
+    expect(
+      await client.request('desktop.remedy.subscribe', {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+      }),
+    ).toHaveProperty('result.subscription');
+    let toolEnded;
+    for (;;) {
+      const event = await client.next();
+      if ('event' in event && event.event === 'desktop-remedy-ended') {
+        toolEnded = event;
+        break;
+      }
+    }
+    expect(toolEnded).toMatchObject({ exitCode: 1 });
+    assert('stdout' in toolEnded && typeof toolEnded.stdout === 'string');
+    expect(JSON.parse(toolEnded.stdout)).toMatchObject({ code: 'STIM_DEVICE_TOOL_TARGET', remedy: expect.any(String) });
     expect(stimCalls()).toEqual([]);
     const config = JSON.parse(readFileSync(join(root, 'home', 'config.json'), 'utf8'));
     expect(config.projects[selected].doctorRuns.ios.at).toEqual(expect.any(String));
@@ -2222,6 +2266,7 @@ describe('hosted device sessions', () => {
         process.exit(0);
       }
 
+      if(input.mode==='app-state') { process.stdout.write(JSON.stringify({state:'stopped'})); process.exit(0); }
       const device={udid:'12345678-1234-1234-1234-123456789abc',name:'stim-hosted',deviceTypeId:'iphone',runtimeId:'ios',deviceType:'iPhone',runtime:'27.1',architecture:'arm64'};
       writeFileSync(join(process.env.STIM_HOME,'hosted-device.json'),JSON.stringify(device));
       writeFileSync(join(process.env.STIM_HOME,'created-devices.json'),JSON.stringify({version:1,ios:[device.udid],android:[],web:[]}));
@@ -2336,6 +2381,13 @@ describe('hosted device sessions', () => {
       expect(await reattached.request('device-host.app.launch', { session: id, attempt: app.attempt })).toHaveProperty(
         'result.launched',
         'unverified',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: app.attempt })).toHaveProperty(
+        'result.state',
+        'stopped',
+      );
+      expect(await reattached.request('device-host.app.state', { session: id, attempt: 'foreign' })).toHaveProperty(
+        'error',
       );
       expect(readFileSync(join(deviceHostArea(id), 'home', 'installs'), 'utf8')).toBe('socket-app\n');
       expect(await reattached.request('device-host.metro.open', metro)).toHaveProperty('result.port', metroPort);

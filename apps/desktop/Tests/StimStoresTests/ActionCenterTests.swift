@@ -199,6 +199,45 @@ struct ActionCenterTests {
     }
   }
 
+  @Test func deviceToolsUseTheAuthenticatedSameHomeServerWithoutCLI() async throws {
+    let key = DesktopBootstrapKey()
+    var transport: DoctorTransport?
+    let client = ServerClient(
+      endpoint: URL(fileURLWithPath: "/tmp/stim/server/local.sock"), clientName: "Tools", clientVersion: "1",
+      serverPort: 7787, bootstrap: { key },
+      transport: { _, onEvent in
+        let next = DoctorTransport(onEvent: onEvent, key: key)
+        transport = next
+        return next
+      })
+    client.start()
+    defer { client.stop() }
+    #expect(await until { client.isOpen })
+    let socket = try #require(transport)
+    let center = ActionCenter(environment: Task { ["STIM_HOME": "/tmp/stim", "PATH": "/does-not-exist"] }) {
+      (client, "/tmp/stim")
+    }
+    let changing = Task { try await center.deviceTool(.clearLocation, platform: "ios", slot: "default", cwd: "/selected") }
+    #expect(await until { socket.sent.last?["method"] == .string("desktop.remedy.subscribe") })
+    #expect(
+      socket.sent.last?["params"]
+        == .object(DeviceTool.clearLocation.remedyParams(platform: "ios", slot: "default", cwd: "/selected")))
+    socket.answer(.object(["subscription": .string("tool")]))
+    socket.reply([
+      "event": .string("desktop-remedy-ended"), "subscription": .string("tool"), "exitCode": .number(0),
+      "stdout": .string(#"{"tool":"location","action":"clear","deviceName":"stim-fixture","readBack":null}"#),
+      "message": .string("Device change completed."),
+    ])
+    #expect(try await changing.value.summary == "Location cleared.")
+    #expect(await until { socket.sent.last?["method"] == .string("unsubscribe") })
+    let foreignHome = ActionCenter(environment: Task { ["STIM_HOME": "/tmp/another-home", "PATH": "/does-not-exist"] }) {
+      (client, "/tmp/stim")
+    }
+    await #expect(throws: ServerError.self) {
+      try await foreignHome.deviceTool(.clearLocation, platform: "ios", slot: "default", cwd: "/selected")
+    }
+  }
+
   @Test func settingsKeepJSONAndRefusalsInActivityWithoutCLI() async throws {
     let key = DesktopBootstrapKey()
     var transport: DoctorTransport?
@@ -322,7 +361,8 @@ struct ActionCenterTests {
         ]),
         "capabilities": .array([.string("read"), .string("control")]),
         "features": .array([
-          .string("desktop-doctor-run"), .string("desktop-remedy"), .string("desktop-settings-write"),
+          .string("desktop-doctor-run"), .string("desktop-remedy"), .string("desktop-device-tools"),
+          .string("desktop-settings-write"),
           .string("desktop-reload"), .string("desktop-start"),
           .string("desktop-run"), .string("desktop-gc"), .string("desktop-worktree-remove"), .string("desktop-worktree-warm"),
         ]),

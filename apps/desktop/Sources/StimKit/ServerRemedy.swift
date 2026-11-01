@@ -13,16 +13,6 @@ public struct ServerRemedyResult: Sendable {
   _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerRemedyResult {
-  try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
-    throw ServerError(
-      code: "not-connected",
-      message: "The bundled local stim-server is not ready to repair projects or release device leases from this Stim home.")
-  }
-  guard case .open(let hello) = client.state, hello.features?.contains("desktop-remedy") == true else {
-    throw ServerError(
-      code: "unsupported", message: "Update the bundled stim-server to repair projects or release device leases from Desktop.")
-  }
   guard command.program == "stim" else {
     throw ServerError(code: "bad-request", message: "Unsupported Desktop repair command.")
   }
@@ -51,6 +41,24 @@ public struct ServerRemedyResult: Sendable {
     params["slot"] = .string(arguments[1])
   } else if !arguments.isEmpty {
     throw ServerError(code: "bad-request", message: "Unsupported Desktop repair command.")
+  }
+  return try await runServerRemedy(
+    params: params, stimHome: stimHome, connection: connection, feature: "desktop-remedy", json: json, onLine: onLine)
+}
+
+@MainActor func runServerRemedy(
+  params: [String: JSONValue], stimHome: String, connection: (client: ServerClient, home: String)?,
+  feature: String, json: Bool, onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
+) async throws -> ServerRemedyResult {
+  try Task.checkCancellation()
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
+    throw ServerError(
+      code: "not-connected",
+      message: "The bundled local stim-server is not ready to run this Desktop action from this Stim home.")
+  }
+  guard case .open(let hello) = client.state, hello.features?.contains(feature) == true else {
+    throw ServerError(
+      code: "unsupported", message: "Update the bundled stim-server to run this Desktop action.")
   }
   let (events, continuation) = AsyncThrowingStream<ServerEvent, Error>.makeStream()
   var terminal: ServerEvent?

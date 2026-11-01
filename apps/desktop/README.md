@@ -47,6 +47,14 @@ access without applying project repairs; a person still approves each capability
 the worker. Cancellation waits for owned cleanup, and an unresolved cleanup refuses
 another action in that workspace. Reconnecting never repeats the request automatically.
 
+Device tools use a typed `device-tool` request on `desktop.remedy.subscribe`,
+requiring `desktop-device-tools` support and private authority on the matching-home
+bundled server. The existing tool operations validate the workspace's owned local
+simulator or emulator and preserve their refusal messages. Cancellation before
+admission prevents a change; an admitted change finishes within the 60-second
+execution and 35-second cleanup budgets, including after the popover closes.
+Reconnecting never repeats it, and there is no external CLI fallback.
+
 Whole-workspace and named-slot stops, including tutorial and sample cleanup, use
 `desktop.stop.subscribe` on the matching-home bundled server with private Desktop
 authority and `desktop-stop` support. Activity retains ordered progress and the
@@ -204,9 +212,13 @@ tree. Each project expands to its workspaces,
 and selecting the project row shows all of its workspaces and devices. Projects
 with an active, warming or ready workspace start expanded, and the app remembers each project you
 expand or collapse. A workspace is named like in the phone app: after its
-worktree's branch, else the worktree's folder, else its project for a main
-checkout. The second line is where it sits inside its checkout, such as
-`apps/mobile`. The view options button next to the logo opens a menu:
+worktree's branch, else the verified checkout's folder, else its project.
+Apps sharing a reported checkout appear together, including primary checkouts;
+older servers retain linked-worktree grouping. Each app keeps its own commands,
+devices and log routes. Primary checkout groups have no Remove Worktree action.
+Resources shows each app's dependency disk breakdown separately.
+The second line is where the app sits inside its checkout, such as `apps/mobile`.
+The view options button next to the logo opens a menu:
 
 - **Status**: select any combination of Active, Idle, Not set up and Archived. The
   default is Active + Idle. All selects all four states, Archived included, and
@@ -402,6 +414,9 @@ It holds the workspace's details, in this order:
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
+  Completed runs show the selected build destination and recorded compilation machine;
+  cache hits never claim compilation, and an absent compilation destination stays unknown.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
   history and logs use the selected app. macOS uses the same card layout and Run
@@ -446,7 +461,9 @@ outer padding. A tile is a preview: the device's name and state, its activity, i
 CPU, memory and disk (from the machine owner matched by slot and kind, and the
 device's `disk`) and its screen, which takes no input. A device whose build is
 running shows "Waiting for the iOS build" over its frame with the phase, a
-thin bar and the elapsed time over the estimate. One whose app process is gone
+thin bar and the elapsed time over the estimate until its app is running.
+An already-running app stays visible during later builds, so you can open
+**Control** and keep using it while the next build compiles. One whose app process is gone
 shows **App not running**, and one whose platform never built here and last
 failed shows **No app installed** over its frame instead. A workspace that is
 warming with no device yet shows a warming placeholder. Stopped-device cards use a
@@ -991,7 +1008,17 @@ Reduce transparency or Show button borders. Each change reads the device back;
 **Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
-location, VoiceOver, color filters and Liquid Glass controls are not included.
+VoiceOver, color filters and Liquid Glass controls are not included.
+
+The options popover's **Tools** section runs `stim device location|permission|push|network`
+through the CLI for the workspace's own local simulator or emulator, only while **Control** is on
+and outside replay. **Location** sets `latitude, longitude` (or a preset place) and, on iOS, clears
+it. **Permission** grants, revokes or resets one service for the workspace's app. **Test push**
+sends a title and message to the iOS app. **Network** turns an Android emulator's Wi-Fi and mobile
+data off or on. The line under the buttons shows what the CLI printed: Android permissions and
+network read the state back from the device, and iOS location, permissions and push report only
+that the command succeeded. A hosted, remote, EAS or physical device has no Tools section, and a CLI
+refusal shows its message there. Desktop never calls `simctl` or `adb` for these.
 
 The panel's **Development** section offers **Slow animations** and **Shake**
 on supported iOS simulators. Slow animations changes UIKit's animation speed

@@ -10,6 +10,7 @@ import {
   type HostedAndroidDevice,
 } from '@stim-cli/core/state';
 import { getExecutor } from '../exec.ts';
+import { RELEASE_VERIFY_WAIT_MS } from '../engine/launch-verify.ts';
 import { findAapt } from '../commands/android/support.ts';
 import { getAvdNameForSerialAsync, androidDeviceAbi, androidToolPath } from '../devices/android.ts';
 import {
@@ -92,12 +93,10 @@ export async function installHostedAndroidApp(
       : await launchAndroidReleaseApp({ serial: device.serial, packageName: record.bundleId }, { exec: sdkExecutor });
   if (!launched.ok) throw new Error(launched.reason ?? 'Hosted APK launch was not established.');
   if (record.mode === 'development') return 'unverified';
-  for (let tries = 0; tries < 10; tries++) {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    if ((await androidAppProcess(device.serial, record.bundleId, { exec: sdkExecutor })).state === 'running')
-      return true;
-  }
-  return 'unverified';
+  await new Promise((resolve) => setTimeout(resolve, RELEASE_VERIFY_WAIT_MS));
+  return (await androidAppProcess(device.serial, record.bundleId, { exec: sdkExecutor })).state === 'running'
+    ? true
+    : 'unverified';
 }
 
 export async function assertHostedAndroidSerial(home: string, device: HostedAndroidDevice): Promise<void> {
@@ -118,7 +117,7 @@ async function assertHostedAndroidTarget(home: string, device: HostedAndroidDevi
     throw new Error('The hosted Android device identity or running ABI changed.');
 }
 
-function hostedAndroidExecutor(): ReturnType<typeof getExecutor> {
+export function hostedAndroidExecutor(): ReturnType<typeof getExecutor> {
   const executor = getExecutor();
   const adb = androidToolPath('adb');
   const tool = (file: string) => (file === 'adb' ? adb : file);

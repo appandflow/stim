@@ -468,15 +468,29 @@ struct DeviceTile: View {
         if let udid = simulatorOptionsUDID {
           SimulatorOptionsView(
             udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption, audio: simulatorAudioTarget
+            frame: frameOption, audio: simulatorAudioTarget, tools: deviceToolsView
           )
           .id(udid)
         } else {
           EmulatorOptionsView(
             title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
-            audio: emulatorAudioTarget)
+            audio: emulatorAudioTarget, tools: deviceToolsView)
         }
       }
+  }
+
+  private var deviceToolsView: DeviceToolsView? {
+    guard owner.isLocal, viewer, interactive, !replaying, device.isRunning, let workspace else { return nil }
+    let platform: String
+    switch device {
+    case .ios(_, let sim) where sim.owned && !sim.physical && device.localSimulatorUDID != nil: platform = "ios"
+    case .android(_, let avd) where avd.owned && !avd.physical && device.localEmulatorSerial != nil: platform = "android"
+    default: return nil
+    }
+    let slot = device.slot
+    return DeviceToolsView(platform: platform) { [actions] tool in
+      try await actions.deviceTool(tool, platform: platform, slot: slot, cwd: workspace)
+    }
   }
 
   private var optionsTitle: String {
@@ -565,8 +579,7 @@ struct DeviceTile: View {
   }
 
   private var buildCovered: Bool {
-    guard showsCovers, !interactive, let build else { return false }
-    return build.phase != "launch" || device.app?.state != "running"
+    showsCovers && !interactive && build != nil && device.app?.state != "running"
   }
 
   @ViewBuilder private var screenCover: some View {

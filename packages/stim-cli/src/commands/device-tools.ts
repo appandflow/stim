@@ -13,6 +13,8 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 type ToolPlatform = 'ios' | 'android';
 
 export interface ToolOptions {
+  cwd?: string;
+  beforeTool?: (workspace: string) => void;
   slot?: string;
   json?: boolean;
   set?: string;
@@ -547,7 +549,7 @@ export async function runDeviceTool(
     return problem;
   };
   if ('code' in request) return report(request);
-  const root = d.findProjectRoot(process.cwd());
+  const root = d.findProjectRoot(opts.cwd ?? process.cwd());
   if (!root) return report(NO_PROJECT_REFUSAL);
   let target: Awaited<ReturnType<typeof resolveToolTarget>>;
   try {
@@ -562,6 +564,7 @@ export async function runDeviceTool(
     );
   }
   if ('code' in target) return report(target);
+  opts.beforeTool?.(root);
   let result: ToolResult | ToolFailure;
   try {
     result = request.platform === 'ios' ? await runIos(request, target, d) : await runAndroid(request, target, d);

@@ -151,6 +151,14 @@ public final class ActionCenter: ObservableObject {
 
   public func latest(for key: String) -> ActionRun? { runs[key] }
 
+  /// Changes the workspace's owned device through its private same-home server.
+  public func deviceTool(_ tool: DeviceTool, platform: String, slot: String, cwd: String) async throws -> DeviceToolResult {
+    let environment = await environment.value
+    return try await runServerDeviceTool(
+      tool, platform: platform, slot: slot, cwd: cwd,
+      stimHome: StimHome.path(environment: environment), connection: server())
+  }
+
   public func run(_ title: String, _ command: StimCommand, key: String? = nil) {
     run(title, steps: [command], key: key)
   }

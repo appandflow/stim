@@ -13,14 +13,17 @@ agents driving them. It includes its local server; a separately installed CLI is
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
-Apps in one linked worktree share a detail page and one sidebar row, with platform
-badges for each app. Selecting the row opens the page; a link or action for one app
-scrolls to that app. The row's context menu has per-app submenus, **Stop All** and
-**Remove Worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
-subtitles only for repeated platforms. The inspector aggregates resources,
-labels each Metro and deduplicates agents. The logs drawer follows app selection
-and has an **App** picker. The actions menu keeps each app's commands plus
-**Stop All** and one **Remove Worktree** action.
+Apps sharing a reported checkout, including a primary checkout, share a detail
+page and one sidebar row, with platform badges for each app. Older servers retain
+linked-worktree grouping. Selecting the row opens the page; a link or action for
+one app scrolls to that app. Each app keeps its own commands, devices and log
+routes. The context and actions menus have per-app submenus and **Stop All**;
+**Remove Worktree** appears only for linked worktrees. The canvas combines all
+devices, with one stage and git chip. Build cards keep platform titles, adding
+project subtitles only for repeated platforms. The inspector aggregates process
+resources, shows each app's dependency disk breakdown separately, labels each
+Metro and deduplicates agents. The logs drawer follows app selection and has an
+**App** picker.
 
 ## Download
 
@@ -267,7 +270,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
-  screen, wrapping when space is tight.
+  screen, wrapping when space is tight. An already-running app stays visible
+  during rebuilds; take **Control** to keep using it while the next build compiles.
   Local iOS input connects in the background and drops clicks and keys while
   the screen shows **Connecting input** or **Input unavailable**. Lookups time
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's
@@ -281,8 +285,8 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   simulator, change appearance, text size, contrast, motion, transparency and
   button borders in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; location,
-  VoiceOver, color filters and Liquid Glass options are not included.
+  **Unavailable**. Requires Xcode's simulator appearance API; VoiceOver,
+  color filters and Liquid Glass options are not included.
   **Sound** turns an owned simulator's output volume off or back on; turning it
   back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
@@ -298,6 +302,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   older images startup warns that it could not mute the emulator. Your Mac's
   volume and physical phones are unchanged. Hosted simulators and emulators are
   muted when the host boots them, but the Sound toggles do not reach them.
+- **Device tools.** The options popover of a local simulator or emulator has a
+  **Tools** section while **Control** is on: set or clear a simulated location,
+  grant, revoke or reset an app permission, send a test push to an iOS app, and
+  turn an Android emulator's network off or on. Each button runs the matching
+  [`stim device`](./commands.md#device-location-permission-push-and-network)
+  command, so the same ownership checks apply, and the line under the buttons
+  shows what the device reported back where the platform can say. Hosted, remote
+  and physical devices have no Tools section.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
@@ -308,7 +320,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote machine and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. While a run boots its simulator or emulator, builds the app's first JS
+  plan. Completed runs show the selected build destination and recorded compilation
+  machine. Cache hits never claim compilation, and missing compilation data stays unknown;
+  `STIM_OFFLOAD_REFUSED` reads **Build destination refused**. While a run boots its simulator or emulator, builds the app's first JS
   bundle in Metro, or waits for the app to report ready, the progress and the
   current phase say so with that step's own elapsed time: **Booting
   simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports

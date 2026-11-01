@@ -2002,7 +2002,9 @@ blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
 `GRADLE_USER_HOME` and SwiftPM) and one area
 per repository under `repos/<repo>/`: the checkout, its own Stim home with
 DerivedData, the compilation cache and ccache, and the output. A build never reads or
-writes this machine's own Stim home. An ownership claim at
+writes this machine's own Stim home. Each source mirror has an initial empty Git
+commit so local development podspecs can resolve `HEAD`; it is internal mirror
+metadata, not the client's commit or history. An ownership claim at
 `repos/<repo>.claims`, whose child is the build's process group, guards each
 area; it is released only once that group is gone, and a claim whose server
 and build are both gone is recovered by the next build. Windows has no

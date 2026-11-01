@@ -42,6 +42,26 @@ const requestId: JsonSchema = { type: ['integer', 'string'] };
 
 const runText = { type: 'string', minLength: 1, maxLength: 1024, pattern: '^[^\\u0000]+$' };
 const runSelector = { oneOf: [runText, { type: 'boolean' }] };
+const deviceToolRequest = {
+  oneOf: (
+    [
+      ['location', ['ios', 'android'], { set: { type: 'string', maxLength: 256 } }],
+      ['location', ['ios', 'android'], { clear: { const: true } }],
+      [
+        'permission',
+        ['ios', 'android'],
+        { action: { enum: ['grant', 'revoke', 'reset'] }, service: { type: 'string', maxLength: 1024 } },
+      ],
+      ['push', ['ios'], { payload: { type: 'string', maxLength: 65_536 } }],
+      ['network', ['android'], { state: { enum: ['on', 'off'] } }],
+    ] satisfies Array<[string, string[], Record<string, JsonSchema>]>
+  ).map(([tool, platforms, fields]) => ({
+    type: 'object',
+    additionalProperties: false,
+    required: ['tool', 'platform', ...Object.keys(fields)],
+    properties: { tool: { const: tool }, platform: { enum: platforms }, ...fields },
+  })),
+};
 const nativeRunProperties = {
   slot: runText,
   remote: runText,
@@ -1448,6 +1468,7 @@ export function protocolJsonSchema(): JsonSchema {
           ),
           request('device-host.app.launch', session({ attempt: { type: 'string' } }, ['attempt'])),
           request('device-host.app.attach', session({ attempt: { type: 'string' } }, ['attempt'])),
+          request('device-host.app.state', session({ attempt: { type: 'string' } }, ['attempt'])),
           request(
             'device-host.logs.query',
             session({
@@ -1613,25 +1634,42 @@ export function protocolJsonSchema(): JsonSchema {
             },
           }),
           request('desktop.remedy.subscribe', {
-            oneOf: ['doctor-fix', 'device-unlock'].map((action) => ({
-              type: 'object',
-              required: ['cwd', 'action'],
-              additionalProperties: false,
-              properties: {
-                cwd: { type: 'string', minLength: 1, maxLength: 4096 },
-                action: { const: action },
-                platform: { enum: ['ios', 'android'] },
-                ...(action === 'device-unlock'
-                  ? {
-                      slot: {
-                        type: 'string',
-                        pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
-                        not: { enum: ['constructor', 'prototype', '__proto__'] },
-                      },
-                    }
-                  : {}),
+            oneOf: [
+              ...['doctor-fix', 'device-unlock'].map((action) => ({
+                type: 'object',
+                required: ['cwd', 'action'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  action: { const: action },
+                  platform: { enum: ['ios', 'android'] },
+                  ...(action === 'device-unlock'
+                    ? {
+                        slot: {
+                          type: 'string',
+                          pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                          not: { enum: ['constructor', 'prototype', '__proto__'] },
+                        },
+                      }
+                    : {}),
+                },
+              })),
+              {
+                type: 'object',
+                required: ['cwd', 'action', 'request'],
+                additionalProperties: false,
+                properties: {
+                  cwd: { type: 'string', minLength: 1, maxLength: 4096 },
+                  action: { const: 'device-tool' },
+                  request: deviceToolRequest,
+                  slot: {
+                    type: 'string',
+                    pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$',
+                    not: { enum: ['constructor', 'prototype', '__proto__'] },
+                  },
+                },
               },
-            })),
+            ],
           }),
           request('desktop.machine-access.subscribe', {
             type: 'object',

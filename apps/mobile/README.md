@@ -37,7 +37,7 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   repo, active workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns active or idle, not while builds run and
   agents attach. A workspace `stim worktree warm` is preparing or has prepared
-  counts as active. When status identifies a linked Git checkout, its app projects
+  counts as active. When status identifies a Git checkout, including a primary checkout, its app projects
   share one row, with the branch and git state shown once. The row shows the
   status of the app that needs attention most (failed, building, running, idle),
   error and warning counts summed across the apps, the agent sessions of all of
@@ -45,9 +45,9 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   Web), as in Stim Desktop's sidebar. Tapping the row opens the unified workspace
   page at the app that leads the row. Filters still apply per app. Repo active/idle counts count
   the shown workspaces, while the hidden-idle footer counts apps and source-only worktrees. Different Macs
-  and checkouts stay separate even when they share a branch name. Primary checkouts
-  and older servers without an explicit checkout identity retain separate app rows;
-  [#2418](https://github.com/appandflow/stim/issues/2418) tracks that payload addition.
+  and checkouts stay separate even when they share a branch name. Older servers without
+  an explicit checkout identity retain separate app rows for primary checkouts.
+  The identity groups display rows only; each app keeps its own routes, commands, ports and devices.
   Source-only worktrees share their repo's section and count as idle. **Not set up**,
   **All** and **Show All** reveal them; the default **Active** filter hides them. Their rows
   show the branch or folder, **Not warmed**, git facts and the machine when more
@@ -327,7 +327,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   time against the estimate with the miss reason, a checklist of phases with
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
-  Otherwise it shows the last build with when it ran, a failed build's compiler
+  Otherwise it shows the last build's selected destination and recorded compilation machine,
+  omitting the compilation line for cache hits or absent compilation data.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
+  It shows when the last build ran, a failed build's compiler
   errors, why it missed the cache with the changed fingerprint sources, its
   phase times, and a **Build Logs** row (marked Failed for a failed build) that
   opens Logs on the build source for that build's slot, limited to the lines

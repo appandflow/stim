@@ -258,6 +258,8 @@ export interface BuildPlanPayload {
   refusal?: { code: string; message: string; remedy: string };
   /** With ios.remote or android.remote set to auto or a Mac, where the plan assumes the device runs, such as `this machine; auto may use janics-mac-mini`. */
   placement?: string;
+  /** Resolved build preference; automatic worker availability and compatibility are checked at run time. */
+  buildPlacement?: { preference: string; reason: string };
 }
 
 /** The read-only `stim macos --plan --json` payload; SwiftPM work and worker availability remain unknown. */
@@ -699,6 +701,8 @@ export interface EnvironmentState {
   logs?: { dir: string; errorsSinceMarker: number } | null;
   /** `installed` is whether the agent-device executable is on the PATH of the process that ran status. */
   agentDevice?: { stateDir: string; installed?: boolean };
+  /** The verified canonical Git checkout root, including primary checkouts; null outside Git or when unreadable. This does not imply removable worktree ownership. */
+  checkout?: string | null;
   worktree?: WorktreeFacts | null;
   remoteDevices?: RemoteDeviceState[];
   /** The physical devices this workspace leases, in every slot; absent when it leases none. */

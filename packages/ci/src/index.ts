@@ -45,7 +45,7 @@ function commandEnvironment(result: CIResult, options: CIOptions): NodeJS.Proces
     ...(options.home ? { STIM_HOME: resolve(options.home) } : {}),
     ...(options.buildCache ? { STIM_BUILD_CACHE: resolve(options.buildCache) } : {}),
     STIM_CI_PLATFORM: result.platform,
-    STIM_CI_DEVICE_ID: String('udid' in facts ? facts.udid : 'serial' in facts ? (facts.serial ?? '') : ''),
+    STIM_CI_DEVICE_ID: String('udid' in facts ? (facts.udid ?? '') : 'serial' in facts ? (facts.serial ?? '') : ''),
     STIM_CI_APP_ID: String('bundleId' in facts ? (facts.bundleId ?? '') : ''),
     STIM_CI_METRO_PORT: String('metroPort' in facts ? (facts.metroPort ?? '') : ''),
     STIM_CI_ARTIFACTS_DIR: result.artifactsDir ?? '',

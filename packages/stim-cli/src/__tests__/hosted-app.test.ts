@@ -1,3 +1,4 @@
+import { hostedAppState } from '../device-host/app-state.ts';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -169,4 +170,28 @@ test('rejects a device Mach-O disguised by simulator plist metadata without inst
   platform = 'IOS';
   await expect(installHostedApp(home, session, 'app', device)).rejects.toThrow('incompatible');
   expect(native.runFile.mock.calls.some(([, args]) => args?.[0] === 'simctl')).toBe(false);
+});
+
+test('an app that exits after its first process sighting is not a verified release launch', async () => {
+  receipt();
+  const ready = installHostedApp(home, session, 'app', device);
+  await vi.waitUntil(() => native.runFile.mock.calls.some(([, args]) => args?.includes('launch')));
+  setTimeout(() => {
+    launched = false;
+  }, 300);
+  await vi.runAllTimersAsync();
+  expect(await ready).toBe('unverified');
+});
+
+test('app state requires an installed receipt and probes only its ledger-owned ios target', async () => {
+  receipt();
+  await expect(hostedAppState(home, session, 'app', 'ios')).rejects.toThrow('installed');
+  const file = join(area, 'receipt.json');
+  writeFileSync(file, JSON.stringify({ ...JSON.parse(readFileSync(file, 'utf8')), state: 'installed' }));
+  launched = true;
+  expect(await hostedAppState(home, session, 'app', 'ios')).toEqual({ state: 'running' });
+  launched = false;
+  expect(await hostedAppState(home, session, 'app', 'ios')).toEqual({ state: 'stopped' });
+  writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
+  await expect(hostedAppState(home, session, 'app', 'ios')).rejects.toThrow('ownership ledger');
 });

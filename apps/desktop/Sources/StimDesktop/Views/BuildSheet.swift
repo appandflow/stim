@@ -302,11 +302,27 @@ private struct BuildRunDetail: View {
     VStack(alignment: .leading, spacing: Space.xxl) {
       title
       section("Where it ran") {
-        TimelineView(run.running.map { .buildSeconds($0) } ?? .periodic(from: .now, by: 30)) { context in
-          let remote = run.running?.remote(at: context.date)
-          Label(
-            remote.map { "Building on \($0.host), \($0.phase)" }
-              ?? run.offloadedTo.map { "Built on \(machineName($0))" } ?? "This Mac", systemImage: "desktopcomputer")
+        if let machine = run.last?.buildMachine {
+          let selected =
+            switch machine {
+            case "auto": "Automatic"
+            case "local": "This Mac"
+            case "remote": "Prefer remote"
+            case "remote-only": "Remote only"
+            default: machineName(machine)
+            }
+          Text("Selected: \(selected)").foregroundStyle(Palette.secondary)
+        }
+        if let build = run.running {
+          TimelineView(.buildSeconds(build)) { context in
+            let remote = build.remote(at: context.date)
+            Label(
+              remote.map { "Building on \($0.host), \($0.phase)" } ?? "This Mac", systemImage: "desktopcomputer")
+          }
+        } else if run.last?.cacheHit == CacheSource.none, let machine = run.last?.builtOn ?? run.offloadedTo {
+          Label("Compiled on \(machine == "here" ? "This Mac" : machineName(machine))", systemImage: "desktopcomputer")
+        } else {
+          Text("Compilation destination not recorded").foregroundStyle(Palette.secondary)
         }
         if let reason = run.last?.offloadFallback, !reason.isEmpty {
           Text(reason).foregroundStyle(Palette.secondary).textSelection(.enabled)
@@ -351,6 +367,7 @@ private struct BuildRunDetail: View {
       if ["failed", "cancelled", "interrupted"].contains(run.result) {
         section("Failure") {
           if let code = run.errorCode {
+            if code == "STIM_OFFLOAD_REFUSED" { Text("Build destination refused").foregroundStyle(Palette.error) }
             Text(code).font(.stim(.callout, mono: true)).foregroundStyle(Palette.error).textSelection(.enabled)
           }
           if run.isMacos, let build = env.macos?.build, build.startedAt == run.startedAt, let message = build.error {
