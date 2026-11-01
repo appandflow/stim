@@ -31,11 +31,15 @@ jobs:
           export STIM_HOME="$PWD/.stim-ci-home"
           sdkmanager 'platform-tools' 'emulator' 'system-images;android-34;google_apis;x86_64'
           node packages/stim-cli/dist/cli.mjs settings set android.systemImage 'system-images;android-34;google_apis;x86_64' --scope machine
-      - name: Build, launch, probe and stop
+      - name: Build the app
+        run: >-
+          node packages/ci/dist/stim-ci.mjs build
+          --platform android --project apps/mobile --timeout 2400
+      - name: Install, launch, probe and stop
         run: >-
           node packages/ci/dist/stim-ci.mjs run
           --platform android --project apps/mobile
-          --artifacts stim-ci-results/android --timeout 2400
+          --artifacts stim-ci-results/android --timeout 900
           -- node ../../scripts/ci/app-smoke.mjs
       - name: Upload diagnostics
         if: ${{ always() }}

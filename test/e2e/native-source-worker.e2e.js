@@ -423,11 +423,12 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     const workerJdk = join(area, 'worker-jdk');
     write(join(workerJdk, 'release'), 'JAVA_VERSION="21"\n');
     let lastCompleted;
-    const run = (id, { succeeds = true, policy = { read: true, write: true, remote: false } } = {}) => {
+    const run = (id, { succeeds = true, policy = { read: true, write: true, remote: false }, jdk } = {}) => {
       const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
         input: JSON.stringify({
           ...job,
           job: id,
+          ...(jdk ? { jdk } : {}),
           native: { ...job.native, ...(policy === null ? {} : { cache: { remote: false, ...policy } }) },
         }),
         env: { ...process.env, JAVA_HOME: workerJdk },
@@ -453,9 +454,9 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
         .split('\n')
         .filter((line) => line === 'compile').length;
     const fresh = run('first');
-    const completedArtifact = lastCompleted.cacheArtifact;
+    let completedArtifact = lastCompleted.cacheArtifact;
     assert.ok(completedArtifact);
-    const query = (declaration = inputs, android = job.android) => {
+    const query = (declaration = inputs, android = job.android, jdk) => {
       const result = spawnSync(
         process.execPath,
         [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'native-gradle-artifact'],
@@ -466,6 +467,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
             sourceDigest: transfer.digest,
             inputs: declaration,
             android,
+            ...(jdk ? { jdk } : {}),
           }),
           env: { ...process.env, JAVA_HOME: workerJdk },
           encoding: 'utf8',
@@ -518,6 +520,17 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     assert.deepEqual(run('legacy-first', { policy: null }), fresh);
     assert.deepEqual(run('legacy-again', { policy: null }), fresh);
     assert.equal(compilations(), beforeLegacy + 2);
+    const alternateJdk = join(process.env.HOME, '.sdkman/candidates/java/fixture-17');
+    write(join(alternateJdk, 'release'), 'JAVA_VERSION="17"\n');
+    write(join(alternateJdk, 'bin/javac'), '', true);
+    assert.deepEqual(run('alternate-jdk', { jdk: '17' }), fresh);
+    completedArtifact = lastCompleted.cacheArtifact;
+    assert.ok(completedArtifact);
+    const beforeAlternateQuery = readFileSync(actions);
+    assert.deepEqual(query(inputs, job.android, '17'), completedArtifact.identity);
+    assert.notDeepEqual(query(inputs, job.android, '24'), completedArtifact.identity);
+    assert.equal(query(inputs, job.android, '999'), null);
+    assert.deepEqual(readFileSync(actions), beforeAlternateQuery);
     write(join(client, '.stim.json'), JSON.stringify({ optimizations: { android: { compilerCache: 'none' } } }));
     const undeclared = await nativeGradleTransfer(client, inputs);
     for (const file of undeclared.files.filter((entry) => entry.kind === 'file' || entry.kind === 'exec'))

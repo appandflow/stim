@@ -65,7 +65,7 @@ public enum MachineUpdatePhase: Equatable, Sendable {
 
   public var line: String {
     switch self {
-    case .sending(let fraction): return "Sending this Mac's build (\(Int((fraction * 100).rounded()))%)\u{2026}"
+    case .sending(let fraction): return "Sending this Mac's build (\(Format.int((fraction * 100).rounded()))%)\u{2026}"
     case .installing(let line): return line ?? "Installing\u{2026}"
     case .waiting(let builds, let sessions):
       let work = [

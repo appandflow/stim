@@ -163,6 +163,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
   { key: 'ios.deviceType', type: STRING, scopes: EVERY, description: 'Simulator model for owned simulators' },
   { key: 'ios.runtime', type: STRING, scopes: EVERY, description: 'iOS runtime owned simulators are created on' },
   {
+    key: 'ios.autoInstallRuntime',
+    type: BOOLEAN,
+    scopes: EVERY,
+    default: false,
+    description: 'Install an explicitly requested missing iOS simulator runtime on the selected Mac',
+  },
+  {
     key: 'ios.configuration',
     type: STRING,
     scopes: PROJECT,
@@ -252,6 +259,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: "Address a phone uses to reach this workspace's Metro",
   },
   { key: 'android.systemImage', type: STRING, scopes: EVERY, description: 'SDK system image for owned AVDs' },
+  {
+    key: 'android.installImages',
+    type: { kind: 'choice', choices: ['auto', 'never'] },
+    scopes: EVERY,
+    default: 'auto',
+    description: 'Whether Stim installs a missing system image with sdkmanager before creating an owned AVD',
+  },
   {
     key: 'android.deviceProfile',
     type: {
@@ -602,7 +616,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_DEVICES',
-    description: 'Booted owned devices; 0 means no limit',
+    description:
+      'Booted owned iOS simulators and Android emulators together, and, separately, hosted macOS apps; 0 means no limit',
+  },
+  {
+    key: 'concurrency.maxIosDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_IOS_DEVICES',
+    description: 'Booted owned iOS simulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxAndroidDevices',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_ANDROID_DEVICES',
+    description:
+      'Booted owned Android emulators, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+  },
+  {
+    key: 'concurrency.maxMacosApps',
+    type: CAPACITY,
+    scopes: MACHINE,
+    default: 0,
+    env: 'STIM_MAX_MACOS_APPS',
+    description: 'Hosted macOS apps, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'budget.minFreeDiskGb',
@@ -753,7 +793,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 6,
     env: 'STIM_MAINTENANCE_IDLE_STOP_HOURS',
     description:
-      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned simulators and emulators, as stim stop does; device and app log lines do not count; 0 never",
+      "Hours with no native run, Metro bundle or HMR request, agent-device command, Stim command or live view of a local device before automatic maintenance and gc --delete stop a workspace's dev server and shut down its owned or hosted simulators and emulators, as stim stop does, and stim-server stops a hosted session whose client has been gone that long; device and app log lines do not count; 0 never",
   },
   {
     key: 'maintenance.sweepHours',
@@ -879,9 +919,10 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'caches.swiftCompilationCacheMaxGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
-    default: 15,
+    default: 0,
     env: 'STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB',
-    description: 'Swift compilation-cache cap in GiB; planned emptying is whole; 0 means no cap',
+    description:
+      'Swift compilation-cache cap in GiB; above it the cache is emptied whole, while no build holds it; 0 means no cap',
   },
   {
     key: 'caches.ccacheMaxGb',
@@ -972,7 +1013,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: { kind: 'strings' },
     scopes: MACHINE,
     description:
-      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key doctor --fix pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which doctor --fix asks for separately',
+      'The remote machines this machine may build on and host owned simulators, emulators and macOS apps on: a Tailscale name, optionally with :<port> of its tailscale serve route (default 7443), or local: and a host name or IPv4 address on the local network, optionally with :<port> of its stim-server (default 7787), whose server key stim remote add pins after a person confirms its fingerprint. The order is the placement priority: each workload goes to the first machine with room and a load under its own limit. What each is used for follows the build and device-host approvals it grants, which stim remote add asks for separately. Change the list with stim remote add and stim remote remove',
   },
   {
     key: 'remote.buildPoolDisabled',
@@ -996,7 +1037,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: false,
     description:
-      'When ios.remote or android.remote is auto or remote, this machine is at its concurrency.maxDevices cap and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
+      'When ios.remote or android.remote is auto or remote, this machine is at a device cap (concurrency.maxDevices or a per-platform cap) and no remote.machines entry takes the run, run the simulator or emulator on a billed EAS Simulator instead of waiting or refusing, when eas-cli can; remote-only never uses it',
   },
   {
     key: 'remote.easMaxDurationMinutes',

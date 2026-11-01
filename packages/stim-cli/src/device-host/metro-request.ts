@@ -122,6 +122,15 @@ export async function requestHostedMetro(
   );
 }
 
+/** The loopback port on which this workspace's live supervisor relays `session`'s agent control, or null. */
+export function hostedAgentPort(root: string, session: string): number | null {
+  const state = readWorkspaceState(root);
+  const links = hostedMetroLinks(state)[session];
+  return links?.ready && links.agentPort && links.processToken === state?.supervisor?.processToken
+    ? links.agentPort
+    : null;
+}
+
 export function clearHostedMetro(root: string, session: string): void {
   updateWorkspaceState(root, (state) => {
     const requests = { ...hostedMetroRequests(state) };

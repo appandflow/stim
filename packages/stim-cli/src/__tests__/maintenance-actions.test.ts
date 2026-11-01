@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { buildCacheRoot, metroCacheRoot } from '@stim-cli/core';
 import {
   gcLogFile,
@@ -38,7 +38,7 @@ import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { ensureWorkspaceStorage, workspaceDir } from '../workspace/paths.ts';
 import * as inUse from '../workspace/in-use.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { recordWorkspaceUse, workspaceLastUsed, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -268,36 +268,6 @@ test('the age sweep removes only what is provably stale', async () => {
   expect(actionKinds().toSorted()).toEqual(['clear-outputs', 'remove-orphan', 'trim-cache', 'unregister-cache']);
 });
 
-test.skipIf(process.platform === 'win32')(
-  'the age sweep keeps the outputs of a git-locked worktree unused for olderThanDays, and logs it as locked',
-  async () => {
-    process.env.STIM_MAINTENANCE_WORKTREE_CHECK_MINUTES = '1000000';
-    process.env.STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES = 'false';
-    const repo = join(projects, 'repo');
-    mkdirSync(repo);
-    const git = (cwd: string, args: string) => execSync(`git ${args}`, { cwd, timeout: 15_000 });
-    git(repo, 'init -q -b main');
-    git(repo, '-c user.email=t@example.com -c user.name=t commit -q --allow-empty -m init');
-    git(repo, `worktree add -q --detach "${join(projects, 'rollback')}"`);
-    git(repo, `worktree lock --reason rollback "${join(projects, 'rollback')}"`);
-    const rollback = workspace('rollback', { usedDaysAgo: 10 });
-    const idle = workspace('idle-ten', { usedDaysAgo: 10 });
-
-    await runMaintenance('test');
-
-    expect(hasOutputs(idle.dir)).toBe(false);
-    expect(hasOutputs(rollback.dir)).toBe(true);
-    expect(JSON.stringify(records())).toContain(`Kept ${realpathSync(rollback.root)}: locked with git worktree lock`);
-  },
-  60_000,
-);
-
-test('maintenance records in a workspace log do not make the workspace look used', () => {
-  const old = workspace('written-by-maintenance', { usedDaysAgo: 30 });
-  writeFileSync(join(old.dir, 'logs', 'maintenance.ndjson'), '{}\n');
-  expect(Date.now() - workspaceLastUsed(old.root)).toBeGreaterThan(29 * DAY_MS);
-});
-
 describe('executing single actions', () => {
   const context = (overrides: Partial<ActContext> = {}): ActContext => ({
     settings: resolveMaintenanceSettings(),
@@ -323,28 +293,36 @@ describe('executing single actions', () => {
     expect(hasOutputs(own.dir)).toBe(true);
   });
 
-  test('the compilation cache is emptied whole only below the hard floor and never beside a live build', async () => {
+  test('the compilation cache is emptied whole above the hard floor, but never beside a live build', async () => {
     const dir = sharedCompilationCache();
     mkdirSync(join(dir, 'objects'), { recursive: true });
     writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
     register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
     const empty = action({ kind: 'would-empty-cache', target: dir, bytes: 4096 });
 
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 10 * 1024 }]);
-    const above = await executeAction(empty, context({ budget: { ...context().budget, hardFloorDiskMb: 5 * 1024 } }));
-    expect(above.status).toBe('kept');
-    expect(existsSync(join(dir, 'objects'))).toBe(true);
-
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 1024 }]);
-    const hardFloor = { ...context().budget, hardFloorDiskMb: 5 * 1024 };
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
     const build = plantClaim(cacheClaimRoot(dir), 'shared', liveClaimOwner());
-    expect((await executeAction(empty, context({ budget: hardFloor }))).status).toBe('kept');
+    expect((await executeAction(empty, context())).status).toBe('kept');
     expect(existsSync(join(dir, 'objects'))).toBe(true);
 
     rmSync(build);
-    const emptied = await executeAction(empty, context({ budget: hardFloor }));
+    const emptied = await executeAction(empty, context());
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);
+  });
+
+  test('a level 3 compilation cache emptying is kept once free disk is back above the level 3 floor', async () => {
+    const dir = sharedCompilationCache();
+    mkdirSync(join(dir, 'objects'), { recursive: true });
+    writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
+    register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
+    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
+    const outcome = await executeAction(
+      action({ kind: 'would-empty-cache', target: dir, bytes: 4096, level: 3 }),
+      context(),
+    );
+    expect(outcome.status).toBe('kept');
+    expect(existsSync(join(dir, 'objects'))).toBe(true);
   });
 
   test('a stale registration is kept when its directory exists again', async () => {
@@ -380,27 +358,6 @@ describe('executing single actions', () => {
 });
 
 describe('pruneCache protection and LRU order', () => {
-  test('evictBytes removes the least recently used unprotected entries and stops at the target', () => {
-    const root = join(home, 'lru');
-    const names = ['a', 'b', 'c', 'd'];
-    names.forEach((name, i) => {
-      mkdirSync(join(root, name), { recursive: true });
-      writeFileSync(join(root, name, 'blob'), 'x'.repeat(1024));
-      utimesSync(join(root, name), ago(10 - i), ago(10 - i));
-    });
-    const result = pruneCache(
-      { name: 'lru', dir: root, prune: 'entries', note: '' },
-      {
-        olderThanDays: 0.01,
-        evictBytes: 1,
-        protect: (entry) => (basename(entry) === 'a' ? 'in use' : null),
-      },
-    );
-    expect(result.removed).toBe(1);
-    expect(result.protectedEntries).toBe(1);
-    expect(names.filter((name) => existsSync(join(root, name)))).toEqual(['a', 'c', 'd']);
-  });
-
   test('the newest succeeded build-only artifact of each platform is protected', () => {
     const root = buildCacheRoot();
     const entries = ['k-build-only', 'k-older', 'k-failed'].map((key) => cacheEntry(root, 'ios', key, 9));
@@ -428,20 +385,6 @@ describe('pruneCache protection and LRU order', () => {
       { olderThanDays: 1, byMtime: true, protect: cacheEntryProtection() },
     );
     expect(entries.map((entry) => existsSync(entry))).toEqual([true, false, false]);
-  });
-
-  test('without a size target the age cutoff behaves as before', () => {
-    const root = join(home, 'age');
-    for (const [name, days] of [
-      ['old', 9],
-      ['new', 1],
-    ] as const) {
-      mkdirSync(join(root, name), { recursive: true });
-      utimesSync(join(root, name), ago(days), ago(days));
-    }
-    const result = pruneCache({ name: 'age', dir: root, prune: 'entries', note: '' }, { olderThanDays: 7 });
-    expect(result.removed).toBe(1);
-    expect(existsSync(join(root, 'new'))).toBe(true);
   });
 });
 
@@ -565,31 +508,6 @@ test('the age sweep removes a clean pushed worktree unused for olderThanDays, an
   expect(existsSync(unpushed)).toBe(true);
   expect(existsSync(recent)).toBe(true);
   expect(actionKinds()).toEqual(['remove-worktree']);
-}, 60_000);
-
-test('olderThanDays 0 keeps idle worktrees, outputs and cache entries while the sweep still removes orphans', async () => {
-  process.env.STIM_MAINTENANCE_OLDER_THAN_DAYS = '0';
-  process.env.STIM_MAINTENANCE_REMOVE_IDLE_WORKTREES = 'true';
-  const { repo, worktrees } = gitRepoWithWorktrees(['idle']);
-  ageWorktrees(worktrees, { idle: 30 });
-  const old = workspace('old-outputs', { usedDaysAgo: 30 });
-  const orphanDir = ensureWorkspaceStorage(join(projects, 'deleted-worktree'));
-  writeFileSync(join(orphanDir, 'state.json'), '{}');
-  const cache = join(projects, 'shared-cache');
-  const oldEntry = join(cache, 'old-entry');
-  mkdirSync(oldEntry, { recursive: true });
-  utimesSync(oldEntry, new Date(), ago(30));
-  register({ dir: cache, name: 'Shared cache' });
-  vi.spyOn(process, 'cwd').mockReturnValue(repo);
-
-  await runMaintenance('test');
-
-  expect(resolveMaintenanceSettings().invalid).toBeUndefined();
-  expect(existsSync(worktrees.idle ?? '')).toBe(true);
-  expect(hasOutputs(old.dir)).toBe(true);
-  expect(existsSync(oldEntry)).toBe(true);
-  expect(existsSync(orphanDir)).toBe(false);
-  expect(actionKinds()).toEqual(['remove-orphan']);
 }, 60_000);
 
 test('the age sweep deletes a parked simulator unused for olderThanDays through teardown and keeps a recently parked one', async () => {

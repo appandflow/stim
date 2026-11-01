@@ -339,9 +339,9 @@ ON ANOTHER MAC
 
 stim macos --remote <machine> or macos.remote builds the Debug app on this Mac and runs it on an
 approved remote Mac over the tailnet, without SSH. The Mac must be listed
-in remote.machines and approved: stim doctor --fix makes a setup ticket, a
-person on that Mac runs stim-server setup with that ticket and expiry (guide
-settings), and stim doctor then pins that Mac's stim-server key. Stim goes ahead
+in remote.machines and approved: stim remote add <machine> adds it and makes a
+setup ticket, a person on that Mac runs stim-server setup with that ticket and
+expiry (guide settings), and stim remote list then pins that Mac's stim-server key. Stim goes ahead
 only with the stim-server that proves it holds that key.
 A refusal or an unreachable host fails the command; with a named Mac it never launches here
 instead.
@@ -371,6 +371,10 @@ choice and the skipped Macs. macOS refuses eas and proxy because it has neither
 backend. Reserved names are case-insensitive and trimmed; they refuse with
 STIM_BAD_ARG before state access or a connection. The device pool switches
 (remote.devicePoolDisabled) also apply to automatic macOS placement.
+
+A hosted app is not kept forever: the idle workspace stop ends its hosted session
+after maintenance.idleStopHours without activity, and stim-server stops a session
+whose client has been gone that long (guide cleanup, IDLE STOP).
 
 Logs: the host records the hosted app's stdout, stderr and exit like a local run.
 stim logs, including --errors, --json and --follow, asks the host over the same
@@ -476,9 +480,9 @@ script such as mini-desktop.sh use these instead:
   quit                       stim stop (verified stop; the host frees the slot
                              and removes the app's defaults)
   clean                      stim worktree remove
-  3 concurrent slots         concurrency.maxDevices on the host, counted apart
-                             from simulators and emulators; one bundle id
-                             slot per session
+  3 concurrent slots         concurrency.maxMacosApps and concurrency.maxDevices
+                             on the host, counted apart from simulators and
+                             emulators; one bundle id slot per session
 
 The agent-device rows work once the host's agent field names agent-device.
 

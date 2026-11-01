@@ -36,12 +36,33 @@ describe('slotMeters', () => {
     expect(slotMeters(capacityOf(older))).toEqual([]);
     expect(slotMeters(capacity)).toEqual([
       { kind: 'devices', label: 'Devices', value: '6 / 6', full: true, reason: null },
+      { kind: 'ios', label: 'iOS simulators', value: '4 / 4', full: true, reason: null },
+      { kind: 'android', label: 'Android emulators', value: '2 / 3', full: false, reason: null },
       { kind: 'builds', label: 'Builds', value: '2 / 2', full: true, reason: null },
     ]);
     expect(slotMeters({ ...capacity, devices: { ...devices, inUse: 5 } })[0]).toMatchObject({
       value: '5 / 6',
       full: false,
     });
+  });
+
+  it('shows a per-platform cap on its own, and an uncountable one as a question mark with the reason', () => {
+    expect(
+      slotMeters({
+        ...capacity,
+        devices: undefined,
+        builds: undefined,
+        platformDevices: { android: { max: 2, inUse: 1 } },
+      }),
+    ).toEqual([{ kind: 'android', label: 'Android emulators', value: '1 / 2', full: false, reason: null }]);
+    expect(
+      slotMeters({
+        ...capacity,
+        devices: undefined,
+        builds: undefined,
+        platformDevices: { ios: { max: 2, inUse: null, unknown: 'simctl did not answer' } },
+      }),
+    ).toEqual([{ kind: 'ios', label: 'iOS simulators', value: '? / 2', full: false, reason: 'simctl did not answer' }]);
   });
 
   it('shows an uncountable device total as a question mark with the reason', () => {

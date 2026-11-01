@@ -289,6 +289,15 @@ PATH).
   No workflow uses a larger runner, because larger runners are billed per minute
   even on public repositories.
 
+- **`post-release.yml`** -- "Post-release validation": a pushed `v*` tag runs
+  the full Windows unit suite (`windows-full.yml`). It is a separate workflow
+  from `release.yml`, so the suite never delays or fails the npm publish, and a
+  failure shows as its own red run on the tag. The release gate in RELEASE.md
+  section 4 is the merge queue's `Merge gate` plus the `test (node 22)`,
+  `test (node 24)` and `published runtime (node 22.12.0)` jobs of the push `CI`
+  run on the release commit; the Windows, macOS and native jobs are checked
+  after publishing (RELEASE.md section 5).
+
 - **`windows-debug.yml`** -- dispatch only: prepares a `windows-latest` runner
   like the Android lane and holds it open behind Tailscale SSH or tmate.
 

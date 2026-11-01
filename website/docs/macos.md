@@ -189,9 +189,9 @@ Runtime locks, state, logs and the project's own `.build` stay; the next
 machine setting `remote.build` (default `auto`). `local` builds here. A name
 requires the matching configured and paired worker, ignoring this Mac's capacity. Any failure is `STIM_OFFLOAD_REFUSED` with the worker and
 reason; no local xcodebuild, Gradle or SwiftPM compile or another machine follows. Check
-`stim settings get remote.machines`. Run `stim doctor --fix` to ask for build
-access if not paired; a person on the worker approves it by running the
-`stim-server setup` command doctor printed.
+`stim remote list`. Run `stim remote add <machine>` to ask for build
+access if not approved; a person on the worker approves it by running the
+`stim-server setup` command it printed.
 Invalid, unlisted or unpaired selections refuse before stopping the running app
 or changing its build record. To change placement, rerun with `--remote-build auto`,
 `remote` or `local`.
@@ -377,9 +377,9 @@ available.
 
 `stim macos --remote <placement>` (or `macos.remote`) builds the Debug app on this Mac and runs it on
 another Mac over your tailnet, without SSH. List that Mac in
-[`remote.machines`](./settings.md#machine-settings) and run `stim doctor --fix`;
+[`remote.machines`](./settings.md#machine-settings) with `stim remote add <machine>`;
 a person on that Mac runs the `stim-server setup` command it printed, then run
-`stim doctor` once more. Stim connects only to the stim-server that proves it
+`stim remote list`. Stim connects only to the stim-server that proves it
 holds the key pinned at approval. If the host refuses or is
 unreachable, the command fails; with a named Mac it never launches the app locally instead.
 
@@ -497,7 +497,8 @@ session directories under its own state directory. Start with
 `agent-device open <host bundleId> --remote-config <path>`; the lease allows only
 commands that drive that one app (`snapshot`, `click`, `fill`, `type`, `press`,
 `scroll`, `screenshot` and similar), and the agent-device on the client needs the
-`macos-app` lease backend. On the hosting Mac, `stim-server service install --env
+`macos-app` lease backend. `record` is refused, because agent-device's `macos-app`
+lease does not allow screen recording. On the hosting Mac, `stim-server service install --env
 STIM_AGENT_DEVICE_BIN=<path>` points stim-server at a specific agent-device.
 A request outside the allowed commands, or a method the relay does not forward,
 is refused with an agent-device `UNAUTHORIZED` error whose `details.reason` is

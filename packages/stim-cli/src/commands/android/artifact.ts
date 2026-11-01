@@ -1,3 +1,4 @@
+import { retainFailedTranscript } from '../../engine/failed-transcript.ts';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import { throwIfCancelled } from '../../cancellation.ts';
 import { rmSync } from 'node:fs';
@@ -17,6 +18,7 @@ import {
   type ProviderCallResult,
 } from '@stim-cli/cache';
 import { prepareProviderDownloadDir, providerDownloadPath, type storedAppId } from '../../cache/build-cache.ts';
+import type { RecordedBuild } from '../../engine/recorded-build.ts';
 import type { FingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
@@ -42,13 +44,14 @@ import type { RunRecorder } from '../../engine/stats.ts';
 import type { BuildPhase, BuildProgress } from '../../engine/build-progress.ts';
 import { machineCapacity, type BuildMissReason, type MachineCapacity } from '@stim-cli/core/state';
 import { claimFailure } from '../../ownership-claim.ts';
-import type { pairedMachines } from '../../offload/build-machines.ts';
+import { predictedRefusal, type pairedMachines } from '../../offload/build-machines.ts';
 import {
   closeOffload,
   chooseBuildMachine,
   offloadBuild,
   buildPlacementCandidates,
   offloadPlacement,
+  offloadCheck,
   placementLoad,
   remotePhaseText,
   type OffloadChoice,
@@ -494,8 +497,7 @@ export async function acquireAndroidArtifact(
     machines: ReturnType<typeof pairedMachines>;
   }
 
-  /** Whether this build should leave this machine, before any machine is asked; null builds here. */
-  function placeBuild(): Candidate | null {
+  async function placeBuild(): Promise<Candidate | null> {
     if (cacheIneligible && !recipe.offload?.supportsUncachedArtifacts) {
       if (namedBuildMachine(buildMachine)) throw new OffloadRefusal(buildMachine, cacheIneligible);
       hereReason = cacheIneligible;
@@ -533,6 +535,22 @@ export async function acquireAndroidArtifact(
       );
       if (buildMachine !== 'local') phase('build', `placement: here (${placement.reason})`);
       return null;
+    }
+    const named = machines.find((each) => each.machine === buildMachine);
+    const offload = recipe.offload;
+    if (placement.code === 'named' && named && offload) {
+      const check = await offloadCheck(root, async () => [await offload.target()])(named).catch((error: unknown) => {
+        throwIfCancelled(signal, 'Android build');
+        fallBack(error instanceof Error ? error.message : String(error));
+        return null;
+      });
+      if (!check) return null;
+      const predicted = predictedRefusal(buildMachine, check.problems);
+      if (predicted)
+        fallBack(predicted.reason, predicted.reason, {
+          machine: buildMachine,
+          remedy: predicted.remedy,
+        });
     }
     return { cacheOnly: false, here, code: placement.code, reason: placement.reason, machines };
   }
@@ -819,7 +837,7 @@ export async function acquireAndroidArtifact(
         diagnostics: extracted,
         buildDiagnostics: diagnostics,
         lines: extracted.length ? [] : tail(built.lastLines),
-        logPath: displayPath(root, buildLog),
+        logPath: displayPath(root, retainFailedTranscript(buildLog)),
       });
       throw new ArtifactRefusal(phaseFailure);
     }
@@ -990,4 +1008,32 @@ export async function acquireAndroidArtifact(
 
 function tail(lines: unknown, n = FALLBACK_LINES): string[] {
   return (Array.isArray(lines) ? lines : []).slice(-n);
+}
+
+export async function acquireAndroidArtifactOrRecorded(
+  recorded: RecordedBuild | null,
+  request: AndroidArtifactRequest,
+  deps: AndroidArtifactDeps,
+): Promise<AndroidArtifactResult> {
+  return recorded ? recordedAndroidArtifact(recorded) : acquireAndroidArtifact(request, deps);
+}
+
+function recordedAndroidArtifact(recorded: RecordedBuild): { ok: true; artifact: PreparedAndroidArtifact } {
+  return {
+    ok: true,
+    artifact: {
+      apkPath: recorded.appPath,
+      androidPackage: recorded.bundleId,
+      apkPackage: recorded.bundleId,
+      fingerprintCheck: null,
+      release: () => {},
+      waitedForBuild: null,
+      ccache: CCACHE_NOT_RUN,
+      uploadPending: null,
+      providerUpload: null,
+      providerName: null,
+      remote: null,
+      abandonedRemote: false,
+    },
+  };
 }

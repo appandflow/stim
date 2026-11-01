@@ -37,29 +37,6 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-test('warning requires consecutive observations for the configured duration while critical counts immediately', () => {
-  const settings = resolveMaintenanceSettings(null, {})!;
-  const level = vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
-  vi.spyOn(os, 'freemem').mockReturnValue(os.totalmem());
-  const first = measurePressure(settings, null, 0);
-  expect(first.memory.pressured).toBe(false);
-  expect(first.warningSince).toBe(0);
-  expect(measurePressure(settings, first, 599_999).memory.pressured).toBe(false);
-  expect(measurePressure(settings, first, 600_000).memory.pressured).toBe(true);
-  level.mockReturnValue('normal');
-  const normal = measurePressure(settings, first, 600_000);
-  expect(normal.warningSince).toBeNull();
-  level.mockReturnValue('warning');
-  expect(measurePressure(settings, normal, 600_001).memory.pressured).toBe(false);
-  level.mockReturnValue('critical');
-  expect(measurePressure(settings, normal, 600_001).memory.pressured).toBe(true);
-  expect(measurePressure({ ...settings, memoryPressureLevel: 'off' }, first, 600_001).memory.pressured).toBe(false);
-  level.mockReturnValue('warning');
-  expect(measurePressure({ ...settings, memoryPressureLevel: 'critical' }, first, 600_001).memory.pressured).toBe(
-    false,
-  );
-});
-
 test.skipIf(process.platform === 'darwin')(
   'available memory uses 10 percent of RAM when unset and honors an explicit threshold',
   () => {

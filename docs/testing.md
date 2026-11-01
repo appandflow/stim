@@ -1,22 +1,40 @@
 # Test stages
 
-`pnpm test` runs the deterministic parser and decision tests alongside real Git,
-process, filesystem, HTTP, and WebSocket integration fixtures. It needs Node and
-Git, but no Xcode, Android SDK, signing identity, or connected phone. The default
-Vitest worker count and five-second unit timeout remain unchanged.
+`pnpm run test:unit` runs the fast suite with fake elapsed-time clocks enabled
+before each test. Advance clocks explicitly when testing deadlines or retries;
+use events and promises for readiness. The linter rejects `useRealTimers`, real
+sleep imports and blocking `Atomics.wait` calls in unit tests.
+
+`pnpm run test:integration` runs the explicit `*.integration.test.ts` and
+`*.integration.test.mjs` fixtures. Use this stage when the contract needs real
+processes, socket deadlines, filesystem watchers, cross-process ownership or CPU
+performance budgets.
+Keep each exception tied to the real interaction it verifies. These tests may
+use fake clocks for policy inside the fixture, such as a child process clock.
+
+`pnpm test` remains the complete unit and integration run. It needs Node and
+Git, but no Xcode, Android SDK, signing identity, or connected phone. Vitest's
+worker count and test deadlines are unchanged. The native compatibility stage
+keeps its real clocks.
+
+Linux PR jobs run the unit stage on each push. Integration runs remain required
+in the merge candidate's complete `pnpm test`; main and manual CI runs also run
+both stages. Existing Windows and Darwin-specific smoke selections retain
+their integration coverage. Run affected integrations locally when changing
+the behavior they protect, rather than waiting for merge validation.
 
 `pnpm run test:compat` runs the explicit native tool compatibility stage. It
 requires macOS, Xcode with the iOS and iOS Simulator SDKs, `codesign`, `security`,
 `clang`, `openssl`, Google Chrome or Chromium, and a paired, unlocked iPhone
 with Developer Mode enabled. Set `STIM_COMPAT_IOS_UDID` to the test iPhone's UDID
 so the process probe targets only that phone. It also requires agent-device source
-from tag `v0.21.28` (`542fb77b324e522b121b18550307e457ba9be471`). Set
+from tag `v0.21.31` (`f3d2619abed42c69e60c80cf2e2dc0f626c37284`). Set
 `STIM_AGENT_DEVICE_SOURCE` to that source root, with its workspace dependencies
 installed. The tag pins the internal modules imported by the hosted iOS policy probe,
 which uses the real upstream parser, digest and inventory filter; it starts only a
 local fixture process and does not drive a simulator. Missing source fails this
 stage and never affects unit discovery. The hosted Android daemon probe requires
-agent-device 0.21.22 or later installed at the host's fixed binary location
+agent-device 0.21.30 or later installed at the host's fixed binary location
 (or `STIM_AGENT_DEVICE_BIN`) and `STIM_AGENT_DEVICE_ANDROID_SERIAL` naming a
 booted emulator created and owned exclusively by this validation. It starts a
 private real daemon, verifies its policy digest, backend, filtered inventory and
@@ -25,6 +43,11 @@ the daemon and its fixed helpers only on that serial. It does not create or
 delete the emulator; retain the validation fixture record and clean it through
 centralized Stim teardown. Missing binary, serial, adb or emulator fails the
 explicit stage and is unavailable validation, never a compatibility pass.
+The hosted command probe uses the same agent-device binary. It reads
+`agent-device help commands` and `agent-device help <command>` and fails when a
+command is neither a hosted device command nor refused with a reason, when a
+hosted command is missing from the catalog, or when a hosted command's flags
+differ from the committed classification. It starts no daemon or device.
 It builds generated scratch projects, signs temporary apps ad hoc, decodes
 fixture provisioning profiles, reads signing identities, and queries devices and
 processes through `devicectl`. It launches the installed Chrome headless with a
@@ -46,6 +69,12 @@ probe is useful while iterating, for example:
 ```sh
 pnpm run test:compat engine-ios-device.compat.test.ts
 ```
+
+The focused `ios-runtime.compat.test.ts` probe requires macOS, Xcode, access to
+its download catalog and 20 GB free on the simulator volume. It runs the real
+installer with the impossible iOS version `0.0`, verifies Xcode accepts the
+arguments and refuses the version, and downloads no runtime. It uses a private
+Stim home; it does not create, boot or delete a simulator.
 
 The focused `native-android-cache.compat.test.ts` probe requires an installed
 Android SDK platform, `aapt`, `apksigner`, and JDK `keytool`. It creates and signs
@@ -74,8 +103,8 @@ The native app workflows remain separate; see [RELEASE.md](../RELEASE.md).
 
 Run the tests that protect the changed behavior while iterating and before a
 commit. Use the relevant formatting, lint, build and type checks locally, then
-let CI validate the full merge candidate. Source changes also run the full
-suite on the pushed PR head. A prose-only change needs
+let CI validate the full merge candidate. Source changes run the unit stage on
+the pushed PR head; run affected integrations locally. A prose-only change needs
 formatting. Full local runs are useful for broad regressions, shared test setup
 or discovery changes, and behavior that CI cannot validate. A passing unchanged
 check does not need another run unless a new failure or concern justifies it.
@@ -129,26 +158,29 @@ include real Windows subprocesses and filesystem/cache operations. The full
 `test:e2e` command also contains Unix shell fixtures and is not the Windows
 smoke lane.
 
-A PR that only modifies existing root unit test files runs those changed files
-on Node 22 and 24. Adding, deleting or renaming tests, or changing source, shared
-fixtures, documentation, configuration or compatibility tests, runs the full PR
-suite. Missing base history or an empty/uncertain selection also uses the full
-suite. The selector reads the checked-out PR merge commit against its first
+A PR that only modifies existing root test files runs those changed files,
+including affected integrations, on Node 22 and 24. Other changes run the fast
+unit stage. Missing base history or an empty/uncertain selection also uses the
+unit stage. The selector reads the checked-out PR merge commit against its first
 parent; checkout retains both parents. Other PR checks remain enabled.
 
-The merge queue always runs the full unit suite on its combined candidate before
-merging. Main pushes, scheduled validation and release validation retain their
+The merge queue always runs the full unit and integration suite on its combined
+candidate before merging. Main pushes, scheduled validation and release validation retain their
 full suites. Focused PR selection never replaces the merge-candidate gate.
 
 The Linux Node 22 and 24 jobs retain a `unit-test-timings-node-<version>` JSON
-artifact for seven days, including failing runs that produce a report. Use
-these reports to compare case and file costs on the same runner type. Required
+artifact for seven days, including failing runs that produce a report. Main and
+manual runs also retain `integration-test-timings-node-<version>`. Use these
+reports to compare case and file costs on the same runner type. Required
 full suites still run before merge; local affected selection does not change
 that gate.
 
 CI runs the complete Windows unit suite nightly at 06:00 UTC and on manual
-dispatch. The npm Release workflow runs that same suite alongside publication
-but does not gate it until [#3878](https://github.com/appandflow/stim/issues/3878).
+dispatch. A pushed `v*` tag starts `Post-release validation`
+(`post-release.yml`), which runs that same suite in its own workflow. It is
+separate from the npm Release workflow, so it neither delays nor fails the
+publish, and it does not gate a release until
+[#3878](https://github.com/appandflow/stim/issues/3878).
 Desktop release packaging runs nightly at 05:00 UTC and on manual Desktop
 dispatch; the production Desktop release workflow still builds and packages
 its candidate. Scheduled validation never publishes a release.

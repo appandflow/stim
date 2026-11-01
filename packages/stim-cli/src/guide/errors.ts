@@ -35,7 +35,9 @@ Branch on the code, never on the message.`,
   tailscale ping. Check stim-server and Tailscale there,
   then run stim doctor. Correct --device-type / --runtime for iOS or
   --system-image / --device-profile for Android when the offer names
-  an unavailable choice. A session that exists stays recorded even if delivery
+  an unavailable choice. A host that would install a missing Android image
+  but cannot (android.installImages never there, unaccepted licenses, no
+  cmdline-tools, low disk) declines with the command to run on that host. A session that exists stays recorded even if delivery
   fails: retry stim ios|android --remote <machine>, or run stim stop to reconcile it.
   An Expo dev client whose running or pinned Metro port is in use on the host
   refuses before the build: run stim stop, then stim ios --remote <machine>
@@ -50,7 +52,7 @@ Branch on the code, never on the message.`,
   on the host to enable handoff and native logs (hello features hosted-ios-data
   for iOS and hosted-android-data for Android).
   A name outside remote.machines is STIM_BAD_ARG. Missing or pending hosting
-  approval keeps the doctor --fix and stim-server setup remedies.`,
+  approval keeps the stim remote add and stim-server setup remedies.`,
     },
     STIM_EAS_BUILD_MISSING: {
       summary: 'no completed EAS development build matches; build only with session authorization',
@@ -167,9 +169,14 @@ Branch on the code, never on the message.`,
       summary: 'xcodebuild or gradle failed; the Android missing-SDK and APK refusals',
       body: () => `STIM_BUILD_FAILED
   xcodebuild or gradle failed. The EXTRACTED diagnostics are printed (capped),
-  not the transcript. Read the log path on the next line for the rest.
+  not the transcript. Read the log path on the next line for the rest: it names
+  a copy of the failed transcript (<log>.failed) that the next build in the
+  workspace does not overwrite. When xcodebuild names failed script phases,
+  the first diagnostics are the phase names and the last error lines the
+  script printed, ahead of the compiler diagnostics.
   Three Android refusals share this code without gradle itself failing:
-  - NO ANDROID SDK, before gradle starts: nothing exists at the SDK path
+  - NO ANDROID SDK, before gradle starts: local React Native emulator runs
+    refuse before Metro or device setup. Nothing exists at the SDK path
     Stim resolves (ANDROID_HOME, else ANDROID_SDK_ROOT, else the default
     location), and there is no android/local.properties. Set ANDROID_HOME to the SDK or write sdk.dir
     into android/local.properties; \`stim doctor --platform android\` reports
@@ -411,7 +418,9 @@ too old to speak protocol 2, incompatible
 toolchain/runtime/CPU, low disk, busy, sync/build failure, artifact failure,
 or a checkout that changed while it built. Unsupported build kinds also refuse.
 No local xcodebuild, Gradle or SwiftPM compile or alternate machine follows a
-refusal. For stim ios, a toolchain difference on the named machine, such as Xcode,
+refusal. For stim android, a known toolchain refusal on the named machine stops
+before prebuild; busy, low disk and unreachable are checked again afterward.
+For stim ios, a toolchain difference on the named machine, such as Xcode,
 the simulator runtime or the CPU, refuses before this machine runs prebuild or pod
 install, even when prebuild would have produced an app the local cache already holds, or the
 machine already holds the exact artifact. A
@@ -428,9 +437,9 @@ fingerprint reads, such as .env.local. Make the named input agree on both Macs,
 for example by committing the lockfile pod install rewrote there; pairing does
 not change it.
 
-Run stim doctor --fix to ask for build access if not paired. Check
-stim settings get remote.machines. A person on the worker approves this machine
-by running the stim-server setup command doctor --fix printed, with its ticket
+Run stim remote add <machine> to ask for build access if not approved. Check
+stim remote list. A person on the worker approves this machine
+by running the stim-server setup command stim remote add printed, with its ticket
 and expiry (guide settings). Agents never run setup or approve requests.
 Rerun with --remote-build auto or remote for placement with local fallback, or
 --remote-build local to keep the build here.
@@ -791,6 +800,12 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   Mode off, over a cable or over Wi-Fi alike. Hardware is never created or
   booted, so there is nothing to retry into existence: fix the cable, the
   trust prompt, or Developer Mode.
+  On Android it also means no system image matched and Stim could not install
+  one: android.installImages is never, the SDK has no cmdline-tools/latest,
+  the SDK licenses are not accepted (Stim never accepts them; run the
+  \`sdkmanager --licenses\` line the remedy prints), the SDK volume has under
+  8 GB free, or sdkmanager failed. The remedy names the exact sdkmanager
+  command. Nothing was downloaded or created.
   Otherwise the owned simulator/emulator could not be created or could not
   reach a booted state. \`stim doctor\` checks the toolchain; \`stim status\` says what
   Stim thinks it owns. Re-running the command creates a fresh owned device
@@ -812,7 +827,11 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   then until SpringBoard has finished starting, which \`simctl launch\` needs.
   Booted alone does not end that wait. The failure names the udid and the wait.
   After boot, a process-spawn probe must finish within 30 seconds before
-  installation. If it fails, the refusal includes observed host memory pressure
+  installation. A probe that times out while the simulator still reports Booted
+  is retried for about three minutes, since a loaded host can leave a booted
+  simulator unresponsive for a while; a timeout on a simulator that no longer
+  reports Booted, and any other probe failure, refuse at once. If it
+  fails, the refusal includes observed host memory pressure
   when available. Free memory before retrying under pressure; see
   \`stim guide lifecycle simslim\`. Booted alone does not prove readiness.
   The same probe lists the simulator's launchd jobs and requires a running
@@ -896,7 +915,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   owned by this Stim home, or it is not booted or running. Permission and push
   also refuse when no app is recorded for the device. Run the platform command
   the remedy names (\`stim ios\` or \`stim android\`, with \`--slot\` for a named
-  slot) and retry. No tool runs before this refusal.`,
+  slot) and retry. A non-Mac client cannot run a local iOS simulator; run the
+  iOS tool on a Mac with a local Stim-owned simulator. No tool runs before this refusal.`,
     },
     STIM_DEVICE_TOOL_UNSUPPORTED: {
       summary: 'that device tool has no equivalent on that platform',
@@ -943,8 +963,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
     STIM_AT_CAPACITY: {
       summary: 'owned-device slot wait timed out, or --no-wait reached the cap or queue',
       body: () => `STIM_AT_CAPACITY
-  Only when concurrency.maxDevices is set (unset by default). New owned
-  devices queue in FIFO order across $STIM_HOME for 600 seconds by default.
+  Only when concurrency.maxDevices, concurrency.maxIosDevices or
+  concurrency.maxAndroidDevices is set (all unset by default). A boot must fit
+  its platform cap and concurrency.maxDevices; the message names the limit that
+  was full with its count and cap. New owned devices queue in FIFO order across $STIM_HOME for 600 seconds by default.
   This refusal means the wait expired, or \`--no-wait\` / \`--wait 0\`
   found the cap full or another run queued. The message gives the current
   count and, on timeout, how long it waited. iOS waits beside its build,
@@ -962,7 +984,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   --no-wait and --wait 0 refuse at once. Builds under remote-only refuse with
   STIM_OFFLOAD_REFUSED instead.
   Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise concurrency.maxDevices. With --remote auto, remote.machines and
+  or raise the limit the message names (concurrency.maxDevices, or the
+  platform's concurrency.maxIosDevices / maxAndroidDevices). On a stim-server
+  worker the hosted offer and reserve name the full limit too, including
+  concurrency.maxMacosApps. With --remote auto, remote.machines and
   the opt-in remote.easFallback (billed EAS Simulator) are tried before this
   wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
   time; status JSON exposes build.waitingFor independently of phase.
@@ -1297,6 +1322,16 @@ captured"  (in metro.ndjson, bare RN)
   Stim's processes. For a legacy record, stop the server with the tool that
   started it before retrying. Never reconstruct ownership from a process
   name, port, or wall-clock timestamp.`,
+    },
+    STIM_NO_RECORDED_BUILD: {
+      summary: 'a recordedBuild run found no recorded build for its selectors',
+      body: () => `STIM_NO_RECORDED_BUILD
+  The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the
+  app the last build with the same iOS scheme and configuration, or Android
+  variant, recorded in this workspace's state. None is recorded, or its app was
+  removed. Nothing was started. Build first with the same selectors and the same
+  Stim home (\`stim-ci build\`, or the API build), then run again. \`stim guide ci\`
+  has the flow. \`stim ios\` and \`stim android\` never use it.`,
     },
     STIM_BAD_ARG: {
       summary: 'an argument, setting, directory, flavor, or device name refused before anything starts',
@@ -1662,6 +1697,16 @@ not on any remote"  (worktree remove)
   and does not print this line. When the locks match but Pods still name the
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
+
+"carry       left out <app>/<platform>: <reason>"
+  The app is an Expo project whose ios/ or android/ Git ignores, and Stim
+  cannot show the source checkout's copy was generated from the app's current
+  inputs: Stim has no prebuild record for it, its last prebuild did not
+  finish, or the record names an earlier native fingerprint. Warm does not
+  copy it, so the first \`stim <platform>\` in this worktree generates it
+  fresh. Nothing to fix. To let later warms copy it, delete <platform>/ in
+  the source checkout and run \`stim <platform>\` there, so Stim generates it
+  fresh and records that.
 
 "carry       carried <dir>/Pods but there is no <dir>/Podfile.lock"
   Warm copied Pods but the destination has no Podfile.lock. Follow the printed

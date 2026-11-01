@@ -1,0 +1,119 @@
+import { type ChildProcess, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const CORE_URL = new URL('../index.ts', import.meta.url).href;
+const CHILD_SCRIPT = `
+import fs from 'node:fs';
+const { registerCache } = await import(process.argv[1]);
+if (process.env.STIM_DELAY_MANIFEST_READ === '1') {
+  const readFileSync = fs.readFileSync.bind(fs);
+  fs.readFileSync = (...args) => {
+    const value = readFileSync(...args);
+    if (String(args[0]).endsWith('caches.json')) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120);
+    }
+    return value;
+  };
+}
+fs.writeFileSync(process.env.STIM_READY_FILE, '');
+while (process.env.STIM_GO_FILE && !fs.existsSync(process.env.STIM_GO_FILE)) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+}
+registerCache({ dir: process.argv[2], name: process.argv[3], prune: 'entries', note: 'test' });
+`;
+
+let home: string;
+const children: { child: ChildProcess; settled: Promise<void> }[] = [];
+
+beforeEach(() => {
+  home = mkdtempSync(join(tmpdir(), 'stim-core-manifest-'));
+});
+
+afterEach(async () => {
+  for (const { child } of children) {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  }
+  await Promise.all(children.map(({ settled }) => settled));
+  children.length = 0;
+  rmSync(home, { recursive: true, force: true });
+});
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForFile(file: string, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!existsSync(file)) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${file}`);
+    await delay(5);
+  }
+}
+
+function registerInChild({
+  dir,
+  name,
+  readyFile,
+  goFile,
+  delayRead = false,
+}: {
+  dir: string;
+  name: string;
+  readyFile: string;
+  goFile?: string;
+  delayRead?: boolean;
+}): Promise<void> {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', CHILD_SCRIPT, CORE_URL, dir, name], {
+    env: {
+      ...process.env,
+      STIM_HOME: home,
+      STIM_READY_FILE: readyFile,
+      ...(goFile ? { STIM_GO_FILE: goFile } : {}),
+      ...(delayRead ? { STIM_DELAY_MANIFEST_READ: '1' } : {}),
+    },
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  const done = new Promise<void>((resolve, reject) => {
+    let stderr = '';
+    child.stderr?.setEncoding('utf-8');
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on('error', reject);
+    child.on('exit', (code, signal) => {
+      if (code === 0) resolve();
+      else reject(new Error(`registration child failed (${signal || code}): ${stderr}`));
+    });
+  });
+  children.push({ child, settled: done.catch(() => {}) });
+  return done;
+}
+
+test('concurrent cache registrations preserve every entry', async () => {
+  const manifest = join(home, 'caches.json');
+  const go = join(home, 'go');
+  const count = 12;
+  writeFileSync(manifest, JSON.stringify({ version: 1, caches: [] }));
+
+  const registrations = Array.from({ length: count }, (_, index) => {
+    const readyFile = join(home, `ready-${index}`);
+    return {
+      readyFile,
+      done: registerInChild({
+        dir: join(home, `cache-${index}`),
+        name: `cache-${index}`,
+        readyFile,
+        goFile: go,
+        delayRead: true,
+      }),
+    };
+  });
+  await Promise.all(registrations.map(({ readyFile }) => waitForFile(readyFile, 10_000)));
+  writeFileSync(go, '');
+  await Promise.all(registrations.map(({ done }) => done));
+
+  const parsed = JSON.parse(readFileSync(manifest, 'utf-8')) as { caches: Array<{ dir: string }> };
+  expect(new Set(parsed.caches.map((entry) => entry.dir)).size).toBe(count);
+}, 30_000);

@@ -67,6 +67,7 @@ export interface RecordStatsResult {
 
 interface RunOutcome {
   failed: boolean;
+  remoteDevice?: boolean;
   cacheHit?: CacheHitLevel;
   waited?: unknown;
   durationMs: number;
@@ -307,10 +308,17 @@ export function createRunRecorder({
     setPlacement(next: RunPlacement): void {
       placement = next;
     },
-    record({ failed, cacheHit = false, waited = null, durationMs, offloadedTo = null }: RunOutcome): void {
+    record({
+      failed,
+      cacheHit = false,
+      waited = null,
+      durationMs,
+      offloadedTo = null,
+      remoteDevice = false,
+    }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
       recorded = true;
-      const ran = failed ? {} : (phases?.() ?? {});
+      const ran = failed || remoteDevice ? {} : (phases?.() ?? {});
       try {
         const outcome = write(
           {

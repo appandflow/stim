@@ -1,4 +1,5 @@
 import { testContext } from './_context.ts';
+import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
 import * as iosOperation from '../commands/ios.ts';
 import { operationState } from '../engine/operation-state.ts';
@@ -17,7 +18,9 @@ import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
 import { POD_MISSING_REASON } from '../engine/deps.ts';
 import * as offloadClient from '../offload/client.ts';
+import * as buildCache from '../cache/build-cache.ts';
 import * as tailnet from '../offload/tailnet.ts';
+import * as sharedState from '@stim-cli/core/state';
 import { requestNativeRunCancel } from '../engine/native-run.ts';
 import { SETTING_SHAPE_REMEDY } from '../workspace/settings.ts';
 import assert from 'node:assert';
@@ -635,6 +638,16 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
   }
 });
 
+test('the API refuses recordedBuild and cleanAppState together with a physical device', async () => {
+  const stim = createStim({ projectRoot: root, home: tmpHome });
+  await expect(stim.run({ platform: 'ios', recordedBuild: true, device: true })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+  });
+  await expect(stim.run({ platform: 'android', cleanAppState: true, device: 'R5CT' })).rejects.toMatchObject({
+    code: 'STIM_BAD_ARG',
+  });
+});
+
 describe('the project gate', () => {
   test('a directory that depends on neither react-native nor expo is refused before any workspace state', async () => {
     reserve();
@@ -875,7 +888,11 @@ describe('the simulator boot gate', () => {
     const events: string[] = [];
     let bootStartedAt = 0;
     let fingerprintStartedAt = 0;
-    const { exitCode, errs } = await run(
+    let markFingerprintStarted: () => void = () => {};
+    const fingerprintStarted = new Promise<void>((resolve) => {
+      markFingerprintStarted = resolve;
+    });
+    const pending = run(
       {},
       {
         now: () => clock,
@@ -897,6 +914,7 @@ describe('the simulator boot gate', () => {
         fingerprintProject: async () => {
           fingerprintStartedAt ||= clock;
           events.push('fingerprint start');
+          markFingerprintStarted();
           await tick();
           clock += 3_000;
           events.push('fingerprint end');
@@ -904,6 +922,9 @@ describe('the simulator boot gate', () => {
         },
       },
     );
+    await fingerprintStarted;
+    await vi.runAllTimersAsync();
+    const { exitCode, errs } = await pending;
     expect(exitCode).toBe(null);
     expect(events.slice(0, 3)).toEqual(['boot start', 'fingerprint start', 'fingerprint end']);
     expect(events).toContain('boot end');
@@ -1168,6 +1189,84 @@ describe('parked simulator adoption', () => {
     expect(cleared).toBe(false);
     expect(installed).toBe(false);
     expect(errs.join('\n')).toMatch(/Could not remove com\.example\.old.*did not install or launch/);
+  });
+});
+
+describe('clean app state', () => {
+  beforeEach(() => setExecutor(makeExecutor()));
+
+  test.each([
+    ['cleans and resets the keychain before a skipped install', true, ['sweep', 'data', 'keychain', 'install']],
+    ['leaves a plain run on its own simulator untouched', false, ['install']],
+  ])('cleanAppState %s', async (_label, cleanAppState, expected) => {
+    reserve();
+    const events: string[] = [];
+    let proveInstalled: unknown;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState },
+      {
+        clearOtherUserApps: () => {
+          events.push('sweep');
+          return { listed: true, kept: true, removed: ['com.example.other'], failed: [] };
+        },
+        clearIosAppData: () => {
+          events.push('data');
+        },
+        resetIosKeychain: () => {
+          events.push('keychain');
+        },
+        clearIosAdoptionPending: () => events.push('adoption'),
+        installIosApp: (args) => {
+          events.push('install');
+          proveInstalled = args.proveInstalled;
+          return { ok: true, skipped: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(null);
+    expect(events).toEqual(expected);
+    expect(proveInstalled).toBe(true);
+    expect(/removed com\.example\.other, left by an earlier run/.test(errs.join('\n'))).toBe(cleanAppState);
+  });
+
+  test('refuses to clean a simulator Stim does not own', async () => {
+    reserve();
+    let swept = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState: true },
+      {
+        ensureOwnedDevice: async () => ({ deviceUdid: UDID, deviceName: 'My iPhone', owned: false }),
+        clearOtherUserApps: () => {
+          swept = true;
+          return { listed: true, kept: false, removed: [], failed: [] };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(swept).toBe(false);
+    expect(errs.join('\n')).toMatch(/cleanAppState clears only a simulator Stim owns/);
+  });
+
+  test('a failed keychain reset refuses before install without mentioning adoption', async () => {
+    reserve();
+    let installed = false;
+    const { exitCode, errs } = await run(
+      { metroCheck: false, cleanAppState: true },
+      {
+        clearOtherUserApps: () => ({ listed: true, kept: false, removed: [], failed: [] }),
+        resetIosKeychain: () => {
+          throw new Error('keychain busy');
+        },
+        installIosApp: () => {
+          installed = true;
+          return { ok: true };
+        },
+      },
+    );
+    expect(exitCode).toBe(1);
+    expect(installed).toBe(false);
+    expect(errs.join('\n')).toMatch(/Could not reset the keychain .*keychain busy.* Stim did not install or launch/s);
+    expect(errs.join('\n')).not.toMatch(/adoption cleanup pending/);
   });
 });
 
@@ -1969,7 +2068,7 @@ describe('the remote cache', () => {
     });
     try {
       await installed;
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await vi.advanceTimersByTimeAsync(20);
       expect(installationStarted).toBe(true);
       expect(returned).toBe(false);
     } finally {
@@ -3372,6 +3471,33 @@ describe('devClientScheme', () => {
     },
   );
 
+  test("reads the scheme from the bundle's binary Info.plist where plutil does not exist", () => {
+    const dir = project(null, withDevClient);
+    const app = join(dir, 'Fixture.app');
+    mkdirSync(app);
+    writeFileSync(
+      join(app, 'Info.plist'),
+      Buffer.from(
+        'YnBsaXN0MDDYAQIDBAUGBwgJCgsMDRgtMF8QEkNGQnVuZGxlSWRlbnRpZmllcl8QGE5TQ2FtZXJhVXNhZ2VEZXNjcmlwdGlvbl8Q' +
+          'EkxTUmVxdWlyZXNJUGhvbmVPU18QE0NGQnVuZGxlRGlzcGxheU5hbWVfEBBDRkJ1bmRsZVVSTFR5cGVzXxAbTFNBcHBsaWNhdGlv' +
+          'blF1ZXJpZXNTY2hlbWVzXlVJRGV2aWNlRmFtaWx5XFJDVE1ldHJvUG9ydF8QD2NvbS5leGFtcGxlLmFwcG8QHQBVAHMAZQBzACAA' +
+          'dABoAGUAIABjAGEAbQBlAHIAYQAgIBMAIABmAG8AcgAgAHAAaABvAHQAbwBzAC4JaABDAGEAZgDpACAAQQBwAHCjDhIV0Q8QXxAS' +
+          'Q0ZCdW5kbGVVUkxTY2hlbWVzohEJV2V4YW1wbGXRExRfEBBDRkJ1bmRsZVR5cGVSb2xlVkVkaXRvctEPFqEXW2V4cCtleGFtcGxl' +
+          'rxAUGRobHB0eHyAhIiMkJSYnKCkqKyxScTBScTFScTJScTNScTRScTVScTZScTdScThScTlTcTEwU3ExMVNxMTJTcTEzU3ExNFNx' +
+          'MTVTcTE2U3ExN1NxMThTcTE5oi4vEAEQAhEfkgAIABkALgBJAF4AdACHAKUAtADBANMBEAERASIBJgEpAT4BQQFJAUwBXwFmAWkB' +
+          'awF3AY4BkQGUAZcBmgGdAaABowGmAakBrAGwAbQBuAG8AcABxAHIAcwB0AHUAdcB2QHbAAAAAAAAAgEAAAAAAAAAMQAAAAAAAAAA' +
+          'AAAAAAAAAd4=',
+        'base64',
+      ),
+    );
+    const exec = makeExecutor({
+      runFile: () => {
+        throw Object.assign(new Error('spawnSync plutil ENOENT'), { code: 'ENOENT' });
+      },
+    });
+    expect(devClientScheme(dir, app, { exec })).toBe('exp+example');
+  });
+
   test('falls back to app.json when the bundle cannot be read', () => {
     const dir = project({ expo: { scheme: 'from-app-json' } }, withDevClient);
     const exec = makeExecutor({
@@ -3605,6 +3731,7 @@ describe('concurrency limits', () => {
             code: 'STIM_AT_CAPACITY',
             message: 'at capacity',
             remedy: 'stop an environment (stim stop) or raise concurrency.maxDevices',
+            max: 1,
           };
         },
       },
@@ -3625,7 +3752,7 @@ describe('concurrency limits', () => {
     expect(capacity.args.max).toBe(2);
     expect(recordCapacityRefusal).toHaveBeenCalledTimes(1);
     expect(recordCapacityRefusal).toHaveBeenCalledWith(
-      { platform: 'ios', max: 2, workspace: workspaceId(root) },
+      { platform: 'ios', max: 1, workspace: workspaceId(root) },
       expect.any(Number),
     );
     expect(errs.join('\n')).toContain('at capacity');
@@ -3863,16 +3990,79 @@ describe('--remote', () => {
     };
   }
 
+  test('cleanAppState installs on a remote simulator without cleaning it', async () => {
+    const remote = remoteStub();
+    reserve();
+    const cleaned: string[] = [];
+    const { exitCode } = await run(
+      { remote: 'eas', cleanAppState: true },
+      {
+        ...remote.deps,
+        clearOtherUserApps: () => {
+          cleaned.push('sweep');
+          return { listed: true, kept: true, removed: [], failed: [] };
+        },
+        resetIosKeychain: () => {
+          cleaned.push('keychain');
+        },
+      },
+    );
+    expect(exitCode).toBeFalsy();
+    expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
+    expect(cleaned).toEqual([]);
+  });
+
   test('the device phases run against the remote implementation', async () => {
     const remote = remoteStub();
     reserve();
-    const { calls, exitCode } = await run({ remote: 'eas' }, remote.deps);
+    const { calls, exitCode } = await run(
+      { remote: 'eas' },
+      {
+        ...remote.deps,
+        fingerprintProject: async () => {
+          vi.advanceTimersByTime(1000);
+          return { hash: FINGERPRINT, sources: [] };
+        },
+      },
+    );
     expect(exitCode).toBeFalsy();
+    const stats = sharedState.readStats().record;
+    expect(stats?.machine.ios?.runs).toBe(1);
+    expect(stats?.history).toBeUndefined();
     expect(remote.hits).toEqual(['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp']);
     expect(remote.backends).toEqual(['eas']);
     expect(calls.order.includes('ensureOwnedDevice')).toBeFalsy();
     expect(calls.order.includes('installIosApp')).toBeFalsy();
   });
+
+  test.each(['Release', 'Debug'])(
+    'an EAS %s process launch reports unavailable verification without local diagnostics',
+    async (configuration) => {
+      const remote = remoteStub();
+      const verifyReleaseLaunch = vi.fn<NonNullable<IosDeps['verifyReleaseLaunch']>>(async () => ({
+        verified: false,
+        reason: 'no-pid',
+        waitedMs: 0,
+      }));
+      const { calls, errs, logs, exitCode } = await run(
+        { remote: 'eas', configuration, json: true },
+        {
+          ...remote.deps,
+          verifyReleaseLaunch,
+          ...(configuration === 'Debug'
+            ? { runtimePlan: iosProcessRuntime(async () => ({ ok: true, prepared: { metroPort: null } })) }
+            : {}),
+        },
+      );
+      expect(exitCode).toBe(null);
+      expect(parseFirst(logs)).toMatchObject({ launched: 'unverified', metroPort: null });
+      expect(remote.hits).toContain('launchIosApp');
+      expect(verifyReleaseLaunch).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('verifyIosDeviceReleaseLaunch');
+      expect(errs.join('\n')).toContain('remote adapter launch accepted; process verification is unavailable');
+      expect(errs.join('\n')).not.toMatch(/simctl launch reported|stim logs --source device/);
+    },
+  );
 
   test('auto on a full machine with remote.easFallback runs the same EAS Simulator path as --remote eas', async () => {
     const remote = remoteStub();
@@ -4035,6 +4225,13 @@ describe('--remote', () => {
     const { calls } = await run({}, { hostSimulatorArch: () => 'x86_64' });
     expect(calls.args.buildIos).toMatchObject({ destination: null, arch: null });
     expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-debug-sim-x86-64`);
+  });
+
+  test('a local Release simulator build passes the host arch to Xcode and keys it', async () => {
+    reserve();
+    const { calls } = await run({ configuration: 'Release' }, { hostSimulatorArch: () => 'x86_64' });
+    expect(calls.args.buildIos).toMatchObject({ destination: null, arch: 'x86_64' });
+    expect(calls.args.storeBuild.key).toBe(`${FINGERPRINT}-release-sim-x86-64`);
   });
 
   test('a remote start refused on the EAS project lock stops before install, with its notice and remedy', async () => {
@@ -4663,7 +4860,7 @@ describe('release skips Metro entirely', () => {
     expect(facts.configuration).toBe('Release');
     expect(facts.metroPort).toBe(null);
     expect(facts.launched).toBe(true);
-    expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim`);
+    expect(facts.cacheKey).toBe(`${FINGERPRINT}-release-sim-arm64`);
   });
 
   test('a dead app process fails the readiness check with the device-log pointer', async () => {
@@ -4690,15 +4887,53 @@ describe('release skips Metro entirely', () => {
   });
 });
 
+describe('a recorded build', () => {
+  test('is refused before any build or install when no build was recorded', async () => {
+    reserve();
+    const { exitCode, calls, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle', 'installIosApp'])
+      expect(calls.order).not.toContain(step);
+  });
+
+  test('is installed as recorded, without a cache lookup, build or JS swap', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Release' }), {
+      appPath: recorded,
+      bundleId: 'dev.fixture.app',
+    });
+    const { exitCode, calls } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(null);
+    expect(calls.args.installIosApp.appPath).toBe(recorded);
+    for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle']) expect(calls.order).not.toContain(step);
+  });
+
+  test('is refused when the selectors differ from the recorded build', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    recordBuild(root, recordedBuildKey({ platform: 'ios', configuration: 'Debug' }), {
+      appPath: recorded,
+      bundleId: null,
+    });
+    const { exitCode, errs } = await run({ configuration: 'Release', recordedBuild: true });
+    expect(exitCode).toBe(1);
+    expect(errs.join('\n')).toMatch(/STIM_NO_RECORDED_BUILD/);
+  });
+});
+
 describe('the release cache key and the JS swap', () => {
-  test('the key differs from debug: -release-sim vs -debug-sim-arm64', async () => {
+  test('the key differs from debug: -release-sim-arm64 vs -debug-sim-arm64', async () => {
     reserve();
     const debugRun = await run({});
     expect(debugRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-debug-sim-arm64`);
     const releaseRun = await run({ configuration: 'Release' });
-    expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim`);
+    expect(releaseRun.calls.args.resolveBuild.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
     expect(releaseRun.calls.args.storeBuild.platform).toBe('ios');
-    expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim`);
+    expect((releaseRun.calls.args.storeBuild as { key?: unknown }).key).toBe(`${FINGERPRINT}-release-sim-arm64`);
   });
 
   test('a fresh release build passes the configuration to xcodebuild and needs no swap', async () => {
@@ -5101,7 +5336,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   test('a post-shift hit on a Release build swaps the JS in, exactly as a first-pass hit does', async () => {
     reserve();
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim-arm64`, 'Fixture.app');
     const { calls } = await run(
       { configuration: 'Release' },
       {
@@ -5118,7 +5353,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
 
   test('a post-shift hit whose swap fails falls back to a build, as a first-pass failure does', async () => {
     reserve();
-    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim`, 'Fixture.app');
+    const cachedApp = join(tmpHome, 'build-cache', 'ios', `${WARM}-release-sim-arm64`, 'Fixture.app');
     const { calls } = await run(
       { configuration: 'Release' },
       {
@@ -5130,7 +5365,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       },
     );
     expect(calls.order.includes('buildIos')).toBe(true);
-    expect(String(calls.args.storeBuild.key)).toBe(`${WARM}-release-sim`);
+    expect(String(calls.args.storeBuild.key)).toBe(`${WARM}-release-sim-arm64`);
   });
 
   test('a post-shift MISS builds and stores under the new key', async () => {
@@ -6062,7 +6297,7 @@ describe('ios --device: selecting a phone and building the device slice', () => 
     reserve();
     const { calls } = await run({ configuration: 'Release' });
     const store = calls.args.storeBuild as { key: string };
-    expect(store.key).toBe(`${FINGERPRINT}-release-sim`);
+    expect(store.key).toBe(`${FINGERPRINT}-release-sim-arm64`);
     const build = calls.args.buildIos as Record<string, unknown>;
     expect(build?.sdk).toBe(undefined);
   });
@@ -7250,6 +7485,57 @@ describe('the simulator model and runtime flags', () => {
     expect(ok.calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
+  test.each(['flag', 'setting'])(
+    'runtime installation through %s happens before selector validation and continues the run',
+    async (entry) => {
+      reserve();
+      let installed = false;
+      const result = await run(
+        { runtime: '26.5', installRuntime: entry === 'flag', json: true },
+        {
+          resolveSettings: () => ({ ios: { autoInstallRuntime: entry === 'setting' } }),
+          ensureIosRuntime: async () => {
+            installed = true;
+            return { ok: true };
+          },
+          listIosRuntimes: async () =>
+            installed
+              ? [
+                  {
+                    identifier: 'com.apple.CoreSimulator.SimRuntime.iOS-26-5',
+                    version: '26.5',
+                    name: 'iOS 26.5',
+                    supportedDeviceTypes: [{ identifier: 'iphone', name: 'iPhone 17' }],
+                  },
+                ]
+              : [],
+        },
+      );
+      expect(installed).toBe(true);
+      expect(result.exitCode).toBe(null);
+      expect(result.calls.order).toContain('ensureOwnedDevice');
+    },
+  );
+
+  test('runtime installation failure stops before any device or app build', async () => {
+    reserve();
+    const result = await run(
+      { runtime: '26.5', installRuntime: true, json: true },
+      {
+        ensureIosRuntime: async () => ({
+          ok: false,
+          code: 'STIM_NO_DEVICE',
+          message: 'Xcode cannot install that version',
+          remedy: 'Choose an available version.',
+        }),
+      },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(parseFirst(result.logs).message).toContain('Xcode cannot install');
+    expect(result.calls.order).not.toContain('ensureOwnedDevice');
+    expect(result.calls.order).not.toContain('buildIos');
+  });
+
   test('an unknown runtime refuses first, naming the installed versions', async () => {
     reserve();
     const { exitCode, logs, calls } = await run({ runtime: '99.9', json: true });
@@ -7569,8 +7855,7 @@ describe('run statistics', () => {
         },
         ensureBooted: async () => {
           await built;
-          while (!['device', 'install'].includes(phase() as string))
-            await new Promise((resolve) => setTimeout(resolve, 5));
+          await vi.waitUntil(() => ['device', 'install'].includes(phase() as string));
           waitPhase = phase();
           return { ok: true, udid: UDID };
         },
@@ -8127,7 +8412,11 @@ describe('--plan', () => {
   });
 
   test('a local entry under the configuration key is a hit, and planning leaves its LRU time alone', async () => {
-    const releaseKey = buildCacheKey('ios', FINGERPRINT, { configuration: 'Release', isSimulator: true });
+    const releaseKey = buildCacheKey('ios', FINGERPRINT, {
+      configuration: 'Release',
+      isSimulator: true,
+      arch: 'arm64',
+    });
     const entry = storeEntry(releaseKey);
     const old = new Date('2026-01-01T00:00:00Z');
     utimesSync(entry, old, old);
@@ -8257,6 +8546,7 @@ describe('--plan', () => {
   test.each([
     [{ device: true }, '--device'],
     [{ remote: 'proxy' }, '--remote'],
+    [{ installRuntime: true }, '--install-runtime'],
     [{ simulatorApp: 'xcode' }, '--simulator-app'],
   ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
     const { logs, exitCode, calls } = await run({ plan: true, json: true, ...flags });
@@ -8546,9 +8836,9 @@ describe('iOS placement on a hosting Mac', () => {
     const result = await run({ remote: 'mini', json }, { prepareHostedIos });
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toContain('STIM_HOSTING_REFUSED');
-    expect(result.stderr).toContain('stim doctor --fix');
+    expect(result.stderr).toContain('stim remote add mini');
     expect(result.logs).toHaveLength(json ? 1 : 0);
-    const expected = expect.objectContaining({ code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim doctor --fix.' });
+    const expected = expect.objectContaining({ code: 'STIM_HOSTING_REFUSED', remedy: 'Run stim remote add mini.' });
     expect(result.logs.map((line) => JSON.parse(line))).toEqual(json ? [expected] : []);
     expect(result.calls.order).not.toContain('buildIos');
   });
@@ -8695,16 +8985,24 @@ describe('iOS placement on a hosting Mac', () => {
     expect(calls.order).not.toContain('ensureOwnedDevice');
   });
 
-  test.each([undefined, 'other', 'proxy'])('a recorded host refuses switching to %s until stop', async (remote) => {
-    writeHostedIos(root, 'default', placement);
-    const { logs, calls } = await run({ remote, json: true });
-    expect(parseFirst(logs)).toMatchObject({
-      code: 'STIM_BAD_ARG',
-      message: expect.stringContaining('runs on mini; run stim stop first'),
-    });
-    expect(calls.order).not.toContain('ensureOwnedDevice');
-    expect(calls.order).not.toContain('buildIos');
-  });
+  test.each([undefined, 'other', 'proxy'])(
+    'a recorded host refuses switching to %s before runtime installation',
+    async (remote) => {
+      writeHostedIos(root, 'default', placement);
+      const install = vi.fn<() => Promise<{ ok: true }>>(async () => ({ ok: true }));
+      const { logs, calls } = await run(
+        { remote, runtime: '26.5', installRuntime: true, json: true },
+        { installHostedIosRuntime: install },
+      );
+      expect(parseFirst(logs)).toMatchObject({
+        code: 'STIM_BAD_ARG',
+        message: expect.stringContaining('runs on mini; run stim stop first'),
+      });
+      expect(install).not.toHaveBeenCalled();
+      expect(calls.order).not.toContain('ensureOwnedDevice');
+      expect(calls.order).not.toContain('buildIos');
+    },
+  );
 
   test.each(['Debug', 'Release'])(
     'builds %s for the offered architecture before reservation and never touches a local device',
@@ -8729,6 +9027,7 @@ describe('iOS placement on a hosting Mac', () => {
           hostSimulatorArch: () => 'arm64',
           buildIos: async (args) => {
             order.push('build');
+            vi.advanceTimersByTime(1000);
             expect(args.destination).toBe('generic/platform=iOS Simulator');
             expect(args.arch).toBe('x86_64');
             return makeIosBuildSuccess({ appPath: join(root, 'Fixture.app'), bundleId: 'com.example.app' });
@@ -8752,6 +9051,9 @@ describe('iOS placement on a hosting Mac', () => {
         agent: { driver: 'none' },
       });
       expect(facts.cacheKey).toContain('x86-64');
+      const stats = sharedState.readStats().record;
+      expect(stats?.machine.ios?.runs).toBe(1);
+      expect(stats?.history).toBeUndefined();
       expect(JSON.stringify(facts).includes(hostedDevice.udid)).toBe(false);
       for (const native of ['ensureOwnedDevice', 'ensureBooted', 'installIosApp', 'launchIosApp', 'replaceCollector'])
         expect(calls.order).not.toContain(native);
@@ -9259,19 +9561,143 @@ describe('strict remote machine selection', () => {
     expect(failure.remedy).toContain('brew install cocoapods');
   });
 
-  test('a non-Debug cache miss refuses strict placement before xcodebuild', async () => {
+  function offloadedRelease(cacheHit: boolean) {
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath, { recursive: true });
+    const choose = vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      ...(cacheHit && { cacheHit }),
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    return choose;
+  }
+
+  test('a non-Debug cache miss builds on a named machine and installs its app with the JS it bundled', async () => {
     reserve();
     configureMini();
-    const build = vi.fn<() => never>();
-    const slot = vi.fn<() => never>();
+    offloadedRelease(false);
+    const store = vi.fn<Required<IosDeps>['storeBuild']>(async (_platform, _key, path) => path);
     const result = await run(
       { remoteBuild: 'mini', configuration: 'Release', json: true },
-      { buildIos: build, acquireBuildSlot: slot },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
     );
-    expect(parseFirst(result.logs).code).toBe('STIM_OFFLOAD_REFUSED');
-    expect(result.stderr).toContain('Release builds build here');
-    expect(build).not.toHaveBeenCalled();
-    expect(slot).not.toHaveBeenCalled();
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    const options = store.mock.calls[0]?.[3];
+    expect(typeof options === 'object' && options.overwrite).toBe(true);
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ builtOn: 'mini', status: 'ok' });
+  });
+
+  test("a non-Debug app from a machine's artifact cache gets this workspace's JS before install", async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(true);
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.args.swapJsBundle.cachedAppPath).toBe(join(root, 'fetched.app'));
+    expect(result.calls.order.indexOf('installIosApp')).toBeGreaterThan(result.calls.order.indexOf('swapJsBundle'));
+  });
+
+  test('a client without Xcode rebuilds a cached Release app on the machine instead of swapping its JS', async () => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    const cached = join(root, 'cached.app');
+    mkdirSync(cached, { recursive: true });
+    const result = await run(
+      { remoteBuild: 'mini', configuration: 'Release', json: true },
+      {
+        resolveBuild: () => cached,
+        storeBuild: (_platform, _key, path) => path,
+        iosToolchain: async () => ({
+          stimBuild: 'fixture',
+          compat: 2,
+          arch: 'arm64',
+          xcode: null,
+          simulatorSdk: null,
+          cocoapods: null,
+        }),
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    expect(result.calls.order).not.toContain('swapJsBundle');
+    expect(offloadClient.offloadBuild).toHaveBeenCalled();
+  });
+
+  test.each([
+    { configuration: 'Debug', asks: true },
+    { configuration: 'Release', asks: false },
+  ])('a $configuration miss asks machines for a cached app built elsewhere: $asks', async ({ configuration, asks }) => {
+    reserve();
+    configureMini();
+    const choose = offloadedRelease(false);
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(choose).toHaveBeenCalled();
+    expect(choose.mock.calls[0]?.[0].reactNativeArtifact !== undefined).toBe(asks);
+  });
+
+  test.each([
+    { configuration: 'Release', sent: true },
+    { configuration: 'Debug', sent: false },
+  ])('an Expo $configuration offload sends the gitignored .env.production: $sent', async ({ configuration, sent }) => {
+    reserve();
+    configureMini();
+    offloadedRelease(false);
+    vi.spyOn(buildCache, 'gitignoredFingerprintInputs').mockResolvedValue([]);
+    writeFileSync(join(root, '.env.production'), 'EXPO_PUBLIC_API=https://api.example.com\n');
+    await run(
+      { remoteBuild: 'mini', configuration, json: true },
+      {
+        detectIsExpo: () => true,
+        storeBuild: (_platform, _key, path) => path,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    const inputs = await vi.mocked(offloadClient.offloadBuild).mock.calls[0]?.[0].fingerprintInputs?.();
+    expect(inputs?.ignored.includes(join(root, '.env.production'))).toBe(sent);
   });
 
   test('a listed paired named cache hit contacts no worker and records no compilation', async () => {
@@ -9309,9 +9735,16 @@ describe('strict remote machine selection', () => {
     },
   );
 
-  test('auto still builds a Release cache miss here without contacting a paired worker', async () => {
+  test('auto builds a Release cache miss here while idle without contacting a paired worker', async () => {
     reserve();
     configureMini();
+    vi.spyOn(sharedState, 'machineCapacity').mockReturnValue({
+      cpus: 10,
+      loadPerCore: 0.1,
+      builds: 0,
+      maxBuilds: 3,
+      maxLoadPerCore: 2,
+    });
     writeConfigSetting({ scope: 'machine' }, 'remote.build', 'remote');
     const choose = vi.spyOn(offloadClient, 'chooseBuildMachine');
     const result = await run({ remoteBuild: 'auto', configuration: 'Release' });
@@ -9419,6 +9852,52 @@ describe('strict remote machine selection', () => {
       expect(store).toHaveBeenCalledTimes(scenario === 'checkout changed' ? 0 : 1);
     },
   );
+
+  test('an app the machine built under the fingerprint after its pod install is stored only under that key', async () => {
+    reserve();
+    configureMini();
+    const after = 'b'.repeat(40);
+    vi.spyOn(offloadClient, 'chooseBuildMachine').mockResolvedValue({
+      machine: 'mini',
+      offer: { capacity: {} },
+    } as offloadClient.OffloadChoice);
+    const artifactPath = join(root, 'fetched.app');
+    mkdirSync(artifactPath);
+    vi.spyOn(offloadClient, 'offloadBuild').mockResolvedValue({
+      ok: true,
+      machine: 'mini',
+      artifactPath,
+      builtFingerprint: after,
+      compilationCache: { status: 'not-run', hits: null, cacheableTasks: null, hitRatePercent: null },
+      ccache: { status: 'not-run', hits: null, misses: null, hitRatePercent: null },
+      timings: {
+        offerMs: 0,
+        syncMs: 0,
+        workerMs: 10,
+        fetchMs: 0,
+        totalMs: 10,
+        worker: {},
+        uploadedBytes: 0,
+        artifactBytes: 0,
+      },
+    });
+    const store = vi.fn<(_platform: string, key: string, path: string) => string>((_platform, _key, path) => path);
+    const result = await run(
+      { remoteBuild: 'mini', json: true },
+      {
+        storeBuild: store,
+        buildIos: () => {
+          throw new Error('unexpected local compile');
+        },
+      },
+    );
+    expect(result.exitCode).toBeNull();
+    const keys = store.mock.calls.map(([, key]) => key);
+    expect(keys).toEqual([expect.stringContaining(after)]);
+    expect(keys[0]).not.toContain(FINGERPRINT);
+    expect(result.stderr).toContain('a3f9b1.. -> bbbbbb.. (as mini built it)');
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({ fingerprint: after, status: 'ok' });
+  });
 
   test('an offloaded hosted iOS build carries its handoff through artifact caching into delivery', async () => {
     reserve();

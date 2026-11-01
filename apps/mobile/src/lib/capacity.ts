@@ -28,7 +28,7 @@ export function loadView(load: NonNullable<Capacity['load']>): LoadView {
 }
 
 export interface Meter {
-  kind: 'devices' | 'builds';
+  kind: 'devices' | 'ios' | 'android' | 'builds';
   label: string;
   value: string;
   full: boolean;
@@ -36,10 +36,10 @@ export interface Meter {
   reason: string | null;
 }
 
-/** The device and build slot meters; each is present only while its cap is set. */
+/** The device, per-platform device and build slot meters; each is present only while its cap is set. */
 export function slotMeters(capacity: Capacity): Meter[] {
   const meters: Meter[] = [];
-  const { devices, builds } = capacity;
+  const { devices, builds, platformDevices } = capacity;
   if (devices) {
     const used = devices.inUse ?? '?';
     meters.push({
@@ -48,6 +48,19 @@ export function slotMeters(capacity: Capacity): Meter[] {
       value: `${used} / ${devices.max}`,
       full: devices.inUse !== null && devices.inUse >= devices.max,
       reason: devices.inUse === null ? (devices.unknown ?? null) : null,
+    });
+  }
+  for (const [kind, label, slots] of [
+    ['ios', t`iOS simulators`, platformDevices?.ios],
+    ['android', t`Android emulators`, platformDevices?.android],
+  ] as const) {
+    if (!slots) continue;
+    meters.push({
+      kind,
+      label,
+      value: `${slots.inUse ?? '?'} / ${slots.max}`,
+      full: slots.inUse !== null && slots.inUse >= slots.max,
+      reason: slots.inUse === null ? (slots.unknown ?? null) : null,
     });
   }
   if (builds) {

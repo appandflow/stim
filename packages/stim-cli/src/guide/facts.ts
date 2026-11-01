@@ -247,12 +247,14 @@ leased until <time>" for each one.`,
                   the ios.scheme setting; absent for automatic selection;
                   not the app URL scheme
   cacheKey        the shared-build-cache key derived from it (the
-                  configuration is part of it: -release-sim vs
+                  configuration is part of it: -release-sim-arm64 vs
                   -debug-sim-arm64). A single-architecture simulator build
-                  ends in its architecture (-arm64 or -x86-64): a local Debug
-                  build compiles this machine's, a --remote build the remote
-                  host's. A local non-Debug simulator build compiles every
-                  architecture the project lists and has no suffix
+                  ends in its architecture (-arm64 or -x86-64): a local build
+                  compiles this machine's in every configuration, a --remote
+                  build the remote host's (a React Native Release build
+                  offloaded to a worker may also contain other
+                  architectures). A build of every architecture the project
+                  lists (stim build --arch all) has no suffix
   With --eas-profile, fingerprint is computed by EAS CLI using the selected
   profile/environment, and cacheKey identifies the EAS project and build ID
   separately from local native builds. cacheHit is "remote" for the EAS
@@ -566,7 +568,7 @@ leased until <time>" for each one.`,
                   local: machine that approved this one but whose key no
                   person confirmed, so nothing pinned it; fingerprint is the
                   key's fingerprint to compare with the one stim-server setup
-                  printed there, and only stim doctor --fix in a terminal asks.
+                  printed there, and only stim remote add or doctor --fix in a terminal asks.
                   A local: entry has no dnsName. "outdated" means its
                   stim-server speaks protocol 1; the finding names the
                   stim-server service update command to run there.
@@ -581,7 +583,7 @@ leased until <time>" for each one.`,
                   fits the pin; match is "exact", or "major" for the newest
                   install of the pinned major not older than the pin), else null
   remoteMachines  one { machine, state, diagnosis?, dnsName?, fingerprint?, deviceId?,
-                  requestedAt?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
+                  requestedAt?, tailnet?, expiresAt?, offloadable?, reasons?, problems?, capacity?, host? } per
                   remote.machines entry, for its build approval; state is "approved", "pending", "not-asked",
                   "revoked" (revoked or denied), "lapsed" (the request lapsed
                   before approval), "key-changed", "key-unconfirmed" (as in
@@ -593,6 +595,10 @@ leased until <time>" for each one.`,
                   (deviceHosts carries it too); the codes are
                   tailscale-stopped, tailscale-logged-out, tailscale-unavailable
                   (this machine's Tailscale), peer-not-found, peer-ambiguous,
+                  peer-wrong-tailnet (no peer is named so, and this Mac is
+                  signed in to another tailnet than the one it was on when it
+                  asked the machine for access; both are named; tailnet is
+                  { name, suffix?, id? }),
                   peer-offline (with last seen), peer-no-answer (the connection
                   got no reply and tailscale ping fails), route-missing (nothing accepts
                   connections on the serve port), route-tls, route-http-error
@@ -892,9 +898,11 @@ RULES
                     it; command is the \`xcrun simctl runtime delete\`
                     line for a deletable runtime, else null. Stim never
                     runs it
-    systemImages  { package, directory, avdCount, command }  installed
-                    Android system images; avdCount is the AVDs whose
-                    image.sysdir.1 names it; command is the
+    systemImages  { package, directory, avdCount, stimInstalled,
+                    command }  installed Android system images; avdCount
+                    is the AVDs whose image.sysdir.1 names it;
+                    stimInstalled is true when this Stim home installed it
+                    (android.installImages); command is the
                     \`sdkmanager --uninstall\` line. Stim never runs it
     notices       why a listing is missing or partial, such as simctl
                     timing out or an AVD or system image folder Stim
@@ -910,7 +918,8 @@ RULES
     invalidProjects         { path }  the registry key is not absolute
     orphanedPorts           { project, label, port }
     orphanedWorkspaces      { dir, projectRoot, bytes }  --delete removes the
-                              whole workspace directory
+                              whole workspace directory; projectRoot is null
+                              for an empty directory with no workspace.json
     linkedWorktrees         { path, idleDays, mergedInto, pullRequest,
                               pullRequestUnknown, willRemove, reason,
                               detail, eligibleAt, buildState }  mergedInto is the
@@ -1001,9 +1010,10 @@ RULES
                               whose absolute workspace root is missing on a
                               mounted volume; --delete forgets the entry
                               only and contacts no EAS session
-    staleStatusCaches       { kind: "disk-usage" | "pull-request", path,
-                              file, bytes }  entries of $STIM_HOME/disk-usage
-                              and pull-requests whose path is gone from a
+    staleStatusCaches       { kind: "disk-usage" | "pull-request" | "git-merge",
+                              path, file, bytes }  entries of
+                              $STIM_HOME/disk-usage, pull-requests and
+                              git-merge whose path is gone from a
                               mounted volume; --delete removes the file
     idleDevices             { kind, id, name, project, slot, lastActivityAt,
                               idleForMs, buildInProgress }  booted owned
@@ -1042,7 +1052,7 @@ RULES
     workspaceBuildOutputs   { dir, projectRoot, inTreeDirs, bytes, idleDays,
                               willClear, reason, detail }  derived-data,
                               gradle-build, android-cas, cache-provider,
-                              macos/build, macos/<Product>.app and
+                              js-swap-tmp, macos/build, macos/<Product>.app and
                               macos/staging-* of each workspace; inTreeDirs
                               lists the project's android/app/build,
                               android/build,
@@ -1138,12 +1148,14 @@ RULES
                               "busy" | "unknown", reclaimable, reason,
                               detail }  without --cache, or with --cache
                               watchman or gradle-daemons; reclaimable marks
-                              the ones gc --delete --cache <cacheKind>
-                              would stop (\`guide cleanup memory\`)
+                              the ones gc --delete would stop (watchman) or
+                              gc --delete --cache gradle-daemons would
+                              (\`guide cleanup memory\`)
     watchmanRoots           { path, stale: "missing" | "pruned-worktree" |
                               null, subscriptions, triggers, removable,
                               detail }  removable marks the stale roots
-                              --cache watchman would watch-del
+                              gc --delete (or --cache watchman) would
+                              watch-del
     memoryNotices           { message }  why the memory sweep was skipped
   bytes is null when the size is unknown: not measured, or the measurement
   failed. idleDays is null when the last use is unknown. listed is false for
@@ -1222,6 +1234,12 @@ RULES
               device screens for replay, from recording.enabled
   hidden      true when workspace.hidden is set; absent otherwise. The next
               command that uses the workspace clears it.
+  pathMissing true when the workspace folder no longer exists on a mounted
+              volume, such as after git worktree remove or rm -rf; absent
+              otherwise, and for a folder on a volume that is not mounted.
+              phase is then never warming or ready. status only reports it:
+              the entry stays registered until stim gc --delete or
+              stim worktree remove <path> removes it.
 
   Each environment also carries stage, where the workspace is as Stim
   Desktop and the phone app show it: { kind, since, platform, closedApps }.
@@ -1805,8 +1823,9 @@ RULES
   \`guide lifecycle\`), so the sums can differ from what they sum.
 
   capacity.load is always present. capacity.builds is present only while
-  concurrency.maxBuilds is set, and capacity.devices only while
-  concurrency.maxDevices is set (see \`guide lifecycle concurrency\`):
+  concurrency.maxBuilds is set, capacity.devices only while
+  concurrency.maxDevices is set, and capacity.platformDevices only for the
+  platforms whose cap is set (see \`guide lifecycle concurrency\`):
 
   load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
            5-minute load average divided by cpus, to one decimal. busyAt is
@@ -1829,6 +1848,11 @@ RULES
            device, with its device slot; for a device no workspace records,
            label is its name and workspace and slot are null. inUse is null
            and unknown says why when the devices could not be listed.
+  platformDevices  { ios?: { max, inUse, unknown? }, android?: { max, inUse,
+           unknown? } }, the booted owned simulators and emulators counted
+           against concurrency.maxIosDevices and concurrency.maxAndroidDevices.
+           Each key is present only while its cap is set, whether or not
+           concurrency.maxDevices is.
 
   The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
@@ -1969,7 +1993,9 @@ CAPACITY REFUSALS
   capacityRefusals?: [{ at, kind: "device", platform: "ios" | "android",
                        max, workspace }]
   Only device refusals with STIM_AT_CAPACITY are recorded; build caps wait.
-  at is the ISO timestamp, max is concurrency.maxDevices, and workspace is
+  at is the ISO timestamp, max is the cap of the limit that was full
+  (concurrency.maxDevices, or the platform's concurrency.maxIosDevices or
+  concurrency.maxAndroidDevices), and workspace is
   the workspace id used by status and Desktop. The list is newest first:
   the last 50 from the last 7 days, omitted when empty. Desktop uses events
   within 6 hours for its device-limit suggestion, including terminal runs.

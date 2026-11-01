@@ -21,6 +21,7 @@ struct NavigationDestination: Equatable {
     case .notifications: "notifications"
     case .machine: "machine"
     case .builds: "builds"
+    case .pairedWorkspace: "paired-workspace"
     case nil: "none"
     }
   }

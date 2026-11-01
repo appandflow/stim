@@ -70,10 +70,11 @@ test(
         setExecutor({
           ...real,
           async runFileAsync(file, args, opts) {
-            if (file !== 'cp') return real.runFileAsync(file, args, opts);
+            const directoryClone = file.includes('stim-clonefile-');
+            if (file !== 'cp' && !directoryClone) return real.runFileAsync(file, args, opts);
             assert.equal(args.at(-1), join(target, 'node_modules'));
             assert.equal(statSync(dirname(args.at(-1))).dev, statSync(source).dev);
-            if (fallback && args[0] === '-Rc') throw new Error('force clone fallback');
+            if (fallback && (directoryClone || args[0] === '-Rc')) throw new Error('force clone fallback');
             return real.runFileAsync(file, args, opts);
           },
         });

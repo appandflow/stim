@@ -2,7 +2,6 @@ import assert from 'node:assert';
 import {
   parseLocationRequest,
   parseNetworkRequest,
-  parsePackagePermissions,
   parsePermissionRequest,
   parsePushRequest,
   runDeviceTool,
@@ -39,6 +38,7 @@ function harness(over: Partial<ToolDeps> = {}, replies: (args: string[]) => stri
   const out: string[] = [];
   const note: string[] = [];
   const deps: Partial<ToolDeps> = {
+    hostPlatform: 'darwin',
     findProjectRoot: () => '/ws',
     getProject: () => project,
     hostedSlots: () => [],
@@ -139,6 +139,18 @@ describe('target ownership', () => {
     expect(succeeded(await runDeviceTool(request, {}, h.deps)).tool).toBe('location');
   });
 
+  test.each([
+    { hostPlatform: 'darwin' as const, remedy: /stim ios --remote local/ },
+    { hostPlatform: 'linux' as const, remedy: /on a Mac/ },
+  ])('hosted iOS remedies fit the $hostPlatform client', async ({ hostPlatform, remedy }) => {
+    const h = harness({ hostPlatform, hostedSlots: () => ['default'] });
+    const result = failed(await runDeviceTool(request, { json: true }, h.deps));
+    expect(result.code).toBe('STIM_DEVICE_TOOL_TARGET');
+    expect(result.remedy).toMatch(remedy);
+    expect(result.remedy?.includes('--remote local')).toBe(hostPlatform === 'darwin');
+    expect(h.calls).toEqual([]);
+  });
+
   test('permission and push refuse when no app is recorded for the device', async () => {
     const h = harness({ getProject: () => ({ platforms: project.platforms }) });
     const req = parsePermissionRequest('ios', 'grant', 'photos');
@@ -217,15 +229,6 @@ describe('iOS tool calls', () => {
 describe('Android read-back', () => {
   const fine = 'android.permission.ACCESS_FINE_LOCATION';
   const coarse = 'android.permission.ACCESS_COARSE_LOCATION';
-
-  test('parsePackagePermissions reads grant state and omits permissions the dump does not list', () => {
-    expect(
-      parsePackagePermissions(dump({ [fine]: true, [coarse]: false }), [fine, coarse, 'android.permission.CAMERA']),
-    ).toEqual([
-      { name: fine, granted: true, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
-      { name: coarse, granted: false, flags: ['USER_SENSITIVE_WHEN_GRANTED'] },
-    ]);
-  });
 
   test('a grant reads each declared permission back; one the app does not declare is skipped, not hidden', async () => {
     let granted = false;

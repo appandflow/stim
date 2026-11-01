@@ -75,7 +75,7 @@ export function parseTopMemory(output: string): TopProcess[] {
   return rows;
 }
 
-export function findMemoryCulprits(
+function findMemoryCulprits(
   processes: readonly TopProcess[],
   totalBytes: number,
   commandLines: ReadonlyMap<number, string> = new Map(),

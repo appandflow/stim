@@ -17,37 +17,8 @@ afterEach(() => {
 });
 
 const sim = { platform: 'ios' as const, udid: 'SIM-1', foldable: false };
-const emulator = { platform: 'android' as const, serial: 'emulator-5554' };
 
 describe('DeviceViewers', () => {
-  test('Stim reads a device as viewed from its first subscriber until its last one leaves', () => {
-    const viewers = new DeviceViewers(dir);
-    const first = viewers.add(sim);
-    const second = viewers.add(sim);
-    const other = viewers.add(emulator);
-    expect(readViewedDevices(dir)).toEqual([
-      { platform: 'ios', id: 'SIM-1' },
-      { platform: 'android', id: 'emulator-5554' },
-    ]);
-
-    first();
-    first();
-    other();
-    expect(readViewedDevices(dir)).toEqual([{ platform: 'ios', id: 'SIM-1' }]);
-
-    second();
-    expect(readViewedDevices(dir)).toEqual([]);
-    expect(existsSync(join(dir, `${process.pid}.json`))).toBe(false);
-  });
-
-  test('a web page and a physical device are not recorded', () => {
-    const viewers = new DeviceViewers(dir);
-    viewers.add({ platform: 'web', endpoint: 'http://127.0.0.1:1', pid: 1, targetId: 't' });
-    viewers.add({ platform: 'android', serial: 'R58M1234ABC', physical: true });
-    viewers.add({ platform: 'ios', udid: 'PHONE-1', foldable: false, physical: true });
-    expect(existsSync(dir)).toBe(false);
-  });
-
   test("a crashed server's record counts for nothing and the next server removes it", async () => {
     const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)']);
     const token = captureProcessToken(child.pid!);

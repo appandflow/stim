@@ -26,7 +26,12 @@ extension CapacityLoad {
 }
 
 public struct CapacityMeter: Hashable, Sendable {
-  public enum Kind: Hashable, Sendable { case devices, builds }
+  public enum Kind: Hashable, Sendable {
+    case devices, ios, android, builds
+
+    /// Whether the meter counts devices, and so shows the device icon and the device wait caption.
+    public var countsDevices: Bool { self != .builds }
+  }
 
   public var kind: Kind
   public var label: String
@@ -38,7 +43,7 @@ public struct CapacityMeter: Hashable, Sendable {
 }
 
 extension Capacity {
-  /// The device and build slot meters; each is present only while its cap is set.
+  /// The device, per-platform device and build slot meters; each is present only while its cap is set.
   public var meters: [CapacityMeter] {
     var meters: [CapacityMeter] = []
     if let devices {
@@ -46,6 +51,16 @@ extension Capacity {
         CapacityMeter(
           kind: .devices, label: "Devices", value: "\(devices.inUse.map(String.init) ?? "?") / \(devices.max)",
           isFull: devices.inUse.map { $0 >= devices.max } ?? false, reason: devices.inUse == nil ? devices.unknown : nil))
+    }
+    for (kind, label, slots) in [
+      (CapacityMeter.Kind.ios, "iOS simulators", platformDevices?.ios),
+      (.android, "Android emulators", platformDevices?.android),
+    ] {
+      guard let slots else { continue }
+      meters.append(
+        CapacityMeter(
+          kind: kind, label: label, value: "\(slots.inUse.map(String.init) ?? "?") / \(slots.max)",
+          isFull: slots.inUse.map { $0 >= slots.max } ?? false, reason: slots.inUse == nil ? slots.unknown : nil))
     }
     if let builds {
       meters.append(

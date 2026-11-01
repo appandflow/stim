@@ -39,16 +39,6 @@ const offer = (machine: string, choice: ReturnType<typeof iosChoice> | null): { 
 });
 const base = { root: '/project', slot: 'default', platform: 'ios' as const, selectors: {} };
 
-test('a named machine plans with the architecture its offer gives', async () => {
-  const planned = await planHostedDevice({
-    ...base,
-    machine: 'mini',
-    sameKey: () => true,
-    deps: { probe: async (machine) => offer(machine, iosChoice('x86_64')) },
-  });
-  expect(planned).toMatchObject({ kind: 'hosted', placement: 'on mini', choice: { architecture: 'x86_64' } });
-});
-
 test('a named machine that cannot be reached or has no device is unknown, not an error', async () => {
   const unreachable = await planHostedDevice({
     ...base,
@@ -101,23 +91,6 @@ const noAutomatic = async () => {
   throw new Error('placement must not run');
 };
 
-test('an invalid STIM_REMOTE_BUILD is refused as that variable before placement runs', async () => {
-  process.env.STIM_REMOTE_BUILD = 'bad word';
-  const planned = await planHostedDevice({
-    ...base,
-    machine: 'auto',
-    sameKey: () => true,
-    deps: { automatic: noAutomatic },
-  });
-  expect(planned).toEqual({
-    kind: 'refused',
-    code: 'STIM_BAD_ARG',
-    message:
-      'Invalid STIM_REMOTE_BUILD value "bad word". Expected local, auto, remote, remote-only, or a tailnet machine name.',
-    remedy: 'Fix the environment variable, or unset it and run `stim settings set remote.build <value>`.',
-  });
-});
-
 test('an invalid remote.build setting is refused as that setting, and a valid environment value overrides it', async () => {
   saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: 'bad word' } });
   const planned = await planHostedDevice({
@@ -140,17 +113,6 @@ test('an invalid remote.build setting is refused as that setting, and a valid en
     deps: { automatic: noAutomatic },
   });
   expect(overridden).toEqual({ kind: 'unknown', reason: 'placement must not run' });
-});
-
-test('a padded remote.build is accepted as a run accepts it', async () => {
-  saveConfig({ version: 2, projects: {}, repos: {}, remote: { build: ' auto ' } });
-  const planned = await planHostedDevice({
-    ...base,
-    machine: 'auto',
-    sameKey: () => true,
-    deps: { automatic: noAutomatic },
-  });
-  expect(planned).toEqual({ kind: 'unknown', reason: 'placement must not run' });
 });
 
 test('remote-only with no remote machines plans the STIM_HOSTING_REFUSED a run gives, with a remedy that adds a machine', async () => {

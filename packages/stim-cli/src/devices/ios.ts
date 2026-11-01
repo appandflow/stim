@@ -675,7 +675,11 @@ export async function resolveIosCreation({
   const pick = pickDefaultIosCreation(deviceTypes, runtimes, { deviceType, runtime });
   if (!pick) {
     throw new Error(
-      'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
+      runtime &&
+        /^(?:iOS )?\d+\.\d+(?:\.\d+)?$/.test(runtime) &&
+        !runtimes.some((item) => iosRuntimeMatches(item, runtime))
+        ? `No installed simulator runtime matches "${runtime}". Retry with --runtime "${runtime}" --install-runtime on this named Mac, or run \`xcodebuild -downloadPlatform iOS -buildVersion ${runtime.replace(/^iOS /, '')} -architectureVariant ${process.arch === 'arm64' ? 'arm64' : 'universal'}\` on it. Xcode Settings > Components lists available versions.`
+        : 'No matching simulator device type / runtime is installed. Install one via Xcode, or pass --device-type / --runtime.',
     );
   }
   return {
@@ -733,6 +737,11 @@ export async function clearIosAppData(
   { defaultsPlist = null }: { defaultsPlist?: string | null } = {},
 ): Promise<void> {
   const exec = getExecutor();
+  try {
+    await exec.runFileAsync('xcrun', ['simctl', 'terminate', udid, bundleId], SIMCTL_OPTIONS);
+  } catch (error) {
+    if (!/found nothing to terminate/.test(error instanceof Error ? error.message : String(error))) throw error;
+  }
   if (defaultsPlist) {
     await exec.runFileAsync('xcrun', ['simctl', 'spawn', udid, 'defaults', 'import', bundleId, '-'], {
       ...SIMCTL_OPTIONS,
@@ -867,10 +876,11 @@ export function listIosRuntimes(): IosRuntime[] {
 export async function listIosRuntimesAsync({
   signal,
   snapshot,
-}: { signal?: AbortSignal; snapshot?: IosSimSnapshot } = {}): Promise<IosRuntime[]> {
-  if (snapshot?.runtimes) return snapshot.runtimes({ signal });
+  operation,
+}: { signal?: AbortSignal; snapshot?: IosSimSnapshot; operation?: StimContext } = {}): Promise<IosRuntime[]> {
+  if (snapshot?.runtimes) return snapshot.runtimes({ signal, operation });
   return parseIosRuntimes(
-    await getExecutor().runFileAsync('xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
+    await runOperationFile(operation, getExecutor(), 'xcrun', LIST_RUNTIMES_ARGS, { ...LIST_RUNTIMES_OPTIONS, signal }),
   );
 }
 

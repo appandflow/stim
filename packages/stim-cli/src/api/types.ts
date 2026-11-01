@@ -43,7 +43,22 @@ export interface StimOptions {
   onProgress?: (event: StimProgress) => void;
 }
 
-export type StimRunOptions = PlatformRunOptions & { signal?: AbortSignal };
+export type StimRunOptions = PlatformRunOptions & {
+  /**
+   * iOS and Android: install and launch the app the last `build` with the same scheme and configuration or variant
+   * recorded in this workspace, without fingerprinting, building or replacing its JS. Refuses with
+   * STIM_NO_RECORDED_BUILD when there is none. Not part of the private Desktop transport.
+   */
+  recordedBuild?: boolean;
+  /**
+   * iOS and Android: start the app from clean state on the workspace's owned local simulator or emulator. Before install,
+   * uninstall every other user app and clear the kept app's data: on iOS its defaults and data container, then the
+   * simulator keychain; on Android `pm clear`. Applies whether or not the install is skipped. `stim-ci run` always sets
+   * it. A run placed on another machine or on EAS is not cleaned. Refused with a physical device.
+   */
+  cleanAppState?: boolean;
+  signal?: AbortSignal;
+};
 
 export type StimRunResult =
   | { platform: 'ios'; facts: IosFacts }

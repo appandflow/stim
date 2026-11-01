@@ -17,6 +17,7 @@ export async function reclaimIdleDevice(
   out: (line: string) => void,
   now: () => number,
   skipped: Set<string>,
+  platform?: 'ios' | 'android',
 ): Promise<number> {
   try {
     const self = canonicalPath(root);
@@ -28,6 +29,7 @@ export async function reclaimIdleDevice(
           return false;
         }
       })
+      .filter(({ device }) => !platform || device.kind === platform)
       .toSorted((a, b) => b.idleForMs - a.idleForMs);
     const candidate = candidates.find(({ device }) => !skipped.has(`${device.kind}:${device.id}`));
     if (!candidate) return 0;

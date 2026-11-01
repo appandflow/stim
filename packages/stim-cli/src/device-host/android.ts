@@ -24,7 +24,7 @@ import {
   DEFAULT_AVD_DEVICE_PROFILE,
   getAvdNameForSerialAsync,
   hostSystemImageArch,
-  listAdbDevices,
+  listAdbDevicesAsync,
   listAvdsAsync,
   listAvdDeviceProfiles,
   listInstalledSystemImages,
@@ -33,18 +33,48 @@ import {
   waitForBoot,
 } from '../devices/android.ts';
 import { forgetCreatedDeviceAsync } from '../devices/created-devices.ts';
+import { androidImageInstallPolicy, decideSystemImage, systemImageInstallProblem } from '../devices/android-image.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { ensureConfig, loadConfig, withConfigLockAsync } from '../workspace/config.ts';
 import { hostedNotify, type HostedWorkerResult } from './worker.ts';
 import { removeHostedAppData } from './app.ts';
 import { installHostedAndroidApp, restoreHostedAndroidMetro } from './android-app.ts';
 
-function portIsOccupied(port: number): boolean {
-  const devices = listAdbDevices({ timeoutMs: 5000 });
+async function portIsOccupied(port: number): Promise<boolean> {
+  const devices = await listAdbDevicesAsync({ timeoutMs: 5000 });
   return [...devices.emulators, ...devices.unhealthy].some((device) => device.consolePort === port);
 }
 
-export function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
+/**
+ * Offers the image this host would use. A missing image is offered with `installImage` when this machine's
+ * android.installImages allows it and sdkmanager could install it now; otherwise the refusal names the host command.
+ */
+export function offerHostedAndroidDevice(request: HostedDeviceSelectors): {
+  choice: HostedAndroidChoice;
+  installImage?: string;
+} {
+  const decided = decideSystemImage({
+    requested: request.systemImage ?? null,
+    installed: listInstalledSystemImages(),
+    policy: androidImageInstallPolicy(loadConfig()),
+  });
+  if (decided.kind === 'refuse') throw new Error(`${decided.message} ${decided.remedy}`);
+  if (decided.kind === 'installed') return { choice: selectHostedAndroidDevice(request) };
+  const problem = systemImageInstallProblem(decided.pkg, process.env);
+  if (problem) throw new Error(`${problem.message} ${problem.remedy}`);
+  const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
+  if (!listAvdDeviceProfiles().includes(profile)) throw new Error('The Android device profile is not installed.');
+  return {
+    choice: {
+      systemImage: decided.pkg,
+      deviceProfile: profile,
+      architecture: hostSystemImageArch() === 'arm64-v8a' ? 'arm64-v8a' : 'x86_64',
+    },
+    installImage: decided.pkg,
+  };
+}
+
+function selectHostedAndroidDevice(request: HostedDeviceSelectors): HostedAndroidChoice {
   const image = pickDefaultSystemImage(listInstalledSystemImages(), { systemImage: request.systemImage });
   if (!image || image.arch !== hostSystemImageArch()) throw new Error('No compatible installed Android image.');
   const profile = request.deviceProfile ?? DEFAULT_AVD_DEVICE_PROFILE;
@@ -91,7 +121,7 @@ export async function runHostedAndroidDevice(
         throw new Error('Hosted Android prepare needs its server-selected session and console port.');
       const choice = selectHostedAndroidDevice(request);
       const avdName = ownedAvdName(`hosted-${request.session}`);
-      if ((await listAvdsAsync({ timeoutMs: 5000 })).includes(avdName) || portIsOccupied(request.consolePort))
+      if ((await listAvdsAsync({ timeoutMs: 5000 })).includes(avdName) || (await portIsOccupied(request.consolePort)))
         throw new Error('The hosted AVD name or selected console port is already in use.');
       const selected: HostedAndroidDevice = {
         avdName,
@@ -115,7 +145,8 @@ export async function runHostedAndroidDevice(
         },
       });
       assertHostedDeviceLedger(home, avdName, 'android');
-      if (portIsOccupied(selected.consolePort)) throw new Error('The selected Android console port became occupied.');
+      if (await portIsOccupied(selected.consolePort))
+        throw new Error('The selected Android console port became occupied.');
       await bootAndroidEmulator(avdName, selected.consolePort, {
         openViewer: false,
         logFile: join(home, 'emulator.log'),
@@ -129,7 +160,7 @@ export async function runHostedAndroidDevice(
       }
       if (
         (await getAvdNameForSerialAsync(selected.serial)) !== avdName ||
-        androidDeviceAbi(selected.serial) !== selected.architecture
+        (await androidDeviceAbi(selected.serial)) !== selected.architecture
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
       await muteBootedEmulator(selected.serial, selected.avdName, hostedNotify);
@@ -166,7 +197,7 @@ export async function runHostedAndroidDevice(
         throw new Error('The parked hosted emulator does not match the requested selectors.');
       }
       if (mode === 'inspect') return { state: 'compatible', device };
-      if (!hostedConsolePort(request.consolePort) || portIsOccupied(request.consolePort))
+      if (!hostedConsolePort(request.consolePort) || (await portIsOccupied(request.consolePort)))
         throw new Error('The selected Android console port is invalid or occupied.');
       device = { ...device, consolePort: request.consolePort, serial: `emulator-${request.consolePort}` };
       await withDirLockAsync(join(home, 'hosted-device.lock'), () => {
@@ -187,7 +218,7 @@ export async function runHostedAndroidDevice(
       }
       if (
         (await getAvdNameForSerialAsync(device.serial)) !== device.avdName ||
-        androidDeviceAbi(device.serial) !== device.architecture
+        (await androidDeviceAbi(device.serial)) !== device.architecture
       )
         throw new Error('Hosted Android boot could not be verified for its exact owned AVD.');
       await resetAdoptedAvd(device.avdName, device.serial, '');

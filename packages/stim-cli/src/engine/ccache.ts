@@ -10,7 +10,7 @@ import { sharedCcache, workspaceLogsDir } from '../workspace/paths.ts';
 import type { CcacheActivity } from './build-facts.ts';
 import { defaultAndroidLayout, type AndroidLayout } from '../workspace/settings.ts';
 
-export const CCACHE_MAX_SIZE = '5G';
+const CCACHE_MAX_SIZE = '5G';
 
 export function ccacheInstallCommand(platform: NodeJS.Platform = process.platform): string {
   return platform === 'darwin'
@@ -23,7 +23,7 @@ export function ccacheInstallCommand(platform: NodeJS.Platform = process.platfor
 // ccache manual, "SLOPPINESS": pch_defines is required for a precompiled
 // header to be reusable at all, and time_macros lets a translation unit that
 // expands __DATE__ or __TIME__ be cached.
-export const CCACHE_SLOPPINESS = 'pch_defines,time_macros';
+const CCACHE_SLOPPINESS = 'pch_defines,time_macros';
 
 const STATS_LOG_FILE = 'ccache-stats.log';
 
@@ -47,7 +47,7 @@ export interface CcacheSetup {
   env: Record<string, string>;
 }
 
-export function ccacheStatsLog(root: string): string {
+function ccacheStatsLog(root: string): string {
   return join(workspaceLogsDir(root), STATS_LOG_FILE);
 }
 

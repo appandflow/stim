@@ -34,7 +34,7 @@ const runPrep = (root, ...args) =>
   spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd: REPO,
     encoding: 'utf8',
-    env: { ...process.env, RELEASE_PREP_ROOT: root },
+    env: { ...process.env, RELEASE_PREP_ROOT: root, RELEASE_PREP_SKIP_LICENSES: '1' },
   });
 
 // A workspace pnpm can resolve without the network: every importer the lockfile

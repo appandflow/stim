@@ -163,6 +163,7 @@ const gradleArtifactQuery: JsonSchema = {
   additionalProperties: false,
   properties: {
     project: { type: 'string' },
+    jdk: { type: 'string', pattern: '^[0-9]{1,3}$' },
     sourceDigest: sha256,
     inputs: {
       type: 'object',
@@ -570,6 +571,7 @@ export function protocolJsonSchema(): JsonSchema {
         properties: {
           platform: { enum: ['ios', 'android', 'macos'] },
           choice: {},
+          installImage: { type: 'string', pattern: '^system-images;' },
           declined: { type: ['string', 'null'], minLength: 1 },
           resources: {
             type: 'object',
@@ -1302,6 +1304,12 @@ export function protocolJsonSchema(): JsonSchema {
       },
       ClientRequest: {
         oneOf: [
+          request('device-host.runtime.install', {
+            type: 'object',
+            required: ['runtime'],
+            additionalProperties: false,
+            properties: { runtime: { type: 'string', pattern: '^(iOS )?[0-9]+[.][0-9]+([.][0-9]+)?$', maxLength: 64 } },
+          }),
           request('device-host.offer', {
             type: 'object',
             required: ['platform'],
@@ -1464,6 +1472,7 @@ export function protocolJsonSchema(): JsonSchema {
           }),
           request('device-host.metro.close', session({})),
           request('device-host.metro.link', session({})),
+          request('device-host.agent.link', session({})),
           request(
             'device-host.frames.subscribe',
             session({
@@ -1987,6 +1996,7 @@ export function protocolJsonSchema(): JsonSchema {
               platform: { enum: ['ios', 'android', 'macos'] },
               configuration: { type: ['string', 'null'] },
               scheme: { type: ['string', 'null'] },
+              iosProjectPath: { type: ['string', 'null'] },
               runtime: { type: ['string', 'null'], minLength: 1 },
               fingerprint: { type: ['string', 'null'], minLength: 1 },
               fingerprintSources: {
@@ -2003,6 +2013,8 @@ export function protocolJsonSchema(): JsonSchema {
                   },
                 },
               },
+              podsOnWorker: { type: 'boolean' },
+              reuseArtifact: { type: 'boolean' },
               fingerprintIgnored: {
                 type: 'array',
                 maxItems: 20000,
@@ -2078,6 +2090,8 @@ export function protocolJsonSchema(): JsonSchema {
                   gradleBuildCache: { type: 'boolean' },
                   pch: { enum: ['auto', 'on', 'off'] },
                   compilerCache: { enum: ['ccache', 'none'] },
+                  gradleRoot: { type: ['string', 'null'] },
+                  module: { type: ['string', 'null'] },
                 },
               },
               macos: {

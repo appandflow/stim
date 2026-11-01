@@ -69,20 +69,27 @@ console.log(result.facts.links.workspace);
 coordination. It does not create or boot a device, launch an app, start Metro,
 or stop a session. Results are inferred from `platform`, just like `run`.
 
-| Platform  | Options                                                                                            | Returned artifact                        |
-| --------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `ios`     | `scheme`, `configuration`, `arch` (`arm64`, `x86_64`, `all`), `buildCache`, `remoteBuild`          | `facts.appPath`, a simulator app         |
-| `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild` | `facts.apkPath`                          |
-| `macos`   | `remoteBuild`                                                                                      | `facts.bundle`, the configured Debug app |
+| Platform  | Options                                                                                                          | Returned artifact                        |
+| --------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `ios`     | `scheme`, `configuration`, `arch` (`arm64`, `x86_64`, `all`), `buildCache`, `remoteBuild`, `easProfile`          | `facts.appPath`, a simulator app         |
+| `android` | `variant`, `abi` (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`, `all`), `buildCache`, `remoteBuild`, `easProfile` | `facts.apkPath`                          |
+| `macos`   | `remoteBuild`                                                                                                    | `facts.bundle`, the configured Debug app |
 
-A Debug build targets the host architecture by default; on Android only while
-`optimizations.android.targetAbiOnly` is on, which is the default. Release uses
-all architectures. Each result points to a separate owned copy retained until
-`stim worktree remove` removes this workspace; a later build does not overwrite
-it. A build does not replace a running app's last build record or build log; it
+An iOS build targets the host simulator architecture by default in every
+configuration; `arch: 'all'` builds every architecture the project lists. An
+Android Debug build targets the host ABI while
+`optimizations.android.targetAbiOnly` is on, which is the default; Android
+Release uses all ABIs. Each result points to a separate owned copy. A successful
+build removes the workspace's other copies for its platform that no recorded
+build points to, so a copy lasts until a build replaces its record (for macOS,
+until the next macOS build) or `stim worktree remove` removes this workspace.
+Copy or export a result you need to keep before the next build. A build does not replace a running app's last build record or build log; it
 writes its own `build-artifact-<platform>.ndjson`. Build-only does not export
 distribution archives or infer a web compilation pipeline.
-Use `buildCI` from `@stim-cli/ci` to export the app and diagnostics for CI artifacts.
+An iOS or Android build also records its app in the workspace state; the last build for
+a scheme and configuration (or variant) wins. `easProfile` downloads a completed EAS
+development build instead of compiling. Use `buildCI` from `@stim-cli/ci` to build for CI;
+it exports the app only when given `exportPath`.
 
 Successful builds also return `facts.links.workspace`, the machine-aware HTTPS
 workspace link agents can share with an already-paired phone or Desktop.
@@ -92,7 +99,11 @@ only navigates to the workspace; it does not install or launch the built app.
 ## Run
 
 `run` builds, installs and launches with the same requirements and configuration
-as the corresponding CLI command.
+as the corresponding CLI command. On iOS and Android, `recordedBuild: true` instead
+installs and launches the app the last `build` with the same scheme and configuration
+(or variant) recorded in this workspace, without fingerprinting, building or replacing
+its JS, and refuses with `STIM_NO_RECORDED_BUILD` when there is none. `@stim-cli/ci`
+uses it; the CLI does not.
 
 Unresolved native Metro cleanup preserves its claim roots in
 `error.details.cause.retainedClaimRoots` and reports `STIM_CLAIM_UNAVAILABLE`

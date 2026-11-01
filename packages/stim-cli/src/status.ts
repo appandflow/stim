@@ -567,7 +567,11 @@ export function loadLine({ loadPerCore, busyAt, limit }: StatusCapacityLoad): st
 }
 
 /** The plain status lines for the `concurrency.maxBuilds` and `concurrency.maxDevices` caps that are set. */
-export function slotUsageLines({ builds, devices }: Pick<StatusCapacity, 'builds' | 'devices'>): string[] {
+export function slotUsageLines({
+  builds,
+  devices,
+  platformDevices,
+}: Pick<StatusCapacity, 'builds' | 'devices' | 'platformDevices'>): string[] {
   const lines: string[] = [];
   if (builds) {
     const holders = builds.holders.map((holder) =>
@@ -596,6 +600,18 @@ export function slotUsageLines({ builds, devices }: Pick<StatusCapacity, 'builds
       );
     }
   }
+  for (const [platform, setting, noun] of [
+    ['ios', 'concurrency.maxIosDevices', 'iOS simulators'],
+    ['android', 'concurrency.maxAndroidDevices', 'Android emulators'],
+  ] as const) {
+    const slots = platformDevices?.[platform];
+    if (!slots) continue;
+    lines.push(
+      slots.inUse === null
+        ? `${noun} ?/${slots.max} (${setting}): ${slots.unknown ?? 'not counted'}`
+        : `${noun} ${slots.inUse}/${slots.max} (${setting})`,
+    );
+  }
   return lines;
 }
 
@@ -614,7 +630,7 @@ export function parseDfFree(output: unknown): DiskInfo | null {
   return { availableMb: Math.round(availableKb / 1024), totalMb: Math.round(totalKb / 1024) };
 }
 
-export function diskIsTight(disk: DiskInfo | null | undefined): boolean {
+function diskIsTight(disk: DiskInfo | null | undefined): boolean {
   return Boolean(disk && disk.availableMb < 25 * 1024);
 }
 

@@ -39,7 +39,8 @@ unless it serves phones.
 serving command: see [Run as a service](#run-as-a-service). When serving, a bare
 `--env KEY` takes the value from the server's own environment.
 
-`pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`, and
+`pair --json` prints `{ "qr": <payload>, "expiresAt": "<ISO time>" }`; with or
+without `--json` the single-use note and the route note go to stderr, and
 `devices --json` prints `{ "devices": [...] }` with each device's `id`, `name`,
 `from` (where it paired from, as a label only), `keyFingerprint`, `pairedAt`,
 `lastSeenAt` (refreshed by a hello at most once a minute) and `capabilities`, followed by the [build clients](#build-access)
@@ -494,8 +495,11 @@ Funnel makes every handler on that port reachable from the public internet.
 
 `stim-server` reads `tailscale serve status --json` at start and on every
 `pair`. It uses the HTTPS port whose `/` handler proxies to its loopback port,
-preferring 7443. Without such a route, it assumes 7443 and prints the command
-above, or the next free port when 7443 is taken. It never suggests a Funnel
+preferring 7443. Without such a route, or when it cannot read the serve status, `pair` and the startup message give the
+server's direct tailnet address, `ws://<tailnet IP>:<port>`. With no route it also prints the
+command above (7443, or the next free port when 7443 is taken) for a `wss://`
+endpoint. Clients accept the direct address on a tailnet because the Noise
+session encrypts it and pins the server key. It never suggests a Funnel
 port. Any handler, at any path, or TCP forward that reaches the server on a
 Funnel port makes it public, and `pair` refuses.
 
@@ -786,12 +790,26 @@ selected SDK `choice` (runtime/model/image and host architecture), `resources`,
 with a reason; elevated memory pressure, or a sample that cannot be read after one retry, declines with its own reason. The query creates
 no session, simulator, AVD or ownership claim.
 
+An Android offer whose image is not installed on the host carries
+`installImage`, the sdkmanager package the host installs before it creates the
+AVD, when the host's machine `android.installImages` is `auto`, the image
+matches its ABI, its SDK licenses are accepted and it has cmdline-tools and
+8 GB free. Otherwise the offer declines with the command to run on the host.
+Reserve then runs the install in the server's own Stim home and `ANDROID_HOME`,
+for up to 30 minutes, while the session stays `preparing`; an install that
+fails stops the session with the refusal as its `notice`.
+
 `capacity.running` counts every simulator or emulator reservation not confirmed
 stopped, including unresolved sessions, plus the host's own booted `stim-*`
 devices in `capacity.local`. A session's simulator counts once, whether or not
 its record names the device yet. A macOS offer counts only macOS app
 reservations against `max` and reports no `local`. `max` is
-`concurrency.maxDevices`; zero means uncapped and `available` is then `null`.
+`concurrency.maxDevices`; zero means that cap is off. `available` is the room
+left under the tightest limit that applies to the offer's platform:
+`concurrency.maxDevices` and the platform's `concurrency.maxIosDevices`,
+`concurrency.maxAndroidDevices` or `concurrency.maxMacosApps`, a reservation
+having to fit both. It is `null` when none is set. The decline reason names the
+full limit with its hosted and local counts.
 A full pool, an uncountable host inventory and memory pressure each decline
 with a different reason. Android offers also decline when all supported
 console ports are already recorded as occupied. macOS offers decline when all
@@ -838,6 +856,22 @@ the credential; the node check only stops a machine that took over the host's
 MagicDNS name from replaying it, and a request whose node no transport identifies
 is refused. Browser requests and
 other sessions' tokens are refused with 403, an unknown or stopped session with 404.
+
+A client on a `local:` machine has no tailnet node, so its agent requests ride
+connections it opened itself. On an approved `device-host` connection it calls
+`device-host.agent.link` with `{session}`; the server answers `{}` only when that
+session's agent grant belongs to the authenticated client key, and refuses any
+other session with `unknown-session` and a second link on the same connection
+with `bad-request`. The connection then carries one HTTP connection as binary
+frames, with the same backpressure and close codes as a Metro link. The server
+answers it with the agent route above, where the authenticated key replaces the
+node check: each request must name the linked session, carry its token and come
+from a client that still holds `device-host`. The client's Metro supervisor
+listens for these on a loopback port per hosted session and names that port in
+the remote config, and holds at most 8 connections there. A session holds at
+most 16 agent links; a new one closes the oldest. A link that carries no bytes
+for 5 minutes between requests is closed, and stopping the session closes all of its links. The
+feature `hosted-agent-link` advertises it.
 
 The `agent-device` adapter runs the binary that `STIM_AGENT_DEVICE_BIN` names
 in `stim-server`'s environment, or else the first of
@@ -905,7 +939,7 @@ need operator investigation, never a replacement inferred from a simulator name.
 Revoking this client's approval stops its sessions without granting access to
 the worker's other devices.
 
-`concurrency.maxDevices` bounds hosted reservations atomically, including
+`concurrency.maxDevices` and the per-platform caps bound hosted reservations atomically, including
 unresolved sessions. Ordinary local producers do not join that reservation
 transaction, so this is not a machine-wide hard capacity guarantee. Unknown
 inventory refuses native creation. Memory pressure is decided once: when the
@@ -983,8 +1017,11 @@ host when its delivery does not report the requested arguments.
 An offer returns `{delivery, missing}`. Upload each missing digest with
 `device-host.app.chunk` and `{session, attempt, sha256, offset, data}`; `data` is
 base64 for at most 32 KiB of raw bytes. The reply names the next byte `offset`.
-Replay of the same bytes is safe after a lost reply. Re-offer to learn received
-offsets. Upload the manifest first, then re-offer for its missing file content.
+The server answers one connection's requests in arrival order and accepts a
+chunk only at the received length, so a client may keep chunks in flight if it
+sends each file's chunks in offset order. Replay of the same bytes is safe after
+a lost reply. Re-offer to learn received offsets.
+Upload the manifest first, then re-offer for its missing file content.
 The manifest is limited to 8 MiB and 20,000 entries, with at most 1 GiB per file,
 1 KiB per link, and 4 GiB of declared bundle content. An app attempt cannot
 change its identity, mode, arguments or manifest. Complete a receiving attempt or stop the
@@ -1049,7 +1086,7 @@ retain the same reconciliation rules as iOS.
 
 With `hosting.agentDriver: agent-device`, each installed Android session gets
 its own daemon and child-aware claim under `device-host/sessions/<session>/agent-device.claims`.
-Both machines need agent-device 0.21.22 or later. The host verifies the serial policy
+Both machines need agent-device 0.21.30 or later. The host verifies the serial policy
 digest and `android-instance` backend and advertises `hosted-android-agent`.
 `device-host.app.attach` and session attach carry a session grant with
 `android:mobile:<serial>` and the same token checks as iOS.
@@ -1058,9 +1095,8 @@ it as `android.host.agent`. Use `agent-device <command> --remote-config <file>`.
 Missing or unsupported agent-device reports `driver: none` with its reason.
 
 The policy pins the ledger-owned serial and filters `devices` to that emulator.
-Inspection and interaction commands match iOS. Installs, reinstall, uninstall,
-boot/shutdown, `close --shutdown`, record, logs, uploads, other serials (including
-nested batches and leases), and host paths are refused. Ambient fields are
+Commands match iOS. Uploads, other serials (including nested batches and
+leases) and host paths are refused. Ambient fields are
 stripped and replaced with host-owned platform, serial and lease scope.
 Stim installs apps. Android snapshots use one-shot helpers without adb forwards;
 after daemon exit the host stops and verifies only the two fixed agent-device
@@ -1068,10 +1104,62 @@ helper packages on that serial. Their APKs leave with emulator deletion.
 Reinstall, stop, revocation and close await agent teardown before native work;
 unresolved agent claims refuse replacement and deletion after restart too.
 
+Hosted iOS and Android sessions allow the device commands in
+`DEVICE_COMMAND_RULES` (`@stim-cli/agent-driver-agent-device`), and the daemon
+policy names the same list; agent-device 0.21.30 is the first release that knows
+every name, and an older daemon refuses to start with it. The adapter checks
+each request, and each batch step, before it reaches the daemon. A command the
+rules do not name is refused with rule `command`; `REFUSED_DEVICE_COMMANDS`
+gives the reason it returns, such as host files, host-wide sampling or Stim's own
+install and teardown. Every key in `flags` and `input` must be one the rules
+list for that command, or a client connection, selector or session key the
+adapter strips or pins, so a key a newer agent-device adds is refused with rule
+`request` until the rules name it. The host-path key list still refuses `--out`,
+`baseline`, `launchConsole` and similar keys as a second check. Per-command
+positional rules keep `open`, `close`, `push` and `settings` app ids free of
+paths, require an inline JSON object for `push` (agent-device stats a payload
+as a host path first), limit `perf` to `frames` and `memory sample`, keep
+`artifacts` to this session and refuse `settings permission` for macOS host
+permissions. A request carrying agent-device `runtime` hints, which is how
+`open --metro-host`, `--metro-port`, `--bundle-url` and `--launch-url` arrive, is
+refused: the session's Metro endpoint already reaches only its client, and a
+client-chosen address would reach any service the worker can.
+`agent-device-commands.compat.test.ts` compares the rules with the installed
+agent-device's `help` catalog and per-command flags.
+
+Hosted iOS and Android sessions allow `record start` and `record stop`, outside
+`batch`. The adapter accepts no output path but agent-device's remote temp shape
+(`/tmp/agent-device-recording-<ms>-<id>.<ext>`) and requires the client's
+`clientArtifactPaths.outPath`. It replaces the path with
+`<tmpdir>/stim-server-recordings-<hash>/<random>/recording.<ext>` (directory mode
+0700), where `<tmpdir>` is the server's `os.tmpdir()` and `<hash>` derives from
+the session's agent-device state directory, so the daemon writes the video, its
+chunks and gesture telemetry only there. The recording stays off the Stim home
+because the simulator's `SimRenderServer` writes the file, and macOS denies it
+removable volumes such as an external disk holding `~/.stim`. `record stop` returns them as daemon artifacts, which the
+client downloads over `GET /artifacts/<id>` on the same agent route, and the
+daemon deletes each file after its download, or after 15 minutes. One recording
+runs per session; a second start, a stop naming another agent-device session and
+a stop while the start is still in flight are refused with rule `recording`. A
+stop carries only the session and the pinned platform and device flags. A matching
+stop ends the recording when it succeeds or agent-device answers
+`no active recording`; any other failure keeps the recording and its files, as
+agent-device keeps them for a retried stop. After 10 minutes the adapter sends
+`record stop` itself under the session's tenant, every 30 seconds until it
+succeeds or up to 10 times, after which it deletes the files, and answers the
+client's next `record stop` within 15 minutes with that result. A finished
+recording over 512 MiB, whichever stop finished it, is deleted and `record stop`
+fails with `STIM_RECORDING_TOO_LARGE`. A request the relay cannot process
+answers 500 instead of rejecting. Driver stop and daemon start
+delete the session's recordings directory, which must be a directory of the
+server's user with no group or other access. `stim gc --delete` run by that user
+without `STIM_HOME` removes one idle for 24 hours as a Stim temp directory. Hosted macOS refuses `record`, because
+agent-device's `macos-app` lease does not allow it.
+
 ### Hosted macOS app sessions
 
 The same offer/reserve/attach/stop methods accept `platform: "macos"` without
-selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and each takes
+selectors. macOS reservations count toward `concurrency.maxDevices` among themselves, apart from simulators and emulators, and toward `concurrency.maxMacosApps`, and each takes
 the lowest free `appSlot` from 1 through 64. Unresolved sessions retain their
 slot; only a confirmed stop frees it. The ready device describes the host's
 `architecture` (`arm64` or `x86_64`), `macosVersion` and `appSlot`. No simulator,
@@ -1762,6 +1850,10 @@ connected since stim-server started keeps its directory when revoked.
   worker archives survive job-output cleanup in their client's repository cache;
   removing that client's worker area removes the cache too. Other clients and
   repositories cannot look up those entries.
+  Native Gradle queries may carry `jdk` after `native-gradle-peer-jdk` is advertised.
+  The worker selects that exact installed JDK major before rechecking private
+  inputs; an unavailable major is a cache miss. Clients with a known JDK skip
+  native Gradle peer lookup on older workers and use normal build placement.
   React Native archives also require the same `reactNativeArtifact` query on
   download, checked against the completed receipt again. An identity alone
   cannot fetch them. Archives use the existing complete-file cache and digest verification;
@@ -1805,7 +1897,11 @@ connected since stim-server started keeps its directory when revoked.
   checkout has no copy of. With the `fingerprint-tracked` feature, it can
   send `fingerprintTracked`, the top-level entry names of `project` that its
   git tracks although an ignore pattern matches them, which the machine's
-  empty index would skip. It returns `{ "job" }`. It fails with
+  empty index would skip. With the `build-reuse-artifact` feature, a caller
+  that sets `podsOnWorker` can also set `reuseArtifact: true` when its cache
+  reads allow it; a job whose fingerprint after `pod install` differs from
+  `fingerprint` then returns the development archive this machine retained
+  under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with

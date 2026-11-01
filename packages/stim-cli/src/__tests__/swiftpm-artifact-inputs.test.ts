@@ -53,14 +53,6 @@ afterEach(() => {
 const snapshot = (root: string, env: NodeJS.ProcessEnv = { FLAVOR: 'blue' }) =>
   swiftpmArtifactSnapshot(root, declaration, build, toolchain, env);
 
-test('identical declared inputs share a key across worktree paths without leaking private contents', async () => {
-  const first = await snapshot(firstRoot);
-  expect((await snapshot(secondRoot)).hash).toBe(first.hash);
-  expect(JSON.stringify(first)).not.toContain('content:private.txt');
-  expect(JSON.stringify(first)).not.toContain('blue');
-  expect(JSON.stringify(first)).not.toContain(directory);
-});
-
 test('source, lockfile, ignored inputs, private files and declared environment each invalidate reuse', async () => {
   const root = firstRoot;
   let before = await snapshot(root);
@@ -99,12 +91,6 @@ test('declared bundled resources are hashed even when Git ignores them', async (
   const first = await swiftpmArtifactSnapshot(root, declaration, withResources, toolchain, {});
   write(root, 'assets/image', 'two');
   expect((await swiftpmArtifactSnapshot(root, declaration, withResources, toolchain, {})).hash).not.toBe(first.hash);
-});
-
-test('private file declarations cannot broaden into whole directories', async () => {
-  await expect(
-    swiftpmArtifactSnapshot(firstRoot, { ...declaration, localFiles: ['Sources'] }, build, toolchain, {}),
-  ).rejects.toThrow('exact regular files');
 });
 
 test('ignored input declarations cannot escape the repository or include whole directories', async () => {

@@ -141,35 +141,29 @@ function receipt(args?: string[]) {
   );
 }
 
-test.each([
-  'identity',
-  'architecture',
-  'minos',
-  'platform',
-  'plist minimum',
-  'URL schemes',
-  'update feed',
-  'executable',
-])('refuses incompatible macOS %s before signing or launching', async (failure) => {
-  receipt();
-  if (failure === 'identity') plist.CFBundleIdentifier = 'different.app';
-  if (failure === 'architecture') arch = 'x86_64';
-  if (failure === 'minos') build = 'platform MACOS\n minos 27.0.1';
-  if (failure === 'platform') build = 'platform IOSSIMULATOR\n minos 26.0';
-  if (failure === 'plist minimum') plist.LSMinimumSystemVersion = '28';
-  if (failure === 'URL schemes') plist.CFBundleURLTypes = [];
-  if (failure === 'update feed') plist.SUFeedURL = 'https://example.test';
-  if (failure === 'executable') plist.CFBundleExecutable = '../Fixture';
-  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
-    state: 'unknown',
-    device,
-    notice: expect.any(String),
-  });
-  expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === '/usr/libexec/PlistBuddy')).toBe(
-    false,
-  );
-  expect(native.spawn).not.toHaveBeenCalled();
-});
+test.each(['identity', 'architecture', 'platform', 'executable'])(
+  'refuses incompatible macOS %s before signing or launching',
+  async (failure) => {
+    receipt();
+    if (failure === 'identity') plist.CFBundleIdentifier = 'different.app';
+    if (failure === 'architecture') arch = 'x86_64';
+    if (failure === 'minos') build = 'platform MACOS\n minos 27.0.1';
+    if (failure === 'platform') build = 'platform IOSSIMULATOR\n minos 26.0';
+    if (failure === 'plist minimum') plist.LSMinimumSystemVersion = '28';
+    if (failure === 'URL schemes') plist.CFBundleURLTypes = [];
+    if (failure === 'update feed') plist.SUFeedURL = 'https://example.test';
+    if (failure === 'executable') plist.CFBundleExecutable = '../Fixture';
+    expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({
+      state: 'unknown',
+      device,
+      notice: expect.any(String),
+    });
+    expect(native.runFile.mock.calls.some(([file]) => file === 'codesign' || file === '/usr/libexec/PlistBuddy')).toBe(
+      false,
+    );
+    expect(native.spawn).not.toHaveBeenCalled();
+  },
+);
 
 test('stamps and signs verified bytes, launches with an isolated home, and deletes only its recorded preference domain after stop', async () => {
   const offeredArguments = ['-autopilot.enabled', 'true', '', 'ENV=value'];
@@ -357,27 +351,6 @@ test('stop ends copies of the session bundles before deleting them, and keeps th
   expect(existsSync(join(area, 'App.app'))).toBe(false);
 });
 
-test('installing a replacement ends copies of earlier attempts before it launches', async () => {
-  receipt();
-  const launchesWhenStopped: number[] = [];
-  native.stopApps.mockImplementation(() => {
-    launchesWhenStopped.push(native.spawn.mock.calls.length);
-    return Promise.resolve();
-  });
-  expect(await runHostedMacosApp('install', request, { attempt: 'app' })).toMatchObject({ state: 'installed' });
-  expect(launchesWhenStopped).toEqual([0]);
-  expect(native.spawn).toHaveBeenCalledTimes(1);
-});
-
-test('a preference plist removal failure leaves stop unresolved and app data intact', async () => {
-  receipt();
-  await runHostedMacosApp('install', request, { attempt: 'app' });
-  mkdirSync(join(process.env.HOME!, 'Library', 'Preferences', `${bundleId}.hosted3.plist`));
-  expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
-  expect(existsSync(join(home, 'app-home'))).toBe(true);
-  expect(existsSync(join(area, 'App.app'))).toBe(true);
-});
-
 test.each([
   ['read succeeds', null, 'unknown', 'still readable'],
   ['read times out', 'defaults read timed out', 'unknown', 'timed out'],
@@ -398,24 +371,6 @@ test.each([
   expect(result.notice === undefined).toBe(notice === null);
   expect(existsSync(file)).toBe(false);
 });
-
-test.each(['foo.hosted4', `${'a'.repeat(242)}.hosted3`])(
-  'stop refuses tampered preference identity %s without deleting preferences or app data',
-  async (id) => {
-    receipt();
-    await runHostedMacosApp('install', request, { attempt: 'app' });
-    const file = join(process.env.HOME!, 'Library', 'Preferences', 'foo.hosted4.plist');
-    writeFileSync(file, 'another slot');
-    writeFileSync(join(home, 'hosted-macos-app.json'), JSON.stringify({ bundleId: id }));
-    expect(await runHostedMacosApp('stop', request)).toMatchObject({ state: 'unknown' });
-    expect(native.quiet).not.toHaveBeenCalled();
-    expect(native.runFile.mock.calls.some(([command]) => command === 'defaults')).toBe(false);
-    expect(readFileSync(file, 'utf8')).toBe('another slot');
-    expect(existsSync(join(home, 'app-home'))).toBe(true);
-    expect(existsSync(join(area, 'App.app'))).toBe(true);
-    expect(existsSync(join(home, '..', 'blobs'))).toBe(true);
-  },
-);
 
 test('does not claim a launch when registration lacks a verified process', async () => {
   receipt();

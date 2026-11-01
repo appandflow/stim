@@ -11,6 +11,9 @@ project's before exiting. You get your shell back with a bundler running: no
 backgrounding idiom, no sleep, no poll loop, and no chance of building against
 another worktree's bundler.
 
+If Expo cannot be resolved in a linked worktree, run \`stim worktree warm\`
+there before retrying. The refusal also names dependency installation.
+
   --json            one line of facts on stdout, everything else on stderr:
                       { port, supervisorPid, mode, logsDir, alreadyRunning }
   --wait <seconds>  how long to wait for server and remote tunnel readiness
@@ -34,7 +37,7 @@ HOSTED IOS METRO
   Macs; a running Metro or a pin on a port the host uses refuses the run before
   the build. metro.tunnel and metro.publicUrl are ignored. Supervisor restart
   reopens the recorded links; stop or a stopped hosted session closes them. A recorded
-  hosted session prevents Metro idle stop. Release runs skip the bridge.
+  hosted session prevents Metro idle stop; maintenance.idleStopHours still stops the workspace and its hosted session (guide cleanup). Release runs skip the bridge.
   Hosted Debug runs require a supervisor and a stim-server that support these
   links before reservation. --no-metro-check refuses; restart a missing or older supervisor
   with stim stop; stim start.
@@ -179,8 +182,9 @@ WHAT THE SUPERVISOR IS
                  for the bundle lines.
 
   expo-child and command-child put the Node the app pins (.nvmrc,
-  .node-version, .tool-versions nodejs, or package.json volta.node) first
-  on PATH when an nvm, fnm, Volta, asdf, mise or linked Homebrew
+  .node-version, .tool-versions nodejs, or package.json volta.node), looking
+  from the app directory up to its repository or worktree root, first on PATH
+  when an nvm, fnm, Volta, asdf, mise or linked Homebrew
   node/node@NN install satisfies the pin and the node already on PATH does
   not; the metro log then records a project_node event naming it. When no
   install has the version the pin names, the newest install of the pinned

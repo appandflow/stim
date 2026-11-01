@@ -3,7 +3,13 @@ import { basename, dirname, join } from 'node:path';
 import { createInterface, type Interface } from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { claimRemoveCommand, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { isJsonObject, stimBuildDigest, type SetupCapability, type SetupJournal } from '@stim-cli/core/state';
+import {
+  isJsonObject,
+  stimBuildDigest,
+  tailscaleEnv,
+  type SetupCapability,
+  type SetupJournal,
+} from '@stim-cli/core/state';
 import type { BuildToolchain, ServeRoute } from '@stim-cli/core/protocol';
 import { BuildHost } from './build.ts';
 import { discoverToolchain } from '@stim-cli/core/toolchain';
@@ -114,7 +120,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
     );
   if (values.client !== undefined)
     throw new SetupRefusal(
-      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim doctor --fix` on the requesting machine.',
+      'setup no longer takes --client: the setup ticket alone names the requesting machine. Copy a new command from Stim Desktop, or run `stim remote add <this machine>` on the requesting machine.',
     );
   const secret = ticket ? decodeSecret(ticket) : null;
   if (!secret) throw new SetupRefusal('STIM_SETUP_TICKET takes the 43 base64url characters of the setup ticket.');
@@ -155,8 +161,7 @@ export function parseSetupArgs(args: string[], now: number, ticket: string | und
   };
 }
 
-/** The record a client made for each capability by spending this run's ticket. */
-export function selectGrants(
+function selectGrants(
   records: PairedDevice[],
   match: { journal: string; capabilities: SetupCapability[] },
 ): { capability: SetupCapability; record: PairedDevice }[] {
@@ -189,7 +194,7 @@ function tailscaleRefusal(install: TailscaleInstall, platform: SetupDeps['platfo
   return `Run tailscale up on this ${platform === 'darwin' ? 'Mac' : 'machine'}, then run this again.`;
 }
 
-export function setupExitCode(journal: SetupJournal): number {
+function setupExitCode(journal: SetupJournal): number {
   if (journal.steps.some((s) => s.state === 'failed')) return 1;
   if (journal.granted.length === 0) return 2;
   if (
@@ -434,7 +439,7 @@ export function defaultSetupDeps(): SetupDeps {
     prepareRoute,
     recordRoute: recordServiceRoute,
     async createRoute(args) {
-      const result = await run(binary() ?? 'tailscale', args);
+      const result = await run(binary() ?? 'tailscale', args, tailscaleEnv(process.env));
       if (!result.ok) throw new ServiceError(result.stderr.trim());
     },
     records: () => [...readBuildClients(), ...readDeviceHostClients()],
@@ -1101,9 +1106,9 @@ export async function runSetup(args: string[], version: string, deps: SetupDeps)
         deps.storeSecret(opts.ticket, approved, opts.expiresAt, deps.now());
         secretStored = true;
         const waiting = preflight.lan
-          ? `Waiting for the requesting machine to reconnect. Run \`stim doctor --fix\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
+          ? `Waiting for the requesting machine to reconnect. Run \`stim remote list\` in a terminal on that machine: when it names this one by its local network address, it shows this machine's server key fingerprint, ${output.fingerprint}, and pins the key only after you confirm it matches.`
           : deps.fromDoctor
-            ? 'Waiting for the requesting machine to reconnect. Run `stim doctor` on that machine to finish.'
+            ? 'Waiting for the requesting machine to reconnect. Run `stim remote list` on that machine to finish.'
             : 'Waiting for the requesting machine to connect. Stim Desktop sends this automatically.';
         step('approve', 'running', 'Access approval', waiting, undefined, { running: waiting });
         while (deps.now() < Date.parse(opts.expiresAt)) {

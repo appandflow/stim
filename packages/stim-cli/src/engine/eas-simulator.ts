@@ -32,7 +32,7 @@ export interface SessionListPage {
   endCursor: string | null;
 }
 
-export interface StoppedSession {
+interface StoppedSession {
   id: string;
   status: string | null;
 }
@@ -67,7 +67,7 @@ export function ownedSessionName(label: string): string {
   return `${OWNED_PREFIX}${clean.startsWith(OWNED_PREFIX) ? clean.slice(OWNED_PREFIX.length) : clean}`;
 }
 
-export function isOwnedSessionName(name: string | null | undefined): name is string {
+function isOwnedSessionName(name: string | null | undefined): name is string {
   return typeof name === 'string' && name.startsWith(OWNED_PREFIX);
 }
 
@@ -340,7 +340,7 @@ export function findOrphanedOwnedSessions({
   return { orphaned: [...candidates.values()], notices };
 }
 
-export function parseStoppedSession(stdout: string): StoppedSession | null {
+function parseStoppedSession(stdout: string): StoppedSession | null {
   const data = parseJson(stdout);
   if (!isRecord(data)) return null;
   const id = str(data.id);

@@ -1,3 +1,4 @@
+import { installRequestedIosRuntime } from './ios/runtime.ts';
 import type { IosArtifactContext, IosProject } from '../integrations/ios-project.ts';
 import { simulatorRuntime } from '../offload/client.ts';
 import type { RuntimePreparationError, RuntimePreparationResult } from '../engine/runtime-plan.ts';
@@ -7,7 +8,8 @@ import { hostedMetroSettings } from '../device-host/metro-request.ts';
 import { devClientPortBusy } from '../device-host/hosted-native.ts';
 import { type StimContext, workspaceId } from '@stim-cli/core';
 import { exitAfterFlush, runProcessOperation } from '../cli-operation.ts';
-import { acquireIosArtifact, type PreparedIosArtifact } from './ios/artifact.ts';
+import { acquireIosArtifact, acquireIosArtifactOrRecorded, type PreparedIosArtifact } from './ios/artifact.ts';
+import { lookupRecordedBuild, type RecordedBuildRefusal } from '../engine/recorded-build.ts';
 import { isEasBuildFailure } from '../engine/eas-build.ts';
 import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '../devices/device-slots.ts';
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
@@ -180,6 +182,10 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
         'refuses with STIM_BAD_ARG and prints the installed runtimes.',
     )
     .option(
+      '--install-runtime',
+      'Install the explicitly requested missing iOS runtime with Xcode on the local or named approved Mac (about 8-10 GB; shared by all workspaces)',
+    )
+    .option(
       '--simulator-app <app>',
       'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
     )
@@ -278,12 +284,15 @@ function iosProjectTargetRefusal(
     physical,
     easProfile,
     placement,
+    recordedRefusal,
   }: {
     physical: boolean;
     easProfile?: string;
     placement?: { machine: string | null; backend: string | null };
+    recordedRefusal: RecordedBuildRefusal | null;
   },
 ): FailArgs | null {
+  if (recordedRefusal) return recordedRefusal;
   const target = physical
     ? 'physical'
     : placement
@@ -314,6 +323,7 @@ function iosArtifactTargetInputs({
   remote,
   hosted,
   simulatorArch,
+  configuration,
   lanAddress,
   metroPort,
   settings,
@@ -323,6 +333,7 @@ function iosArtifactTargetInputs({
   remote: boolean;
   hosted: Awaited<ReturnType<IosDeps['prepareHostedIos']>> | null;
   simulatorArch: IosArtifactContext['target']['arch'];
+  configuration: string | null;
   lanAddress: string | null;
   metroPort: number | null;
   settings: ReturnType<IosDeps['resolveSettings']>;
@@ -332,7 +343,9 @@ function iosArtifactTargetInputs({
       udid,
       destination: remote || hosted ? 'generic/platform=iOS Simulator' : null,
       sdk: physical ? 'iphoneos' : 'iphonesimulator',
-      arch: remote || hosted ? simulatorArch : null,
+      // Xcode narrows a local simulator build to the booted device's arch only when the configuration sets
+      // ONLY_ACTIVE_ARCH=YES, which Debug does and Release does not by default.
+      arch: remote || hosted || isReleaseConfiguration(configuration) ? simulatorArch : null,
       keyArch: simulatorArch,
       offloadRuntime: () => hosted?.choice.runtimeId ?? (remote ? null : simulatorRuntime(udid)),
       hostedArchitecture: hosted?.choice.architecture,
@@ -644,7 +657,31 @@ async function runIos(
   const isExpo = integration.isExpo;
   const schemeRefusal = await integration.schemeProblem(buildScheme, configuration);
   if (schemeRefusal) return fail(schemeRefusal);
-  const capabilityRefusal = iosProjectTargetRefusal(integration, { physical, easProfile: opts.easProfile });
+  const recordedLookup = lookupRecordedBuild(opts.recordedBuild, root, {
+    platform: 'ios',
+    scheme: buildScheme,
+    configuration: builtConfiguration,
+  });
+  const capabilityRefusal = await installRequestedIosRuntime({
+    targetRefusal: iosProjectTargetRefusal(integration, {
+      physical,
+      easProfile: opts.easProfile,
+      recordedRefusal: recordedLookup.refusal,
+    }),
+    root,
+    slot,
+    release,
+    appMode,
+    metroCheck,
+    opts,
+    settings,
+    physical,
+    runtime,
+    d,
+    progress,
+    note,
+    context,
+  });
   if (capabilityRefusal) return fail(capabilityRefusal);
   const simSnapshot = createIosSimSnapshot();
   const remoteSelection = await selectIosPlacement({
@@ -686,7 +723,11 @@ async function runIos(
   });
   if ('failure' in remoteSelection) return fail(remoteSelection.failure);
   deviceSlotWait.automatic = Boolean(remoteSelection.auto);
-  const targetRefusal = iosProjectTargetRefusal(integration, { physical, placement: remoteSelection });
+  const targetRefusal = iosProjectTargetRefusal(integration, {
+    physical,
+    placement: remoteSelection,
+    recordedRefusal: null,
+  });
   if (targetRefusal) return fail(targetRefusal);
   devicePlacement = remoteSelection.devicePlacement;
   await writeDevicePlacementAsync(root, slot, PLATFORM, devicePlacement);
@@ -817,20 +858,18 @@ async function runIos(
       wireless = resolved.wireless === true;
     }
     if (checkCapacity && !hostedTarget) {
-      const capacity = d.checkDeviceCapacity({
+      const capacity = await d.checkDeviceCapacity({
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
         sims: () => simSnapshot.read().filter((sim) => sim.available),
       });
       if (capacity) {
-        if (capacity.code === 'STIM_AT_CAPACITY') {
-          d.recordCapacityRefusal(
-            { platform: PLATFORM, max: limits.maxDevices, workspace: workspaceId(root) },
-            d.now(),
-          );
+        const { max: fullMax, ...refusal } = capacity;
+        if (refusal.code === 'STIM_AT_CAPACITY') {
+          d.recordCapacityRefusal({ platform: PLATFORM, max: fullMax, workspace: workspaceId(root) }, d.now());
         }
-        return fail(capacity);
+        return fail(refusal);
       }
     }
 
@@ -1107,11 +1146,11 @@ async function runIos(
         physical,
         remoteArch,
         hostArch: d.hostSimulatorArch(),
-        configuration,
       });
       const acquiredArtifact = unlessCancelled(
         context,
-        await acquireIosArtifact(
+        await acquireIosArtifactOrRecorded(
+          recordedLookup.build,
           {
             context,
             root,
@@ -1132,6 +1171,7 @@ async function runIos(
                 remote: Boolean(remoteDevice),
                 hosted: hostedTarget,
                 simulatorArch,
+                configuration,
                 lanAddress,
                 metroPort,
                 settings,
@@ -1203,7 +1243,7 @@ async function runIos(
           startedAt,
           closeWriter: () => writer?.close(),
           devicePlacement,
-          recordRun,
+          recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
           reclaimed,
           devServer,
           fail,
@@ -1284,6 +1324,7 @@ async function runIos(
           lanAddress,
           lanOriginUrl,
           remoteDevice,
+          cleanAppState: Boolean(opts.cleanAppState),
           bootPromise,
           bootDuration: () => bootDuration,
           bootPending: () => bootPending,
@@ -1298,7 +1339,7 @@ async function runIos(
           lease: leaseHandle,
           releaseLease,
           devicePlacement,
-          recordRun,
+          recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
           reclaimed,
           devServer,
           enterPhase: progress.step,

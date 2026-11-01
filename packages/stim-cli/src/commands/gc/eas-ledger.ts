@@ -24,11 +24,7 @@ export interface EasLedgerDependencies {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/**
- * An entry is dropped only when its id cannot be an EAS session id and its workspace root is provably gone:
- * absolute, missing, and on a mounted volume, the same proof gc uses for dead project entries.
- */
-export function isStaleEasLedgerEntry(
+function isStaleEasLedgerEntry(
   claim: EasSessionClaim,
   mountedVolumes: string[],
   exists: (path: string) => boolean = existsSync,

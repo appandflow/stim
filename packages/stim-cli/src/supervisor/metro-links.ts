@@ -7,6 +7,37 @@ const FRAME_BYTES = 32 * 1024;
 const RETRY_MS = [500, 1000, 2000, 5000, 10_000];
 const METRO_RESET = 4410;
 
+/**
+ * Carries one TCP stream over a link connection as binary frames, with backpressure both ways. A clean end on either
+ * side closes the other cleanly, and a reset resets it. `ended` runs once when `socket` closes.
+ */
+export function pipeLink(connection: BuildConnection, socket: Socket, ended: () => void): void {
+  socket.on('error', () => socket.destroy());
+  socket.once('close', (hadError) => {
+    ended();
+    void connection.flushed().then(() => connection.close(hadError ? METRO_RESET : 1000));
+  });
+  connection.onDropped((code) => (code === 1000 ? socket.end() : socket.resetAndDestroy()));
+  let paused = false;
+  connection.onBinary((frame) => {
+    if (socket.write(frame) || paused) return;
+    paused = true;
+    connection.pause();
+    socket.once('drain', () => {
+      paused = false;
+      connection.resume();
+    });
+  });
+  socket.on('data', (chunk: Buffer) => {
+    socket.pause();
+    void (async () => {
+      for (let offset = 0; offset < chunk.length; offset += FRAME_BYTES)
+        await connection.sendBinary(chunk.subarray(offset, offset + FRAME_BYTES));
+      if (!socket.destroyed) socket.resume();
+    })();
+  });
+}
+
 export interface MetroLinkPool {
   close: () => void;
 }
@@ -83,30 +114,9 @@ export function openMetroLinks({
   const carry = (connection: BuildConnection, ended: () => void) => {
     const metro = connectSocket({ host: '127.0.0.1', port: metroPort });
     streams.add(metro);
-    metro.on('error', () => metro.destroy());
-    metro.once('close', (hadError) => {
+    pipeLink(connection, metro, () => {
       streams.delete(metro);
       ended();
-      void connection.flushed().then(() => connection.close(hadError ? METRO_RESET : 1000));
-    });
-    connection.onDropped((code) => (code === 1000 ? metro.end() : metro.resetAndDestroy()));
-    let paused = false;
-    connection.onBinary((frame) => {
-      if (metro.write(frame) || paused) return;
-      paused = true;
-      connection.pause();
-      metro.once('drain', () => {
-        paused = false;
-        connection.resume();
-      });
-    });
-    metro.on('data', (chunk: Buffer) => {
-      metro.pause();
-      void (async () => {
-        for (let offset = 0; offset < chunk.length; offset += FRAME_BYTES)
-          await connection.sendBinary(chunk.subarray(offset, offset + FRAME_BYTES));
-        if (!metro.destroyed) metro.resume();
-      })();
     });
   };
 

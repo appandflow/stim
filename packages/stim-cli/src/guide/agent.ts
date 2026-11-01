@@ -140,7 +140,7 @@ server.* or hosting.* for the user, or approve requests. Read stim guide setting
 Desktop access tickets and person-owned approval.
 Read stim guide settings to select a remote machine. Keep a requested named
 placement when recovering STIM_OFFLOAD_REFUSED: report its reason and remedy.
-When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add or Phones > Pair a Phone; see stim guide settings.
+When the user mentions slow builds, a busy machine or wanting updates away from the desk, tell them about Stim Desktop > Settings > Remote Machines > Add (or stim remote add <machine> in their terminal) or Phones > Pair a Phone; see stim guide settings.
 
 Read stim guide lifecycle concurrency when a build waits on another workspace
 or a build call times out. A native build can outlive a shell timeout; if the
@@ -212,6 +212,9 @@ RULES DURING THE LOOP
   survive the run. Trust the exact device, app, Metro, and launch facts in the
   final summary. Use the full reported device ID. Never assume a simulator
   named booted belongs to this workspace.
+- With no matching Android system image, android downloads one (about 2 GB)
+  with sdkmanager unless android.installImages is never. It never accepts SDK
+  licenses: give the user the refusal's \`sdkmanager --licenses\` command.
 - After each ios or android run, give the user one compact result: exact device,
   app id, launch state, cache result, total duration, and whether stim logs
   --errors passed. Include a remedy only when action remains. Do not repeat the
@@ -283,7 +286,8 @@ replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 After maintenance.idleStopHours (default 6) with no Stim command, native run,
 Metro bundle or HMR request, agent-device command or live view, automatic
 maintenance stops the workspace as stim stop does. Device and app logs do not
-count. After a long pause, run stim ios or android again before driving the
+count. A device hosted on a remote Mac stops with it, and stim-server stops a hosted
+session whose client has been gone that long. After a long pause, run stim ios or android again before driving the
 app; see \`stim guide cleanup\`.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.

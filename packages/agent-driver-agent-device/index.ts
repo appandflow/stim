@@ -9,6 +9,7 @@ import { createAgentActionReader } from '@stim-cli/core/state';
 import { AgentDeviceDriver } from './driver.ts';
 
 export { AgentDeviceDriver, resolveAgentDevice, type AgentDeviceDriverOptions } from './driver.ts';
+export { DEVICE_COMMAND_RULES, REFUSED_DEVICE_COMMANDS, type DeviceCommandRule } from './device-policy.ts';
 
 export const apiVersion: typeof AGENT_DRIVER_API_VERSION = AGENT_DRIVER_API_VERSION;
 

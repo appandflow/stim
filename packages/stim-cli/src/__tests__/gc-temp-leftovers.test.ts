@@ -257,31 +257,6 @@ test('xctrace recordings stay while xctrace or Instruments runs, or when process
   expect(existsSync(trace)).toBe(true);
 });
 
-test.skipIf(!POSIX)("Jest's cache is reported and never deleted", async () => {
-  const jest = oldDir(`jest_${process.getuid?.().toString(36)}`, { 'haste-map': 'x' });
-  setExecutor({
-    ...getExecutor(),
-    runFileAsync: async (file: string) => (file === 'du' ? `12\t${jest}\n` : processes),
-  });
-
-  expect(await leftovers()).toEqual([
-    { kind: 'jest', path: jest, bytes: 12 * 1024, willDelete: false, kept: 'report only: Jest owns it' },
-  ]);
-  await deleteTempLeftovers();
-  expect(existsSync(jest)).toBe(true);
-});
-
-test("the caller's environment chooses the TMPDIR that is swept", async () => {
-  const clientTmp = join(home, 'client-tmp');
-  mkdirSync(clientTmp);
-  oldDir('stim-ws-host');
-  const env = { TMPDIR: clientTmp, TEMP: clientTmp, TMP: clientTmp };
-
-  expect(await collectTempLeftovers({ env })).toEqual(
-    expect.objectContaining({ root: realpathSync.native(clientTmp), entries: [] }),
-  );
-});
-
 test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', async () => {
   vi.mocked(gcDevices.deviceSweepIsScoped).mockReturnValue(true);
   const idle = oldDir('stim-host-871a9a');

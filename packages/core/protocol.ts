@@ -63,6 +63,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
+ * `hosted-agent-link` is `device-host.agent.link`, which carries one HTTP connection to a session's agent route over a
+ * connection its client opened and authenticated, so agent control needs no tailnet node.
  * `hosted-metro-ports` is `device-host.metro.ports`, which names the listed ports that already accept loopback
  * connections on the host, apart from the requesting client's own dev-client bridges.
  * `native-xcode-build` accepts native Xcode provider requests with a separate source-transfer identity.
@@ -75,11 +77,13 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `fingerprint-ignored` accepts `fingerprintIgnored` on `build.start`, the paths the caller's git ignored that the machine's git cannot.
  * `fingerprint-tracked` accepts `fingerprintTracked` on `build.start`, the top-level entries the caller's git tracks although an ignore pattern matches them.
  * `native-gradle-peer-cache` queries and fetches completed APKs after rechecking worker-private inputs.
+ * `native-gradle-peer-jdk` accepts an exact JDK major on native Gradle artifact queries.
  * `swiftpm-peer-cache` queries and fetches completed SwiftPM apps after rechecking worker-private inputs.
  * `build-dependency-cache` checks dependency warmth against the requested project and install selection.
  * `server-update` is `server.update.status`, `server.update.start` and `server.update.chunk`.
  * `build-compat` accepts `compat` on `build.start`, and in place of `stimBuild` in React Native and SwiftPM artifact
  * queries.
+ * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
  * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
@@ -123,6 +127,7 @@ export const FEATURES = [
   'native-gradle-build',
   'native-gradle-artifact-cache',
   'native-gradle-peer-cache',
+  'native-gradle-peer-jdk',
   'react-native-peer-cache',
   'fingerprint-sources',
   'fingerprint-ignored',
@@ -133,9 +138,11 @@ export const FEATURES = [
   'hosted-android-process',
   'hosted-metro-ports',
   'hosted-metro-link',
+  'hosted-agent-link',
   'server-update',
   'build-compat',
   'build-jdk',
+  'build-reuse-artifact',
   'status-views',
   'desktop-reports',
   'desktop-report-platform',
@@ -231,6 +238,7 @@ export const METHODS = [
   'build.artifact',
   'build.cached-artifact',
   'build.attach',
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -245,6 +253,7 @@ export const METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -287,6 +296,7 @@ export const BUILD_METHODS = [
 
 /** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -301,6 +311,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.metro.ports',
   'device-host.metro.close',
   'device-host.metro.link',
+  'device-host.agent.link',
   'device-host.frames.subscribe',
   'device-host.frames.keyframe',
   'device-host.frames.congested',
@@ -1030,6 +1041,8 @@ export type BuildReactNativeArtifactQuery = {
 /** A declared native Gradle request with a resolved variant, excluding worker-private inputs and APK identity. */
 export interface BuildGradleArtifactQuery {
   project: string;
+  /** The exact JDK major to revalidate, sent only with native-gradle-peer-jdk. */
+  jdk?: string;
   sourceDigest: string;
   inputs: GradleOffloadInputs;
   android: BuildAndroidOptions & { variant: string };
@@ -1229,6 +1242,18 @@ export interface BuildStartParams {
   /** The JDK major the client's Android build ran on; a machine with the `build-jdk` feature builds on a JDK of that major. */
   jdk?: string;
   cacheArtifact?: boolean;
+  /**
+   * The client has no Xcode and left pod install to the machine. When the machine's fingerprint after pod install
+   * differs from `fingerprint` only in `fingerprintSources` inside the iOS project directory, it builds under and
+   * reports its own instead of refusing. An older machine ignores it.
+   */
+  podsOnWorker?: boolean;
+  /**
+   * With `podsOnWorker`, from a caller that saw `build-reuse-artifact`: the client's cache reads allow the machine to
+   * return the development app it retained under its own fingerprint after pod install instead of compiling. A
+   * non-Debug request never carries it, because a retained app carries its builder's JS.
+   */
+  reuseArtifact?: boolean;
 }
 
 export interface BuildJobParams {
@@ -1257,6 +1282,8 @@ export type BuildJobOutcome =
       ok: true;
       artifact: BuildArtifactResult;
       fingerprint: string | null;
+      /** The machine returned the app it retained under `fingerprint` instead of compiling. */
+      reused?: true;
       sourceDigest?: string;
       androidPackage?: string;
       compilationCache: Record<string, unknown>;
@@ -1605,6 +1632,7 @@ export interface Methods {
   };
   'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
   'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
+  'device-host.runtime.install': { params: { runtime: string }; result: { ok: true } };
   'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
   'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };
@@ -1632,6 +1660,7 @@ export interface Methods {
   'device-host.metro.ports': { params: { ports: number[] }; result: { busy: number[] } };
   'device-host.metro.close': { params: { session: string }; result: { port: null } };
   'device-host.metro.link': { params: { session: string }; result: Record<string, never> };
+  'device-host.agent.link': { params: { session: string }; result: Record<string, never> };
   'device-host.frames.subscribe': {
     params: { session: string; fps?: number; maxEdge?: number; video?: string[] };
     result: FramesSubscribeResult;
@@ -2013,7 +2042,7 @@ export type PlatformBuildOptions =
       platform: 'ios';
       configuration?: string;
       scheme?: string;
-      /** Defaults to the host simulator architecture for Debug, or all architectures otherwise. */
+      /** Defaults to the host simulator architecture in every configuration; `all` builds every architecture. */
       arch?: 'arm64' | 'x86_64' | 'all';
       buildCache?: boolean;
       remoteBuild?: string;

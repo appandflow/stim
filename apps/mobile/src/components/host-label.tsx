@@ -10,11 +10,13 @@ export function HostLabel({
   color,
   mode = 'running',
   variant = 'caption',
+  numberOfLines = 1,
 }: {
   host: string;
   color?: string;
   mode?: 'running' | 'building' | 'placed';
   variant?: 'caption' | 'footnote';
+  numberOfLines?: number;
 }) {
   const { theme } = useUnistyles();
   const foreground = color ?? theme.colors.tertiary;
@@ -27,7 +29,7 @@ export function HostLabel({
       }
     >
       <Icon name="desktopcomputer" size={variant === 'footnote' ? 12 : 11} color={foreground} />
-      <Text variant={variant} style={[styles.text, { color: foreground }]} numberOfLines={1}>
+      <Text variant={variant} style={[styles.text, { color: foreground }]} numberOfLines={numberOfLines}>
         {host}
       </Text>
     </View>

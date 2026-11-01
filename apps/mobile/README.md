@@ -66,10 +66,11 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   build while the workspace is active or for a day after, a closed app, **CI
   failing**, and warning or issue counts); while building, the build step with
   its counts, the cache outcome and the elapsed time against the estimate over
-  a bar of the planned phases; while warming, the step with an activity
+  a bar of the planned phases, with the build machine beside the step when the
+  build was offloaded; while warming, the step with an activity
   indicator; the running devices by kind (`2 iOS, Android`) with the tools
-  driving them, or how long they have been idle once that is 10 minutes, and
-  remote EAS sessions; and the git state: the pull request number colored by
+  driving them, or how long they have been idle once that is 10 minutes, the
+  machines hosted devices run on, and remote EAS sessions; and the git state: the pull request number colored by
   its state, commits ahead and behind, changed files, **merged into** and **no
   upstream**. The machine's name shows only when more than one machine is
   paired, and the app's folder in its checkout only when a repo's workspaces
@@ -1031,6 +1032,12 @@ one Mac that built here. The `a4-offloading`, `a4-offloaded` and
 `a4-offload-fallback` workspaces show an iOS build running on
 `janics-mac-mini`, a last build that machine compiled, and a local build after
 it was busy.
+`linux-owner.json` adds two workspaces a Linux `stim-server` could report, which
+has no simulators of its own: `bot/onboarding-copy`, an iOS simulator hosted on
+`janics-mac-mini-2` and driven by Claude Code, and `bot/upgrade-pods`, an iOS build
+running on `janics-mac-mini-2`. `pnpm run mock-server --linux-owner --name floco`
+lists only them as workspaces, with `simctlAvailable` false, no device leases and no archives;
+the machine's usage, `machine.details` and notifications stay the captured Mac's.
 The `a4-multi-device` workspace also carries a macOS app that
 `stim macos --remote janics-mac-mini` placed on another Mac, added by hand in the
 `macos.host` shape.

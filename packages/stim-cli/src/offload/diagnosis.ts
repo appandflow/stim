@@ -1,5 +1,5 @@
 import type { RemoteDiagnosis } from '@stim-cli/core/protocol';
-import { isJsonObject, type TailnetPeer } from '@stim-cli/core/state';
+import { isJsonObject, type TailnetPeer, type TailnetIdentity, type WrongTailnet } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 
 export type Transport =
@@ -84,7 +84,23 @@ export function tailscaleDiagnosis(code: TailscaleCode): RemoteDiagnosis {
   }
 }
 
-export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean): RemoteDiagnosis {
+const tailnetLabel = (tailnet: TailnetIdentity) =>
+  tailnet.suffix ? `${tailnet.name} (${tailnet.suffix})` : tailnet.name;
+
+/** A machine that is not on the tailnet this Mac is signed in to now, but was on the one it was signed in to at approval. */
+export function wrongTailnetDiagnosis(entry: string, wrong: WrongTailnet): RemoteDiagnosis {
+  const owner = wrong.owner ? `, or to ${wrong.owner}, the tailnet that owns ${entry}` : '';
+  return {
+    layer: 'peer',
+    code: 'peer-wrong-tailnet',
+    title: 'Other Tailscale account',
+    message: `This Mac asked ${entry} for access while it was signed in to the Tailscale tailnet ${tailnetLabel(wrong.recorded)}. This Mac is signed in to ${tailnetLabel(wrong.current)} now, and no peer there is named ${entry}.`,
+    remedy: `Switch Tailscale on this Mac to ${tailnetLabel(wrong.recorded)}${owner}, then run \`stim doctor\` again.`,
+  };
+}
+
+export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean, wrong?: WrongTailnet | null): RemoteDiagnosis {
+  if (wrong && !ambiguous) return wrongTailnetDiagnosis(entry, wrong);
   return {
     layer: 'peer',
     code: ambiguous ? 'peer-ambiguous' : 'peer-not-found',
@@ -96,7 +112,7 @@ export function notOnTailnetDiagnosis(entry: string, ambiguous: boolean): Remote
   };
 }
 
-export function ago(iso: string | undefined, now: number): string | null {
+function ago(iso: string | undefined, now: number): string | null {
   const then = iso ? Date.parse(iso) : NaN;
   if (!Number.isFinite(then) || then <= 0) return null;
   const minutes = Math.max(0, Math.round((now - then) / 60_000));
@@ -274,7 +290,7 @@ export function unconfirmedKeyFinding(code: string, entry: string, fingerprint: 
     level: 'note',
     title: `Remote machine ${entry} needs its server key confirmed`,
     detail: `${entry} approved this machine and answered with the stim-server key fingerprint ${fingerprint}. On the local network nothing vouches for that key, so Stim pins it only after a person checks it against the fingerprint \`stim-server setup\` printed there. Until then this machine does not use ${entry}.`,
-    fix: `Run \`stim doctor --fix\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
+    fix: `Run \`stim remote list\` in a terminal here and answer y only if the fingerprint matches. If it does not, another machine answered at that address: do not confirm, and check the address in remote.machines.`,
   };
 }
 

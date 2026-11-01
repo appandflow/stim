@@ -162,7 +162,7 @@ public struct BuildTest: Equatable, Sendable {
 }
 
 public func sampleDuration(_ ms: Double) -> String {
-  let seconds = max(0, Int(ms / 1000))
+  let seconds = max(0, Format.int(ms / 1000))
   return String(format: "%d:%02d", seconds / 60, seconds % 60)
 }
 

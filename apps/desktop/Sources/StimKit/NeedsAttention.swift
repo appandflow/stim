@@ -165,7 +165,7 @@ private func stuckItem(_ env: Workspace, now: Double, stuckMinutes: Int, ownLeas
   guard let driven = devices.first(where: { $0.driven(by: ownLeases) }), env.build?.isRunning != true,
     let since = quietSince(env, devices), now - since >= Double(stuckMinutes) * 60_000
   else { return nil }
-  let minutes = Int(((now - since) / 60_000).rounded(.down))
+  let minutes = Format.int(((now - since) / 60_000).rounded(.down))
   let newest = [env.lastBuilds?.ios, env.lastBuilds?.android].compactMap { $0 }.reduce(nil as LastBuild?) { a, b in
     guard let a else { return b }
     return (epochMs(b.startedAt) ?? -.infinity) > (epochMs(a.startedAt) ?? -.infinity) ? b : a
@@ -208,7 +208,7 @@ private func workspaceItems(
   for session in env.remoteDevices ?? [] {
     guard !driven, let started = epochMs(session.startedAt), now - started >= Double(easSessionMinutes) * 60_000
     else { continue }
-    let minutes = Int(((now - started) / 60_000).rounded(.down))
+    let minutes = Format.int(((now - started) / 60_000).rounded(.down))
     items.append(
       NeedsAttentionItem(
         id: "eas-\(session.sessionId):\(env.path)", category: .attention, severity: "warning", workspace: env.path,

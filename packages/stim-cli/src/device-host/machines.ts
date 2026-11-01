@@ -10,6 +10,7 @@ import {
   deviceHostMachinesLock,
   acceptsShape,
   cannotHost,
+  currentTailnet,
   isJsonObject,
   localEndpoint,
   MACHINE_CREDENTIALS_VERSION,
@@ -17,6 +18,7 @@ import {
   readDeviceHostMachines,
   settingDefinition,
   type DeviceHostMachineCredential,
+  wrongTailnet,
 } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { withDirLock } from '../dir-lock.ts';
@@ -129,19 +131,57 @@ async function store(machines: DeviceHostMachineCredential[], operation?: StimCo
   else withDirLock(deviceHostMachinesLock(), write, options);
 }
 
+/** Forgets this machine's hosting credential for `machine`; false when another run holds the credential claim. */
+export async function forgetDeviceHostMachine(machine: string): Promise<boolean> {
+  const claim = tryAcquireClaim({ root: deviceHostMachinesClaims(), mode: 'exclusive', label: 'device-host approval' });
+  if (!claim.acquired) {
+    releaseClaim(claim.pending);
+    return false;
+  }
+  try {
+    const credentials = readDeviceHostMachines();
+    if (credentials.some((each) => each.machine === machine))
+      await store(credentials.filter((each) => each.machine !== machine));
+    return true;
+  } finally {
+    releaseClaim(claim.acquired);
+  }
+}
+
+function notOnTailnet(
+  machine: string,
+  ambiguous: boolean,
+  stored: DeviceHostMachineCredential | undefined,
+  current: unknown,
+) {
+  const diagnosis = notOnTailnetDiagnosis(machine, ambiguous, stored ? wrongTailnet(stored, current) : null);
+  return {
+    diagnosis,
+    report: {
+      machine,
+      state: 'not-on-tailnet' as const,
+      ...(stored?.tailnet ? { tailnet: stored.tailnet } : {}),
+      diagnosis,
+    },
+  };
+}
+
 /**
- * Reports the device-host approval of each remote machine, separate from its build approval. Only --fix makes a setup
- * ticket or forgets credentials; every server key stays pinned.
+ * Reports the device-host approval of each remote machine, separate from its build approval. Only `fix` makes a setup
+ * ticket, and only `forget`, which defaults to `fix`, forgets the credentials of machines not in `entries`; every
+ * server key stays pinned.
  */
 export async function inspectDeviceHostMachines(
   {
     fix,
+    forget = fix,
     version = '<version>',
     tickets = new Map(),
     operation,
     confirmKey,
   }: {
     fix: boolean;
+    forget?: boolean;
     version?: string;
     tickets?: GeneratedTickets;
     operation?: StimContext;
@@ -176,7 +216,7 @@ export async function inspectDeviceHostMachines(
       ),
     );
   if (!entries.length) {
-    if (!fix) return { findings: [], machines: [] };
+    if (!forget) return { findings: [], machines: [] };
     try {
       if (!readDeviceHostMachines().length) return { findings: [], machines: [] };
     } catch {
@@ -205,7 +245,7 @@ export async function inspectDeviceHostMachines(
     } catch {
       return unreadable();
     }
-    if (fix) {
+    if (forget) {
       const kept = credentials.filter((each) => entries.includes(each.machine));
       if (kept.length !== credentials.length) {
         await store(kept, operation);
@@ -257,11 +297,17 @@ export async function inspectDeviceHostMachines(
       }
       const peer = local ? null : findPeer(current, parsed.name);
       if (peer === 'missing' || peer === 'ambiguous') {
-        const diagnosis = notOnTailnetDiagnosis(machine, peer === 'ambiguous');
-        inspected.machines.push({ machine, state: 'not-on-tailnet', diagnosis });
+        const { report, diagnosis } = notOnTailnet(
+          machine,
+          peer === 'ambiguous',
+          credentials.find((each) => each.machine === machine),
+          current,
+        );
+        inspected.machines.push(report);
         inspected.findings.push(diagnosisFinding('device-host-machine', machine, diagnosis));
         continue;
       }
+      const signedIn = local ? null : currentTailnet(current);
       const target = peer ? endpoint(peer, parsed.port) : localEndpoint(parsed.name, parsed.port);
       const dnsName = peer ? { dnsName: peer.dnsName } : {};
       const nodeRoute = peer ? `${peer.nodeId}:${parsed.port}` : `local:${parsed.name}:${parsed.port}`;
@@ -287,6 +333,7 @@ export async function inspectDeviceHostMachines(
         access: 'device-host',
         endpoint: target,
         address: peer?.dnsName ?? parsed.name,
+        ...(signedIn ? { tailnet: signedIn } : {}),
         credential,
         other: () => readBuildMachines().find((each) => each.machine === machine),
         persist: async (next) => {
@@ -316,6 +363,7 @@ export async function inspectDeviceHostMachines(
         machine,
         ...dnsName,
         ...(saved?.deviceId ? { deviceId: saved.deviceId } : {}),
+        ...(saved?.tailnet ? { tailnet: saved.tailnet } : {}),
         ...(saved ? { requestedAt: saved.requestedAt } : {}),
       };
       if (outcome.state === 'approved') {
@@ -365,7 +413,7 @@ export async function inspectDeviceHostMachines(
           note(
             `Remote machine ${machine} has not approved this machine for device hosting`,
             'This machine has not asked for hosting access.',
-            'Run `stim doctor --fix` to make a setup ticket and print the command to run there.',
+            `Run \`stim remote add ${machine}\` to make a setup ticket and print the command to run there.`,
           ),
         );
         continue;
@@ -416,18 +464,18 @@ export async function inspectDeviceHostMachines(
           ? note(
               `Remote machine ${machine} answered with a different server key`,
               'Stim refuses to connect to a stim-server that does not prove it holds the key pinned at approval.',
-              `If that machine or its Stim home was replaced, remove ${machine} from remote.machines, run \`stim doctor --fix\`, then add it back and run \`stim doctor --fix\` again.`,
+              `If that machine or its Stim home was replaced, run \`stim remote remove ${machine}\`, then \`stim remote add ${machine}\`.`,
             )
           : outcome.state === 'lapsed'
             ? note(
                 `Hosting request to ${machine} lapsed`,
                 `${machine} did not approve this machine before its setup ticket expired at ${outcome.credential.expiresAt}.`,
-                'Run `stim doctor --fix` to make a new ticket.',
+                `Run \`stim remote add ${machine}\` to make a new ticket.`,
               )
             : note(
                 `Remote machine ${machine} no longer accepts this machine for device hosting`,
                 `${outcome.reason} The pinned key is preserved.`,
-                'Run `stim doctor --fix` to ask again.',
+                `Run \`stim remote add ${machine}\` to ask again.`,
               ),
       );
     }

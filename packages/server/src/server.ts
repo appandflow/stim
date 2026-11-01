@@ -6,7 +6,8 @@ import {
   type Server,
   type ServerResponse,
 } from 'node:http';
-import { connect as connectSocket, isIP, type AddressInfo, type Socket } from 'node:net';
+import { connect as connectSocket, isIP, Socket, type AddressInfo } from 'node:net';
+import { duplexPair, type Duplex } from 'node:stream';
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -56,6 +57,7 @@ import { parsePlatformBuild } from './platform-build.ts';
 import { agentActionReaders, configuredAgentDriver, stoppingAgentDriver } from './agent-drivers.ts';
 import { HostedAgentHost } from './agent-driver.ts';
 import { DeviceHost } from './device-host.ts';
+import { HOSTED_IDLE_SWEEP_MS } from './hosted-idle.ts';
 import { HostedViews } from './hosted-view.ts';
 import { HostConnections, HostedRelay, type HostedRelayOptions } from './hosted-relay.ts';
 import { LatestFrames, FRAME_RETRY_MS } from './frame-delivery.ts';
@@ -313,6 +315,10 @@ export interface ServerOptions {
   /** How many offloaded builds run, and for how long; tests shorten them. */
   buildLimits?: Partial<BuildLimits>;
   deviceHostLimits?: Partial<DeviceHostLimits>;
+  /** How often a device-host client connection is pinged, and how long it may stay silent before it is dropped. */
+  clientHeartbeat?: { pingMs: number; silentMs: number };
+  /** How often hosted sessions are checked for a client that is gone. */
+  hostedIdleSweepMs?: number;
   hostedRelay?: HostedRelayOptions;
   service?: {
     label: string | null;
@@ -399,7 +405,17 @@ const LOCAL_DEVICE: PairedDevice = {
 type ServerSocket = WebSocket | NoiseSocket;
 const CLOSE_AUTH_TIMEOUT = 4408;
 const CLOSE_METRO_RESET = 4410;
+interface AgentLink {
+  client: string;
+  session: string;
+  busy: number;
+}
+const AGENT_PATH = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/;
 const METRO_LINK_PING_MS = 15_000;
+const CLIENT_PING_MS = 60_000;
+const CLIENT_SILENT_MS = 180_000;
+const MAX_AGENT_LINKS = 16;
+const AGENT_LINK_IDLE_MS = 5 * 60_000;
 const METRO_END_MS = 30_000;
 const CLOSE_ABNORMAL = 1006;
 const MAX_PAYLOAD = 64 * 1024;
@@ -427,6 +443,18 @@ function isWorkspaceChangeMethod(method: string): method is 'workspace.files' | 
 const MAX_KEYFRAME_READS = 8;
 const LOG_LIMITS: LogLimits = { maxBufferedBytes: 4 * 1024 * 1024, maxPendingRecords: 20_000 };
 const HELPER_RETRY_MS = 5 * 60_000;
+
+const MACOS_ONLY_FEATURES: readonly string[] = [
+  'physical-ios',
+  'macos-window',
+  'macos-windows',
+  'macos-window-select',
+  'macos-window-control',
+  'macos-keyboard-extended',
+  'duo-frames',
+  'native-xcode-build',
+  'native-xcode-toolchain',
+];
 /**
  * Test switch: set to 1, a `physical` target may resolve to an emulator its workspace leases with `stim device
  * lock`, which then streams and takes input over adb as a phone does. It exists to exercise the physical-device
@@ -1235,12 +1263,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       });
       if (done) unsubscribe();
     });
+  const hostsDevices = options.hostsDevices ?? process.platform === 'darwin';
   const frameLimits: FrameLimits = { ...DEFAULT_FRAME_LIMITS, ...options.frameLimits };
   let helperPath = options.frameHelper ?? null;
   let helperBuilding = false;
   let helperRetryAt = 0;
   const helperAbort = new AbortController();
   const buildHelper = () => {
+    if (!hostsDevices) return;
     helperBuilding = true;
     void (async () => {
       try {
@@ -1388,10 +1418,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         deviceHostArea(app.session),
         app,
       ),
-    approved: (client, node) =>
-      node !== null &&
-      agentNodes.get(client) === node &&
+    approved: (client, from) =>
+      ('client' in from ? from.client === client : from.node !== null && agentNodes.get(client) === from.node) &&
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    withdrawn: (session) => {
+      for (const stream of agentStreams.get(session) ?? []) stream.destroy();
+    },
   });
   const hostedDevices = new DeviceHost({
     worker: join(dirname(options.stimCli), 'device-host-worker.mjs'),
@@ -1400,6 +1432,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     limits: options.deviceHostLimits,
     allowed: (client) =>
       readDeviceHostClients().some((entry) => entry.id === client && entry.capabilities.includes('device-host')),
+    connected: (client) => [...sessions.values()].some((entry) => entry.id === client),
     builtBundle: (client, handoff, sha256) => {
       const host = readDeviceHostClients().find(
         (entry) => entry.id === client && entry.capabilities.includes('device-host'),
@@ -1413,19 +1446,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     },
   });
   const agentLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
-  async function answerAgent(request: IncomingMessage, response: ServerResponse, session: string): Promise<void> {
-    const peer = peerAddress(request) ?? 'local';
+  const agentLinks = new WeakMap<object, AgentLink>();
+  const agentStreams = new Map<string, Set<Duplex>>();
+  async function answerAgent(
+    request: IncomingMessage,
+    response: ServerResponse,
+    session: string,
+    link?: AgentLink,
+  ): Promise<void> {
+    const peer = link ? `client:${link.client}:${link.session}` : (peerAddress(request) ?? 'local');
     const refuse = (status: number, text: string) =>
       void response.writeHead(status, { 'content-type': 'text/plain' }).end(`${text}\n`);
     if (request.headers.origin !== undefined || request.headers['sec-fetch-site'] !== undefined)
       return refuse(403, 'Forbidden.');
     if (agentLimiter.blocked(peer)) return refuse(429, 'Too many attempts. Try again in a minute.');
+    if (link && link.session !== session) {
+      agentLimiter.record(peer);
+      return refuse(403, 'Forbidden. This agent link carries another hosted session.');
+    }
     const bearer = /^bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
     const header = request.headers['x-agent-device-token'];
     const token = bearer ?? (typeof header === 'string' ? header : null);
-    const node = peer === 'local' ? null : await peerNode(request, peer);
-    if (agentDrivers.forward(session, token, request, response, node) === 'forbidden') agentLimiter.record(peer);
+    const from = link ? { client: link.client } : { node: peer === 'local' ? null : await peerNode(request, peer) };
+    const verdict = agentDrivers.forward(session, token, request, response, from);
+    if (verdict === 'forbidden') agentLimiter.record(peer);
+    else if (verdict === 'ok') hostedDevices.clientActed(session);
   }
+  const agentHttp = createServer((request, response) => {
+    const link = agentLinks.get(request.socket);
+    const session = AGENT_PATH.exec(request.url ?? '')?.[1];
+    if (!link || !session) return void response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
+    link.busy++;
+    response.once('close', () => link.busy--);
+    answerAgent(request, response, session, link).catch(() => {
+      if (response.headersSent) response.destroy();
+      else response.writeHead(500, { 'content-type': 'text/plain' }).end('Agent control failed.\n');
+    });
+  });
   const setupLimiter = new FailureLimiter(30, options.failureWindowMs ?? 60_000);
   /** The journal holds no secret, so it is served to whoever names it; failures are rate limited by peer. */
   function answerSetup(request: IncomingMessage, response: ServerResponse): void {
@@ -1588,6 +1645,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   let watcher: FSWatcher | null = null;
   let revocationPoll: NodeJS.Timeout | null = null;
+  let hostedIdleSweep: NodeJS.Timeout | null = null;
   let retireOnce: Promise<void> | undefined;
   const becomeReady = () => {
     mkdirSync(serverDir(), { recursive: true, mode: 0o700 });
@@ -1599,6 +1657,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     // Node's macOS watcher can miss changes before it is ready: https://github.com/nodejs/node/issues/52601.
     revocationPoll ??= setInterval(checkRevocations, 1000).unref();
+    hostedIdleSweep ??= setInterval(
+      () => hostedDevices.sweepIdle(),
+      options.hostedIdleSweepMs ?? HOSTED_IDLE_SWEEP_MS,
+    ).unref();
     push.refresh();
     retireOnce ??= hostedDevices.reconcileStopped().catch((error: unknown) => {
       process.stderr.write(`Hosted device retirement failed: ${(error as Error).message}\n`);
@@ -1660,8 +1722,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     let runId: string | null = null;
     let buildSession: BuildSession | null = null;
     let metroLink: MetroLink | null = null;
-    let metroStream: Socket | null = null;
+    let metroStream: Duplex | null = null;
     let metroPing: NodeJS.Timeout | undefined;
+    let clientPing: NodeJS.Timeout | undefined;
     let queue = Promise.resolve();
     let archiveReads = Promise.resolve();
     const relay = new HostedRelay(
@@ -1698,7 +1761,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (access !== undefined && access !== 'build' && access !== 'device-host') {
         return refuse(id, 'bad-request', 'params.access is build or device-host.', CLOSE_BAD_REQUEST);
       }
-      if (access === 'device-host' && !(options.hostsDevices ?? process.platform === 'darwin')) {
+      if (access === 'device-host' && !hostsDevices) {
         return refuse(
           id,
           'forbidden',
@@ -1725,6 +1788,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       device = chosen;
       if (!local) touchDevice(device.id);
+      if (access === 'device-host' && !local) {
+        hostedDevices.clientSeen(device.id);
+        let heardAt = Date.now();
+        let late = false;
+        const hear = () => (heardAt = Date.now());
+        socket.on('pong', hear);
+        socket.on('message', hear);
+        const { pingMs, silentMs } = options.clientHeartbeat ?? { pingMs: CLIENT_PING_MS, silentMs: CLIENT_SILENT_MS };
+        clientPing = setInterval(() => {
+          if (Date.now() - heardAt > silentMs) {
+            if (late) return void socket.terminate();
+            late = true;
+          } else late = false;
+          socket.ping();
+        }, pingMs);
+        clientPing.unref();
+      }
       if (local && params.desktopBootstrap === true) desktopChallenge = options.desktopBootstrap?.challenge() ?? null;
       tracker.identify({ id: device.id, runId });
       sessions.set(socket, device);
@@ -1746,6 +1826,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         capabilities: device.capabilities,
         features: FEATURES.filter(
           (feature) =>
+            (hostsDevices || !MACOS_ONLY_FEATURES.includes(feature)) &&
             (![
               'desktop-settings-write',
               'desktop-reload',
@@ -4197,21 +4278,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (refused) socket.close(CLOSE_BAD_REQUEST, refused.slice(0, 120));
     }
 
+    function carry(stream: Duplex): void {
+      clearInterval(metroPing);
+      metroLink = null;
+      metroStream = stream;
+      stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
+      stream.on('data', (chunk: Buffer) => {
+        socket.send(chunk, { binary: true }, () => {
+          if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
+        });
+        if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
+      });
+    }
+
     function linkMetro(id: RequestId, raw: unknown, session: PairedDevice): void {
       if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already links Metro.');
       const link: MetroLink = {
         open: (stream) => {
           if (socket.readyState !== socket.OPEN) return false;
-          clearInterval(metroPing);
-          metroLink = null;
-          metroStream = stream;
-          stream.once('close', (hadError) => socket.close(hadError ? CLOSE_METRO_RESET : 1000));
-          stream.on('data', (chunk: Buffer) => {
-            socket.send(chunk, { binary: true }, () => {
-              if (stream.isPaused() && socket.bufferedAmount < METRO_LINK_BUFFERED_BYTES) stream.resume();
-            });
-            if (socket.bufferedAmount >= METRO_LINK_BUFFERED_BYTES) stream.pause();
-          });
+          carry(stream);
           send(socket, JSON.stringify({ event: 'device-host.metro.link.open' } satisfies MetroLinkOpenEvent));
           stream.resume();
           return true;
@@ -4233,8 +4318,50 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       metroPing.unref();
     }
 
+    function linkAgent(id: RequestId, raw: unknown, session: PairedDevice): void {
+      if (metroLink || metroStream) return error(id, 'bad-request', 'This connection already carries a link.');
+      const hosted = isJsonObject(raw) && typeof raw.session === 'string' ? raw.session : null;
+      if (hosted === null) return error(id, 'bad-request', 'An agent link needs a session.');
+      if (agentDrivers.holder(hosted) !== session.id)
+        return error(id, 'unknown-session', 'This client has no hosted session with agent control by that id.');
+      const [inside, outside] = duplexPair();
+      const link: AgentLink = { client: session.id, session: hosted, busy: 0 };
+      agentLinks.set(inside, link);
+      const streams = agentStreams.get(hosted) ?? new Set<Duplex>();
+      agentStreams.set(hosted, streams.add(outside));
+      outside.once('close', () => {
+        streams.delete(outside);
+        if (streams.size === 0 && agentStreams.get(hosted) === streams) agentStreams.delete(hosted);
+      });
+      let excess = [...streams].filter((stream) => !stream.destroyed).length - MAX_AGENT_LINKS;
+      for (const oldest of streams) if (!oldest.destroyed && excess-- > 0) oldest.destroy();
+      let heard = true;
+      socket.on('pong', () => (heard = true));
+      const idle = setTimeout(() => {
+        if (link.busy === 0 || !heard) return void outside.destroy();
+        heard = false;
+        socket.ping();
+        idle.refresh();
+      }, AGENT_LINK_IDLE_MS);
+      idle.unref();
+      const active = () => idle.refresh();
+      socket.on('message', active);
+      outside.on('data', active);
+      outside.once('close', () => clearTimeout(idle));
+      outside.once('end', () => outside.end());
+      outside.once('close', () => inside.destroy());
+      inside.once('close', () => {
+        outside.push(null);
+        outside.end();
+      });
+      send(socket, { id, result: {} });
+      carry(outside);
+      agentHttp.emit('connection', inside);
+    }
+
     async function hostedMethod(id: RequestId, method: string, raw: unknown, session: PairedDevice): Promise<void> {
       if (method === 'device-host.metro.link') return linkMetro(id, raw, session);
+      if (method === 'device-host.agent.link') return linkAgent(id, raw, session);
       const params = isJsonObject(raw) ? raw : {};
       if (method === 'device-host.frames.subscribe' || method === 'device-host.control.begin') {
         if (typeof params.session !== 'string') return error(id, 'bad-request', 'A hosted session is required.');
@@ -4293,6 +4420,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (method.startsWith('device-host.input.')) {
         const inputMethod = method.slice('device-host.'.length) as (typeof INPUT_METHODS)[number];
         return input(id, inputMethod, raw, session);
+      }
+      if (method === 'device-host.runtime.install') {
+        const cancellation = new AbortController();
+        const cancel = () => cancellation.abort();
+        socket.once('close', cancel);
+        try {
+          const answer = await hostedDevices.installRuntime(session.id, raw, cancellation.signal);
+          return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
+        } finally {
+          socket.off('close', cancel);
+        }
       }
       const answer =
         method === 'device-host.offer'
@@ -4513,6 +4651,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     socket.on('close', (code) => {
       clearInterval(metroPing);
+      clearInterval(clientPing);
       if (metroLink) hostedDevices.metroUnlink(metroLink);
       const stream = metroStream;
       if (stream && code === 1000 && !stream.destroyed) {
@@ -4529,7 +4668,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           clearTimeout(ending);
           stream.off('drain', arm);
         });
-      } else if (stream && !stream.destroyed) stream.resetAndDestroy();
+      } else if (stream && !stream.destroyed) {
+        if (stream instanceof Socket) stream.resetAndDestroy();
+        else stream.destroy();
+      }
       relay.close();
       relays.delete(socket);
       clearTimeout(timer);
@@ -4726,6 +4868,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
+    if (hostedIdleSweep) clearInterval(hostedIdleSweep);
     if (revocationCheck) clearTimeout(revocationCheck);
     await settle(builds.close());
     for (const client of [...wss.clients, ...localWss.clients]) client.terminate();
@@ -4808,7 +4951,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         answerSetup(request, response);
         return;
       }
-      const agent = /^\/device-host\/agent\/([a-f0-9-]{36})(?:[/?]|$)/.exec(request.url ?? '');
+      const agent = AGENT_PATH.exec(request.url ?? '');
       if (agent && arrival(request) === 'direct') {
         response.writeHead(404, { 'content-type': 'text/plain' }).end('Not found.\n');
         return;

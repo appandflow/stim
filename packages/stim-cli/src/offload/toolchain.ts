@@ -207,7 +207,7 @@ function assembleMacosToolchain(xcode: string | null, macosSdk: string | null): 
 }
 
 /** The major version in a JDK's `release` file, as `JAVA_VERSION="17.0.19"` (or `"1.8.0_402"` for Java 8) gives it. */
-export function jdkMajor(release: string): string | null {
+function jdkMajor(release: string): string | null {
   return /^JAVA_VERSION="(?:1\.)?(\d+)/m.exec(release)?.[1] ?? null;
 }
 
@@ -326,7 +326,7 @@ export async function androidToolchainAsync(env: NodeJS.ProcessEnv = process.env
 }
 
 /** `ndkVersion`, `buildTools` and `compileSdk` from React Native's `gradle/libs.versions.toml`. */
-export function parseAndroidRequirements(catalog: string): AndroidRequirements {
+function parseAndroidRequirements(catalog: string): AndroidRequirements {
   const value = (key: string) => new RegExp(`^${key}\\s*=\\s*"([^"]+)"`, 'm').exec(catalog)?.[1] ?? null;
   return { ndk: value('ndkVersion'), buildTools: value('buildTools'), compileSdk: value('compileSdk') };
 }
@@ -360,7 +360,7 @@ export function androidRequirements(
 }
 
 /** Runtime identifiers that have at least one available iPhone simulator, from `simctl list devices -j`. */
-export function iphoneRuntimes(listed: unknown): string[] {
+function iphoneRuntimes(listed: unknown): string[] {
   const devices = (
     listed as { devices?: Record<string, Array<{ deviceTypeIdentifier?: unknown; isAvailable?: unknown }>> }
   )?.devices;
@@ -590,11 +590,14 @@ function androidMismatches(
   worker: WorkerToolchain,
 ): OffloadProblem[] {
   const out: OffloadProblem[] = [];
-  if ((!local.jdk || worker.jdk !== local.jdk) && !(local.jdk && worker.jdks?.includes(local.jdk))) {
+  if (!local.jdk) {
+    // React Native's Gradle builds need JDK 17; the worker builds on its own default JDK.
+    if (!worker.jdk) out.push({ code: 'jdk', reason: 'no JDK there', ...jdkInstall('17', worker.os) });
+  } else if (worker.jdk !== local.jdk && !worker.jdks?.includes(local.jdk)) {
     out.push({
       code: 'jdk',
-      reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk ?? 'none'} here`,
-      ...(local.jdk && worker.jdks ? jdkInstall(local.jdk, worker.os) : {}),
+      reason: `JDK ${worker.jdk ?? 'none'} there, ${local.jdk} here`,
+      ...(worker.jdks ? jdkInstall(local.jdk, worker.os) : {}),
     });
   }
   const sdk = worker.androidSdk;
@@ -662,22 +665,31 @@ export function cocoapodsDifference(
 
 /**
  * What a build on the worker does beyond the match: the SDK packages it lacks and Gradle downloads on the first build,
- * because its SDK licenses are accepted and the project allows the download. None of them stops the build. For iOS, the
- * CocoaPods difference a named machine is sent the build despite.
+ * because its SDK licenses are accepted and the project allows the download, and the JDK it builds on for a client with
+ * none. None of them stops the build. For iOS, the CocoaPods difference a named machine is sent the build despite.
  */
 export function toolchainNotes(target: BuildTarget, worker: WorkerToolchain): OffloadProblem[] {
   if (target.platform === 'ios') {
     const pods = cocoapodsDifference(target, worker);
     return pods ? [{ ...pods, reason: `${pods.reason}; its pod install runs anyway and a failure is reported` }] : [];
   }
-  if (target.platform !== 'android' || !worker.androidSdk || !gradleDownloads(target.requires, worker)) return [];
+  if (target.platform !== 'android') return [];
+  // A client with no JDK sends no JDK major, so the worker's own JDK is the build's JDK.
+  const jdk: OffloadProblem[] =
+    !target.local.jdk && worker.jdk
+      ? [{ code: 'jdk', reason: `this machine has no JDK, so the build runs on JDK ${worker.jdk} there` }]
+      : [];
+  if (!worker.androidSdk || !gradleDownloads(target.requires, worker)) return jdk;
   const sdkManager = sdkManagerPath(worker);
-  return sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
-    code: gap.code,
-    reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
-    commands: [`${sdkManager} "${gap.id}"`],
-    lead: 'install the package now so the first build does not download it',
-  }));
+  return [
+    ...jdk,
+    ...sdkGaps(target.requires, worker.androidSdk).map((gap) => ({
+      code: gap.code,
+      reason: `${gap.label} is not installed there; Gradle downloads it on the first build${gap.size ? ` (${gap.size})` : ''}`,
+      commands: [`${sdkManager} "${gap.id}"`],
+      lead: 'install the package now so the first build does not download it',
+    })),
+  ];
 }
 
 function versionMismatch(tool: string, there: string | null, here: string | null): string {

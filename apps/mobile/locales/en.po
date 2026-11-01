@@ -134,6 +134,10 @@ msgstr "{ahead, plural, one {# commit not pushed to {upstream}} other {# commits
 msgid "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 msgstr "{behind, plural, one {# commit behind {upstream}} other {# commits behind {upstream}}}"
 
+#: src/lib/worktree-row.ts
+msgid "{building} on {buildHost}"
+msgstr "{building} on {buildHost}"
+
 #: src/screens/mac-status.tsx
 msgid "{builds} in all"
 msgstr "{builds} in all"
@@ -424,9 +428,17 @@ msgid "{name} no build"
 msgstr "{name} no build"
 
 #: src/lib/home-list.ts
+msgid "{name} on {host}, {activity}"
+msgstr "{name} on {host}, {activity}"
+
+#: src/lib/home-list.ts
 #: src/lib/worktree-row.ts
 msgid "{name} running"
 msgstr "{name} running"
+
+#: src/lib/home-list.ts
+msgid "{name} running on {host}"
+msgstr "{name} running on {host}"
 
 #: src/lib/workspace-view.ts
 msgid "{name} simulator"
@@ -573,6 +585,10 @@ msgstr "{time}, {msg}"
 #: src/screens/mac-status.tsx
 msgid "{title} — {remedy}"
 msgstr "{title} — {remedy}"
+
+#: src/lib/spoken-status.ts
+msgid "{title} on {host}"
+msgstr "{title} on {host}"
 
 #: src/screens/inbox.tsx
 msgid "{title}, {body}, {detail}, {ago} ago"
@@ -872,6 +888,10 @@ msgstr "Android emulator"
 #: src/screens/device-view.tsx
 msgid "Android Emulator"
 msgstr "Android Emulator"
+
+#: src/lib/capacity.ts
+msgid "Android emulators"
+msgstr "Android emulators"
 
 #: src/lib/build-machines.ts
 msgid "Android platform missing"
@@ -2099,6 +2119,10 @@ msgstr "iOS device"
 msgid "iOS Simulator"
 msgstr "iOS Simulator"
 
+#: src/lib/capacity.ts
+msgid "iOS simulators"
+msgstr "iOS simulators"
+
 #: src/lib/machine-report.ts
 msgid "Its pull request is finished"
 msgstr "Its pull request is finished"
@@ -2283,9 +2307,21 @@ msgstr "logs {logs}"
 msgid "Logs for Which App?"
 msgstr "Logs for Which App?"
 
+#: src/screens/logs.tsx
+msgid "Logs from {windowStart} to {windowEnd}"
+msgstr "Logs from {windowStart} to {windowEnd}"
+
 #: src/lib/machine-report.ts
 msgid "Logs of {workspace}"
 msgstr "Logs of {workspace}"
+
+#: src/screens/logs.tsx
+msgid "Logs since {windowStart}"
+msgstr "Logs since {windowStart}"
+
+#: src/screens/logs.tsx
+msgid "Logs until {windowEnd}"
+msgstr "Logs until {windowEnd}"
 
 #: src/lib/format.ts
 msgid "longer than usual"
@@ -2640,6 +2676,10 @@ msgstr "No recording for this device."
 #: src/screens/logs.tsx
 msgid "No records match these filters."
 msgstr "No records match these filters."
+
+#: src/screens/logs.tsx
+msgid "No records match this time window and these filters."
+msgstr "No records match this time window and these filters."
 
 #: src/screens/mac-status.tsx
 msgid "No shared cache was found."
@@ -3426,6 +3466,10 @@ msgstr "running"
 msgid "Running"
 msgstr "Running"
 
+#: src/lib/worktree-row.ts
+msgid "running on {deviceHosts}"
+msgstr "running on {deviceHosts}"
+
 #: src/components/device-grid-tile.tsx
 #: src/components/host-label.tsx
 msgid "Running on {host}"
@@ -3554,6 +3598,10 @@ msgstr "Show All {count}"
 #: src/components/collapsible-section.tsx
 msgid "Show all {count} {title}"
 msgstr "Show all {count} {title}"
+
+#: src/screens/logs.tsx
+msgid "Show All Times"
+msgstr "Show All Times"
 
 #: src/components/workspace-row.tsx
 #: src/screens/workspace-detail.tsx

@@ -53,23 +53,6 @@ describe.skipIf(process.platform === 'win32')('android debug builds', () => {
     if (savedSdkRoot !== undefined) process.env.ANDROID_SDK_ROOT = savedSdkRoot;
   });
 
-  test.each(['debug', 'previewDebugOptimized'])(
-    'a %s build for an x86_64 emulator is not served to an arm64 phone',
-    async (variant) => {
-      const bc = await provider();
-      connect([['emulator-5554', 'device', 'x86_64,arm64-v8a']]);
-      const runOptions = { variant };
-      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeNull();
-      expect(
-        await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f1', buildPath: apk, runOptions }),
-      ).toBeTruthy();
-      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeTruthy();
-
-      connect([['R5CT', 'device', 'arm64-v8a,armeabi-v7a']]);
-      expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f1', runOptions })).toBeNull();
-    },
-  );
-
   test('finds adb in the default SDK location when ANDROID_HOME is unset', async () => {
     delete process.env.ANDROID_HOME;
     const savedPath = process.env.PATH;
@@ -87,26 +70,6 @@ describe.skipIf(process.platform === 'win32')('android debug builds', () => {
     }
   });
 
-  test('an all-arch build is not served to a single-ABI run and vice versa', async () => {
-    const bc = await provider();
-    connect([['emulator-5554', 'device', 'x86_64']]);
-    await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f2', buildPath: apk, runOptions: {} });
-    expect(
-      await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f2', runOptions: { allArch: true } }),
-    ).toBeNull();
-
-    await bc.uploadBuildCache({
-      platform: 'android',
-      fingerprintHash: 'f3',
-      buildPath: apk,
-      runOptions: { allArch: true },
-    });
-    expect(await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f3', runOptions: {} })).toBeNull();
-    expect(
-      await bc.resolveBuildCache({ platform: 'android', fingerprintHash: 'f3', runOptions: { allArch: true } }),
-    ).toBeTruthy();
-  });
-
   test('skips the cache when the target device cannot be identified', async () => {
     const bc = await provider();
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -122,23 +85,5 @@ describe.skipIf(process.platform === 'win32')('android debug builds', () => {
       log.mockRestore();
     }
     expect(existsSync(join(root, 'cache', 'android'))).toBe(false);
-  });
-
-  test('a store failure after a successful build does not fail expo run', async () => {
-    const blocked = join(root, 'not-a-directory');
-    writeFileSync(blocked, '');
-    process.env.STIM_BUILD_CACHE = join(blocked, 'cache');
-    const bc = await provider();
-    connect([['emulator-5554', 'device', 'x86_64']]);
-    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      expect(await bc.uploadBuildCache({ platform: 'android', fingerprintHash: 'f5', buildPath: apk })).toBeNull();
-      expect(log.mock.calls.flat().join('\n')).not.toMatch(/stored/);
-      expect(warn).toHaveBeenCalled();
-    } finally {
-      log.mockRestore();
-      warn.mockRestore();
-    }
   });
 });

@@ -1,7 +1,8 @@
+import chalk from 'chalk';
 import { withDrainingCancellation } from '../../engine/operation-state.ts';
 import type { PlatformBuildOptions } from '@stim-cli/core/protocol';
 import { constants, promises as fs } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { loadCacheProvider } from '@stim-cli/cache';
 import { hostSimulatorArch, type StimContext } from '@stim-cli/core';
 import { phaseLine } from '../../command-output.ts';
@@ -29,7 +30,9 @@ import {
 } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
 import { ensureWorkspaceStorageSafely } from '../native-runtime.ts';
+import { isEasBuildFailure, resolveEasDevelopmentBuild } from '../../engine/eas-build.ts';
 import { acquireIosArtifact, type PreparedIosArtifact } from './artifact.ts';
+import { pruneArtifactCopies, recordBuild, recordedBuildKey } from '../../engine/recorded-build.ts';
 import { lastBuildRecord } from './result.ts';
 import {
   iosProjectPathError,
@@ -40,10 +43,13 @@ import {
 } from './support.ts';
 import { detectIsExpo } from '../../workspace/project-files.ts';
 
-export type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'ios' }>, 'platform'>;
+export type IosBuildOptions = Omit<Extract<PlatformBuildOptions, { platform: 'ios' }>, 'platform'> & {
+  /** Downloads this EAS profile's completed development build instead of compiling; not part of the Desktop transport. */
+  easProfile?: string;
+};
 
 export interface IosBuildFacts {
-  /** Owned simulator app, retained with this workspace until explicitly removed. */
+  /** Owned simulator app, retained until a build replaces its recorded build or the worktree is removed. */
   appPath: string;
   bundleId: string | null;
   configuration: string;
@@ -91,7 +97,7 @@ export async function buildIosOperation(
     throw Object.assign(new Error(failure.message ?? failure.code), failure, { details: failure });
   }
   const { buildMachine, optimizations } = setup;
-  const configuration = resolveConfiguration(options.configuration, settings);
+  const configuration = options.easProfile !== undefined ? null : resolveConfiguration(options.configuration, settings);
   const buildScheme = resolveSchemeSelection(options, settings);
   const problem = await integration.schemeProblem(buildScheme, configuration);
   if (problem) throw Object.assign(new Error(problem.message ?? problem.code), problem);
@@ -100,8 +106,7 @@ export async function buildIosOperation(
   const arch =
     options.arch === 'all'
       ? null
-      : (options.arch ??
-        simulatorBuildArch({ physical: false, remoteArch: null, hostArch: hostSimulatorArch(), configuration }));
+      : (options.arch ?? simulatorBuildArch({ physical: false, remoteArch: null, hostArch: hostSimulatorArch() }));
   const cache = artifactCachePolicy(
     optimizations,
     options.buildCache !== false,
@@ -144,6 +149,21 @@ export async function buildIosOperation(
         });
         stats.setProject(projectKey);
         progress.estimate(projectKey);
+        const easBuild = await resolveEasDevelopmentBuild({
+          context,
+          root,
+          platform: 'ios',
+          profile: options.easProfile,
+          note,
+          isExpo: integration.isExpo,
+          physical: false,
+          selectors: [options.scheme, options.configuration],
+          buildCache: options.buildCache,
+          env: context.env,
+          signal: runCancellationSignal(context) ?? context.signal,
+        });
+        if (isEasBuildFailure(easBuild))
+          throw Object.assign(new Error(easBuild.message ?? easBuild.code), easBuild, { details: easBuild });
         let artifact: PreparedIosArtifact | undefined;
         let directory: string | undefined;
         let built: IosBuildFacts | null = null;
@@ -207,6 +227,7 @@ export async function buildIosOperation(
                 },
                 device: null,
                 optimizations: optimizations.ios,
+                easProfile: options.easProfile,
                 cache,
                 phase,
                 note,
@@ -220,7 +241,7 @@ export async function buildIosOperation(
                 providerConfig: resolveCacheProviderConfig(settingsContext),
                 disabledByFlag: options.buildCache === false,
               },
-              easBuild: null,
+              easBuild,
               maxBuilds: getConcurrencyLimits().maxBuilds,
               progress: {
                 phase,
@@ -313,6 +334,18 @@ export async function buildIosOperation(
           if ((!built || failureAfterCleanup) && directory) await fs.rm(directory, { recursive: true, force: true });
           if (built && !failureAfterCleanup) {
             finish('ok', built.appPath);
+            recordBuild(
+              root,
+              recordedBuildKey({
+                platform: 'ios',
+                scheme: resolveSchemeSelection({ scheme: options.scheme }, settings),
+                configuration: resolveConfiguration(options.configuration, settings),
+              }),
+              { appPath: built.appPath, bundleId: built.bundleId },
+            );
+            await pruneArtifactCopies(root, 'ios', dirname(built.appPath), (line) =>
+              phase('artifacts', chalk.yellow(line)),
+            );
             stats.record({
               failed: false,
               durationMs: Date.now() - started,

@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -48,13 +48,14 @@ change needs formatting, not the unit suite. Use CI for the full unit suite,
 dead-code, runtime-floor and RPC gates; all required checks and the merge gate
 must pass before merging. A PR that only modifies existing root unit test files
 runs those files first; its merge candidate still runs the full unit suite.
-Other PRs run the full suite on their pushed head. Run a full local suite when
-investigating a broad regression, changing shared test setup or discovery, or
+Other PRs run the unit stage on their pushed head; main and manual runs also
+run integrations. Run a full local suite when investigating a broad regression, changing shared test setup or discovery, or
 when CI cannot validate the affected behavior. Do not repeat a passing check on
 unchanged code without a new failure or unresolved concern. Run
 `pnpm run test:e2e` when a change affects an end-to-end workflow, and keep the
 real-tool and app verification requirements below. Candidate version commits
-in the authorized expedited RC lane follow [`RELEASE.md`](./RELEASE.md).
+follow the preflight in [`RELEASE.md`](./RELEASE.md), which leaves the checks
+that CI runs on the release commit to CI.
 
 Filter unit tests with `pnpm test <file> -t "case name"`. Do not insert `--`
 before the file: pnpm forwards it to Vitest, which then ignores the filter and
@@ -72,12 +73,24 @@ or through the local stim-server protocol for stats, status and GC dry runs when
 read-capable session serves the same Stim home, and for device replay and a leased physical
 device's screen. Status and explicit refresh use only the matching server's views;
 connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
-through the CLI, never by reading or writing `$STIM_HOME`. It connects to
-stim-server only over the server's Unix socket, normally `$STIM_HOME/server/local.sock`.
+through the CLI, never by reading or writing `$STIM_HOME`. It connects to its
+own Stim home's stim-server only over that server's Unix socket, normally
+`$STIM_HOME/server/local.sock`.
 When that path exceeds macOS's 103-byte limit, core and Desktop use
 `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
 is mode 0700 and owned by the server's user; the socket serves only that user
-without pairing or Noise. Build and test it with `swift build` and
+without pairing or Noise. It may also pair, as a client, with another machine's
+stim-server, as the phone app does: it spends a `stim-server pair` token in
+protocol 2's Noise handshake, requires the payload's server-key fingerprint, and
+keeps its per-pairing client private key and pinned server key in the macOS
+Keychain, never under `$STIM_HOME`. The pinned key is the trust boundary;
+Desktop accepts only tailnet endpoints, and `stim-server pair` refuses a Funnel
+route. A remote server grants it only the capabilities recorded for its key:
+`read`, plus `control` for a `--control` pairing. `desktop.*`, `route.setup`,
+`machines.update.*` and `device-host.sessions*` stay Unix-socket-only. Desktop
+treats every remote message as untrusted input, never turns a remote path into a
+local file or process, and never stores another machine's workspace data on
+disk. Build and test it with `swift build` and
 `swift test` from that directory, both with `-Xswiftc -warnings-as-errors` in
 CI. Format and lint its Swift sources with `scripts/format.sh` and
 `scripts/format.sh --check`. Its design tokens and empty-state agent prompts are generated from
@@ -106,16 +119,40 @@ validation, never a compatibility pass.
 
 Before adding a test, name the independent requirement or bug and the concrete
 failure it catches. Its expected result must be able to disagree with the
-implementation. Assert observable results at the lowest stable boundary that
-provides confidence: parser output, state transitions, ownership decisions,
-emitted payloads, or real command behavior. Check existing coverage first;
+implementation. Prefer command and public API tests that exercise real
+collaborators, with mocks at external boundaries. Keep focused lower-level
+tests for complex parsing, algorithms, decision logic and regressions when
+they protect behavior the API tests do not. Simple helpers already covered
+through their callers do not need their own suite. Search existing tests and
 extend a relevant case instead of repeating it at another layer.
+
+Choose representative equivalence classes and boundary cases in parameter
+tables. Each row must protect a distinct contract, boundary or known failure
+mode; extra spellings and combinations do not justify more cases by themselves.
+Use a cross-product only when the interaction between its dimensions is a
+requirement. Repeating the same assertions at a second layer or on another
+platform requires a distinct contract there.
 
 Do not add tests that only check a constant, a pass-through call, import spelling,
 or implementation source text. A mock returning the expected result does not
 prove the operation works. Use mocks for external boundaries and assert the
 behavior Stim adds. Keep regression tests for real failure modes even when the
 implementation is short.
+
+Unit tests use fake clocks by default. Test timeout and retry policy with
+immediate external failures, explicit clock advancement or controlled events.
+Real-clock contracts, such as OS process termination, socket deadlines and
+filesystem watchers and CPU performance budgets, belong in
+`*.integration.test.ts` or
+`*.integration.test.mjs`; name the real interaction the test protects. Do not
+disable fake clocks in a unit test or repeat executor deadline waits in every
+caller. Synchronize fixture readiness with events or handshakes instead of
+fixed sleeps.
+
+For bulk test changes, report the expanded case count and measured runtime;
+parameter-table rows count as cases. Compare line, branch and function coverage
+when removing tests. A test's failure history informs this decision, but a test
+that has never failed can still protect a distinct regression or safety rule.
 
 Guide tests protect rendering, routing, safety instructions, and agreement with
 code-defined contracts such as error codes and settings. Keep assertions to the
@@ -271,7 +308,8 @@ outside it moves to its own issue and pull request.
   elsewhere in the CLI source. `expo-build-cache` cannot import CLI code, so it
   calls `node:child_process` directly.
 - **Pure parsing and decision logic.** Keep parsers and selectors separate from
-  thin I/O wrappers. Unit-test the pure functions.
+  thin I/O wrappers. Test complex logic directly when it adds distinct coverage;
+  simple helpers remain covered through their callers.
 - **Locked state.** Lock every read-modify-write to global config or workspace
   state. Use atomic writes. An ownership claim held across a long operation -- a
   build, an install, a supervisor lifetime -- goes through
@@ -330,14 +368,15 @@ outside it moves to its own issue and pull request.
   are 32 random bytes; the server keeps only their derived `psk` and `lookup` in
   `server/secrets.json` and never writes them to setup journals, which are named
   by the derived `journal`. Clients of this machine's own user use the Unix
-  socket, never a TCP connection. The Desktop-only methods work only there; on a
+  socket, never a TCP connection. A Stim Desktop paired with another machine's
+  server is an ordinary paired device there. The Desktop-only methods work only there; on a
   server Desktop started, only for the connection that proved the private
   bootstrap key Desktop passed to its bundled server on a pipe; the key never appears in arguments, environment or
   output, and is never passed to an external executable.
 - **Build access.** stim-server's `build` capability lets another machine on the
   tailnet run its project code on this machine to build. The requesting machine
-  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim doctor --fix`,
-  which prints the command), and a person approves it by running
+  makes a setup ticket (Stim Desktop's Add Machine flow, or `stim remote add`
+  or `stim doctor --fix`, which print the command), and a person approves it by running
   `stim-server setup` on the worker with the ticket in `STIM_SETUP_TICKET`.
   Running setup is the worker-side approval: a person on the
   worker approves the key holding one ticket, once per capability, until one
@@ -349,7 +388,7 @@ outside it moves to its own issue and pull request.
   `server/build-clients.json`, apart from `devices.json`. The client names its
   remote machines in `remote.machines` and pins each one's stim-server key in
   `build-machines.json`; a worker that cannot prove that key is refused.
-  `remote.build` places iOS simulator Debug builds and Android emulator
+  `remote.build` places iOS simulator builds and Android emulator
   debug builds and macOS SwiftPM Debug builds with the placement words every
   workload shares (`local`, `auto`, `remote`, `remote-only` or one machine),
   trying the machines of `remote.machines` in that order, each only while it
@@ -442,7 +481,11 @@ outside it moves to its own issue and pull request.
   `device-host.metro.link` connection the session's own client opened and
   authenticated, and the client forwards it only to its verified loopback Metro.
   Stop and revocation close the bridge, idle links and active streams. Keep the
-  recorded worker port on reconnect; refuse an occupied port.
+  recorded worker port on reconnect; refuse an occupied port. Agent control of a
+  session on a `local:` machine rides `device-host.agent.link` connections its
+  own client opened and authenticated, which the client's supervisor feeds from
+  a loopback port; the host serves only that client's session and still checks
+  the session's agent token on every request.
   App transfer uses bounded digest chunks, including the manifest itself. The
   worker validates content, contained links, simulator platform, architecture
   and minimum OS before installing on the exact ledger-owned device. Hold the
@@ -541,7 +584,7 @@ of parking. Owned devices are disposable: automatic maintenance and `gc
 use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
-apps and clears the adopting app's data before launch, on every adoption, and
+apps except iOS XCUITest runners (`*.xctrunner`) and clears the adopting app's data before launch, on every adoption, and
 skips the install only after verifying the installed bytes. On Android that proof is the installed
 APK's size and the SHA-256 of its tail, from the v2 or v3 signing block through the end of the file,
 matching the values recorded after one `apksigner verify` of the local APK; an APK without a recorded

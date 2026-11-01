@@ -409,7 +409,7 @@ struct TutorialPanel: View {
     case "agent": return "Open Agent Actions to see what your agent did, then press Play to replay it."
     case "logs": return "Open Logs to see your app's output and errors."
     case "phone":
-      return "Pair a phone from Settings > Phones, then open Stim on it to see these workspaces. You can skip this step."
+      return "Pair a phone from Settings > Paired Devices, then open Stim on it to see these workspaces. You can skip this step."
     case "share":
       return
         "Your agent opens a public PR on appandflow/stim-tutorial with before/after screenshots. Needs gh access. Do it before Finish."

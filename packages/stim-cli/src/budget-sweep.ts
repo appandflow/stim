@@ -5,7 +5,7 @@ import { budgetSweepFile, budgetSweepLock, readJsonObject } from '@stim-cli/core
 import { withDirLock } from './dir-lock.ts';
 
 export const EMPTY_SWEEP_WINDOW_MS: number = 5 * 60 * 1000;
-export const EMPTY_SWEEP_DISK_DROP_MB: number = 1024;
+const EMPTY_SWEEP_DISK_DROP_MB: number = 1024;
 
 export interface EmptySweep {
   at: number;

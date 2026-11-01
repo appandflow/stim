@@ -6,7 +6,7 @@ export interface Diagnostic {
   remedy?: string;
 }
 
-export const MAX_DIAGNOSTICS = 10;
+const MAX_DIAGNOSTICS = 10;
 
 const MAX_MESSAGE_LENGTH = 300;
 
@@ -62,7 +62,7 @@ const REMEDIES: Array<[RegExp, string]> = [
   ],
 ];
 
-export function remedyFor(message: string): string | null {
+function remedyFor(message: string): string | null {
   const text = String(message || '');
   for (const [pattern, remedy] of REMEDIES) {
     if (pattern.test(text)) return remedy;

@@ -47,8 +47,22 @@ public struct Capacity: Decodable, Sendable {
   public var builds: BuildSlots?
   /// `concurrency.maxDevices` usage; present only while that cap is set.
   public var devices: DeviceSlots?
+  /// `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` usage; each is present only while its cap is set.
+  public var platformDevices: PlatformDeviceSlots?
   /// Absent from a `stim` that predates it.
   public var load: CapacityLoad?
+}
+
+public struct PlatformDeviceSlots: Decodable, Hashable, Sendable {
+  public var ios: PlatformSlots?
+  public var android: PlatformSlots?
+}
+
+public struct PlatformSlots: Decodable, Hashable, Sendable {
+  public var max: Int
+  /// Nil when `stim` could not count the owned devices; `unknown` says why.
+  public var inUse: Int?
+  public var unknown: String?
 }
 
 /// The Mac's 5-minute load average per core, and the state `stim` placed it in.
@@ -129,6 +143,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var live: Bool
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
+  /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
+  public var pathMissing: Bool?
   /// When the warm started (`warming`) or finished (`ready`).
   public var phaseSince: String?
   /// `refresh` or `copy` while `phase` is `warming`.
@@ -172,7 +188,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   enum CodingKeys: String, CodingKey {
     case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
       web, metro
-    case macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
+    case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, worktree, recording
     case agents, endedAgents, disk, tutorial, doctorRuns, agentDevice
     case stageFacts = "stage"
@@ -196,7 +212,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var isWarming: Bool { phase == "warming" }
 
   /// A workspace `stim worktree warm` is preparing or has just prepared, before its first run.
-  public var isSettingUp: Bool { isWarming || phase == "ready" }
+  public var isSettingUp: Bool { pathMissing != true && (isWarming || phase == "ready") }
 
   /// Whether the Live views show the workspace: something runs, a build runs, an EAS session or a leased phone is
   /// held, or it is being set up.
@@ -364,7 +380,7 @@ public struct WorktreeGit: Decodable, Hashable, Sendable {
   }
 
   /// Changed and untracked files together: what a commit would still have to pick up.
-  public var uncommitted: Int { changed + untracked }
+  public var uncommitted: Int { Format.sum([changed, untracked]) }
 
   /// `\u{2191}2 \u{2193}1` for commits ahead of and behind the upstream, or nil when level with it.
   public var arrows: String? { Self.arrows(ahead: ahead ?? 0, behind: behind ?? 0) }

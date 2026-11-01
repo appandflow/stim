@@ -92,7 +92,9 @@ resolved variant, ABI and build options. Each worker rechecks its current privat
 inputs against the saved build receipt, again before download. A hit skips source
 upload and compilation even while that worker is busy. A miss uses normal build
 placement. This requires `native-gradle-peer-cache`; older workers still build
-normally. Off mode, an explicit local build and disabled remote artifact reads
+normally. When the client has a JDK, lookup also requires `native-gradle-peer-jdk`
+and rechecks inputs on that exact installed JDK major; older workers use normal
+build placement. Off mode, an explicit local build and disabled remote artifact reads
 skip peer lookup. The returned offload fingerprint remains `null`; a worker key
 is never published under the caller's identity.
 
@@ -105,9 +107,12 @@ Stim uses `@expo/fingerprint` to identify native inputs in both Expo and bare
 React Native projects. The cache key also includes the platform, target, and
 build configuration or variant. A build for one CPU architecture adds it: an
 Android Debug build for a known ABI ends in that ABI (`-arm64-v8a`), and an iOS
-Debug simulator build or a `--remote` build ends in its architecture (`-arm64`
-or `-x86-64`). A local iOS Release simulator build compiles every architecture
-the project lists and has no suffix.
+simulator build ends in the architecture it runs on (`-arm64` or `-x86-64`):
+this Mac's for a local build in any configuration, the remote host's for a
+`--remote` build. A build of every architecture the project lists
+(`stim build --arch all`, `stim-ci build --arch all`) has no suffix. An app
+built on Apple silicon therefore no longer runs on an Intel Mac's simulator;
+build it with `--arch all` for that.
 
 Stim runs `@expo/fingerprint` with its default `balanced` preset, the one the
 project's own Expo uses:
@@ -273,7 +278,12 @@ or Android target, Stim regenerates the current workspace's JavaScript and
 assets in a copy of the artifact. In an app with `expo-updates`, the copy's
 embedded update also gets a new id and the current time, as a full build
 would, so an update the app downloaded earlier cannot launch instead of your
-JavaScript. If that swap fails, it builds fresh. iOS physical-device Release
+JavaScript. The swap points Metro's default cache at a directory private to
+the workspace, emptied whenever the `EXPO_PUBLIC_` values, `EXPO_NO_DOTENV`,
+`NODE_ENV` or the project's `.env` files change, so it does not inline values
+from another build on the same machine. A `metro.config.js` that sets its own
+`cacheStores` keeps that cache location.
+If that swap fails, it builds fresh. iOS physical-device Release
 runs always build fresh.
 
 ### Generated dependency output and cache misses
@@ -431,6 +441,12 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
+The one exception to leaving caches alone is the Swift compilation cache. When
+it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), a plain
+`stim gc --delete` empties it whole, as automatic maintenance does. It cannot be
+trimmed by age without corrupting its index. The cache is kept, with the build
+named, while an iOS build holds its claim on it.
+
 A full disk or a killed build can leave a damaged object in the Xcode
 compilation cache. When an iOS build that used it fails with the compiler's
 own corruption error, such as `OnDiskCAS: corrupt internal reference` or
@@ -460,7 +476,7 @@ running xcodebuild. Xcode builds you run outside Stim take no claim.
 ### Workspace build outputs
 
 Each workspace keeps its own `derived-data/`, `gradle-build/`, `android-cas/`,
-`cache-provider/`, SwiftPM scratch directory `macos/build`, staged
+`cache-provider/`, the Release swap's Metro cache `js-swap-tmp/`, SwiftPM scratch directory `macos/build`, staged
 `macos/<Product>.app` and interrupted-build `macos/staging-*` directories under
 `$STIM_HOME/workspaces/<name>/`. They usually take most of the disk Stim uses. `gc` reports them as one cache, "Workspace build
 outputs", with the size, last use and verdict of each workspace.
@@ -585,8 +601,9 @@ stops the disk-driven ones once free space is back above the floor:
 3. Native build and Metro cache entries, least recently used first, down to
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
-4. The Swift compilation cache, emptied whole, only below
-   `budget.hardFloorDiskGb`. It is kept while an iOS build holds its claim on
+4. The Swift compilation cache, emptied whole once it is over
+   `caches.swiftCompilationCacheMaxGb` (default 0, no cap), whatever the
+   free disk. It is kept while an iOS build holds its claim on
    the cache, or while that claim is unresolved. The cache is LLVM's
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.

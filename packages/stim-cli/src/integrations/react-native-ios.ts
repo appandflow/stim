@@ -1,10 +1,12 @@
-import { rmSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import chalk from 'chalk';
 import type { FingerprintSource } from '@expo/fingerprint';
 import {
   buildCacheKey,
   changedDuringBuildLine,
   configInputsChanged,
+  expoProductionEnvFiles,
   filesystemBuildCapability,
   fingerprintDiffRecord,
   gitignoredFingerprintInputs,
@@ -245,6 +247,17 @@ function reactNativeIosArtifact(
     const installableCachedApp = async (cachedPath: string): Promise<string | null> => {
       if (device) return prepareDeviceApp(cachedPath, device, { fresh: false });
       if (!release) return cachedPath;
+      if (buildsOnlyOnWorker(await d.iosToolchain(root, null))) {
+        note(
+          chalk.yellow(
+            phaseLine(
+              'swap',
+              `a cached ${configuration} app carries its builder's JS, and only a Mac with Xcode can replace it -- building fresh instead`,
+            ),
+          ),
+        );
+        return null;
+      }
       phase('swap', `regenerating this workspace's JS for the cached ${configuration} app`);
       const swap = await d.swapJsBundle({
         context: operation,
@@ -546,18 +559,16 @@ function reactNativeIosArtifact(
           },
     offload: {
       context: () => {
-        const runtime = physical || release ? null : target.offloadRuntime();
+        const runtime = physical ? null : target.offloadRuntime();
         const unsupported =
           target.offloadRefusal ??
-          (release
-            ? `${configuration} builds build here`
-            : !cachePolicy.write
-              ? 'the build cache is off'
-              : !runtime
-                ? udid
-                  ? `the runtime of simulator ${udid} is unknown`
-                  : 'no simulator runtime is available for worker selection'
-                : null);
+          (!cachePolicy.write
+            ? 'the build cache is off'
+            : !runtime
+              ? udid
+                ? `the runtime of simulator ${udid} is unknown`
+                : 'no simulator runtime is available for worker selection'
+              : null);
         return { runtime, unsupported };
       },
       target: async (runtime) => ({
@@ -571,7 +582,8 @@ function reactNativeIosArtifact(
       }),
       request: (runtime) => ({
         platform: 'ios',
-        cacheArtifact: cachePolicy.write && cachePolicy.remote,
+        cacheArtifact: cachePolicy.write && cachePolicy.remote && !release,
+        reuseArtifact: cachePolicy.read && cachePolicy.remote,
         runtime,
         configuration,
         scheme: buildScheme ?? null,
@@ -581,12 +593,19 @@ function reactNativeIosArtifact(
       }),
       fingerprintInputs: async () => ({
         sources: storeSources,
-        ignored: await gitignoredFingerprintInputs(
-          root,
-          storeSources,
-          { platform: PLATFORM, iosProjectPath: iosProject.relative },
-          { env: operation?.env },
-        ),
+        ignored: [
+          ...(await gitignoredFingerprintInputs(
+            root,
+            storeSources,
+            { platform: PLATFORM, iosProjectPath: iosProject.relative },
+            { env: operation?.env },
+          )),
+          ...(release && isExpo
+            ? expoProductionEnvFiles(operation?.env)
+                .map((name) => join(root, name))
+                .filter((path) => existsSync(path))
+            : []),
+        ],
         ignoredPaths: ignoredFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
         trackedPaths: trackedFingerprintPaths(root, { platform: PLATFORM, iosProjectPath: iosProject.relative }),
       }),
@@ -600,6 +619,7 @@ function reactNativeIosArtifact(
         });
         return Boolean(after && !after.moved);
       },
+      rekeyed: (hash) => ({ hash, key: buildCacheKey(PLATFORM, hash, keyOptions) }),
     },
   };
 }

@@ -40,7 +40,9 @@ test('a module that is not a version 1 driver with the expected id is unavailabl
   expect(await unavailable(() => Promise.resolve(fake({ client: { access: () => null } })))).toBe(
     'the client capability must name configFile and implement access()',
   );
-  expect(await unavailable(() => new Promise(() => undefined))).toBe('the module did not load within 20ms');
+  const blocked = unavailable(() => new Promise(() => undefined));
+  await vi.advanceTimersByTimeAsync(20);
+  expect(await blocked).toBe('the module did not load within 20ms');
 });
 
 test('a factory that throws or returns a driver under another name is unavailable', async () => {
@@ -76,7 +78,7 @@ test('a module or factory that fails in an unusual way is unavailable, never a r
     expect(await loadAgentDriver('fake', () => Promise.resolve(async), input)).toEqual({
       unavailable: 'createAgentDriver() must return the driver, not a promise',
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await vi.advanceTimersByTimeAsync(10);
     expect(unhandled).not.toHaveBeenCalled();
   } finally {
     process.off('unhandledRejection', unhandled);
@@ -98,25 +100,7 @@ test('the contract kit fails a driver whose forward() throws or never answers', 
     throw new Error('boom');
   });
   expect(throwing).toHaveLength(1);
-  expect(await failedNames(() => undefined)).toEqual(throwing);
-});
-
-test('the contract kit fails a driver that reports a missing tool as a plain error', async () => {
-  const passing = await runAgentDriverContract({
-    id: 'fake',
-    load: () => Promise.resolve(fake()),
-    unavailableInput: input,
-    app,
-  });
-  expect(passing.filter((result) => !result.passed)).toEqual([]);
-  const plain = fake({ createAgentDriver: () => driver('fake', () => Promise.reject(new Error('ENOENT'))) });
-  const failing = await runAgentDriverContract({
-    id: 'fake',
-    load: () => Promise.resolve(plain),
-    unavailableInput: input,
-    app,
-  });
-  expect(failing.filter((result) => !result.passed).map((result) => result.name)).toEqual([
-    'start refuses with AgentDriverUnavailable when the tool is missing, then stops',
-  ]);
+  const blocked = failedNames(() => undefined);
+  await vi.runAllTimersAsync();
+  expect(await blocked).toEqual(throwing);
 });

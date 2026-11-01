@@ -81,6 +81,7 @@ interface ToolTarget {
 }
 
 export interface ToolDeps {
+  hostPlatform: NodeJS.Platform;
   findProjectRoot: typeof findProjectRoot;
   getProject: (root: string) => ProjectRecord | null;
   hostedSlots: (root: string, platform: ToolPlatform) => string[];
@@ -95,6 +96,7 @@ export interface ToolDeps {
 }
 
 const DEFAULT_DEPS: ToolDeps = {
+  hostPlatform: process.platform,
   findProjectRoot,
   getProject,
   hostedSlots: (root, platform) => Object.keys(hostedNativeRecords(readWorkspaceState(root), platform)),
@@ -262,6 +264,10 @@ async function resolveToolTarget(
 ): Promise<ToolTarget | ToolFailure> {
   const slotText = slot === 'default' ? '' : ` --slot ${slot}`;
   const runCommand = `stim ${platform}${slotText}`;
+  const localRemedy =
+    platform === 'ios' && d.hostPlatform !== 'darwin'
+      ? 'Run device tools on a Mac with a local Stim-owned iOS simulator.'
+      : `Run \`${runCommand} --remote local\` to use a local device.`;
   const project = d.getProject(root);
   if (!project) {
     return failure('STIM_NO_PROJECT', `No Stim environment is registered for ${root}.`, 'Run `stim start` first.');
@@ -270,7 +276,7 @@ async function resolveToolTarget(
     return failure(
       TARGET,
       `This workspace's ${platform} device${slotText ? ` in slot ${slot}` : ''} is hosted on another Mac, and device tools act only on the workspace's own local simulator or emulator.`,
-      `Run \`${runCommand} --remote local\` to use a local device.`,
+      localRemedy,
     );
   }
   const remote = d.readRemotePlatform(root);
@@ -278,7 +284,7 @@ async function resolveToolTarget(
     return failure(
       TARGET,
       `This workspace's remote device is EAS Simulator session ${remote.sessionId}, and device tools act only on the workspace's own local simulator or emulator.`,
-      `Run \`${runCommand} --remote local\` to use a local device.`,
+      localRemedy,
     );
   }
   const records = deviceSlotPlatforms(project, slot);
@@ -322,16 +328,12 @@ function noOwnedDevice(platform: ToolPlatform, slot: string, runCommand: string)
   );
 }
 
-export interface PermissionReadBack {
+interface PermissionReadBack {
   name: string;
   granted: boolean;
 }
 
-/** Reads each permission's grant state out of `dumpsys package <id>`; a permission the dump does not list is omitted. */
-export function parsePackagePermissions(
-  dump: string,
-  names: readonly string[],
-): (PermissionReadBack & { flags: string[] })[] {
+function parsePackagePermissions(dump: string, names: readonly string[]): (PermissionReadBack & { flags: string[] })[] {
   const states: (PermissionReadBack & { flags: string[] })[] = [];
   for (const name of names) {
     const match = new RegExp(

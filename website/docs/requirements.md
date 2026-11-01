@@ -68,10 +68,19 @@ version. The tools Stim starts inherit the override.
   `ANDROID_HOME` when neither variable is set.
   With no SDK there and no `android/local.properties`, `stim doctor --platform
 android` reports it and `stim android` refuses with `STIM_BUILD_FAILED`
-  before Gradle runs.
-- For an emulator, an installed Android system image matching the host:
-  `arm64-v8a` on ARM64 or `x86_64` on x64.
+  before Gradle runs. A local React Native or Expo emulator run checks this
+  before starting Metro or preparing a device.
+- For an emulator, an Android system image matching the host: `arm64-v8a` on
+  ARM64 or `x86_64` on x64. When none is installed, `stim android` installs
+  `system-images;android-36;google_apis;<host ABI>` with the SDK's
+  `cmdline-tools/latest/bin/sdkmanager`, which needs the SDK licenses accepted
+  (`sdkmanager --licenses`) and 8 GB free.
 - A working Java and Gradle setup for the project.
+- Without a JDK or the Android SDK, a React Native or Expo app builds and runs
+  on a paired machine approved for builds and hosted emulators:
+  `stim android --remote <machine> --remote-build <machine>`. That machine's
+  JDK and Android SDK are the build's. See
+  [Remote machines](./remote-machines.md#requirements).
 - On Windows, a project root short enough for the NDK's object paths: its
   ninja cannot open a path of 260 characters or more, and a React Native
   codegen object path only fits when CMake can shorten it. A project with

@@ -41,10 +41,10 @@ per-ABI builds `stim android` makes by default; a universal debug build that
 `stim android` makes with `optimizations.android.targetAbiOnly: false` is not
 shared with Expo runs.
 
-An iOS Debug simulator build compiles only this Mac's architecture, so the
-provider keys it on `arm64` or `x86_64`, matching `stim ios`. Other iOS
-configurations and `--device generic` keep the project's architectures and
-their unsuffixed key.
+An iOS simulator build runs on this Mac's architecture, so the provider keys
+it on `arm64` or `x86_64` in every configuration, matching `stim ios`. A Release
+build that Expo compiles still contains every architecture the project lists.
+`--device generic` keeps the project's architectures and the unsuffixed key.
 
 The provider works without the `stim` npm package. When Stim is available,
 the provider registers its cache so `stim gc` can report and trim it.

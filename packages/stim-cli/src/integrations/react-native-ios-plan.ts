@@ -172,7 +172,7 @@ export async function planReactNativeIos(
     });
   }
   const keyArch = (remoteArch: SimulatorArch | null) =>
-    simulatorBuildArch({ physical: false, remoteArch, hostArch: d.hostSimulatorArch(), configuration });
+    simulatorBuildArch({ physical: false, remoteArch, hostArch: d.hostSimulatorArch() });
   let arch = keyArch(null);
   let placement: string | undefined;
   if (iosRemote?.kind === 'machine') {

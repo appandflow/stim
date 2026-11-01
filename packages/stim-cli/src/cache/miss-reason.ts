@@ -47,7 +47,7 @@ function recordedBuilds(state: WorkspaceState | null, platform: StatsPlatform): 
   return builds;
 }
 
-export function projectIdentity(root: string): string | null {
+function projectIdentity(root: string): string | null {
   let real: string;
   try {
     real = realpathSync.native(root);

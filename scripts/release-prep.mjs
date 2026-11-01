@@ -20,6 +20,7 @@ const packageDirs = [
 ];
 const versionPattern =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][\dA-Za-z-]*))*)?$/;
+const licensesPath = join(repositoryRoot, 'apps', 'mobile', 'src', 'generated', 'licenses.json');
 const exactRange = 'workspace:*';
 const usage = 'usage: node scripts/release-prep.mjs <X.Y.Z[-rc.N]>\n       node scripts/release-prep.mjs --check';
 
@@ -146,11 +147,15 @@ if (compareVersions(target, before.version) <= 0) {
   fail(`${target} does not come after ${before.version}, which the packages already carry`);
 }
 
+const regenerateLicenses = !process.env.RELEASE_PREP_SKIP_LICENSES;
+const licensesBefore = regenerateLicenses ? readFileSync(licensesPath, 'utf8') : null;
+
 const rewrites = packageDirs.map((dir) => bumped(dir, before.version, target));
 for (const { dir, after } of rewrites) writeFileSync(manifestPath(dir), after);
 
 const restore = (message) => {
   for (const { dir, before: original } of rewrites) writeFileSync(manifestPath(dir), original);
+  if (regenerateLicenses) writeFileSync(licensesPath, licensesBefore);
   fail(`${message}\nthe manifests were restored to ${before.version}`);
 };
 
@@ -159,6 +164,14 @@ try {
   pnpm(['install', '--frozen-lockfile', '--lockfile-only']);
 } catch {
   restore('pnpm could not refresh the lockfile for the bumped manifests');
+}
+
+if (regenerateLicenses) {
+  try {
+    pnpm(['--filter', 'stim-mobile', 'run', 'licenses']);
+  } catch {
+    restore('apps/mobile could not regenerate src/generated/licenses.json for the bumped manifests');
+  }
 }
 
 const after = audit();
@@ -170,5 +183,6 @@ for (const dir of packageDirs) process.stdout.write(`  ${`packages/${dir}`.padEn
 process.stdout.write(
   `  ${'inter-package ranges'.padEnd(28)}${after.ranges} workspace:* ranges, packed as exact versions\n`,
 );
+if (regenerateLicenses) process.stdout.write(`  ${'apps/mobile licenses.json'.padEnd(28)}regenerated\n`);
 process.stdout.write(`  ${'pnpm-lock.yaml'.padEnd(28)}still matches the manifests\n`);
 process.stdout.write('\nNext: RELEASE.md section 2, step 2.\n');

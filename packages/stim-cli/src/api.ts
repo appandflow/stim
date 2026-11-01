@@ -756,6 +756,13 @@ async function build(context: StimContext, options: StimBuildOptions): Promise<S
 }
 
 async function run(context: StimContext, options: StimRunOptions): Promise<StimRunResult> {
+  const simulatorOnly = options.recordedBuild ? 'recordedBuild' : options.cleanAppState ? 'cleanAppState' : null;
+  if (simulatorOnly && 'device' in options && options.device !== undefined)
+    throw new StimError({
+      code: 'STIM_BAD_ARG',
+      message: `${simulatorOnly} applies to a simulator or emulator, not a physical device.`,
+      remedy: `Drop device, or run without ${simulatorOnly}.`,
+    });
   const root = context.projectRoot;
   switch (options.platform) {
     case 'ios': {

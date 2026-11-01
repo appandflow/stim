@@ -5,13 +5,14 @@ import { platformName, runningBuild, type DeviceRef } from '@/lib/workspaces';
 import type { BuildReport, EnvironmentState } from '@/protocol/types';
 
 /** A running build as spoken: what it builds, the phase, how long it has run, its cache outcome and the time left. */
-export function buildLabel(build: BuildReport, now: number): string {
+export function buildLabel(build: BuildReport, now: number, host?: string | null): string {
   const progress = buildProgress(build, now);
   const platform = platformName(build.platform);
   const { slot } = build;
   const elapsed = spokenDuration(progress.elapsedMs);
+  const title = slot === 'default' ? t`Building ${platform}` : t`Building ${platform}, slot ${slot}`;
   return [
-    slot === 'default' ? t`Building ${platform}` : t`Building ${platform}, slot ${slot}`,
+    host ? t`${title} on ${host}` : title,
     build.phase,
     t`${elapsed} elapsed`,
     outcomeLabel(build),

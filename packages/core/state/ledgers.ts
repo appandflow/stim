@@ -6,11 +6,15 @@ import { createdDevicesFile, easMachineStateRoot, easSessionLedgerFile } from '.
 
 export type CreatedDevicePlatform = 'ios' | 'android' | 'web';
 
-/** `web` lists the absolute paths of browser profile directories Stim created. */
+/**
+ * `web` lists the absolute paths of browser profile directories Stim created. `systemImages` lists the canonical
+ * directories of Android system images Stim installed with sdkmanager.
+ */
 export interface CreatedDevices {
   ios: ReadonlySet<string>;
   android: ReadonlySet<string>;
   web: ReadonlySet<string>;
+  systemImages: ReadonlySet<string>;
 }
 
 function ids(value: unknown): string[] {
@@ -22,10 +26,15 @@ function ids(value: unknown): string[] {
 export function readCreatedDevices(): CreatedDevices {
   try {
     const parsed: unknown = JSON.parse(readStateFile(createdDevicesFile()));
-    if (!isJsonObject(parsed)) return { ios: new Set(), android: new Set(), web: new Set() };
-    return { ios: new Set(ids(parsed.ios)), android: new Set(ids(parsed.android)), web: new Set(ids(parsed.web)) };
+    if (!isJsonObject(parsed)) return { ios: new Set(), android: new Set(), web: new Set(), systemImages: new Set() };
+    return {
+      ios: new Set(ids(parsed.ios)),
+      android: new Set(ids(parsed.android)),
+      web: new Set(ids(parsed.web)),
+      systemImages: new Set(ids(parsed.systemImages)),
+    };
   } catch {
-    return { ios: new Set(), android: new Set(), web: new Set() };
+    return { ios: new Set(), android: new Set(), web: new Set(), systemImages: new Set() };
   }
 }
 

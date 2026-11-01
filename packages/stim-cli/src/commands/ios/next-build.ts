@@ -13,6 +13,7 @@ import type { IosCommandOptions } from './types.ts';
 function runOnlyFlag(opts: IosCommandOptions): string | null {
   if (isPhysicalDeviceRequest(opts.device)) return '--device';
   if (opts.remote) return '--remote';
+  if (opts.installRuntime) return '--install-runtime';
   if (opts.wait !== undefined) return opts.wait === false ? '--no-wait' : '--wait';
   if (opts.simulatorApp !== undefined) return '--simulator-app';
   if (opts.metroCheck === false) return '--no-metro-check';

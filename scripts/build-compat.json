@@ -4,7 +4,6 @@
     "packages/core/dependency-install.ts",
     "packages/core/react-native-artifact.ts",
     "packages/core/swiftpm-artifact.ts",
-    "packages/server/src/build-artifact-cache.ts",
     "packages/server/src/build.ts",
     "packages/stim-cli/shim/android-cas-pch.cmake",
     "packages/stim-cli/shim/android-cas.gradle",
@@ -25,6 +24,7 @@
     "packages/stim-cli/src/engine/xcode.ts",
     "packages/stim-cli/src/integrations/",
     "packages/stim-cli/src/macos/stage.ts",
+    "packages/stim-cli/src/offload/build-artifact-cache.ts",
     "packages/stim-cli/src/offload/manifest.ts",
     "packages/stim-cli/src/offload/native-source.ts",
     "packages/stim-cli/src/offload/react-native-artifact.ts",
@@ -34,5 +34,5 @@
     "packages/stim-cli/src/optimizations.ts",
     "packages/stim-cli/src/supervisor/project-node.ts"
   ],
-  "digest": "fb4b356e35342dc3bdd29bcb95dabf7d20d5c7031976d8ae6a7f6aca937ea33c"
+  "digest": "03d064720d78bf3bfc34ce5f939a81e5157eb9147bdd6d510aa5f09cf573bd52"
 }

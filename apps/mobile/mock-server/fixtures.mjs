@@ -8,6 +8,7 @@ export function loadFixtures({ slotWaits = false, capacity = false } = {}) {
   const status = JSON.parse(readFileSync(fixture('status.json'), 'utf8'));
   for (const platform of ['ios', 'android'])
     status.payload.environments.push(...JSON.parse(readFileSync(fixture(`hosted-${platform}.json`), 'utf8')));
+  status.payload.environments.push(...JSON.parse(readFileSync(fixture('linux-owner.json'), 'utf8')));
   if (slotWaits) {
     const changes = JSON.parse(readFileSync(fixture('slot-waits.json'), 'utf8')).environments;
     status.payload.environments = status.payload.environments.map((env) =>

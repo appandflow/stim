@@ -258,10 +258,40 @@ Advanced > Feature flags** lists them with **Reset to Defaults**. Code asks `Fea
 (StimKit), or `FeatureFlagStore.shared` from a view. A launch argument such as `-featureFlag.phoneApp YES` sets a
 flag for one run.
 
-**Phone app** is off by default. Off, Desktop hides the Phones page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
+**Phone app** is off by default. Off, Desktop hides the Paired Devices page, the phone steps of the setup guide and tutorial, the `phone.away` suggestion and mentions of
 phones in copy. It never revokes a pairing. Desktop's own stim-server then listens on loopback only. A Mac that already serves phones or has a
 paired phone gets the flag on at first launch with flags. The phone app is documented in
 `website/docs/phone-app.md`.
+
+**Paired machines** is off by default. On, **Settings > Paired Machines** lists this Mac's pairings with other machines'
+stim-servers and opens **Pair with a Machine...**, which takes the output of `stim-server pair` (the bare JSON or the
+`{ qr, expiresAt }` form of `--json`). `PairedServers` (StimKit) holds the list and the pairing in progress: one
+`ServerClient` per pairing while the flag is on, reporting the connection and recording each `hello` back to the store, and one
+pairing at a time. Items live in the data-protection Keychain, one per pairing, and an ad-hoc copy
+keeps them in memory only. An item that cannot be decoded shows as unreadable with Forget. Forget deletes the key
+and shows `stim-server devices revoke <id>`; it does not revoke on the machine. A key the Keychain cannot read
+right now is tried again, not reported as revoked.
+
+`PairedServerSessions` wraps each of those clients in a `ServerSession` (owner `.paired(<pairing id>)`), so a pairing
+has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
+projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
+Control** for a `--control` pairing), and its
+workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
+rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
+row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
+("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
+floco". An iOS or Android device row, own or hosted, and a hosted macOS app open `DeviceViewer` with the pairing's
+owner: `DeviceTile` streams it through `PhysicalDeviceScreen` on that server's `ServerSession`, with messages from
+`PhysicalScreen(pairedDevice:)`, which never offer a command to run here. The viewer has no replay, agent action list,
+run notice, Stop or device menu for a paired device, and it does not take control on open; **Control** appears only
+when `OwnedDevice.offersControl` finds the server granting `control`. **Reload App** and **Stop** come from
+`PairedAccess`: the known actions (`reload`, `stop`) the open connection's `hello.actions` lists, run with the
+server's `action` method by `ServerSession.runPairedAction`. A read-only pairing shows both disabled with the grant
+command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
+page has no logs, files or settings, and no context menu beyond Hide. **Machines** lists each paired server after the
+build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
+servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
+With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
 
 ## Hiding a workspace
 
@@ -297,7 +327,7 @@ expiry means nothing was kept. Recording expiry is a label: retained replay span
 available regardless of the client clock. Archived pages offer
 no live device or workspace actions. An older server shows an update hint for archive
 requests that require a workspace instead of an archive; other refusals show the server's
-message. Connect through the Phones page to read logs and replay.
+message. Connect through the Paired Devices page to read logs and replay.
 
 Each of Logs, Recordings and Agent actions has a **Clear** button that, after a confirmation, deletes that kind of that archive through
 `stim gc --delete --cache archived-logs:<id>` (`archived-recordings:<id>`, `archived-agent:<id>`) and keeps the record; the row then reads Cleared until the page is left, and None kept after.
@@ -645,10 +675,21 @@ version with `gc --json`.
 **Machines** has a selector for **This Mac** and its configured remote Macs
 (see [Remote Machines](#remote-machines)), with visible choices across the top and
 a menu when they do not fit. **Link Machine** opens **Settings >
-Remote Machines**. Select **This Mac** for **Now**, where its builds ran and
-**Disk on this Mac**; select a remote Mac for its readiness, capacity and
-build history. Removing a selected machine returns the page to **This Mac**.
-**Now** is what uses the Mac's CPU and memory at this
+Remote Machines**. Selected machines use the accent color; other choices have neutral
+surfaces and remote readiness labels. Select **This Mac** for **Overview**,
+**Builds**, and **Storage** tabs; select a remote Mac for its readiness, capacity
+and build history. Removing a selected machine returns the page to **This Mac**.
+**Overview** puts whole-Mac memory, tracked-process CPU and available disk space
+in one compact row, stacking the cards in a narrow window. It shows the three
+largest process groups, with **View all processes** to expand the list, and a
+**Storage to reclaim** summary. **Review cleanup** opens the Storage tab without
+running a cleanup command. Its total includes measured cleanup candidates,
+including optional caches; the checklist still decides what to free. Unknown
+candidate sizes make the total a lower bound. **Builds** shows the latest build
+placements, or explains why no history is available. The Overview also shows
+the latest three placements when available.
+
+**Top resource users** shows what uses the Mac's CPU and memory at this
 moment, from the `machine` section of the status watch, which refreshes it
 every 15 seconds while something runs. Each row is a booted simulator or
 emulator with its workspace (or "Not Stim's"), a workspace's Metro, running
@@ -657,13 +698,15 @@ CoreSimulator services, the adb server or a Gradle daemon. Rows show CPU (100%
 is one core) and memory, largest memory first so rows stay in place
 as CPU changes; each process counts in one row only. A workspace's owned simulator or emulator has **Shut down**, which
 runs `stim stop --slot <slot>`, and its Metro has **Stop**, which runs
-`stim stop`. Nothing Stim does not own has an action. Two sparklines above the
+`stim stop`. Nothing Stim does not own has an action. The information button
+explains measurement scope and the difference between row CPU (one core) and
+summary CPU (a share of the whole Mac). Two sparklines above the
 list follow the Mac's memory in use and the rows' total CPU, sampled every 3
 seconds while the window is visible, so the CPU line steps with the 15-second
 refresh. When workspaces are active but `machine` is missing, the band says live
 usage is unavailable instead of listing nothing.
 
-Under **Disk on this Mac**, the page shows what uses disk space, largest first,
+Under **Storage**, the page shows what uses disk space, largest first,
 and what Stim can free. It never blocks on a measurement: the device, runtime
 and cache sizes come from `stim gc --json`, and the app sizes only folders
 outside `$STIM_HOME` with `du`, each path on its own, three at a time. A path
@@ -673,13 +716,13 @@ when nothing is on disk, an ellipsis while it is measured, **Unknown** when it
 could not be sized, or a dash before the first measurement, with the reason in
 its help tag.
 
-The processes under **Now**, **Safe to free now**, **Projects**,
+**Free Disk Space**, **Repositories and Worktrees**,
 **Simulators and Emulators** and **Runtimes and System Images** each have a
 header with a disclosure chevron and a count. A collapsed section shows only
 its header. An expanded one shows its first 10 rows in their usual order, then
-**Show All** or **Show Fewer**. For **Projects** the 10 are repositories; an
-expanded repository lists all of its worktrees. An expanded **Safe to free
-now** always lists every row, so none of the rows **Free** acts on are hidden.
+**Show All** or **Show Fewer**. For **Repositories and Worktrees** the 10 are repositories; an
+expanded repository lists all of its worktrees. An expanded **Free Disk Space**
+always lists every row, so none of the rows **Free** acts on are hidden.
 Free still previews or confirms its commands first, collapsed or not. The app
 remembers each section's choices in its own preferences.
 
@@ -812,7 +855,7 @@ back), the cache result, the duration and the outcome. The filters choose a proj
 machine (**This Mac** or a build machine) and an outcome. Clicking a row opens its phases as bars, the
 failure code, message and remedy of a failed build, and the device, cache key and fingerprint. The model
 is `BuildLedger` in `StimKit` (parsing, filters, day groups and the phase timeline), which the tests in
-`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.25.0 or older), the page says to
+`BuildLedgerTests` cover. With a `stim` that has no build ledger (1.26.0 or older), the page says to
 update `stim`.
 
 ## Logs
@@ -1135,8 +1178,10 @@ as a build worker, still installs `@stim-cli/server` from npm. Replay, the diff 
 views and device recordings all read from it. At launch the app checks
 `http://127.0.0.1:7787/health`. When a server answers, the app uses it if
 Desktop uses the default home or the server serves Desktop's resolved
-home; otherwise it names both homes and asks you to stop that server or launch
-Desktop with `-stimServerPort <port>`. A server the app did not start, such as the
+home. When a different explicit Stim home needs its own loopback-only server,
+Desktop lets the OS choose a free port instead; hosted test copies use this path.
+An explicit `-stimServerPort <port>` or serving phones keeps the selected port
+and reports a home mismatch. A server the app did not start, such as the
 `stim-server service` LaunchAgent on a Mac that hosts for others, is never stopped
 or reconfigured and keeps running after the app quits. If no server answers, the app runs
 `stim-server --port 7787 --loopback-only`, which listens on `127.0.0.1` and never on
@@ -1162,7 +1207,7 @@ scripts in `~/Library/Caches/<bundle id>/node-compile-cache`; it removes
 `NODE_COMPILE_CACHE` from its environment before it starts anything, so commands it
 runs, such as Metro or Gradle, never write there. A test copy can move the port from 7787 with
 `defaults write <bundle id> stimServerPort -int <port>`, so it never adopts
-the Mac's own server. While a server runs, the Phones tab re-checks it every 5
+the Mac's own server. While a server runs, the Paired Devices tab re-checks it every 5
 seconds and the app every 10 seconds while it is active, otherwise every 60
 seconds. When a server the app did not start misses two checks in a row, the app starts its
 own. With the Phone app on and **Serve to phones** on, Desktop starts its server without
@@ -1191,7 +1236,7 @@ server the app started in loopback-only mode and never touches one it did not st
 turning it on after a failed start tries again.
 
 A server answering health with HTTP 503 appears as **Starting** or
-**Degraded** with its reason in the Phones page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
+**Degraded** with its reason in the Paired Devices page (or **Settings > Advanced** with the Phone app off); the footer icon shows only Degraded. Desktop keeps
 checking it without starting another server or terminating one it launched.
 For a server it launches, Desktop checks every 250 milliseconds until it is
 ready or the 15-second startup deadline passes, then uses its regular poller.
@@ -1230,7 +1275,7 @@ stays valid until it expires. **Can't Scan? Enter the Endpoint and Token** shows
 copyable **Endpoint** and **Token** fields, with the token hidden until revealed. The wizard
 waits for the phone and shows its name and access on the success screen.
 
-The Phones tab lists paired phones from `stim-server devices --json`: each
+The Paired Devices tab lists paired phones from `stim-server devices --json`: each
 phone's name, when it was last seen and a **View Only** or **Can control**
 badge. Its menu has **Allow Control** or **View Only**, which runs
 `stim-server devices grant <id> --control` or `--read`, and **Revoke...**,
@@ -1240,7 +1285,7 @@ problem that stops phones from connecting shows as one line above the list:
 serving off (**Turn On**), or Tailscale off, a missing route or a Funneled
 route (**Fix...**, which opens the wizard at its Tailscale step). Below the
 list, the **Server** section holds **Serve to phones** and the server's version
-and port. With the Phone app flag off there is no Phones tab. **Settings >
+and port. With the Phone app flag off there is no Paired Devices tab. **Settings >
 Advanced** holds **Record device screens for replay** and a **stim-server**
 section with the server's status, **Try Again** after a failure and the
 executable override.
@@ -1565,9 +1610,10 @@ checks a machine that reports an incompatible Stim build. It runs once per machi
 reason each time Desktop launches. Either way, the machine gets this Mac's build.
 
 The **Machines** page shows where builds ran. While `remote.machines` names a
-machine, **Where Builds Ran** under **This Mac** counts today's compiling builds that built here, on a remote Mac, or
+machine, **Where builds ran** under **This Mac > Builds** counts today's compiling builds that built here, on a remote Mac, or
 here after trying one, and lists the latest placements with the reason Stim
-gave, such as `load 0.6/core, 1 of 3 build slots busy here`. Selecting an
+gave, such as `load 0.6/core, 1 of 3 build slots busy here`. **Overview** shows
+the latest three placements. Selecting an
 `remote.machines` entry shows its state and first reason from
 doctor (the same check as Settings, each minute while the page is open), its
 problems and notes by platform (as on the machine's page in Settings), its
@@ -2019,7 +2065,7 @@ Choose live or archived Workspaces, Notifications, Builds, Simulator controls, S
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
-Settings covers the four configuration scopes, not the App, Phones or Remote Machines tabs.
+Settings covers the four configuration scopes, not the App, Paired Devices or Remote Machines tabs.
 
 **Compact** sets the fixture viewport to 380 points; regular is 900 points. Switch light/dark,
 large text and increased contrast without changing system preferences. Reduce Motion follows the Mac's current accessibility setting because SwiftUI does not expose a writable override. Filters,

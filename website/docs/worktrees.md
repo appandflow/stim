@@ -68,6 +68,29 @@ path, warm applies the same rewrite and scan, so builds do not read the source
 checkout's files (entitlements, `Podfile.properties.json`). If it cannot, warm
 deletes `ios/Pods/Manifest.lock` so `stim ios` runs `pod install`.
 
+In an Expo project whose `ios/` or `android/` Git ignores (Continuous Native
+Generation), warm copies that directory only when the source checkout's last
+Stim prebuild of it ran on the app's current native fingerprint. It then records
+the same prebuild in the worktree, so the first `stim ios` or `stim android`
+there does not run `expo prebuild` when the worktree's fingerprint is the same.
+Otherwise warm leaves the directory out, with its Pods and build output, and
+prints why on stderr:
+
+```text
+carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here
+```
+
+A directory generated outside Stim, for example by `npx expo prebuild` or
+`npx expo run:ios`, has no record, so warm leaves it out. To make it eligible,
+delete it in the source checkout and run `stim ios` or `stim android` there,
+so Stim generates it fresh and records that. Running Stim over the existing
+directory instead updates it in place and records it as current even when it
+came from an older template. Leaving out a directory Stim cannot vouch for
+keeps an older Expo or React Native template out of every worktree: Stim runs
+`expo prebuild` without `--clean` over an existing directory, which keeps
+template files such as the Podfile. Checking a recorded directory costs one
+native fingerprint per platform, about a second.
+
 Wait for warm to exit successfully before editing, installing dependencies,
 starting Metro/builds in that worktree. Concurrent warms into the same target
 wait on its exclusive copy claim. **Other concurrent writes to the destination
@@ -77,8 +100,8 @@ Concurrent files can be overwritten or removed.
 Stim excludes:
 
 - Nested registered Git worktrees, including ignored parents containing them.
-- Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, and `android/build/generated/autolinking`.
-- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Warm renames these paths into `$STIM_HOME/trash` and a detached, low-priority `rm` deletes them after the command returns (through the [programmatic API](./programmatic-api.md), before the call resolves); on Windows, or when `$STIM_HOME` is on another volume than the worktree, warm deletes them before it returns. Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
+- Ignored entries named `.DS_Store`, `.DerivedData`, `.idea`, `.jj`, or `.pnpm-store`, `android/build/generated/autolinking`, and `.expo/types`.
+- From a copied directory, these known paths: `.pnpm-store` in `node_modules` (a project-local pnpm store duplicates the global one, and pnpm refills it when it needs to), `android/build/generated/autolinking` under a copied `android`, `android/build`, or `android/build/generated` (Gradle regenerates it for the new checkout), `types` in a copied `.expo` (Expo Router's typed routes, which the source checkout may have generated from older routes; Expo regenerates them on the worktree's first `expo start`), and `expo-modules-jsi/apple/.DerivedData` in `node_modules`, hoisted or in the pnpm virtual store (Xcode build state that records the source checkout's paths). Warm renames these paths into `$STIM_HOME/trash` and a detached, low-priority `rm` deletes them after the command returns (through the [programmatic API](./programmatic-api.md), before the call resolves); on Windows, or when `$STIM_HOME` is on another volume than the worktree, warm deletes them before it returns. Stim does not walk copied directories, so a `.DS_Store` or `.idea` inside one stays, and so do these paths inside an ignored directory that Git reports above those names, such as an app directory with no tracked files.
 - Paths matched by the source checkout's nonempty `.worktreeexclude`, or its
   resolved `worktree.exclude` setting when that file is absent or empty.
 - Destination paths that overlap a registered nested worktree or have symlink
@@ -113,7 +136,8 @@ with recovery instructions. A completed copy does not prove dependencies are ins
 match the current branch. When the carried `node_modules` records the lockfile
 it was installed from (npm `node_modules/.package-lock.json`, pnpm
 `node_modules/.pnpm/lock.yaml`, Yarn `node_modules/.yarn-integrity` or
-`node_modules/.yarn-state.yml`), warm compares it with this worktree's lockfile
+`node_modules/.yarn-state.yml`), warm compares it with this worktree's lockfile,
+the nearest one at or above that `node_modules` within the worktree,
 and prints the install command when they differ. A pnpm install run with
 `--filter` or `--prod` records only part of the lockfile and also reads as a
 difference. Otherwise it compares the source checkout's lockfile with
@@ -222,6 +246,11 @@ workspace `[warming: copy]`, `[ready]` or `[idle]`. A warm that finds no app
 registers nothing, and the worktree stays in `unprovisionedWorktrees` until
 `start`, `ios`, `android`, or `doctor` registers it.
 
+A registered workspace whose folder was deleted outside Stim reads as `idle`
+with `pathMissing: true` in `stim status --json` and the marker
+`[folder missing]`; `stim worktree remove <path>` or `stim gc --delete` removes
+the entry.
+
 Each worktree also reports its git state: the number of changed and untracked
 files, its upstream with commits ahead and behind, and whether its branch is
 merged into the default branch. In `--json` that is the `git` object on each
@@ -301,6 +330,14 @@ On the source checkout, `worktree remove` only reclaims the Stim environment.
 It does not remove that checkout. Run from the checkout root, it reclaims every
 registered project under it. Run from a subfolder such as `apps/mobile`, it
 reclaims only the project at or above that folder, with the projects nested under it.
+
+A worktree deleted outside Stim, with `git worktree remove` or `rm -rf`, stays
+registered and shows as `[folder missing]` in `stim status`. Pass its path to
+`worktree remove` to drop the record of that path and of the projects registered
+under it, with their owned devices, leases and workspace directory. This works
+only when the folder is gone from a mounted volume; a path on a volume that is
+not mounted is kept and refused, since the folder may come back. `gc --delete`
+prunes every such entry.
 
 `worktree remove` refuses a worktree that a `stim-server service` runs from,
 even with `--force` (`STIM_WORKTREE_SERVICE`): deleting the folder would delete

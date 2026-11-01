@@ -539,7 +539,7 @@ public struct MachineReadiness: Equatable, Sendable {
 }
 
 func formatLoad(_ value: Double) -> String {
-  value == value.rounded() ? String(Int(value)) : String(value)
+  Int(exactly: value).map(String.init) ?? String(value)
 }
 
 /// A tailnet machine that is already in `remote.machines`, with the state `stim doctor` found for it.
