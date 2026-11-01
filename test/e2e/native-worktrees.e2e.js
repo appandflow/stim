@@ -183,6 +183,7 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
   });
   const sh = h.sh;
   let prepared = false;
+  let recorded = false;
   h.sh = (file, argv, opts) => {
     if (file === 'npx' && argv[2] === 'install') {
       assert.deepEqual(argv, ['--no-install', 'expo', 'install', 'expo-build-properties']);
@@ -192,6 +193,10 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
     if (file === 'npx') {
       assert.deepEqual(argv, ['--no-install', 'expo', 'prebuild', '--platform', 'ios']);
       assert.equal(existsSync(join(opts.cwd, '.git')), false);
+      assert.equal(
+        JSON.parse(readFileSync(join(opts.cwd, '.stim.json'), 'utf8')).ios.simslimProfile,
+        '.stim-simslim.json',
+      );
       assert.deepEqual(JSON.parse(readFileSync(join(opts.cwd, 'app.json'), 'utf8')).expo.plugins, [
         ['fixture-plugin', { enabled: true }],
         ['expo-build-properties', { android: { compileSdkVersion: 36 }, ios: { enableSceneSupport: true } }],
@@ -203,10 +208,18 @@ writeFileSync(join(app, '.stim.json'), JSON.stringify({ios:{deviceType:'iPhone 1
       prepared = true;
       return { code: 0, stdout: '', stderr: '' };
     }
+    if (file === process.execPath && basename(argv[1]) === 'record-fixture-prebuild.mjs') {
+      assert.equal(prepared, true);
+      assert.equal(git(opts.cwd, 'status', '--porcelain'), '');
+      assert.equal(git(opts.cwd, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
+      recorded = true;
+      return { code: 0, stdout: '', stderr: '' };
+    }
     if (file === 'git' && argv[0] === 'init') assert.equal(prepared, true);
     return sh(file, argv, opts);
   };
   const app = createFixture({ framework: 'expo', platform: 'ios', workDir, h });
+  assert.equal(recorded, true);
   assertMatchingPods(app);
   assert.equal(git(app, 'status', '--porcelain'), '');
   assert.equal(git(app, 'show', 'HEAD:package.json'), '{"name":"prepared-fixture"}');
