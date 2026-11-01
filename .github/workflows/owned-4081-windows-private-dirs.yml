@@ -1,0 +1,27 @@
+name: Owned 4081 Windows directory-only diagnosis
+on:
+  push:
+    branches: [codex/4081-windows-private-dirs-probe]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Exact private-directory script with inherited and omitted module path
+        timeout-minutes: 3
+        shell: pwsh
+        run: node scripts/4081-owned-proof/windows-private-dirs-probe.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned4081-private-dirs
+          path: ${{ runner.temp }}/owned4081-private-dirs.json
+          if-no-files-found: warn
