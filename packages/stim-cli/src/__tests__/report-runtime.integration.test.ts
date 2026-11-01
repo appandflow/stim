@@ -32,19 +32,15 @@ import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } fr
 let scratch: string;
 let fixtureAbort: AbortController;
 let pending: Set<Promise<unknown>>;
-let diagnosticEvents: unknown[] | undefined;
 beforeEach(() => {
   scratch = realpathSync(mkdtempSync(join(tmpdir(), 'stim-report-runtime-')));
   fixtureAbort = new AbortController();
   pending = new Set();
-  diagnosticEvents = undefined;
 });
 afterEach(async () => {
   vi.useRealTimers();
-  diagnosticEvents?.push({ event: 'fixture-cleanup-abort', time: new Date().toISOString() });
   fixtureAbort.abort();
   await Promise.allSettled(pending);
-  if (diagnosticEvents) console.log('STIM_3865_TRACE', JSON.stringify(diagnosticEvents));
   // https://github.com/nodejs/node/issues/64016: Windows rmSync can ignore retryDelay.
   await rm(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
@@ -71,19 +67,7 @@ function reapFixtureChild(record: { pid: number; processToken: string } | undefi
   }
 }
 
-// https://github.com/appandflow/stim/issues/3865
 test('cancelling a report reaps its child and leaves another client running', async () => {
-  const started = performance.now();
-  const events: unknown[] = [];
-  diagnosticEvents = events;
-  const trace = (event: string, details?: unknown) => events.push({ ms: performance.now() - started, event, details });
-  const describeFailure = (error: unknown) =>
-    error && typeof error === 'object'
-      ? Object.fromEntries(
-          ['name', 'message', 'code', 'signal', 'stdout', 'stderr'].map((key) => [key, Reflect.get(error, key)]),
-        )
-      : String(error);
-  trace('begin', { time: new Date().toISOString(), parentPid: process.pid });
   const controller = new AbortController();
   let pid: number | undefined;
   const one = runReport(context(controller.signal), async () =>
@@ -91,49 +75,22 @@ test('cancelling a report reaps its child and leaves another client running', as
       timeoutMs: 10_000,
       onSpawn: (child) => {
         pid = child.pid;
-        trace('controlled-onSpawn', { pid });
-        child.once('spawn', () => trace('controlled-spawn', { pid: child.pid }));
-        child.once('exit', (code, signal) => trace('controlled-exit', { pid: child.pid, code, signal }));
-        child.once('close', (code, signal) => trace('controlled-close', { pid: child.pid, code, signal }));
-        child.stdout?.once('data', (chunk) => {
-          trace('controlled-ready', { pid: child.pid, stdout: String(chunk) });
-          trace('controlled-abort');
-          controller.abort();
-        });
+        child.stdout?.once('data', () => controller.abort());
       },
     }),
   );
   const failure = one.then(
-    () => {
-      trace('controlled-resolve');
-      return null;
-    },
-    (error: unknown) => {
-      trace('controlled-reject', describeFailure(error));
-      return error;
-    },
+    () => null,
+    (error: unknown) => error,
   );
   const other = runReport(context(new AbortController().signal), async () =>
     getExecutor().runFileAsync(process.execPath, ['-e', 'setTimeout(() => console.log("other client"), 150)'], {
       timeoutMs: 10_000,
-      onSpawn: (child) => {
-        trace('sibling-onSpawn', { pid: child.pid });
-        child.once('spawn', () => trace('sibling-spawn', { pid: child.pid }));
-        child.once('exit', (code, signal) => trace('sibling-exit', { pid: child.pid, code, signal }));
-        child.once('close', (code, signal) => trace('sibling-close', { pid: child.pid, code, signal }));
-        child.stdout?.once('data', (chunk) => trace('sibling-output', { pid: child.pid, stdout: String(chunk) }));
-      },
     }),
   );
   const otherResult = other.then(
-    (value) => {
-      trace('sibling-complete', { stdout: value });
-      return value;
-    },
-    (error: unknown) => {
-      trace('sibling-reject', describeFailure(error));
-      return error;
-    },
+    (value) => value,
+    (error: unknown) => error,
   );
   expect(await failure).toBe(controller.signal.reason);
   if (pid === undefined) throw new Error('The controlled child did not start');
