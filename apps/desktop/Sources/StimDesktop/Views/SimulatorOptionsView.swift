@@ -71,6 +71,25 @@ struct SimulatorOptionsView: View {
   }
 
   var body: some View {
+    Group {
+      if tools != nil {
+        ScrollView { options }
+          .frame(width: 300 + Space.lg * 2, height: 600)
+      } else {
+        options
+      }
+    }
+    .task(id: canControl) {
+      guard canControl else { return }
+      await SimulatorOptionsPolling.run { await poll() }
+    }
+    .onDisappear { operation?.cancel() }
+    .onChange(of: canControl) { _, allowed in
+      if !allowed { operation?.cancel() }
+    }
+  }
+
+  private var options: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
         Text("Simulator Options").font(.stim(.headline))
@@ -129,14 +148,6 @@ struct SimulatorOptionsView: View {
     .controlSize(.small)
     .frame(width: 300)
     .padding(Space.lg)
-    .task(id: canControl) {
-      guard canControl else { return }
-      await SimulatorOptionsPolling.run { await poll() }
-    }
-    .onDisappear { operation?.cancel() }
-    .onChange(of: canControl) { _, allowed in
-      if !allowed { operation?.cancel() }
-    }
   }
 
   @ViewBuilder private func mode(_ appearance: SimulatorAppearance) -> some View {
