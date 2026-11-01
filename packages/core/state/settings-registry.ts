@@ -738,7 +738,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'warning',
     env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
     description:
-      'Lowest macOS memory pressure level considered; off disables memory pressure reporting and the daemon stop it triggers',
+      'Lowest macOS memory pressure level considered; off disables memory pressure reporting and the automatic Gradle daemon stop on every platform',
   },
   {
     key: 'maintenance.memoryWarningMinutes',
