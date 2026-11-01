@@ -1903,7 +1903,8 @@ connected since stim-server started keeps its directory when revoked.
   `fingerprint` then returns the development archive this machine retained
   under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
   `build-busy` while the offer would be declined, naming the reason, or while
-  another build of the same client and repository runs, or while every one
+  another build of the same client and repository runs or a cancelled Android
+  one is still in its 15-second hold, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `compat` differs from this machine's, or, when either
   side has no `compat`, when `stimBuild` differs. The build runs `offload-worker.mjs` of the bundled Stim with

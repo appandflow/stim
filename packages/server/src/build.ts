@@ -398,6 +398,8 @@ interface Job {
   settled: boolean;
   cancel: () => void;
   done: Promise<void>;
+  /** Settles once its repository claim is released, which can trail `done` while Gradle finishes cancelling. */
+  released: Promise<void>;
   send: (event: BuildProgressEvent) => void;
   session: BuildSession | null;
   grace: NodeJS.Timeout | null;
@@ -939,7 +941,7 @@ export class BuildHost {
     const jobs = [...this.jobs].filter((job) => job.client === client);
     for (const job of jobs) job.cancel();
     const queriesSettled = await this.stopQueries(client);
-    await Promise.all(jobs.map((job) => job.done));
+    await Promise.all(jobs.map((job) => job.done.then(() => job.released)));
     if (!queriesSettled) {
       console.error(`stim-server: retaining the build area of ${client} because artifact query cleanup is unresolved.`);
       return;
@@ -1030,7 +1032,7 @@ export class BuildHost {
         if (attempt.pending) releaseClaim(attempt.pending);
         return refusal(
           'build-busy',
-          'Another build of this repository is running on this machine, or a cancelled one is still stopping.',
+          'Another build of this repository is running on this machine, or an ended one is still stopping.',
         );
       }
       claim = attempt.acquired;
@@ -1131,6 +1133,7 @@ export class BuildHost {
       settled: false,
       cancel,
       done: Promise.resolve(),
+      released: Promise.resolve(),
       send,
       session,
       grace: null,
@@ -1184,7 +1187,12 @@ export class BuildHost {
           const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
           if (gradle && (cancelled || (!outcome.ok && outcome.code === 'worker-exited'))) {
             releaseClaim(slot);
-            setTimeout(() => releaseClaim(claim), this.limits.gradleCancelDrainMs).unref();
+            entry.released = new Promise<void>((released) =>
+              setTimeout(() => {
+                releaseClaim(claim);
+                released();
+              }, this.limits.gradleCancelDrainMs).unref(),
+            );
           } else releaseClaims();
           if (
             entry.outcome?.ok &&
