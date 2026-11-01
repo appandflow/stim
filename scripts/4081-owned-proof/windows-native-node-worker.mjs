@@ -18,8 +18,9 @@ const save=(name,value)=>{
  else if(name==='versions.json')summary={reactNative:value.reactNative,lockedReactNative:value.lockedReactNative,versions:value.versions,toolchain:{compat:value.toolchain.compat,arch:value.toolchain.arch,jdk:value.toolchain.jdk,androidSdk:value.toolchain.androidSdk},effectivePathNotPinDiscovery:true};
  else if(name==='budget.json')summary={deadline:value.deadline,modeStartedAt:value.modeStartedAt,remainingMs:value.remainingMs};
  else if(/^acl-(22-first|24-switch|22-return)\.json$/.test(name))summary={owner:value.owner,me:value.me,rules:value.rules};
- else if(name==='failure.json')summary={failed:true,kind:'native-observation',checkpoint,workerCode,budgetExpired:Date.now()>=deadline};
- else if(name==='worker-diagnostics.json')summary={checkpoint,wave:waveNow,workerCode,workerOk,phaseCounts,workerTimings};
+ else if(name==='failure.json')summary={failed:true,kind:'native-observation',checkpoint,workerCode,workerFailure,budgetExpired:Date.now()>=deadline};
+ else if(name==='diagnosis.json')summary={diagnosisOnly:true,reachedSync:value.reachedSync===true,cancelAcknowledged:value.cancelAcknowledged===true,workerCode,workerFailure,phaseCounts};
+ else if(name==='worker-diagnostics.json')summary={checkpoint,wave:waveNow,workerCode,workerFailure,workerOk,phaseCounts,workerTimings};
  if(summary!==undefined){const out=join(base,'evidence');mkdirSync(out,{recursive:true});writeFileSync(join(out,name),JSON.stringify(summary,null,2));}
 };
 const put=(n,v)=>{mkdirSync(dirname(n),{recursive:true});writeFileSync(n,v);};
@@ -54,8 +55,16 @@ const events=[],connections=[],jobs=[],identities=[],homes=new Set();let repo,pa
 const record=v=>{events.push({at:Date.now(),...v});save('events.json',events);};
 const codes=new Set(['worker-crashed','worker-exited','cancelled','cleanup-unresolved','bad-project','deps-failed','build-refused','bad-request','no-fingerprint','fingerprint-mismatch','fingerprint-moved','prebuild-refused','prebuild-failed','build-failed','timeout','closed','dropped']);
 const phases=['sync','deps','prebuild','pods','build','cache','package'];
-let checkpoint='bootstrap',waveNow=null,workerCode='none',workerOk=false,phaseCounts=Object.fromEntries(phases.map(p=>[p,0])),workerTimings={};
+const classifyWorkerFailure=message=>{
+ if(typeof message!=='string')return 'unknown';
+ if(message.startsWith('Could not prepare the private Windows build directories:'))return 'private-windows-directories';
+ if(message.startsWith('Command failed: git '))return 'git-command-failed';
+ const code=/^(?:spawnSync (?:git|powershell\.exe) )?(ENOENT|EACCES|EPERM|EINVAL|ENAMETOOLONG|ENOTDIR|EEXIST|EBUSY|ENOSPC|ETIMEDOUT)(?=[: ])/u.exec(message)?.[1];
+ return code?'os-'+code.toLowerCase():'unknown';
+};
+let checkpoint='bootstrap',waveNow=null,workerCode='none',workerFailure='none',workerOk=false,phaseCounts=Object.fromEntries(phases.map(p=>[p,0])),workerTimings={};
 const diagnostics=()=>save('worker-diagnostics.json',{});
+let diagnosticSyncReached=false,diagnosticCancel=null,diagnosticCancelAcknowledged=false;
 let server,serverClosed=false,clientId,observer,timer,clean=false;
 const wait=async(p,why,ms=30_000)=>{const until=Date.now()+ms;while(!p()){assert(Date.now()<until,why);await new Promise(r=>setTimeout(r,25));}};
 const inventory=async()=>{const text=await listCommandLines();return {text,daemons:clientId&&repo?workerGradleDaemons(text,join(home,'build-worker'),'win32',[{client:clientId,repo}]):[]};};
@@ -85,8 +94,8 @@ run('git',['init','-q','--initial-branch=main'],{cwd:source});run('git',['add','
 const rows=[];
 save('budget.json',{deadline,modeStartedAt:Date.now(),remainingMs:deadline-Date.now()});
 timer=setTimeout(()=>{record({budgetExpired:true});for(const j of jobs)void j.connection.request('build.cancel',{job:j.id}).catch(()=>{});},Math.max(1,deadline-Date.now()));
-for(const [wave,version] of [['22-first',versions[0][1]],['24-switch',versions[1][1]],['22-return',versions[0][1]]]){
- checkpoint='wave-preparation';waveNow=wave;workerCode='none';workerOk=false;phaseCounts=Object.fromEntries(phases.map(p=>[p,0]));workerTimings={};diagnostics();
+for(const [wave,version] of [['22-first',versions[0][1]]]){
+ checkpoint='wave-preparation';waveNow=wave;workerCode='none';workerFailure='none';workerOk=false;phaseCounts=Object.fromEntries(phases.map(p=>[p,0]));workerTimings={};diagnostics();
  assert(Date.now()<deadline,'shared acceptance budget remains');
  workerEnv.PATH=dirname(version===versions[0][1]?node22:node24)+';'+originalPath;
  assert(!existsSync(join(source,'.nvmrc'))&&!existsSync(join(source,'.node-version')),'no pin-discovery claim');put(join(source,'probe4081-wave.txt'),wave+'\n');
@@ -115,7 +124,8 @@ for(const [wave,version] of [['22-first',versions[0][1]],['24-switch',versions[1
  const onProgress=c.connection.onProgress.bind(c.connection);
  c.connection.onProgress=listener=>onProgress(listener===null?null:event=>{
   if(phases.includes(event.phase))phaseCounts[event.phase]++;
-  if(event.outcome){workerOk=event.outcome.ok===true;workerCode=codes.has(event.outcome.code)?event.outcome.code:(workerOk?'none':'other');const t=event.outcome.timings;workerTimings=Object.fromEntries(['syncMs','depsMs','prebuildMs','podsMs','fingerprintMs','buildMs','packageMs'].filter(k=>Number.isFinite(t?.[k])).map(k=>[k,t[k]]));}
+  if(event.outcome){workerFailure=event.outcome.ok?'none':classifyWorkerFailure(event.outcome.message);workerOk=event.outcome.ok===true;workerCode=codes.has(event.outcome.code)?event.outcome.code:(workerOk?'none':'other');const t=event.outcome.timings;workerTimings=Object.fromEntries(['syncMs','depsMs','prebuildMs','podsMs','fingerprintMs','buildMs','packageMs'].filter(k=>Number.isFinite(t?.[k])).map(k=>[k,t[k]]));}
+  if(event.phase==='sync'&&!diagnosticSyncReached){diagnosticSyncReached=true;assert.equal(typeof event.job,'string');diagnosticCancel=c.connection.request('build.cancel',{job:event.job}).then(ack=>{diagnosticCancelAcknowledged=Boolean(ack.result);},()=>{});}
   diagnostics();return listener(event);
  });
  const request=c.connection.request.bind(c.connection);c.connection.request=async(m,p,...rest)=>{
@@ -131,20 +141,12 @@ for(const [wave,version] of [['22-first',versions[0][1]],['24-switch',versions[1
  const ignored=await gitignoredFingerprintInputs(source,fp.sources,{platform:'android',androidLayout:layout});
  const began=Date.now();
  checkpoint='offload';diagnostics();const result=await offloadBuild({choice:c,expectedFingerprint:fp.hash,fingerprintInputs:async()=>({sources:fp.sources,ignored}),request:{platform:'android',isExpo:false,cacheArtifact:true,android:{variant:'debug',abi:'arm64-v8a',gradleBuildCache:true,pch:'off',compilerCache:'none',gradleRoot:null,module:':app'}},stagingDir:join(base,'apk-'+wave),onPhase:(phase,msg)=>record({wave,phase,msg}),onEnter:()=>{},onRecord:r=>record({wave,record:r}),note:n=>record({wave,note:n})});
- checkpoint='offload-returned';diagnostics();await capture();record({wave,result,elapsedMs:Date.now()-began});assert(Date.now()<deadline,'shared acceptance budget remains');assert(result.ok,JSON.stringify(result));
- checkpoint='artifact-verification';diagnostics();const unpack=join(base,'unpack-'+wave);mkdirSync(unpack);run(join(process.env.JAVA_HOME,'bin','jar.exe'),['xf',result.artifactPath,'assets/node4081.json'],{cwd:unpack});
- const identity=JSON.parse(readFileSync(join(unpack,'assets/node4081.json'),'utf8'));assert.equal(identity.wave,wave);
- const dex=run(join(process.env.JAVA_HOME,'bin','jar.exe'),['tf',result.artifactPath]).trim().split(/\r?\n/).filter(name=>/^classes(?:[0-9]+)?\.dex$/.test(name));assert(dex.length>0);
- run(join(process.env.JAVA_HOME,'bin','jar.exe'),['xf',result.artifactPath,...dex],{cwd:unpack});assert(dex.some(name=>readFileSync(join(unpack,name)).includes(Buffer.from(wave))),'Java source wave in returned native DEX');
- assert.equal(readFileSync(parent+'.owner','utf8'),windowsShortDirKey('gradle',area));
- const acl=JSON.parse(run('powershell.exe',['-NoProfile','-NonInteractive','-Command',`$a=Get-Acl -LiteralPath '${gh.replaceAll("'","''")}';$me=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;$rules=@($a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])|ForEach-Object {$_.IdentityReference.Value});[pscustomobject]@{owner=$a.GetOwner([Security.Principal.SecurityIdentifier]).Value;me=$me;rules=$rules}|ConvertTo-Json -Compress`]));
- assert([acl.me,'S-1-5-18','S-1-5-32-544'].includes(acl.owner));assert(acl.rules.every(sid=>[acl.me,'S-1-5-18'].includes(sid)));save('acl-'+wave+'.json',acl);
- const settings=readFileSync(settingsLog,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse).at(-1);assert(settings);
- const row={wave,selectedNode:version,identity,nativeDexMarker:true,settings,elapsedMs:Date.now()-began,apkBytes:lstatSync(result.artifactPath).size,fingerprint:fp.hash,repo};rows.push(row);save('result.json',{mode,rows,partial:true});
- if(mode==='candidate'){assert.equal(identity.version,version);assert.equal(JSON.parse(settings.node)[1],version);assert.equal(realpathSync(settings.home),realpathSync(gh));}
+ checkpoint='offload-returned';diagnostics();await capture();record({wave,result,elapsedMs:Date.now()-began});if(diagnosticCancel)await diagnosticCancel;
+ save('diagnosis.json',{reachedSync:diagnosticSyncReached,cancelAcknowledged:diagnosticCancelAcknowledged});
+ if(diagnosticSyncReached){assert(diagnosticCancelAcknowledged);assert.equal(result.ok,false);assert.equal(workerCode,'cancelled');}
+ else assert(result.ok,'first-job failed before sync; fixed category retained');
 }
-assert.notEqual(rows[0].settings.pid,rows[1].settings.pid);assert.equal(rows[0].settings.pid,rows[2].settings.pid);
-checkpoint='complete';diagnostics();save('result.json',{mode,rows,pass:true,ordinaryWorker:true,bareReactNative:true,effectivePathNotPinDiscovery:true});
+checkpoint='diagnosis-complete';diagnostics();
 }catch(e){diagnostics();save('failure.json',{message:String(e),stack:e.stack});process.exitCode=1;}
 finally{
  checkpoint='cleanup';diagnostics();clearTimeout(timer);const errors=[];
