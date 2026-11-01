@@ -1,3 +1,4 @@
+import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
@@ -1048,6 +1049,8 @@ describe('explicit remote backend behavior', () => {
       expect(stats?.machine.android?.runs).toBe(1);
       expect(stats?.history).toBeUndefined();
       expect(result.ok).toBe(true);
+      expect(result.facts?.devicePlacement?.decision).toBe(backend === 'eas' ? 'eas' : undefined);
+      expect(result.facts?.devicePlacement?.machine).toBe(backend === 'eas' ? 'eas' : undefined);
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
       expect(h.calls.ensureDevice).toEqual([]);
@@ -7934,6 +7937,7 @@ describe('strict remote machine selection', () => {
 });
 
 describe('named Android hosting placement', () => {
+  afterEach(() => vi.restoreAllMocks());
   const session = '12345678-1234-1234-1234-123456789abc';
   const hostDevice = {
     avdName: 'stim-host-private',
@@ -8166,8 +8170,18 @@ describe('named Android hosting placement', () => {
     'builds for the offered ABI and records %s launch evidence without local adb',
     async (evidence) => {
       const order: string[] = [];
+      const links = { desktop: 'https://stim.appandflow.com/open?v=1&machine=fixture&workspace=fixture' };
+      vi.spyOn(desktopLinks, 'workspaceLinks').mockResolvedValue(links);
+      const delivered = {
+        ...placement,
+        agent: {
+          driver: 'agent-device',
+          remoteConfig: '/tmp/host-config',
+          command: 'agent-device <command> --remote-config /tmp/host-config',
+        },
+      };
       const h = harness({
-        json: true,
+        json: evidence !== 'release',
         remoteDevice: 'mini',
         variant: evidence === 'release' ? 'release' : 'debug',
         progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
@@ -8180,12 +8194,12 @@ describe('named Android hosting placement', () => {
         },
         placeHostedAndroid: async (
           _target: unknown,
-          args: { reserved: (value: typeof placement) => void; bundle: string; metroPort: number | null },
+          args: { reserved: (value: typeof delivered) => void; bundle: string; metroPort: number | null },
         ) => {
           order.push('reserve');
           expect(args.bundle).toBe(fakeApk());
-          args.reserved(placement);
-          return { placement, launched: evidence === 'release' ? true : 'unverified' };
+          args.reserved(delivered);
+          return { placement: delivered, launched: evidence === 'release' ? true : 'unverified' };
         },
         build: async (args) => {
           order.push('build');
@@ -8200,6 +8214,11 @@ describe('named Android hosting placement', () => {
       });
       const result = await h.run();
       expect(result.ok).toBe(true);
+      expect(result.facts?.devicePlacement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+      const output = h.stdout.join('\n') + h.stderr.join('\n');
+      expect(output).toContain(delivered.agent.command);
+      expect(output).toContain(links.desktop);
+      expect(output).not.toContain('AGENT_DEVICE_STATE_DIR=');
       expect(order).toEqual(['offer', 'build', 'reserve']);
       expect(result.facts?.launched).toBe(
         evidence === 'release' || evidence === 'verified' ? true : evidence === 'requested' ? 'bundling' : 'unverified',
@@ -8212,7 +8231,7 @@ describe('named Android hosting placement', () => {
       expect(result.facts?.serial).not.toBe(hostDevice.serial);
       expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
-      expect(readWorkspaceState(root)?.android).toMatchObject({ host: placement });
+      expect(readWorkspaceState(root)?.android).toMatchObject({ host: delivered });
       expect(h.calls.ensureDevice).toEqual([]);
       expect(h.calls.booted).toEqual([]);
       expect(h.calls.spawn).toEqual([]);

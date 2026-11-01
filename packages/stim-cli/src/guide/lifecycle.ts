@@ -855,7 +855,9 @@ Status adds ios.host { machine, session, selected, device: { name, runtime },
 agent, state } per slot. A shutdown local simulator is replaced in status; a
 booted or unknown local simulator stays visible alongside ios.host with a warning.
 The default slot appears only in ios, never in slots[]. No host UDID enters local device state or
-status. Ready is normal; stopped has a rerun hint; unknown or unreachable is
+status. Hosted ios --json results use udid: null and the actual simulator name as
+deviceName; host.agent.command addresses the hosted app. Ready is normal;
+stopped has a rerun hint; unknown or unreachable is
 unverified. A clean host server restart stops its sessions and retains eligible
 parked devices. A running session left by a crash stays unknown until explicit
 stop; the restarted server never re-attaches to a booted device.

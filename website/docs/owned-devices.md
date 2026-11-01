@@ -832,7 +832,9 @@ hosting Mac, requires `stim stop` first for that slot.
 is replaced in status without a warning. A booted or unknown local simulator
 stays visible alongside `ios.host` with a warning; plain status shows both. The
 default slot appears only in `ios`, never in `slots[]`. The host UDID never appears
-in local device fields. Stop and worktree removal wait for the host, park its
+in local device fields. A hosted `stim ios --json` result uses `udid: null` and
+reports the actual simulator name as `deviceName`; use `host.agent.command` for
+hosted agent control. Stop and worktree removal wait for the host, park its
 eligible owned simulator within the host's `pool.iosParkedMax` limit (delete
 otherwise), then clear placement. `stop --json` reports
 each hosted slot under `outcomes.device["ios:host:<slot>"]`, alongside local

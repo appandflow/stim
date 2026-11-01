@@ -1,3 +1,4 @@
+import { workspaceLinks } from '../../devices/stim-desktop.ts';
 import chalk from 'chalk';
 import { settleFingerprintCheck } from '../../cache/fingerprint-memo.ts';
 import { hostedAndroidStatus, type HostedDeviceSelectors, type HostedAppOffer } from '@stim-cli/core/state';
@@ -221,6 +222,7 @@ export async function finishHostedAndroidRun({
       (entry) => report.writer.write(entry),
     );
     const facts = reportAndroidResult({
+      links: await workspaceLinks(root, { platform: 'android', slot }),
       ...report,
       out,
       ...(appMode === 'process' ? { runtimeKind: 'process' as const } : {}),

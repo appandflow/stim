@@ -125,7 +125,7 @@ export function iosFacts({
   offloadFallback?: string | null;
   root?: string;
   slot?: string;
-  udid: string;
+  udid: string | null;
   deviceName?: string | null;
   deviceType?: string | null;
   runtime?: string | null;
@@ -247,7 +247,7 @@ export interface ReportIosResultArgs {
   metroPort: number | null;
   logsDir: string;
   device: DeviceLike;
-  udid: string;
+  udid: string | null;
   appPath: string | null;
   bundleId: string;
   installSkipped: boolean;
@@ -381,7 +381,10 @@ export function reportIosResult({
     offloadFallback,
   });
   if (devicePlacement) facts.devicePlacement = devicePlacement;
-  if (host) facts.host = host;
+  if (host) {
+    facts.host = host;
+    delete facts.agentDevice;
+  }
   if (json) {
     emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
   } else {
@@ -430,7 +433,11 @@ export function reportIosResult({
           ? [phaseLine('compilation cache', compilationCacheActivityLine(compilationCache))]
           : []),
         phaseLine('logs', logsDir),
-        phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`),
+        ...(host
+          ? 'command' in host.agent
+            ? [phaseLine('agent-device', host.agent.command)]
+            : []
+          : [phaseLine('agent-device', `AGENT_DEVICE_STATE_DIR=${workspaceAgentDeviceDir(root)}`)]),
       ].join('\n'),
     );
     if (facts.webPreviewUrl) note(chalk.dim(`Watch this device: ${facts.webPreviewUrl}`));
