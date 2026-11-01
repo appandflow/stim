@@ -1,13 +1,12 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 test('units advance fake deadlines, integration exceptions keep real clocks, and lint rejects unit opt-outs', () => {
-  const fixture = mkdtempSync(join(tmpdir(), 'stim-clock-policy-'));
+  const fixture = mkdtempSync(join(root, '.stim-clock-policy-'));
   const source = join(fixture, 'packages', 'clock', '__tests__');
   mkdirSync(source, { recursive: true });
   const unit = join(source, 'clock.test.ts');
