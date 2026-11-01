@@ -407,6 +407,9 @@ It holds the workspace's details, in this order:
   visible, reusing a completed build or check for 60 seconds and skipping running
   builds; there is no manual Check button. **Run** starts the app. The next-build prediction keeps **Cache miss details**.
   **Details** opens a build sheet with a platform switch and recent runs.
+  Completed runs show the selected build destination and recorded compilation machine;
+  cache hits never claim compilation, and an absent compilation destination stays unknown.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
   In a multi-app worktree, the sheet switches among all apps' iOS, Android and
   macOS entries, adding project names only for repeated platforms; checks, runs,
   history and logs use the selected app. macOS uses the same card layout and Run

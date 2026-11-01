@@ -309,7 +309,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote machine and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. While a run boots its simulator or emulator, builds the app's first JS
+  plan. Completed runs show the selected build destination and recorded compilation
+  machine. Cache hits never claim compilation, and missing compilation data stays unknown;
+  `STIM_OFFLOAD_REFUSED` reads **Build destination refused**. While a run boots its simulator or emulator, builds the app's first JS
   bundle in Metro, or waits for the app to report ready, the progress and the
   current phase say so with that step's own elapsed time: **Booting
   simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports

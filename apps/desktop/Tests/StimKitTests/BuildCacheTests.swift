@@ -83,14 +83,16 @@ import Testing
       """
       {"path":"/w","live":true,"warnings":[],"lastBuilds":{
         "ios":{"platform":"ios","status":"ok","cacheHit":false,"cacheSkipped":false,"durationMs":83123,
-               "fingerprint":"1b62","startedAt":"2026-09-25T12:28:58.294Z","finishedAt":"2026-09-25T12:30:21.417Z"},
-        "android":{"platform":"android","status":"failed","cacheHit":"remote","durationMs":4000,
+               "fingerprint":"1b62","buildMachine":"remote-only","builtOn":"mini:7744","startedAt":"2026-09-25T12:28:58.294Z","finishedAt":"2026-09-25T12:30:21.417Z"},
+        "android":{"platform":"android","status":"failed","cacheHit":"remote","durationMs":4000,"buildMachine":"remote-only","builtOn":"mini:7744",
                    "startedAt":"2026-09-25T12:00:00.000Z","finishedAt":null,"errorCode":"STIM_BUILD_FAILED"}}}
       """)
     let ios = try #require(workspace.lastBuilds?.build(for: "ios"))
     #expect(ios.cacheHit == .none && ios.status == "ok" && ios.durationMs == 83123)
+    #expect(ios.buildMachine == "remote-only" && ios.builtOn == "mini:7744")
     let android = try #require(workspace.lastBuilds?.build(for: "android"))
     #expect(android.status == "failed" && android.errorCode == "STIM_BUILD_FAILED" && android.cacheHit == .remote)
+    #expect(android.buildMachine == "remote-only" && android.builtOn == "mini:7744")
   }
 
   @Test func readsTheBuildHistoryOfEachPlatformWithHowEachRunEnded() throws {
