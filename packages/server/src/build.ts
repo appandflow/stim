@@ -416,7 +416,7 @@ export interface BuildHostOptions {
   limits?: Partial<BuildLimits>;
   /** Called once a job ends, for the action log. */
   finished?: (record: { client: string; repo: string; ok: boolean; error?: ProtocolError; durationMs: number }) => void;
-  /** Whether a client still holds `build`; the Gradle daemons of one that does not are stopped. */
+  /** Whether a client still holds `build`. */
   allowed?: (client: string) => boolean;
   /** Whether the periodic daemon sweep may read the Stim home yet; it runs unconditionally when absent. */
   ready?: () => boolean;
