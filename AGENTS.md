@@ -417,10 +417,10 @@ outside it moves to its own issue and pull request.
   with `taskkill /T`, and the checkout, linked from the area, and the
   client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
-  that group, so it never holds a claim or build slot. After a cancelled
-  Android build the repository stays claimed for 15 seconds, past Gradle's
-  10-second cancel grace, so a rerun cannot change sources the daemon still
-  reads. The client's daemon stays warm for Gradle's own idle timeout. stim-server stops the workers'
+  that group, so it never holds a claim or build slot. After an Android
+  build is cancelled or its worker dies, the repository stays claimed for 15
+  seconds, past Gradle's 10-second cancel grace, so a rerun cannot change
+  sources the daemon still reads; the build no longer counts as running. The client's daemon stays warm for Gradle's own idle timeout. stim-server stops the workers'
   idle daemons only while the machine's available memory runs low and no
   offloaded build runs, and on Windows before it deletes a removed client's
   area. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,

@@ -3410,6 +3410,10 @@ describe('offloaded builds', () => {
         await eventually(() => !alive(pid));
         await new Promise((resolve) => setTimeout(resolve, 500));
         expect(readClaimSet(claims).live).toHaveLength(1);
+        const other = await buildClient(port, '100.64.0.3');
+        expect(await other.client.request('build.offer', { repo: 'app-1' })).toMatchObject({
+          result: { capacity: { running: 0, declined: null } },
+        });
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
         expect(readClaimSet(claims).live).toHaveLength(0);
       },

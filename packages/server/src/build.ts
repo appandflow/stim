@@ -396,6 +396,8 @@ interface Job {
   reactNativeArtifact?: Record<string, unknown>;
   swiftpmArtifact?: Record<string, unknown>;
   settled: boolean;
+  /** Whether its build ended and only its repository stays claimed while Gradle finishes cancelling. */
+  holding: boolean;
   cancel: () => void;
   done: Promise<void>;
   send: (event: BuildProgressEvent) => void;
@@ -838,7 +840,11 @@ export class BuildHost {
   }
 
   running(): number {
-    return this.jobs.size;
+    return this.building().length;
+  }
+
+  private building(): Job[] {
+    return [...this.jobs].filter((job) => !job.holding);
   }
 
   drain(reason: string | null): void {
@@ -855,9 +861,10 @@ export class BuildHost {
 
   capacity(): BuildCapacity {
     const machine = machineCapacity();
-    const running = this.jobs.size;
+    const building = this.building();
+    const running = building.length;
     const diskFreeBytes = workerFreeBytes(this.root());
-    const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
+    const builds = machine.builds + building.filter((job) => !job.slotted).length;
     const declined =
       this.draining ??
       (loadConfig()?.server?.buildsPaused === true
@@ -1126,6 +1133,7 @@ export class BuildHost {
       slotted: slot !== null,
       outcome: null,
       settled: false,
+      holding: false,
       cancel,
       done: Promise.resolve(),
       send,
@@ -1168,6 +1176,7 @@ export class BuildHost {
             ? { ok: false, code: 'cancelled', message: 'The build was cancelled.' }
             : { ok: false, code: 'worker-exited', message: 'The build process exited without a result.' });
         entry.outcome = outcome;
+        const cancelled = killTimer !== null;
         if (child.pid !== undefined && processGroupAlive(child.pid)) cancel();
         const settle = async () => {
           if (child.pid !== undefined && processGroupAlive(child.pid)) {
@@ -1178,10 +1187,11 @@ export class BuildHost {
           if (killTimer) clearTimeout(killTimer);
           finished = true;
           const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
-          if (gradle && !this.closed && (killTimer || (!outcome.ok && outcome.code === 'worker-exited'))) {
+          if (gradle && (cancelled || (!outcome.ok && outcome.code === 'worker-exited'))) {
             releaseClaim(slot);
             slot = null;
-            await new Promise((resolve) => setTimeout(resolve, this.limits.gradleCancelDrainMs));
+            entry.holding = true;
+            await new Promise<void>((held) => setTimeout(held, this.limits.gradleCancelDrainMs));
           }
           releaseClaims();
           if (
