@@ -1993,6 +1993,10 @@ msgstr "healthy"
 msgid "Held outside a listed workspace"
 msgstr "Held outside a listed workspace"
 
+#: src/screens/filters.tsx
+msgid "Hidden"
+msgstr "Hidden"
+
 #: src/screens/device-view.tsx
 msgid "Hide Keyboard"
 msgstr "Hide Keyboard"
