@@ -144,6 +144,7 @@ in the workspace directory:
   its tile, workspace page, viewer toolbar and sidebar row show the machine's name
   with a computer icon (VoiceOver: "Running on &lt;machine&gt;"),
   with the placement reason as hover text. Local devices show no placement label. The
+  same views label EAS Simulator sessions **EAS**. The
   menus offer the platforms `stim status` reports in `platforms`, plus any
   with a device or a last build; an older `stim` that does not report them
   offers the used ones, or iOS and Android when none is recorded. Run is disabled while a build runs in the workspace.
