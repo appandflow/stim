@@ -1089,7 +1089,9 @@ THE ONE CASE GC WILL NOT REAP
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
   watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
-  The Gradle and Kotlin daemons are stopped only by \`--cache gradle-daemons\`:
+  The Gradle and Kotlin daemons are stopped by \`--cache gradle-daemons\`, and
+  by automatic maintenance under memory pressure (after
+  maintenance.memoryWarningMinutes at warning) or disk pressure level 3:
     stim gc --delete              (or: stim gc --delete --cache watchman)
                                   runs \`watchman watch-del\` on each stale root
                                   with no subscription or trigger, then

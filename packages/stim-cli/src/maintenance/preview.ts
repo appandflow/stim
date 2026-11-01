@@ -200,7 +200,12 @@ export async function plannedMaintenance(
     });
     merge(pressured);
     if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
-    if (pressure.memory.pressured) merge(await planMemoryDaemonStop(operation));
+    if (pressure.memory.pressured) {
+      const memory = await planMemoryDaemonStop(operation);
+      if (memory.actions.length)
+        result.actions = result.actions.filter((action) => action.kind !== 'would-stop-gradle-daemons');
+      merge(memory);
+    }
   }
   if (low) {
     result.skips.push(

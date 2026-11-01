@@ -411,13 +411,13 @@ const actionKinds = () =>
       : [];
   });
 
-function memoryPressured() {
+function memoryPressured(freeGb = 100) {
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
-    disk: [{ volume: '/', freeMb: 100 * GB }],
+    disk: [{ volume: '/', freeMb: freeGb * GB }],
     memory: { level: 'critical', availableBytes: null, pressured: true },
     warningSince: null,
   });
-  vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * GB }]);
+  vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: freeGb * GB }]);
 }
 
 test('memory pressure stops an idle Gradle daemon with plenty of free disk', async () => {
@@ -429,13 +429,21 @@ test('memory pressure stops an idle Gradle daemon with plenty of free disk', asy
   expect(actionKinds()).toEqual(['stop-gradle-daemons']);
 });
 
-test('memory pressure keeps every Gradle daemon while a build can use it', async () => {
-  memoryPressured();
-  daemonPlan({ state: 'idle' }, 'a Gradle build is running');
-  const stop = stopsDaemon();
+test('memory pressure at disk level 3 stops the daemons once, then deletes the version', async () => {
+  let running = true;
+  const version = idleUnpinnedVersion(() => (running ? DAEMON_ROW : ''));
+  memoryPressured(4);
+  daemonPlan({ state: 'idle' });
+  const stop = stopsDaemon(() => (running = false));
   await pass();
-  expect(stop).not.toHaveBeenCalled();
-  expect(actionKinds()).toEqual([]);
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(existsSync(version)).toBe(false);
+  expect(actionKinds().filter((kind) => kind === 'stop-gradle-daemons')).toHaveLength(1);
+  expect(
+    readMaintenanceState()?.recent.some(
+      (entry) => entry.event === 'maintenance_skip' && /pid 101/.test(String(entry.target)),
+    ),
+  ).toBe(false);
 });
 
 test('level 3 stops an idle Gradle daemon, then deletes the version it was blocking, as two records', async () => {
