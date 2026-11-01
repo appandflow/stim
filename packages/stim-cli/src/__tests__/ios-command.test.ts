@@ -8336,9 +8336,9 @@ describe('--plan', () => {
       expect(exitCode).toBe(1);
       const refusal = parseFirst(logs);
       expect(refusal).toMatchObject({ code: 'STIM_BAD_ARG' });
-      expect(refusal.message).toContain('Invalid STIM_REMOTE_BUILD value "bad word"');
+      expect(refusal.message).toContain('--remote-build / remote.build');
       expect(refusal.message).not.toContain('ios.remote');
-      expect(refusal.remedy).toContain('stim settings set remote.build');
+      expect(refusal.remedy).toContain('remote-build local');
     } finally {
       delete process.env.STIM_REMOTE_BUILD;
     }
@@ -8380,6 +8380,21 @@ describe('--plan', () => {
     'ensureWorkspaceStorage',
   ];
 
+  test('explicit local device and build flags override remote settings in the read-only plan', async () => {
+    const { logs, exitCode, calls } = await run(
+      { plan: true, json: true, remote: 'local', remoteBuild: 'local' },
+      { resolveSettings: () => ({ ios: { remote: 'unreachable-mini' } }) },
+    );
+    expect(exitCode).toBeNull();
+    expect(parseFirst(logs)).toMatchObject({
+      cacheKey: debugKey,
+      placement: 'this machine',
+      buildPlacement: { preference: 'local', reason: 'builds on this machine' },
+    });
+    expect(calls.order.filter((name) => RUN_ONLY.includes(name))).toEqual([]);
+    expect(existsSync(workspaceStateFile(root))).toBe(false);
+  });
+
   test('a miss predicts a cold build from the cold history and touches no device, build or workspace state', async () => {
     reserve();
     recordRuns('cold', [300_000, 420_000, 400_000]);
@@ -8399,6 +8414,11 @@ describe('--plan', () => {
       outcome: 'cold',
       expectedMs: 400_000,
       basis: 3,
+      placement: 'this machine',
+      buildPlacement: {
+        preference: 'auto',
+        reason: 'chooses among enabled build machines at run time, after capacity and compatibility checks',
+      },
       missReason: {
         kind: 'no-baseline',
         summary: 'no earlier build of this project in the cache to compare with',
@@ -8443,14 +8463,21 @@ describe('--plan', () => {
     const { logs } = await run(
       { plan: true, json: true },
       {
-        loadProjectProvider: async () => ({ name: 'probe', provider: { easCli: '/fixture/eas' } }),
+        loadProjectProvider: async () => ({ name: 'eas', provider: { easCli: '/fixture/eas' } }),
         resolveRemote: async (args) => {
           asked.push(args);
           return { appPath: join(root, 'remote', 'Fixture.app') };
         },
       },
     );
-    expect(parseFirst(logs)).toMatchObject({ cacheHit: 'remote', provider: 'probe', outcome: 'hit', prebuild: null });
+    expect(parseFirst(logs)).toMatchObject({
+      cacheHit: 'remote',
+      provider: 'eas',
+      outcome: 'hit',
+      prebuild: null,
+      placement: 'this machine',
+      buildPlacement: { preference: 'auto', reason: 'cache hit; no compilation expected' },
+    });
     expect(asked).toEqual([
       expect.objectContaining({ fingerprintHash: FINGERPRINT, runOptions: { configuration: 'Debug', arch: 'arm64' } }),
     ]);
@@ -8546,7 +8573,6 @@ describe('--plan', () => {
 
   test.each([
     [{ device: true }, '--device'],
-    [{ remote: 'proxy' }, '--remote'],
     [{ installRuntime: true }, '--install-runtime'],
     [{ simulatorApp: 'xcode' }, '--simulator-app'],
   ])('%o refuses because it does not apply to a plan', async (flags, flag) => {
