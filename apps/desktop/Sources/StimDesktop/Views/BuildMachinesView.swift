@@ -323,7 +323,7 @@ struct BuildMachinesContent<ThisMac: View>: View {
     if poolDisabled != nil {
       Section {
         HStack(alignment: .top, spacing: Space.lg) {
-          Image(systemName: "laptopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
+          Image(systemName: "laptopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
             .frame(width: 24).accessibilityHidden(true)
           VStack(alignment: .leading, spacing: Space.lg) {
             Text(verbatim: thisMacName).font(.stim(.body, weight: .semibold)).lineLimit(1)
@@ -454,7 +454,7 @@ private struct BuildMachineRow<Toggles: View>: View {
 
   var body: some View {
     HStack(alignment: .top, spacing: Space.lg) {
-      Image(systemName: "desktopcomputer").font(.system(size: 18)).foregroundStyle(Palette.accent)
+      Image(systemName: "desktopcomputer").iconFont(IconSize.large).foregroundStyle(Palette.accent)
         .frame(width: 24).accessibilityHidden(true)
       VStack(alignment: .leading, spacing: Space.lg) {
         HStack(spacing: Space.sm) {

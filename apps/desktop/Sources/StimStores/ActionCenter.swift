@@ -131,9 +131,10 @@ public final class ActionCenter: ObservableObject {
   #if DEBUG
     private var fixtureAction: ((String) -> Void)?
 
-    public convenience init(fixtureAction: @escaping (String) -> Void) {
+    public convenience init(fixtureAction: @escaping (String) -> Void, running: [ActionRun] = []) {
       self.init(environment: Task { [String: String]() })
       self.fixtureAction = fixtureAction
+      runs = Dictionary(uniqueKeysWithValues: running.map { ($0.key, $0) })
     }
   #endif
 

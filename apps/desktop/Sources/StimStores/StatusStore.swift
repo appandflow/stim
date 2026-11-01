@@ -55,6 +55,13 @@ public final class StatusStore: ObservableObject {
     }
   }
 
+  #if DEBUG
+    public convenience init(fixture: StatusPayload) {
+      self.init(environment: Task { [String: String]() })
+      payload = fixture
+    }
+  #endif
+
   public func start() {
     guard !started else { return }
     started = true

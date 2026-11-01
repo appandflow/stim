@@ -44,6 +44,7 @@
     case addMachine = "Add remote machine"
     case pairPhone = "Pair a phone"
     case pairedMachines = "Paired machines"
+    case machineActions = "Machine actions"
     case viewerPermissions = "Viewer permissions"
     case discovery = "Suggestions"
     case tokens = "Design tokens"
@@ -61,6 +62,7 @@
       case .buildSheet: return [.ready, .loading, .error, .longText, .largeData]
       case .hostedIos, .hostedAndroid: return [.ready, .loading, .error, .empty]
       case .pairedMachines: return [.ready, .empty, .error]
+      case .machineActions: return [.ready, .loading, .empty, .error]
       case .simulator: return [.ready, .loading, .empty, .error]
       case .settings: return [.ready, .loading, .empty, .error, .longText]
       case .tokens, .addMachine, .pairPhone, .viewerPermissions, .discovery, .notificationCards, .deviceTools:
@@ -105,6 +107,18 @@
             try [.realArchiveSidebar, .realArchiveWorkspace, .realArchiveBuildSheet].contains(screen)
             ? PlaygroundFixtures.realArchive(now: fixtureDate) : PlaygroundFixtures.make(scenario, now: fixtureDate)
           actions = ActionCenter(fixtureAction: { action = "Simulated: \($0). No command was run." })
+          if screen == .machineActions, scenario == .loading {
+            actions = ActionCenter(
+              fixtureAction: { action = "Simulated: \($0). No command was run." },
+              running: [
+                ActionRun(
+                  title: "Stopping workspace", steps: [StimCommand(["stop"], cwd: PlaygroundFixtures.workspace)],
+                  key: PlaygroundFixtures.workspace),
+                ActionRun(
+                  title: "Reclaiming memory", steps: [StimCommand(["gc", "--json"], cwd: NSHomeDirectory())],
+                  key: ActionCenter.machineKey),
+              ])
+          }
           if scenario == .empty { workspace = nil }
         } catch {
           failure = error.localizedDescription
@@ -295,6 +309,8 @@
         PairPhonePlayground()
       case .pairedMachines:
         PairedMachinesPlayground(scenario: scenario, now: fixtureDate)
+      case .machineActions:
+        MachineActionsPlayground(scenario: scenario)
       case .viewerPermissions:
         ViewerPermissionsPlayground()
       case .tokens:

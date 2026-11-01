@@ -358,9 +358,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **This Mac > Overview** shows compact memory, tracked-process CPU and free-disk
   cards, the three largest process groups, and a cleanup summary. **View all
   processes** expands the list; the information button explains the measurements.
+  A process row's trailing Actions menu names **Stop workspace** or **Stop devices in slot**
+  for owned work. Shared Watchman, Gradle and Kotlin reclaim actions describe their category-wide
+  scope in a confirmation. Worktree rows use the same trailing menu presentation.
   **Review cleanup** opens **Storage**, where you can inspect devices, caches,
   repositories and cleanup candidates before choosing what to free. The summary
   includes optional caches, so it is not an amount selected for deletion.
+  The cleanup checklist shows a selected-row count; changing checkboxes performs no cleanup.
+  Mixed cleanup confirmations name the selected items and consequences before command details.
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
@@ -629,7 +634,7 @@ emulator or macOS app, **Build and Run** and **Stop**. Right-click an Idle proje
 **Reveal in Finder** and **Copy Path**. Stop and Remove Worktree ask for the same confirmation as in the sidebar.
 
 Run, Reload App, Start Dev Server and Stop from the workspace or sidebar menus keep
-you on the workspace page, as do Stop or Shut down in the now band and Build and Run and Stop
+you on the workspace page, as do Stop workspace or Stop devices in slot in the resource list and Build and Run and Stop
 on a macOS app card. Open **Last Output** or **Operations** for command details,
 including failed runs. The device viewer's Run, Stop (including a remote session's), Reload web and Close web
 also run without opening a sheet. Progress and failures appear on a line under
