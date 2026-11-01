@@ -412,15 +412,17 @@ outside it moves to its own issue and pull request.
   client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group. Windows has no process
-  groups: there the claim follows the worker process, cancel stops its tree
-  with `taskkill /T`, and the checkout, linked from the area, and the
-  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
-  because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
-  that group, so it never holds a claim or build slot. The client's daemon
-  stays warm after an Android build for `server.gradleDaemonIdleMinutes`,
-  and stim-server stops it when the build is cancelled, the client loses
-  `build`, or the machine's available memory runs low. Gradle stops a daemon
+  claim. Non-Android claims follow the worker process group. Android claims
+  stay child-pending because Gradle daemons leave that group; cancellation
+  releases them only after this repository's verified daemon identities exit.
+  Unknown cleanup or a server crash retains unresolved repository and build-slot
+  claims for manual inspection and recovery. Windows has no process groups:
+  cancel stops the worker tree with `taskkill /T`; each checkout and repository's
+  Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
+  because the NDK's ninja cannot open longer paths. The repository's daemon
+  stays warm after an Android build for `server.gradleDaemonIdleMinutes`.
+  Cancellation drains only that repository; whole-client revocation and low
+  memory retain their client-scoped cleanup. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is

@@ -317,6 +317,10 @@ if (process.argv[2].startsWith('offer')) {
       const { existsSync } = await import('node:fs');
       while (!existsSync(process.env.FAKE_WORKER_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (process.env.FAKE_WORKER_CRASH) {
+      print({ type: 'result', ok: false, code: 'worker-crashed', message: 'The worker crashed.' });
+      process.exit(1);
+    }
     mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
     writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
@@ -3259,7 +3263,7 @@ describe('offloaded builds', () => {
   });
 
   test.skipIf(!fakeTailscale)(
-    "builds an Android job with its Gradle options in the client's own Gradle home",
+    "builds an Android job with its Gradle options in the repository's own Gradle home",
     async () => {
       const port = await start();
       const { client, id } = await buildClient(port);
@@ -3281,7 +3285,7 @@ describe('offloaded builds', () => {
       await progress(client);
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android: { ...android, ...layout } });
-      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
+      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'cache', 'gradle'));
     },
   );
 
@@ -3772,10 +3776,18 @@ describe('offloaded builds', () => {
 
   describe('warm Gradle daemons', () => {
     const daemons: ChildProcess[] = [];
-    const gradleHome = (client: string) => join(process.env.STIM_HOME!, 'build-worker', client, 'cache', 'gradle');
-    const daemonOf = (client: string) => {
-      const jar = join(gradleHome(client), 'wrapper', 'dists', 'gradle-9.4.1', 'lib', 'gradle-daemon-main-9.4.1.jar');
-      mkdirSync(gradleHome(client), { recursive: true });
+    const gradleHome = (client: string, repo?: string) =>
+      join(process.env.STIM_HOME!, 'build-worker', client, ...(repo ? ['repos', repo] : []), 'cache', 'gradle');
+    const daemonOf = (client: string, repo?: string) => {
+      const jar = join(
+        gradleHome(client, repo),
+        'wrapper',
+        'dists',
+        'gradle-9.4.1',
+        'lib',
+        'gradle-daemon-main-9.4.1.jar',
+      );
+      mkdirSync(gradleHome(client, repo), { recursive: true });
       const daemon = spawn(
         process.execPath,
         ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
@@ -3841,18 +3853,29 @@ describe('offloaded builds', () => {
       },
     );
 
-    test.skipIf(!fakeTailscale)("stops the client's daemon when its build is cancelled", async () => {
-      const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
-      });
-      const { client, id } = await buildClient(port);
-      const job = await launch(client);
-      const daemon = daemonOf(id);
-      expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
-      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
-      await eventually(() => !running(daemon));
-    });
+    test.each(['cancelled', 'worker-crashed'] as const)(
+      'stops only the failed repository daemon after %s',
+      { skip: !fakeTailscale },
+      async (reason) => {
+        const gate = join(root, 'crash-gate');
+        const port = await start({
+          env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
+          buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+        });
+        const { client, id } = await buildClient(port);
+        const job = await launch(client);
+        const daemon = daemonOf(id, 'app-1');
+        const sibling = daemonOf(id, 'another-repo');
+        if (reason === 'cancelled') {
+          const response = await client.request('build.cancel', { job });
+          assert('result' in response);
+          assert.deepStrictEqual(response.result, {});
+        } else writeFileSync(gate, '');
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
+        await eventually(() => !running(daemon));
+        expect(running(sibling)).toBe(true);
+      },
+    );
   });
 });
 

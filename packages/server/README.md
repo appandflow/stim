@@ -1915,22 +1915,21 @@ connected since stim-server started keeps its directory when revoked.
   equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
   simulators on `runtime`, which it never boots, or Gradle's
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
-  Gradle daemon leaves the build's process group, so no claim or slot tracks
-  it. An Android build keeps the client's daemon warm, with Gradle's idle
-  timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM (on Windows,
-  where a cancel ends the build's process tree with `taskkill /T /F`, the
-  daemon sweep below stops it). Gradle
-  fixes a daemon's idle timeout when the daemon starts, so a new value
-  applies to the next daemon. Once no build of that client runs, stim-server
-  sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home (on Windows, every process running from it, the Kotlin daemon
-  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
-  loses `build`, and, for every client, while this machine has less than 2 GB of
-  available memory (total memory minus Activity Monitor's Memory Used). It
-  checks every minute and on each change under its server directory. A daemon
-  whose Gradle home is deleted stops itself within seconds, because Gradle
-  expires a daemon whose registry file is gone.
+  Gradle daemon leaves the build's process group. Each repository has its own
+  Gradle home, so cancellation can stop its verified daemons without waiting
+  for or stopping another repository's build. Android claims remain pending
+  until cancellation cleanup proves those identities exited; unknown cleanup
+  retains the repository and build-slot claims. A daemon exiting between process
+  inventory and identity capture also requires inspection and manual claim
+  recovery before retrying. The daemon stays warm with
+  `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
+  Gradle fixes that timeout at daemon startup. Once no build of a client runs,
+  stim-server also stops its daemons when the client loses `build` or the
+  machine has less than 2 GB of available memory. The periodic sweep still
+  recognizes legacy client-home daemons; changing home namespaces does not
+  migrate or delete the old cache. A live process named in a legacy daemon log
+  refuses new Android admissions until it has been inspected and retired.
+  An unrelated process reusing a logged PID can also require manual inspection.
   A macOS request supplies `macos: { product, infoPlist, bundleId }` and
   optionally `resources` (up to 256 destination-to-source entries) and
   `assetCatalog` (a string or null), omitting runtime, configuration, scheme, packageName, isExpo, optimizations and android.
@@ -1998,26 +1997,33 @@ connected since stim-server started keeps its directory when revoked.
 
 The worker root is `server.workerRoot` in this machine's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
-blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
-`GRADLE_USER_HOME` and SwiftPM) and one area
-per repository under `repos/<repo>/`: the checkout, its own Stim home with
-DerivedData, the compilation cache and ccache, and the output. A build never reads or
-writes this machine's own Stim home. Each source mirror has an initial empty Git
-commit so local development podspecs can resolve `HEAD`; it is internal mirror
-metadata, not the client's commit or history. An ownership claim at
-`repos/<repo>.claims`, whose child is the build's process group, guards each
-area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. Windows has no
-process groups, so there the claim follows the build's worker process, and a
-cancel ends its whole tree with `taskkill /T /F` before the claim is
-released. The NDK's ninja on Windows cannot open paths longer than 260
-characters, so a Windows worker keeps each area's checkout and each client's
-Gradle home in private short directories, `<SystemDrive>\sw\<6 hex>`, with
-an owner key beside each; the area's `src` is a junction to its checkout.
-Removing a client deletes them too. With a non-zero
-`concurrency.maxBuilds`, the build also holds one of this machine's build slots
-(`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
-same child, so a local build waits for it and `builds` counts it. Each finished build
+blobs and shared CocoaPods, pnpm and SwiftPM caches. Each area under
+`repos/<repo>/` contains its checkout, Stim home, compilation cache, output and
+`cache/gradle` (`GRADLE_USER_HOME`). Separate repositories repeat Gradle
+wrapper/dependency/transform caches and their first build starts cold. Repository
+identity is the Git common directory: worktrees of one repository still share
+one mirror and serialize, while different repositories can build concurrently
+within the configured admission limits. This does not change the current
+single offload-job default.
+
+A build never reads or writes this machine's own Stim home. Each source mirror
+has an initial empty Git commit so development podspecs can resolve `HEAD`;
+it is internal metadata, not client history. An ownership claim at
+`repos/<repo>.claims` guards each area. Non-Android claims follow the worker
+process group (the worker process on Windows). Android claims stay child-pending
+because Gradle escapes that group. Cancellation verifies repository daemon
+identities have exited before releasing its repository and build-slot claims.
+A server crash leaves those Android claims unresolved, including an ordinary
+in-flight Android build; inspect the worker and daemon processes and recover
+both claim sets manually before retrying. A successful worker result releases
+its claims normally while retaining the warm daemon.
+
+Windows keeps each checkout and repository Gradle home in private short
+`<SystemDrive>\\sw\\<6 hex>` directories for the NDK path limit, with an exact
+owner key beside each; `src` is a junction. Client removal deletes only matched
+owned short homes, including a marked legacy client home. With non-zero
+`concurrency.maxBuilds`, a build holds one of the machine's build slots
+(`$STIM_HOME/build-slots/`), so local builds count it too. Each finished build
 appends a `build` record to the [action log](#actions) with the repository as
 `workspace`. The worker root keeps growing with each repository; delete a
 client's directory to reclaim it.
