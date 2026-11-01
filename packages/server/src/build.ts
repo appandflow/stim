@@ -400,8 +400,6 @@ interface Job {
   reactNativeArtifact?: Record<string, unknown>;
   swiftpmArtifact?: Record<string, unknown>;
   settled: boolean;
-  /** Whether its build ended and only its repository stays claimed while Gradle finishes cancelling. */
-  holding: boolean;
   cancel: () => void;
   done: Promise<void>;
   send: (event: BuildProgressEvent) => void;
@@ -844,11 +842,7 @@ export class BuildHost {
   }
 
   running(): number {
-    return this.building().length;
-  }
-
-  private building(): Job[] {
-    return [...this.jobs].filter((job) => !job.holding);
+    return this.jobs.size;
   }
 
   drain(reason: string | null): void {
@@ -869,11 +863,10 @@ export class BuildHost {
 
   private assess(): { capacity: BuildCapacity; numbers: string | null } {
     const machine = machineCapacity();
-    const building = this.building();
-    const running = building.length;
+    const running = this.jobs.size;
     const max = maxOffloadedBuilds();
     const diskFreeBytes = workerFreeBytes(this.root());
-    const builds = machine.builds + building.filter((job) => !job.slotted).length;
+    const builds = machine.builds + [...this.jobs].filter((job) => !job.slotted).length;
     const limit =
       max > 0 && running >= max
         ? `already running ${running} offloaded build(s), its server.maxOffloadedBuilds limit`
@@ -1052,7 +1045,10 @@ export class BuildHost {
       });
       if (!attempt.acquired) {
         if (attempt.pending) releaseClaim(attempt.pending);
-        return refusal('build-busy', 'Another build of this repository is running on this machine.');
+        return refusal(
+          'build-busy',
+          'Another build of this repository is running on this machine, or a cancelled one is still stopping.',
+        );
       }
       claim = attempt.acquired;
     } catch (error) {
@@ -1154,7 +1150,6 @@ export class BuildHost {
       slotted: slot !== null,
       outcome: null,
       settled: false,
-      holding: false,
       cancel,
       done: Promise.resolve(),
       send,
@@ -1210,11 +1205,8 @@ export class BuildHost {
           const gradle = job.platform === 'android' || (isJsonObject(job.native) && job.native.provider === 'gradle');
           if (gradle && (cancelled || (!outcome.ok && outcome.code === 'worker-exited'))) {
             releaseClaim(slot);
-            slot = null;
-            entry.holding = true;
-            await new Promise<void>((held) => setTimeout(held, this.limits.gradleCancelDrainMs));
-          }
-          releaseClaims();
+            setTimeout(() => releaseClaim(claim), this.limits.gradleCancelDrainMs).unref();
+          } else releaseClaims();
           if (
             entry.outcome?.ok &&
             isJsonObject(job.native) &&

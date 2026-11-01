@@ -1902,8 +1902,9 @@ connected since stim-server started keeps its directory when revoked.
   reads allow it; a job whose fingerprint after `pod install` differs from
   `fingerprint` then returns the development archive this machine retained
   under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
-  `build-busy` while the offer would be declined, naming the reason with the load
-  per core, offloaded builds running and free disk it was decided on, or while
+  `build-busy` while the offer would be declined, naming the reason (a load,
+  offloaded-build cap or build-slot decline also names the load per core,
+  offloaded builds running and free disk it was decided on), or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `compat` differs from this machine's, or, when either
@@ -1920,7 +1921,9 @@ connected since stim-server started keeps its directory when revoked.
   it. When an Android build is cancelled or its worker dies, the repository
   stays claimed for 15 more seconds: the daemon keeps running the cancelled
   build in the checkout for up to Gradle's 10-second cancel grace before it
-  stops itself, and a rerun must not change those sources first. An Android build leaves the client's daemon warm for Gradle's own idle
+  stops itself, and a rerun must not change those sources first. The outcome
+  is sent at once and the build no longer counts as running; only that
+  repository's next build waits. An Android build leaves the client's daemon warm for Gradle's own idle
   timeout, and a cancelled build does not stop it. While no offloaded build
   runs and this machine has less than 2 GB of available memory (total memory
   minus Activity Monitor's Memory Used), stim-server sends SIGTERM to each

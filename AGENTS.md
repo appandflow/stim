@@ -420,7 +420,9 @@ outside it moves to its own issue and pull request.
   that group, so it never holds a claim or build slot. After an Android
   build is cancelled or its worker dies, the repository stays claimed for 15
   seconds, past Gradle's 10-second cancel grace, so a rerun cannot change
-  sources the daemon still reads; the build no longer counts as running. The client's daemon stays warm for Gradle's own idle timeout. stim-server stops the workers'
+  sources the daemon still reads. The build itself has ended: its outcome is
+  sent and it no longer counts as running. A stim-server that exits during
+  the hold leaves a claim whose owner is gone, which the next one recovers. The client's daemon stays warm for Gradle's own idle timeout. stim-server stops the workers'
   idle daemons only while the machine's available memory runs low and no
   offloaded build runs, and on Windows before it deletes a removed client's
   area. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,

@@ -353,11 +353,11 @@ stim-server writes to its service log (~/Library/Logs/Stim/<label>.log), with
 no tokens or tickets, each of these lines starting with an ISO time:
 "request failed method=<m> client=<device id> run=<runId>
 ms=<n> error=<code>" for an error reply (once a minute per client, method,
-code and reason), ending in reason="<message>" for a build-busy or build-refused
+code and reason, ignoring its numbers), ending in reason="<message>" for a build-busy or build-refused
 refusal; and "host_connect ... error=<reason_with_underscores>" when its connection to a hosting
 machine fails. With debug.logs on or STIM_DEBUG=1 for the server it logs every
 request instead: "debug request method=<m> client=<id> run=<runId> ms=<n>
-slow=true error=<code> whois=<ms> probe=<ms>" (slow means 1000 ms or more;
+slow=true error=<code> reason="<message>" whois=<ms> probe=<ms>" (slow means 1000 ms or more;
 whois and probe are the hello's Tailscale identity lookup and its wait for
 the host permission probe; a method name that is not a plain dotted lowercase
 name is logged as unknown)
