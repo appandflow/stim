@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -57,8 +57,9 @@ test('units advance fake deadlines, integration exceptions keep real clocks, and
         timeout: 15_000,
       },
     );
-    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
-    expect(JSON.parse(readFileSync(report, 'utf8'))).toMatchObject({ numPassedTests: 2, numFailedTests: 0 });
+    const result = existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : null;
+    expect(run.status, `${run.stdout}\n${run.stderr}\n${JSON.stringify(result)}`).toBe(0);
+    expect(result).toMatchObject({ numPassedTests: 2, numFailedTests: 0 });
 
     writeFileSync(
       unit,
