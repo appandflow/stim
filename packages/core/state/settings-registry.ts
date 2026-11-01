@@ -737,7 +737,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'warning',
     env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
-    description: 'Lowest macOS memory pressure level considered; off disables memory pressure reporting',
+    description:
+      'Lowest macOS memory pressure level considered; off disables memory pressure reporting and the daemon stop it triggers',
   },
   {
     key: 'maintenance.memoryWarningMinutes',

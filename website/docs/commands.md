@@ -2014,7 +2014,8 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   while a Stim Android build runs. While stim-server runs, it manages the
   daemons of builds offloaded to this machine, and gc leaves them alone.
   Automatic maintenance stops the same daemons on its own under memory
-  pressure, once a `warning` level has lasted `maintenance.memoryWarningMinutes`.
+  pressure: at once at `critical`, after `maintenance.memoryWarningMinutes` at
+  `warning`, or off macOS below `maintenance.minAvailableMemoryGb`.
 - `stim gc --delete --cache gradle-versions` deletes the version caches
   (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
   under `GRADLE_USER_HOME` for each Gradle version no registered project pins
