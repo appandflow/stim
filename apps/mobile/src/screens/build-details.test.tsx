@@ -77,14 +77,23 @@ const body = (path: string, platform: 'ios' | 'macos') => (
 );
 
 it('switches among the native and macOS builds and opens the selected macOS app logs', async () => {
-  mockEnvironments = [app('desktop', 'macos'), app('mobile', 'ios')];
+  const desktop = app('desktop', 'macos');
+  Object.assign(desktop.macos?.build ?? {}, { buildMachine: 'mini:7744', errorCode: 'STIM_OFFLOAD_REFUSED' });
+  const mobile = app('mobile', 'ios');
+  Object.assign(mobile.lastBuilds?.ios ?? {}, { buildMachine: 'remote-only', builtOn: 'mini:7744' });
+  mockEnvironments = [desktop, mobile];
   const screen = await render(body('/w/apps/mobile', 'ios'));
   expect(screen.getAllByRole('tab')).toHaveLength(3);
   expect(screen.queryAllByTestId('project-subtitle')).toHaveLength(0);
   expect(screen.getByText('mobile error')).toBeTruthy();
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.getByText('Compiled on mini')).toBeTruthy();
   await fireEvent.press(screen.getByRole('tab', { name: 'macOS' }));
   expect(screen.getByRole('tab', { name: 'macOS' }).props.accessibilityState.selected).toBe(true);
   expect(screen.getByText('desktop error')).toBeTruthy();
+  expect(screen.getByText('Selected: mini')).toBeTruthy();
+  expect(screen.getByText('Build destination refused')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
   expect(screen.queryByText('mobile error')).toBeNull();
   await fireEvent.press(screen.getByText('Build Logs'));
   expect(mockPush).toHaveBeenLastCalledWith({
@@ -97,15 +106,32 @@ it('offers the macOS build of a single app that also has a macOS app', async () 
   mockEnvironments = [
     { ...app('mobile', 'ios'), platforms: ['ios', 'android', 'macos'], macos: app('mobile', 'macos').macos },
   ];
+  Object.assign(mockEnvironments[0]?.macos?.build ?? {}, {
+    cacheHit: true,
+    builtOn: 'mini:7744',
+    buildMachine: 'remote-only',
+  });
   const screen = await render(body('/w/apps/mobile', 'ios'));
   expect(screen.getAllByRole('tab').map((tab) => tab.props.accessibilityLabel)).toEqual(['iOS', 'Android', 'macOS']);
   await fireEvent.press(screen.getByRole('tab', { name: 'macOS' }));
   expect(screen.getByText('desktop error')).toBeTruthy();
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
 });
 
 it('opens the build logs of the last native build, limited to the time it ran', async () => {
-  mockEnvironments = [app('a', 'ios'), app('b', 'ios')];
+  const cached = app('b', 'ios');
+  Object.assign(cached.lastBuilds?.ios ?? {}, {
+    status: 'ok',
+    cacheHit: 'remote',
+    buildMachine: 'remote-only',
+    builtOn: 'mini:7744',
+    offloadedTo: 'mini:7744',
+  });
+  mockEnvironments = [app('a', 'ios'), cached];
   const screen = await render(body('/w/apps/b', 'ios'));
+  expect(screen.getByText('Selected: Remote only')).toBeTruthy();
+  expect(screen.queryByText(/Compiled on/)).toBeNull();
   await fireEvent.press(screen.getByText('Build Logs'));
   expect(mockPush).toHaveBeenLastCalledWith({
     pathname: '/mac/[id]/logs',

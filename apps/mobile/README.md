@@ -327,7 +327,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   time against the estimate with the miss reason, a checklist of phases with
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
-  Otherwise it shows the last build with when it ran, a failed build's compiler
+  Otherwise it shows the last build's selected destination and recorded compilation machine,
+  omitting the compilation line for cache hits or absent compilation data.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
+  It shows when the last build ran, a failed build's compiler
   errors, why it missed the cache with the changed fingerprint sources, its
   phase times, and a **Build Logs** row (marked Failed for a failed build) that
   opens Logs on the build source for that build's slot, limited to the lines

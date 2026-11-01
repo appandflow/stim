@@ -14,6 +14,27 @@
     var id: Self { self }
   }
 
+  /// A device tool that answers like the CLI would, without touching a device.
+  func playgroundDeviceTool(_ platform: String) -> (DeviceTool) async throws -> DeviceToolResult {
+    { tool in
+      let body: String
+      switch tool {
+      case .setLocation: body = #"{"tool":"location","action":"set","readBack":null}"#
+      case .clearLocation: body = #"{"tool":"location","action":"clear","readBack":null}"#
+      case .permission(_, let service):
+        body =
+          platform == "ios"
+          ? #"{"tool":"permission","action":"grant","service":"\#(service)","readBack":null}"#
+          : #"{"tool":"permission","action":"grant","service":"\#(service)","readBack":{"permissions":[{"name":"android.permission.CAMERA","granted":true}]}}"#
+      case .push: body = #"{"tool":"push","readBack":null}"#
+      case .network(let enabled):
+        body = #"{"tool":"network","enabled":\#(enabled),"readBack":{"wifi":\#(enabled),"data":\#(enabled)}}"#
+      }
+      let json = String(body.dropLast()) + #","deviceName":"playground"}"#
+      return try JSONDecoder().decode(DeviceToolResult.self, from: Data(json.utf8))
+    }
+  }
+
   struct PlaygroundSimulator {
     let loading: Bool
     let error: String?
@@ -131,14 +152,22 @@
         let builds = (0..<count).map { index -> [String: Any] in
           let failed = scenario == .error || (scenario == .longText && index == 0)
           let date = now.addingTimeInterval(-Double(index + 1) * 600)
-          let cacheHit: Any = failed || (scenario == .largeData && index == 0) ? false : index.isMultiple(of: 2) ? "local" : false
+          let cacheHit: Any =
+            failed || (scenario == .largeData && index == 0)
+            ? false : index == 0 ? "remote" : index.isMultiple(of: 2) ? "local" : false
           var build: [String: Any] = [
             "platform": "ios", "status": failed ? "failed" : "ok", "cacheHit": cacheHit,
+            "buildMachine": index.isMultiple(of: 2) ? "local" : "remote-only",
             "durationMs": 128400, "startedAt": date.ISO8601Format(),
             "finishedAt": date.addingTimeInterval(128.4).ISO8601Format(), "fingerprint": "abc123456789abcd",
             "result": failed ? "failed" : "succeeded", "slot": "default", "configuration": "Debug",
             "phases": failed ? phases.filter { !["install", "launch"].contains($0.key) } : phases,
           ]
+          if cacheHit is Bool { build["builtOn"] = index.isMultiple(of: 2) ? "here" : "janics-mac-mini:7744" }
+          if cacheHit as? String == "remote" {
+            build["buildMachine"] = "remote-only"
+            build["builtOn"] = "janics-mac-mini:7744"
+          }
           if scenario == .largeData && index == 0 {
             build["missReason"] = miss
             build["offloadFallback"] =
@@ -155,6 +184,13 @@
                   : "Cannot find type 'WorkspaceHeader' in scope",
               ] as [String: Any]
             }
+          }
+          if scenario == .error && index == 0 {
+            build["buildMachine"] = "janics-mac-mini:7744"
+            build.removeValue(forKey: "builtOn")
+            build.removeValue(forKey: "diagnostics")
+            build["errorCode"] = "STIM_OFFLOAD_REFUSED"
+            build["phases"] = ["prepare": 200]
           }
           return build
         }
