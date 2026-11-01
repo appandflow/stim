@@ -11,11 +11,19 @@ npm install --save-dev @stim-cli/metro
 
 ## Shared transforms
 
+Set `cacheStores` on the final merged Metro config:
+
 ```js
 const { sharedCacheStores } = require('@stim-cli/metro');
+const { name } = require('./package.json');
 
-config.cacheStores = sharedCacheStores('my-app');
+config.cacheStores = sharedCacheStores(name, { cwd: __dirname });
 ```
+
+For bare React Native under Stim, this explicitly selects one shared transform
+store. Stim's automatic setup preserves Metro's default `os.tmpdir()/metro-cache`
+store; this assignment replaces it and any custom stores in `cacheStores`.
+Using the package name lets Stim recognize the shared store without adding another.
 
 Set `STIM_METRO_CACHE` to an absolute path to override the shared cache location.
 A relative value is ignored with a warning.
@@ -57,8 +65,9 @@ The reporter must be attached to the config passed directly to
 `Metro.runServer`. React Native and Expo CLIs can replace a reporter declared in
 `metro.config.js`.
 
-Stim supplies this integration automatically for Stim-managed servers. Add the
-package directly only for Metro processes that run outside Stim.
+Stim supplies this integration automatically for Stim-managed servers. Direct
+configuration is optional: use it for the explicit store choice above or for
+Metro processes that run outside Stim.
 
 See the [cache package documentation](https://stim.appandflow.com/docs/cache-packages)
 for current usage and cleanup guidance.
