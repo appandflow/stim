@@ -3632,20 +3632,29 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
     child.stdout?.on('data', (d) => (output += d));
     child.stderr?.on('data', (d) => (output += d));
     const timer = setTimeout(() => child.kill('SIGKILL'), CHILD_TIMEOUT_MS);
-    const done = once(child, 'exit').then(([code]) => {
-      clearTimeout(timer);
-      if (code !== 0) throw new Error(`${path} exited ${code}: ${output}`);
-      return output;
-    });
-    return { child, done };
-  }
-
-  async function waitForFile(file: string) {
-    const deadline = Date.now() + BARRIER_MS;
-    while (!existsSync(file)) {
-      if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
-      await new Promise((r) => setTimeout(r, 5));
+    let exited = false;
+    const done = once(child, 'exit')
+      .then(([code]) => {
+        if (code !== 0) throw new Error(`${path} exited ${code}: ${output}`);
+        return output;
+      })
+      .finally(() => {
+        exited = true;
+        clearTimeout(timer);
+      });
+    void done.catch(() => undefined);
+    async function waitForFile(file: string) {
+      const deadline = Date.now() + BARRIER_MS;
+      while (!existsSync(file)) {
+        if (exited) {
+          await done;
+          throw new Error(`${path} exited before ${file}: ${output}`);
+        }
+        if (Date.now() > deadline) throw new Error(`barrier timed out: ${file}`);
+        await new Promise((r) => setTimeout(r, 5));
+      }
     }
+    return { child, done, waitForFile };
   }
 
   // gc, paused inside the first removal it makes anywhere under the claim set it decided was stale.
@@ -3719,10 +3728,10 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
       const file = (name: string) => join(scratch, name);
 
       const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
-      await waitForFile(file('gc.ready'));
+      await gc.waitForFile(file('gc.ready'));
 
       const holder = start(holderScript(), [claimSet, file('a.acquired'), file('a.go')]);
-      await waitForFile(file('a.acquired'));
+      await holder.waitForFile(file('a.acquired'));
       const held = JSON.parse(readFileSync(file('a.acquired'), 'utf-8')) as { path: string; claimId: string };
 
       writeFileSync(file('gc.go'), 'go');
@@ -3751,7 +3760,7 @@ describe('--delete against a claim taken while gc is deleting', { timeout: 60_00
     const file = (name: string) => join(scratch, name);
 
     const gc = start(gcScript(), [claimSet, file('gc.ready'), file('gc.go')]);
-    await waitForFile(file('gc.ready'));
+    await gc.waitForFile(file('gc.ready'));
 
     const spawning = plantClaim(claimSet, 'exclusive', goneClaimOwner(), {
       claimId: 'spawning',
