@@ -139,16 +139,20 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
-test('file commands write the given input to stdin and preserve raw stdout when requested', async () => {
+test('file commands isolate child environment and preserve stdin and raw stdout', async () => {
   resetExecutor();
-  const echo = ['-e', 'process.stdin.pipe(process.stdout)'];
+  const echo = [
+    '-e',
+    'if ("STIM_EXEC_OMITTED" in process.env || process.env.STIM_EXEC_KEPT !== "kept") process.exit(3); process.stdin.pipe(process.stdout)',
+  ];
   const input = ' \t<plist/> \n';
+  const env = { STIM_EXEC_OMITTED: 'omitted', STIM_EXEC_KEPT: 'kept' };
+  const options = { input, env, omitEnv: ['STIM_EXEC_OMITTED'], timeoutMs: 60_000 };
   const executor = getExecutor();
-  expect(await executor.runFileAsync(process.execPath, echo, { input, timeoutMs: 60_000 })).toBe('<plist/>');
-  expect(await executor.runFileAsync(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(
-    input,
-  );
-  expect(executor.runFile(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(input);
+  expect(await executor.runFileAsync(process.execPath, echo, options)).toBe('<plist/>');
+  expect(await executor.runFileAsync(process.execPath, echo, { ...options, untrimmed: true })).toBe(input);
+  expect(executor.runFile(process.execPath, echo, { ...options, untrimmed: true })).toBe(input);
+  expect(env).toEqual({ STIM_EXEC_OMITTED: 'omitted', STIM_EXEC_KEPT: 'kept' });
 });
 
 test('file commands can reject stderr on a successful exit without changing the default', async () => {
