@@ -1,7 +1,7 @@
 import { ensureIosRuntime } from '../devices/ios-runtime.ts';
 import { hostedAppAttempt, hostedMacosAppSlot, isJsonObject, parseHostedOfferRequest } from '@stim-cli/core/state';
 import { collectHostedAndroidLogs } from './android-logs.ts';
-import { collectHostedIosLogs, collectHostedIosCrashes } from './ios-logs.ts';
+import { collectHostedIosLogs } from './ios-logs.ts';
 import { runHostedDevice } from './worker.ts';
 import { runHostedAndroidDevice } from './android.ts';
 import { runHostedMacosApp } from './macos.ts';
@@ -112,16 +112,17 @@ async function main(): Promise<void> {
       throw new Error('Invalid hosted native log request.');
     const session = input.session as string;
     const attempt = input.attempt as string;
-    const deadline = Date.now() + 10_000;
-    const more = await (input.platform === 'android' ? collectHostedAndroidLogs : collectHostedIosLogs)(
-      process.env.STIM_HOME,
-      session,
-      attempt,
-      input.since,
-      input.final === true,
-    );
-    if (input.platform === 'ios')
-      await collectHostedIosCrashes(process.env.STIM_HOME, session, attempt, input.since, deadline, process.env);
+    const more =
+      input.platform === 'ios'
+        ? await collectHostedIosLogs(
+            process.env.STIM_HOME,
+            session,
+            attempt,
+            input.since,
+            process.env,
+            input.final === true,
+          )
+        : await collectHostedAndroidLogs(process.env.STIM_HOME, session, attempt, input.since, input.final === true);
     process.stdout.write(`${JSON.stringify({ more })}\n`);
     return;
   }

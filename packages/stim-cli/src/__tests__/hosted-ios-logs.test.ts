@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { hostedNativeLogsDir, readHostedNativeLogsCheckpoint, readLogsSince } from '@stim-cli/core/state';
-import { collectHostedIosLogs, collectHostedIosCrashes } from '../device-host/ios-logs.ts';
+import { collectHostedIosLogs } from '../device-host/ios-logs.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -69,7 +69,7 @@ afterEach(() => {
 
 test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowMs: 10995116277760000 })])(
   'collection rebuilds checkpoint %s without repeating saved records',
-  (checkpoint) => {
+  async (checkpoint) => {
     const events = [
       event(1100, 'older saved failure'),
       event(8100, 'saved failure'),
@@ -89,18 +89,20 @@ test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowM
         .join('\n');
     });
     vi.setSystemTime(start + 10_000);
-    collectHostedIosLogs(home, session, 'app', start);
+    await collectHostedIosLogs(home, session, 'app', start, { HOME: root });
     const path = join(hostedNativeLogsDir(home, 'ios'), 'checkpoint.json');
     if (checkpoint === null) rmSync(path);
     else writeFileSync(path, checkpoint);
     fail = true;
-    expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow('query failed during rebuild');
+    await expect(collectHostedIosLogs(home, session, 'app', start, { HOME: root })).rejects.toThrow(
+      'query failed during rebuild',
+    );
     expect(readHostedNativeLogsCheckpoint(home)).toBeNull();
     fail = false;
     events.push(event(9000, 'new failure'));
-    expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+    expect(await collectHostedIosLogs(home, session, 'app', start, { HOME: root })).toBe(false);
     expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 10_000);
-    expect(collectHostedIosLogs(home, session, 'app', start)).toBe(false);
+    expect(await collectHostedIosLogs(home, session, 'app', start, { HOME: root })).toBe(false);
     expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
       'older saved failure',
       'saved failure',
@@ -110,40 +112,40 @@ test.each(['{broken', null, JSON.stringify({ until: start, boundary: [], windowM
   },
 );
 
-test('refuses a foreign device or unsafe executable before querying native logs', () => {
+test('refuses a foreign device or unsafe executable before querying native logs', async () => {
   writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [], android: [], web: [] }));
-  expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow(/ledger|owned/);
+  await expect(collectHostedIosLogs(home, session, 'app', start, { HOME: root })).rejects.toThrow(/ledger|owned/);
   expect(native.runFile).not.toHaveBeenCalled();
   writeFileSync(join(home, 'created-devices.json'), JSON.stringify({ version: 1, ios: [udid], android: [], web: [] }));
   native.runFile.mockReturnValue('Fixture" OR TRUEPREDICATE');
-  expect(() => collectHostedIosLogs(home, session, 'app', start)).toThrow('log predicate');
+  await expect(collectHostedIosLogs(home, session, 'app', start, { HOME: root })).rejects.toThrow('log predicate');
   expect(native.runFile.mock.calls.every(([file]) => file === '/usr/libexec/PlistBuddy')).toBe(true);
 });
 
-test('shrinks a dense historical window after native failure and grows the next successful window', () => {
+test('shrinks a dense historical window after native failure and grows the next successful window', async () => {
   vi.setSystemTime(start + 240_000);
   native.runFile.mockImplementation((file, args) => {
     if (file === '/usr/libexec/PlistBuddy') return 'Fixture';
     if (args?.at(-1) === '2026-10-06 12:04:01+0000') throw new Error('maxBuffer exceeded');
     return event(30_000, 'historical failure');
   });
-  expect(collectHostedIosLogs(home, session, 'app', start)).toBe(true);
+  expect(await collectHostedIosLogs(home, session, 'app', start, { HOME: root })).toBe(true);
   expect(readHostedNativeLogsCheckpoint(home)).toMatchObject({ until: start + 60_000, windowMs: 60_000 });
-  expect(collectHostedIosLogs(home, session, 'app', start)).toBe(true);
+  expect(await collectHostedIosLogs(home, session, 'app', start, { HOME: root })).toBe(true);
   expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 180_000);
   expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records.map((record) => record.msg)).toEqual([
     'historical failure',
   ]);
 });
 
-test('final collection shrinks toward the recent tail instead of spending its bound on old history', () => {
+test('final collection shrinks toward the recent tail instead of spending its bound on old history', async () => {
   vi.setSystemTime(start + 240_000);
   native.runFile.mockImplementation((file, args) => {
     if (file === '/usr/libexec/PlistBuddy') return 'Fixture';
     if (args?.at(-3) === '2026-10-06 12:00:00+0000') throw new Error('maxBuffer exceeded');
     return event(230_000, 'stop tail');
   });
-  expect(collectHostedIosLogs(home, session, 'app', start, true)).toBe(false);
+  expect(await collectHostedIosLogs(home, session, 'app', start, { HOME: root }, true)).toBe(false);
   expect(readHostedNativeLogsCheckpoint(home)?.until).toBe(start + 240_000);
   expect(readLogsSince(hostedNativeLogsDir(home, 'ios'), {}).records).toMatchObject([
     {
@@ -201,8 +203,14 @@ test('hosted iOS keeps bounded exact-device crashes across log rotation without 
     vi.setSystemTime(start + 20_000);
     throw new DOMException('symbolication deadline expired', 'TimeoutError');
   });
+  native.runFile.mockImplementation((file) => {
+    if (file === '/usr/libexec/PlistBuddy') return 'Fixture';
+    throw new Error('console unavailable');
+  });
   vi.setSystemTime(start + 10_000);
-  await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  await expect(collectHostedIosLogs(home, session, 'app', start, { HOME: root })).rejects.toThrow(
+    'console unavailable',
+  );
   const logs = hostedNativeLogsDir(home, 'ios');
   const page = readLogsSince(logs, {});
   expect(page.more).toBe(false);
@@ -226,7 +234,9 @@ test('hosted iOS keeps bounded exact-device crashes across log rotation without 
   writeFileSync(crashLog, '');
   for (const name of ['device.ndjson', 'device.ndjson.1'])
     writeFileSync(join(logs, name), JSON.stringify({ ts: start + 2000, msg: 'console churn' }) + '\n');
-  await collectHostedIosCrashes(home, session, 'app', start, start + 20_000, { HOME: root });
+  await expect(collectHostedIosLogs(home, session, 'app', start, { HOME: root })).rejects.toThrow(
+    'console unavailable',
+  );
   expect(readLogsSince(logs, {}).records.filter((record) => record.event === 'native_crash')).toEqual([]);
   expect(readFileSync(join(directory, 'owned.ips'), 'utf8')).toBe('{}\n' + JSON.stringify(report));
 });

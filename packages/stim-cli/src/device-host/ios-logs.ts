@@ -21,18 +21,25 @@ function logDate(ms: number): string {
   return new Date(ms).toISOString().replace('T', ' ').replace('.000Z', '+0000');
 }
 
-/** Captures a bounded unified-log window only from this home's exact ledger-owned simulator. */
-export function collectHostedIosLogs(
+/**
+ * Captures bounded console and crash logs only for this home's ledger-owned simulator and installed app.
+ * Crash incident deduplication covers retained crash-log generations; an evicted incident can reappear if its OS
+ * report remains discoverable.
+ */
+export async function collectHostedIosLogs(
   home: string,
   session: string,
   attempt: string,
   since: number,
+  env: NodeJS.ProcessEnv,
   final = false,
-): boolean {
+): Promise<boolean> {
   const device = readHostedDevice(home);
   assertHostedDeviceLedger(home, device.udid);
-  if (readHostedAppMetadata(session, attempt, home).state !== 'installed') return false;
+  const app = readHostedAppMetadata(session, attempt, home);
+  if (app.state !== 'installed') return false;
   const deadline = Date.now() + 10_000;
+  await collectHostedIosCrashes(home, device.udid, app.bundleId, since, deadline, env);
   const exec = getExecutor();
   const executable = exec.runFile(
     '/usr/libexec/PlistBuddy',
@@ -80,28 +87,20 @@ export function collectHostedIosLogs(
   });
 }
 
-/**
- * Stores captured iOS crash summaries in a dedicated rotating log. Incident deduplication covers its retained
- * generations; an evicted incident can reappear if the OS report remains discoverable.
- */
-export async function collectHostedIosCrashes(
+async function collectHostedIosCrashes(
   home: string,
-  session: string,
-  attempt: string,
+  deviceId: string,
+  appId: string,
   since: number,
   deadline: number,
   env: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const device = readHostedDevice(home);
-  assertHostedDeviceLedger(home, device.udid);
-  const app = readHostedAppMetadata(session, attempt, home);
-  if (app.state !== 'installed' || Date.now() >= deadline) return;
   const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
   const records = await readIosCrashReports(
     {
       platform: 'ios',
-      deviceId: device.udid,
-      appId: app.bundleId,
+      deviceId,
+      appId,
       since,
     },
     deadline,
@@ -112,7 +111,7 @@ export async function collectHostedIosCrashes(
   const hostHome = env.HOME || homedir();
   const text = (value: string, limit: number) =>
     value
-      .replaceAll(new RegExp(device.udid, 'gi'), '<hosted-simulator>')
+      .replaceAll(new RegExp(deviceId, 'gi'), '<hosted-simulator>')
       .replaceAll(hostHome, '<host-home>')
       .slice(0, limit);
   const file = join(hostedNativeLogsDir(home, 'ios'), 'native-crashes.ndjson');
@@ -137,7 +136,7 @@ export async function collectHostedIosCrashes(
             level: 'fatal',
             event: 'native_crash',
             incident,
-            appId: app.bundleId,
+            appId,
             msg: text(String(record.msg), 8192),
             stack: Array.isArray(record.stack)
               ? record.stack
