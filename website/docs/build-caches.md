@@ -442,7 +442,7 @@ nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
 The one exception to leaving caches alone is the Swift compilation cache. When
-it is over `caches.swiftCompilationCacheMaxGb` (15 GB; 0 means no cap), a plain
+it is over `caches.swiftCompilationCacheMaxGb` (default 0, no cap), a plain
 `stim gc --delete` empties it whole, as automatic maintenance does. It cannot be
 trimmed by age without corrupting its index. The cache is kept, with the build
 named, while an iOS build holds its claim on it.
@@ -602,7 +602,7 @@ stops the disk-driven ones once free space is back above the floor:
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
 4. The Swift compilation cache, emptied whole once it is over
-   `caches.swiftCompilationCacheMaxGb` (15 GB; 0 means no cap), whatever the
+   `caches.swiftCompilationCacheMaxGb` (default 0, no cap), whatever the
    free disk. It is kept while an iOS build holds its claim on
    the cache, or while that claim is unresolved. The cache is LLVM's
    on-disk content store, whose entries live inside shared database files, so

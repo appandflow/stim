@@ -912,7 +912,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'caches.swiftCompilationCacheMaxGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
-    default: 15,
+    default: 0,
     env: 'STIM_CACHES_SWIFT_COMPILATION_CACHE_MAX_GB',
     description:
       'Swift compilation-cache cap in GiB; above it the cache is emptied whole, while no build holds it; 0 means no cap',

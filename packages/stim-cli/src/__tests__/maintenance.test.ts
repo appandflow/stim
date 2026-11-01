@@ -155,7 +155,7 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
         blocked: 'in use: native run claim',
       }),
     ],
-    settings,
+    settings: { ...settings, swiftCompilationCacheMaxGb: 15 },
     budget,
     protectedRoot: '/self',
   });
