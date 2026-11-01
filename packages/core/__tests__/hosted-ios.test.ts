@@ -38,9 +38,14 @@ test('agent access survives placement reads and status without a token or local 
     remoteConfig: '/tmp/remote.json',
     command: 'agent-device <command> --remote-config /tmp/remote.json',
   };
-  const parsed = parseHostedIosPlacement({ ...placement, agent })!;
+  const parsed = parseHostedIosPlacement({
+    ...placement,
+    agent,
+    device: { ...placement.device, name: 'stim-fixture-remote' },
+  })!;
   expect(parsed.agent).toEqual(agent);
   expect(hostedIosStatus(parsed).agent).toEqual(agent);
+  expect(hostedIosStatus(parsed).device?.name).toBe('stim-fixture-remote');
   expect(JSON.stringify(hostedIosStatus(parsed))).not.toContain(placement.device.udid);
 });
 

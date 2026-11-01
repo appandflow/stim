@@ -20,9 +20,11 @@ vi.mock('stim', () => ({
 
 let root: string;
 let active: string;
+let deviceId: string | null;
 let options: CIOptions;
 
 beforeEach(() => {
+  deviceId = 'owned-device';
   lifecycle.create.mockClear();
   vi.stubEnv('GITHUB_ACTIONS', 'false');
   vi.stubEnv('RUNNER_ENVIRONMENT', '');
@@ -39,7 +41,7 @@ beforeEach(() => {
   lifecycle.run.mockReset().mockImplementation(async () => {
     writeFileSync(active, 'running');
     writeFileSync(join(root, 'native.log'), 'running');
-    return { platform: 'ios', facts: { udid: 'owned-device', bundleId: 'test.app', metroPort: 8181 } };
+    return { platform: 'ios', facts: { udid: deviceId, bundleId: 'test.app', metroPort: 8181 } };
   });
   lifecycle.diagnostics.mockReset().mockImplementation(async () => ({
     directory: root,
@@ -249,32 +251,36 @@ it('writes no result, test or diagnostic file without an artifacts directory', a
   expect(lifecycle.diagnostics).not.toHaveBeenCalled();
 });
 
-it('gives the command exact target facts and retains persisted diagnostics after cleanup', async () => {
-  const cwd = process.cwd();
-  const home = process.env.STIM_HOME;
-  const output = join(root, 'seen.json');
-  options.home = join(root, 'ci-home');
-  options.command = [
-    process.execPath,
-    '-e',
-    `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(output)}, JSON.stringify({ cwd:process.cwd(), device:process.env.STIM_CI_DEVICE_ID, app:process.env.STIM_CI_APP_ID, metro:process.env.STIM_CI_METRO_PORT, home:process.env.STIM_HOME, run:JSON.parse(fs.readFileSync(process.env.STIM_CI_RUN_RESULT,'utf8')) }));`,
-  ];
-  const result = await runCI(options);
-  expect(result.exitCode).toBe(0);
-  expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({
-    cwd: root,
-    device: 'owned-device',
-    app: 'test.app',
-    metro: '8181',
-    home: options.home,
-    run: { platform: 'ios', facts: { udid: 'owned-device', bundleId: 'test.app', metroPort: 8181 } },
-  });
-  expect(JSON.parse(readFileSync(result.diagnostics.path!, 'utf8')).records).toEqual([{ message: 'running' }]);
-  expect(existsSync(active)).toBe(false);
-  expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(0);
-  expect(process.cwd()).toBe(cwd);
-  expect(process.env.STIM_HOME).toBe(home);
-});
+it.each(['owned-device', null])(
+  'gives the command exact target facts and retains persisted diagnostics after cleanup (%s)',
+  async (udid) => {
+    deviceId = udid;
+    const cwd = process.cwd();
+    const home = process.env.STIM_HOME;
+    const output = join(root, 'seen.json');
+    options.home = join(root, 'ci-home');
+    options.command = [
+      process.execPath,
+      '-e',
+      `const fs = require('node:fs'); fs.writeFileSync(${JSON.stringify(output)}, JSON.stringify({ cwd:process.cwd(), device:process.env.STIM_CI_DEVICE_ID, app:process.env.STIM_CI_APP_ID, metro:process.env.STIM_CI_METRO_PORT, home:process.env.STIM_HOME, run:JSON.parse(fs.readFileSync(process.env.STIM_CI_RUN_RESULT,'utf8')) }));`,
+    ];
+    const result = await runCI(options);
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(readFileSync(output, 'utf8'))).toEqual({
+      cwd: root,
+      device: udid ?? '',
+      app: 'test.app',
+      metro: '8181',
+      home: options.home,
+      run: { platform: 'ios', facts: { udid, bundleId: 'test.app', metroPort: 8181 } },
+    });
+    expect(JSON.parse(readFileSync(result.diagnostics.path!, 'utf8')).records).toEqual([{ message: 'running' }]);
+    expect(existsSync(active)).toBe(false);
+    expect(JSON.parse(readFileSync(result.resultPath ?? '', 'utf8')).exitCode).toBe(0);
+    expect(process.cwd()).toBe(cwd);
+    expect(process.env.STIM_HOME).toBe(home);
+  },
+);
 
 it('asks Stim to install the recorded build from clean app state and never to build', async () => {
   options.run = { platform: 'ios', scheme: 'App', configuration: 'Release' };
