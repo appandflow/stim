@@ -320,14 +320,22 @@ With the flag off, or with no pairing, nothing connects and the sidebar and Mach
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
 row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Active,
 Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
-a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
-this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
-archive). It is not shared with the phone app or another Mac, and Stim itself does not know about it.
+a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again".
 
-A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
-or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
-workspace in use cannot be hidden. Entries for a workspace that is no longer active, idle, not set up or
-archived are dropped.
+Provisioned local apps use the shared `workspace.hidden` setting, so the CLI and phone see the same state.
+A multi-app row writes one setting per represented app. Mixed checkouts omit hidden apps from ordinary
+filters; Hidden shows those apps, and selecting both keeps one checkout row. Starting, reloading or warming
+a workspace clears its shared hidden setting in the CLI. Hide is disabled for workspaces in use.
+
+Desktop migrates matching old preference paths through the same local server setting writes. Progress and
+refusals appear in Activity; the old entry stays until every app reports the intended shared state, including
+after a retry. Archived and Not Set Up
+hides stay in this Desktop's preferences, as do the separate in-memory masks for paired rows. Stale local
+entries are dropped when the server no longer reports them.
+
+A missing-folder row keeps local hiding until its folder returns. Unhide is disabled if that row is
+already shared-hidden: restore the folder to change shared visibility. This avoids writing settings
+from a nonexistent folder or masking a shared hide locally.
 
 ## Archived workspaces
 

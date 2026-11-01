@@ -264,10 +264,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   "..." menu moves a worktree, a multi-app worktree, a Not set up worktree or an
   archive out of the list. Turn on **Hidden** in the sidebar's Status filter, or
   use the "3 hidden - Show" line at the foot of the sidebar, to see them again;
-  **Hide again** turns it off. Hidden is not part of All. A hidden workspace
-  that becomes active (its dev server runs, a build starts, a device boots or
-  connects, or a run starts) shows again. The list lives in this Desktop's own
-  preferences on this Mac and is not shared with the phone app.
+  **Hide again** turns it off. Hidden is not part of All. Provisioned local
+  apps use the shared `workspace.hidden` setting, so the CLI and phone agree;
+  a multi-app row changes each represented app. Mixed checkouts show only the
+  apps selected by the filters. Starting, reloading or warming clears the
+  setting. Old Desktop hides migrate after every app reports the intended shared state, including retries, with
+  progress and failures in Activity. Archives, Not Set Up worktrees and paired
+  row masks keep their existing Desktop-local behavior. A missing-folder row stays local until its
+  folder returns; Unhide requires restoring that folder when the row is already shared-hidden.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the

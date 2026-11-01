@@ -300,7 +300,20 @@ public func sidebarEntries(
 
 /// The rows of `entries` whose status the options show.
 public func visibleSidebarEntries(_ entries: [SidebarEntry], _ options: SidebarOptions) -> [SidebarEntry] {
-  entries.filter { options.statuses.contains($0.status(hidden: options.hiddenWorkspaces)) }
+  entries.compactMap { entry in
+    guard case .worktreeGroup(let page) = entry else {
+      return options.statuses.contains(entry.status(hidden: options.hiddenWorkspaces)) ? entry : nil
+    }
+    let hidden = page.apps.filter {
+      options.hiddenWorkspaces.paths.contains(page.id) || options.hiddenWorkspaces.contains(.workspace($0))
+    }
+    let normal = page.apps.filter { app in !hidden.contains(where: { $0.path == app.path }) }
+    var shown = options.statuses.contains(.hidden) ? hidden : []
+    let status: StatusFilter = normal.contains(where: \.isActive) ? .live : .idle
+    if options.statuses.contains(status) { shown += normal }
+    guard let visible = WorktreePage.groups(environments: shown).first else { return nil }
+    return visible.isUnified ? .worktreeGroup(visible) : .workspace(visible.apps[0])
+  }
 }
 
 public func sidebarStatusCounts(
@@ -314,13 +327,15 @@ public func sidebarStatusCounts(
     hidden: options.hiddenWorkspaces)
 }
 
-/// How many of `entries` have each status.
+/// Rows matching each status. A checkout with hidden and visible apps can match both filters.
 public func sidebarStatusCounts(_ entries: [SidebarEntry], hidden: HiddenWorkspaces) -> [StatusFilter: Int] {
-  var counts = Dictionary(uniqueKeysWithValues: StatusFilter.allCases.map { ($0, 0) })
-  for entry in entries {
-    counts[entry.status(hidden: hidden), default: 0] += 1
-  }
-  return counts
+  Dictionary(
+    uniqueKeysWithValues: StatusFilter.allCases.map { status in
+      var options = SidebarOptions()
+      options.statuses = [status]
+      options.hiddenWorkspaces = hidden
+      return (status, visibleSidebarEntries(entries, options).count)
+    })
 }
 
 private func orderedEntries(
