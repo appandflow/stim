@@ -52,6 +52,7 @@ import {
   includesRecordings,
   includesWorkspaceOutputs,
   isWorkspacesScope,
+  markOverCapCompilationCache,
   planCacheEmptying,
   previewScopedEmptying,
   selectCaches,
@@ -278,7 +279,10 @@ export async function collectGcReport(
   );
   if (selected.length) phase('caches', `measuring ${plural(selected.length, 'shared cache')}`, operation);
   const sized = await sizeCaches(selected, operation);
-  const caches = scope === null ? previewScopedEmptying(sized, env) : planCacheEmptying(sized, all, env);
+  const caches =
+    scope === null
+      ? markOverCapCompilationCache(previewScopedEmptying(sized, env), env)
+      : planCacheEmptying(sized, all, env);
 
   if (scope) {
     return {
@@ -1017,6 +1021,7 @@ function reportActionable(report: GcReport): boolean {
       deviceLeases.expired.length > 0 ||
       easSessionSweep.orphaned.length > 0 ||
       ((olderThan !== null || all) && caches.length > 0) ||
+      caches.some((entry) => entry.willEmpty) ||
       scopedWorkPending(cache, report),
   );
 }
@@ -1316,14 +1321,29 @@ async function runGcCore(
   if (all) {
     deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
   } else if (olderThan === null) {
-    if (caches.length) {
+    if (caches.some((entry) => !entry.willEmpty)) {
       output.log(
         chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
       );
     }
   } else {
-    deleteFailures += (await trimCaches(caches, olderThan, output, signal, deps.operation)).failures;
+    deleteFailures += (
+      await trimCaches(
+        caches.filter((entry) => !entry.willEmpty),
+        olderThan,
+        output,
+        signal,
+        deps.operation,
+      )
+    ).failures;
   }
+  if (!all)
+    deleteFailures += await emptyCaches(
+      caches.filter((entry) => entry.willEmpty),
+      output,
+      signal,
+      deps.operation,
+    );
   return payload(deleteFailures);
 }
 

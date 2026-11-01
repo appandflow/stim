@@ -441,6 +441,12 @@ The first command only reports sizes. Age-based cleanup removes unused entries.
 nothing, so `gc --delete` on its own remains the way to prune stale entries.
 `--cache "compilation cache"` empties one cache instead of every one.
 
+The one exception to leaving caches alone is the Swift compilation cache. When
+it is over `caches.swiftCompilationCacheMaxGb` (15 GB; 0 means no cap), a plain
+`stim gc --delete` empties it whole, as automatic maintenance does. It cannot be
+trimmed by age without corrupting its index. The cache is kept, with the build
+named, while an iOS build holds its claim on it.
+
 A full disk or a killed build can leave a damaged object in the Xcode
 compilation cache. When an iOS build that used it fails with the compiler's
 own corruption error, such as `OnDiskCAS: corrupt internal reference` or
@@ -595,8 +601,9 @@ stops the disk-driven ones once free space is back above the floor:
 3. Native build and Metro cache entries, least recently used first, down to
    `maintenance.capTargetPercent` of their caps, plus entries unused for
    `maintenance.olderThanDays`.
-4. The Swift compilation cache, emptied whole, only below
-   `budget.hardFloorDiskGb`. It is kept while an iOS build holds its claim on
+4. The Swift compilation cache, emptied whole once it is over
+   `caches.swiftCompilationCacheMaxGb` (15 GB; 0 means no cap), whatever the
+   free disk. It is kept while an iOS build holds its claim on
    the cache, or while that claim is unresolved. The cache is LLVM's
    on-disk content store, whose entries live inside shared database files, so
    Stim cannot remove only the entries a running build does not need.
