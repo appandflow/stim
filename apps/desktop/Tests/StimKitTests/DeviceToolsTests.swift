@@ -4,19 +4,28 @@ import Testing
 @testable import StimKit
 
 @Suite struct DeviceToolsTests {
-  @Test func buildsTheDeviceCommandsTheCLIAccepts() {
+  @Test func buildsTypedRequestsForThePrivateServer() {
+    let location = DeviceTool.setLocation(latitude: -33.8688, longitude: 151.2093)
+      .remedyParams(platform: "ios", slot: "default", cwd: "/app")
     #expect(
-      DeviceTool.setLocation(latitude: -33.8688, longitude: 151.2093).arguments(platform: "ios", slot: "default")
-        == ["device", "location", "ios", "--set", "-33.868800,151.209300", "--json"])
+      location == [
+        "action": .string("device-tool"), "cwd": .string("/app"),
+        "request": .object(["tool": .string("location"), "platform": .string("ios"), "set": .string("-33.868800,151.209300")]),
+      ])
+    let permission = DeviceTool.permission(.reset, service: "camera")
+      .remedyParams(platform: "android", slot: "second", cwd: "/app")
+    #expect(permission["slot"] == .string("second"))
     #expect(
-      DeviceTool.permission(.reset, service: "camera").arguments(platform: "android", slot: "second")
-        == ["device", "permission", "android", "reset", "camera", "--slot", "second", "--json"])
+      permission["request"]
+        == .object([
+          "tool": .string("permission"), "platform": .string("android"), "action": .string("reset"), "service": .string("camera"),
+        ]))
     #expect(
-      DeviceTool.network(enabled: false).arguments(platform: "android", slot: "default")
-        == ["device", "network", "android", "off", "--json"])
+      DeviceTool.network(enabled: false).remedyParams(platform: "android", slot: "default", cwd: "/app")["request"]
+        == .object(["tool": .string("network"), "platform": .string("android"), "state": .string("off")]))
     #expect(
-      DeviceTool.push(payload: "{\"aps\":{}}").arguments(platform: "ios", slot: "default")
-        == ["device", "push", "ios", "--payload", "{\"aps\":{}}", "--json"])
+      DeviceTool.push(payload: "{\"aps\":{}}").remedyParams(platform: "ios", slot: "default", cwd: "/app")["request"]
+        == .object(["tool": .string("push"), "platform": .string("ios"), "payload": .string("{\"aps\":{}}")]))
   }
 
   @Test func parsesCoordinatesLikeTheCLI() throws {
@@ -67,8 +76,7 @@ import Testing
     let json = Data(
       #"{"code":"STIM_DEVICE_TOOL_FAILED","message":"simctl failed:\nline two","remedy":"Retry."}"#.utf8)
     #expect(DeviceToolError(stdout: json, stderr: "ignored").errorDescription == "simctl failed:\nline two Retry.")
-    let old = DeviceToolError(stdout: Data(), stderr: "error: unknown command 'location'")
-    #expect(old.errorDescription == "This version of stim has no device tools. Update stim to 1.30.0 or later.")
+    #expect(DeviceToolError(stdout: Data(), stderr: "").errorDescription == "The device tool failed.")
     let error = DeviceToolError(
       stdout: Data(),
       stderr: "STIM_DEVICE_TOOL_TARGET: The owned iOS simulator is not booted.\nRun `stim ios` to boot it.")

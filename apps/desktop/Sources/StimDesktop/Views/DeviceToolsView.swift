@@ -1,9 +1,6 @@
 import StimKit
 import SwiftUI
 
-/// The Tools section of a local simulator's or emulator's options popover: location, privacy permissions, a test push
-/// and the Android network. Each button runs one `stim device` command through the CLI, which checks that the device
-/// is this workspace's own, and shows what the CLI reported.
 struct DeviceToolsView: View {
   let platform: String
   let run: (DeviceTool) async throws -> DeviceToolResult

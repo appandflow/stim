@@ -1,8 +1,6 @@
 import Foundation
 
-/// One change the device viewer's Tools section asks `stim device` to make to the workspace's own simulator or
-/// emulator. The CLI owns the ownership check and the tool calls; Desktop only builds the arguments and reads the
-/// JSON it prints.
+/// A change to the workspace's owned local virtual device.
 public enum DeviceTool: Sendable, Equatable {
   public enum PermissionAction: String, Sendable, CaseIterable {
     case grant, revoke, reset
@@ -13,9 +11,6 @@ public enum DeviceTool: Sendable, Equatable {
   case permission(PermissionAction, service: String)
   case push(payload: String)
   case network(enabled: Bool)
-
-  /// The `stim` release that added `stim device location|permission|push|network`.
-  public static let minimumCLIVersion = "1.30.0"
 
   public static let iosServices = [
     "calendar", "contacts", "contacts-limited", "location", "location-always", "media-library", "microphone",
@@ -40,28 +35,33 @@ public enum DeviceTool: Sendable, Equatable {
     return (latitude, longitude)
   }
 
-  public func arguments(platform: String, slot: String) -> [String] {
-    var arguments: [String]
+  public func remedyParams(platform: String, slot: String, cwd: String) -> [String: JSONValue] {
+    var request: [String: JSONValue] = ["platform": .string(platform)]
     switch self {
     case .setLocation(let latitude, let longitude):
-      arguments = [
-        "device", "location", platform, "--set", String(format: "%.6f,%.6f", latitude, longitude),
-      ]
+      request["tool"] = .string("location")
+      request["set"] = .string(String(format: "%.6f,%.6f", latitude, longitude))
     case .clearLocation:
-      arguments = ["device", "location", platform, "--clear"]
+      request["tool"] = .string("location")
+      request["clear"] = .bool(true)
     case .permission(let action, let service):
-      arguments = ["device", "permission", platform, action.rawValue, service]
+      request["tool"] = .string("permission")
+      request["action"] = .string(action.rawValue)
+      request["service"] = .string(service)
     case .push(let payload):
-      arguments = ["device", "push", platform, "--payload", payload]
+      request["tool"] = .string("push")
+      request["payload"] = .string(payload)
     case .network(let enabled):
-      arguments = ["device", "network", platform, enabled ? "on" : "off"]
+      request["tool"] = .string("network")
+      request["state"] = .string(enabled ? "on" : "off")
     }
-    if slot != DeviceRef.defaultSlot { arguments += ["--slot", slot] }
-    return arguments + ["--json"]
+    var params: [String: JSONValue] = ["action": .string("device-tool"), "cwd": .string(cwd), "request": .object(request)]
+    if slot != DeviceRef.defaultSlot { params["slot"] = .string(slot) }
+    return params
   }
 }
 
-/// The single JSON line `stim device location|permission|push|network --json` prints.
+/// The result of a device change and its optional read-back state.
 public struct DeviceToolResult: Decodable, Sendable, Equatable {
   public struct Permission: Decodable, Sendable, Equatable {
     public let name: String
@@ -100,8 +100,7 @@ public struct DeviceToolResult: Decodable, Sendable, Equatable {
   }
 }
 
-/// A refusal or failure `stim device` printed: its message and remedy, without the code and the exit status. With
-/// `--json` the CLI prints the whole refusal as one JSON line on stdout, which survives a message that spans lines.
+/// A device-tool refusal with its message and recovery instructions.
 public struct DeviceToolError: LocalizedError, Equatable {
   public let message: String
 
@@ -112,10 +111,6 @@ public struct DeviceToolError: LocalizedError, Equatable {
     }
     if let refusal = try? JSONDecoder().decode(Refusal.self, from: stdout) {
       message = [refusal.message, refusal.remedy].compactMap { $0 }.joined(separator: " ")
-      return
-    }
-    if stderr.contains("unknown command") {
-      message = "This version of stim has no device tools. Update stim to \(DeviceTool.minimumCLIVersion) or later."
       return
     }
     let lines = stderr.split(separator: "\n").map(String.init)
@@ -129,14 +124,14 @@ public struct DeviceToolError: LocalizedError, Equatable {
   public var errorDescription: String? { message.isEmpty ? "The device tool failed." : message }
 }
 
-extension StimCLI {
-  /// Runs one device tool in `cwd`, the workspace whose own simulator or emulator it changes.
-  public func deviceTool(_ tool: DeviceTool, platform: String, slot: String, cwd: String) async throws
-    -> DeviceToolResult
-  {
-    let (status, data, stderr) = try await execute(
-      tool.arguments(platform: platform, slot: slot), cwd: cwd, timeout: 60)
-    guard status == 0 else { throw DeviceToolError(stdout: data, stderr: stderr) }
-    return try JSONDecoder().decode(DeviceToolResult.self, from: data)
-  }
+/// Runs a typed device change through the private same-home Desktop server and awaits its cleanup acknowledgement.
+@MainActor public func runServerDeviceTool(
+  _ tool: DeviceTool, platform: String, slot: String, cwd: String, stimHome: String,
+  connection: (client: ServerClient, home: String)?
+) async throws -> DeviceToolResult {
+  let result = try await runServerRemedy(
+    params: tool.remedyParams(platform: platform, slot: slot, cwd: cwd), stimHome: stimHome,
+    connection: connection, feature: "desktop-device-tools", json: true)
+  guard result.exitStatus == 0 else { throw DeviceToolError(stdout: result.stdout, stderr: result.message) }
+  return try JSONDecoder().decode(DeviceToolResult.self, from: result.stdout)
 }

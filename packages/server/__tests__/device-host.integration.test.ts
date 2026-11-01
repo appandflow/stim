@@ -70,8 +70,9 @@ for await (const chunk of process.stdin) chunks.push(chunk);
 const input = JSON.parse(Buffer.concat(chunks));
 const localCount = () => { const value = JSON.parse(process.env.LOCAL_COUNT ?? '0'); return typeof value === 'number' ? { ios: value, android: 0 } : value; };
 if(input.mode === 'count') {
+  if(process.env.LOCAL_COUNT === 'hang') process.on('SIGTERM',()=>{});
   writeFileSync(join(process.env.STIM_HOME,'count-entered'),String(process.pid));
-  if(process.env.LOCAL_COUNT === 'hang') { process.on('SIGTERM',()=>{}); await new Promise(()=>setInterval(()=>{},1000)); }
+  if(process.env.LOCAL_COUNT === 'hang') await new Promise(()=>setInterval(()=>{},1000));
   else {
     if(process.env.COUNT_GATE) while(!existsSync(process.env.COUNT_GATE)) await new Promise(resolve=>setTimeout(resolve,20));
     process.stdout.write(JSON.stringify(localCount()));

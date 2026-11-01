@@ -6,7 +6,7 @@ import StimStores
 import SwiftUI
 
 struct DeviceViewer: View {
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var env: Workspace
   var deviceID: String
   var owner: ServerOwner = .local
@@ -49,8 +49,10 @@ struct DeviceViewer: View {
     let size = Self.size(in: windowSize)
     Group {
       if let device {
-        AgentFeed(cli: cli, workspace: env.path, slot: device.slot, deviceID: OwnedDevice(owner: owner, ref: device).activityKey)
-        { agentActions in
+        AgentFeed(
+          environment: environment, workspace: env.path, slot: device.slot,
+          deviceID: OwnedDevice(owner: owner, ref: device).activityKey
+        ) { agentActions in
           if let target = replayTarget(device) {
             ReplayHost(target: target) { replay in
               ReplayingContent(

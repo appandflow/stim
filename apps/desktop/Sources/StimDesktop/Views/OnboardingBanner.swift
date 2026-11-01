@@ -24,17 +24,13 @@ struct OnboardingBanner: View {
 
   private func currentKind(_ report: Onboarding.Report) -> Onboarding.PopupKind? {
     if onboarding.showsGuide { return nil }
-    if report.nodeBlocksStim || report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
-    if !report.stim.isCompatible, !report.nodeBlocksStim, !onboarding.dismissedPopups.contains(.stim) {
-      return .stim
-    }
-    if report.needsRelaunch, !onboarding.dismissedPopups.contains(.relaunch) { return .relaunch }
+    if report.nodeBlocksServer, !onboarding.dismissedPopups.contains(.node) { return .node }
     if let server = report.server, !server.isCompatible, !report.nodeBlocksServer,
       !onboarding.dismissedPopups.contains(.server)
     {
       return .server
     }
-    if report.stim.isCompatible, !report.needsRelaunch, !report.viewerKeys.isEmpty,
+    if !report.viewerKeys.isEmpty,
       !onboarding.dismissedPopups.contains(.viewer)
     {
       return .viewer
@@ -46,40 +42,17 @@ struct OnboardingBanner: View {
   private func popup(_ kind: Onboarding.PopupKind, _ report: Onboarding.Report) -> some View {
     switch kind {
     case .node: nodePopup(report)
-    case .stim: stimPopup(report)
-    case .relaunch: relaunchPopup(report)
     case .server: serverPopup(report)
     case .viewer: viewerPopup(report.viewerKeys)
     }
   }
 
-  private func stimPopup(_ report: Onboarding.Report) -> some View {
-    let missing = report.stim == .missing
-    let minimum = StimCLI.minimumVersion.description
-    return popupCard(kind: .stim, icon: missing ? "shippingbox" : "arrow.up.circle", tone: .accent) {
-      Text(missing ? "Install stim to get started" : "Update stim to use Stim Desktop").font(.stim(.headline))
-      Text("Stim Desktop needs stim \(minimum) or later to show and drive your workspaces.")
-        .foregroundStyle(Palette.secondary)
-      if !missing, report.stimOwner == nil {
-        Text("No package manager installed this stim, so update it where it came from, or choose another.")
-          .foregroundStyle(Palette.secondary)
-      }
-      disclosure { Text(detail(report.stim, name: "stim", path: report.stimPath, manager: onboarding.installer)) }
-    } buttons: {
-      if onboarding.installCLICommand != nil {
-        runButton(
-          missing ? "Install stim" : "Update stim", variant: .primary, key: .stim, action: onboarding.installStim)
-      }
-      Button("Choose stim Executable\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim())
-    }
-  }
-
   private func nodePopup(_ report: Onboarding.Report) -> some View {
-    let runtime = report.nodeBlockingStim ?? report.nodeBlockingServer
+    let runtime = report.nodeBlockingServer
     return popupCard(kind: .node, icon: "exclamationmark.triangle", tone: .warning) {
       Text("Update Node.js to Use Stim Desktop").font(.stim(.headline))
       Text(
-        "stim and stim-server need Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
+        "stim-server needs Node.js \(SetupChecks.nodeMinimum.description) or later. Make a newer Node your version manager's default, or reinstall the CLI under one when an older Node sits beside it, then check again."
       )
       .foregroundStyle(Palette.secondary)
       if let runtime {
@@ -87,19 +60,6 @@ struct OnboardingBanner: View {
       }
     } buttons: {
       Button("Check Again", action: onboarding.check).buttonStyle(.stim(.primary))
-    }
-  }
-
-  private func relaunchPopup(_ report: Onboarding.Report) -> some View {
-    popupCard(kind: .relaunch, icon: "arrow.clockwise", tone: .accent) {
-      Text("Restart Stim Desktop to Use the New stim").font(.stim(.headline))
-      Text("Stim Desktop resolves stim once at launch, and it now finds a different one.")
-        .foregroundStyle(Palette.secondary)
-      disclosure { Text(abbreviatingHome(report.stimPath ?? "stim")) }
-    } buttons: {
-      if onboarding.canRelaunch {
-        Button("Restart Stim Desktop", action: onboarding.relaunch).buttonStyle(.stim(.primary))
-      }
     }
   }
 
