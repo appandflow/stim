@@ -495,8 +495,29 @@ test.skipIf(process.platform === 'win32')(
   'an offload daemon is found by its classpath or by the Gradle home it runs in',
   () => {
     const root = '/Users/me/.stim/build-worker';
-    expect(offloadClientOf(`java -cp ${root}/client-a/cache/gradle/wrapper/dists/x.jar`, root, null)).toBe('client-a');
-    expect(offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/cache/gradle`)).toBe('client-b');
+    for (const area of ['', 'repos/source-4ecffdb90498/']) {
+      const classpathClient = offloadClientOf(
+        `java -cp ${root}/client-a/${area}cache/gradle/wrapper/dists/x.jar`,
+        root,
+        null,
+      );
+      const homeClient = offloadClientOf(GRADLE_DAEMON, root, `${root}/client-b/${area}cache/gradle`);
+      expect(classpathClient).toBe('client-a');
+      expect(homeClient).toBe('client-b');
+      expect(
+        decisions(
+          planDaemons({
+            gradle: [gradle(1, { state: 'idle' }, classpathClient), gradle(2, { state: 'idle' }, homeClient)],
+            kotlin: [],
+            buildRunning: null,
+            stimServerRunning: true,
+          }),
+        ),
+      ).toEqual([
+        [1, false, 'stim-server'],
+        [2, false, 'stim-server'],
+      ]);
+    }
     expect(offloadClientOf(GRADLE_DAEMON, root, '/Users/me/.gradle')).toBeNull();
   },
 );
