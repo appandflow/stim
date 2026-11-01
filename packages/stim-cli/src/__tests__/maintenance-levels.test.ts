@@ -411,6 +411,33 @@ const actionKinds = () =>
       : [];
   });
 
+function memoryPressured() {
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: 100 * GB }],
+    memory: { level: 'critical', availableBytes: null, pressured: true },
+    warningSince: null,
+  });
+  vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * GB }]);
+}
+
+test('memory pressure stops an idle Gradle daemon with plenty of free disk', async () => {
+  memoryPressured();
+  daemonPlan({ state: 'idle' });
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).toHaveBeenCalledWith([101]);
+  expect(actionKinds()).toEqual(['stop-gradle-daemons']);
+});
+
+test('memory pressure keeps every Gradle daemon while a build can use it', async () => {
+  memoryPressured();
+  daemonPlan({ state: 'idle' }, 'a Gradle build is running');
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).not.toHaveBeenCalled();
+  expect(actionKinds()).toEqual([]);
+});
+
 test('level 3 stops an idle Gradle daemon, then deletes the version it was blocking, as two records', async () => {
   let running = true;
   const version = idleUnpinnedVersion(() => (running ? DAEMON_ROW : ''));

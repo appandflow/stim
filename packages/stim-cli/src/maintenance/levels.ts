@@ -138,6 +138,28 @@ async function planGradleDaemonStop(
   return { pids: [...blockers] };
 }
 
+/** Under memory pressure, stops the idle Gradle and Kotlin daemons `gc --delete --cache gradle-daemons` would stop. */
+export async function planMemoryDaemonStop(operation?: StimContext): Promise<MaintenancePlan> {
+  if (memorySweepIsScoped(operation?.env ?? process.env)) return { actions: [], blocked: [], skips: [] };
+  const report = await collectMemoryReport({ watchman: false, gradle: true, anyMemory: true }, false, operation);
+  const pids = report.processes
+    .filter((entry) => entry.reclaimable && (entry.kind === 'gradleDaemon' || entry.kind === 'kotlinDaemon'))
+    .map((entry) => entry.pid);
+  if (pids.length === 0) return { actions: [], blocked: [], skips: [] };
+  return {
+    actions: [
+      {
+        kind: 'would-stop-gradle-daemons',
+        target: `pid ${pids.join(', ')}`,
+        bytes: 0,
+        reason: 'memory pressure, these Gradle and Kotlin daemons are idle',
+      },
+    ],
+    blocked: [],
+    skips: [],
+  };
+}
+
 async function planLevel3({
   settings,
   sizes,

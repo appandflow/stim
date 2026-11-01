@@ -575,9 +575,11 @@ Disk and memory pressure are checked every minute, idle devices every
 `maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
 finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
-sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; below disk pressure level 3 a pass stops a dev server only after
-`maintenance.idleStopHours` without real activity and never stops helpers. The idle check shuts down owned simulators and emulators idle for
+sysctl fails. Only other platforms use `os.freemem()`. Under memory pressure
+a pass stops the idle Gradle and Kotlin daemons that
+`stim gc --delete --cache gradle-daemons` would stop, and none while a build
+can use them. Below disk pressure level 3 a pass stops a dev server only after
+`maintenance.idleStopHours` without real activity and stops no other helper. The idle check shuts down owned simulators and emulators idle for
 their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
 see [idle shutdown](./owned-devices.md#idle-shutdown).
 The same check stops a whole workspace, dev server and owned devices, after
