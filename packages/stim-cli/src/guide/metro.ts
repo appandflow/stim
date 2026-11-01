@@ -179,8 +179,9 @@ WHAT THE SUPERVISOR IS
                  for the bundle lines.
 
   expo-child and command-child put the Node the app pins (.nvmrc,
-  .node-version, .tool-versions nodejs, or package.json volta.node) first
-  on PATH when an nvm, fnm, Volta, asdf, mise or linked Homebrew
+  .node-version, .tool-versions nodejs, or package.json volta.node), looking
+  from the app directory up to its repository or worktree root, first on PATH
+  when an nvm, fnm, Volta, asdf, mise or linked Homebrew
   node/node@NN install satisfies the pin and the node already on PATH does
   not; the metro log then records a project_node event naming it. When no
   install has the version the pin names, the newest install of the pinned

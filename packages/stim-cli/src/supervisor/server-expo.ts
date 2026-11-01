@@ -75,7 +75,7 @@ export function findBinUpward(
   }
 }
 
-function repositoryRoot(startDir: string, exists: (p: string) => boolean): string | null {
+export function repositoryRoot(startDir: string, exists: (p: string) => boolean = existsSync): string | null {
   for (let dir = startDir; ; dir = dirname(dir)) {
     if (exists(join(dir, '.git'))) return dir;
     if (dirname(dir) === dir) return null;
@@ -317,7 +317,7 @@ export async function startExpoServer({
   // accepts the recorded serverPid, so the supervisor runs its own node directly.
   const runWithOwnNode = platform === 'win32' && resolved.source === 'package';
   const [command, commandArgs] = runWithOwnNode ? [process.execPath, [bin, ...args]] : [bin, args];
-  const node = withProjectNode(root, process.env);
+  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',
