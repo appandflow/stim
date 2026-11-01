@@ -17,12 +17,16 @@ jobs:
         with:
           node: '22'
       - name: Existing whole-file GC integration contracts
-        run: pnpm run test:integration packages/stim-cli/src/__tests__/gc.integration.test.ts --reporter=default --reporter=json --outputFile.json=gc-3873-results.json
+        run: |
+          foreach ($probeRound in 1..2) {
+            pnpm run test:integration packages/stim-cli/src/__tests__/gc.integration.test.ts --reporter=default --reporter=json --outputFile.json=gc-3873-results-$probeRound.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Retain probe results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gc-3873-windows
-          path: gc-3873-results.json
+          path: gc-3873-results-*.json
           if-no-files-found: ignore
           retention-days: 7
