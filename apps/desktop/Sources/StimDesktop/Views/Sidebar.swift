@@ -12,6 +12,7 @@ struct Sidebar: View {
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @ObservedObject private var pairedState = PairedViewState.shared
+  @State private var migratedHidden: Set<String> = []
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -20,7 +21,13 @@ struct Sidebar: View {
 
   var body: some View {
     let options = prefs.options
-    let pages = WorktreePage.groups(environments: store.environments(in: nil))
+    let pages = store.sidebarList(options).compactMap { entry -> WorktreePage? in
+      switch entry {
+      case .workspace(let app): return WorktreePage(path: app.path, environments: [app])
+      case .worktreeGroup(let page): return page
+      default: return nil
+      }
+    }
     let rowSelection = listSelection(pages: pages)
     List(selection: rowSelection) {
       Section {
@@ -110,13 +117,19 @@ struct Sidebar: View {
       }
       .background(Palette.sidebar)
     }
-    .onAppear { forgetStaleHidden() }
+    .onAppear {
+      forgetStaleHidden()
+      migrateHidden(store.payload)
+    }
     .onReceive(openRequests.$showsViewOptions) { requested in
       guard requested else { return }
       showsViewOptions = true
       openRequests.showsViewOptions = false
     }
     .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: prefs.hiddenWorkspacesRaw) { migrateHidden(store.payload) }
+    .onReceive(store.$payload) { migrateHidden($0) }
+    .onReceive(ServerSession.shared.$client) { _ in migrateHidden(store.payload) }
     .onChange(of: store.payload == nil, initial: true) { _, missing in
       if !missing { LaunchMilestones.reach("sidebar-rows") }
     }
@@ -136,6 +149,19 @@ struct Sidebar: View {
 
   private func forgetStaleHidden() {
     if let reconciled = reconciledHidden() { prefs.hiddenWorkspacesRaw = HiddenWorkspaces.encode(reconciled) }
+  }
+
+  private func migrateHidden(_ payload: StatusPayload?) {
+    migratedHidden.formIntersection(prefs.hiddenWorkspaces.paths)
+    guard let payload, ServerSession.shared.localActionConnection?.home == store.stimHome else { return }
+    for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
+      guard !migratedHidden.contains(item.path) else { continue }
+      let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions) { run in
+        guard run.exitStatus == 0 else { return }
+        prefs.setHidden(false, path: item.path)
+      }
+      if run != nil { migratedHidden.insert(item.path) }
+    }
   }
 
   private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
@@ -372,7 +398,7 @@ struct WorkspaceRow: View {
   let prefs = SidebarPreferences()
 
   var body: some View {
-    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
     WorkspaceActions(env: env, openLogs: openLogs) { menu in
       TimelineView(.everyMinute) { _ in
         WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)

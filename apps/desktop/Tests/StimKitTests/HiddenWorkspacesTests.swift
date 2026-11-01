@@ -63,6 +63,28 @@ import Testing
     #expect(try list(everything, hidden: HiddenWorkspaces()).count == 6)
     #expect(!StatusFilter.all.contains(.hidden))
     #expect(!StatusFilter.defaultSelection.contains(.hidden))
+    let shared = try JSONDecoder().decode(
+      [Workspace].self,
+      from: Data(
+        #"[{"path":"/r/app/.worktrees/idle","live":false,"warnings":[]},{"path":"/r/app/.worktrees/live","live":true,"warnings":[]},{"path":"/r/app/.worktrees/z/apps/a","live":false,"hidden":true,"warnings":[],"worktree":{"path":"/r/app/.worktrees/z","branch":"z"}},{"path":"/r/app/.worktrees/z/apps/b","live":false,"warnings":[],"worktree":{"path":"/r/app/.worktrees/z","branch":"z"}}]"#
+          .utf8))
+    let normal = sidebarList(environments: shared, unprovisioned: [], project: project, options: SidebarOptions())
+    #expect(normal.map(\.path).contains(shared[3].path))
+    #expect(!normal.map(\.path).contains(shared[2].path))
+    var onlyHidden = SidebarOptions()
+    onlyHidden.statuses = [.hidden]
+    let hiddenRows = sidebarList(environments: shared, unprovisioned: [], project: project, options: onlyHidden)
+    #expect(hiddenRows.map(\.path) == [shared[2].path])
+    let counts = sidebarStatusCounts(environments: shared, unprovisioned: [], project: project, options: onlyHidden)
+    #expect(counts[.hidden] == 1 && counts[.idle] == 2 && counts[.live] == 1)
+    onlyHidden.statuses = StatusFilter.all.union([.hidden])
+    let combined = sidebarList(environments: shared, unprovisioned: [], project: project, options: onlyHidden)
+    #expect(Set(combined.map(\.id)).count == combined.count)
+    #expect(
+      combined.contains {
+        if case .worktreeGroup(let page) = $0 { return page.apps.map(\.path) == [shared[2].path, shared[3].path] }
+        return false
+      })
   }
 
   @Test func hidingOneArchiveOfAGroupSplitsItFromTheRest() throws {
@@ -106,48 +128,48 @@ import Testing
     #expect(StatusFilter.summary(StatusFilter.all.union([.hidden])) == "All + Hidden")
   }
 
-  @Test func aWorkspaceThatBecomesActiveIsShownAgain() throws {
-    let hidden = HiddenWorkspaces(paths: ["/r/app/.worktrees/live", "/r/app/.worktrees/idle"])
-    let reconciled = hidden.reconciled(
-      environments: try environments(), unprovisioned: worktrees, archived: [], isBusy: { _ in false })
-    #expect(reconciled.paths == ["/r/app/.worktrees/idle"])
+  @Test func knownLocalPathsRemainUntilTheirSharedWritesSucceed() throws {
+    let envs = try environments()
+    let hidden = HiddenWorkspaces(paths: [envs[0].path, envs[1].path, "/unknown"])
+    let kept = hidden.reconciled(environments: envs, unprovisioned: nil, archived: nil, isBusy: { _ in false })
+    #expect(kept == hidden)
+    let migration = kept.migrations(environments: envs)
+    #expect(migration.map(\.path) == [envs[0].path, envs[1].path])
+    #expect(migration.map(\.hidden) == [true, false])
   }
 
-  @Test func eachKindOfRealActivityUnhides() throws {
-    func reconcile(_ json: String, busy: Set<String> = []) throws -> Set<String> {
+  @Test func eachKindOfRealActivityMigratesAsVisible() throws {
+    func migrating(_ json: String) throws -> Bool {
       let envs = try JSONDecoder().decode([Workspace].self, from: Data(json.utf8))
-      return HiddenWorkspaces(paths: ["/w"]).reconciled(
-        environments: envs, unprovisioned: [], archived: [], isBusy: { busy.contains($0) }
-      ).paths
+      return try #require(HiddenWorkspaces(paths: ["/w"]).migrations(environments: envs).first).hidden
     }
-    #expect(try reconcile(#"[{"path":"/w","live":false,"warnings":[]}]"#) == ["/w"])
-    #expect(try reconcile(#"[{"path":"/w","live":true,"warnings":[]}]"#).isEmpty)
+    #expect(try migrating(#"[{"path":"/w","live":false,"warnings":[]}]"#))
+    #expect(try !migrating(#"[{"path":"/w","live":true,"warnings":[]}]"#))
     #expect(
-      try reconcile(
+      try !migrating(
         #"[{"path":"/w","live":false,"warnings":[],"build":{"platform":"ios","slot":"default","state":"running","phase":"install","startedAt":"2026-10-06T00:00:00Z","phaseStartedAt":"2026-10-06T00:00:00Z","basis":0}}]"#
-      ).isEmpty)
-    #expect(try reconcile(#"[{"path":"/w","live":false,"warnings":[],"phase":"warming"}]"#).isEmpty)
-    #expect(try reconcile(#"[{"path":"/w","live":false,"warnings":[]}]"#, busy: ["/w"]).isEmpty)
+      ))
+    #expect(try !migrating(#"[{"path":"/w","live":false,"warnings":[],"phase":"warming"}]"#))
   }
 
-  @Test func recentIdleActivityDoesNotUnhide() throws {
+  @Test func recentIdleActivityDoesNotClearTheMigration() throws {
     let envs = try JSONDecoder().decode(
       [Workspace].self,
       from: Data(
         #"[{"path":"/w","live":false,"warnings":[],"supervisor":{"startedAt":"2099-01-01T00:00:00Z"},"lastBuilds":{"ios":{"platform":"ios","status":"ok","cacheHit":"local","startedAt":"2099-01-01T00:00:00Z","finishedAt":"2099-01-01T00:05:00Z"}}}]"#
           .utf8))
-    let kept = HiddenWorkspaces(paths: ["/w"]).reconciled(
-      environments: envs, unprovisioned: [], archived: [], isBusy: { _ in false })
-    #expect(kept.paths == ["/w"])
+    let migration = try #require(HiddenWorkspaces(paths: ["/w"]).migrations(environments: envs).first)
+    #expect(migration.hidden)
   }
 
-  @Test func aGroupUnhidesWhenAnyAppIsActive() throws {
+  @Test func aLegacyGroupMigratesEveryAppAndStaysVisibleIfAnyIsActive() throws {
     var envs = try environments()
     let hidden = HiddenWorkspaces(paths: [envs[2].path])
-    #expect(
-      hidden.reconciled(environments: envs, unprovisioned: [], archived: [], isBusy: { _ in false }).paths == [envs[2].path])
+    let idle = try #require(hidden.migrations(environments: envs).first)
+    #expect(idle.apps.map(\.path) == [envs[2].path, envs[3].path] && idle.hidden)
     envs[3].live = true
-    #expect(hidden.reconciled(environments: envs, unprovisioned: [], archived: [], isBusy: { _ in false }).isEmpty)
+    let active = try #require(hidden.migrations(environments: envs).first)
+    #expect(active.apps.map(\.path) == idle.apps.map(\.path) && !active.hidden)
   }
 
   @Test func entriesForWorkspacesThatExistNowhereAreForgotten() throws {

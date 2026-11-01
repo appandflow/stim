@@ -1,4 +1,5 @@
 import StimKit
+import StimStores
 import SwiftUI
 
 /// The sidebar's view options, stored in `UserDefaults`.
@@ -27,6 +28,29 @@ struct SidebarPreferences: DynamicProperty {
 
   func setHidden(_ hidden: Bool, path: String) {
     hiddenWorkspacesRaw = HiddenWorkspaces.encode(hiddenWorkspaces.setting(path: path, hidden: hidden))
+  }
+
+  @MainActor @discardableResult
+  func setHidden(
+    _ hidden: Bool, apps: [Workspace], actions: ActionCenter, completion: ((ActionRun) -> Void)? = nil
+  ) -> ActionRun? {
+    guard let first = apps.first,
+      !apps.contains(where: { actions.active(for: $0.path) != nil || actions.active(for: $0.worktreeActionKey) != nil })
+    else { return nil }
+    return actions.run(
+      hidden ? "Hide workspace" : "Unhide workspace",
+      steps: apps.map {
+        StimCommand(["settings", "set", "workspace.hidden", String(hidden), "--scope", "workspace"], cwd: $0.path)
+      },
+      key: apps.count > 1 ? first.worktreeActionKey : first.path, present: false
+    ) { run in
+      if run.exitStatus == 0 {
+        var local = self.hiddenWorkspaces
+        local.paths.subtract(apps.map(\.path))
+        self.hiddenWorkspacesRaw = HiddenWorkspaces.encode(local)
+      }
+      completion?(run)
+    }
   }
 
   func setHidden(_ hidden: Bool, archives ids: [String]) {

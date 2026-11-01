@@ -25,6 +25,7 @@ struct WorkspaceActionsMenu: View {
   var onStopAllLiveWorkspaces: (() -> Void)?
   var hidden = false
   var canHide = true
+  var hidePending = false
   var onToggleHidden: (() -> Void)?
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
@@ -103,7 +104,7 @@ struct WorkspaceActionsMenu: View {
     case .toggleHidden:
       if let onToggleHidden {
         Button(hidden ? "Unhide" : "Hide", systemImage: hidden ? "eye" : "eye.slash", action: onToggleHidden)
-          .disabled(!hidden && !canHide)
+          .disabled(hidePending || (!hidden && !canHide))
           .help(!hidden && !canHide ? "A workspace in use cannot be hidden." : "")
       }
     case .removeWorktree:
@@ -131,7 +132,7 @@ struct WorkspaceActions<Content: View>: View {
   let prefs = SidebarPreferences()
 
   var body: some View {
-    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
     content(
       WorkspaceActionsMenu(
         kind: .workspace(
@@ -159,7 +160,8 @@ struct WorkspaceActions<Content: View>: View {
         onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
         hidden: isHidden,
         canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
-        onToggleHidden: showsHide ? { prefs.setHidden(!isHidden, path: env.path) } : nil)
+        hidePending: actions.active(for: env.path) != nil || actions.active(for: env.worktreeActionKey) != nil,
+        onToggleHidden: showsHide ? { prefs.setHidden(!isHidden, apps: [env], actions: actions) } : nil)
     )
     .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
       Button("Run stim stop", role: .destructive) {

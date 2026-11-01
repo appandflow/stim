@@ -142,7 +142,7 @@ struct WorkspaceActionsButton: View {
 
   var body: some View {
     let busy = actions.active(for: env.path) != nil
-    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
     Menu {
       WorkspaceActionsMenu(
         kind: .workspace(
@@ -169,7 +169,8 @@ struct WorkspaceActionsButton: View {
         onShowLogs: openLogs,
         onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
         hidden: isHidden, canHide: !busy && !env.isActive && actions.active(for: env.worktreeActionKey) == nil,
-        onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
+        hidePending: busy || actions.active(for: env.worktreeActionKey) != nil,
+        onToggleHidden: { prefs.setHidden(!isHidden, apps: [env], actions: actions) })
     } label: {
       Image(systemName: "ellipsis")
     }
@@ -291,7 +292,7 @@ struct WorktreeActionsMenuContent: View {
 
   var body: some View {
     let firstApp = page.apps[0]
-    let isHidden = prefs.hiddenWorkspaces.paths.contains(page.id)
+    let isHidden = prefs.hiddenWorkspaces.contains(.worktreeGroup(page))
     let removalAllowed = worktreeRemovalAllowed(git: firstApp.worktree?.git)
     Group {
       ForEach(Array(zip(page.apps, page.appLabels)), id: \.0.path) { app, label in
@@ -303,12 +304,11 @@ struct WorktreeActionsMenuContent: View {
           !page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
             || page.apps.contains { actions.active(for: $0.path) != nil })
       Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
-        prefs.setHidden(!isHidden, path: page.id)
+        prefs.setHidden(!isHidden, apps: page.apps, actions: actions)
       }
       .disabled(
-        !isHidden
-          && (page.apps.contains(where: \.isActive) || actions.active(for: page.actionKey) != nil
-            || page.apps.contains { actions.active(for: $0.path) != nil })
+        actions.active(for: page.actionKey) != nil || page.apps.contains { actions.active(for: $0.path) != nil }
+          || (!isHidden && page.apps.contains(where: \.isActive))
       )
       .help(!isHidden && page.apps.contains(where: \.isActive) ? "A workspace in use cannot be hidden." : "")
       if firstApp.worktree != nil {
