@@ -3823,7 +3823,15 @@ describe('offloaded builds', () => {
   describe('warm Gradle daemons', () => {
     const daemons: ChildProcess[] = [];
     const gradleHome = (client: string, repo?: string) =>
-      join(process.env.STIM_HOME!, 'build-worker', client, ...(repo ? ['repos', repo] : []), 'cache', 'gradle');
+      join(
+        process.env.STIM_HOME!,
+        'build-worker',
+        client,
+        ...(repo ? ['repos', repo] : []),
+        'cache',
+        'gradle',
+        ...(repo ? ['n0123456789ab'] : []),
+      );
     const daemonOf = (client: string, repo?: string) => {
       const jar = join(
         gradleHome(client, repo),
@@ -3903,6 +3911,7 @@ describe('offloaded builds', () => {
       'stops only the failed repository daemon after %s',
       { skip: !fakeTailscale },
       async (reason) => {
+        configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
         const gate = join(root, 'crash-gate');
         const port = await start({
           env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
@@ -3920,6 +3929,24 @@ describe('offloaded builds', () => {
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
         await eventually(() => !running(daemon));
         expect(running(sibling)).toBe(true);
+        if (reason === 'worker-crashed') {
+          const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+          daemons.push(unclassified);
+          await once(unclassified, 'spawn');
+          assert(unclassified.pid);
+          const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
+          mkdirSync(logs, { recursive: true });
+          writeFileSync(join(logs, `daemon-${unclassified.pid}.out.log`), '');
+          await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+          assert('result' in (await client.request('build.start', ANDROID_START)));
+          const outcome = (await progress(client)).at(-1)?.outcome;
+          assert(isJsonObject(outcome));
+          assert.equal(outcome.code, 'cleanup-unresolved');
+          const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
+          assert.equal(readClaimSet(`${area}.claims`).live.length, 1);
+          assert.equal(readClaimSet(buildSlotPath(0)).live.length, 1);
+          assert(running(unclassified) && running(sibling));
+        }
       },
     );
   });

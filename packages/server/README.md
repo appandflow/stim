@@ -1919,7 +1919,11 @@ connected since stim-server started keeps its directory when revoked.
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group. Each repository has its own
   Gradle home, so cancellation can stop its verified daemons without waiting
-  for or stopping another repository's build. Android claims remain pending
+  for or stopping another repository's build. RN/Expo Android workers choose
+  an `n<12 hex>` child home by the selected Node executable and version;
+  switching Node keeps separate dependency caches and warm daemons. Cleanup
+  covers the parent and these children. Native Gradle keeps the parent home.
+  Android claims remain pending
   until cancellation cleanup proves those identities exited; unknown cleanup
   retains the repository and build-slot claims. A daemon exiting between process
   inventory and identity capture also requires inspection and manual claim

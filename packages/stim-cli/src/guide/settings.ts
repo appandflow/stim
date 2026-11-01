@@ -1139,9 +1139,13 @@ Node the app pins, in its directory or the nearest one above it in the
 checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
 every offloaded iOS build, pinned or not, it writes the first node on its PATH
 (the pinned Node when it put one first) as NODE_BINARY in the iOS project's
-.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
-Gradle daemon keeps running React Native's node steps on the Node it started
-with. When no installed Node fits the pin, the steps run on the worker's node
+.xcode.env.local, replacing any export NODE_BINARY= line already there. Offloaded
+React Native and Expo Android builds keep a separate Gradle home for each
+selected Node executable and version, so a warm daemon cannot use a previous
+Node. Each Node choice starts with cold Gradle dependencies and can retain
+another warm daemon; switching back reuses its cache. The caches stay until the
+client is removed. Native Gradle projects keep their existing home.
+When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
 version. A change of the pinned Node's major reinstalls the dependencies.
 

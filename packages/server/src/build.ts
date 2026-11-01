@@ -392,20 +392,29 @@ export function workerGradleDaemons(
 }
 
 function assertKnownGradleProcesses(home: string, known: ReadonlySet<number>): void {
-  const logs = join(home, 'daemon');
-  if (!existsSync(logs)) return;
-  for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
-    for (const log of readdirSync(join(logs, version.name))) {
-      const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
-      if (!pid || known.has(pid)) continue;
-      if (processGroupAlive(pid)) throw new Error(`Gradle process ${pid} may still use ${home}.`);
-      try {
-        process.kill(pid, 0);
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
-        throw error;
+  const homes = [home];
+  if (existsSync(home))
+    homes.push(
+      ...readdirSync(home)
+        .filter((name) => /^n[a-f0-9]{12}$/.test(name))
+        .map((name) => join(home, name)),
+    );
+  for (const directory of homes) {
+    const logs = join(directory, 'daemon');
+    if (!existsSync(logs)) continue;
+    for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+      for (const log of readdirSync(join(logs, version.name))) {
+        const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
+        if (!pid || known.has(pid)) continue;
+        if (processGroupAlive(pid)) throw new Error(`Gradle process ${pid} may still use ${directory}.`);
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
+          throw error;
+        }
+        throw new Error(`Gradle process ${pid} may still use ${directory}.`);
       }
-      throw new Error(`Gradle process ${pid} may still use ${home}.`);
     }
   }
 }

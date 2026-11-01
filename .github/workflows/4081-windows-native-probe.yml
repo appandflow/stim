@@ -1,0 +1,61 @@
+name: Owned 4081 Windows Node worker proof
+on:
+  push:
+    branches: [codex/4081-windows-native-probe]
+permissions:
+  contents: read
+jobs:
+  native-worker:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.0.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: node22
+        shell: pwsh
+        run: '"path=$((Get-Command node).Source)" >> $env:GITHUB_OUTPUT'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - id: node24
+        shell: pwsh
+        run: '"path=$((Get-Command node).Source)" >> $env:GITHUB_OUTPUT'
+      - name: Build source and verify exact prerequisites
+        timeout-minutes: 15
+        shell: pwsh
+        env:
+          NODE24: ${{ steps.node24.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:JAVA_HOME = $env:JAVA_HOME_17_X64
+          $deadline = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 900000
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/4081-owned-proof/windows-prepare.py "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\stim-4081-native" "$env:NODE24" "$deadline"
+          exit $LASTEXITCODE
+      - name: Real worker effective Node 22 to 24 to 22
+        timeout-minutes: 25
+        shell: pwsh
+        env:
+          NODE22: ${{ steps.node22.outputs.path }}
+          NODE24: ${{ steps.node24.outputs.path }}
+        run: |
+          $env:JAVA_HOME = $env:JAVA_HOME_17_X64
+          $deadline = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() + 1200000
+          node scripts/4081-owned-proof/windows-native-node-worker.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\stim-4081-native" "$env:NODE22" "$env:NODE24" "$deadline"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owned-4081-windows-evidence
+          path: ${{ runner.temp }}/stim-4081-native/evidence
+          if-no-files-found: warn
