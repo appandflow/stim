@@ -68,6 +68,7 @@ try {
     home,
     build: { platform: 'macos', remoteBuild: 'local' },
     artifactsDir: join(artifacts, 'build'),
+    exportPath: join(artifacts, 'app.tar.gz'),
     timeoutMs: 180_000,
   });
   evidence.exported = built;
