@@ -142,13 +142,15 @@ struct MachineView: View {
         actions.run("Free Disk Space", steps: confirmation.commands, key: ActionCenter.machineKey)
       }
     } message: { confirmation in
-      Text(
+      let commands: String = confirmation.commands.map {
+        "stim " + $0.arguments.filter { $0 != "--json" }.joined(separator: " ")
+      }.joined(separator: "\n")
+      let message: String =
         confirmation.items.joined(separator: "\n\n")
-          + "\n\nstim worktree remove refuses a worktree with uncommitted or unpushed work, and stim gc checks each entry again before it acts."
-          + "\n\nCommands:\n"
-          + confirmation.commands.map { "stim " + $0.arguments.filter { $0 != "--json" }.joined(separator: " ") }
-          .joined(separator: "\n")
-      )
+        + "\n\nstim worktree remove refuses a worktree with uncommitted or unpushed work, and stim gc checks each entry again before it acts."
+        + "\n\nCommands:\n"
+        + commands
+      Text(message)
     }
     .confirmationDialog(
       removing.map { "Remove \(status.names(ofPath: $0.path).title)?" } ?? "Remove worktree?",
