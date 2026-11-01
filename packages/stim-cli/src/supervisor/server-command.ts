@@ -6,7 +6,7 @@ import { signalProcessTree } from '../metro.ts';
 import { type NdjsonWriter, createNdjsonWriter } from '../ndjson.ts';
 import { METRO_COMMAND_PORT } from '../workspace/settings.ts';
 import { type ChildServerHandle, superviseChildServer } from './child-server.ts';
-import { recordFromLine } from './server-expo.ts';
+import { recordFromLine, repositoryRoot } from './server-expo.ts';
 import { MODE_COMMAND } from './state.ts';
 import { projectNodeLine, withProjectNode } from './project-node.ts';
 
@@ -57,7 +57,7 @@ export async function startCommandServer({
   });
   // A wrapper such as yarn runs Metro in a grandchild, so the command gets its own process group to stop as one.
   const group = platform !== 'win32';
-  const node = withProjectNode(root, process.env);
+  const node = withProjectNode(root, process.env, { top: repositoryRoot(root) ?? root });
   if (node.pinned) {
     log.write({
       src: 'metro',

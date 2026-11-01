@@ -238,6 +238,7 @@ export const METHODS = [
   'build.artifact',
   'build.cached-artifact',
   'build.attach',
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -295,6 +296,7 @@ export const BUILD_METHODS = [
 
 /** Methods restricted to explicitly approved device-host clients. */
 export const DEVICE_HOST_METHODS = [
+  'device-host.runtime.install',
   'device-host.offer',
   'device-host.reserve',
   'device-host.attach',
@@ -1630,6 +1632,7 @@ export interface Methods {
   };
   'workspace.files': { params: { workspace: string; group: 'changed' | 'untracked' }; result: WorkspaceFiles };
   'workspace.diff': { params: { workspace: string; path: string }; result: WorkspaceDiff };
+  'device-host.runtime.install': { params: { runtime: string }; result: { ok: true } };
   'device-host.offer': { params: HostedDeviceOfferRequest; result: HostedDeviceOffer };
   'route.setup': { params?: Record<string, never>; result: ServeRoute };
   'device-host.reserve': { params: HostedDeviceRequest; result: HostedDeviceSession };

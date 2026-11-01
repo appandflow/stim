@@ -161,6 +161,7 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   'macos.arguments': { valid: ['--playground'], invalid: ['--playground', 7], expected: 'an array of strings' },
   'ios.deviceType': { valid: 'iPhone 17 Pro', invalid: {}, expected: 'a string' },
   'ios.runtime': { valid: '26.2', invalid: 26.2, expected: 'a string' },
+  'ios.autoInstallRuntime': { valid: false, invalid: 'true', expected: 'true or false' },
   'ios.configuration': { valid: 'Release', invalid: { name: 'Release' }, expected: 'a string' },
   'ios.scheme': { valid: 'RNTester', invalid: ['RNTester'], expected: 'a string' },
   'ios.remote': { valid: 'mini', invalid: true, expected: 'a string' },

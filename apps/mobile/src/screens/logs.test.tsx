@@ -9,7 +9,7 @@ import '@/design/unistyles';
 
 import { RequestError } from '@/lib/connection';
 import type { LogEntry } from '@/lib/logs';
-import type { LogFilter, LogRecord, ServerEvent } from '@/protocol/types';
+import type { EnvironmentState, LogFilter, LogRecord, ServerEvent } from '@/protocol/types';
 
 import { Logs } from './logs';
 
@@ -30,6 +30,7 @@ const mockConnection = {
   request: jest.fn(),
 };
 let mockEntries: LogEntry[] = [];
+let mockEnvironments: EnvironmentState[] = [];
 
 jest.mock('expo-router', () => ({ Stack: { Screen: () => null }, useIsFocused: () => mockFocused }));
 jest.mock('@/hooks/header-inset', () => ({ useHeaderInset: () => 0 }));
@@ -47,7 +48,7 @@ jest.mock('@/hooks/machines', () => ({
     state: { kind: mockOpen ? 'open' : 'connecting' },
     home: null,
   }),
-  useStatus: () => null,
+  useStatus: () => ({ environments: mockEnvironments }),
 }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -69,14 +70,27 @@ jest.mock('@/components/touch', () => ({
 }));
 jest.mock('@/components/lists', () => ({
   ScrollView: jest.requireActual<typeof import('react-native')>('react-native').ScrollView,
-  FlatList: ({ data, ListHeaderComponent }: { data: LogEntry[]; ListHeaderComponent: React.ReactNode }) => {
+  FlatList: ({
+    data,
+    ListHeaderComponent,
+    ListEmptyComponent,
+  }: {
+    data: LogEntry[];
+    ListHeaderComponent: React.ReactNode;
+    ListEmptyComponent: React.ReactNode;
+  }) => {
     mockEntries = data;
     const { View } = jest.requireActual('react-native');
-    return <View>{ListHeaderComponent}</View>;
+    return (
+      <View>
+        {ListHeaderComponent}
+        {data.length === 0 ? ListEmptyComponent : null}
+      </View>
+    );
   },
 }));
 
-const body = (at?: string, window: { since?: string; until?: string } = {}) => (
+const body = (at?: string, window: { since?: string; until?: string; source?: string } = {}) => (
   <I18nProvider i18n={i18n}>
     <Logs path="/app" params={{ at, ...window }} />
   </I18nProvider>
@@ -90,6 +104,7 @@ beforeEach(() => {
   mockFocused = true;
   mockOpen = true;
   mockEntries = [];
+  mockEnvironments = [];
   mockSubscriptions.length = 0;
   jest.clearAllMocks();
   jest.replaceProperty(AppState, 'currentState', 'active');
@@ -110,11 +125,24 @@ test('starts with 200 records and explicitly reloads an older recent window with
   expect(mockSubscriptions).toHaveLength(2);
 });
 
-test('keeps only the records inside the since/until window and loads the full tail', async () => {
-  await render(body(undefined, { since: '100', until: '200' }));
+test('shows the build time window, filters its records, and reloads all times when cleared', async () => {
+  mockEnvironments = [{ path: '/app', live: true, memoryMb: 0, warnings: [], logs: { errorsSinceMarker: 7 } }];
+  const screen = await render(body(undefined, { since: '100', until: '200', source: 'build' }));
+  expect(screen.getByText(/Logs from /)).toBeTruthy();
+  expect(screen.getByText('No records match this time window and these filters.')).toBeTruthy();
+  expect(screen.queryByLabelText('Errors, 7')).toBeNull();
   expect(latest().filter.tail).toBe(5000);
-  await push([record(99), record(100), record(150), record(200), record(201)]);
+  await push([99, 100, 150, 200, 201].map((ts) => ({ ...record(ts), src: 'build' })));
   expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([100, 150, 200]);
+  await fireEvent.press(screen.getByText('Errors'));
+  const previous = latest();
+  await fireEvent.press(screen.getByLabelText('Show All Times'));
+  expect(previous.stop).toHaveBeenCalledTimes(1);
+  expect(latest().filter).toEqual({ workspace: '/app', tail: 5000, sources: ['build'], errors: true });
+  expect(screen.queryByText(/Logs from /)).toBeNull();
+  expect(screen.getByLabelText('Errors, 7')).toBeTruthy();
+  await push([{ ...record(201), src: 'build', level: 'error' }]);
+  expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([201]);
 });
 
 test('unsubscribes while covered and backgrounded, retains the display window, and ignores late callbacks', async () => {
@@ -249,11 +277,14 @@ test('queries archived logs once without a reconnectable subscription and maps l
   mockConnection.request.mockResolvedValue({ records: [record(1), record(2)] });
   const screen = await render(
     <I18nProvider i18n={i18n}>
-      <Logs path="/app" archive="app--old" params={{}} />
+      <Logs path="/app" archive="app--old" params={{ since: '10', until: '20' }} />
     </I18nProvider>,
   );
   expect(mockConnection.subscribe).not.toHaveBeenCalled();
-  expect(mockConnection.request).toHaveBeenCalledWith('logs.query', { archive: 'app--old', tail: 200 });
+  expect(mockConnection.request).toHaveBeenCalledWith('logs.query', { archive: 'app--old', tail: 5000 });
+  expect(mockEntries).toEqual([]);
+  await fireEvent.press(screen.getByLabelText('Show All Times'));
+  expect(mockConnection.request).toHaveBeenCalledTimes(2);
   expect(mockEntries.map((entry) => entry.lead.ts)).toEqual([1, 2]);
   mockConnection.request.mockRejectedValue(new RequestError({ code: 'bad-request', message: 'workspace is required' }));
   await fireEvent.press(screen.getByText('Errors'));
