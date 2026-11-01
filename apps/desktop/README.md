@@ -1003,13 +1003,13 @@ available only while **Control** is on.
 **Simulator Options** below the screen reads the selected iOS simulator's
 appearance, text size and accessibility settings from Xcode. Change light/dark,
 text size, Larger accessibility sizes, Increase contrast, Reduce motion,
-Reduce transparency or Show button borders. Each change reads the device back;
+Reduce transparency, Show button borders or Color filters. Each change reads the device back;
 **Refresh** picks up changes made elsewhere. Unsupported fields read
 **Unavailable**. The panel is available only on a running local simulator while
 **Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
-VoiceOver, color filters and Liquid Glass controls are not included.
+VoiceOver, color-filter type/intensity and Liquid Glass controls are not included.
 
 The options popover's **Tools** section runs `stim device location|permission|push|network`
 through the CLI for the workspace's own local simulator or emulator, only while **Control** is on

@@ -284,10 +284,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   and errors marked on the timeline.
 - **Simulator Options.** While **Control** is on for a running local iOS
   simulator, change appearance, text size, contrast, motion, transparency and
-  button borders in its options popover. Values come from the selected device;
+  button borders or color filters in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
   **Unavailable**. Requires Xcode's simulator appearance API; VoiceOver,
-  color filters and Liquid Glass options are not included.
+  color-filter type/intensity and Liquid Glass options are not included.
   **Sound** turns an owned simulator's output volume off or back on; turning it
   back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
