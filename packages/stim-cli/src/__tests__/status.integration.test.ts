@@ -1228,10 +1228,15 @@ test('status lists worktrees with no environment for every registered repository
       },
     });
     const checkoutReads: string[] = [];
+    let refusedCheckout: string | null = null;
     setExecutor({
       runFileAsync: (file: string, args: string[], opts: ExecOptions) => {
         if (file === 'git') {
-          if (args.includes('--show-toplevel')) checkoutReads.push(args[args.indexOf('-C') + 1]!);
+          if (args.includes('--show-toplevel')) {
+            const path = args[args.indexOf('-C') + 1]!;
+            checkoutReads.push(path);
+            if (path === refusedCheckout) return Promise.reject(new Error('dubious ownership'));
+          }
           return realExecutor.runFileAsync(file, args, opts);
         }
         return Promise.resolve(args.join(' ').includes('simctl list devices --json') ? bootedSims : '');
@@ -1266,6 +1271,11 @@ test('status lists worktrees with no environment for every registered repository
     expect(checkout(standalone)?.checkout).toBeNull();
     expect(checkout(bogusGit)?.checkout).toBeNull();
     expect(checkout(join(base, 'gone'))?.checkout).toBeNull();
+    refusedCheckout = nestedRepo;
+    const refused = await runStatusJson();
+    expect(
+      refused.environments.find((e: { path: string }) => e.path === join(nestedRepo, 'apps', 'mobile')),
+    ).toMatchObject({ checkout: null, worktree: null });
     expect(payload.unprovisionedWorktrees).toEqual([
       { path: deleted, branch: 'deleted', repository: second, git: null },
       { path: other, branch: 'other', repository: second, git: null },

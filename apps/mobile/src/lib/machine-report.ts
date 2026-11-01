@@ -383,7 +383,7 @@ export function machineReport(status: StatusPayload | null, gc: GcReport | null,
   const dead = new Set((s.deadProjects ?? []).map((p) => p.path));
 
   const rows: (WorktreeRow & { root: string; repository: string })[] = environments.map((env) => {
-    const root = env.checkout ?? env.worktree?.path ?? env.path;
+    const root = env.worktree?.path ?? env.path;
     const own = inventory
       ? devices.filter((d) => {
           const source = inventory.devices.find((i) => `${i.kind}:${i.id}` === d.id);

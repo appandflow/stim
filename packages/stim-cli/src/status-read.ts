@@ -417,7 +417,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
     if (state) {
       const checkout = checkouts.get(path);
       state.checkout = checkout && verifiedCheckouts.has(checkout) ? checkout : null;
-      if (state.checkout && state.worktree && nativeCanonicalPath(state.worktree.path) !== state.checkout)
+      if (state.worktree && (!state.checkout || nativeCanonicalPath(state.worktree.path) !== state.checkout))
         state.worktree = null;
       for (const [slot, record] of Object.entries(hostedIosRecords(saved))) {
         if (!parseHostedIosPlacement(record)) state.warnings.push(unreadableHostedIos(slot));
