@@ -117,6 +117,7 @@ struct SimulatorOptionsView: View {
           "Reduce transparency", value: appearance.reduceTransparency?.enabled, change: SimulatorOptions.Change.reduceTransparency
         )
         toggle("Show button borders", value: appearance.showBorders?.enabled, change: SimulatorOptions.Change.showBorders)
+        toggle("Color filters", value: appearance.colorFilter?.enabled, change: SimulatorOptions.Change.colorFilter)
       } else if !busy && (loaded || !canControl) {
         Text("Appearance settings are unavailable.").foregroundStyle(Palette.secondary)
       }

@@ -3,7 +3,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `revive`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -12,7 +12,7 @@ Named collector, lease-holder, and launch keys use platform:slot internally.
 
 FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+\`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`revive\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 \`gc\`, \`device lock\`/\`device unlock\`, and \`device location|permission|push|network\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
@@ -172,7 +172,7 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web and reload payloads, the error contract, the device rules',
+        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -500,6 +500,25 @@ leased until <time>" for each one.`,
   reverseRestored the Android serials whose adb reverse for metroPort was
                   missing and that Stim re-applied before reloading; [] when
                   none was, and always [] for iOS and web
+
+  stim revive --json
+
+  { revived: { metro, devices } }. Human lines on stderr say the same.
+  metro           { port, stoppedAt, reason, restarted }. restarted is true
+                  when revive started the dev server an idle stop had
+                  stopped; stoppedAt and reason ("idle") describe that stop,
+                  and are null when Metro was already running
+  devices         one entry per recorded launch on a local owned
+                  simulator or emulator, except Release, native-process and
+                  hosted launches, which revive does not relaunch. Run as
+                  agent-device's boot hook, only the launch on the device
+                  agent-device asked for: { platform, slot, deviceId, deviceName,
+                  rebooted, app: { bundleId, relaunched, launched } }.
+                  rebooted is true when revive booted the device;
+                  relaunched is true when it relaunched the app from cold,
+                  so in-app state is gone. launched is the relaunch's launch
+                  state as in ios and android, or null when the app was
+                  left running
 
   stim web --json
 
@@ -1426,12 +1445,14 @@ RULES
 
   An owned device that is not booted after supervisor idle shutdown or queue
   reclaim carries idleShutdown, and plain \`status\`
-  appends "shut down after 30m idle at <at>" to its line; the next \`ios\` or
+  appends "shut down after 15m idle at <at>" to its line; the next \`ios\` or
   \`android\` run for that slot clears it (\`guide lifecycle budget\`):
 
-  idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run" }
+  idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run"
+                  | "Metro's idle stop" }
   Absent reason or "idle" means supervisor idle shutdown; reclaim adds
-  "reclaimed for a waiting run" to plain status.
+  "reclaimed for a waiting run" to plain status, and a shutdown at Metro's
+  idle stop adds "with Metro's idle stop".
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
@@ -1517,9 +1538,14 @@ RULES
                    gone -- the run was killed, and the next run replaces the
                    record; "unknown" when the claim set cannot be resolved.
                    Never treat a stale record as a build in progress.
-  phase            prepare | cache-lookup | wait | prebuild | pods |
+  phase            prepare | cleanup | cache-lookup | wait | prebuild | pods |
                    compile | device | install | launch. prepare covers
-                   settings and Metro; wait is waiting on another
+                   settings and Metro; cleanup covers an acting local
+                   budget-reclaim plan, including remeasurement, and
+                   restores the interrupted phase on success. Cleanup has
+                   no learned duration; elapsed time and history retain it,
+                   while estimates/progress comparisons exclude it and
+                   pause during cleanup. wait is waiting on another
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
                    before the cache lookup is prepare time. device starts
@@ -1987,7 +2013,9 @@ RULES
   offloadedRuns, offloadedRunMs and lastOffloadHost once a remote machine
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
-  integers.
+  integers. Optional coldCleanupMs, hitCleanupMs and offloadedCleanupMs
+  carry the cleanup within those raw totals; comparison averages and cache
+  credit subtract it.
 
 CAPACITY REFUSALS
   capacityRefusals?: [{ at, kind: "device", platform: "ios" | "android",

@@ -24,6 +24,13 @@ export function workspaceDevServerMode(root: string, isExpo: boolean): string {
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 
+export interface LaunchedArtifact {
+  configuration: string | null;
+  fingerprint: string | null;
+  cacheKey: string | null;
+  cacheHit: 'local' | 'remote' | false;
+}
+
 export interface WorkspaceLaunchRecord {
   appId: string;
   deviceId: string;
@@ -31,6 +38,8 @@ export interface WorkspaceLaunchRecord {
   release: boolean;
   runtime?: 'process';
   launchedAt: string;
+  avdName?: string;
+  artifact?: LaunchedArtifact;
 }
 
 interface ExpoTunnelRecord {
@@ -104,6 +113,12 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   if (record.runtime !== undefined && (record.runtime !== 'process' || record.metroPort !== null)) return null;
   if (typeof record.launchedAt !== 'string') return null;
   return record as WorkspaceLaunchRecord;
+}
+
+/** What lets the launched app run without Metro, or null when it loads its JS from Metro. */
+export function launchWithoutMetro(record: WorkspaceLaunchRecord): string | null {
+  if (record.release) return 'a Release build';
+  return record.runtime === 'process' ? 'a native-process launch' : null;
 }
 
 export function readWorkspaceLaunches(root: string): Record<string, WorkspaceLaunchRecord> {

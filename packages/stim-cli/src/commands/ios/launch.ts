@@ -32,7 +32,7 @@ import {
 } from '../../command-output.ts';
 import { localNetworkPending, iosDeviceBounds, isWirelessIosDevice } from '../../engine/ios-device.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, type LaunchedArtifact } from '../../supervisor/state.ts';
 import type { VerifyLaunchResultLike, DeviceLike, IosBootLike, FailArgs } from './types.ts';
 import { PLATFORM, deviceLabel, deviceShortName, appNameFromPath } from './support.ts';
 import { type RunLease, DEBUG_VERIFY_STEP_MS, lostLine, lostRefusal } from '../../engine/device-lease-run.ts';
@@ -798,6 +798,7 @@ async function recordIosReloadTarget({
   release,
   runtimeKind,
   launchedAt,
+  artifact,
   note,
 }: {
   d: IosDeps;
@@ -811,6 +812,7 @@ async function recordIosReloadTarget({
   release: boolean;
   runtimeKind: IosRuntimeKind;
   launchedAt: number;
+  artifact: LaunchedArtifact | null;
   note: (line: string) => void;
 }): Promise<void> {
   if (physical || remoteDevice) return;
@@ -822,6 +824,7 @@ async function recordIosReloadTarget({
       release,
       ...(runtimeKind === 'process' ? { runtime: 'process' as const } : {}),
       launchedAt: new Date(launchedAt).toISOString(),
+      ...(artifact ? { artifact } : {}),
     });
   } catch (error) {
     note(chalk.yellow(phaseLine('state', `could not record iOS launch: ${(error as Error)?.message || error}`)));
@@ -1219,6 +1222,14 @@ export async function finishIosRun({
     release,
     runtimeKind: runtime.kind,
     launchedAt,
+    artifact: appPath
+      ? {
+          configuration: configuration ?? 'Debug',
+          fingerprint: storeHash,
+          cacheKey: storeKey,
+          cacheHit: cacheHit || false,
+        }
+      : null,
     note,
   });
 

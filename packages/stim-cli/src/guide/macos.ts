@@ -73,6 +73,10 @@ changing focus: it sets STIM_BACKGROUND_LAUNCH=1 in the app's environment, which
 Stim Desktop honors, including for reopen events from open -g. An app that
 activates itself at launch or on reopen still takes focus.
 Hosted launches (macos --remote) do not set it.
+Local launches fit concurrency.maxMacosApps and concurrency.maxDevices when
+set, counting running owned app workspaces in this Stim home separately from
+hosted reservations. A full cap refuses with STIM_AT_CAPACITY before replacing
+the workspace's previous app. Builds remain parallel; 0 means unlimited.
 This prototype has no --slot or reload command.
 Completed app caching is opt-in with macos.artifactInputs:
 

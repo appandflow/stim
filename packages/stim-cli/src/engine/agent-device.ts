@@ -1,5 +1,7 @@
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { workspaceDir } from '../workspace/paths.ts';
+import { spawnEntry } from '../spawn-entry.ts';
+import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
 import { sanitizeDeviceLabel } from '../devices/ios.ts';
 import type { RemoteDaemon } from './eas-simulator.ts';
 
@@ -141,5 +143,20 @@ export async function readRemoteSimulatorArch(
     return parseHealthHostArch(await response.json()) ?? 'arm64';
   } catch {
     return 'arm64';
+  }
+}
+
+export function writeAgentDeviceBootHook(root: string): void {
+  const dir = workspaceAgentDeviceDir(root);
+  const file = join(dir, 'boot-hook.json');
+  const hook = { command: [process.execPath, spawnEntry('cli'), 'revive', '--json'], cwd: root };
+  mkdirSync(dir, { recursive: true });
+  const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    writeFileSync(tmp, `${JSON.stringify(hook, null, 2)}\n`);
+    renameSync(tmp, file);
+  } catch (error) {
+    rmSync(tmp, { force: true });
+    throw error;
   }
 }

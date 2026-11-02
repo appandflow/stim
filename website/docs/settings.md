@@ -315,7 +315,7 @@ stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 
 `concurrency.maxIosDevices`, `concurrency.maxAndroidDevices` and
 `concurrency.maxMacosApps` cap one platform each: booted owned iOS simulators,
-booted owned Android emulators and hosted macOS apps on a worker. They default
+booted owned Android emulators and macOS apps. They default
 to `0`, no per-platform limit, and they only tighten. A run must fit its
 platform's cap and `concurrency.maxDevices`: `maxDevices` counts simulators and
 emulators together, local and hosted, and counts hosted macOS apps as a pool of
@@ -327,8 +327,11 @@ back only by its own platform's cap does not hold up a run on the other
 platform; reclaim for a full platform cap shuts down only devices of that
 platform. A stim-server worker applies all three caps when it offers and
 reserves a hosted session, counting its own local simulators and emulators.
-Local `stim macos` runs are not counted, so `maxMacosApps` limits hosted macOS
-apps only. A refusal names the full limit with its count and cap, such as
+Local `stim macos` counts running owned app workspaces in this Stim home,
+separately from hosted reservations. At capacity it refuses immediately;
+builds remain parallel, and replacing this workspace's app does not add to
+the count. Both macOS pools fit `maxMacosApps` and `maxDevices` separately.
+A refusal names the full limit with its count and cap, such as
 `1 Stim iOS simulator(s) are already booted and concurrency.maxIosDevices is 1`.
 
 ```bash
@@ -345,7 +348,7 @@ locks, builds, viewers and recent activity. Reclaim never deletes and excludes
 the waiting workspace, physical, hosted, remote, parked and other homes'
 devices. Failed locks or shutdowns are reported once per device and skipped
 for the rest of the wait. The supervisor's own
-idle shutdown defaults to 30 minutes. Positive `reclaimed` counts
+idle shutdown defaults to 15 minutes. Positive `reclaimed` counts
 are included in wait stats.
 
 Any workspace of this Stim home with a device idle for
@@ -662,13 +665,15 @@ Android Studio and SDKMAN) even when its default JDK is another one; a machine
 with none gets the install command as the fix. Start stim-server with
 `JAVA_HOME` at such a JDK only to choose it for every build, and with
 `ANDROID_HOME` at its Android SDK (default
-`~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
-stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
-when each build ends), so the client's next build skips a JVM start of about
-15 seconds. A new value applies from the next daemon. The daemon never holds
-a build slot. While none of the client's builds runs, stim-server stops it
-sooner when a build of the client is cancelled, when the client is revoked, and when
-the remote machine has less than 2 GB of memory available. Deleting the
+`~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's
+Gradle daemon follows Gradle's idle policy (normally 3 hours; Gradle can expire it
+sooner). Each Android build clears only Stim's old generated timeout line in its
+selected owned Gradle home, preserving other properties and inactive homes.
+Existing daemons keep their startup timeout until they exit. The daemon never
+holds a build slot. While none of the client's builds runs, stim-server stops it
+sooner when a build of the client is cancelled or when the client is revoked.
+The low-memory sweep waits until no offloaded build is running and the remote
+machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
@@ -775,8 +780,13 @@ Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
 workspace's owned simulators and emulators once they have been idle that long,
 through the workspace's dev server supervisor or, with no supervisor, through
 automatic maintenance every `maintenance.idleCheckMinutes` (5).
-It is on by default at 30 minutes; see
-[idle shutdown](./owned-devices.md#idle-shutdown).
+It is on by default at 15 minutes; see
+[idle shutdown](./owned-devices.md#idle-shutdown). A device whose app loads
+its JavaScript from Metro goes down with the dev server's
+[idle stop](./dev-server-and-logs.md#idle-stop) even when
+`devices.idleShutdownMinutes` is longer than `metro.idleStopMinutes`, because
+its device logs stop counting as use once Metro is gone. `0` keeps devices
+booted, at the idle stop too.
 
 Try it with an agent:
 
@@ -836,8 +846,8 @@ stim settings set workspace.hidden true
 
 `workspace.hidden` is false by default and lives only in the workspace layer, so
 it takes no `--scope`. `stim status --json` reports `hidden: true` on that
-environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `logs`
-or `worktree warm` in the workspace clears it, so a workspace in use is never
+environment. The next `start`, `ios`, `android`, `web`, `macos`, `reload`, `revive`,
+`logs` or `worktree warm` in the workspace clears it, so a workspace in use is never
 hidden. `stim settings unset workspace.hidden` shows it again, and
 `worktree remove` drops it with the workspace.
 
@@ -938,7 +948,16 @@ worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `mainte
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Under memory pressure a pass stops verified idle Gradle and Kotlin daemons;
+manual `stim gc --delete --cache gradle-daemons` requires fresh configured pressure
+and no local build, including iOS, independently of `maintenance.mode`.
+`memoryPressureLevel: off`, invalid settings or an unreadable macOS signal keep
+daemons; a manual report does not update warning history and ignores observations
+older than `maintenance.pressureCheckMinutes` or outside the last completed,
+unblocked pass. A later unrelated pass can conservatively keep warning daemons.
+Disk-level-3 version
+cleanup remains independent of memory pressure and allows known iOS builds.
+Below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

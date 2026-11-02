@@ -130,16 +130,12 @@ import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from '
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
 import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
-  collectMemoryReport,
+  collectGcMemory,
   GRADLE_DAEMONS_KIND,
   memoryCacheKind,
   memoryScope,
-  memorySweepIsScoped,
   memoryWorkPending,
   reclaimMemory,
-  scopedMemoryReport,
-  type MemoryReport,
-  type MemoryScope,
   WATCHMAN_KIND,
 } from './gc/memory.ts';
 
@@ -240,10 +236,6 @@ async function removeInvalidProjectEntries(
     output.log(chalk.green(`Removed the invalid registry entry ${path}`));
     output.record('project', 'done', path);
   }
-}
-
-function collectGcMemory(scope: MemoryScope, env: NodeJS.ProcessEnv, operation?: StimContext): Promise<MemoryReport> {
-  return memorySweepIsScoped(env) ? Promise.resolve(scopedMemoryReport()) : collectMemoryReport(scope, true, operation);
 }
 
 /** The workspace directories an unscoped run removes whole: those of dead projects and orphaned directories. */

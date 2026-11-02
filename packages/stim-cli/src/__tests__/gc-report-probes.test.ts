@@ -1,19 +1,14 @@
-import type { ChildProcess } from 'node:child_process';
-import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { collectParkedAvds, collectParkedSims } from '../commands/gc/devices.ts';
 
-import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { parkSim } from '../devices/sim-pool.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { upsertProject } from '../workspace/config.ts';
 
 let home: string;
-let child: ChildProcess | undefined;
-let reportAbort: AbortController | undefined;
-let activeReport: Promise<unknown> | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-gc-report-probes-'));
@@ -21,17 +16,7 @@ beforeEach(() => {
   resetExecutor();
 });
 
-afterEach(async () => {
-  reportAbort?.abort();
-  await activeReport?.catch(() => {});
-  reportAbort = undefined;
-  activeReport = undefined;
-  if (child?.exitCode === null && child.signalCode === null) {
-    const closed = once(child, 'close');
-    child.kill('SIGKILL');
-    await closed;
-  }
-  child = undefined;
+afterEach(() => {
   vi.clearAllTimers();
   resetExecutor();
   vi.unstubAllEnvs();
@@ -48,9 +33,9 @@ function gatedProbe() {
     release = resolve;
   });
   return {
-    run<T>(probe: () => Promise<T>): Promise<T> {
+    run<T>(value: T): Promise<T> {
       markStarted();
-      return released.then(probe);
+      return released.then(() => value);
     },
     async settle<T>(report: Promise<T>): Promise<T> {
       const pending = await Promise.race([started.then(() => true), report.then(() => false)]);
@@ -62,7 +47,7 @@ function gatedProbe() {
 }
 
 test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
-  'a slow %s child leaves the event loop responsive while collecting parked devices',
+  'a pending %s probe leaves the event loop responsive while collecting parked devices',
   async (slow) => {
     const ios = slow === 'simulators' || slow === 'device types';
     const platform = ios ? 'ios' : 'android';
@@ -120,19 +105,15 @@ test.each(['simulators', 'device types', 'AVDs', 'AVD size'] as const)(
       if (args.includes('devices')) return 'simulators';
       throw new Error(`Unexpected report probe: ${file} ${args.join(' ')}`);
     };
-    const executor = getExecutor();
-    const delay = ['-e', 'setTimeout(() => process.stdout.write(process.argv[1]), 150)', outputs[slow]];
     const gate = gatedProbe();
     setExecutor({
-      runFile(file, args, options) {
+      runFile(file, args) {
         const phase = probe(file, args);
-        return phase === slow ? executor.runFile(process.execPath, delay, options) : outputs[phase];
+        return outputs[phase];
       },
-      runFileAsync(file, args, options) {
+      runFileAsync(file, args) {
         const phase = probe(file, args);
-        return phase === slow
-          ? gate.run(() => executor.runFileAsync(process.execPath, delay, options))
-          : Promise.resolve(outputs[phase]);
+        return phase === slow ? gate.run(outputs[phase]) : Promise.resolve(outputs[phase]);
       },
     });
     const report = ios

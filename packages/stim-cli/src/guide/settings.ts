@@ -487,19 +487,27 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them. See \`guide metro\` for warmup behavior.
   metro.idleStopMinutes minutes without a bundle request, client log record or
                         Stim command before the supervisor stops the dev
-                        server (default 60). 0 never stops it. Never during a
+                        server (default 15). 0 never stops it. Never during a
                         build or bundle response, while the workspace holds
                         a device lock, or while a workspace device is
-                        driven. Read
+                        driven. Unless devices.idleShutdownMinutes is 0,
+                        the stop first shuts down the workspace's owned
+                        devices idle for the shorter window, and from then
+                        on a Debug launch's device logs do not count as
+                        activity. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
   devices.idleShutdownMinutes
                         minutes an owned simulator or emulator stays idle
                         (\`gc --idle\` conditions; an open stim-server viewer
                         counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 30; 0 never.
-                        Machine or project layers. Read when the supervisor
-                        starts; see \`guide lifecycle budget\`.
+                        shuts it down, never deletes it. Default 15; 0 never,
+                        not even at Metro's idle stop. A device whose last
+                        launch needs Metro goes down with Metro's idle stop
+                        even when this is longer: from then on its device
+                        logs do not count as activity. Machine or project
+                        layers. Read when the supervisor starts; see
+                        \`guide lifecycle budget\`.
   devices.reclaimIdleMinutes
                         minutes idle before the head of the device slot queue
                         shuts down the longest-idle eligible owned device in
@@ -1139,9 +1147,13 @@ Node the app pins, in its directory or the nearest one above it in the
 checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
 every offloaded iOS build, pinned or not, it writes the first node on its PATH
 (the pinned Node when it put one first) as NODE_BINARY in the iOS project's
-.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
-Gradle daemon keeps running React Native's node steps on the Node it started
-with. When no installed Node fits the pin, the steps run on the worker's node
+.xcode.env.local, replacing any export NODE_BINARY= line already there. Offloaded
+React Native and Expo Android builds keep a separate Gradle home for each
+selected Node executable and version, so a warm daemon cannot use a previous
+Node. Each Node choice starts with cold Gradle dependencies and can retain
+another warm daemon; switching back reuses its cache. The caches stay until the
+client is removed. Native Gradle projects keep their existing home.
+When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
 version. A change of the pinned Node's major reinstalls the dependencies.
 
@@ -1273,13 +1285,15 @@ machine's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for
 and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
-~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon stays warm there for
-\`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
-ends; a new value applies from the next daemon) and never holds a build
-slot. While none of the client's builds runs, stim-server stops it sooner
-when a build is cancelled, the client is revoked, or the machine has less
-than 2 GB of memory available, and deleting the client's directory under the
-worker root stops it too.
+~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon follows
+Gradle's idle policy (normally 3 hours; Gradle can expire it sooner) and never
+holds a build slot. Each Android build clears only Stim's old generated timeout
+line in the selected owned Gradle home, preserving other properties and inactive
+homes. Existing daemons keep their startup timeout until they exit.
+While none of the client's builds runs, stim-server stops it sooner
+when a build is cancelled or the client is revoked. The low-memory sweep waits
+until no offloaded build is running and the machine has less than 2 GB of
+memory available. Deleting the client's directory under the worker root stops it too.
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
@@ -1356,7 +1370,7 @@ scope, so it needs no --scope. Run it from the workspace:
 
 \`stim status --json\` then reports hidden: true on that environment, and
 clients that read it list the workspace under Hidden. The next start, ios,
-android, web, macos, reload, logs or worktree warm in the workspace clears it, so
+android, web, macos, reload, revive, logs or worktree warm in the workspace clears it, so
 a workspace in use is never hidden. \`worktree remove\` drops it with the
 workspace.
 

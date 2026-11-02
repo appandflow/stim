@@ -16,8 +16,16 @@ struct PairedSidebarSection: View {
   private var environments: [Workspace] { status?.payload?.environments ?? [] }
 
   var body: some View {
+    if let session {
+      ObservedSession(session: session) { section }
+    } else {
+      section
+    }
+  }
+
+  private var section: some View {
     let expanded = !state.collapsedServers.contains(id)
-    Section {
+    return Section {
       if expanded {
         if let line = connectionLine { line }
         let trees = pairedSidebarTrees(environments: environments, options: options, hidden: hiddenPaths)
@@ -54,7 +62,7 @@ struct PairedSidebarSection: View {
     ForEach(entries.flatMap(Self.workspaces), id: \.path) { env in
       PairedWorkspaceRow(
         env: env, key: WorkspaceKey(owner: owner, path: env.path), place: subtitle.map { [$0] } ?? [],
-        showsGit: options.showsGitStatus, selection: selection, state: state)
+        showsGit: options.showsGitStatus, selection: selection, session: session, state: state)
     }
   }
 
@@ -144,7 +152,11 @@ private struct PairedWorkspaceRow: View {
   var place: [String]
   var showsGit: Bool
   var selection: SidebarItem?
+  var session: ServerSession?
   @ObservedObject var state: PairedViewState
+  @State private var running = false
+  @State private var failure: String?
+  @State private var confirmingStop = false
 
   var body: some View {
     let isHidden = state.hidden.contains(key)
@@ -153,9 +165,52 @@ private struct PairedWorkspaceRow: View {
     }
     .sidebarTag(.pairedWorkspace(key), selection: selection)
     .contextMenu {
+      if let session {
+        ForEach(PairedAccess.known, id: \.self) { action in
+          let offered = session.pairedAccess?.actions.contains(action) == true
+          Button(
+            action == "stop" ? "Stop" : "Reload App", systemImage: action == "stop" ? "stop.circle" : "arrow.clockwise"
+          ) {
+            if action == "stop" { confirmingStop = true } else { run(action) }
+          }
+          .disabled(running || !offered)
+          .help(
+            offered
+              ? "Runs \(action) on \(session.name)."
+              : session.pairedAccess?.reason ?? "\(session.name) does not offer \(action).")
+        }
+        Divider()
+      }
       Button(isHidden ? "Unhide" : "Hide", systemImage: isHidden ? "eye" : "eye.slash") {
         if isHidden { state.hidden.remove(key) } else { state.hidden.insert(key) }
       }
+    }
+    .confirmationDialog(
+      Text(verbatim: "Stop \(env.names.title) on \(session?.name ?? "the paired machine")?"),
+      isPresented: $confirmingStop, titleVisibility: .visible
+    ) {
+      Button("Stop", role: .destructive) { run("stop") }
+    } message: {
+      Text("This runs stim stop on the owning server, halting this workspace's dev server and devices there.")
+    }
+    .alert("Action Failed", isPresented: .init(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+      Button("OK") { failure = nil }
+    } message: {
+      Text(verbatim: failure ?? "")
+    }
+  }
+
+  private func run(_ action: String) {
+    guard !running, let session else { return }
+    running = true
+    failure = nil
+    Task {
+      do {
+        try await session.runPairedAction(action, workspace: env.path)
+      } catch {
+        failure = error.localizedDescription
+      }
+      running = false
     }
   }
 }

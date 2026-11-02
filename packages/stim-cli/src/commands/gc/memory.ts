@@ -5,8 +5,9 @@ import { childEnvironment } from '../../workspace/git-read.ts';
 import type { StimContext } from '@stim-cli/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { freemem, totalmem } from 'node:os';
 import chalk from 'chalk';
-import { buildWorkerRoot, loadConfig } from '@stim-cli/core/state';
+import { buildWorkerRoot, loadConfig, readMaintenanceState } from '@stim-cli/core/state';
 import { formatLongDuration, plural } from '../../command-output.ts';
 import { readHostProcessTableAsync, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
@@ -27,6 +28,10 @@ import {
 import type { Finding } from '../../diagnostics/doctor.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
+import { readHostMemoryPressureAsync } from '../../host-memory.ts';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
+import { memoryPressureFromObservations } from '../../maintenance/pressure.ts';
+import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 
 export const WATCHMAN_KIND = 'watchman';
 export const GRADLE_DAEMONS_KIND = 'gradle-daemons';
@@ -768,8 +773,7 @@ export function memorySweepIsScoped(env: NodeJS.ProcessEnv = process.env): boole
   return Boolean(env.STIM_HOME);
 }
 
-/** The report of a run whose STIM_HOME is set: the helpers are machine-global, so none is inspected or stopped. */
-export function scopedMemoryReport(): MemoryReport {
+function scopedMemoryReport(): MemoryReport {
   return {
     processes: [],
     watchmanRoots: [],
@@ -820,6 +824,72 @@ export async function collectMemoryReport(
   return report;
 }
 
+async function manualDaemonsKept(
+  operation?: StimContext,
+  env = operation?.env ?? process.env,
+  entry?: MemoryProcess,
+): Promise<string | null> {
+  if (memorySweepIsScoped(env)) return 'STIM_HOME scopes this config, so machine-global daemons are kept';
+  if (entry && !sameProcess(entry, await hostRows(operation))) return 'the process changed or exited since the check';
+  const birth = entry ? captureProcessIdentity(entry.pid) : null;
+  if (entry && !birth?.ok) return 'the process identity could not be verified';
+  const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
+  const settings = resolveMaintenanceSettings(undefined, env);
+  if (settings.invalid) return `memory settings are invalid: ${settings.invalid}`;
+  if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
+  const state = readMaintenanceState();
+  const now = Date.now();
+  const checkedAt = state?.lastAt.pressure;
+  const completed = state?.lastPass;
+  const previous =
+    checkedAt !== undefined &&
+    completed &&
+    completed.blocked.length === 0 &&
+    checkedAt >= completed.startedAt &&
+    checkedAt <= completed.startedAt + completed.durationMs &&
+    checkedAt <= now &&
+    now - checkedAt <= settings.pressureCheckMinutes * 60_000
+      ? state?.pressure
+      : null;
+  const pressure = memoryPressureFromObservations(
+    settings,
+    level === 'warning' && previous?.memory.level === 'warning' ? previous : null,
+    now,
+    level,
+    process.platform === 'darwin' ? null : freemem(),
+    totalmem(),
+  );
+  if (!pressure.memory.pressured)
+    return process.platform === 'darwin' && level === null
+      ? 'macOS memory pressure could not be read'
+      : 'memory is below the configured sustained-pressure threshold';
+  if (entry && birth?.ok && inspectProcessIdentity({ pid: entry.pid, processToken: birth.token }) !== 'same')
+    return 'the process changed, exited or could not be verified during the memory check';
+  const lock = listBuildLocks().find((record) => record.alive || record.unresolved);
+  if (lock) return `${lock.unresolved ? 'an unresolved' : 'a running'} ${lock.platform} build holds ${lock.path}`;
+  const slot = listBuildSlots().find((record) => record.alive || record.unresolved);
+  return slot ? `${slot.unresolved ? 'an unresolved' : 'a running'} build holds build slot ${slot.index ?? '?'}` : null;
+}
+
+export async function collectGcMemory(
+  scope: MemoryScope,
+  env: NodeJS.ProcessEnv,
+  operation?: StimContext,
+): Promise<MemoryReport> {
+  if (memorySweepIsScoped(env)) return scopedMemoryReport();
+  const report = await collectMemoryReport(scope, true, operation);
+  if (scope.gradle && report.processes.some((entry) => entry.cacheKind === GRADLE_DAEMONS_KIND)) {
+    const kept = await manualDaemonsKept(operation, env);
+    if (kept)
+      report.processes = report.processes.map((entry) =>
+        entry.cacheKind === GRADLE_DAEMONS_KIND
+          ? { ...entry, reclaimable: false, detail: entry.detail ?? kept }
+          : entry,
+      );
+  }
+  return report;
+}
+
 function processLabel(entry: MemoryProcess): string {
   if (entry.kind === 'watchman') return `watchman pid ${entry.pid}`;
   if (entry.kind === 'kotlinDaemon') return `Kotlin compile daemon pid ${entry.pid}`;
@@ -844,7 +914,7 @@ export function memoryLines(
     ? 'footprint, resident size where unreadable'
     : 'physical footprint';
   const lines = [
-    `Memory (${measure}) - shared helpers that grow while they run; --delete stops an unused watchman and --cache gradle-daemons stops idle Gradle and Kotlin daemons:`,
+    `Memory (${measure}) - shared helpers that grow while they run; --delete stops an unused watchman and --cache gradle-daemons stops idle Gradle and Kotlin daemons under memory pressure with no build running:`,
   ];
   for (const entry of report.processes) {
     const state = entry.reclaimable
@@ -997,6 +1067,7 @@ async function stopGradle(
   rows: ReadonlyMap<number, HostProcess> | null,
   output: GcOutput,
   operation?: StimContext,
+  guard?: (entry?: MemoryProcess) => Promise<string | null>,
 ): Promise<number> {
   let failures = 0;
   const groups = new Map<string, MemoryProcess[]>();
@@ -1027,6 +1098,11 @@ async function stopGradle(
       listed.length > 0 &&
       listed.every(([pid, state]) => state === 'idle' && entries.some((entry) => entry.pid === pid));
     if (whole) {
+      const kept = guard ? await guard() : null;
+      if (kept) {
+        for (const entry of entries) keep(output, entry, 'gradleDaemon', kept);
+        continue;
+      }
       try {
         phase('daemons', `gradle --stop for Gradle ${command.version} in ${home}`, operation);
         await runOperationFile(
@@ -1074,6 +1150,11 @@ async function stopGradle(
           'gradleDaemon',
           state ? `gradle --status now reports it ${state}` : 'gradle --status no longer lists it idle',
         );
+        continue;
+      }
+      const kept = guard ? await guard(entry) : null;
+      if (kept) {
+        keep(output, entry, 'gradleDaemon', kept);
         continue;
       }
       const error = signal(entry.pid, operation?.signal);
@@ -1132,13 +1213,18 @@ async function waitForExit(pids: readonly number[], operation?: StimContext): Pr
 }
 
 /** Stops the Gradle daemons first, then re-checks the Kotlin daemons, whose clients those Gradle daemons were. */
-async function reclaimDaemons(before: MemoryReport, output: GcOutput, operation?: StimContext): Promise<number> {
+async function reclaimDaemons(
+  before: MemoryReport,
+  output: GcOutput,
+  operation?: StimContext,
+  guard?: (entry?: MemoryProcess) => Promise<string | null>,
+): Promise<number> {
   const scope = { watchman: false, gradle: true };
   const gradle = stillPlanned(await collectMemoryReport(scope, true, operation), before, 'gradleDaemon');
   for (const entry of gradle.filter((e) => !e.reclaimable))
     keep(output, entry, 'gradleDaemon', entry.detail ?? 'it could not be proven idle');
   const stopping = gradle.filter((entry) => entry.reclaimable);
-  let failures = await stopGradle(stopping, await hostRows(operation), output, operation);
+  let failures = await stopGradle(stopping, await hostRows(operation), output, operation, guard);
   if (!before.processes.some((entry) => entry.kind === 'kotlinDaemon')) return failures;
   await waitForExit(
     stopping.map((entry) => entry.pid),
@@ -1154,15 +1240,17 @@ async function reclaimDaemons(before: MemoryReport, output: GcOutput, operation?
   }
   const rows = await hostRows(operation);
   for (const entry of kotlin) {
-    if (entry.reclaimable) failures += stopKotlin(entry, rows, output, operation);
+    const kept = entry.reclaimable && guard && sameProcess(entry, rows) ? await guard(entry) : null;
+    if (kept) keep(output, entry, 'kotlinDaemon', kept);
+    else if (entry.reclaimable) failures += stopKotlin(entry, rows, output, operation);
     else keep(output, entry, 'kotlinDaemon', entry.detail ?? 'it could not be proven idle');
   }
   return failures;
 }
 
 /**
- * Stops those of `pids` that `gc --delete --cache gradle-daemons` would stop, under the same idle rules: never during a
- * Stim build, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
+ * Stops those of `pids` the common daemon inventory proves idle, under the same identity rules: never during a
+ * build that could use them, never a busy daemon or one whose state is unknown. A Kotlin daemon in `pids` stops only when every idle
  * Gradle daemon is in `pids` too, since one left running may still be its client. Nothing stops while STIM_HOME scopes
  * the config.
  */
@@ -1199,9 +1287,14 @@ export async function reclaimMemory(
   operation?.signal.throwIfAborted();
   const kind = reclaimedKind(cache);
   if (!kind || !report || report.processes.length === 0) return 0;
-  return kind === WATCHMAN_KIND
-    ? reclaimWatchman(report, output, operation)
-    : reclaimDaemons(report, output, operation);
+  if (kind === WATCHMAN_KIND) return reclaimWatchman(report, output, operation);
+  const guard = (entry?: MemoryProcess) => manualDaemonsKept(operation, operation?.env ?? process.env, entry);
+  const kept = await guard();
+  if (kept) {
+    for (const entry of report.processes) keep(output, entry, entry.kind, kept);
+    return 0;
+  }
+  return reclaimDaemons(report, output, operation, guard);
 }
 
 /** A doctor note when watchman's footprint is over 2 GiB: only a restart shrinks it, and gc says when one is safe. */

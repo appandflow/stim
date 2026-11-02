@@ -388,14 +388,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'metro.idleStopMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: PROJECT,
-    default: 60,
+    default: 15,
     description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
   },
   {
     key: 'devices.idleShutdownMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
-    default: 30,
+    default: 15,
     description:
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },
@@ -617,7 +617,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     env: 'STIM_MAX_DEVICES',
     description:
-      'Booted owned iOS simulators and Android emulators together, and, separately, hosted macOS apps; 0 means no limit',
+      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 means no limit',
   },
   {
     key: 'concurrency.maxIosDevices',
@@ -642,7 +642,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_MACOS_APPS',
-    description: 'Hosted macOS apps, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+    description:
+      'Local and hosted macOS apps in separate pools, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'budget.minFreeDiskGb',
@@ -1082,14 +1083,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     description:
       'Directory where stim-server keeps the checkouts, dependencies and build state of the machines that build here; default $STIM_HOME/build-worker',
-  },
-  {
-    key: 'server.gradleDaemonIdleMinutes',
-    type: { kind: 'number', integer: true, minimum: 0, maximum: 35_791 },
-    scopes: MACHINE,
-    default: 30,
-    description:
-      'Minutes the Gradle daemon of an Android build another machine sent here stays warm after the build; 0 stops it when the build ends',
   },
   {
     key: 'caches.buildCache',

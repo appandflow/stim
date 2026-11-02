@@ -392,10 +392,6 @@ export type PhoneNotificationsListResult = Omit<Wire.NotificationsListResult, 'n
   notifications: PhoneNotificationEntry[];
 };
 export type PhoneProtocolError = Omit<Wire.ProtocolError, 'code'> & { code: string };
-export type PhoneStatusEvent = Omit<Wire.StatusEvent, 'payload' | 'usage'> & {
-  payload: PhoneStatusPayload;
-  usage?: PhoneStatusUsage;
-};
 export type PhoneLogsEndedEvent = Wire.LogsEndedEvent;
 export type PhoneLogsEvent = Omit<Wire.LogsEvent, 'records'> & { records: PhoneLogRecord[] };
 export type PhoneDeviceFrameArtwork = Wire.DeviceFrameArtwork;
@@ -418,7 +414,6 @@ export type PhoneServerEvent =
   | Exclude<
       Wire.ServerEvent,
       | Wire.BuildProgressEvent
-      | Wire.StatusEvent
       | Wire.WorkspacesEvent
       | Wire.WorkspaceEvent
       | Wire.MachineEvent
@@ -449,7 +444,6 @@ export type PhoneServerEvent =
       | Wire.DesktopWorktreeWarmEndedEvent
     >
   | PhoneMacosWindowsEvent
-  | PhoneStatusEvent
   | PhoneWorkspacesEvent
   | PhoneWorkspaceEvent
   | PhoneMachineEvent
@@ -653,7 +647,6 @@ export type {
   PhoneNotificationEntry as NotificationEntry,
   PhoneNotificationsListResult as NotificationsListResult,
   PhoneProtocolError as ProtocolError,
-  PhoneStatusEvent as StatusEvent,
   PhoneWorkspaceSummary as WorkspaceSummary,
   PhoneWorktreeRow as WorktreeRow,
   PhoneArchivedWorkspace as ArchivedWorkspace,

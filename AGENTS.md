@@ -17,7 +17,7 @@ git worktree add -> cd -> worktree warm -> start -> ios|android -> logs --errors
 ```
 
 The command surface is `doctor`, `worktree warm|remove`, `start`, `stop`,
-`ios`, `android`, `web`, `reload`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
+`ios`, `android`, `web`, `reload`, `revive`, `ports [get|stop|release]`, `device lock|unlock|provision|location|permission|push|network`, `logs`, `remote add|list|remove`, `settings [get|set|unset]`,
 `status`, `stats`, `gc`, and `guide`. Do not add commands or flags without an explicit product decision.
 Projects can wrap Stim when they need custom behavior.
 
@@ -420,9 +420,11 @@ outside it moves to its own issue and pull request.
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon
-  stays warm after an Android build for `server.gradleDaemonIdleMinutes`.
+  follows Gradle's idle policy after an Android build. Each build clears only
+  the old generated idle-timeout override in its selected owned Gradle home.
   Cancellation drains only that repository; whole-client revocation and low
-  memory retain their client-scoped cleanup. Gradle stops a daemon
+  memory retain their client-scoped cleanup. Low-memory sweeps wait until no
+  offloaded build is running. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is

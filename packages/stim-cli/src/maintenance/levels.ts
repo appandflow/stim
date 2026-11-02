@@ -15,7 +15,9 @@ import type { MaintenanceSettings } from './settings.ts';
 import { planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import { planWorktrees, type WorktreePlan } from './sweep.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
-import { collectMemoryReport, memorySweepIsScoped } from '../commands/gc/memory.ts';
+import { collectMemoryReport, memorySweepIsScoped, runningBuild } from '../commands/gc/memory.ts';
+import { listBuildLocks } from '../engine/build-lock.ts';
+import { listBuildSlots } from '../engine/build-slots.ts';
 import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
 
 interface LevelContext {
@@ -136,6 +138,34 @@ async function planGradleDaemonStop(
       };
   }
   return { pids: [...blockers] };
+}
+
+function daemonsKept(reason: string): MaintenancePlan {
+  return { actions: [], blocked: [], skips: [{ target: 'Gradle daemons', reason }] };
+}
+
+export async function planMemoryDaemonStop(operation?: StimContext): Promise<MaintenancePlan> {
+  if (memorySweepIsScoped(operation?.env ?? process.env))
+    return daemonsKept('STIM_HOME scopes this config, so the machine-global Gradle daemons are not stopped');
+  const building = runningBuild(listBuildLocks(), listBuildSlots());
+  if (building) return daemonsKept(building);
+  const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
+  const pids = report.processes
+    .filter((entry) => entry.reclaimable && (entry.kind === 'gradleDaemon' || entry.kind === 'kotlinDaemon'))
+    .map((entry) => entry.pid);
+  if (pids.length === 0) return { actions: [], blocked: [], skips: [] };
+  return {
+    actions: [
+      {
+        kind: 'would-stop-gradle-daemons',
+        target: `pid ${pids.join(', ')}`,
+        bytes: 0,
+        reason: 'memory pressure, these Gradle and Kotlin daemons are idle',
+      },
+    ],
+    blocked: [],
+    skips: [],
+  };
 }
 
 async function planLevel3({

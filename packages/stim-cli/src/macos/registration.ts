@@ -7,9 +7,12 @@ export function waitForMacosRegistration(
   launchId: string,
   child: ChildProcess,
   deadline: number,
+  beforeAccept: (record: MacosAppRecord) => void = () => {},
 ): Promise<MacosAppRecord | null> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let accepting = false;
+    let accepted = false;
     let repairTimer: ReturnType<typeof setTimeout> | undefined;
     let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
     const finish = (record: MacosAppRecord | null, error?: Error) => {
@@ -35,9 +38,20 @@ export function waitForMacosRegistration(
         current.supervisor &&
         inspectProcessIdentity(current.app) === 'same' &&
         inspectProcessIdentity(current.supervisor) === 'same'
-      )
-        finish(current);
-      else if (child.exitCode !== null || child.signalCode !== null) finish(null);
+      ) {
+        if (accepted) return finish(current);
+        if (!child.connected) return finish(null);
+        if (accepting) return;
+        accepting = true;
+        try {
+          beforeAccept(current);
+          child.send('macos-accept', (error) => {
+            if (error) finish(null, error);
+          });
+        } catch (error) {
+          finish(null, error instanceof Error ? error : new Error(String(error)));
+        }
+      } else if (child.exitCode !== null || child.signalCode !== null) finish(null);
     };
     const onExit = () => {
       check();
@@ -46,6 +60,10 @@ export function waitForMacosRegistration(
     const onError = (error: Error) => finish(null, error);
     const onMessage = (message: unknown) => {
       if (message === 'macos-registered') check();
+      else if (message === 'macos-accepted' && accepting) {
+        accepted = true;
+        check();
+      }
     };
     const repair = () => {
       check();

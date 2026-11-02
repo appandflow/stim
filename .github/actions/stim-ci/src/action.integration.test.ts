@@ -95,13 +95,14 @@ it('validates explicit inputs and preserves command source and argument paths', 
       /required|must/,
     );
   }
-  expect(() => readInputs((key) => (key === 'build-only' ? 'true' : (github.inputs[key] ?? '')), root)).toThrow(
-    'no native build',
-  );
+  expect(() =>
+    readInputs((key) => (key === 'build-only' ? 'true' : (github.inputs[key] ?? '')), root, 'linux'),
+  ).toThrow('no native build');
   expect(() =>
     readInputs(
       (key) => (key === 'platform' ? 'ios' : key === 'build-only' ? 'true' : (github.inputs[key] ?? '')),
       root,
+      'linux',
     ),
   ).toThrow('command does not apply');
   github.inputs.arch = 'arm64';

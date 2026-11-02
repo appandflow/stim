@@ -264,7 +264,8 @@ struct StimDesktopApp: App {
     }
     actions.onFinish = { [store, gc] run in
       let worktree = run.steps.contains { $0.program == "stim" && $0.arguments.first == "worktree" }
-      if !store.watching || worktree { store.refresh() }
+      let visibility = run.steps.contains { Array($0.arguments.prefix(3)) == ["settings", "set", "workspace.hidden"] }
+      if !store.watching || worktree || visibility { store.refresh() }
       if run.steps.contains(where: GcReport.changed(by:)) { gc.changed() }
       for step in run.steps where step.arguments.first == "doctor" && step.arguments.contains("--fix") {
         store.doctorChanged(in: step.cwd)

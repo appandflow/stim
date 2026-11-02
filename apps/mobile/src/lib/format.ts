@@ -115,8 +115,9 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
   const started = Date.parse(build.startedAt);
   const elapsedMs = Math.max(0, now - (Number.isFinite(started) ? started : now));
   const expected = build.expectedMs;
-  if (!expected || expected <= 0) return { elapsedMs, fraction: null, remaining: null };
-  const remainingMs = expected - elapsedMs;
+  if (!expected || expected <= 0 || build.phase === 'cleanup') return { elapsedMs, fraction: null, remaining: null };
+  const comparedMs = Math.max(0, elapsedMs - (build.completedPhaseMs?.cleanup ?? 0));
+  const remainingMs = expected - comparedMs;
   const minutesLeft = Math.ceil(remainingMs / 60_000);
   const remaining =
     remainingMs <= 0
@@ -124,7 +125,7 @@ export function buildProgress(build: BuildReport, now: number): BuildProgress {
       : remainingMs < 60_000
         ? t`under a minute left`
         : t`about ${minutesLeft} min left`;
-  const fraction = steadyFraction(`${buildKey(build)}|top`, Math.min(elapsedMs / expected, 0.99));
+  const fraction = steadyFraction(`${buildKey(build)}|top`, Math.min(comparedMs / expected, 0.99));
   return { elapsedMs, fraction, remaining };
 }
 
@@ -132,7 +133,7 @@ export function buildTiming(build: BuildReport, now: number): { elapsed: string;
   const progress = buildProgress(build, now);
   return {
     elapsed: clockDuration(progress.elapsedMs),
-    estimate: build.expectedMs ? `~${clockDuration(build.expectedMs)}` : null,
+    estimate: build.phase !== 'cleanup' && build.expectedMs ? `~${clockDuration(build.expectedMs)}` : null,
   };
 }
 
@@ -155,7 +156,7 @@ export function outcomeLabel(
   build: Pick<BuildReport, 'outcome' | 'phase' | 'outcomeKnown' | 'missReason'>,
 ): string | null {
   if (build.outcome !== 'hit' && build.outcome !== 'cold') return null;
-  const settled = build.outcomeKnown ?? !['prepare', 'cache-lookup', 'wait', 'device'].includes(build.phase);
+  const settled = build.outcomeKnown ?? !['prepare', 'cleanup', 'cache-lookup', 'wait', 'device'].includes(build.phase);
   if (build.outcome === 'hit') return settled ? t`Cache hit` : t`Likely cache hit`;
   if (!settled) return t`Likely cold`;
   return build.missReason ? t`Cache miss` : t`Cold build`;

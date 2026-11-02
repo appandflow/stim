@@ -3,8 +3,8 @@ import { ownedDeviceLabel } from '../workspace/project.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 import { pidExists } from '../metro.ts';
 import type { IosSimulatorApp } from '../devices/ios-simulator-viewer.ts';
-import { IOS_BOOT_TIMEOUT_MS, type IosSimSnapshot } from '../devices/ios.ts';
-import { configureNewOwnedAvd } from '../devices/android.ts';
+import { IOS_BOOT_TIMEOUT_MS, listAllIosSims, resolveOwnedIosSim, type IosSimSnapshot } from '../devices/ios.ts';
+import { avdStorageExists, configureNewOwnedAvd } from '../devices/android.ts';
 import { teardownOwnedAvd } from '../devices/teardown.ts';
 import { clearDeviceIdleShutdown } from '../devices/idle-shutdown.ts';
 import { reconcileSimSlim } from './simslim.ts';
@@ -71,9 +71,45 @@ export interface DeviceFlags {
   systemImage?: string | null;
   systemImageFlag?: string | null;
   deviceProfile?: string | null;
+  /** The only device this run may use: the slot's simulator UDID or AVD name. It never creates or adopts another. */
+  expectedDevice?: string;
 }
 
 export type Notify = (msg: string) => void;
+
+export class RecordedDeviceLostError extends Error {
+  readonly code = 'STIM_DEVICE_LOST';
+  readonly remedy: string;
+  constructor(platform: string, expected: string, why: string) {
+    super(
+      `${platform === 'ios' ? 'Simulator' : 'Emulator'} ${expected} ${why}, and this run may not create or adopt another device.`,
+    );
+    this.remedy = `Run \`stim ${platform}\` (with \`--slot\` for a named slot); it boots or creates this workspace's owned device and launches the app.`;
+  }
+}
+
+function recordedDeviceId(platform: string, record: OwnedDeviceRecord | null): string | undefined {
+  return platform === 'ios' ? record?.deviceUdid : record?.avdName;
+}
+
+function requireRecordedDevice(
+  platform: string,
+  record: OwnedDeviceRecord | null,
+  expected: string,
+  simSnapshot: IosSimSnapshot | undefined,
+): void {
+  if (!record?.owned || recordedDeviceId(platform, record) !== expected || record.setupIncomplete) {
+    throw new RecordedDeviceLostError(platform, expected, "is no longer this slot's owned device");
+  }
+  const exists =
+    platform === 'ios'
+      ? Boolean(
+          resolveOwnedIosSim(expected, simSnapshot ? simSnapshot.read() : listAllIosSims({ includeUnavailable: true }))
+            .sim,
+        )
+      : avdStorageExists(expected);
+  if (!exists) throw new RecordedDeviceLostError(platform, expected, 'no longer exists as a Stim-owned device');
+}
 
 export type Liveness = (pid: number) => boolean;
 
@@ -123,39 +159,45 @@ export async function ensureOwnedDevice({
   reconcileIosSimulator?: typeof reconcileSimSlim;
   simSnapshot?: IosSimSnapshot;
 } & EmulatorLogging): Promise<OwnedDeviceRecord> {
+  const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
+  const expected = flags.expectedDevice;
+  if (expected !== undefined) requireRecordedDevice(platform, record, expected, simSnapshot);
   await clearDeviceIdleShutdown(projectPath, platform, slot);
   if (slot && slot !== 'default') label = `${label}-${slot}`;
-  const record = (deviceSlotPlatforms(project, slot)?.[platform] as OwnedDeviceRecord | undefined) ?? null;
-  if (platform === 'ios') {
-    return ensureOwnedIosDevice({
-      record,
-      projectPath,
-      slot,
-      settingsRoot,
-      label,
-      settings,
-      flags,
-      note,
-      out,
-      reconcileIosSimulator,
-      simSnapshot,
-    });
+  const ensured =
+    platform === 'ios'
+      ? await ensureOwnedIosDevice({
+          record,
+          projectPath,
+          slot,
+          settingsRoot,
+          label,
+          settings,
+          flags,
+          note,
+          out,
+          reconcileIosSimulator,
+          simSnapshot,
+        })
+      : await ensureOwnedAndroidDevice({
+          record,
+          projectPath,
+          slot,
+          settingsRoot,
+          label,
+          settings,
+          flags,
+          note,
+          out,
+          logFile,
+          alive,
+          configureAvd,
+          teardownAvd,
+        });
+  if (expected !== undefined && recordedDeviceId(platform, ensured) !== expected) {
+    throw new RecordedDeviceLostError(platform, expected, 'was replaced while this run prepared it');
   }
-  return ensureOwnedAndroidDevice({
-    record,
-    projectPath,
-    slot,
-    settingsRoot,
-    label,
-    settings,
-    flags,
-    note,
-    out,
-    logFile,
-    alive,
-    configureAvd,
-    teardownAvd,
-  });
+  return ensured;
 }
 
 const BOOT_POLL_MS = 500;

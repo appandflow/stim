@@ -11,26 +11,15 @@ const stimKitFixtures = new URL('StimKitTests/Fixtures/', desktopTests);
 const realArchive = new URL('VisualFixtureTests/Fixtures/real-archive/', desktopTests);
 const read = (url: URL) => JSON.parse(readFileSync(url, 'utf8'));
 
-function issues(validator: Validator, value: unknown, prefix = ''): string[] {
+function issues(validator: Validator, value: unknown): string[] {
   if (validator(value)) return [];
   const found = (validator.errors ?? [])
-    .filter((issue) => issue.keyword !== 'anyOf' && issue.instancePath.startsWith(prefix))
+    .filter((issue) => issue.keyword !== 'anyOf')
     .map((issue) => `${issue.instancePath} ${issue.message}`);
   return found.length > 0 ? found : ['rejected outside the fixture payload'];
 }
 
-const statusEvent = (payload: unknown) => ({ event: 'status', subscription: 'desktop', payload });
-
 const statusFixtures = readdirSync(stimKitFixtures).filter((name) => /status.*\.json$/.test(name));
-
-test('reports a status event the validator rejects even when no payload path explains it', () => {
-  const { environments: _environments, ...payload } = read(new URL('status.json', stimKitFixtures));
-  expect(issues(event as Validator, { event: 'status', payload }, '/payload')).not.toEqual([]);
-});
-
-test.each(statusFixtures)('desktop fixture %s is a status payload the producer contract accepts', (name) => {
-  expect(issues(event as Validator, statusEvent(read(new URL(name, stimKitFixtures))), '/payload')).toEqual([]);
-});
 
 test('desktop replay range fixture matches the replay.range result contract', () => {
   expect(issues(responses['replay.range'] as Validator, read(new URL('replay-range.json', stimKitFixtures)))).toEqual(
@@ -38,23 +27,30 @@ test('desktop replay range fixture matches the replay.range result contract', ()
   );
 });
 
-test('captured archive fixtures match the archived status entry and archive.detail contracts', () => {
+test('captured archive fixtures match the archived.list and archive.detail contracts', () => {
+  const archive = read(new URL('archive.json', realArchive));
+  const { total, ...byKind } = archive.bytes;
   const archived = {
-    ...read(new URL('status.json', stimKitFixtures)),
-    archived: [read(new URL('archive.json', realArchive))],
+    archived: [archive],
+    usage: { count: 1, bytes: total, byKind },
+    next: null,
   };
-  expect(issues(event as Validator, statusEvent(archived), '/payload')).toEqual([]);
+  expect(issues(responses['archived.list'] as Validator, archived)).toEqual([]);
   expect(issues(responses['archive.detail'] as Validator, read(new URL('detail.json', realArchive)))).toEqual([]);
 });
 
 test.each(statusFixtures)('the live views of desktop fixture %s are events the phone accepts', (name) => {
   const views = statusViews({ unprovisionedWorktrees: [], ...read(new URL(name, stimKitFixtures)) });
-  const [detail] = views.details.values();
   const { workspaces, worktrees, archived, machine } = views;
   const events = [
     { event: 'workspaces', subscription: 's1', seq: 0, snapshot: { workspaces, worktrees, archived } },
     { event: 'workspaces', subscription: 's1', seq: 1, workspaces: { upsert: workspaces, remove: ['/gone'] } },
-    { event: 'workspace', subscription: 's2', seq: 0, environment: detail ?? null },
+    ...[...views.details.values()].map((environment) => ({
+      event: 'workspace',
+      subscription: 's2',
+      seq: 0,
+      environment,
+    })),
     { event: 'machine', subscription: 's3', seq: 0, machine },
   ];
   for (const message of events) expect(issues(event as Validator, message)).toEqual([]);

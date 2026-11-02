@@ -189,12 +189,14 @@ export async function automaticDevicePlacement(
     write = writeHostedNativeAsync,
     resume = prepareHostedNative,
     peek = () =>
-      peekDeviceSlots({
-        platform: platform === 'macos' ? 'ios' : platform,
-        project: getProject(root),
-        slot,
-        ...(localSims ? { sources: { sims: localSims } } : {}),
-      }),
+      platform === 'macos'
+        ? { count: 0, max: 0, queued: 0, localLive: false }
+        : peekDeviceSlots({
+            platform,
+            project: getProject(root),
+            slot,
+            ...(localSims ? { sources: { sims: localSims } } : {}),
+          }),
     capacity = machineCapacity,
     memory = () => readHostMemoryPressureAsync(undefined, undefined, signal),
     probe = probeHost,
@@ -239,7 +241,7 @@ export async function automaticDevicePlacement(
       };
     await write(root, slot, null, platform);
   }
-  const devices = platform === 'macos' ? { count: 0, max: 0, queued: 0, localLive: false } : await peek();
+  const devices = await peek();
   if (devices.localLive && placement === 'remote-only')
     throw Object.assign(
       new Error(

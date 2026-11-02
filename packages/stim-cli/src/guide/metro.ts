@@ -232,11 +232,11 @@ the workflow, stop the workspace and the specific unit you created:
   systemctl --user stop stim-metro-my-worktree.service
 
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
-  (default 60; 0 never stops) with no bundle request, no client log record
+  (default 15; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo or metro.command, any stdout line of the
   dev server) and no Stim
-  command in the workspace (start, ios, android, reload, logs, worktree
-  warm). It checks once a minute. It keeps running while a bundle response is in
+  command in the workspace (start, ios, android, reload, revive, logs,
+  worktree warm). It checks once a minute. It keeps running while a bundle response is in
   flight, while a build in the workspace is in progress, while a stim ios,
   android or stop run holds the workspace's native-run lock, while the
   workspace holds an unexpired device lease (\`stim device lock\` or a
@@ -250,15 +250,37 @@ the workflow, stop the workspace and the specific unit you created:
   connected app alone does not keep the server. It records a
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  Devices stay booted, unless devices.idleShutdownMinutes is above 0 (the default is 30): then the
-  idle stop first shuts down the workspace's owned devices idle for the
-  shorter of the two (\`guide lifecycle budget\`). The next \`stim start\`
+  With devices.idleShutdownMinutes at 0 the devices stay booted. Otherwise
+  (the default is 15) the idle stop first shuts down the workspace's owned
+  devices idle for the shorter of the two settings, and device log lines no
+  longer count as use of a device whose last launch loads its JS from Metro:
+  that app cannot run without Metro, and its reconnect attempts fill the
+  device log. A Debug app's device therefore goes down with the dev server
+  even when devices.idleShutdownMinutes is longer. An open stim-server live
+  view keeps it booted. Device logs still count for a Release or
+  native-process launch and for a slot with no recorded launch, and for those
+  any change to the workspace's device.ndjson counts, so another slot's
+  reconnect logs keep them booted until that slot's device is shut down. The
+  supervisor_idle_stopped message names each device it shut down and why it
+  kept any other (\`guide lifecycle budget\`). The next \`stim start\`
   starts it again and clears the
   record, also when it reuses a dev server that another process started. A
   Debug \`ios\` or \`android\` run starts it the same way and reports
-  devServer.reason "stopped (idle)". The setting
-  is read when \`start\` spawns the supervisor; a value that is not a whole
-  number of 0 or more is refused, as \`stim settings set\` refuses it.
+  devServer.reason "stopped (idle)". \`stim revive\` resumes exactly what the
+  idle stop paused: it restarts the dev server, boots each owned simulator or
+  emulator a recorded launch ran on, on this machine and through the
+  same admission as \`ios\` and \`android\`, and relaunches that app from
+  cold from the build cache entry that launch installed, without
+  fingerprinting or building. The run may use only that device: it refuses
+  instead of creating or adopting another one. In-app state is gone. An app that is still running is left alone
+  unless Metro restarted. Release, native-process and hosted launches are not
+  relaunched. Run as agent-device's boot hook (guide logs), it restores only
+  the launch on the device agent-device asked for, plus Metro. It refuses
+  with STIM_NO_METRO when the last stop was not an idle stop or the
+  workspace was stopped since, STIM_DEVICE_LOST when the owned device is
+  gone, and STIM_NO_RECORDED_BUILD when the app is. The setting is read
+  when \`start\` spawns the supervisor; a value that is not a whole number
+  of 0 or more is refused, as \`stim settings set\` refuses it.
 
   WHY IT STOPPED: a supervisor that stops its dev server writes a
   supervisor_stopped line (supervisor_idle_stopped for an idle stop) whose

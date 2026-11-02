@@ -278,7 +278,9 @@ struct ActionCenterTests {
 
     let unset = StimCommand(["settings", "unset", "ios.runtime", "--scope", "workspace"], cwd: "/selected")
     let next = StimCommand([], cwd: "/tmp", program: "true")
-    let second = try #require(center.run("Reset setting", steps: [unset, next], present: false))
+    var completions: [Int32?] = []
+    let second = try #require(
+      center.run("Reset setting", steps: [unset, next], present: false) { completions.append($0.exitStatus) })
     #expect(await until { socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 2 })
     #expect(
       socket.sent.last?["params"]
@@ -293,6 +295,20 @@ struct ActionCenterTests {
     #expect(second.exitStatus == 1 && second.logLines.contains { $0.text.contains("STIM_NO_PROJECT: No app Choose an app") })
     #expect(second.logLines.contains { $0.text == "$ true" })
     #expect(client.isOpen && center.operations.attentionCount == 1)
+    #expect(completions == [1])
+
+    let retried = try #require(center.retry(second))
+    #expect(await until { socket.sent.filter { $0["method"] == .string("desktop.settings.write") }.count == 3 })
+    socket.answer(
+      .object([
+        "setting": .object([
+          "key": .string("ios.runtime"), "value": .null, "origin": .string("default"), "layers": .object([:]),
+        ])
+      ]))
+    #expect(await until { retried.exitStatus != nil })
+    #expect(retried.exitStatus == 0 && completions == [1, 0])
+    #expect(second.exitStatus == 1 && retried.logLines.contains { $0.text == "$ true" })
+    #expect(center.active(for: "/selected") == nil && center.latest(for: "/selected")?.id == retried.id)
   }
 
   #if DEBUG

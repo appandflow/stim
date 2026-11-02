@@ -7,11 +7,11 @@
     "promotionalText": "See your development workspaces, builds and devices from your phone. Pair with your Mac to follow progress, inspect logs and control a simulator.",
     "keywords": "react native,expo,simulator,developer,build,logs,debug,worktree,remote",
     "description": "Keep an eye on your development work from your phone.\n\nStim connects to Stim Desktop on your Mac, where the Stim command-line tools manage your React Native and Expo workspaces. See which workspaces are running, check build progress, inspect Metro and native logs, and view the devices running your apps.\n\nOpen a live device view to inspect your app. When your Mac grants Control, you can interact with the device, type, rotate supported simulators and use their available controls.\n\nNotifications help you return to builds and workspace activity that need attention.\n\nRequires a Mac running Stim Desktop and stim-server. Pair your phone with that Mac and keep it reachable over your local network or configured private network. The phone app does not compile your projects itself.",
-    "supportURL": "https://github.com/appandflow/stim/issues",
+    "supportURL": "https://stim.appandflow.com/support",
     "marketingURL": "https://stim.appandflow.com",
-    "privacyPolicyURL": null,
+    "privacyPolicyURL": "https://stim.appandflow.com/privacy",
     "categorySuggestion": "Developer Tools",
-    "reviewNotesDraft": "The app connects to a Mac running Stim Desktop and stim-server. Review needs a reachable demonstration Mac and a temporary pairing flow; provide those details through App Store Connect review notes, never in public metadata. No review server or credentials have been provisioned by this preparation package."
+    "reviewNotesDraft": "The App Review demo Worker is implemented with fictional workspaces and simulated device Control. Before submission, verify its deployment and review-token configuration, then pair from a clean TestFlight install over cellular. Provide the endpoint and pairing token privately through App Store Connect review notes, never in public metadata. This draft contains no review credentials."
   },
   "macos": {
     "distributionStatus": "current app uses Developer ID delivery; Mac App Store variant not implemented",

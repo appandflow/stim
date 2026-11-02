@@ -380,7 +380,9 @@ public struct PhaseStep: Equatable, Sendable {
   /// A fact about a finished phase, such as `428 steps`, or what the current phase waits on and for how long.
   public var note: String? = nil
 
-  public static let order = ["prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch"]
+  public static let order = [
+    "prepare", "cleanup", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch",
+  ]
 
   public static func name(_ phase: String) -> String {
     switch phase {
@@ -403,9 +405,10 @@ extension Build {
   /// which is all an older stim offers.
   func plannedDurations(_ history: [BuildHistoryEntry]) -> [String: Double] {
     if let plannedPhases {
-      return Dictionary(plannedPhases.map { ($0.phase, $0.expectedMs) }, uniquingKeysWith: { _, last in last })
+      return Dictionary(
+        plannedPhases.filter { $0.phase != "cleanup" }.map { ($0.phase, $0.expectedMs) }, uniquingKeysWith: { _, last in last })
     }
-    return referenceRun(history)?.phases ?? [:]
+    return (referenceRun(history)?.phases ?? [:]).filter { $0.key != "cleanup" }
   }
 
   /// The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases.
@@ -421,7 +424,7 @@ extension Build {
   }
 
   /// Whether the current phase waits on something whose progress nothing measures, so its bar shows no fill amount.
-  public var waitsWithoutProgress: Bool { activityLabel != nil && bundledFraction == nil }
+  public var waitsWithoutProgress: Bool { phase == "cleanup" || (activityLabel != nil && bundledFraction == nil) }
 
   /// How long the current activity has lasted; nil without one.
   public func activityElapsedMs(at now: Date) -> Double? {
@@ -443,11 +446,15 @@ extension Build {
   public func phaseSteps(history: [BuildHistoryEntry], now: Date) -> [PhaseStep] {
     let reference = plannedDurations(history)
     let currentIndex = PhaseStep.order.firstIndex(of: phase) ?? -1
-    let inPhase = parseTimestamp(phaseStartedAt).map { max(0, now.timeIntervalSince($0) * 1000) }
-    return PhaseStep.order.enumerated().filter { $0.offset == currentIndex || reference[$0.element] != nil }.map {
+    let inPhase = parseTimestamp(phaseStartedAt).map {
+      max(0, now.timeIntervalSince($0) * 1000) + (completedPhaseMs?[phase] ?? 0)
+    }
+    return PhaseStep.order.enumerated().filter {
+      $0.offset == currentIndex || reference[$0.element] != nil || completedPhaseMs?[$0.element] != nil
+    }.map {
       i, step in
-      let expected = step == phase ? (expectedPhaseMs ?? reference[step]) : reference[step]
-      if i < currentIndex {
+      let expected = step == "cleanup" ? nil : step == phase ? (expectedPhaseMs ?? reference[step]) : reference[step]
+      if i < currentIndex || (step == "cleanup" && step != phase && completedPhaseMs?[step] != nil) {
         return PhaseStep(phase: step, state: .done, elapsedMs: completedPhaseMs?[step], expectedMs: expected, fraction: 1)
       }
       if i > currentIndex {
@@ -490,7 +497,7 @@ public func namesPhases(_ steps: [PhaseStep]) -> Bool { steps.count > 1 }
 
 /// The short prepare phases folded into one segment and launch into install, for the progress bar.
 public func barSteps(_ steps: [PhaseStep]) -> [PhaseStep] {
-  let group = ["cache-lookup": "prepare", "wait": "prepare", "launch": "install"]
+  let group = ["cleanup": "prepare", "cache-lookup": "prepare", "wait": "prepare", "launch": "install"]
   var groups: [PhaseStep] = []
   for step in steps {
     let phase = group[step.phase] ?? step.phase
@@ -507,11 +514,13 @@ public func barSteps(_ steps: [PhaseStep]) -> [PhaseStep] {
       ? (step.fraction ?? 0) * (step.expectedMs ?? 0)
       : last.state == .current ? (last.fraction ?? 0) * (last.expectedMs ?? 0) : 0
     let state: PhaseStep.State = last.state == step.state ? step.state : .current
+    let indeterminate = (last.state == .current && last.fraction == nil) || (step.state == .current && step.fraction == nil)
     let fraction: Double? =
       switch state {
       case .done: 1
       case .pending: 0
-      case .current: expected > 0 ? min(0.95, (doneMs + currentMs) / expected) : (step.fraction ?? last.fraction)
+      case .current:
+        indeterminate ? nil : expected > 0 ? min(0.95, (doneMs + currentMs) / expected) : (step.fraction ?? last.fraction)
       }
     groups[groups.count - 1] = PhaseStep(
       phase: phase, state: state, elapsedMs: nil, expectedMs: expected > 0 ? expected : nil, fraction: fraction)

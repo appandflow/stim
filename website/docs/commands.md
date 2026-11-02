@@ -56,6 +56,9 @@ restarts it. Use it when an error screen remains after a fix, not after every
 JavaScript edit. It also recovers an Android app whose first bundle failed; an
 iOS app in that state never connects to Metro, so reload cannot reach it.
 
+`revive` resumes a workspace after an [idle stop](./dev-server-and-logs.md#idle-stop).
+Use it when the app shows "could not connect" or a blank screen after a pause.
+
 ## Named device slots
 
 `ios`, `android`, `device lock`, `device unlock`, `logs`, and `stop` accept
@@ -277,7 +280,7 @@ or hyphens. `metro` is reserved for `stim start` and `stim stop`.
 The workspace is the nearest `package.json` directory. In a monorepo, a package
 that is not a React Native or Expo app, such as a Vite web app in `apps/web`,
 uses the one Stim app registered in the same Git worktree instead, and stderr
-names it. `web`, `settings`, `logs`, `reload`, `stop` and `status` follow the
+names it. `web`, `settings`, `logs`, `reload`, `revive`, `stop` and `status` follow the
 same rule; `status` stars the app instead of printing the note. Every `ports` command there then acts on that app's ports, including
 `stop` and `release` without a label. `status`, `worktree remove` and `gc`
 treat the ports as the app's. A package that already holds ports keeps them
@@ -397,7 +400,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   targets do not join this local slot queue. At the cap, only the queue head
   reclaims the longest-idle eligible owned device in another workspace, one
   per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
   drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
   never deletes, and excludes this workspace, physical, hosted, remote,
   parked and other homes' devices. Failed reclaim is logged and skipped.
@@ -686,7 +689,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   targets do not join this local slot queue. At the cap, only the queue head
   reclaims the longest-idle eligible owned device in another workspace, one
   per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
   drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
   never deletes, and excludes this workspace, physical, hosted, remote,
   parked and other homes' devices. Failed reclaim is logged and skipped.
@@ -929,7 +932,69 @@ foreign Metro server, and ambiguous selection. `--json` prints one object with
 `platform`, `deviceId`, `deviceName`, `appId`, `metroPort`, and `strategy`.
 Success, including exit 0 with `--json`, confirms that the request was sent.
 The command does not observe completion. Verify the expected UI on the reported
-device and inspect `stim logs --errors` before claiming recovery.
+device and inspect `stim logs --errors` before claiming recovery. When the
+recorded device is shut down, as after an idle stop, the remedy is
+[`stim revive`](#revive).
+
+## `revive`
+
+```text
+stim revive [--json]
+```
+
+Resumes this workspace after an [idle stop](./dev-server-and-logs.md#idle-stop),
+and restores exactly what the stop paused, never more:
+
+- **Metro.** When the dev server's last stop was an idle stop, it starts it
+  again on the workspace's port, as `stim start` would. A dev server that is
+  running is left alone.
+- **Devices.** For each recorded launch except Release and native-process
+  launches (see below), it boots the owned simulator or
+  emulator the app ran on (the same UDID or AVD), on this machine and through
+  the same device admission as `ios` and `android` (`concurrency.maxDevices`
+  included). It never creates or adopts another device.
+- **App.** It relaunches the app from cold from the build cache entry that
+  launch installed, without fingerprinting or building. In-app state is gone.
+  An app still running is left alone unless Metro restarted.
+
+Release and native-process launches do not use Metro, and hosted launches
+belong to their host, so revive does not relaunch them; run `stim ios` or
+`stim android` for them. Revive refuses instead of widening:
+
+- `STIM_NO_METRO` when Metro is not running and its last stop was not an idle
+  stop (it was never started, or a signal or crash stopped it), or when
+  `stim stop` or automatic maintenance stopped the workspace after the idle
+  stop.
+- `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
+  this workspace's owned device, or, when agent-device runs it as its boot
+  hook, when the device agent-device asked for is neither one of them nor one
+  this workspace owns.
+- `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
+  gone, for example after `stim gc`, or the launch names none (never cached, or
+  recorded before revive). Run as agent-device's boot hook for a device this
+  workspace owns, it also refuses with this code when the last launch on that
+  device is one revive does not relaunch, or no launch is recorded on it. The
+  remedy names `stim ios` or `stim android`.
+
+It checks all three before starting anything. Only a device that changes after
+that check is refused later, by the run that boots it, with Metro already
+restarted. Each line on stderr says what came
+back:
+
+```text
+Metro stopped idle 14h02m ago, restarted on port 8081.
+Simulator stim-my-app (iPhone 17 Pro 26.0) rebooted.
+com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.0); in-app state is gone.
+```
+
+`--json` prints one object, `{ "revived": { "metro": { "port", "stoppedAt",
+"reason", "restarted" }, "devices": [{ "platform", "slot", "deviceId",
+"deviceName", "rebooted", "app": { "bundleId", "relaunched", "launched" } }] } }`.
+`relaunched: true` means in-app state is gone. agent-device runs
+`stim revive --json` itself when it finds the workspace's device shut down and
+reads the workspace's boot hook; revive then restores only the launch on that
+device, plus Metro. See
+[agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
 ## `logs`
 
@@ -1436,7 +1501,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `revive`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
@@ -1495,8 +1560,9 @@ devices could not be listed. With neither cap set, neither field appears.
 `iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,
 `capacity.platformDevices.ios` or `.android`: `max` and `inUse`, with `unknown`
 saying why `inUse` is `null`. Each appears only while its cap is set, whether or
-not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits hosted macOS
-apps only and has no status line.
+not `concurrency.maxDevices` is. `concurrency.maxMacosApps` limits local app
+workspaces in this Stim home and hosted reservations in separate pools; it
+has no status line.
 
 `--watch` keeps running and prints the status again each time it changes.
 With `--json` it prints one complete payload per line: one immediately, then
@@ -1532,7 +1598,7 @@ and an estimate of the time left:
 
 In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
-`phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
+`phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`.
 `device` starts once the app is ready and covers waiting for the device (its
@@ -1551,6 +1617,10 @@ cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
+`cleanup` covers an acting local budget-reclaim plan, including its resource
+remeasurements, and restores the interrupted phase on success. It has no learned
+duration. Raw elapsed time and history include cleanup; estimates and progress
+comparisons exclude it and pause while cleanup is current.
 `expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such
@@ -1793,7 +1863,9 @@ machine section prints. There is no reset flag: delete that file to start over.
 compiled or installed pods; those two size the progress line a long build
 prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
 an estimate: each cache hit is credited this project's mean cold run at that
-moment, minus its own duration, floored at zero.
+moment, minus its own duration, floored at zero. These comparisons exclude
+cleanup. Raw run totals remain unchanged; optional `coldCleanupMs`,
+`hitCleanupMs` and `offloadedCleanupMs` carry the cleanup within each total.
 
 Every run that compiles also records its placement: where it built (`here`,
 `offloaded`, or `fell-back` when it tried a machine and built here), the
@@ -2028,6 +2100,9 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   client connection once no Gradle daemon is busy. Nothing stops while a Stim
   Android build runs. While stim-server runs, it manages the daemons of builds
   offloaded to this machine, and gc leaves them alone.
+  Automatic maintenance stops the same daemons under memory pressure: at once
+  at `critical`, after `maintenance.memoryWarningMinutes` at `warning`, or off
+  macOS below `maintenance.minAvailableMemoryGb`.
 - `stim gc --delete --cache gradle-versions` deletes the version caches
   (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
   under `GRADLE_USER_HOME` for each Gradle version no registered project pins

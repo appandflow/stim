@@ -391,6 +391,7 @@ export function supportedPlatforms(env: EnvironmentState): DevicePlatform[] {
 
 export const PHASE_ORDER: readonly BuildPhase[] = [
   'prepare',
+  'cleanup',
   'cache-lookup',
   'wait',
   'prebuild',
@@ -405,6 +406,8 @@ export function phaseName(phase: BuildPhase): string {
   switch (phase) {
     case 'prepare':
       return t`Prepare`;
+    case 'cleanup':
+      return t`Cleanup`;
     case 'cache-lookup':
       return t`Cache lookup`;
     case 'wait':
@@ -465,8 +468,10 @@ function plannedDurations(
   build: BuildReport,
   history: readonly BuildHistoryEntry[],
 ): Partial<Record<BuildPhase, number>> {
-  if (build.plannedPhases) return Object.fromEntries(build.plannedPhases.map((p) => [p.phase, p.expectedMs]));
-  return referenceRun(build, history)?.phases ?? {};
+  const phases = build.plannedPhases
+    ? Object.fromEntries(build.plannedPhases.map((p) => [p.phase, p.expectedMs]))
+    : (referenceRun(build, history)?.phases ?? {});
+  return Object.fromEntries(Object.entries(phases).filter(([phase]) => phase !== 'cleanup'));
 }
 
 /** The build tool's own counts, which only describe `compile`; an older stim also sends them in later phases. */
@@ -482,21 +487,25 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
     (phase, i) => i === currentIndex || reference[phase] !== undefined || completed[phase] !== undefined,
   );
   const phaseStart = Date.parse(build.phaseStartedAt);
-  const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) : null;
+  const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) + (completed[build.phase] ?? 0) : null;
   if (currentIndex < 0)
     return [{ phase: 'unknown', state: 'current', elapsedMs: inPhase, expectedMs: null, fraction: null }];
   return phases.map((phase) => {
     const i = PHASE_ORDER.indexOf(phase);
     const expectedMs =
-      phase === build.phase ? (build.expectedPhaseMs ?? reference[phase] ?? null) : (reference[phase] ?? null);
-    if (i < currentIndex)
+      phase === 'cleanup'
+        ? null
+        : phase === build.phase
+          ? (build.expectedPhaseMs ?? reference[phase] ?? null)
+          : (reference[phase] ?? null);
+    if (i < currentIndex || (phase === 'cleanup' && build.phase !== phase && completed[phase] !== undefined))
       return {
         phase,
         state: 'done',
         elapsedMs: completed[phase] ?? null,
         expectedMs,
         fraction: 1,
-        ...(reference[phase] === undefined ? { unplanned: true as const } : {}),
+        ...(reference[phase] === undefined && phase !== 'cleanup' ? { unplanned: true as const } : {}),
       };
     if (i > currentIndex)
       return {
@@ -540,6 +549,7 @@ function stepName(step: NonNullable<NonNullable<BuildReport['detail']>['step']>)
 
 const BAR_GROUP: Record<BuildPhase, BuildPhase> = {
   prepare: 'prepare',
+  cleanup: 'prepare',
   'cache-lookup': 'prepare',
   wait: 'prepare',
   prebuild: 'prebuild',
@@ -575,6 +585,8 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
           ? (group.fraction ?? 0) * (group.expectedMs ?? 0)
           : 0;
     const state = group.state === step.state ? step.state : 'current';
+    const indeterminate =
+      (group.state === 'current' && group.fraction === null) || (step.state === 'current' && step.fraction === null);
     groups[groups.length - 1] = {
       phase,
       state,
@@ -585,9 +597,11 @@ export function barSteps(steps: PhaseStep[]): PhaseStep[] {
           ? 1
           : state === 'pending'
             ? 0
-            : expected
-              ? Math.min(0.95, (doneMs + currentMs) / expected)
-              : (step.fraction ?? group.fraction),
+            : indeterminate
+              ? null
+              : expected
+                ? Math.min(0.95, (doneMs + currentMs) / expected)
+                : (step.fraction ?? group.fraction),
     };
   }
   return groups;

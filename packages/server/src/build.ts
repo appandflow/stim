@@ -38,8 +38,6 @@ import {
   machineCapacity,
   maxOffloadedBuilds,
   saturation,
-  settingDefinition,
-  settingValueError,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
   windowsShortDirKey,
@@ -330,13 +328,6 @@ function workerFreeBytes(root: string): number | null {
   return free.length ? Math.min(...free) : null;
 }
 
-function gradleDaemonIdleMs(): number {
-  const definition = settingDefinition('server.gradleDaemonIdleMinutes')!;
-  const value = loadConfig()?.server?.gradleDaemonIdleMinutes;
-  const valid = typeof value === 'number' && settingValueError(definition, value) === null;
-  return (valid ? value : (definition.default as number)) * 60_000;
-}
-
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
 
 /** An area's Gradle home, shortened on Windows for the NDK's path limit. */
@@ -391,23 +382,33 @@ export function workerGradleDaemons(
   return daemons;
 }
 
-function assertKnownGradleProcesses(home: string, known: ReadonlySet<number>): void {
-  const logs = join(home, 'daemon');
-  if (!existsSync(logs)) return;
-  for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
-    for (const log of readdirSync(join(logs, version.name))) {
-      const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
-      if (!pid || known.has(pid)) continue;
-      if (processGroupAlive(pid)) throw new Error(`Gradle process ${pid} may still use ${home}.`);
-      try {
-        process.kill(pid, 0);
-      } catch (error) {
-        if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
-        throw error;
+function unknownGradleProcess(home: string, known: ReadonlySet<number>): Error | null {
+  const homes = [home];
+  if (existsSync(home))
+    homes.push(
+      ...readdirSync(home)
+        .filter((name) => /^n[a-f0-9]{12}$/.test(name))
+        .map((name) => join(home, name)),
+    );
+  for (const directory of homes) {
+    const logs = join(directory, 'daemon');
+    if (!existsSync(logs)) continue;
+    for (const version of readdirSync(logs, { withFileTypes: true }).filter((entry) => entry.isDirectory())) {
+      for (const log of readdirSync(join(logs, version.name))) {
+        const pid = Number(/^daemon-(\d+)\.out\.log$/.exec(log)?.[1]);
+        if (!pid || known.has(pid)) continue;
+        if (processGroupAlive(pid)) return new Error(`Gradle process ${pid} may still use ${directory}.`);
+        try {
+          process.kill(pid, 0);
+        } catch (error) {
+          if (error instanceof Error && 'code' in error && error.code === 'ESRCH') continue;
+          throw error;
+        }
+        return new Error(`Gradle process ${pid} may still use ${directory}.`);
       }
-      throw new Error(`Gradle process ${pid} may still use ${home}.`);
     }
   }
+  return null;
 }
 
 /**
@@ -500,7 +501,7 @@ export class BuildHost {
 
   /**
    * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
-   * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
+   * every one while no job runs and available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
    * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
    * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
@@ -539,7 +540,8 @@ export class BuildHost {
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
-      if (!low && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true)) continue;
+      if ((!low || busy.size > 0) && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true))
+        continue;
       try {
         process.kill(daemon.pid, 'SIGTERM');
       } catch {}
@@ -584,10 +586,8 @@ export class BuildHost {
         if (!captured.ok) throw new Error(`Cannot identify Gradle daemon ${pid}.`);
         return { pid, processToken: captured.token };
       });
-      assertKnownGradleProcesses(
-        gradleUserHome(join(this.clientDir(client), 'repos', repo)),
-        new Set(identities.map(({ pid }) => pid)),
-      );
+      const home = gradleUserHome(join(this.clientDir(client), 'repos', repo));
+      const known = new Set(identities.map(({ pid }) => pid));
       for (const identity of identities) {
         const state = inspectProcessIdentity(identity);
         if (state === 'gone') continue;
@@ -602,11 +602,19 @@ export class BuildHost {
         }
       }
       const deadline = Date.now() + this.limits.killGraceMs;
-      while (
-        identities.some((identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid))
-      ) {
-        if (Date.now() >= deadline + 5000) return false;
-        if (Date.now() >= deadline) {
+      let forced = false;
+      for (;;) {
+        const unknown = unknownGradleProcess(home, known);
+        const pending = identities.some(
+          (identity) => inspectProcessIdentity(identity) === 'same' || processGroupAlive(identity.pid),
+        );
+        if (!unknown && !pending) break;
+        if (unknown && !pending && !forced && Date.now() >= deadline) throw unknown;
+        if (Date.now() >= deadline + 5000) {
+          if (unknown) throw unknown;
+          return false;
+        }
+        if (!forced && Date.now() >= deadline) {
           for (const identity of identities) {
             const state = inspectProcessIdentity(identity);
             if (state === 'unknown' || state === 'different') return false;
@@ -618,6 +626,7 @@ export class BuildHost {
               }
             }
           }
+          forced = true;
         }
         await new Promise((resolve) => setTimeout(resolve, GROUP_POLL_MS));
       }
@@ -1158,7 +1167,8 @@ export class BuildHost {
     const area = join(clientDir, 'repos', repo);
     if (job.platform === 'android') {
       try {
-        assertKnownGradleProcesses(gradleUserHome(clientDir), new Set());
+        const unknown = unknownGradleProcess(gradleUserHome(clientDir), new Set());
+        if (unknown) throw unknown;
       } catch (error) {
         return refusal('build-busy', `Inspect this client's legacy Gradle processes before retrying: ${String(error)}`);
       }
@@ -1264,7 +1274,6 @@ export class BuildHost {
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         artifactCache: this.artifactCacheDir(client, repo),
-        gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
     const timeout = setTimeout(cancel, this.limits.timeoutMs);
@@ -1542,6 +1551,7 @@ export class BuildHost {
     await this.stopQueries();
     await Promise.all([...this.jobs].map((job) => job.done));
     await this.sweeping;
+    await Promise.all(this.removals.values());
   }
 }
 

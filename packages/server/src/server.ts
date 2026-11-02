@@ -198,7 +198,7 @@ import {
 import { readWorkspaceDiff } from './workspace-diff.ts';
 import { ServerUpdates } from './server-update.ts';
 import { MachineUpdates } from './machine-update.ts';
-import { Pending, runStim, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
+import { Pending, STDERR_TAIL, type CommandLimits, type CommandOutcome } from './stim-command.ts';
 import { readHostPermissions } from './stim-host.ts';
 import type { Transport, TransportIdentity } from '@stim-cli/transport';
 import {
@@ -304,7 +304,7 @@ export interface ServerOptions {
    * one at startup, and devices subscribed before the build finishes get screenshots.
    */
   frameHelper?: string | null;
-  /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
+  /** The Duo fold/angle helper. Without it, the server builds one on the first fold or composed viewer. */
   foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
   /** False runs the notification rules only while a phone is registered for pushes; true by default. */
@@ -1395,14 +1395,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return helperPath;
   };
-  let nativeViewerOpened = false;
-  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
-  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
-  let recorder: Recorder | null = null;
-  let startup: StartupState = { state: 'pending' };
-  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
-  let startupRetry: NodeJS.Timeout | null = null;
-  let setupPruneTimer: NodeJS.Timeout | null = null;
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -1412,6 +1404,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     return foldBuild;
   };
+  let nativeViewerOpened = false;
+  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
+  let recorder: Recorder | null = null;
+  let startup: StartupState = { state: 'pending' };
+  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
+  let startupRetry: NodeJS.Timeout | null = null;
+  let setupPruneTimer: NodeJS.Timeout | null = null;
   const running = new Set<() => Promise<void>>();
   const peerCommands = new Map<string, number>();
   const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };
@@ -2137,34 +2137,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const subscription = `s${nextSubscription++}`;
       send(socket, { id, result: { subscription, ...result } });
       return subscription;
-    }
-
-    function subscribeStatus(id: RequestId): void {
-      const subscription = openSubscription(id);
-      if (!subscription) return;
-      const envelope = `{"event":"status","subscription":${JSON.stringify(subscription)},"payload":`;
-      const stopUsage = recordUsage();
-      const unsubscribe = statusFeed.subscribe({
-        item: (_payload, text) => {
-          const history = usage.history();
-          const leases = control.ownLeaseTimes();
-          send(
-            socket,
-            `${envelope}${text}${history ? `,"usage":${JSON.stringify(history)}` : ''}${
-              leases.length ? `,"ownLeases":${JSON.stringify(leases)}` : ''
-            }}`,
-          );
-        },
-        failed: (message) => {
-          stopUsage();
-          subscriptions.delete(subscription);
-          send(socket, { event: 'error', subscription, error: { code: 'status-failed', message } });
-        },
-      });
-      subscriptions.set(subscription, () => {
-        stopUsage();
-        unsubscribe();
-      });
     }
 
     function subscribeWorkspaces(id: RequestId): void {
@@ -3889,31 +3861,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           .catch(() => {})
           .then(async () => {
             if (closing) return;
-            const run = runStim(
-              options.stimCli,
-              options.env,
-              ['settings', 'set', 'recording.enabled', String(enabled), '--scope', 'machine', '--json'],
-              homedir(),
-              actionLimits,
-            );
-            let stop!: () => void;
-            const stopped = new Promise<null>((resolve) => {
-              stop = () => resolve(null);
-            });
-            const cancel = () => {
-              stop();
-              return run.cancel();
+            const abort = new AbortController();
+            let finished = false;
+            const fail = (message: string) => {
+              if (finished || closing) return;
+              finished = true;
+              refuseSetting('action-failed', message);
+            };
+            const deadline = setTimeout(() => {
+              fail(`stim settings did not finish within ${actionLimits.timeoutMs / 1000} s.`);
+              abort.abort();
+            }, actionLimits.timeoutMs);
+            const task = Promise.resolve()
+              .then(() =>
+                createStim({ projectRoot: homedir(), env: options.env }).setSetting(
+                  'recording.enabled',
+                  String(enabled),
+                  { scope: 'machine', signal: abort.signal },
+                ),
+              )
+              .then((result) => {
+                if (finished || closing) return;
+                if (Buffer.byteLength(JSON.stringify(result)) + 1 > actionLimits.maxOutputBytes)
+                  return fail(`stim settings printed more than ${actionLimits.maxOutputBytes} bytes.`);
+                finished = true;
+                audit({ ok: true });
+                send(socket, { id, result: { enabled, recordingsDeleted: result.recordingsDeleted ?? [] } });
+                return undefined;
+              })
+              .catch((cause: unknown) => fail(readFailure(cause)))
+              .finally(() => clearTimeout(deadline));
+            const cancel = async () => {
+              abort.abort();
+              await task;
             };
             running.add(cancel);
-            const outcome = await Promise.race([run.outcome, stopped]);
-            running.delete(cancel);
-            if (!outcome) return;
-            const printed = actionOutcome(outcome);
-            if (!printed.ok) return refuseSetting('action-failed', printed.error.message);
-            audit({ ok: true });
-            const deleted = printed.output.recordingsDeleted;
-            const recordingsDeleted = Array.isArray(deleted) ? deleted.filter((path) => typeof path === 'string') : [];
-            return send(socket, { id, result: { enabled, recordingsDeleted } });
+            await task.finally(() => running.delete(cancel));
+            return undefined;
           }),
       );
     }
@@ -4729,7 +4713,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         const read = reads[message.method];
         if (read) return archiveRead(id, () => read(id, params));
       }
-      if (message.method === 'status.subscribe') return subscribeStatus(id);
       const statusMethod = statusMethods[message.method];
       if (statusMethod) return void statusMethod(id, message.params);
       if (message.method === 'logs.subscribe') return subscribeLogs(id, message.params);

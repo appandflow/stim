@@ -34,6 +34,7 @@ public struct SimulatorAppearance: Decodable, Sendable {
   public let reduceMotion: Flag?
   public let reduceTransparency: Flag?
   public let showBorders: Flag?
+  public let colorFilter: Flag?
 
   public var mode: Mode? { userInterfaceStyle.flatMap(Mode.init(rawValue:)) }
   public var size: TextSize? {
@@ -53,6 +54,7 @@ public enum SimulatorOptions {
     case reduceMotion(Bool)
     case reduceTransparency(Bool)
     case showBorders(Bool)
+    case colorFilter(Bool)
 
     var arguments: [String] {
       switch self {
@@ -63,6 +65,7 @@ public enum SimulatorOptions {
       case .reduceMotion(let enabled): return ["--reduce-motion", enabled ? "on" : "off"]
       case .reduceTransparency(let enabled): return ["--reduce-transparency", enabled ? "on" : "off"]
       case .showBorders(let enabled): return ["--show-borders", enabled ? "on" : "off"]
+      case .colorFilter(let enabled): return ["--color-filter", enabled ? "on" : "off"]
       }
     }
   }

@@ -129,7 +129,6 @@ const MAX_DEVICE_NAME = 64;
 const SIMULATOR = { canShake: false, slowAnimations: null };
 const ROOT = '/Users/demo/Developer';
 const SUBSCRIPTION_LIMITS = new Map([
-  ['status.subscribe', 2],
   ['workspaces.subscribe', 2],
   ['machine.subscribe', 2],
   ['workspace.subscribe', 8],
@@ -358,14 +357,7 @@ export class DemoConnection {
           home: fixtures.home,
         },
         capabilities: ['read', 'control'],
-        features: [
-          'physical-ios',
-          'physical-android',
-          'notifications',
-          'workspace-diff',
-          'macos-window',
-          'status-views',
-        ],
+        features: ['physical-ios', 'physical-android', 'notifications', 'workspace-diff', 'macos-window'],
         actions: ACTIONS,
         device: this.device,
       },
@@ -413,20 +405,6 @@ export class DemoConnection {
       return { error: ['limit-exceeded', `A connection can hold ${limit} ${method} subscriptions.`] };
     }
     switch (method) {
-      case 'status.subscribe': {
-        const event = (subscription: string): unknown => {
-          const payload = machine.status();
-          return {
-            event: 'status',
-            subscription,
-            payload,
-            usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
-          };
-        };
-        const subscription = this.every(method, STATUS_MS, (sub) => this.send(event(sub)));
-        setTimeout(() => this.timers.has(subscription) && this.send(event(subscription)), 0);
-        return { result: { subscription } };
-      }
       case 'workspaces.subscribe':
         return this.stream(method, (views, seq) => ({
           event: 'workspaces',

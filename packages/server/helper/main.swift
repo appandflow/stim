@@ -67,6 +67,7 @@ struct Recording: Equatable {
 struct DuoCapture: Equatable {
   var maxEdge: Int
   var fps: Double
+  var hingeHelper: String
 }
 
 enum Output {
@@ -930,9 +931,10 @@ func parseCommand(_ line: String, base: Config) -> Command? {
     config.deviceFrame = object["deviceFrame"] as? Bool ?? false
     config.duoFrame = (object["duoFrame"] as? [String: Any]).flatMap { duo in
       guard let edge = duo["maxEdge"] as? Int, edge > 0,
-        let fps = duo["fps"] as? Double, fps > 0
+        let fps = duo["fps"] as? Double, fps > 0,
+        let helper = duo["hingeHelper"] as? String, !helper.isEmpty
       else { return nil }
-      return DuoCapture(maxEdge: min(edge, 4096), fps: min(fps, 60))
+      return DuoCapture(maxEdge: min(edge, 4096), fps: min(fps, 60), hingeHelper: helper)
     }
     if let bitrate = object["bitrate"] as? Int, bitrate > 0 { config.bitrate = bitrate }
     config.record = (object["record"] as? [String: Any]).flatMap { record in
@@ -1170,14 +1172,14 @@ let usage =
   "usage: stim-frames ios <udid> | android <serial> | android-device <serial> <adb> <scrcpy-server> | web <cdpEndpoint> <chromePid> <targetId> | iphone <udid> [name]"
 let terminated = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
 let counts = [
-  "simulator-options": [4, 5], "hinge-monitor": [3], "web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4],
+  "simulator-options": [4, 5], "hinge-monitor": [4], "web": [5], "iphone": [3, 4], "android-device": [5], "android": [3, 4],
 ]
 guard arguments.count > 1, (counts[arguments[1]] ?? [3]).contains(arguments.count) else { fail(usage) }
 switch arguments[1] {
 case "hinge-monitor":
   guard let directory = ProcessInfo.processInfo.environment["DEVELOPER_DIR"] else { exit(1) }
   CoreSimulator.developerDir = directory
-  DuoHingeMonitor.run(udid: arguments[2])
+  DuoHingeMonitor.run(udid: arguments[2], helper: arguments[3])
 case "simulator-options":
   DispatchQueue.global().async {
     _ = FileHandle.standardInput.readDataToEndOfFile()

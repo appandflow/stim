@@ -1,7 +1,5 @@
-import type { ChildProcess } from 'node:child_process';
 import type { Executor } from '../exec.ts';
 import { createHash } from 'node:crypto';
-import { EventEmitter } from 'node:events';
 import {
   existsSync,
   mkdtempSync,
@@ -25,6 +23,7 @@ import {
 import { runHostedMacosApp } from '../device-host/macos.ts';
 import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
+import { makeChildProcess } from './_factories.ts';
 
 const native = vi.hoisted(() => ({
   runFile: vi.fn<(file: string, args?: string[], options?: unknown) => string>(),
@@ -99,11 +98,16 @@ beforeEach(() => {
         app: { pid: 102, processToken: 'app', startedAtMicros: 1 },
       },
     });
-    return Object.assign(new EventEmitter(), {
-      unref: vi.fn<() => void>(),
-      exitCode: null,
-      signalCode: null,
-    }) as unknown as ChildProcess;
+    const child = makeChildProcess({ connected: true });
+    child.send = () => {
+      queueMicrotask(() => child.emit('message', 'macos-accepted'));
+      return true;
+    };
+    child.disconnect = () => {
+      Object.assign(child, { connected: false });
+      child.emit('disconnect');
+    };
+    return child;
   });
 });
 afterEach(() => {

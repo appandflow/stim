@@ -18,8 +18,11 @@ not keep exports:
   AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device open <bundle id> --platform ios --session <name>
   AGENT_DEVICE_STATE_DIR="$STATE_DIR" agent-device snapshot --session <name>
 
-The path is $STIM_HOME/workspaces/<name>/agent-device. agent-device creates it
-itself. Sessions (including events, runner logs and request text), logs,
+The path is $STIM_HOME/workspaces/<name>/agent-device. stim start creates it
+and writes boot-hook.json there: an agent-device that reads it runs stim revive
+(guide metro, IDLE STOP) instead of booting a shut-down simulator or emulator
+itself, so the device comes back through Stim's admission with this
+workspace's Metro. Sessions (including events, runner logs and request text), logs,
 metro-sessions, allocations and daemon files move there. The apple-runner build
 cache and device claims stay shared; do not set
 AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.

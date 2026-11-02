@@ -47,6 +47,25 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
   let stopping = false;
   let spawned = false;
   let childExited = false;
+  let accepted = false;
+  const stop = async () => {
+    if (stopping) return;
+    stopping = true;
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      if (!app || inspectProcessIdentity(app) !== 'same') return;
+      process.kill(app.pid, signal);
+      if (await waitForProcessExit(app, 5000)) return;
+    }
+  };
+  const disconnected = () => {
+    if (!accepted) void stop();
+  };
+  const accept = (message: unknown) => {
+    if (message !== 'macos-accept' || stopping) return;
+    accepted = true;
+    process.send?.('macos-accepted', () => {});
+  };
+  process.on('disconnect', disconnected);
   try {
     if (
       !sameProcessRecord(readMacosRecord(root)?.supervisor, record.supervisor) ||
@@ -54,6 +73,7 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     ) {
       throw new Error('The macOS launch owner changed.');
     }
+    if (stopping || !process.connected) throw new Error('The macOS launcher disconnected before startup.');
     markClaimChildPending(claim);
     const child = getExecutor().spawn(record.executable, record.arguments, {
       cwd: root,
@@ -82,19 +102,11 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     const log = (level: string, msg: string) => writer.write({ src: 'client', platform: 'macos', level, msg });
     if (child.stdout) logLines(child.stdout, (line) => log('info', line));
     if (child.stderr) logLines(child.stderr, (line) => log('warn', line));
-    const stop = async () => {
-      if (stopping) return;
-      stopping = true;
-      for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
-        if (!app || inspectProcessIdentity(app) !== 'same') return;
-        process.kill(app.pid, signal);
-        if (await waitForProcessExit(app, 5000)) return;
-      }
-    };
     process.on('SIGTERM', stop);
     process.on('SIGINT', stop);
+    process.on('message', accept);
     log('info', `Started ${record.product} (pid ${app.pid}).`);
-    // Node reports IPC send failure through this callback; the app outlives its launcher.
+    // Node reports a closed IPC channel through the send callback instead of an unhandled error.
     process.send?.('macos-registered', () => {});
     await ended;
     process.off('SIGTERM', stop);
@@ -105,6 +117,8 @@ export async function runMacosSupervisor(root: string, launchId: string): Promis
     );
     updateMacosRecord(root, owner, { app: undefined, supervisor: undefined });
   } finally {
+    process.off('disconnect', disconnected);
+    process.off('message', accept);
     const gone = !spawned || childExited || (app && ['gone', 'different'].includes(inspectProcessIdentity(app)));
     if (gone) {
       clearClaimChild(claim);

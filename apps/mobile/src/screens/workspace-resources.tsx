@@ -1,7 +1,7 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import { useRouter } from 'expo-router';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ListRow, ListSection } from '@/components/list';
@@ -9,7 +9,7 @@ import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { useArchiveDetail } from '@/hooks/archive-detail';
 import { archivedPage } from '@/lib/archived-page';
-import { useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
+import { useArchivesPending, useMacConnection, useMachineUsage, useStatus, useStatusHistory } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { formatBytes, formatDateTime, formatDuration, formatMemoryMb, formatSize } from '@/intl/format';
 import {
@@ -44,10 +44,11 @@ function ArchiveResources({ archive: id }: { archive: string }) {
   const now = useNow(30_000);
   const router = useRouter();
   const { mac } = useMacConnection();
+  const pending = useArchivesPending(mac?.id ?? '');
   if (!archive)
     return (
       <SheetScreen title={t`Status`}>
-        <Text>{t`This archive is no longer available.`}</Text>
+        {pending ? <ActivityIndicator /> : <Text>{t`This archive is no longer available.`}</Text>}
       </SheetScreen>
     );
   const page = archivedPage(archive, detail.data, now);

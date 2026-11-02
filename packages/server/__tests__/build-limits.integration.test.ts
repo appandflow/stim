@@ -3,6 +3,8 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statfsSync, symlinkSync, writeFileSync } from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -135,7 +137,7 @@ test('refuses a blob whose declared size would take the worker volume under its 
   expect(existsSync(join(root, 'client', 'blobs'))).toBe(false);
 });
 
-test("deletes a revoked client's area, but not through a symlink or outside the worker root", async () => {
+test("shutdown awaits a revoked client's deletion, but not through a symlink or outside the worker root", async () => {
   const host = start();
   mkdirSync(join(root, 'gone', 'repos', 'app-1', 'src'), { recursive: true });
   writeFileSync(join(root, 'gone', 'repos', 'app-1', 'src', 'a'), 'x');
@@ -144,9 +146,38 @@ test("deletes a revoked client's area, but not through a symlink or outside the 
   writeFileSync(join(outside, 'keep'), 'x');
   symlinkSync(outside, join(root, 'linked'));
 
-  await host.remove('gone');
   await host.remove('linked');
   await host.remove('..');
+
+  let entered: () => void = () => {};
+  let release: () => void = () => {};
+  const ready = new Promise<void>((resolve) => (entered = resolve));
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  const remove = fsPromises.rm;
+  const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+    if (path === join(root, 'gone')) {
+      entered();
+      await blocked;
+    }
+    return remove(path, options);
+  });
+  syncBuiltinESMExports();
+  const removal = host.remove('gone');
+  let closing: Promise<boolean> | undefined;
+  try {
+    await ready;
+    let closed = false;
+    closing = host.close().then(() => (closed = true));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release();
+    await Promise.all([removal, closing]);
+  } finally {
+    release();
+    await Promise.allSettled([removal, closing]);
+    deletion.mockRestore();
+    syncBuiltinESMExports();
+  }
 
   expect(existsSync(join(root, 'gone'))).toBe(false);
   expect(existsSync(join(outside, 'keep'))).toBe(true);

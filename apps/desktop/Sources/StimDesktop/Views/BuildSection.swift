@@ -221,7 +221,7 @@ struct RunningBuildDetail: View {
       let (phase, counts) = build.currentPhaseLabel
       let elapsedMs = build.progress(at: context.date).elapsedMs
       let elapsed = Format.clock(ms: elapsedMs)
-      let estimate = Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)
+      let estimate = build.estimateSuffix(at: context.date)
       VStack(alignment: .leading, spacing: Space.md) {
         HStack(alignment: .firstTextBaseline, spacing: Space.sm) {
           Text(phase).font(.stim(.footnote, weight: .semibold)).foregroundStyle(Palette.primary)

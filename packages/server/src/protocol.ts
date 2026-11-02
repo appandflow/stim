@@ -1772,7 +1772,6 @@ export function protocolJsonSchema(): JsonSchema {
               force: { type: 'boolean' },
             },
           }),
-          request('status.subscribe'),
           request('workspaces.subscribe'),
           request('workspace.subscribe', workspaceRef),
           request('machine.subscribe'),
@@ -2498,18 +2497,6 @@ export function protocolJsonSchema(): JsonSchema {
               event: { const: 'notification' },
               log: { type: 'string' },
               notification: { $ref: '#/$defs/NotificationEntry' },
-            },
-          },
-          {
-            type: 'object',
-            required: ['event', 'subscription', 'payload'],
-            additionalProperties: false,
-            properties: {
-              event: { const: 'status' },
-              subscription: { type: 'string' },
-              payload: { type: 'object', description: 'A full payload, as `stim status --watch --json` prints it.' },
-              usage: { $ref: '#/$defs/UsageHistory' },
-              ownLeases: { type: 'array', items: { type: 'string' } },
             },
           },
           {

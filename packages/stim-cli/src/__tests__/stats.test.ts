@@ -28,6 +28,7 @@ import { resetExecutor, setExecutor } from '../exec.ts';
 import statsCommand from '../commands/stats.ts';
 import {
   recordCapacityWait,
+  createRunRecorder,
   emptyStats,
   readStats,
   recordRunStats,
@@ -185,8 +186,24 @@ async function inDir<T>(dir: string, fn: () => T): Promise<Awaited<T>> {
 
 describe('stim stats', async () => {
   test('prints the project section and the machine section', async () => {
-    let record = updateStats(emptyStats(), run({ projectKey: root, durationMs: 252_000 }), T0);
-    record = updateStats(record, run({ projectKey: root, cacheHit: 'local', durationMs: 31_000 }), T1);
+    for (const sample of [
+      { durationMs: 282_000, cleanup: 30_000, cacheHit: false as const, at: T0 },
+      { durationMs: 36_000, cleanup: 5_000, cacheHit: 'local' as const, at: T1 },
+    ]) {
+      const recorder = createRunRecorder({
+        platform: 'ios',
+        write: recordRunStats,
+        now: () => sample.at,
+        note: () => {},
+        phases: () => ({ cleanup: sample.cleanup }),
+      });
+      recorder.setProject(root);
+      recorder.setCacheKey('fixture');
+      recorder.record({ failed: false, remoteDevice: true, cacheHit: sample.cacheHit, durationMs: sample.durationMs });
+    }
+    let record = readStats().record!;
+    expect(record.history).toBeUndefined();
+    expect(record.projects[root]?.ios).toMatchObject({ coldRunMs: 282_000, hitRunMs: 36_000 });
     record = updateStats(record, run({ projectKey: root, failed: true, durationMs: 4_000 }), T1);
     record = updateStats(record, run({ projectKey: '/elsewhere', platform: 'android', durationMs: 400_000 }), T1);
     writeFileSync(statsFile(), JSON.stringify(record));
@@ -267,7 +284,11 @@ describe('stim stats', async () => {
   });
 
   test('--json prints exactly one parseable line in the documented shape', async () => {
-    const record = updateStats(emptyStats(), run({ projectKey: root, durationMs: 240_000 }), T0);
+    const record = updateStats(
+      emptyStats(),
+      run({ projectKey: root, durationMs: 240_000, phases: { cleanup: 30_000 } }),
+      T0,
+    );
     writeFileSync(statsFile(), JSON.stringify(record));
 
     const { out: lines, err } = await inDir(root, () => runStats(['--json']));
@@ -277,6 +298,7 @@ describe('stim stats', async () => {
     expect(payload.version).toBe(1);
     expect(payload.project.key).toBe(root);
     expect(payload.project.ios.coldRunMs).toBe(240_000);
+    expect(payload.project.ios.coldCleanupMs).toBe(30_000);
     expect(payload.project.android).toBe(null);
     expect(payload.machine.ios.runs).toBe(1);
     expect(payload.machine.android).toBe(null);

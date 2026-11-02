@@ -42,7 +42,7 @@ export function Filters() {
   const { filters, update, reset } = useHomeFilters();
   const workspaces = useWorkspaceItems();
   const worktrees = useWorktreeItems();
-  const archives = useArchiveItems();
+  const { items: archives } = useArchiveItems(true);
   const [expanded, setExpanded] = useState(false);
   const [query, setQuery] = useState('');
   const [searchShown, setSearchShown] = useState(false);

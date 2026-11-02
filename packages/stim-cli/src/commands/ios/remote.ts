@@ -1,3 +1,4 @@
+import type { ReclaimObserver } from '../../budget.ts';
 import type { StimContext } from '@stim-cli/core';
 import type { IosSimSnapshot } from '../../devices/ios.ts';
 import { runCancellationSignal } from '../../engine/native-run.ts';
@@ -330,9 +331,10 @@ export async function iosPlacementBudget(
   automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
   simSnapshot?: IosSimSnapshot,
   env?: NodeJS.ProcessEnv,
+  onReclaim?: ReclaimObserver,
 ): ReturnType<IosDeps['budgetGate']> {
   if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
-  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot, env });
+  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot, env, onReclaim });
 }
 
 export function hostedIosMetroNote(

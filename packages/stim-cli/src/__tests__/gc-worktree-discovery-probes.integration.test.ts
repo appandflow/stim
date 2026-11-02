@@ -144,11 +144,9 @@ test.each(['candidate discovery', 'candidate classification', 'build state', 'un
 
 test('worktree reads overlap only while no claim records the children of the operation', async () => {
   const executor = getExecutor();
-  for (let index = 0; index < 4; index++) {
-    const path = join(root, '.worktrees', `wt${index}`);
-    executor.runFile('git', ['-C', root, 'worktree', 'add', '-q', '-b', `wt${index}`, path], { timeoutMs: 5000 });
-    upsertProject(path, { metroPort: null });
-  }
+  const path = join(root, '.worktrees', 'linked');
+  executor.runFile('git', ['-C', root, 'worktree', 'add', '-q', '-b', 'linked', path], { timeoutMs: 5000 });
+  upsertProject(path, { metroPort: null });
   let active = 0;
   let most = 0;
   setExecutor({

@@ -170,7 +170,12 @@ import Testing
     if failed == "workspaces" {
       socket.reply(workspaces(["/w/b"], subscription: "s3"))
     } else {
-      socket.reply(machine(live: 0, subscription: "s3"))
+      var invalid = machine(live: 3, subscription: "s3")
+      invalid["machine"] = .null
+      socket.reply(invalid)
+      await settle()
+      #expect(recorder.delivering == [true, false])
+      socket.reply(machine(live: 3, subscription: "s3"))
     }
     #expect(await until { recorder.paths.last == [failed == "workspaces" ? "/w/b" : "/w/new"] })
     #expect(recorder.delivering == [true, false, true])

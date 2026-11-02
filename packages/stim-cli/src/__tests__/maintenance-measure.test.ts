@@ -46,6 +46,14 @@ test.skipIf(process.platform === 'darwin')(
     vi.spyOn(os, 'freemem').mockReturnValue(1024 ** 3);
     expect(measurePressure(settings, null, 0).memory.pressured).toBe(true);
     expect(measurePressure({ ...settings, minAvailableMemoryGb: 0 }, null, 0).memory.pressured).toBe(false);
+    expect(measurePressure({ ...settings, memoryPressureLevel: 'off' }, null, 0).memory.pressured).toBe(false);
+    const warning = vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
+    const sustained = { ...settings, minAvailableMemoryGb: 0, memoryWarningMinutes: 10 };
+    const first = measurePressure(sustained, null, 100);
+    expect(first.memory.pressured).toBe(false);
+    expect(measurePressure(sustained, first, 600_100).memory.pressured).toBe(true);
+    warning.mockReturnValue('normal');
+    expect(measurePressure(sustained, first, 600_100).warningSince).toBeNull();
   },
 );
 
