@@ -13,6 +13,7 @@ import { pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import type { OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { readParked } from '../devices/sim-pool.ts';
+import { workspaceKeys } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import { artifactWorktrees, clearArtifact, collectArtifactsAsync } from '../maintenance/artifacts.ts';
@@ -311,21 +312,25 @@ async function dormantRung(context: RungContext): Promise<void> {
   }
 }
 
-/** Rung 5, at critical only: node_modules and Pods of idle linked worktrees, each recorded for `stim worktree warm`. */
+/**
+ * Rung 5, at critical only: node_modules and Pods of idle linked worktrees with a workspace in this Stim home, each
+ * recorded for `stim worktree warm`.
+ */
 async function dependenciesRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
   const options = { now: Date.now(), windowMs: PRESSURE_IDLE_MS, protectedRoot: '', pinned: maintenancePinned };
   const found = await collectArtifactsAsync('dependencies', options, new AbortController().signal);
   const worktrees = artifactWorktrees();
   for (const candidate of found.candidates) {
+    const [workspace] = workspaceKeys(candidate.keys);
+    if (!workspace) continue;
     if (!(await context.stillShort())) return;
-    const workspace = candidate.keys[0];
     const plan: MaintenanceAction = {
       kind: 'would-delete-dependencies',
       target: candidate.path,
       bytes: 0,
       reason: context.why,
-      ...(workspace ? { workspace } : {}),
+      workspace,
     };
     if (!context.act) {
       await run(context, plan, { restore: 'stim worktree warm' });
@@ -343,7 +348,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
         rung: 5,
         kind: 'delete-dependencies',
         target: candidate.path,
-        ...(workspace ? { workspace } : {}),
+        workspace,
         outcome: result.status,
         bytes: result.bytes,
         detail: result.detail,
