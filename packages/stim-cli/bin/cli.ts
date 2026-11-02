@@ -65,6 +65,12 @@ try {
       const { triggerMaintenance } = await import('../src/maintenance/trigger.ts');
       triggerMaintenance(action.name());
     } catch {}
+    if (path.length === 1 && ['start', 'ios', 'android'].includes(path[0] ?? '') && !process.argv.includes('--plan')) {
+      try {
+        const { ensureDaemon } = await import('../src/daemon/client.ts');
+        await ensureDaemon();
+      } catch {}
+    }
   });
   await program.parseAsync();
 } catch (err) {

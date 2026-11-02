@@ -49,6 +49,7 @@ import {
 } from './stop-cause.ts';
 import { trackMetroWatchRoots } from './watchman-roots.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { daemonLive, daemonOwnsSupervisedIdle } from '../daemon/client.ts';
 import { runWatchman, type WatchmanCommand } from '../watchman.ts';
 
 const MAINTENANCE_TRIGGER_MS = 60_000;
@@ -381,7 +382,7 @@ export async function runSupervisor({
           supervisor: {
             ...record,
             ...(serverPid ? { serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) } : {}),
-            ...(hmrUpdates ? { hmrUpdates } : {}),
+            ...(hmrUpdates ? { hmrUpdates, idleMinutes: { metro: idleStopMinutes, devices: deviceIdleMinutes } } : {}),
           },
         });
       }
@@ -396,6 +397,8 @@ export async function runSupervisor({
   });
 
   closeHostedMetro = watchHostedMetro(root, port, processToken);
+  const daemonTimesIdle = () =>
+    daemonOwnsSupervisedIdle({ mode, hmrUpdates, idleStopMinutes, deviceIdleMinutes }) && daemonLive();
   const deviceIdleMs = deviceIdleMinutes * 60_000;
 
   if (deviceIdleMinutes > 0) {
@@ -405,6 +408,7 @@ export async function runSupervisor({
       lastUseAt: () => workspaceDeviceLastUseAt(root),
       hasDue: () => deviceIdle.due(root, deviceIdleMs).length > 0,
       onDue: async () => {
+        if (daemonTimesIdle()) return;
         try {
           await withIdleWorkspace(
             root,
@@ -428,6 +432,7 @@ export async function runSupervisor({
       serverActivityAt: serverActivity.lastActivityAt,
       probe: idleProbe ?? workspaceIdleProbe(root),
       onIdle: async (idleMinutesNow) => {
+        if (daemonTimesIdle()) return;
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;

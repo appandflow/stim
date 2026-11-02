@@ -672,6 +672,17 @@ generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
 
+THE HOME DAEMON IS MACHINE-LEVEL AND OFF BY DEFAULT
+daemon.enabled STIM_DAEMON  default false. While on, start, ios and android
+start one stim-daemon process per Stim home, which exits once no dev server,
+build, build slot or owned booted device remains. It stops a workspace's dev
+server and owned devices together after the smaller of metro.idleStopMinutes
+and devices.idleShutdownMinutes, shuts down owned devices idle for
+devices.idleShutdownMinutes when no dev server runs, and wakes a run waiting for
+a build slot as soon as one is released. Without it, or on Windows, the
+supervisor and automatic maintenance keep these timers. Its log is
+STIM_HOME/daemon/daemon.log.
+
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 maintenance.mode on (the default) removes what gc would under the caps and
 floors below; report measures and plans and deletes nothing; off disables it.

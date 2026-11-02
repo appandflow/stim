@@ -2,11 +2,12 @@ import { readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSlotsDir, tryAcquireBuildSlotClaim, requireAutomaticMachine } from '@stim-cli/core/state';
 import type { BuildWaitingFor, StatusBuildSlotHolder, StatusBuildSlots } from '@stim-cli/core/state';
-import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
+import { buildSlotWaiter, notifyBuildSlotReleased } from '../daemon/client.ts';
+import { throwIfCancelled } from '../cancellation.ts';
 
 const SLOT_PREFIX = 'slot-';
 
@@ -119,7 +120,7 @@ export async function acquireBuildSlot({
   out = () => {},
   waitingFor = () => {},
   signal,
-  sleep = (ms) => cancellableSleep(ms, { signal, what: 'build slot' }),
+  sleep: sleepOverride,
   intervalMs = SLOT_POLL_MS,
   progressMs = SLOT_PROGRESS_MS,
   ceilingMs = SLOT_CEILING_MS,
@@ -128,6 +129,8 @@ export async function acquireBuildSlot({
   throwIfCancelled(signal, 'build slot');
   if (automatic) requireAutomaticMachine('build', 'local');
   if (!max || max <= 0) return { acquired: true, unlimited: true };
+  const waiter = buildSlotWaiter();
+  const sleep = sleepOverride ?? ((ms: number) => waiter.wait(ms, signal));
   const started = now();
   let lastProgress = started;
   let waited = false;
@@ -159,6 +162,7 @@ export async function acquireBuildSlot({
       await sleep(intervalMs);
     }
   } finally {
+    waiter.close();
     waitingFor(null);
   }
 }
@@ -166,7 +170,9 @@ export async function acquireBuildSlot({
 export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
   stopDeclaringSpawnsOn(ambientContext(), handle.claim);
-  return releaseClaim(handle.claim);
+  const released = releaseClaim(handle.claim);
+  if (released) notifyBuildSlotReleased();
+  return released;
 }
 
 export function listBuildSlots(): BuildSlotInfo[] {

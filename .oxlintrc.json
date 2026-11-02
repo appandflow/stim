@@ -149,6 +149,7 @@
         "packages/stim-cli/src/web/run.ts",
         "packages/stim-cli/src/macos/run.ts",
         "packages/stim-cli/src/maintenance/**",
+        "packages/stim-cli/src/daemon/**",
         "packages/stim-cli/src/device-host/run.ts",
         "packages/stim-cli/src/offload/worker.ts",
         "packages/stim-cli/src/commands/gc.ts",

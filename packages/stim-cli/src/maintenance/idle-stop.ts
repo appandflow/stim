@@ -64,7 +64,13 @@ const METRO_REQUESTS = new Set([
 const STIM_SESSION = 'stim-teardown-inventory';
 const AGENT_DEVICE_DRIVERS = new Set(['agent-device-claim', 'agent-device-lease']);
 
-type IdleStopBasis = 'stim command' | 'native run' | 'Metro request' | 'agent-device command' | 'live view';
+type IdleStopBasis =
+  | 'stim command'
+  | 'native run'
+  | 'Metro request'
+  | 'client log'
+  | 'agent-device command'
+  | 'live view';
 
 interface IdleStopEvidence {
   activity: { basis: IdleStopBasis; at: number }[];
@@ -73,7 +79,7 @@ interface IdleStopEvidence {
 
 type IdleStopDecision = { stop: true; idleMs: number } | { stop: false; reason: string; active?: true };
 
-function decideIdleStop(
+export function decideIdleStop(
   evidence: IdleStopEvidence,
   { idleMs, now }: { idleMs: number; now: number },
 ): IdleStopDecision {
@@ -285,7 +291,7 @@ async function keepReasons(
   return keep;
 }
 
-async function idleStopEvidence(
+export async function idleStopEvidence(
   root: string,
   devices: readonly OwnedDeviceActivity[],
   {
@@ -345,7 +351,7 @@ function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
   signal?.throwIfAborted();
 }
 
-async function unseenEmulatorError(unseen: readonly string[], operation?: StimContext): Promise<string | null> {
+export async function unseenEmulatorError(unseen: readonly string[], operation?: StimContext): Promise<string | null> {
   try {
     const signal = operation?.signal;
     const adb = operation
