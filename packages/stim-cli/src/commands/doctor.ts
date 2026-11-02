@@ -228,7 +228,7 @@ async function inspectPressure(
       {
         level: pressure.disk === 'normal' ? 'note' : 'cost',
         title: `The pressure level is ${pressure.level}`,
-        detail: `${pressure.reasons.join('; ')}. The stim-daemon runs its pressure ladder each tick until the level is back to normal: idle workspaces, parked devices, shared caches, dormant devices, then idle Gradle daemons and leftovers${pressure.disk === 'critical' ? ', and node_modules and Pods of idle worktrees' : ''}. start, ios and android refuse with STIM_LOW_DISK only under budget.hardFloorDiskGb.`,
+        detail: `${pressure.reasons.join('; ')}. The stim-daemon runs its pressure ladder each tick until the level is back to normal: idle workspaces, parked devices, shared caches, dormant devices, then idle Gradle daemons and leftovers${pressure.disk === 'critical' ? ', and node_modules and Pods of idle worktrees' : ''}. start, ios and android refuse with STIM_LOW_DISK only under disk.hardFloorGb.`,
         fix: 'Run `stim status` to see what it did, `stim gc` to see what else Stim can reclaim, and free space outside Stim.',
       },
     ],
@@ -681,7 +681,6 @@ export default function doctorCommand(
           : []),
         phaseLine('daemon', daemonLine(daemon)),
         phaseLine('daemon log', daemonNdjsonFile()),
-        phaseLine('maintenance.mode', maintenance.mode),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),
       ];

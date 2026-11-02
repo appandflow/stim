@@ -542,7 +542,7 @@ function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): strin
   if (!record) return '';
   const why =
     record.reason === DEVICE_RECLAIM_REASON
-      ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes'
+      ? 'reclaimed for a waiting run'
       : record.reason === DEVICE_METRO_IDLE_STOP_REASON
         ? "with Metro's idle stop; idle.minutes"
         : 'idle.minutes';

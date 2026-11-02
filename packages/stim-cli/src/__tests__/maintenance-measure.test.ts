@@ -8,7 +8,6 @@ import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { plantClaim } from './_factories.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
@@ -61,9 +60,9 @@ test('high load defers scans and every measured output/cache uses a bounded du c
     findExecutable: () => null,
   });
   const load = vi.spyOn(os, 'loadavg').mockReturnValue([os.cpus().length * 5, 0, 0]);
-  expect(sizeScanDeferred(resolveMaintenanceSettings(null, {})!)).toBe(true);
+  expect(sizeScanDeferred()).toBe(true);
   load.mockReturnValue([0, 0, 0]);
-  expect(sizeScanDeferred(resolveMaintenanceSettings(null, {})!)).toBe(false);
+  expect(sizeScanDeferred()).toBe(false);
   const failures: string[] = [];
   const sizes = await measureSizes(100, (target) => failures.push(target));
   expect(sizes).toEqual(

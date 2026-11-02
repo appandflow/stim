@@ -20,7 +20,7 @@ let free: number;
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-floor-')));
   process.env.STIM_HOME = home;
-  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
+  process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   saveConfig({ version: 2, projects: {}, repos: {} });
   free = 100 * GB;
   vi.spyOn(budget, 'readVolumeSpaceAsync').mockImplementation(async () => [{ volume: '/', freeMb: free }]);
@@ -32,7 +32,7 @@ afterEach(() => {
   resetExecutor();
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
-  delete process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB;
+  delete process.env.STIM_DISK_HARD_FLOOR_GB;
 });
 
 const gate = (env: NodeJS.ProcessEnv = process.env) =>

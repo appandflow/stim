@@ -19,10 +19,9 @@ import {
   resolveSettings,
   settingShapeErrors,
   settingValueAt,
-  deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-import { saveConfig, writeConfigSetting, type Config } from '../workspace/config.ts';
+import { writeConfigSetting } from '../workspace/config.ts';
 import { SETTINGS } from '@stim-cli/core/state';
 
 let tmpHome: string;
@@ -219,9 +218,6 @@ const SHAPE_CASES: Record<string, { valid: unknown; invalid: unknown; expected: 
   },
   'maintenance.keep': { valid: true, invalid: 'yes', expected: 'true or false' },
   'maintenance.idleStopHours': { valid: 0.5, invalid: -1, expected: 'a number, 0 or more' },
-  'metro.idleStopMinutes': { valid: 30, invalid: '30', expected: 'a whole number, 0 or more' },
-  'devices.reclaimIdleMinutes': { valid: 10, invalid: 1.5, expected: 'a whole number, 0 or more' },
-  'devices.idleShutdownMinutes': { valid: 30, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'idle.minutes': { valid: 15, invalid: 1.5, expected: 'a whole number, 0 or more' },
   'metro.command': {
     valid: ['npx', 'react-native', 'start', '--port', '{port}'],
@@ -398,14 +394,4 @@ test('ios.signingIdentitySha1 takes exactly the 40-hex hash find-identity prints
   expect(iosSigningIdentitySha1SettingError({ ios: { signingIdentitySha1: `${sha1}00` } })).toMatch(
     /Invalid ios\.signingIdentitySha1/,
   );
-});
-
-test('devices.reclaimIdleMinutes defaults to 10, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(10);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 0 } } as Config);
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(0);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 45 } } as Config);
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(45);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { reclaimIdleMinutes: 0 } }));
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
 });

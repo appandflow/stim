@@ -8,11 +8,11 @@ const LOW_MEMORY_SHARE = 0.1;
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
 export interface DiskThresholds {
-  /** `budget.minFreeDiskGb` in MiB: below it the disk level is high. */
+  /** `disk.minFreeGb` in MiB: below it the disk level is high. */
   highMb: number;
   /** `disk.criticalFreeGb`, or the hard floor when that is higher, in MiB: below it the disk level is critical. */
   criticalMb: number;
-  /** `budget.hardFloorDiskGb` in MiB: below it after the ladder ran, start, ios and android refuse. */
+  /** `disk.hardFloorGb` in MiB: below it after the ladder ran, start, ios and android refuse. */
   hardFloorMb: number;
 }
 
@@ -21,9 +21,9 @@ export function diskThresholds(
   config: Config | null,
   env: NodeJS.ProcessEnv = process.env,
 ): { thresholds: DiskThresholds; error: string | null } {
-  const high = machineNumber('budget.minFreeDiskGb', config, env);
+  const high = machineNumber('disk.minFreeGb', config, env);
   const critical = machineNumber('disk.criticalFreeGb', config, env);
-  const floor = machineNumber('budget.hardFloorDiskGb', config, env);
+  const floor = machineNumber('disk.hardFloorGb', config, env);
   const hardFloorMb = (floor.value ?? 0) * 1024;
   return {
     thresholds: {
@@ -41,7 +41,7 @@ function higherLevel(a: PressureLevel, b: PressureLevel): PressureLevel {
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1)} GB`;
 
-/** The disk level: critical under the critical threshold on any volume, high under `budget.minFreeDiskGb`. */
+/** The disk level: critical under the critical threshold on any volume, high under `disk.minFreeGb`. */
 export function diskPressure(
   disk: DaemonMeasurement['disk'],
   thresholds: DiskThresholds,
@@ -56,9 +56,7 @@ export function diskPressure(
       );
     } else if (thresholds.highMb > 0 && volume.freeMb < thresholds.highMb) {
       level = higherLevel(level, 'high');
-      reasons.push(
-        `${gb(volume.freeMb)} free on ${volume.volume}, under budget.minFreeDiskGb (${gb(thresholds.highMb)})`,
-      );
+      reasons.push(`${gb(volume.freeMb)} free on ${volume.volume}, under disk.minFreeGb (${gb(thresholds.highMb)})`);
     }
   }
   return { level, reasons };

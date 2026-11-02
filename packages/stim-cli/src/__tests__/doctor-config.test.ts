@@ -51,6 +51,29 @@ test('STIM_REMOTE_BUILD_MODE in the environment is reported with its replacement
   expect(check({}, [], { STIM_REMOTE_BUILD_MODE: '  ' })).toEqual([]);
 });
 
+test('a removed setting in the config is reported with what replaced it', () => {
+  expect(check({ budget: { minFreeDiskGb: 12 }, maintenance: { capTargetPercent: 50 } })).toEqual([
+    expect.objectContaining({
+      title: 'budget.minFreeDiskGb was replaced by disk.minFreeGb',
+      fix: `Run \`stim settings set disk.minFreeGb 12\`, then remove budget.minFreeDiskGb from ${MACHINE}.`,
+    }),
+    expect.objectContaining({
+      title: 'maintenance.capTargetPercent is no longer read by Stim',
+      detail: `maintenance.capTargetPercent in ${MACHINE} is not read by Stim: nothing replaced it; the pressure ladder has fixed rules.`,
+      fix: `Remove maintenance.capTargetPercent from ${MACHINE}.`,
+    }),
+  ]);
+});
+
+test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_DAEMON', () => {
+  expect(check({}, [], { STIM_MAINTENANCE: 'off' })).toEqual([
+    expect.objectContaining({
+      title: 'STIM_MAINTENANCE was replaced by daemon.mode',
+      fix: 'Run `stim settings set daemon.mode off` or set STIM_DAEMON, then unset STIM_MAINTENANCE.',
+    }),
+  ]);
+});
+
 describe('against a config file on disk', () => {
   let home: string;
   let project: string;

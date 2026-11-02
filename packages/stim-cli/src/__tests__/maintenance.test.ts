@@ -30,7 +30,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const settings = resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'report' })!;
+const settings = resolveMaintenanceSettings(null, { STIM_DAEMON: 'report' })!;
 const emptyState = (): MaintenanceState => ({
   version: 1,
   lastAt: {},

@@ -6,7 +6,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
-import { daemonMode, parseDaemonMode } from './client.ts';
+import { daemonMode, parseDaemonMode } from './mode.ts';
 
 /**
  * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last

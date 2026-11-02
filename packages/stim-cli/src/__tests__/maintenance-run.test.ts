@@ -58,8 +58,8 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-maintenance-run-'));
   process.env.STIM_HOME = home;
-  process.env.STIM_MAINTENANCE = 'report';
-  process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '20';
+  process.env.STIM_DAEMON = 'report';
+  process.env.STIM_DISK_MIN_FREE_GB = '20';
   setExecutor({
     run: () => '',
     runQuiet: () => null,
@@ -81,8 +81,9 @@ afterEach(() => {
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
   Object.assign(disk, { full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false });
-  for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
+  for (const key of ['STIM_HOME', 'STIM_DAEMON', 'STIM_DISK_MIN_FREE_GB', 'STIM_DISK_HARD_FLOOR_GB'])
     delete process.env[key];
+  process.env.STIM_DAEMON = 'off';
   process.exitCode = 0;
 });
 
@@ -177,7 +178,7 @@ test('status and gc JSON each stay a single payload under the preAction disk war
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     environments: [],
     maintenance: { mode: 'report', running: null },
-    daemon: { mode: 'off', running: null },
+    daemon: { mode: 'report', running: null },
   });
   out.mockClear();
   warnCriticalDisk(['gc', '--json']);
@@ -243,7 +244,7 @@ test.each([
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
-  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
+  process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
     disk: [],
     memory: { level: 'normal', availableBytes: null, pressured: false },
@@ -280,19 +281,19 @@ test('cached Swift CAS observations refresh build protection before each plan', 
 });
 
 test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
-  process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES = 'bad';
+  process.env.STIM_MAINTENANCE_SWEEP_HOURS = 'bad';
   try {
     expect(maintenanceStatus()).toMatchObject({
       mode: 'off',
-      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
+      invalid: expect.stringContaining('maintenance.sweepHours'),
     });
     expect(await preview.previewMaintenance()).toMatchObject({
       mode: 'off',
-      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
-      note: expect.stringContaining('maintenance.sizeCheckMinutes'),
+      invalid: expect.stringContaining('maintenance.sweepHours'),
+      note: expect.stringContaining('maintenance.sweepHours'),
     });
   } finally {
-    delete process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES;
+    delete process.env.STIM_MAINTENANCE_SWEEP_HOURS;
   }
 });
 

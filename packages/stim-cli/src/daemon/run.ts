@@ -30,7 +30,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './client.ts';
+import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './mode.ts';
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';

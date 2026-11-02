@@ -7,35 +7,25 @@ import {
   type Config,
   type MaintenanceMode,
 } from '@stim-cli/core/state';
+import { daemonMode } from '../daemon/mode.ts';
 
 const PER_WORKSPACE = new Set(['maintenance.keep', 'maintenance.idleStopHours']);
 
+/** The automatic maintenance settings; `mode` is `daemon.mode`, off while one of them is invalid. */
 export interface MaintenanceSettings {
   mode: MaintenanceMode;
   invalid?: string;
-  pressureCheckMinutes: number;
-  sizeCheckMinutes: number;
-  maxLoadPerCore: number;
   logMaxMb: number;
   logRetentionDays: number;
   logChecks: boolean;
-  memoryPressureLevel: 'warning' | 'critical' | 'off';
-  memoryWarningMinutes: number;
-  minAvailableMemoryGb?: number;
-  capTargetPercent: number;
   workspaceOutputsMaxGb: number;
   buildCacheMaxGb: number;
   metroCacheMaxGb: number;
   swiftCompilationCacheMaxGb: number;
   worktreeCheckMinutes: number;
-  idleCheckMinutes: number;
   sweepHours: number;
   olderThanDays: number;
-  deviceIdleDays: number;
   protectRecentHours: number;
-  urgentFreeDiskGb: number;
-  criticalFreeDiskGb: number;
-  pressureProtectMinutes: number;
   removeFinishedWorktrees: boolean;
   removeIdleWorktrees: boolean;
   gradleVersionIdleDays: number;
@@ -73,7 +63,7 @@ export function resolveMaintenanceSettings(
     }
     result[name] = error ? setting.default : value;
   }
-  if (disabled) result.mode = 'off';
+  result.mode = disabled ? 'off' : daemonMode(env, config);
   if (invalid.length) result.invalid = invalid.join('; ');
   return result as unknown as MaintenanceSettings;
 }

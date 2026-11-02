@@ -196,7 +196,7 @@ export async function previewMaintenance({
         actions: [],
         blocked: [],
         skips: [],
-        note: 'maintenance.mode is off',
+        note: 'daemon.mode is off',
       };
     const pressure = operation
       ? await measurePressureAsync(state?.pressure ?? null, Date.now(), operation)

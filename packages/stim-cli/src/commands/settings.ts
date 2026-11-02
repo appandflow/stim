@@ -7,7 +7,13 @@ import {
   settingEntry,
   SettingsRefusal,
 } from '../workspace/settings-payload.ts';
-import { REPLACED_SETTINGS, SETTING_SCOPES, type SettingEntry, type SettingWriteResult } from '@stim-cli/core/state';
+import {
+  REPLACED_SETTINGS,
+  replacementAdvice,
+  SETTING_SCOPES,
+  type SettingEntry,
+  type SettingWriteResult,
+} from '@stim-cli/core/state';
 import {
   mutateSetting,
   readScope,
@@ -86,11 +92,15 @@ export function registerSettings(program: Command, io: Output = CONSOLE, env: No
           io.out(`${entry.key.padEnd(width)}  ${shown}${shown ? '  ' : ''}${chalk.dim(`(${formatOrigin(entry)})`)}`);
         }
         for (const entry of payload.unknown) {
-          io.note(
-            chalk.yellow(
-              `Warning: ${entry.key} in ${entry.file} is not read by Stim.${entry.replacement ? ` Run \`${entry.replacement}\` instead.` : ''}`,
-            ),
-          );
+          const advice = replacementAdvice(entry.key, entry.value, entry.scope);
+          const instead = entry.replacement
+            ? ` Run \`${entry.replacement}\` instead.`
+            : advice?.key
+              ? ` Use ${advice.key} instead.`
+              : advice
+                ? ` ${advice.replacement[0]!.toUpperCase()}${advice.replacement.slice(1)}.`
+                : '';
+          io.note(chalk.yellow(`Warning: ${entry.key} in ${entry.file} is not read by Stim.${instead}`));
         }
       }),
     );

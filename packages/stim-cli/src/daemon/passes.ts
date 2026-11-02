@@ -9,7 +9,8 @@ import {
 import { runMaintenance } from '../maintenance/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
-import { daemonClaimHeld, daemonMode, requestDaemonTick } from './client.ts';
+import { daemonClaimHeld, requestDaemonTick } from './client.ts';
+import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { runLadder } from './ladder.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
@@ -115,11 +116,12 @@ export async function runHomePasses({
 /**
  * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because the idle
  * stage of rung 1 is the activity pass, which only the daemon runs. Measures and lists devices only when the level is
- * above normal. Logs to `daemon.ndjson` under `trigger`.
+ * above normal, and nothing while `daemon.mode` is off. Logs to `daemon.ndjson` under `trigger`.
  */
 async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const mode = daemonMode(env);
   const config = loadConfig();
-  if (!config) return;
+  if (!config || mode === 'off') return;
   const { thresholds } = diskThresholds(config, env);
   let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
   const classify = async () => {
@@ -142,7 +144,7 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promis
     await runLadder(
       {
         config,
-        act: daemonMode(env) !== 'report',
+        act: mode === 'on',
         log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
         devices: measured.devices,
         simsFailed: measured.sims === null,
@@ -167,14 +169,15 @@ export async function runLadderNow(env: NodeJS.ProcessEnv, signal?: AbortSignal)
 
 /**
  * Automatic maintenance and the pressure ladder at command time, for a command that found no daemon holding the
- * home: Windows, `daemon.mode off`, or a daemon that could not start. The activity pass, idle stage included, is the
- * daemon's alone; without one, each dev server supervisor times its own idle stop. The pass never stops the command's
- * own workspace.
+ * home: Windows, which has none, or a daemon that could not start. Nothing runs while `daemon.mode` is off, and report
+ * acts on nothing. The activity pass, idle stage included, is the daemon's alone; without one, each dev server
+ * supervisor times its own idle stop. The pass never stops the command's own workspace.
  */
 export async function runPassesInProcess(trigger: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   try {
-    if (env[HOME_PASSES_TEST_GUARD_ENV] || daemonClaimHeld()) return;
-    await runMaintenance(trigger, { report: daemonMode(env) === 'report' });
+    const mode = daemonMode(env);
+    if (env[HOME_PASSES_TEST_GUARD_ENV] || mode === 'off' || daemonClaimHeld()) return;
+    await runMaintenance(trigger, { report: mode === 'report' });
     await runCommandLadder(trigger, env);
   } catch {}
 }

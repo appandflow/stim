@@ -7355,9 +7355,6 @@ describe('ios --device: the lease on the phone', () => {
   });
 });
 
-test('devices.reclaimIdleMinutes reaches the device slot wait', async () => {
-  reserve();
-  const off = await run({}, { resolveSettings: () => ({ devices: { reclaimIdleMinutes: 0 } }) });
   expect(off.exitCode).toBe(null);
   expect(off.calls.args.ensureBooted).toMatchObject({ deviceSlotWait: { reclaimIdleMinutes: 0 } });
   const unset = await run({}, { resolveSettings: () => ({}) });

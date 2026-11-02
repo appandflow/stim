@@ -79,7 +79,7 @@ function fixture(name: string) {
   mkdirSync(root);
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name, private: true }));
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ maintenance: { mode: 'off' } }));
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
   writeFileSync(
     join(home, 'caches.json'),
     JSON.stringify({ version: 1, caches: [{ name: 'fixture', dir: cache, prune: 'entries' }] }),
@@ -281,7 +281,7 @@ test.each([false, true])(
     }));
     writeFileSync(
       join(item.home, 'config.json'),
-      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, maintenance: { mode: 'off' } }),
+      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, daemon: { mode: 'off' } }),
     );
     writeFileSync(
       join(item.home, 'created-devices.json'),
@@ -483,7 +483,7 @@ test.each(
     version: 2,
     projects: kind === 'Gradle project settings' || worktreeProbe ? { [item.root]: {} } : {},
     repos: {},
-    maintenance: { mode: 'off' },
+    daemon: { mode: 'off' },
     parked: {
       [platform]: [
         {
@@ -747,7 +747,7 @@ test.each([
       USERPROFILE: item.home,
       STIM_HOME: undefined,
       STIM_NATIVE_PROBE_TAG: phase,
-      STIM_MAINTENANCE: 'off',
+      STIM_DAEMON: 'off',
       AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
       AGENT_DEVICE_CLAIMS_DIR: join(item.home, 'claims'),
       AGENT_DEVICE_IOS_RUNNER_LEASE_DIR: join(item.home, 'leases'),
@@ -756,7 +756,7 @@ test.each([
       version: 2,
       projects: { [item.root]: { platforms: { ios: { deviceUdid: id, owned: true } } } },
       repos: {},
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
     });
     writeFileSync(join(home, 'config.json'), config);
     const ledger = JSON.stringify({ version: 1, ios: [id], android: [], web: [] });
@@ -1118,13 +1118,13 @@ test('explicit doctor checks record completed platforms in their own homes while
   try {
     await trackRead((signal) => firstClient.doctor({ platform: 'ios', signal }));
     expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
     });
     await expect(firstClient.doctor({ record: true, signal: AbortSignal.abort() })).rejects.toMatchObject({
       code: 'STIM_CANCELLED',
     });
     expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
     });
     const before = Date.now();
     await Promise.all([
@@ -1167,7 +1167,7 @@ test('doctor reports the selected project without synchronous children or record
     expect(run).not.toHaveBeenCalled();
     expect(file).not.toHaveBeenCalled();
     expect(quiet).not.toHaveBeenCalled();
-    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'))).toEqual({ maintenance: { mode: 'off' } });
+    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'))).toEqual({ daemon: { mode: 'off' } });
   } finally {
     run.mockRestore();
     file.mockRestore();
@@ -1183,7 +1183,7 @@ test.each([false, true])('doctor device-cap reads stay responsive with cancellat
       version: 2,
       projects: { [item.root]: { platforms: { android: { avdName: 'stim-owned', consolePort: 5554, owned: true } } } },
       repos: {},
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
       concurrency: cancel ? { maxBuilds: 1 } : { maxDevices: 2 },
     }),
   );
@@ -1572,7 +1572,7 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
                   ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
                 }
               : {}),
-            STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
+            STIM_DAEMON: index === 0 ? 'report' : 'off',
             ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
           },
         }).doctor({ platform: 'android', signal }),
@@ -1654,7 +1654,7 @@ test.each(
         version: 2,
         projects: { [item.root]: { platforms: { ios: { deviceUdid: id, deviceName: 'stim-report', owned: true } } } },
         repos: {},
-        maintenance: { mode: 'off' },
+        daemon: { mode: 'off' },
       }),
     );
     writeFileSync(
@@ -1699,7 +1699,7 @@ test.each(
           HOME: item.home,
           USERPROFILE: item.home,
           STIM_HOME: undefined,
-          STIM_MAINTENANCE: 'off',
+          STIM_DAEMON: 'off',
           AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
           AGENT_DEVICE_IOS_RUNNER_LEASE_DIR:
             leasePath === null ? undefined : leasePath === 'relative' ? 'fixture-leases' : leaseDir,

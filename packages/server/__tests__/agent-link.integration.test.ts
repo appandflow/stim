@@ -331,7 +331,7 @@ test('the relay holds at most 8 local connections, and stopping the session clos
 test('a hosted session stays ready while its client only holds an agent link, and is stopped once that link is gone', async () => {
   agents.driver = new FakeDriver();
   const port = await start({
-    env: { STIM_MAINTENANCE: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
+    env: { STIM_DAEMON: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
     hostedIdleSweepMs: 50,
   });
   const { machine } = approveLocalMachine(port);

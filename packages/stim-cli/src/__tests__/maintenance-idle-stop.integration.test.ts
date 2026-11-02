@@ -391,7 +391,7 @@ test('gc --delete stops idle workspaces only while maintenance is not off, and c
   expect(await stopIdleWorkspaces(output)).toBe(0);
   expect(record).not.toHaveBeenCalled();
 
-  vi.stubEnv('STIM_MAINTENANCE', 'on');
+  vi.stubEnv('STIM_DAEMON', 'on');
   expect(await stopIdleWorkspaces(output)).toBe(1);
   expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
 });
@@ -534,7 +534,7 @@ test('an automatic maintenance pass plans the idle stop of a hosted workspace on
   const hosted = hostedWorkspace('hosted', 7 * HOUR_MS);
   vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  vi.stubEnv('STIM_MAINTENANCE', 'report');
+  vi.stubEnv('STIM_DAEMON', 'report');
 
   await runMaintenance('daemon');
 

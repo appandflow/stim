@@ -1,57 +1,16 @@
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import {
-  daemonClaimRoot,
-  daemonDir,
-  daemonSocket,
-  loadConfig,
-  settingDefinition,
-  SETTINGS,
-  type DaemonMode,
-} from '@stim-cli/core/state';
+import { daemonClaimRoot, daemonDir, daemonSocket, SETTINGS, type DaemonMode } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
+import { daemonMode, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
 const CLAIM_POLL_MS = 50;
-const MODE = settingDefinition('daemon.mode');
-
-const DAEMON_MODES: readonly DaemonMode[] = ['on', 'report', 'off'];
-
-export function parseDaemonMode(value: unknown): DaemonMode | null {
-  return DAEMON_MODES.find((mode) => mode === value) ?? null;
-}
-
-/** The machine setting `daemon.mode` alone, or null when it is unset or invalid. */
-export function configuredDaemonMode(): DaemonMode | null {
-  try {
-    return parseDaemonMode(loadConfig()?.daemon?.mode);
-  } catch {
-    return null;
-  }
-}
-
-/** Whichever of two modes acts less: off, then report, then on. */
-export function stricterDaemonMode(a: DaemonMode, b: DaemonMode): DaemonMode {
-  return DAEMON_MODES.indexOf(a) >= DAEMON_MODES.indexOf(b) ? a : b;
-}
-
-/** `daemon.mode` from `STIM_DAEMON` in `env`, else off in CI, else the machine setting, else on. Windows has none. */
-export function daemonMode(
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): DaemonMode {
-  if (platform === 'win32') return 'off';
-  const fromEnv = MODE?.env ? parseDaemonMode(env[MODE.env]) : null;
-  if (fromEnv) return fromEnv;
-  if (env.CI) return 'off';
-  return configuredDaemonMode() ?? 'on';
-}
-
 /**
  * Whether a stim-daemon holds this home's claim. A claim Stim cannot resolve counts as held, so nothing else takes
  * an idle decision while it stands; `stim doctor` names the command that removes it.
@@ -173,8 +132,8 @@ async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): 
  * resolve is reported and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  if (!spawnsDaemon(env)) return false;
   const mode = daemonMode(env);
-  if (mode === 'off') return false;
   try {
     const survey = readClaimSet(daemonClaimRoot());
     const [claim] = survey.unresolved;
@@ -292,7 +251,7 @@ const START_WAIT_MS = 3000;
  * started. False when no daemon runs, so the caller runs the passes itself.
  */
 export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<boolean> {
-  if (daemonMode(env) === 'off') return false;
+  if (!spawnsDaemon(env)) return false;
   for (let waited = 0; !daemonLive(); waited += 100) {
     if (waited >= START_WAIT_MS) return false;
     await cancellableSleep(100, { signal, what: 'stim-daemon' });

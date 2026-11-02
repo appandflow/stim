@@ -20,6 +20,7 @@ import {
   isJsonObject,
   isSensitiveReference,
   REPLACED_SETTINGS,
+  removedSettingWords,
   replacementAdvice,
   SETTING_SCOPES,
   settingDefinition,
@@ -37,10 +38,13 @@ export function requireSetting(key: string, raw?: string): SettingDefinition {
   const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
   if (replaced) {
     const command = replacementAdvice(key, raw)?.command;
+    const unset = `run \`stim settings unset ${key}\` to remove the leftover key`;
     throw new SettingsRefusal(
       'STIM_BAD_ARG',
-      `${JSON.stringify(key)} was replaced by ${replaced.key} and is no longer read by Stim.`,
-      `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then run \`stim settings unset ${key}\` to remove the leftover key.`,
+      `${removedSettingWords(JSON.stringify(key), replaced)}${replaced.key ? ' and is no longer read by Stim' : ''}.`,
+      replaced.key
+        ? `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then ${unset}.`
+        : `${unset[0]!.toUpperCase()}${unset.slice(1)}.`,
     );
   }
   throw new SettingsRefusal(
@@ -253,7 +257,8 @@ function configTarget(context: SettingsContext, scope: SettingScope): ConfigSett
 
 export interface ReplacedSettingRemoval {
   key: string;
-  replacedBy: string;
+  /** The setting that replaced it; null when nothing did. */
+  replacedBy: string | null;
   removed: Array<{ scope: SettingScope; file: string }>;
 }
 
@@ -281,5 +286,5 @@ export async function unsetReplacedSetting(
         : target && (await writeConfigSettingAsync(target, key, undefined, signal));
     if (changed) removed.push({ scope: entry.scope, file: entry.file });
   }
-  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? key, removed };
+  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? null, removed };
 }

@@ -59,8 +59,8 @@ describe('diskThresholds', () => {
     const config = {
       projects: {},
       repos: {},
-      budget: { minFreeDiskGb: 200, hardFloorDiskGb: 8 },
-      disk: { criticalFreeGb: 6 },
+      budget: { minFreeDiskGb: 1, hardFloorDiskGb: 1 },
+      disk: { minFreeGb: 200, hardFloorGb: 8, criticalFreeGb: 6 },
     };
     expect(diskThresholds(config, { STIM_HOME: '/tmp/home' })).toEqual({
       thresholds: { highMb: 200 * 1024, criticalMb: 8 * 1024, hardFloorMb: 8 * 1024 },
@@ -77,8 +77,8 @@ describe('diskThresholds', () => {
       criticalMb: 6 * 1024,
       hardFloorMb: 5 * 1024,
     });
-    expect(diskThresholds({ projects: {}, repos: {} }, { STIM_BUDGET_HARD_FLOOR_DISK_GB: 'lots' }).error).toMatch(
-      /STIM_BUDGET_HARD_FLOOR_DISK_GB/,
+    expect(diskThresholds({ projects: {}, repos: {} }, { STIM_DISK_HARD_FLOOR_GB: 'lots' }).error).toMatch(
+      /STIM_DISK_HARD_FLOOR_GB/,
     );
   });
 });
