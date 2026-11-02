@@ -118,7 +118,11 @@ function idleDecisions(
     const withoutMetro = launch ? launchWithoutMetro(launch) : null;
     const countDeviceLogs = !launch || withoutMetro !== null;
     const buildInProgress = builds.get(device.project) ?? true;
-    const idleForMs = idleShutdownDueMs(device.activity, { idleMs, now, buildInProgress, countDeviceLogs });
+    const logChangedAt = metroGone && countDeviceLogs ? workspaceDeviceLastUseAt(device.project) : NaN;
+    const idleForMs =
+      now - logChangedAt < idleMs
+        ? null
+        : idleShutdownDueMs(device.activity, { idleMs, now, buildInProgress, countDeviceLogs });
     return {
       device,
       idleForMs,
@@ -128,8 +132,11 @@ function idleDecisions(
             ? newestActivity(device.activity, countDeviceLogs)
             : null;
         if (newest?.basis === 'viewer') return 'a stim-server client is viewing it';
-        if (newest?.basis === 'device-log' && metroGone) {
-          const logged = `it logged ${formatLongDuration(Math.max(0, now - newest.at))} ago`;
+        if (metroGone && (newest?.basis === 'device-log' || now - logChangedAt < idleMs)) {
+          const logged =
+            newest?.basis === 'device-log'
+              ? `it logged ${formatLongDuration(Math.max(0, now - newest.at))} ago`
+              : `the workspace's device log changed ${formatLongDuration(Math.max(0, now - logChangedAt))} ago`;
           return withoutMetro
             ? `its last launch, ${withoutMetro}, runs without Metro, and ${logged}`
             : `no launch is recorded on its slot, and ${logged}`;

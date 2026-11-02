@@ -16,6 +16,7 @@ import { deviceIdleShutdownMinutesSetting, resolveProjectSettings } from '../wor
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
+import { survivingServer } from './idle-stop.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import {
   cachedDeviceActivity,
@@ -237,16 +238,17 @@ export function idleShutdownMinutes(root: string): number {
 
 /**
  * Whether the workspace's dev server is gone, by the supervisor identity check `status` uses. A supervisor whose
- * identity cannot be verified counts as running.
+ * identity cannot be verified, or one that exited while the dev server it started may still run, counts as running.
  */
 export function metroGone(root: string): boolean {
   const project = getProject(root);
+  const state = readWorkspaceState(root);
   const { status } = resolveSupervisorTarget({
-    state: readWorkspaceState(root)?.supervisor,
+    state: state?.supervisor,
     record: project?.supervisor,
     reservedPort: project?.metroPort,
   });
-  return status === 'none' || status === 'stale';
+  return status === 'none' || (status === 'stale' && survivingServer(state?.supervisor) === null);
 }
 
 /**
@@ -276,9 +278,11 @@ export function planIdleShutdown({
   );
   if (minutes.size === 0) return plan;
   const window = Math.min(...minutes.values()) * 60_000;
-  for (const { device, idleForMs } of dueIdleDevices(undefined, window, now, { metroStopped: metroGone })) {
+  const gone = new Map([...minutes.keys()].map((root) => [root, metroGone(root)] as const));
+  const metroStopped = (root: string) => gone.get(root) ?? false;
+  for (const { device, idleForMs } of dueIdleDevices(undefined, window, now, { metroStopped })) {
     const own = minutes.get(device.project);
-    const usedAt = workspaceDeviceLastUseAt(device.project, { countDeviceLogs: !metroGone(device.project) });
+    const usedAt = workspaceDeviceLastUseAt(device.project, { countDeviceLogs: !metroStopped(device.project) });
     if (own === undefined || idleForMs < own * 60_000 || now - usedAt < own * 60_000) continue;
     const root = canonicalPath(device.project);
     plan.actions.push({

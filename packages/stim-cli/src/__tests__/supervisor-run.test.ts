@@ -703,6 +703,16 @@ describe('device idle shutdown', () => {
     expect(seen.closed).toBe(1);
   });
 
+  test("devices.idleShutdownMinutes 0 keeps every device through Metro's idle stop, and the stop says so", async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 0, metroMinutes: 60 });
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(seen.closed).toBe(1);
+    expect(seen.shutDowns).toEqual([]);
+    expect(readMetroLog().find((record) => record.event === 'supervisor_idle_stopped')?.msg).toContain(
+      'devices.idleShutdownMinutes is 0, so no device was shut down',
+    );
+  });
+
   describe("at Metro's idle stop", () => {
     let tornDown: string[];
 
@@ -820,7 +830,7 @@ describe('device idle shutdown', () => {
       expect(idleStopMessage()).toContain('kept simulator stim-VIEWED up: a stim-server client is viewing it');
     });
 
-    test('device logs still keep the slots whose app runs without Metro: a Release launch, or none recorded', async () => {
+    test('device logs still keep a Release launch, whose app runs without Metro, and a slot with no recorded launch', async () => {
       upsertProject(root, {
         metroPort: 8097,
         platforms: { ios: { deviceUdid: 'RELEASE', owned: true } },

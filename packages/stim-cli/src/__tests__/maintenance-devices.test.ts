@@ -338,30 +338,9 @@ test('a maintenance pass shuts down devices idle past their workspace devices.id
   ]);
 });
 
-test("maintenance stops counting a Debug app's device logs once its workspace's supervisor is gone, and keeps counting them while it runs", async () => {
-  idlePass('on');
-  const gone = workspaceWithSim('gone', 30);
-  const live = workspaceWithSim('live', 30);
-  for (const [root, udid] of [
-    [gone, 'UDID-gone'],
-    [live, 'UDID-live'],
-  ] as const) {
-    writeWorkspaceState(root, {
-      launches: {
-        ios: { appId: 'com.example.app', deviceId: udid, metroPort: 8100, release: false, launchedAt: '' },
-      },
-    });
-    mkdirSync(workspaceLogsDir(root), { recursive: true });
-    writeFileSync(
-      join(workspaceLogsDir(root), 'device.ndjson'),
-      `${JSON.stringify({ src: 'device', platform: 'ios', ts: Date.now() - 5_000, msg: 'nw_connection retry' })}\n`,
-    );
-  }
-  writeWorkspaceState(live, {
-    supervisor: { pid: process.pid, processToken: captureProcessToken(process.pid), port: 8100, mode: 'expo-child' },
-  });
+function bootedSims(...udids: string[]) {
   vi.spyOn(ios, 'listAllIosSims').mockReturnValue(
-    ['UDID-gone', 'UDID-live'].map((udid) => ({
+    udids.map((udid) => ({
       udid,
       name: `stim-${udid}`,
       state: 'Booted',
@@ -370,12 +349,77 @@ test("maintenance stops counting a Debug app's device logs once its workspace's 
       available: true,
     })),
   );
+}
+
+const launch = (deviceId: string, release: boolean) => ({
+  appId: 'com.example.app',
+  deviceId,
+  metroPort: release ? null : 8100,
+  release,
+  launchedAt: '',
+});
+
+function writeDeviceLog(root: string, records: object[]) {
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(
+    join(workspaceLogsDir(root), 'device.ndjson'),
+    records.map((record) => JSON.stringify({ src: 'device', platform: 'ios', ...record })).join('\n') + '\n',
+  );
+}
+
+async function shutDownByMaintenance(): Promise<string[]> {
   setExecutor({ ...getExecutor(), runFileQuiet: (file) => (file === 'ps' ? '' : null) });
   const shutDown = vi
     .spyOn(teardown, 'teardownOwnedIosSim')
     .mockImplementation(async (id) => ({ status: 'torn-down', label: id }));
-
   await runMaintenance('test');
+  return shutDown.mock.calls.map(([id]) => id).toSorted();
+}
 
-  expect(shutDown.mock.calls.map(([id]) => id)).toEqual(['UDID-gone']);
+test("maintenance stops counting a Debug app's device logs once its dev server is gone, and keeps counting them while its supervisor or an orphaned dev server runs", async () => {
+  idlePass('on');
+  const roots = ['gone', 'live', 'orphan'].map((name) => {
+    const root = workspaceWithSim(name, 30);
+    writeWorkspaceState(root, { launches: { ios: launch(`UDID-${name}`, false) } });
+    writeDeviceLog(root, [{ ts: Date.now() - 5_000, msg: 'nw_connection retry' }]);
+    return root;
+  });
+  const token = captureProcessToken(process.pid);
+  writeWorkspaceState(roots[1]!, {
+    supervisor: { pid: process.pid, processToken: token, port: 8100, mode: 'expo-child' },
+  });
+  writeWorkspaceState(roots[2]!, {
+    supervisor: {
+      pid: 999_999,
+      processToken: 'exited',
+      port: 8100,
+      mode: 'expo-child',
+      serverPid: process.pid,
+      serverProcessToken: token,
+    },
+  });
+  bootedSims('UDID-gone', 'UDID-live', 'UDID-orphan');
+
+  expect(await shutDownByMaintenance()).toEqual(['UDID-gone']);
+});
+
+test("once Metro is gone, a Debug slot's reconnect flood does not push a Release slot's device logs out of use", async () => {
+  idlePass('on');
+  const root = workspaceWithSim('mixed', 30, 'UDID-release');
+  upsertProject(root, { deviceSlots: { debug: { ios: { deviceUdid: 'UDID-debug', owned: true } } } });
+  writeWorkspaceState(root, {
+    launches: { ios: launch('UDID-release', true), 'ios:debug': launch('UDID-debug', false) },
+  });
+  const flood = {
+    slot: 'debug',
+    ts: Date.now() - 1_000,
+    msg: `nw_connection_report_state_with_handler_on_nw_queue [C228] reporting state cancelled error Connection refused ${'.'.repeat(80)}`,
+  };
+  writeDeviceLog(root, [
+    { ts: Date.now() - 2 * MINUTE_MS, msg: 'release app log' },
+    ...Array.from({ length: 2_000 }, () => flood),
+  ]);
+  bootedSims('UDID-release', 'UDID-debug');
+
+  expect(await shutDownByMaintenance()).toEqual(['UDID-debug']);
 });
