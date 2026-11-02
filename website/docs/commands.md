@@ -996,6 +996,25 @@ reads the workspace's boot hook; revive then restores only the launch on that
 device, plus Metro. See
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
+## `share`
+
+```text
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--device] [--slot <name>] [--json]
+stim share stop [--json]
+stim share list [--json]
+```
+
+Gives anyone a public, password-protected web link to watch the workspace's
+running app, and with `--control` to tap, type and press its buttons. The share
+runs inside this Stim home's stim-server, which `stim share` starts in the
+background when none runs, and is served through Tailscale Funnel. The
+password is generated unless you set one with `--password` or drop it with
+`--no-password`. Every share expires (60 minutes by default, at most 480) and ends with
+`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
+device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
+stim-server and `STIM_SHARE_REFUSED` with the reason otherwise. See
+[Share a running app](./share.md) for the requirements and the security model.
+
 ## `logs`
 
 ```text

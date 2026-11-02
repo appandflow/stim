@@ -163,6 +163,7 @@
         "packages/stim-cli/src/commands/ports.ts",
         "packages/stim-cli/src/commands/reload.ts",
         "packages/stim-cli/src/commands/revive.ts",
+        "packages/stim-cli/src/commands/share.ts",
         "packages/stim-cli/src/commands/device.ts",
         "packages/stim-cli/src/commands/device-provision.ts",
         "packages/stim-cli/src/commands/device-tools.ts",

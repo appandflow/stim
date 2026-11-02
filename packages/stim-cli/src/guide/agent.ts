@@ -381,6 +381,7 @@ Read the matching guide before acting in these situations:
 | Running under a sandbox                               | stim guide errors sandbox        |
 | Release configuration or ...Release variant           | stim guide lifecycle release     |
 | Web app in an owned Chrome (stim web)                 | stim guide web                   |
+| User asks to share the running app (stim share)       | stim guide share                 |
 | Web or API server ports                               | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Metro stopped and no one ran stim stop                | stim guide metro                 |
@@ -435,6 +436,7 @@ FULL TOPIC LIST
   stim guide facts devmenu        # the Expo dev menu or Tools button over the app
   stim guide macos                # Swift Package Debug apps, logs, local preview, --remote on another Mac
   stim guide web                  # stim web: owned Chrome, page logs, launched, teardown
+  stim guide share                # stim share: public password-protected link, security model
   stim guide ports                # named ports for web and API servers
   stim guide metro                # supervisor, custom Metro, tunnels, and remote devices
   stim guide logs                 # filters, record shape, and capture limits
