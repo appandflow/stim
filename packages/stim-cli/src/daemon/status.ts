@@ -5,11 +5,14 @@ import type { Finding } from '../diagnostics/doctor.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { daemonMode } from './client.ts';
+import { daemonMode, parseDaemonMode } from './client.ts';
 
-/** The daemon's mode, whether it runs, and its last tick. */
+/**
+ * The daemon's mode, whether it runs, and its last tick. A running daemon reports the mode it runs in, from its last
+ * tick or else its claim, since it keeps the mode the command that started it resolved.
+ */
 export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus {
-  const mode = daemonMode(env);
+  const setting = daemonMode(env);
   let holder: ReturnType<typeof readClaimSet>['live'][number] | undefined;
   let unresolved: { path: string; reason: string } | undefined;
   try {
@@ -21,8 +24,11 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   }
   const read = readDaemonSnapshot();
   const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
+  const runningMode = holder ? (parseDaemonMode(snapshot?.mode) ?? parseDaemonMode(holder.details.mode)) : null;
+  const mode = runningMode ?? setting;
   return {
     mode,
+    ...(mode === setting ? {} : { setting }),
     running: holder ? { pid: holder.owner.pid, since: holder.startedAt } : null,
     lastTickAt: snapshot?.tickAt ?? null,
     intervalMs: snapshot?.intervalMs ?? null,
@@ -49,7 +55,8 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   const tick = Number.isFinite(tickAt)
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
     : 'no tick yet';
-  const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode})`;
+  const resolves = status.setting ? `; daemon.mode resolves to ${status.setting} here` : '';
+  const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode}${resolves})`;
   return status.running
     ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${claim}`
     : `${label}: not running, ${tick}; start, ios, android, web, macos and revive start it${claim}`;

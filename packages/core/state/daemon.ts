@@ -49,7 +49,10 @@ export interface DaemonSnapshot {
 
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
 export interface DaemonStatus {
+  /** The running daemon's mode, else the mode `daemon.mode` resolves to here. */
   mode: DaemonMode;
+  /** The mode `daemon.mode` resolves to here, when the running daemon started in another one. */
+  setting?: DaemonMode;
   running: { pid: number; since: string } | null;
   lastTickAt: string | null;
   intervalMs: number | null;

@@ -1891,9 +1891,12 @@ RULES
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
 
-  daemon { mode, running: { pid, since } | null, lastTickAt, intervalMs, claim? }
-    mode is on, report or off (daemon.mode; always off on Windows). running
-    comes from a live claim at $STIM_HOME/daemon/claim. lastTickAt and
+  daemon { mode, setting?, running: { pid, since } | null, lastTickAt, intervalMs, claim? }
+    mode is on, report or off: the running daemon's mode, which it keeps from
+    the command that started it, else daemon.mode as resolved here (always off
+    on Windows). setting is that resolved daemon.mode when it differs from the
+    running daemon's. running comes from a live claim at
+    $STIM_HOME/daemon/claim. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null
     before a first tick. A last tick older than three intervals while it runs

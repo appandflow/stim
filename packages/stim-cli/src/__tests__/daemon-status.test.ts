@@ -61,10 +61,15 @@ test('the status line says whether the daemon runs and when it last ticked', () 
   expect(daemonLine(status({ mode: 'off' }), NOW)).toMatch(/^Daemon: off \(daemon\.mode\)/);
 });
 
-test("a snapshot another daemon wrote is not the running daemon's tick", () => {
+test("status reports the running daemon's tick and mode, and the setting when the mode differs", () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   process.env.STIM_HOME = home;
-  const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
+  const claim = tryAcquireClaim({
+    root: daemonClaimRoot(),
+    mode: 'exclusive',
+    label: 'stim-daemon',
+    details: { mode: 'report' },
+  }).acquired;
   onTestFinished(() => {
     if (claim) releaseClaim(claim);
     delete process.env.STIM_HOME;
@@ -72,20 +77,25 @@ test("a snapshot another daemon wrote is not the running daemon's tick", () => {
   });
   expect(claim).toBeTruthy();
   mkdirSync(daemonDir(), { recursive: true });
-  const snapshot = (pid: number) =>
+  const snapshot = (pid: number, mode: string) =>
     writeFileSync(
       daemonSnapshotFile(),
       JSON.stringify({
         version: 1,
         pid,
+        mode,
         startedAt: '2026-11-02T11:00:00.000Z',
         tickAt: '2026-11-02T11:01:00.000Z',
         intervalMs: 60_000,
       }),
     );
 
-  snapshot(process.pid + 1);
-  expect(daemonStatus({})).toMatchObject({ running: { pid: process.pid }, lastTickAt: null });
-  snapshot(process.pid);
-  expect(daemonStatus({})).toMatchObject({ running: { pid: process.pid }, lastTickAt: '2026-11-02T11:01:00.000Z' });
+  snapshot(process.pid + 1, 'on');
+  const fresh = daemonStatus({});
+  expect(fresh).toMatchObject({ mode: 'report', setting: 'on', running: { pid: process.pid }, lastTickAt: null });
+  expect(daemonLine(fresh, NOW)).toMatch(/^Daemon \(report only; daemon\.mode resolves to on here\): running since/);
+  snapshot(process.pid, 'off');
+  expect(daemonStatus({})).toMatchObject({ mode: 'off', setting: 'on', lastTickAt: '2026-11-02T11:01:00.000Z' });
+  snapshot(process.pid, 'on');
+  expect(daemonStatus({ STIM_DAEMON: 'on' })).not.toHaveProperty('setting');
 });

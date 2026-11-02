@@ -44,13 +44,13 @@ const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
 
-async function takeClaim(): Promise<ClaimHandle | null> {
+async function takeClaim(mode: DaemonMode): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
     const attempt = tryAcquireClaim({
       root: daemonClaimRoot(),
       mode: 'exclusive',
       label: 'stim-daemon',
-      details: { socket: daemonSocket() },
+      details: { socket: daemonSocket(), mode },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     if (attempt.acquired) return attempt.acquired;
@@ -156,7 +156,7 @@ export async function runDaemon({
   const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   const log = (level: Level, event: string, msg: string, fields: Record<string, unknown> = {}) =>
     writer.write({ src: 'daemon', level, event, msg, ...fields });
-  const claim = await takeClaim();
+  const claim = await takeClaim(startMode);
   if (!claim) {
     log('debug', 'daemon_claim_held', 'another stim-daemon holds the claim; exiting');
     writer.close();
