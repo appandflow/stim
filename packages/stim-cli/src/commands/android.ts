@@ -22,6 +22,7 @@ import {
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
+  observeBuildCleanup,
   runFailureRecord,
   startBuildProgress,
   tapBuildLog,
@@ -745,6 +746,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     emit,
   } = androidSlotOptions(options);
   const progress = options.progress ?? NO_BUILD_PROGRESS;
+  const onReclaim = observeBuildCleanup(progress);
 
   const slot = validateDeviceSlot(options.slot);
   const started = now();
@@ -1010,7 +1012,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
         }
       : {}),
     localSelectors,
-    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env }),
+    checkBudget: (args) => (options.checkBudget ?? budgetGate)({ ...args, env: context.env, onReclaim }),
     note: out,
     phase,
     log: (entry) => writer.write(entry),
@@ -1103,6 +1105,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
   async function prepareMetro(): Promise<RuntimePreparationResult<MobileRuntimePreparation>> {
     if (metroCheck) {
       const gate = await ensureDevServer({
+        onReclaim,
         env: context.env,
         root,
         port: reservedPort,

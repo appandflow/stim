@@ -1517,9 +1517,14 @@ RULES
                    gone -- the run was killed, and the next run replaces the
                    record; "unknown" when the claim set cannot be resolved.
                    Never treat a stale record as a build in progress.
-  phase            prepare | cache-lookup | wait | prebuild | pods |
+  phase            prepare | cleanup | cache-lookup | wait | prebuild | pods |
                    compile | device | install | launch. prepare covers
-                   settings and Metro; wait is waiting on another
+                   settings and Metro; cleanup covers an acting local
+                   budget-reclaim plan, including remeasurement, and
+                   restores the interrupted phase on success. Cleanup has
+                   no learned duration; elapsed time and history retain it,
+                   while estimates/progress comparisons exclude it and
+                   pause during cleanup. wait is waiting on another
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
                    before the cache lookup is prepare time. device starts
@@ -1987,7 +1992,9 @@ RULES
   offloadedRuns, offloadedRunMs and lastOffloadHost once a remote machine
   compiled one. An offloaded run is a miss but not a cold run, so the cold
   average, time saved and build estimates stay local. Milliseconds are
-  integers.
+  integers. Optional coldCleanupMs, hitCleanupMs and offloadedCleanupMs
+  carry the cleanup within those raw totals; comparison averages and cache
+  credit subtract it.
 
 CAPACITY REFUSALS
   capacityRefusals?: [{ at, kind: "device", platform: "ios" | "android",

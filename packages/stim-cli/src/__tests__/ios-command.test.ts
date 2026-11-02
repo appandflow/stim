@@ -760,6 +760,11 @@ describe('the Metro gate', () => {
         resolveProjectMetro: async () => ({ missing: true }),
         startDevServer: async (args) => {
           starts.push(args);
+          const interrupted = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase;
+          args.onReclaim?.('start');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe('cleanup');
+          args.onReclaim?.('complete');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe(interrupted);
           return devServerStarted();
         },
       },
@@ -3821,6 +3826,9 @@ describe('concurrency limits', () => {
       {
         budgetGate: async (args) => {
           gate.root = args.root;
+          args.onReclaim?.('start');
+          args.onReclaim?.('failed');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe('cleanup');
           return { reclaimed, refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' } };
         },
       },
@@ -3835,7 +3843,19 @@ describe('concurrency limits', () => {
   test('a run that reclaimed first reports the steps in its success payload', async () => {
     reserve();
     const reclaimed = [{ step: 'workspace-outputs' as const, targets: ['/w/b'], failures: 0, freedMb: 2048 }];
-    const { logs, exitCode } = await run({ json: true }, { budgetGate: async () => ({ reclaimed, refusal: null }) });
+    const { logs, exitCode } = await run(
+      { json: true },
+      {
+        budgetGate: async (args) => {
+          const interrupted = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase;
+          args.onReclaim?.('start');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe('cleanup');
+          args.onReclaim?.('complete');
+          expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe(interrupted);
+          return { reclaimed, refusal: null };
+        },
+      },
+    );
     expect(exitCode).toBe(null);
     expect(parseFirst(logs)).toMatchObject({ bundleId: expect.any(String), reclaimed });
   });

@@ -128,12 +128,12 @@ public struct LedgerPhase: Identifiable, Hashable, Sendable {
 
 extension LedgerBuild {
   private static let localOrder = [
-    "prepare", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch",
+    "prepare", "cleanup", "cache-lookup", "wait", "prebuild", "pods", "compile", "device", "install", "launch",
   ]
   private static let machineOrder = ["sync", "deps", "prebuild", "pods", "build", "fetch"]
 
   private static let titles: [String: String] = [
-    "prepare": "Prepare", "cache-lookup": "Cache lookup", "wait": "Waiting for another build",
+    "prepare": "Prepare", "cleanup": "Cleanup", "cache-lookup": "Cache lookup", "wait": "Waiting for another build",
     "prebuild": "Prebuild", "pods": "CocoaPods", "compile": "Compile", "device": "Device",
     "install": "Install", "launch": "Launch", "sync": "Sync", "deps": "Dependencies", "build": "Build",
     "fetch": "Fetch",

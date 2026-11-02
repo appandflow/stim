@@ -15,6 +15,7 @@ import { deviceSlotFileKey, parseDeviceSlotOption, validateDeviceSlot } from '..
 import { cancelledFailure, runCancellation, runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import {
   NO_BUILD_PROGRESS,
+  observeBuildCleanup,
   runFailureRecord,
   startBuildProgress,
   tapBuildLog,
@@ -400,6 +401,7 @@ async function runIos(
 ): Promise<IosRunCompletion | null> {
   const slot = validateDeviceSlot(opts.slot);
   let d = iosSlotDeps({ ...DEFAULT_DEPS, ...overrides }, slot);
+  const onReclaim = observeBuildCleanup(progress);
   const json = Boolean(opts.json);
   const metroCheck = opts.metroCheck !== false;
 
@@ -770,6 +772,7 @@ async function runIos(
       remoteSelection.budget,
       simSnapshot,
       context.env,
+      onReclaim,
     );
     reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
@@ -959,6 +962,7 @@ async function runIos(
           note,
           resolve: d.resolveProjectMetro,
           start: d.startDevServer,
+          onReclaim,
           readState: d.readWorkspaceState,
         });
         reclaimed = [...reclaimed, ...gate.reclaimed];

@@ -336,6 +336,8 @@ export interface ReclaimedStep {
   freedMb?: number;
 }
 
+export type ReclaimObserver = (state: 'start' | 'complete' | 'failed') => void;
+
 interface StepContext {
   root: string;
   cwd?: string;
@@ -713,6 +715,7 @@ export async function enforceBudget(
     cwd,
     signal,
     operation,
+    onReclaim,
   }: {
     root: string;
     note: (line: string) => void;
@@ -723,6 +726,7 @@ export async function enforceBudget(
     cwd?: string;
     signal?: AbortSignal;
     operation?: StimContext;
+    onReclaim?: ReclaimObserver;
   },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<BudgetOutcome | { status: 'invalid'; refusal: BudgetRefusal }> {
@@ -762,65 +766,72 @@ export async function enforceBudget(
       ),
     );
   }
-  const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true, env });
-  const gcResults = gcLog && createGcResults(gcLog.record);
-  for (const step of plan) {
-    signal?.throwIfAborted();
-    if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
-    const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
-    const result = await deps.step(step, {
-      root,
-      cwd,
-      env,
-      dryRun,
-      note,
-      record: gcResults?.record,
-      now: deps.now(),
-      freeMb: lowestFree(measure.volumes),
-      diskRecovered: async () =>
-        budgetShortfalls(budget, {
-          volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
-          memory: null,
-        }).disk.length === 0,
-      signal,
-      operation,
-    });
-    signal?.throwIfAborted();
-    if (!dryRun) {
-      simSnapshot?.invalidate();
-      measure = await measureNow();
-      short = budgetShortfalls(budget, measure);
+  let completed = false;
+  try {
+    if (plan.length) onReclaim?.('start');
+    const gcLog = dryRun ? null : openGcLog({ trigger: 'budget', holdKept: true, env });
+    const gcResults = gcLog && createGcResults(gcLog.record);
+    for (const step of plan) {
+      signal?.throwIfAborted();
+      if (!dryRun && (!overBudget(short) || (DISK_ONLY.includes(step) && short.disk.length === 0))) break;
+      const freeBefore = measure.volumes.reduce((sum, v) => sum + v.freeMb, 0);
+      const result = await deps.step(step, {
+        root,
+        cwd,
+        env,
+        dryRun,
+        note,
+        record: gcResults?.record,
+        now: deps.now(),
+        freeMb: lowestFree(measure.volumes),
+        diskRecovered: async () =>
+          budgetShortfalls(budget, {
+            volumes: await (deps.volumesAsync?.(paths) ?? deps.volumes(paths)),
+            memory: null,
+          }).disk.length === 0,
+        signal,
+        operation,
+      });
+      signal?.throwIfAborted();
+      if (!dryRun) {
+        simSnapshot?.invalidate();
+        measure = await measureNow();
+        short = budgetShortfalls(budget, measure);
+      }
+      if (result.targets.length === 0 && result.failures === 0) continue;
+      const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
+      reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
+      const outcome = dryRun
+        ? result.targets.join(', ')
+        : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
+      note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
     }
-    if (result.targets.length === 0 && result.failures === 0) continue;
-    const freedMb = Math.max(0, Math.round(measure.volumes.reduce((sum, v) => sum + v.freeMb, 0) - freeBefore));
-    reclaimed.push({ step, ...result, ...(dryRun ? {} : { freedMb }) });
-    const outcome = dryRun
-      ? result.targets.join(', ')
-      : `${result.targets.length}${result.failures ? `, ${result.failures} failed` : ''} (${formatSpace(freedMb)} freed)`;
-    note(chalk.dim(phaseLine('budget', `${STEP_ACTIONS[step]}: ${outcome}`)));
+    if (!dryRun && short.hardFloor.length) {
+      const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');
+      const users = await deps.usage(env, signal, operation);
+      return {
+        status: 'refused',
+        reclaimed,
+        refusal: {
+          code: 'STIM_LOW_DISK',
+          message:
+            `Only ${tight} is free, below the ${formatSpace(budget.hardFloorDiskMb)} hard floor (budget.hardFloorDiskGb)` +
+            `${reclaimed.length ? ' after reclaiming what Stim safely could' : ''}, so this run could fill the disk.` +
+            (users.length ? ` Largest uses: ${users.join('; ')}.` : ''),
+          remedy: LOW_DISK_REMEDY,
+        },
+      };
+    }
+    if (!dryRun && overBudget(short)) {
+      note(
+        chalk.yellow(phaseLine('budget', `still over budget: ${describeShortfall(budget, measure, short).join('; ')}`)),
+      );
+    }
+    completed = true;
+    return { status: 'ok', reclaimed, budget, measure, short };
+  } finally {
+    if (plan.length) onReclaim?.(completed ? 'complete' : 'failed');
   }
-  if (!dryRun && short.hardFloor.length) {
-    const tight = short.hardFloor.map((v) => `${formatSpace(v.freeMb)} on ${v.volume}`).join(' and ');
-    const users = await deps.usage(env, signal, operation);
-    return {
-      status: 'refused',
-      reclaimed,
-      refusal: {
-        code: 'STIM_LOW_DISK',
-        message:
-          `Only ${tight} is free, below the ${formatSpace(budget.hardFloorDiskMb)} hard floor (budget.hardFloorDiskGb)` +
-          `${reclaimed.length ? ' after reclaiming what Stim safely could' : ''}, so this run could fill the disk.` +
-          (users.length ? ` Largest uses: ${users.join('; ')}.` : ''),
-        remedy: LOW_DISK_REMEDY,
-      },
-    };
-  }
-  if (!dryRun && overBudget(short)) {
-    note(
-      chalk.yellow(phaseLine('budget', `still over budget: ${describeShortfall(budget, measure, short).join('; ')}`)),
-    );
-  }
-  return { status: 'ok', reclaimed, budget, measure, short };
 }
 
 export async function peekBudget(
@@ -849,6 +860,7 @@ export async function budgetGate(
     env?: NodeJS.ProcessEnv;
     simSnapshot?: IosSimSnapshot;
     signal?: AbortSignal;
+    onReclaim?: ReclaimObserver;
   },
   overrides: Partial<BudgetDeps> = {},
 ): Promise<{ reclaimed: ReclaimedStep[]; refusal: BudgetRefusal | null }> {

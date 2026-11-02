@@ -1,3 +1,4 @@
+import type { ReclaimObserver } from '../budget.ts';
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { formatElapsed, plural } from '../command-output.ts';
@@ -117,6 +118,18 @@ export interface BuildProgress {
   /** The SwiftPM step total the build reported, or null when it reported none. */
   steps(): number | null;
   clear(): void;
+}
+
+export function observeBuildCleanup(progress: BuildProgress): ReclaimObserver {
+  let interrupted: BuildPhase | null = null;
+  return (state) => {
+    if (state === 'start') {
+      interrupted = progress.phase();
+      progress.step('cleanup');
+    } else if (state === 'complete' && interrupted) {
+      progress.step(interrupted);
+    }
+  };
 }
 
 export const NO_BUILD_PROGRESS: BuildProgress = {
@@ -754,6 +767,7 @@ export function estimateBuild(
   const phaseMs: Partial<Record<BuildPhase, number>> = {};
   const planned: BuildPhase[] = [];
   for (const phase of BUILD_PHASES) {
+    if (phase === 'cleanup') continue;
     const durations = samples.flatMap((sample) => (phase in sample.phases ? [sample.phases[phase]!] : []));
     const ms = median(durations);
     if (ms === null) continue;
@@ -762,7 +776,7 @@ export function estimateBuild(
   }
   return {
     outcome,
-    expectedMs: median(samples.map((sample) => sample.durationMs)),
+    expectedMs: median(samples.map((sample) => Math.max(0, sample.durationMs - (sample.phases.cleanup ?? 0)))),
     basis: samples.length,
     phaseMs,
     planned,
@@ -870,9 +884,9 @@ export function buildStatusLine(report: BuildReport, now: number): string {
   const activity = report.activity ? ` (${activityText(report.activity, now)})` : '';
   const head = `build: ${report.platform}${slot} ${report.phase}${activity}${waiting}${remote}, ${formatElapsed(elapsedMs)} elapsed`;
   if (report.state === 'unknown') return `${head} (its native-run claim cannot be resolved, so it may not be running)`;
-  if (report.expectedMs === null) return head;
+  if (report.expectedMs === null || report.phase === 'cleanup') return head;
   const basis = `median of ${plural(report.basis, `${report.outcome} run`)}`;
-  const remainingMs = report.expectedMs - elapsedMs;
+  const remainingMs = report.expectedMs - Math.max(0, elapsedMs - (report.completedPhaseMs?.cleanup ?? 0));
   return remainingMs > 0
     ? `${head} -- ${remainingText(remainingMs)} (${basis})`
     : `${head} (usually ~${formatElapsed(report.expectedMs)}, ${basis})`;

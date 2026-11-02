@@ -107,11 +107,11 @@ function bucketLine(platform: string, bucket: StatsBucket): string {
   const cells = [
     `${bucket.runs} runs${bucket.failed > 0 ? ` (${bucket.failed} failed)` : ''}`,
     `${bucket.hits} hits (${finished > 0 ? `${Math.round((bucket.hits / finished) * 100)}%` : '-'})`,
-    `cold run ${average(bucket.coldRunMs, bucket.coldRuns)} avg`,
-    `hit run ${average(bucket.hitRunMs, bucket.hitRuns)} avg`,
+    `cold run ${average(bucket.coldRunMs - (bucket.coldCleanupMs ?? 0), bucket.coldRuns)} avg`,
+    `hit run ${average(bucket.hitRunMs - (bucket.hitCleanupMs ?? 0), bucket.hitRuns)} avg`,
     ...(bucket.offloadedRuns
       ? [
-          `offloaded run ${average(bucket.offloadedRunMs ?? 0, bucket.offloadedRuns)} avg (${bucket.offloadedRuns}, last on ${bucket.lastOffloadHost ?? '?'})`,
+          `offloaded run ${average((bucket.offloadedRunMs ?? 0) - (bucket.offloadedCleanupMs ?? 0), bucket.offloadedRuns)} avg (${bucket.offloadedRuns}, last on ${bucket.lastOffloadHost ?? '?'})`,
         ]
       : []),
     `saved ~${formatLongDuration(bucket.timeSavedMs)} (estimated)`,

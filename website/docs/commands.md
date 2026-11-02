@@ -1532,7 +1532,7 @@ and an estimate of the time left:
 
 In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
-`phase` is one of `prepare`, `cache-lookup`, `wait`, `prebuild`, `pods`,
+`phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`.
 `device` starts once the app is ready and covers waiting for the device (its
@@ -1551,6 +1551,10 @@ cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
+`cleanup` covers an acting local budget-reclaim plan, including its resource
+remeasurements, and restores the interrupted phase on success. It has no learned
+duration. Raw elapsed time and history include cleanup; estimates and progress
+comparisons exclude it and pause while cleanup is current.
 `expectedMs` and `expectedPhaseMs` are
 medians of this project's last successful runs with that outcome, and `basis`
 counts the runs behind `expectedMs`. Both are `null` until the project has such
@@ -1793,7 +1797,9 @@ machine section prints. There is no reset flag: delete that file to start over.
 compiled or installed pods; those two size the progress line a long build
 prints (`build       still compiling (1m00s of ~3m10s)`). The saved figure is
 an estimate: each cache hit is credited this project's mean cold run at that
-moment, minus its own duration, floored at zero.
+moment, minus its own duration, floored at zero. These comparisons exclude
+cleanup. Raw run totals remain unchanged; optional `coldCleanupMs`,
+`hitCleanupMs` and `offloadedCleanupMs` carry the cleanup within each total.
 
 Every run that compiles also records its placement: where it built (`here`,
 `offloaded`, or `fell-back` when it tried a machine and built here), the

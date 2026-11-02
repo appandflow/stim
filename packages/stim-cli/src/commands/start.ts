@@ -90,7 +90,7 @@ import {
   type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { budgetGate, type ReclaimedStep } from '../budget.ts';
+import { budgetGate, type ReclaimedStep, type ReclaimObserver } from '../budget.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
@@ -528,6 +528,7 @@ function portBindRace(lines: readonly string[], port: number): boolean {
 }
 
 export interface StartDevServerRequest {
+  onReclaim?: ReclaimObserver;
   root: string;
   settings: SettingsObject;
   settingsContext: ProjectSettingsContext;
@@ -559,6 +560,7 @@ export async function startDevServer(
     remote: remoteFlag = false,
     resetCache = false,
     hostedPorts,
+    onReclaim,
     out,
     note,
   }: StartDevServerRequest,
@@ -690,7 +692,7 @@ export async function startDevServer(
       }, operationSignal);
 
       const gateBudget = async () => {
-        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal });
+        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal, onReclaim });
         reclaimed = [...reclaimed, ...budget.reclaimed];
         if (budget.refusal) return fail(budget.refusal);
       };
