@@ -393,7 +393,7 @@ removes a worktree that is idle: no Stim command has used it for
 `--older-than` days, or 7 days without that option. Either way, gc keeps a
 worktree that is the source checkout, bare, not registered in a `STIM_HOME`-scoped
 home (the registry of a scratch home does not list the worktrees of other
-homes, so it never touches them), locked, holds another worktree
+homes, so it does not remove them or clear their `node_modules` and build outputs), locked, holds another worktree
 (`stim worktree remove` refuses that too), in use, unpushed, or has
 initialized submodules. A dirty worktree (untracked files count, except
 watchman's `.watchman-cookie-*` files) is kept unless it is finished, in which

@@ -589,7 +589,7 @@ async function porcelainOf(
   return lines?.length ? lines : null;
 }
 
-function listedRoots(): string[] {
+export function listedRoots(): string[] {
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
   return [...new Set([...registered, ...recorded])];
