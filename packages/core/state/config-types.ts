@@ -105,6 +105,7 @@ export interface StimConfig {
   caches?: { buildCache?: unknown; metroCache?: unknown };
   hosting?: { agentDriver?: unknown };
   debug?: { logs?: unknown };
+  daemon?: { enabled?: unknown };
   server?: {
     buildsPaused?: unknown;
     devicesPaused?: unknown;

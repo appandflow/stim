@@ -961,6 +961,15 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
+    key: 'daemon.enabled',
+    type: BOOLEAN,
+    scopes: MACHINE,
+    default: false,
+    env: 'STIM_DAEMON',
+    description:
+      'Run one background daemon per Stim home, started by start, ios and android and gone once nothing runs there: it owns the idle timers, stopping a workspace dev server and its owned devices together, also with no dev server, and wakes runs waiting for a build slot',
+  },
+  {
     key: 'debug.logs',
     type: { kind: 'boolean' },
     scopes: MACHINE,
