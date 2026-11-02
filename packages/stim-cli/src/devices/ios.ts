@@ -721,12 +721,17 @@ export async function eraseIosSim(udid: string, operation?: StimContext): Promis
   });
 }
 
+// Adoption resets run right after a boot, before SimSlim trims the services
+// that slow it: `privacy reset all` was measured at 52 s there, so the
+// general simctl deadline killed it.
+const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;
+
 export async function resetIosPrivacy(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'privacy', udid, 'reset', 'all'], SIMCTL_RESET_OPTIONS);
 }
 
 export async function resetIosKeychain(udid: string): Promise<void> {
-  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_OPTIONS);
+  await getExecutor().runFileAsync('xcrun', ['simctl', 'keychain', udid, 'reset'], SIMCTL_RESET_OPTIONS);
 }
 
 const CLEARED_CONTAINER_DIRS = ['Documents', 'Library', 'tmp', 'SystemData'];
