@@ -129,7 +129,6 @@ export function provisionXcodebuildArgs({
     project,
     scheme,
     configuration,
-    sdk: 'iphoneos',
     udid,
     derivedDataPath,
     extraArgs: [

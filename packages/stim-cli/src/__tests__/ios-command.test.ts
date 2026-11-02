@@ -10277,10 +10277,9 @@ describe('registered iOS project recipes', () => {
           configuration,
           '-destination',
           `id=${UDID}`,
-          '-sdk',
-          'iphonesimulator',
         ]),
       );
+      expect(requests[0]!.args).not.toContain('-sdk');
       expect(first.calls.args.installIosApp).toMatchObject({ udid: UDID });
       expect(first.calls.args.launchIosApp).toMatchObject({ bundleId: 'org.example.native', metroPort: null });
       expect(first.calls.order).toContain('verifyReleaseLaunch');
