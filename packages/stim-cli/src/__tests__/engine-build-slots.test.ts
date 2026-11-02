@@ -158,6 +158,28 @@ describe('acquireBuildSlot', () => {
     expect(liveWaiters('build')).toEqual([]);
   });
 
+  test('a slot whose holder cannot be identified refuses at once when no other slot is busy, never a silent wait', async () => {
+    const planted = plantClaim(
+      buildSlotPath(0),
+      'exclusive',
+      { pid: 4242, processToken: 'nonsense' },
+      {
+        details: { index: 0 },
+      },
+    );
+    await expect(
+      acquireBuildSlot({
+        max: 1,
+        sleep: async () => {
+          throw new Error('an unresolved slot must not make the build wait');
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_CLAIM_REFUSED',
+      message: expect.stringContaining(claimRemoveCommand(planted)),
+    });
+  });
+
   test('a build whose queue position does not improve for 10 minutes refuses with the queue state', async () => {
     const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
     assert(held);

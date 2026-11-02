@@ -30,6 +30,7 @@ import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { readHostMemoryPressureAsync } from '../../host-memory.ts';
 import { memoryPressure } from '../../daemon/pressure.ts';
+import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 
 export const WATCHMAN_KIND = 'watchman';
@@ -823,6 +824,8 @@ export async function collectMemoryReport(
   return report;
 }
 
+const DAEMON_FRESH_MS = 3 * 60_000;
+
 async function manualDaemonsKept(
   operation?: StimContext,
   env = operation?.env ?? process.env,
@@ -832,13 +835,18 @@ async function manualDaemonsKept(
   if (entry && !sameProcess(entry, await hostRows(operation))) return 'the process changed or exited since the check';
   const birth = entry ? captureProcessIdentity(entry.pid) : null;
   if (entry && !birth?.ok) return 'the process identity could not be verified';
+  const settings = resolveMaintenanceSettings(undefined, env);
+  if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
   const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
+  const snapshot = readDaemonSnapshot();
+  const now = Date.now();
+  const fresh = snapshot && now - Date.parse(snapshot.tickAt) <= DAEMON_FRESH_MS ? snapshot.pressure : undefined;
   const pressure = memoryPressure(
     { level, availableBytes: process.platform === 'darwin' ? null : freemem(), totalBytes: totalmem() },
-    readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
-    Date.now(),
+    snapshot?.pressure?.memoryWarningSince ?? null,
+    now,
   );
-  if (pressure.level === 'normal')
+  if (pressure.level === 'normal' && (fresh?.memory ?? 'normal') === 'normal')
     return process.platform === 'darwin' && level === null
       ? 'macOS memory pressure could not be read'
       : 'memory is under the sustained-pressure threshold: macOS warning for 10 minutes, critical, or under 10% of RAM available';

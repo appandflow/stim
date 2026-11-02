@@ -48,7 +48,10 @@ export interface DaemonPressure {
 
 /** One action of the pressure ladder or the dormant stage, as the daemon logged it. */
 export interface DaemonLadderAction {
-  /** The ladder rung, 1 to 6; the dormant stage reached by `idle.dormantDays` is rung 4. */
+  /**
+   * The ladder rung, 1 to 6; the dormant stage reached by `idle.dormantDays` is rung 4, and the admission reclaim of
+   * a device for a run waiting to boot is 0.
+   */
   rung: number;
   kind: string;
   target: string;

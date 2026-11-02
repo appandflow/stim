@@ -769,7 +769,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 'warning',
     env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
     description:
-      "Not read: the stim-daemon's pressure level counts macOS memory pressure warning for 10 minutes, or critical",
+      "off: automatic maintenance names no memory culprits and stim gc --cache gradle-daemons never stops a daemon for memory; otherwise the stim-daemon's memory level (warning for 10 minutes, or critical) decides",
   },
   {
     key: 'maintenance.memoryWarningMinutes',

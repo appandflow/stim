@@ -187,7 +187,7 @@ export async function acquireBuildSlot({
       if (automatic) requireAutomaticMachine('build', 'local');
       const waiters = liveWaiters('build');
       const position = queuePosition(waiters, ticket);
-      if (position <= max - busySlots(max).length) {
+      if (position <= max - busySlots(max).filter((slot) => slot.alive).length) {
         const got = tryAcquireBuildSlot({ max, root, logFile });
         if (got) return { ...got, slotWaitMs: ticket ? Math.max(0, Math.round(now() - started)) : 0 };
       }

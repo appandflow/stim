@@ -31,6 +31,7 @@ export {
   configCorruptRepair,
   findEnclosingWorktreeRoot,
   admissionLimits,
+  derivedDeviceCap,
   getConcurrencyLimits,
   getConfigPath,
   getPlatformDeviceLimits,

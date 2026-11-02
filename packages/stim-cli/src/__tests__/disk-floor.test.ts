@@ -33,7 +33,8 @@ afterEach(() => {
   delete process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB;
 });
 
-const gate = (env: NodeJS.ProcessEnv = process.env) => diskFloorGate({ root: home, note: () => {}, env });
+const gate = (env: NodeJS.ProcessEnv = process.env) =>
+  diskFloorGate({ root: home, note: () => {}, env: { ...env, HOME: home, USERPROFILE: home } });
 
 describe('with a daemon holding the home', () => {
   beforeEach(() => {

@@ -11,7 +11,7 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { saveConfig, loadConfig } from '../workspace/config.ts';
+import { derivedDeviceCap, saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -436,7 +436,7 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
 });
 
-test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage under set and derived caps', async () => {
   saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
   const cpus = availableParallelism();
   const before = (loadavg()[1] ?? 0) / cpus;
@@ -448,7 +448,7 @@ test('status --json reports the machine load against server.maxLoadPerCore, and 
   expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
   expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
   expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
-  expect(capacity).not.toHaveProperty('devices');
+  expect(capacity.devices).toEqual({ max: derivedDeviceCap(), inUse: 0, holders: [] });
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {
