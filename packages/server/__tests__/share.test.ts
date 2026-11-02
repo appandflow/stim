@@ -419,6 +419,10 @@ describe('a web share', () => {
     expect(f.hub.isIdle()).toBe(false);
     expect(f.idle).toBe(0);
 
+    vi.advanceTimersByTime(30_000);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(f.idle).toBe(0);
+
     f.failRoute.close = false;
     vi.advanceTimersByTime(30_000);
     await vi.waitFor(() => expect(f.idle).toBe(1));

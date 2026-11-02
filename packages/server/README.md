@@ -2061,8 +2061,9 @@ holds an exclusive ownership claim at `$STIM_HOME/server/share-server` with its
 port for as long as it runs, so `stim share stop` stops only a server it
 started, and it exits once its last share has ended and its route is removed,
 after a start it refused leaves no share, or when no share starts within 2
-minutes, but never while a route it could not remove is still public (it
-retries the removal every 30 seconds). When its Stim home does not answer at
+minutes, but never while a route it could not remove is still public. Every
+stim-server retries removing such a route every 30 seconds once no share is
+live or starting. When its Stim home does not answer at
 startup, it does not wait: it logs why and exits, so `stim share` refuses with
 `STIM_SERVER_NOT_RUNNING` and the log path. Viewers see only generic messages
 ("This share has ended.", "Control is not available right now."); the reasons

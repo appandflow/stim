@@ -260,7 +260,15 @@ export class ShareHub {
   private checkIdle(): void {
     if (this.closed) return;
     if (this.isIdle()) return this.deps.idle?.();
-    if (this.shares.size || this.listener || this.retrying || this.deps.route.stranded() === null) return;
+    if (
+      this.shares.size ||
+      this.listener ||
+      this.starting ||
+      this.opening ||
+      this.retrying ||
+      this.deps.route.stranded() === null
+    )
+      return;
     this.retrying = setTimeout(() => {
       this.retrying = null;
       void this.deps.route

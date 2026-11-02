@@ -102,6 +102,7 @@ export class ShareRoute {
   private route: FunnelRoute | null = null;
   private leftover: { claim: ClaimHandle; route: FunnelRoute } | null = null;
   private recovering: Promise<void> = Promise.resolve();
+  private removing: Promise<void> | null = null;
   private readonly root: string;
   private readonly tool: FunnelTool;
 
@@ -169,11 +170,17 @@ export class ShareRoute {
   }
 
   /** Removes the route this server added and could not remove before, if any, and releases its claim. */
-  async removeStranded(): Promise<void> {
-    if (!this.leftover) return;
-    await removeIfHeld(this.tool, this.leftover.route);
-    releaseClaim(this.leftover.claim);
-    this.leftover = null;
+  removeStranded(): Promise<void> {
+    this.removing ??= (async () => {
+      const leftover = this.leftover;
+      if (!leftover) return;
+      await removeIfHeld(this.tool, leftover.route);
+      releaseClaim(leftover.claim);
+      if (this.leftover === leftover) this.leftover = null;
+    })().finally(() => {
+      this.removing = null;
+    });
+    return this.removing;
   }
 
   /** The loopback port a route this server added and could not remove yet still points at, or null. */

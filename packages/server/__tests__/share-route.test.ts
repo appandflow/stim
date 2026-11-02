@@ -131,6 +131,41 @@ describe('the share Funnel route claim', () => {
     expect(route.stranded()).toBeNull();
   });
 
+  it('keeps tracking a new stranded route when an earlier removal finishes after it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const funnel = tool({});
+    let unreadable = false;
+    const read = funnel.serveConfig;
+    funnel.serveConfig = async () => {
+      if (unreadable) throw new Error('tailscale timed out');
+      return read();
+    };
+    const add = funnel.add;
+    const failingAdd = async (target: { port: number; target: number }) => {
+      await add(target);
+      unreadable = true;
+      throw new Error('funnel --bg timed out');
+    };
+    funnel.add = failingAdd;
+    const route = new ShareRoute(root, funnel);
+    await expect(route.open(51234)).rejects.toThrow();
+    unreadable = false;
+
+    let release = () => {};
+    const remove = funnel.remove;
+    funnel.remove = async (target) => {
+      await new Promise<void>((resolve) => (release = resolve));
+      await remove(target);
+    };
+    const retry = route.removeStranded();
+    const reopen = route.open(51236).catch(() => {});
+    await new Promise((resolve) => setImmediate(resolve));
+    funnel.remove = remove;
+    release();
+    await Promise.all([retry, reopen]);
+    expect(route.stranded()).toBe(51236);
+  });
+
   it('refuses without the Funnel capability and never touches the serve config', async () => {
     const funnel = tool({});
     funnel.status = async () => ({ Self: { DNSName: `${HOST}.`, CapMap: { https: null } } });

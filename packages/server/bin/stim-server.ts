@@ -296,6 +296,7 @@ async function serve(
       console.error(
         `stim-server: not serving web shares, because ${startup.state === 'degraded' ? startup.reason : 'it did not start'}; stopping.`,
       );
+      process.exitCode = 1;
       shutdown();
     }
   }
