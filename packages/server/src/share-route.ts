@@ -101,12 +101,19 @@ export class ShareRoute {
   private claim: ClaimHandle | null = null;
   private route: FunnelRoute | null = null;
   private leftover: { claim: ClaimHandle; route: FunnelRoute } | null = null;
+  private recovering: Promise<void> = Promise.resolve();
   private readonly root: string;
   private readonly tool: FunnelTool;
 
   constructor(root: string, tool: FunnelTool) {
     this.root = root;
     this.tool = tool;
+  }
+
+  /** Removes a route a crashed stim-server left; runs one at a time, so startup and a first share do not race. */
+  recover(): Promise<void> {
+    this.recovering = this.recovering.catch(() => {}).then(() => recoverShareRoute(this.root, this.tool));
+    return this.recovering;
   }
 
   async open(target: number): Promise<OpenedRoute> {
@@ -126,7 +133,7 @@ export class ShareRoute {
       releaseClaim(this.leftover.claim);
       this.leftover = null;
     }
-    await recoverShareRoute(this.root, this.tool);
+    await this.recover();
     const port = freeFunnelPort(await this.tool.serveConfig(), allowed);
     if (port === null) {
       throw new Error(

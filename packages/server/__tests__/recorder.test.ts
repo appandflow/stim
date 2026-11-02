@@ -3,11 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FeedListener } from '../src/feed.ts';
 import type { Device, FramePool } from '../src/frames.ts';
-import { Recorder } from '../src/recorder.ts';
+import { Recorder, targetKey } from '../src/recorder.ts';
 
-const SHARE_LEASE = '2026-11-02T18:26:10.000Z';
-
-function status(since: string) {
+function status(basis: string[]) {
   return {
     environments: [
       {
@@ -16,7 +14,7 @@ function status(since: string) {
           udid: 'SIM-1',
           owned: true,
           state: 'Booted',
-          activity: { state: 'driven', driver: { tool: 'stim device lock', since }, basis: [] },
+          activity: { state: 'driven', driver: { tool: 'stim device lock', since: '2026-11-02T18:26:10.000Z' }, basis },
         },
       },
     ],
@@ -37,9 +35,10 @@ describe('recording a driven device', () => {
   });
 
   it.each([
-    ['records a device driven through another lease', '2026-11-02T18:00:00.000Z', 1],
-    ['does not record a device driven only through a web share control lease', SHARE_LEASE, 0],
-  ])('%s', (_name, since, recordings) => {
+    ['records a locked device no web share controls', false, ['device-lock'], 1],
+    ['does not record a device a web share controls through its lease alone', true, ['device-lock'], 0],
+    ['records a shared device another tool also drives', true, ['device-lock', 'driver-process'], 1],
+  ])('%s', (_name, shared, basis, recordings) => {
     const recorded: Device[] = [];
     const frames = {
       record: (device: Device) => {
@@ -51,10 +50,11 @@ describe('recording a driven device', () => {
     const recorder = new Recorder({
       frames,
       subscribeStatus: (listener: FeedListener) => {
-        listener.item(status(since) as never, '');
+        listener.item(status(basis) as never, '');
         return () => {};
       },
-      unrecordedLeases: () => new Set([SHARE_LEASE]),
+      unrecordedTargets: () =>
+        new Set(shared ? [targetKey({ workspace: '/work/app', platform: 'ios', slot: 'default' })] : []),
     });
     recorder.close();
     expect(recorded).toHaveLength(recordings);

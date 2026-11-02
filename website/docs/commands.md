@@ -1007,8 +1007,8 @@ Gives anyone a public, password-protected web link to watch the workspace's
 running app, and with `--control` to tap, type and press its buttons. The share
 runs inside this Stim home's stim-server and is served through Tailscale
 Funnel. Every share expires (60 minutes by default, at most 480) and ends with
-`stim share stop`, `stim stop`, `stim worktree remove`, its device, or
-stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when no stim-server
+`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
+device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when no stim-server
 runs and `STIM_SHARE_REFUSED` with the reason otherwise. See
 [Share a running app](./share.md) for the requirements and the security model.
 

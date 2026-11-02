@@ -2059,7 +2059,8 @@ http://127.0.0.1:<listener>` on the first Funnel port the node's
 `funnel-ports` capability allows that nothing in the serve config uses. It
 holds an exclusive ownership claim at `$STIM_HOME/server/share-route` with
 the port and target while the route exists, removes the route with
-`tailscale funnel --https=<port> off` when the last share ends, and on start
+`tailscale funnel --https=<port> off` when the last share ends, before it
+closes the listener, and on start
 removes a route a crashed server left, in each case only while that port holds
 exactly the recorded route. `stim-server setup` and `service` never enable
 Funnel.
@@ -2594,9 +2595,10 @@ The server records owned simulators, emulators and the Stim-owned Chrome page
 so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
 `driven`), or while a client has a `frames.subscribe` subscription to it. A
-device driven only through the lease a web share's control took is not
-recorded, and a web share viewer is not a subscription here. It records nothing else, holds no device awake and changes no device setting. To
-see drivers, it reads the status watch the server runs for as long as it
+device a web share controls, while that share's `stim device lock` lease is
+its only driver, is not recorded, and a web share viewer is not a
+subscription here. It records nothing else, holds no device awake and changes
+no device setting. To see drivers, it reads the status watch the server runs for as long as it
 runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live

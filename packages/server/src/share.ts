@@ -9,6 +9,7 @@ import { LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
 import type { ServerMessage } from './protocol.ts';
+import { targetKey } from './recorder.ts';
 import { endedPage, loginPage, viewerPage } from './share-page.ts';
 import type { OpenedRoute } from './share-route.ts';
 
@@ -67,6 +68,8 @@ export interface ShareDeps {
   route: { open: (target: number) => Promise<OpenedRoute>; close: () => Promise<void> };
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
+  /** Called when {@link ShareHub.unrecordedTargets} changed. */
+  recordingChanged?: () => void;
 }
 
 export interface StatusListener {
@@ -82,12 +85,20 @@ const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const PASSWORD_LENGTH = 16;
 const MAX_LOGIN_BYTES = 1024;
 const MAX_MESSAGE_BYTES = 4096;
-const MAX_LEASE_TIMES = 256;
+const MAX_SESSIONS = 32;
+const PING_MS = 30_000;
+/** How long status can still show a share's control lease after the share ends: the lease's own `--for`. */
+const LEASE_GRACE_MS = 2 * 60_000;
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
   android: ['back', 'home', 'app-switch'],
 };
+
+function closeServer(server: Server): void {
+  server.closeAllConnections();
+  server.close();
+}
 
 function digest(value: string): Buffer {
   return createHash('sha256').update(value).digest();
@@ -147,6 +158,7 @@ interface Share {
   controlSession: string | null;
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
+  recordKey: string | null;
   timer: NodeJS.Timeout;
   unwatch: () => void;
   ended: boolean;
@@ -160,10 +172,11 @@ export class ShareHub {
   private readonly deps: ShareDeps;
   private readonly limits: ShareLimits;
   private readonly shares = new Map<string, Share>();
-  private readonly leases = new Set<string>();
+  private readonly controlled = new Map<string, number>();
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
   private base: string | null = null;
+  private stranded: Server | null = null;
   private opening: Promise<string> | null = null;
   private closingRoute: Promise<void> = Promise.resolve();
   private closed = false;
@@ -195,9 +208,13 @@ export class ShareHub {
     } catch (cause) {
       return { code: 'action-failed', message: cause instanceof Error ? cause.message : String(cause) };
     }
-    if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    if (this.base !== base)
-      return { code: 'action-failed', message: 'The share listener closed while starting. Try again.' };
+    if (this.closed || this.base !== base) {
+      void this.teardown();
+      return {
+        code: 'action-failed',
+        message: this.closed ? 'stim-server is stopping.' : 'The share listener closed while starting. Try again.',
+      };
+    }
     const secret = token();
     const shown = password();
     const id = `w${this.next++}`;
@@ -219,6 +236,7 @@ export class ShareHub {
       controlSession: null,
       controlStarting: null,
       controlRetryAt: 0,
+      recordKey: null,
       timer: setTimeout(() => void this.end(share, 'This share expired.'), request.expiresMinutes * 60_000),
       unwatch: () => {},
       ended: false,
@@ -238,11 +256,11 @@ export class ShareHub {
   }
 
   /**
-   * `grantedAt` of the device leases shares took for control, kept after their sessions end because status shows the
-   * lease until its release lands, so their driving is never recorded.
+   * Recorder target keys of the simulators and emulators shares control, kept for the lease's duration after a share
+   * ends because status shows its lease until the release lands, so that lease alone never starts a recording.
    */
-  leaseTimes(): ReadonlySet<string> {
-    return this.leases;
+  unrecordedTargets(): ReadonlySet<string> {
+    return new Set(this.controlled.keys());
   }
 
   list(): ShareRow[] {
@@ -260,8 +278,11 @@ export class ShareHub {
 
   async close(): Promise<void> {
     this.closed = true;
+    await this.opening?.catch(() => {});
     await this.stop(null, 'stim-server stopped.');
-    await this.closingRoute;
+    await this.teardown();
+    if (this.stranded) closeServer(this.stranded);
+    this.stranded = null;
   }
 
   private row(share: Share): ShareRow {
@@ -316,9 +337,11 @@ export class ShareHub {
           const opened = await this.deps.route.open(address.port);
           this.listener = server;
           this.base = opened.url;
+          if (this.stranded) closeServer(this.stranded);
+          this.stranded = null;
           return opened.url;
         } catch (cause) {
-          server.close();
+          closeServer(server);
           throw cause;
         }
       })
@@ -344,18 +367,39 @@ export class ShareHub {
     }
     share.viewers.clear();
     this.deps.control.endFor(share.owner, null, message);
-    if (this.shares.size || !this.listener) return;
+    const key = share.recordKey;
+    if (key) {
+      setTimeout(() => {
+        const count = (this.controlled.get(key) ?? 1) - 1;
+        if (count > 0) this.controlled.set(key, count);
+        else this.controlled.delete(key);
+        this.deps.recordingChanged?.();
+      }, LEASE_GRACE_MS).unref?.();
+    }
+    await this.teardown();
+  }
+
+  /**
+   * Once no share is live, removes the Funnel route and only then closes the listener, so the public route never
+   * points at a free loopback port. A listener whose route could not be removed stays bound, answering 404, until a
+   * later route replaces it or the server stops.
+   */
+  private teardown(): Promise<void> {
+    if (this.shares.size || !this.listener) return this.closingRoute;
     const listener = this.listener;
     this.listener = null;
     this.base = null;
-    listener.closeAllConnections();
-    listener.close();
     this.closingRoute = this.closingRoute
       .then(() => this.deps.route.close())
-      .catch((cause: Error) => {
-        console.error(`stim-server: could not remove the share's Funnel route: ${cause.message}`);
-      });
-    await this.closingRoute;
+      .then(
+        () => closeServer(listener),
+        (cause: unknown) => {
+          console.error(`stim-server: could not remove the share's Funnel route: ${String(cause)}`);
+          if (this.stranded) closeServer(this.stranded);
+          this.stranded = listener;
+        },
+      );
+    return this.closingRoute;
   }
 
   private find(request: IncomingMessage): { share: Share; rest: string } | null {
@@ -434,6 +478,8 @@ export class ShareHub {
     }
     const session = token();
     share.sessions.add(digest(session).toString('hex'));
+    const [oldest] = share.sessions;
+    if (share.sessions.size > MAX_SESSIONS && oldest !== undefined) share.sessions.delete(oldest);
     const path = (request.url ?? '').replace(/login(?:\?.*)?$/, '');
     const maxAge = Math.max(1, Math.floor((share.expiresAt - now) / 1000));
     response.writeHead(303, {
@@ -497,11 +543,22 @@ export class ShareHub {
       },
     };
     share.viewers.add(viewer);
+    let alive = true;
+    socket.on('pong', () => {
+      alive = true;
+    });
+    const ping = setInterval(() => {
+      if (!alive) return socket.terminate();
+      alive = false;
+      socket.ping();
+    }, PING_MS);
+    ping.unref?.();
     socket.on('message', (data, binary) => {
       if (binary || !share.request.control) return;
       void this.input(share, viewer, data.toString());
     });
     socket.on('close', () => {
+      clearInterval(ping);
       viewer.stop();
       share.viewers.delete(viewer);
       if (share.viewers.size === 0 && share.controlSession) {
@@ -554,6 +611,11 @@ export class ShareHub {
     if (share.controlStarting) return share.controlStarting;
     if (Date.now() < share.controlRetryAt) return Promise.resolve(null);
     const { workspace, platform, slot, physical } = share.request;
+    if (!physical && !share.recordKey) {
+      share.recordKey = targetKey({ workspace, platform, slot });
+      this.controlled.set(share.recordKey, (this.controlled.get(share.recordKey) ?? 0) + 1);
+      this.deps.recordingChanged?.();
+    }
     share.controlStarting = this.deps.control
       .begin(
         share.owner,
@@ -574,12 +636,6 @@ export class ShareHub {
           return null;
         }
         share.controlSession = outcome.session;
-        const grantedAt = outcome.lease?.grantedAt;
-        if (grantedAt) {
-          this.leases.add(grantedAt);
-          const [oldest] = this.leases;
-          if (this.leases.size > MAX_LEASE_TIMES && oldest !== undefined) this.leases.delete(oldest);
-        }
         return outcome.session;
       })
       .finally(() => {

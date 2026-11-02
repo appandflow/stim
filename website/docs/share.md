@@ -95,14 +95,16 @@ control, viewer count and expiry, never their link or password.
   to taps, text and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
-  expiry, on `stim share stop`, `stim stop`, `stim worktree remove`, when its
-  device stops or changes, and when stim-server stops or restarts. Ending
-  closes its viewers' connections; the last share also removes the Funnel
-  route.
+  expiry, on `stim share stop`, `stim stop` (without `--slot`),
+  `stim worktree remove`, when its device stops or changes (so `stim stop
+--slot` ends a share of that slot), and when stim-server stops or restarts.
+  Ending closes its viewers' connections. The last share removes the Funnel
+  route first and only then closes the listener.
 - **Crash cleanup.** The route is recorded under an ownership claim in
   `$STIM_HOME/server/share-route`. When stim-server crashes, the next one
   removes the route on start, and only while the serve config still holds
-  exactly that route.
+  exactly that route. Until then, a route left by a crash stays public and
+  points at a free loopback port.
 
 ## Try it with an agent
 

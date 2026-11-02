@@ -1,4 +1,5 @@
 import { request } from 'node:http';
+import { connect as tcpConnect } from 'node:net';
 import { WebSocket } from 'ws';
 import type { Device, FrameListener } from '../src/frames.ts';
 import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
@@ -19,6 +20,7 @@ interface Fixture {
   inputs: unknown[];
   routeOpens: number[];
   routeCloses: number;
+  listenerBoundAtRouteClose: boolean[];
   status: (value: ReturnType<typeof payload>) => void;
 }
 
@@ -31,6 +33,7 @@ function fixture(): Fixture {
     inputs: [],
     routeOpens: [],
     routeCloses: 0,
+    listenerBoundAtRouteClose: [],
     status: (value) => {
       latest = value;
       for (const listener of listeners) listener.item(value as never);
@@ -71,6 +74,16 @@ function fixture(): Fixture {
       },
       close: async () => {
         f.routeCloses++;
+        const port = f.routeOpens.at(-1)!;
+        f.listenerBoundAtRouteClose.push(
+          await new Promise<boolean>((resolve) => {
+            const probe = tcpConnect(port, '127.0.0.1', () => {
+              probe.destroy();
+              resolve(true);
+            });
+            probe.once('error', () => resolve(false));
+          }),
+        );
       },
     },
     limits: { maxFailures: 3 },
@@ -239,8 +252,13 @@ describe('a web share', () => {
     await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
     expect(f.begins).toEqual([{ workspace: WORKSPACE, platform: 'ios' }]);
     expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.75 } }]);
-    expect(f.hub.leaseTimes()).toEqual(new Set(['lease-1']));
+    const key = JSON.stringify([WORKSPACE, 'ios', 'default']);
+    expect(f.hub.unrecordedTargets()).toEqual(new Set([key]));
     socket.close();
+    await f.hub.stop(WORKSPACE);
+    expect(f.hub.unrecordedTargets()).toEqual(new Set([key]));
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(f.hub.unrecordedTargets()).toEqual(new Set());
   });
 
   it('ends when stopped: closes viewers, stops capture and removes the route with the last share', async () => {
@@ -252,6 +270,7 @@ describe('a web share', () => {
     await closed;
     expect(f.subscribed[0]!.unsubscribed).toBe(true);
     expect(f.routeCloses).toBe(1);
+    expect(f.listenerBoundAtRouteClose).toEqual([true]);
     expect(f.hub.port).toBeNull();
     expect(f.hub.list()).toEqual([]);
   });

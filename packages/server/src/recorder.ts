@@ -75,19 +75,22 @@ interface Target extends FrameTarget {
   platform: RecordingPlatform;
 }
 
-function targetKey(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>): string {
+export function targetKey(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>): string {
   return JSON.stringify([target.workspace, target.platform, target.slot ?? 'default']);
 }
 
-function isDriven(activity: DeviceActivity | undefined, unrecorded: ReadonlySet<string>): boolean {
+function isDriven(activity: DeviceActivity | undefined, shared: boolean): boolean {
   if (activity?.state !== 'driven') return false;
-  const { tool, since } = activity.driver ?? {};
-  return !(tool === 'stim device lock' && typeof since === 'string' && unrecorded.has(since));
+  return !(
+    shared &&
+    activity.driver?.tool === 'stim device lock' &&
+    activity.basis.every((basis) => basis === 'device-lock')
+  );
 }
 
 /**
- * Each recordable device slot of an environment, and whether an automation tool drives it now. A device driven only
- * through a lease in `unrecorded` does not count.
+ * Each recordable device slot of an environment, and whether an automation tool drives it now. A device in
+ * `unrecorded` whose only driver is a `stim device lock` lease, the one a web share's control holds, does not count.
  */
 function environmentTargets(
   environment: EnvironmentState,
@@ -95,15 +98,16 @@ function environmentTargets(
 ): { target: Target; driven: boolean }[] {
   const workspace = environment.path;
   const slots = [{ slot: 'default', ios: environment.ios, android: environment.android }, ...(environment.slots ?? [])];
+  const driven = (target: Target, activity: DeviceActivity | undefined) => ({
+    target,
+    driven: isDriven(activity, unrecorded.has(targetKey(target))),
+  });
   return [
     ...slots.flatMap(({ slot, ios, android }) => [
-      { target: { workspace, platform: 'ios' as const, slot }, driven: isDriven(ios?.activity, unrecorded) },
-      { target: { workspace, platform: 'android' as const, slot }, driven: isDriven(android?.activity, unrecorded) },
+      driven({ workspace, platform: 'ios', slot }, ios?.activity),
+      driven({ workspace, platform: 'android', slot }, android?.activity),
     ]),
-    {
-      target: { workspace, platform: 'web' as const, slot: 'default' },
-      driven: isDriven(environment.web?.activity, unrecorded),
-    },
+    driven({ workspace, platform: 'web', slot: 'default' }, environment.web?.activity),
   ];
 }
 
@@ -245,11 +249,11 @@ export class Recorder {
     subscribeStatus: (listener: FeedListener) => () => void;
     limits?: Partial<RecordLimits>;
     now?: () => number;
-    /** `grantedAt` of the device leases whose driving is not recorded: those web shares take for control. */
-    unrecordedLeases?: () => ReadonlySet<string>;
+    /** {@link targetKey}s of the devices web shares control, whose share lease alone is not recorded. */
+    unrecordedTargets?: () => ReadonlySet<string>;
   }) {
     this.frames = options.frames;
-    this.unrecorded = options.unrecordedLeases ?? (() => new Set());
+    this.unrecorded = options.unrecordedTargets ?? (() => new Set());
     this.subscribeStatus = options.subscribeStatus;
     this.limits = { ...DEFAULT_RECORD_LIMITS, ...options.limits };
     this.now = options.now ?? Date.now;
@@ -306,6 +310,11 @@ export class Recorder {
       else this.viewers.delete(key);
       this.evaluate();
     };
+  }
+
+  /** Decides again what to record from the last status, after what `unrecordedTargets` returns changed. */
+  refresh(): void {
+    this.evaluate();
   }
 
   /** `recording.enabled` for `workspace` as the last status showed it; true before the first status. */

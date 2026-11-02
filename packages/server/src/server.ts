@@ -212,7 +212,7 @@ import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
-import { recoverShareRoute, ShareRoute, tailscaleFunnel } from './share-route.ts';
+import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
 const INPUT_METHODS = [
   'input.touch',
@@ -1682,12 +1682,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     adbEmulators,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
-  const shareRouteRoot = join(serverDir(), 'share-route');
   const funnel = tailscaleFunnel(
     () => tailscale.snapshot().binary,
     options.env,
     () => tailscale.rawStatus(),
   );
+  const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
   const shares = new ShareHub({
     frames,
     control,
@@ -1696,8 +1696,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         item: (payload) => listener.item(payload as unknown as StatusPayload),
         failed: listener.failed,
       }),
-    route: new ShareRoute(shareRouteRoot, funnel),
+    route: shareRoute,
     lookup: { adbEmulators },
+    recordingChanged: () => recorder?.refresh(),
   });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
@@ -1827,7 +1828,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         frames,
         subscribeStatus: (listener) => statusFeed.subscribe(listener),
         limits: options.recordLimits,
-        unrecordedLeases: () => shares.leaseTimes(),
+        unrecordedTargets: () => shares.unrecordedTargets(),
       });
     }
   };
@@ -5407,9 +5408,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       startup = { state: 'ready' };
       pruneSetup();
-      void recoverShareRoute(shareRouteRoot, funnel).catch((failure: Error) =>
-        console.error(`stim-server: could not remove a web share route left behind: ${failure.message}`),
-      );
+      void shareRoute
+        .recover()
+        .catch((failure: Error) =>
+          console.error(`stim-server: could not remove a web share route left behind: ${failure.message}`),
+        );
       setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
       return settle(startup);
     }

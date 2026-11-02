@@ -60,12 +60,15 @@ SECURITY MODEL
   uses for Desktop and the phone app: taps, text and the hardware buttons of
   the shared device only. A device an agent or another client drives answers
   busy instead of being taken over.
-- A share ends at its expiry, on stim share stop, stim stop, stim worktree
-  remove, when its device stops or changes, and when stim-server stops. Ending
-  closes its viewers' sockets; the last one also removes the Funnel route.
+- A share ends at its expiry, on stim share stop, stim stop (without --slot),
+  stim worktree remove, when its device stops or changes (stim stop --slot
+  ends a share of that slot this way), and when stim-server stops. Ending
+  closes its viewers' sockets. The last one removes the Funnel route first and
+  only then closes the listener, so the route never points at a free port.
 - The route is recorded under an ownership claim at
-  $STIM_HOME/server/share-route. When stim-server crashed, the next one removes
-  the route on start, and only while the serve config still holds exactly
-  that route; a route someone changed is left alone.
+  $STIM_HOME/server/share-route. When stim-server crashed, the route stays
+  public, pointing at a free loopback port, until the next stim-server start
+  removes it, and only while the serve config still holds exactly that route;
+  a route someone changed is left alone.
 `,
 };
