@@ -4,7 +4,7 @@ const STYLE = `
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--fg); font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; flex-direction: column; align-items: center; }
 header { width: 100%; padding: 12px 16px; display: flex; gap: 12px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 13px; }
-.logo { height: 18px; width: auto; fill: var(--accent); display: block; }
+.logo { height: 18px; width: auto; flex: none; fill: var(--accent); display: block; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type=password]:focus-visible { outline-offset: 0; border-color: var(--accent); }
 a { color: var(--accent); }
