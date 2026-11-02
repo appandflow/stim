@@ -21,7 +21,7 @@ import { planSweep, planWorktrees } from './sweep.ts';
 import { planIdleShutdown } from './devices.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
-import { planPressureLevels } from './levels.ts';
+import { planMemoryDaemonStop, planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
@@ -200,6 +200,12 @@ export async function plannedMaintenance(
     });
     merge(pressured);
     if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
+    if (pressure.memory.pressured && settings.memoryPressureLevel !== 'off') {
+      const memory = await planMemoryDaemonStop(operation);
+      if (memory.actions.length)
+        result.actions = result.actions.filter((action) => action.kind !== 'would-stop-gradle-daemons');
+      merge(memory);
+    }
   }
   if (low) {
     result.skips.push(

@@ -410,6 +410,48 @@ const actionKinds = () =>
       : [];
   });
 
+function memoryPressured(freeGb = 100) {
+  vi.spyOn(measurements, 'measurePressure').mockReturnValue({
+    disk: [{ volume: '/', freeMb: freeGb * GB }],
+    memory: { level: 'critical', availableBytes: null, pressured: true },
+    warningSince: null,
+  });
+  vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: freeGb * GB }]);
+}
+
+test('memory pressure stops an idle Gradle daemon with plenty of free disk', async () => {
+  process.env.STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES = '60';
+  memoryPressured();
+  daemonPlan({ state: 'idle' });
+  const stop = stopsDaemon();
+  await pass();
+  expect(stop).toHaveBeenCalledWith([101]);
+  expect(actionKinds()).toEqual(['stop-gradle-daemons']);
+  process.env.STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL = 'off';
+  vi.setSystemTime(Date.now() + 5 * MINUTE_MS);
+  await runMaintenance('test');
+  expect(measurements.measurePressure).toHaveBeenCalledTimes(1);
+  expect(readMaintenanceState()?.pressure?.memory.pressured).toBe(true);
+  expect(stop).toHaveBeenCalledTimes(1);
+});
+
+test('memory pressure at disk level 3 stops the daemons once, then deletes the version', async () => {
+  let running = true;
+  const version = idleUnpinnedVersion(() => (running ? DAEMON_ROW : ''));
+  memoryPressured(4);
+  daemonPlan({ state: 'idle' });
+  const stop = stopsDaemon(() => (running = false));
+  await pass();
+  expect(stop).toHaveBeenCalledTimes(1);
+  expect(existsSync(version)).toBe(false);
+  expect(actionKinds().filter((kind) => kind === 'stop-gradle-daemons')).toHaveLength(1);
+  expect(
+    readMaintenanceState()?.recent.some(
+      (entry) => entry.event === 'maintenance_skip' && /pid 101/.test(String(entry.target)),
+    ),
+  ).toBe(false);
+});
+
 test('level 3 stops an idle Gradle daemon, then deletes the version it was blocking, as two records', async () => {
   let running = true;
   const version = idleUnpinnedVersion(() => (running ? DAEMON_ROW : ''));
