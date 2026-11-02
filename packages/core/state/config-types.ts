@@ -113,7 +113,6 @@ export interface StimConfig {
     maxLoadPerCore?: unknown;
     maxOffloadedBuilds?: unknown;
     workerRoot?: unknown;
-    gradleDaemonIdleMinutes?: unknown;
   };
   remote?: {
     machines?: unknown;

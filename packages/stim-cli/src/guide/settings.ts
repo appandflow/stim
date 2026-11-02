@@ -1277,10 +1277,12 @@ machine's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for
 and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
-~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon stays warm there for
-\`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
-ends; a new value applies from the next daemon) and never holds a build
-slot. While none of the client's builds runs, stim-server stops it sooner
+~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon follows
+Gradle's idle policy (normally 3 hours; Gradle can expire it sooner) and never
+holds a build slot. Each Android build clears only Stim's old generated timeout
+line in the selected owned Gradle home, preserving other properties and inactive
+homes. Existing daemons keep their startup timeout until they exit.
+While none of the client's builds runs, stim-server stops it sooner
 when a build is cancelled or the client is revoked. The low-memory sweep waits
 until no offloaded build is running and the machine has less than 2 GB of
 memory available. Deleting the client's directory under the worker root stops it too.
