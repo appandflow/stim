@@ -8404,7 +8404,7 @@ describe('frames.subscribe', () => {
     env: Record<string, string>,
     frameLimits?: ServerOptions['frameLimits'],
     frameHelper?: string,
-    recording?: Pick<ServerOptions, 'record' | 'recordLimits' | 'actionLimits'>,
+    recording?: Pick<ServerOptions, 'record' | 'recordLimits' | 'actionLimits' | 'foldHelper'>,
   ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -8735,6 +8735,7 @@ describe('frames.subscribe', () => {
         },
         undefined,
         fakeHelper(),
+        { foldHelper: join(root, 'sim-fold') },
       );
       const plain = await authed(port);
       await plain.request('frames.subscribe', { workspace, platform: 'ios' });

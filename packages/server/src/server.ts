@@ -304,7 +304,7 @@ export interface ServerOptions {
    * one at startup, and devices subscribed before the build finishes get screenshots.
    */
   frameHelper?: string | null;
-  /** The `sim-fold` helper that folds an iPhone Duo. Without it, the server builds one on the first fold. */
+  /** The Duo fold/angle helper. Without it, the server builds one on the first fold or composed viewer. */
   foldHelper?: string;
   controlLimits?: Partial<ControlLimits>;
   /** False runs the notification rules only while a phone is registered for pushes; true by default. */
@@ -1395,14 +1395,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     }
     return helperPath;
   };
-  let nativeViewerOpened = false;
-  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
-  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers());
-  let recorder: Recorder | null = null;
-  let startup: StartupState = { state: 'pending' };
-  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
-  let startupRetry: NodeJS.Timeout | null = null;
-  let setupPruneTimer: NodeJS.Timeout | null = null;
   let foldBuild: Promise<string> | null = null;
   const foldHelper = () => {
     if (options.foldHelper !== undefined) return Promise.resolve(options.foldHelper);
@@ -1412,6 +1404,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     });
     return foldBuild;
   };
+  let nativeViewerOpened = false;
+  const helperEnv = options.host ? { ...options.env, STIM_CAPTURE_HOST: options.host.name } : options.env;
+  const frames = new FramePool(helperEnv, frameLimits, frameHelper, new DeviceViewers(), undefined, foldHelper);
+  let recorder: Recorder | null = null;
+  let startup: StartupState = { state: 'pending' };
+  let startupProbe: ReturnType<typeof probeDirectories> | null = null;
+  let startupRetry: NodeJS.Timeout | null = null;
+  let setupPruneTimer: NodeJS.Timeout | null = null;
   const running = new Set<() => Promise<void>>();
   const peerCommands = new Map<string, number>();
   const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };

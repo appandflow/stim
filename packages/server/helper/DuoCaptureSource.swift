@@ -64,10 +64,10 @@ final class DuoCaptureSource {
   }
 
   private func startMonitor() {
-    guard requested != nil, renderer != nil, monitor == nil else { return }
+    guard let requested, renderer != nil, monitor == nil else { return }
     let process = Process()
     process.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-    process.arguments = ["hinge-monitor", udid]
+    process.arguments = ["hinge-monitor", udid, requested.hingeHelper]
     var environment = ProcessInfo.processInfo.environment
     environment["DEVELOPER_DIR"] = CoreSimulator.developerDir
     process.environment = environment
@@ -98,13 +98,16 @@ final class DuoCaptureSource {
       DispatchQueue.main.async {
         MainActor.assumeIsolated {
           guard let self, self.monitor === process else { return }
+          let restart = self.angle != nil || self.input == nil
           self.monitor = nil
           self.input = nil
           self.angle = nil
           self.publish(false)
           self.changed()
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            MainActor.assumeIsolated { self.startMonitor() }
+          if restart {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+              MainActor.assumeIsolated { self.startMonitor() }
+            }
           }
         }
       }

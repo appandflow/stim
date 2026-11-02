@@ -806,6 +806,7 @@ export class FramePool {
   private readonly helper: () => string | null;
   private readonly viewers: DeviceViewers | null;
   private readonly claim: ClaimHandle | undefined;
+  private readonly foldHelper: (() => Promise<string>) | undefined;
 
   constructor(
     env: NodeJS.ProcessEnv,
@@ -813,12 +814,14 @@ export class FramePool {
     helper: () => string | null = () => null,
     viewers: DeviceViewers | null = null,
     claim?: ClaimHandle,
+    foldHelper?: () => Promise<string>,
   ) {
     this.env = env;
     this.limits = limits;
     this.helper = helper;
     this.viewers = viewers;
     this.claim = claim;
+    this.foldHelper = foldHelper;
   }
 
   subscribe(device: Device, listener: FrameListener, hint: FrameHint = DEFAULT_FRAME_HINT): () => void {
@@ -999,6 +1002,7 @@ export class FramePool {
       this.limits.lingerMs,
       lit,
       this.claim,
+      this.foldHelper,
     );
     this.sources.set(key, created);
     return created;

@@ -188,7 +188,7 @@ export async function buildFrameHelper(
 }
 
 /**
- * Compiles `sim-fold`, which folds or unfolds an iPhone Duo from inside the simulator, from the Stim Desktop
+ * Compiles `sim-fold`, which folds an iPhone Duo or observes its angle inside the simulator, from the Stim Desktop
  * sources shipped in `dist/stim-frames/`, the way Stim Desktop's bundle script builds it.
  */
 export async function buildFoldHelper(
@@ -263,6 +263,9 @@ export class HelperSource {
   private readonly lingerMs: number;
   private lingerTimer: NodeJS.Timeout | null = null;
   private readonly claim: ClaimHandle | undefined;
+  private readonly foldHelper: (() => Promise<string>) | undefined;
+  private hingeHelper: string | undefined;
+  private hingeHelperRequested = false;
 
   constructor(
     helper: string,
@@ -272,11 +275,13 @@ export class HelperSource {
     lingerMs: number,
     lit?: (display: number) => Posture | undefined,
     claim?: ClaimHandle,
+    foldHelper?: () => Promise<string>,
   ) {
     this.ended = ended;
     this.lingerMs = lingerMs;
     this.lit = lit;
     this.claim = claim;
+    this.foldHelper = foldHelper;
     if (claim) markClaimChildPending(claim);
     this.child = spawn(helper, helperArgs(device, env), { env, stdio: ['pipe', 'pipe', 'pipe'] });
     this.child.stdin!.on('error', () => {});
@@ -377,6 +382,18 @@ export class HelperSource {
     const viewers = watching.filter(({ listener }) => !listener.record);
     const raw = viewers.filter(({ listener }) => !listener.duo || !this.duoAvailable);
     const duo = viewers.filter(({ listener }) => listener.duo);
+    if (duo.length && this.foldHelper && !this.hingeHelperRequested) {
+      this.hingeHelperRequested = true;
+      void this.foldHelper().then(
+        (helper) => {
+          if (this.stopped) return undefined;
+          this.hingeHelper = helper;
+          this.configure();
+          return undefined;
+        },
+        () => undefined,
+      );
+    }
     const jpegFps = raw.flatMap(({ listener, hint }) => (listener.video ? [] : [hint.fps]));
     const recording = viewers.length < watching.length;
     const config = JSON.stringify({
@@ -384,11 +401,12 @@ export class HelperSource {
       maxEdge: Math.max(FRAME_EDGE.min, ...hints.map((hint) => hint.maxEdge)),
       jpeg: jpegFps.length > 0,
       ...(viewers.some(({ listener }) => listener.artwork !== undefined) ? { deviceFrame: true } : {}),
-      ...(duo.length
+      ...(duo.length && this.hingeHelper
         ? {
             duoFrame: {
               fps: Math.max(...duo.map(({ hint }) => hint.fps)),
               maxEdge: Math.max(...duo.map(({ hint }) => hint.maxEdge)),
+              hingeHelper: this.hingeHelper,
             },
           }
         : {}),

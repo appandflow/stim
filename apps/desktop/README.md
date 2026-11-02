@@ -1047,8 +1047,8 @@ the angle through the simulator's vendor-defined HID service
 (`com.apple.coredevice.feature.remote.hid.vendordefined`), which iOS needs to
 swap panels; the path is adapted from
 [Siniulator](https://github.com/kmagiera/Siniulator) under its MIT licence.
-While its viewer is open, Desktop observes the Duo hinge through
-`devicectl device motion hinge-angle`, so preset selection follows changes
+While its viewer is open, Desktop observes the Duo hinge through the bundled
+`sim-fold` helper's CoreMotion reader, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
 With the device frame on and the installed V68 model available, the housing
 follows the observed hinge angle and display rotation. Touches and drags hit the
@@ -1063,9 +1063,9 @@ the active inner display's two halves around the hinge. The cover, unknown angle
 and fully open display stay flat. Touches and drags map back to the display
 pixels.
 Tools or devices without hinge observation retain the last requested posture.
-The observer consumes valid samples twice a second at most, uses one bounded
-process, and stops it when the viewer closes. Its parser depends on the human
-output of devicectl 651.13.4; unfamiliar output keeps the existing behavior. On a
+The observer accepts finite angles from 0 to 180 degrees, uses one process while
+the viewer is open, and stops it when the viewer closes. A missing helper or
+unavailable CoreMotion reader keeps the existing behavior. On a
 CoreSimulator without that service the controls show **Fold / Unfold** instead,
 which runs the bundled `sim-fold` helper inside the simulator with `xcrun
 simctl spawn` to toggle SpringBoard's private display tool service; it appears
@@ -2293,7 +2293,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 - `Sources/StimKit`: models for Stim JSON, the toolchain environment, the `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the pressure plan and activity log, and the crash report scrubber. Unit-tested.
 - `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
-- `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
+- `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo and observe its angle from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.
