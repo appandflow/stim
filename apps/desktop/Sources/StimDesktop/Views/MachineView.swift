@@ -66,7 +66,7 @@ struct MachineView: View {
             add: {
               OpenRequests.shared.addMachine = AddMachineRequest(
                 machineID: Tips.preselected(buildMachines.peers, hostedSimulators: false)?.id, hostedSimulators: false)
-            }, needsTailscale: variant == .tailscale)
+            }, compact: true, needsTailscale: variant == .tailscale)
         }
         if let failure = buildMachines.settingsFailure {
           Text(failure).font(.stim(.footnote)).foregroundStyle(Palette.secondary).textSelection(.enabled)
