@@ -1,9 +1,5 @@
 import { daemonNdjsonFile, maintenanceNdjsonFile, type DaemonStatus } from '@stim-cli/core/state';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { daemonClaimHeld, daemonMode } from '../daemon/client.ts';
-import { runHomePasses } from '../daemon/passes.ts';
 import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
@@ -593,27 +589,6 @@ async function assembleDoctorReport(
   };
 }
 
-/**
- * With no daemon holding this Stim home, runs its passes here: the activity pass and automatic maintenance. Windows
- * has no daemon, so this is where they run there. `daemon.mode off` on another platform leaves idle to the
- * supervisors.
- */
-async function runPassesWithoutDaemon(): Promise<void> {
-  try {
-    if (daemonClaimHeld() || (process.platform !== 'win32' && daemonMode() === 'off')) return;
-    const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-    try {
-      await runHomePasses({
-        act: daemonMode() !== 'report',
-        trigger: 'doctor',
-        log: (level, event, msg, fields = {}) => writer.write({ src: 'doctor', level, event, msg, ...fields }),
-      });
-    } finally {
-      writer.close();
-    }
-  } catch {}
-}
-
 export default function doctorCommand(
   program: Command,
   version: string,
@@ -649,7 +624,6 @@ export default function doctorCommand(
         process.exitCode = 1;
       }
 
-      await runPassesWithoutDaemon();
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
       const { findings, stim, toolchain, maintenance, daemon } = report;
       const budget = { report: report.budget };

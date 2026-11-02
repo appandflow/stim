@@ -149,11 +149,28 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
       console.error(
         `Stim: the stim-daemon claim at ${claim.path} cannot be resolved (${claim.reason}), so no daemon decides idle in this Stim home. If no stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
       );
-      return;
+      return true;
     }
-    if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return;
-    spawnDaemon(env);
-  } catch {}
+    if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return true;
+    spawnDaemon(env, mode);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
+const PASS_COMMANDS = ['start', 'ios', 'android'];
+
+/**
+ * Before a top-level command runs: commands that create running state make sure the home's daemon runs; `doctor`,
+ * and `start`, `ios` and `android` when no daemon holds the home, run automatic maintenance in this process.
+ */
+export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const held = DAEMON_COMMANDS.includes(name) && (await ensureDaemon(env));
+  if (name !== 'doctor' && (held || !PASS_COMMANDS.includes(name))) return;
+  const { runPassesInProcess } = await import('./passes.ts');
+  await runPassesInProcess(name, env);
 }
 
 function send(op: string): void {

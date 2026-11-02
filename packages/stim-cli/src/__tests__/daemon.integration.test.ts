@@ -7,10 +7,12 @@ import { fileURLToPath } from 'node:url';
 import type { SpawnOptions } from 'node:child_process';
 import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
-import { ensureDaemon } from '../daemon/client.ts';
+import { beforeCommand, ensureDaemon } from '../daemon/client.ts';
+import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
+import * as maintenanceRun from '../maintenance/run.ts';
 import { saveConfig } from '../workspace/config.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
@@ -166,3 +168,25 @@ test('daemon.mode turned off in config after the daemon started stops it on its 
   expect(daemonLog()).toContain('exiting: daemon.mode is off');
   expect(daemonLog()).not.toContain('"event":"daemon_tick"');
 }, 20_000);
+
+test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process', async () => {
+  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'off' };
+  delete env[HOME_PASSES_TEST_GUARD_ENV];
+
+  for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
+    await beforeCommand(name, env);
+  expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+
+  ran.mockClear();
+  await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
+  const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
+  assert(claim);
+  try {
+    await beforeCommand('doctor', env);
+    await beforeCommand('start', env);
+  } finally {
+    releaseClaim(claim);
+  }
+  expect(ran).not.toHaveBeenCalled();
+});
