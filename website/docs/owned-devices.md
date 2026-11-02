@@ -460,6 +460,15 @@ restart the dev server with `stim stop` and `stim start` after changing it.
 When `metro.idleStopMinutes` is shorter, the dev server's idle stop shuts down
 the devices idle that long first.
 
+Device logs stop counting as activity once the workspace's dev server is gone,
+for a device whose last launch loads its JavaScript from Metro: a Debug app
+cannot run without Metro, and its reconnect attempts would otherwise count as
+activity for as long as the device stays booted. A Debug app's device therefore goes down with the
+[idle stop](./dev-server-and-logs.md#idle-stop) even when
+`devices.idleShutdownMinutes` is longer, and `stim status` shows it as shut
+down `with Metro's idle stop`. Device logs still count for a Release or
+native-process launch and for a slot with no recorded launch.
+
 With `maintenance.mode on`, the default,
 [automatic maintenance](./build-caches.md#automatic-maintenance) applies the
 same setting to devices with no supervisor, such as those of release runs or of

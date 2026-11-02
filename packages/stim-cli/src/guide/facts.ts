@@ -1448,9 +1448,11 @@ RULES
   appends "shut down after 15m idle at <at>" to its line; the next \`ios\` or
   \`android\` run for that slot clears it (\`guide lifecycle budget\`):
 
-  idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run" }
+  idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run"
+                  | "Metro's idle stop" }
   Absent reason or "idle" means supervisor idle shutdown; reclaim adds
-  "reclaimed for a waiting run" to plain status.
+  "reclaimed for a waiting run" to plain status, and a shutdown at Metro's
+  idle stop adds "with Metro's idle stop".
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 

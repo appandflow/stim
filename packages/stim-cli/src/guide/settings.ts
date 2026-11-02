@@ -490,16 +490,22 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         server (default 15). 0 never stops it. Never during a
                         build or bundle response, while the workspace holds
                         a device lock, or while a workspace device is
-                        driven. Read
+                        driven. The stop also shuts down the owned devices
+                        of the workspace's Debug launches unless
+                        devices.idleShutdownMinutes is 0. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
   devices.idleShutdownMinutes
                         minutes an owned simulator or emulator stays idle
                         (\`gc --idle\` conditions; an open stim-server viewer
                         counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 15; 0 never.
-                        Machine or project layers. Read when the supervisor
-                        starts; see \`guide lifecycle budget\`.
+                        shuts it down, never deletes it. Default 15; 0 never,
+                        not even at Metro's idle stop. A device whose last
+                        launch needs Metro goes down with Metro's idle stop
+                        even when this is longer: from then on its device
+                        logs do not count as activity. Machine or project
+                        layers. Read when the supervisor starts; see
+                        \`guide lifecycle budget\`.
   devices.reclaimIdleMinutes
                         minutes idle before the head of the device slot queue
                         shuts down the longest-idle eligible owned device in
