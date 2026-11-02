@@ -707,7 +707,10 @@ it back. `stim status` shows the level and why. While the daemon's last tick,
 at most 10 minutes old, found the disk critical, every Stim command prints one
 warning on stderr. `stim start`, `stim ios` and `stim android` refuse with
 `STIM_LOW_DISK` only while free disk stays under `budget.hardFloorDiskGb` after
-the ladder ran.
+the ladder ran. While no daemon holds the home (on Windows, with `daemon.mode
+off`, or when it cannot start), those three commands run the ladder in their own
+process before they build, from rung 2: the idle stage of rung 1 is the
+daemon's alone.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for

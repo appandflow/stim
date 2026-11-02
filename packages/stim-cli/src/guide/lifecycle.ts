@@ -2289,8 +2289,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      while free disk on the workspace's or $STIM_HOME's volume is under
      budget.hardFloorDiskGb (5 GB) after the ladder ran: they ask the daemon
      for a tick first, or run the ladder themselves when no daemon holds the
-     home. With no daemon holding the home (always on Windows), they run the
-     activity and pressure passes in the command before building.
+     home. With no daemon holding the home (always on Windows), they run
+     automatic maintenance and the ladder from rung 2 in the command before
+     building; the idle stage of rung 1 is the daemon's alone.
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
