@@ -420,7 +420,8 @@ outside it moves to its own issue and pull request.
   cancel stops the worker tree with `taskkill /T`; each checkout and repository's
   Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
   because the NDK's ninja cannot open longer paths. The repository's daemon
-  stays warm after an Android build for `server.gradleDaemonIdleMinutes`.
+  follows Gradle's idle policy after an Android build. Each build clears only
+  the old generated idle-timeout override in its selected owned Gradle home.
   Cancellation drains only that repository; whole-client revocation and low
   memory retain their client-scoped cleanup. Low-memory sweeps wait until no
   offloaded build is running. Gradle stops a daemon

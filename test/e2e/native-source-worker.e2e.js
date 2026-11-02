@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,6 +10,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -318,6 +320,9 @@ test('native Gradle worker reuses only its actual complete input identity withou
   const worker = join(area, 'worker');
   const home = join(area, 'home');
   const actions = join(area, 'actions');
+  const keptProperties = Buffer.from('org.gradle.parallel=true\nmarker=\xff\n', 'latin1');
+  const oldProperties = Buffer.concat([Buffer.from('org.gradle.daemon.idletimeout=60000\n'), keptProperties]);
+  const inactiveProperties = join(area, 'inactive-gradle', 'gradle.properties');
   const cli = resolve('packages/stim-cli/dist/cli.mjs');
   const write = (path, text, executable = false) => {
     mkdirSync(dirname(path), { recursive: true });
@@ -354,8 +359,14 @@ test('native Gradle worker reuses only its actual complete input identity withou
       join(client, 'gradlew'),
       `#!${process.execPath}
 const fs = require('node:fs'), path = require('node:path');
+if (process.argv.includes('--stop')) {
+  fs.appendFileSync(process.env.STIM_FIXTURE_WORKER_ACTIONS, 'stop\\n');
+  process.exit(0);
+}
 const model = process.argv.find(arg => arg.startsWith('-Pstim.native.model='));
 if (!model) process.exit(0);
+if (!fs.readFileSync(path.join(process.env.GRADLE_USER_HOME, 'gradle.properties')).equals(Buffer.from(${JSON.stringify(keptProperties.toString('base64'))}, 'base64')))
+  throw new Error('The selected home did not preserve its other properties while clearing the idle limit.');
 const root = path.dirname(process.argv[1]);
 fs.appendFileSync(process.env.STIM_FIXTURE_WORKER_ACTIONS, 'compile\\n');
 const apk = path.join(root, 'app/build/app.apk');
@@ -369,7 +380,8 @@ console.log('BUILD SUCCESSFUL');
       true,
     );
     write(join(area, 'jdk/release'), 'JAVA_VERSION="17"\n');
-    write(join(area, 'gradle/gradle.properties'), 'org.gradle.daemon.idletimeout=60000\n');
+    write(join(area, 'gradle/gradle.properties'), oldProperties);
+    write(inactiveProperties, oldProperties);
     write(join(area, 'sdk/build-tools/35.0.0/source.properties'), 'Pkg.Revision=35.0.0\n');
     write(
       join(area, 'sdk/build-tools/35.0.0/apksigner'),
@@ -470,6 +482,8 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
         .split('\n')
         .filter((line) => line === 'compile').length;
     const fresh = run('first');
+    assert.deepEqual(readFileSync(join(area, 'gradle/gradle.properties')), keptProperties);
+    assert.deepEqual(readFileSync(inactiveProperties), oldProperties);
     let completedArtifact = lastCompleted.cacheArtifact;
     assert.ok(completedArtifact);
     const query = (declaration = inputs, android = job.android, jdk) => {
@@ -557,6 +571,8 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
     assert.deepEqual(run('undeclared-first'), fresh);
     assert.deepEqual(run('undeclared-again'), fresh);
     assert.equal(compilations(), beforeUndeclared + 2);
+    assert.equal(readFileSync(actions, 'utf8').includes('stop\n'), false);
+    assert.deepEqual(readFileSync(inactiveProperties), oldProperties);
   } finally {
     try {
       if (existsSync(join(worker, 'src/settings.gradle')))
@@ -567,5 +583,92 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
       Object.assign(process.env, saved);
       rmSync(area, { recursive: true, force: true });
     }
+  }
+});
+
+test('Android worker clears only its selected Node home before dependency work', () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-worker-idle-')));
+  try {
+    const area = join(root, 'area');
+    const gradle = join(root, 'gradle');
+    const observed = join(root, 'installer.json');
+    const bin = join(root, 'bin');
+    for (const path of [join(area, 'src'), gradle, bin, join(root, 'home')]) mkdirSync(path, { recursive: true });
+    const kept = 'other=true\n';
+    const old = `org.gradle.daemon.idletimeout=60000\n${kept}`;
+    writeFileSync(join(gradle, 'gradle.properties'), old);
+    const installer = join(bin, process.platform === 'win32' ? 'pnpm.exe' : 'pnpm');
+    if (process.platform === 'win32') copyFileSync(process.execPath, installer);
+    else symlinkSync(process.execPath, installer);
+    const files = [
+      ['package.json', JSON.stringify({ name: 'owned-worker-idle', private: true })],
+      ['pnpm-lock.yaml', 'lockfileVersion: "9.0"\n'],
+      [
+        'install',
+        `require('node:fs').writeFileSync(${JSON.stringify(observed)}, JSON.stringify({home:process.env.GRADLE_USER_HOME}));process.exit(1);`,
+      ],
+    ];
+    const manifest = files.map(([path, text]) => {
+      const digest = sha(text);
+      const blob = join(root, 'blobs', digest.slice(0, 2), digest);
+      mkdirSync(dirname(blob), { recursive: true });
+      writeFileSync(blob, text);
+      return { path, sha256: digest, size: Buffer.byteLength(text), kind: 'file' };
+    });
+    writeFileSync(
+      join(root, 'home/config.json'),
+      JSON.stringify({ iosSimulatorApp: 'stim-desktop', androidEmulatorApp: 'stim-desktop' }),
+    );
+    const run = () => {
+      const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+        input: JSON.stringify({
+          job: 'owned-idle',
+          area,
+          blobs: join(root, 'blobs'),
+          manifest,
+          platform: 'android',
+          project: '',
+          isExpo: false,
+        }),
+        env: {
+          ...process.env,
+          STIM_HOME: join(root, 'home'),
+          HOME: root,
+          USERPROFILE: root,
+          GRADLE_USER_HOME: gradle,
+          PATH: `${bin}${delimiter}${process.env.PATH}`,
+          COREPACK_ENABLE_NETWORK: '0',
+        },
+        encoding: 'utf8',
+        timeout: 15000,
+      });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      return result.stdout
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .at(-1);
+    };
+    assert.equal(run().code, 'deps-failed');
+    const selected = JSON.parse(readFileSync(observed, 'utf8')).home;
+    assert.equal(dirname(selected), gradle);
+    const inactive = join(gradle, 'inactive');
+    for (const path of [selected, inactive]) {
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'gradle.properties'), old);
+    }
+    assert.equal(run().code, 'deps-failed');
+    assert.equal(JSON.parse(readFileSync(observed, 'utf8')).home, selected);
+    assert.equal(readFileSync(join(selected, 'gradle.properties'), 'utf8'), kept);
+    assert.equal(readFileSync(join(gradle, 'gradle.properties'), 'utf8'), old);
+    assert.equal(readFileSync(join(inactive, 'gradle.properties'), 'utf8'), old);
+    rmSync(join(selected, 'gradle.properties'));
+    mkdirSync(join(selected, 'gradle.properties'));
+    rmSync(observed);
+    assert.equal(run().code, 'worker-crashed');
+    assert.equal(existsSync(observed), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

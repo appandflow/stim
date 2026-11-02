@@ -1927,9 +1927,10 @@ connected since stim-server started keeps its directory when revoked.
   until cancellation cleanup proves those identities exited; unknown cleanup
   retains the repository and build-slot claims. A daemon exiting between process
   inventory and identity capture also requires inspection and manual claim
-  recovery before retrying. The daemon stays warm with
-  `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
-  Gradle fixes that timeout at daemon startup. Once no build of a client runs,
+  recovery before retrying. Daemons follow Gradle's idle policy. Each Android
+  build removes only Stim's old generated timeout line in its selected owned
+  Gradle home; other properties and inactive homes stay unchanged. Existing
+  daemons keep their startup timeout until they exit. Once no build of a client runs,
   stim-server also stops its daemons when the client loses `build`. The
   low-memory sweep waits until no offloaded build is running and the machine
   has less than 2 GB of available memory. The periodic sweep still

@@ -152,8 +152,6 @@ export interface WorkerJob {
   jdk?: string;
   native?: BuildStartParams['native'];
   optimizations: Optimizations['ios'] | null;
-  /** How long the client's Gradle daemon stays warm after an Android build; 0 or absent stops it when the build ends. */
-  gradleDaemonIdleMs?: number;
 }
 
 export interface WorkerTimings {
@@ -559,6 +557,7 @@ function useProjectNode(root: string, src: string, platform: WorkerJob['platform
       home,
       `n${createHash('sha256').update('canonical-node-path\0').update(identity).digest('hex').slice(0, 12)}`,
     );
+    removeDaemonIdleOverride();
   }
 }
 
@@ -1095,8 +1094,7 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
   if (!options) return { ok: false, code: 'bad-request', message: 'The native Gradle job has no build options.' };
   for (const key of ['compilerCache', 'pch', 'gradleBuildCache'] as const)
     writeConfigSetting({ scope: 'workspace', projectPath: root }, `optimizations.android.${key}`, options[key]);
-  const idleMs = job.gradleDaemonIdleMs ?? 0;
-  limitDaemonIdle(idleMs > 0 ? idleMs : 60_000);
+  removeDaemonIdleOverride();
   const gradlew = join(root, process.platform === 'win32' ? 'gradlew.bat' : 'gradlew');
   const stop = () => {
     stopGradleDaemons(gradlew, 4000);
@@ -1164,7 +1162,6 @@ async function compileNativeAndroid(job: WorkerJob, root: string, log: NdjsonWri
     };
   } finally {
     process.off('SIGTERM', stop);
-    if (idleMs <= 0) stopGradleDaemons(gradlew, 60_000);
     if (existsSync(logFile)) for (const record of parseNdjsonText(readFileSync(logFile, 'utf8'))) log.write(record);
   }
 }
@@ -1314,20 +1311,19 @@ function stopGradleDaemons(gradlew: string, timeoutMs: number): void {
   getExecutor().runFileQuiet(gradlew, ['--stop'], { cwd: dirname(gradlew), timeoutMs });
 }
 
-/**
- * Gradle reads `org.gradle.daemon.idletimeout` from the user home's gradle.properties, which overrides the
- * project's, so the daemon exits after that idle time instead of Gradle's three hours.
- */
-function limitDaemonIdle(idleMs: number): void {
+function removeDaemonIdleOverride(): void {
   const home = process.env.GRADLE_USER_HOME;
   if (!home) return;
   const file = join(home, 'gradle.properties');
-  const wanted = `org.gradle.daemon.idletimeout=${idleMs}\n`;
-  try {
-    if (readFileSync(file, 'utf8') === wanted) return;
-  } catch {}
-  mkdirSync(home, { recursive: true });
-  writeFileSync(file, wanted);
+  const info = lstatSync(file, { throwIfNoEntry: false });
+  if (!info) return;
+  if (!info.isFile()) throw new Error('The worker Gradle properties must be a regular file.');
+  const before = readFileSync(file);
+  const after = Buffer.from(
+    before.toString('latin1').replace(/^org\.gradle\.daemon\.idletimeout=[0-9]+(?:\r?\n|$)/gm, ''),
+    'latin1',
+  );
+  if (!before.equals(after)) writeFileSync(file, after);
 }
 
 async function compileAndroid(
@@ -1339,9 +1335,6 @@ async function compileAndroid(
 ): Promise<Compiled> {
   const options = job.android;
   if (!options) return { ok: false, code: 'bad-request', message: 'The job has no Gradle options.' };
-  const idleMs = job.gradleDaemonIdleMs ?? 0;
-  const keepDaemon = idleMs > 0;
-  limitDaemonIdle(keepDaemon ? idleMs : 60_000);
   const onNote = (line: string) => note('build', line);
   const stop = () => {
     stopGradleDaemons(gradlewPath(layout), 4000);
@@ -1379,7 +1372,6 @@ async function compileAndroid(
     };
   } finally {
     process.off('SIGTERM', stop);
-    if (!keepDaemon) stopGradleDaemons(gradlewPath(layout), 60_000);
   }
 }
 

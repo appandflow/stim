@@ -3873,7 +3873,7 @@ describe('offloaded builds', () => {
     });
 
     test.skipIf(!fakeTailscale)(
-      'tells the worker how long to keep the daemon, and stops an idle one once its client is revoked',
+      'leaves daemon idle policy to Gradle, and stops an idle one once its client is revoked',
       async () => {
         configure({ server: { maxLoadPerCore: 100_000, gradleDaemonIdleMinutes: 45 } });
         const port = await start({ buildLimits: { daemonSweepMs: 50, minFreeMemoryBytes: 0 } });
@@ -3881,7 +3881,7 @@ describe('offloaded builds', () => {
         await launch(client);
         await progress(client);
         const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
-        expect(ran.job.gradleDaemonIdleMs).toBe(45 * 60_000);
+        expect(ran.job).not.toHaveProperty('gradleDaemonIdleMs');
 
         const other = await buildClient(port, '100.64.0.3');
         const kept = daemonOf(other.id);

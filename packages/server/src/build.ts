@@ -38,8 +38,6 @@ import {
   machineCapacity,
   maxOffloadedBuilds,
   saturation,
-  settingDefinition,
-  settingValueError,
   tryAcquireBuildSlotClaim,
   windowsShortDir,
   windowsShortDirKey,
@@ -328,13 +326,6 @@ function workerFreeBytes(root: string): number | null {
     .map(freeBytes)
     .filter((bytes) => bytes !== null);
   return free.length ? Math.min(...free) : null;
-}
-
-function gradleDaemonIdleMs(): number {
-  const definition = settingDefinition('server.gradleDaemonIdleMinutes')!;
-  const value = loadConfig()?.server?.gradleDaemonIdleMinutes;
-  const valid = typeof value === 'number' && settingValueError(definition, value) === null;
-  return (valid ? value : (definition.default as number)) * 60_000;
 }
 
 const GRADLE_DAEMON = 'org.gradle.launcher.daemon.bootstrap.GradleDaemon';
@@ -1283,7 +1274,6 @@ export class BuildHost {
         blobs: join(clientDir, 'blobs'),
         swiftpmCache: join(clientDir, 'cache', 'swiftpm'),
         artifactCache: this.artifactCacheDir(client, repo),
-        gradleDaemonIdleMs: gradleDaemonIdleMs(),
       }),
     );
     const timeout = setTimeout(cancel, this.limits.timeoutMs);

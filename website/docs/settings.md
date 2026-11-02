@@ -662,11 +662,12 @@ Android Studio and SDKMAN) even when its default JDK is another one; a machine
 with none gets the install command as the fix. Start stim-server with
 `JAVA_HOME` at such a JDK only to choose it for every build, and with
 `ANDROID_HOME` at its Android SDK (default
-`~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's Gradle daemon
-stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
-when each build ends), so the client's next build skips a JVM start of about
-15 seconds. A new value applies from the next daemon. The daemon never holds
-a build slot. While none of the client's builds runs, stim-server stops it
+`~/Library/Android/sdk`, or `~/Android/Sdk` on Linux). After an Android build, the client's
+Gradle daemon follows Gradle's idle policy (normally 3 hours; Gradle can expire it
+sooner). Each Android build clears only Stim's old generated timeout line in its
+selected owned Gradle home, preserving other properties and inactive homes.
+Existing daemons keep their startup timeout until they exit. The daemon never
+holds a build slot. While none of the client's builds runs, stim-server stops it
 sooner when a build of the client is cancelled or when the client is revoked.
 The low-memory sweep waits until no offloaded build is running and the remote
 machine has less than 2 GB of memory available. Deleting the
