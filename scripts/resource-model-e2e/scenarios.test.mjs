@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { UsageError, parseArgs } from './args.mjs';
 import { createAssertions, STATUS } from './assertions.mjs';
@@ -70,12 +71,14 @@ describe('stim child environment', () => {
   });
 });
 
+const at = (name) => join('/r', 'packages', name);
+
 describe('workspace closure for the ssh package', () => {
   it('follows workspace dependencies transitively and stops at published ones', () => {
     const manifests = {
-      '/r/packages/cli/package.json': { name: 'stim', dependencies: { '@x/core': 'workspace:*', chalk: '^6' } },
-      '/r/packages/core/package.json': { name: '@x/core', dependencies: { '@x/cache': 'workspace:*' } },
-      '/r/packages/cache/package.json': { name: '@x/cache' },
+      [join(at('cli'), 'package.json')]: { name: 'stim', dependencies: { '@x/core': 'workspace:*', chalk: '^6' } },
+      [join(at('core'), 'package.json')]: { name: '@x/core', dependencies: { '@x/cache': 'workspace:*' } },
+      [join(at('cache'), 'package.json')]: { name: '@x/cache' },
     };
     const dirs = workspaceClosure(
       '/r',
@@ -83,7 +86,7 @@ describe('workspace closure for the ssh package', () => {
       (file) => manifests[file],
       () => ['cli', 'core', 'cache'],
     );
-    expect(dirs.toSorted()).toEqual(['/r/packages/cache', '/r/packages/cli', '/r/packages/core']);
+    expect(dirs.toSorted()).toEqual([at('cache'), at('cli'), at('core')]);
   });
 });
 
