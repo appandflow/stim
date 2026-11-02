@@ -349,6 +349,24 @@ describe('phaseSteps', () => {
       ['compile', 'current', 47_000],
     ]);
     expect(barSteps(steps).map((step) => step.phase)).toEqual(['prepare', 'compile']);
+    const repeated = build({
+      phase: 'cleanup',
+      completedPhaseMs: { prepare: 1000, cleanup: 3000 },
+      plannedPhases: [
+        { phase: 'prepare', expectedMs: 2000 },
+        { phase: 'compile', expectedMs: 94_000 },
+      ],
+    });
+    const cleaning = phaseSteps(repeated, history, NOW);
+    expect(cleaning.find((step) => step.phase === 'cleanup')).toMatchObject({
+      state: 'current',
+      elapsedMs: 47_000,
+      expectedMs: null,
+      fraction: null,
+    });
+    expect(barSteps(cleaning)[0]).toMatchObject({ phase: 'prepare', state: 'current', fraction: null });
+    const resumed = phaseSteps({ ...repeated, phase: 'prepare', completedPhaseMs: { cleanup: 7000 } }, history, NOW);
+    expect(resumed.find((step) => step.phase === 'cleanup')).toMatchObject({ state: 'done', elapsedMs: 7000 });
   });
 
   it('keeps the time of a phase that came before the current one in phase order', () => {

@@ -1398,6 +1398,10 @@ msgstr "Claude Code"
 msgid "cleanup"
 msgstr "cleanup"
 
+#: src/lib/workspace-view.ts
+msgid "Cleanup"
+msgstr "Cleanup"
+
 #: src/screens/device-view.tsx
 #: src/screens/pair.tsx
 msgid "Close"

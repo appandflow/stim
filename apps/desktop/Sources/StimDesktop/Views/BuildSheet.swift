@@ -447,7 +447,7 @@ private struct BuildRunDetail: View {
         TimelineView(.buildSeconds(build)) { context in
           let elapsedMs = build.progress(at: context.date).elapsedMs
           (Text(Format.clock(ms: elapsedMs))
-            + Text(Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: build.expectedMs)).foregroundStyle(Palette.tertiary))
+            + Text(build.estimateSuffix(at: context.date)).foregroundStyle(Palette.tertiary))
             .font(.stim(.title)).monospacedDigit()
         }
       }

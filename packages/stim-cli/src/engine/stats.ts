@@ -98,12 +98,13 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   const phases = {
     coldBuildMs: wholeMs(run.coldBuildMs),
     podsMs: wholeMs(run.podsMs),
+    cleanupMs: Math.min(durationMs, wholeMs(run.phases?.cleanup)),
   };
   const projects: Record<string, StatsScope> = { ...record.projects };
   const scope: StatsScope = { ...projects[run.projectKey] };
   const machine: StatsScope = { ...record.machine };
   const before = scope[run.platform] ?? null;
-  const credit = creditMs(before, run, durationMs);
+  const credit = creditMs(before, run, durationMs - phases.cleanupMs);
 
   scope[run.platform] = applyRun(before, run, {
     at,
@@ -398,7 +399,7 @@ function applyRun(
     at: string;
     durationMs: number;
     credit: number;
-    phases: { coldBuildMs: number; podsMs: number };
+    phases: { coldBuildMs: number; podsMs: number; cleanupMs: number };
   },
 ): StatsBucket {
   const next: StatsBucket = bucket
@@ -429,6 +430,7 @@ function applyRun(
     if (!run.waitedForBuild) {
       next.hitRuns += 1;
       next.hitRunMs += durationMs;
+      if (phases.cleanupMs > 0) next.hitCleanupMs = (next.hitCleanupMs ?? 0) + phases.cleanupMs;
       next.timeSavedMs += credit;
     }
     return next;
@@ -437,18 +439,20 @@ function applyRun(
   if (run.offloadedTo) {
     next.offloadedRuns = (next.offloadedRuns ?? 0) + 1;
     next.offloadedRunMs = (next.offloadedRunMs ?? 0) + durationMs;
+    if (phases.cleanupMs > 0) next.offloadedCleanupMs = (next.offloadedCleanupMs ?? 0) + phases.cleanupMs;
     next.lastOffloadHost = run.offloadedTo;
     return next;
   }
   next.coldRuns += 1;
   next.coldRunMs += durationMs;
+  if (phases.cleanupMs > 0) next.coldCleanupMs = (next.coldCleanupMs ?? 0) + phases.cleanupMs;
   return next;
 }
 
 function creditMs(bucket: StatsBucket | null, run: StatsRun, durationMs: number): number {
   if (run.failed || !isHit(run.cacheHit) || run.waitedForBuild) return 0;
   if (!bucket || bucket.coldRuns <= 0) return 0;
-  return Math.max(0, Math.round(bucket.coldRunMs / bucket.coldRuns) - durationMs);
+  return Math.max(0, Math.round((bucket.coldRunMs - (bucket.coldCleanupMs ?? 0)) / bucket.coldRuns) - durationMs);
 }
 
 function isHit(cacheHit: CacheHitLevel): boolean {

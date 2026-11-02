@@ -190,6 +190,15 @@ import Testing
     #expect(build.progress(at: started.addingTimeInterval(200)).remaining == "under a minute left")
     let late = build.progress(at: started.addingTimeInterval(600))
     #expect(late.fraction == 0.99 && late.remaining == "longer than usual")
+    var cleaned = build
+    cleaned.slot = "cleaned"
+    cleaned.completedPhaseMs = ["cleanup": 30_000]
+    let resumed = cleaned.progress(at: started.addingTimeInterval(90))
+    #expect(resumed.elapsedMs == 90_000 && resumed.fraction == 0.25)
+    cleaned.phase = "cleanup"
+    #expect(cleaned.progress(at: started.addingTimeInterval(90)).fraction == nil)
+    #expect(cleaned.progress(at: started.addingTimeInterval(90)).remaining == nil)
+    #expect(cleaned.estimateSuffix(at: started.addingTimeInterval(90)).isEmpty)
   }
 
   @Test func attachesTheBuildOnlyToTheDeviceItTargets() {

@@ -15,8 +15,10 @@ export interface StatsBucket {
   misses: number;
   coldRuns: number;
   coldRunMs: number;
+  coldCleanupMs?: number;
   hitRuns: number;
   hitRunMs: number;
+  hitCleanupMs?: number;
   timeSavedMs: number;
   firstRunAt: string;
   lastRunAt: string;
@@ -24,6 +26,7 @@ export interface StatsBucket {
   lastPodsMs?: number;
   offloadedRuns?: number;
   offloadedRunMs?: number;
+  offloadedCleanupMs?: number;
   lastOffloadHost?: string;
 }
 
@@ -435,6 +438,9 @@ function normalizeBucket(bucket: Record<string, unknown>): StatsBucket {
     coldRunMs: count(bucket.coldRunMs),
     hitRuns: count(bucket.hitRuns),
     hitRunMs: count(bucket.hitRunMs),
+    ...(count(bucket.coldCleanupMs) > 0 ? { coldCleanupMs: count(bucket.coldCleanupMs) } : {}),
+    ...(count(bucket.hitCleanupMs) > 0 ? { hitCleanupMs: count(bucket.hitCleanupMs) } : {}),
+    ...(count(bucket.offloadedCleanupMs) > 0 ? { offloadedCleanupMs: count(bucket.offloadedCleanupMs) } : {}),
     timeSavedMs: count(bucket.timeSavedMs),
     firstRunAt: timestamp(bucket.firstRunAt),
     lastRunAt: timestamp(bucket.lastRunAt),

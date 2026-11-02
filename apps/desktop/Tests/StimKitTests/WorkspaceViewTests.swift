@@ -169,6 +169,18 @@ private let booted = #"{"name":"stim-w (iPhone 18 27.0)","udid":"SIM-1","owned":
     let steps = try build(#","completedPhaseMs":{"prepare":1800,"pods":15000}"#).phaseSteps(history: history, now: now)
     #expect(steps.map(\.elapsedMs) == [1800, nil, 15_000, 47_000, nil])
     #expect(try build().phaseSteps(history: history, now: now).map(\.elapsedMs) == [nil, nil, nil, 47_000, nil])
+    var repeated = try build(#","completedPhaseMs":{"prepare":1000,"cleanup":3000}"#)
+    repeated.phase = "cleanup"
+    #expect(repeated.waitsWithoutProgress)
+    let cleaning = repeated.phaseSteps(history: history, now: now)
+    let current = cleaning.first { $0.phase == "cleanup" }
+    #expect(current?.state == .current && current?.elapsedMs == 47_000)
+    #expect(current?.expectedMs == nil && current?.fraction == nil)
+    #expect(barSteps(cleaning).first?.fraction == nil)
+    repeated.phase = "prepare"
+    repeated.completedPhaseMs = ["cleanup": 7000]
+    let resumed = repeated.phaseSteps(history: history, now: now).first { $0.phase == "cleanup" }
+    #expect(resumed?.state == .done && resumed?.elapsedMs == 7000)
   }
 
   @Test func movesTheCompilePhaseByTheBuildToolCountsOnlyWhenTheyAreAheadOfTheTimeEstimate() throws {

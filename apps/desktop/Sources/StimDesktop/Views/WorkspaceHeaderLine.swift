@@ -131,7 +131,7 @@ struct BuildInlineProgress: View {
     let progress = build.progress(at: now)
     let (phase, counts) = build.currentPhaseLabel
     let elapsed = Format.clock(ms: progress.elapsedMs)
-    let estimate = Format.estimateSuffix(elapsedMs: progress.elapsedMs, expectedMs: build.expectedMs)
+    let estimate = build.estimateSuffix(at: now)
     let time = ZStack(alignment: .leading) {
       Text("00:00 / ~00:00").hidden()
       Text(elapsed) + Text(estimate).foregroundStyle(Palette.tertiary)
