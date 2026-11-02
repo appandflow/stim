@@ -94,6 +94,8 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
 control, viewer count and expiry, never their link or password.
 `stim share stop` ends every share of the current workspace.
 
+Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
+
 ## Security model
 
 - **A separate listener.** stim-server serves shares on their own listener, on

@@ -47,6 +47,9 @@ struct SettingsView: View {
           .tabItem { Label("Paired Machines", systemImage: "server.rack") }
           .tag("paired-machines")
       }
+      WebSharesView(store: store)
+        .tabItem { Label("Web Shares", systemImage: "link") }
+        .tag("web-shares")
       BuildMachinesView(model: buildMachines, ledger: builds, store: store, workspace: workspace, actions: actions)
         .tabItem { Label("Remote Machines", systemImage: "hammer") }
         .tag("build-machines")

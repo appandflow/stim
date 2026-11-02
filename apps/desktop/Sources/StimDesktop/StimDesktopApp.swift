@@ -28,6 +28,7 @@ final class OpenRequests: ObservableObject {
   @Published var showsDiscover = false
   @Published var showsViewOptions = false
   @Published var showsSetupGuide = false
+  @Published var shareRequest: ShareRequest?
   @Published var target: OversightTarget?
   var openMainWindow: (() -> Void)?
 
@@ -142,6 +143,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   @objc private func handleQuitEvent(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
     NSApp.terminate(nil)
+  }
+
+  private var confirmingQuit = false
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard MainActor.assumeIsolated({ ServerController.shared.runsOwnedServer }) else { return .terminateNow }
+    guard !confirmingQuit else { return .terminateCancel }
+    confirmingQuit = true
+    Task { @MainActor in
+      let shares = await WebSharesModel.shared.liveShares(within: .seconds(2))
+      let prompt = WebShareQuitPrompt(shares: shares) { PathNames(path: $0).title }
+      let quits = prompt.map(Self.confirmQuit) ?? true
+      confirmingQuit = false
+      NSApp.reply(toApplicationShouldTerminate: quits)
+    }
+    return .terminateLater
+  }
+
+  /// A modal alert: `StimApplication.terminate` has already dismissed every sheet by the time this runs.
+  @MainActor private static func confirmQuit(_ prompt: WebShareQuitPrompt) -> Bool {
+    let alert = NSAlert()
+    alert.alertStyle = .warning
+    alert.messageText = prompt.title
+    alert.informativeText = (prompt.lines + ["", WebShareQuitPrompt.detail]).joined(separator: "\n")
+    alert.addButton(withTitle: "Cancel")
+    alert.addButton(withTitle: "Quit")
+    alert.buttons[1].hasDestructiveAction = true
+    NSApp.activate(ignoringOtherApps: true)
+    return alert.runModal() == .alertSecondButtonReturn
   }
 
   func applicationWillTerminate(_ notification: Notification) {
