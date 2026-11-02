@@ -97,7 +97,8 @@ control, viewer count and expiry, never their link or password.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (without `--slot`),
   `stim worktree remove`, when its device stops or changes (so `stim stop
---slot` ends a share of that slot), and when stim-server stops or restarts.
+--slot` ends a share of that slot), when the device's frames fail, and when
+  stim-server stops or restarts.
   Ending closes its viewers' connections. The last share removes the Funnel
   route first and only then closes the listener.
 - **Crash cleanup.** The route is recorded under an ownership claim in

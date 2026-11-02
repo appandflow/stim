@@ -2052,7 +2052,7 @@ workspace device with three methods that only the local Unix socket may call
 - `share.list` returns `shares`, the same rows without `url` or `password`.
 
 Shares live in memory only and end at their expiry, on `share.stop`, when the
-device stops or changes in status, and when the server stops. The server serves
+device stops or changes in status, when its frames fail, and when the server stops. The server serves
 them on one listener on a loopback port of its own, not on this protocol, and
 publishes it with `tailscale funnel --bg --yes --https=<port>
 http://127.0.0.1:<listener>` on the first Funnel port the node's

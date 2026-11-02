@@ -28,11 +28,22 @@ function tool(initial: Record<string, unknown>): FunnelTool & { config: Record<s
     status: async () => STATUS,
     serveConfig: async () => fake.config,
     add: async ({ port, target }: { port: number; target: number }) => {
-      fake.config = { ...fake.config, ...served(port, target) };
+      const added = served(port, target);
+      const merged = (field: 'TCP' | 'Web' | 'AllowFunnel') => ({
+        ...(fake.config[field] as Record<string, unknown> | undefined),
+        ...added[field],
+      });
+      fake.config = { TCP: merged('TCP'), Web: merged('Web'), AllowFunnel: merged('AllowFunnel') };
     },
     remove: async ({ port }: { port: number }) => {
       fake.removed.push(port);
-      fake.config = {};
+      const without = (field: unknown, key: (name: string) => boolean) =>
+        Object.fromEntries(Object.entries((field ?? {}) as Record<string, unknown>).filter(([name]) => !key(name)));
+      fake.config = {
+        TCP: without(fake.config.TCP, (name) => name === String(port)),
+        Web: without(fake.config.Web, (name) => name.endsWith(`:${port}`)),
+        AllowFunnel: without(fake.config.AllowFunnel, (name) => name.endsWith(`:${port}`)),
+      };
     },
   };
   return fake;
@@ -91,6 +102,7 @@ describe('the share Funnel route claim', () => {
     expect(readClaimSet(root).live[0]!.details).toEqual({ funnelPort: 8443, target: 51234, dnsName: HOST });
     await route.close();
     expect(funnel.removed).toEqual([8443]);
+    expect(funnel.config).toEqual(served(443, 8788));
     expect(existsSync(root)).toBe(false);
   });
 

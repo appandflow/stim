@@ -62,7 +62,8 @@ SECURITY MODEL
   busy instead of being taken over.
 - A share ends at its expiry, on stim share stop, stim stop (without --slot),
   stim worktree remove, when its device stops or changes (stim stop --slot
-  ends a share of that slot this way), and when stim-server stops. Ending
+  ends a share of that slot this way), when the device's frames fail, and when
+  stim-server stops. Ending
   closes its viewers' sockets. The last one removes the Funnel route first and
   only then closes the listener, so the route never points at a free port.
 - The route is recorded under an ownership claim at

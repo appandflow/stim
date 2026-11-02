@@ -47,6 +47,8 @@ export interface ShareLimits {
   statusWaitMs: number;
   inputPerSecond: number;
   textCharsPerSecond: number;
+  /** How long status can still show a share's control lease after its session ends: the lease's own duration. */
+  leaseGraceMs: number;
 }
 
 const SHARE_LIMITS: ShareLimits = {
@@ -56,6 +58,7 @@ const SHARE_LIMITS: ShareLimits = {
   statusWaitMs: 20_000,
   inputPerSecond: 120,
   textCharsPerSecond: 40,
+  leaseGraceMs: 2 * 60_000,
 };
 
 export const SHARE_EXPIRY = { default: 60, max: 480 } as const;
@@ -93,8 +96,6 @@ const MAX_MESSAGE_BYTES = 4096;
 const MAX_SESSIONS = 32;
 const PING_MS = 30_000;
 const CLOSE_GRACE_MS = 2000;
-/** How long status can still show a share's control lease after the share ends: the lease's own `--for`. */
-const LEASE_GRACE_MS = 2 * 60_000;
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
@@ -439,7 +440,7 @@ export class ShareHub {
       if (count > 0) this.controlled.set(key, count);
       else this.controlled.delete(key);
       this.deps.recordingChanged?.();
-    }, LEASE_GRACE_MS).unref?.();
+    }, this.limits.leaseGraceMs).unref?.();
   }
 
   private find(request: IncomingMessage): { share: Share; rest: string } | null {
@@ -532,8 +533,13 @@ export class ShareHub {
   }
 
   private upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
+    // Node's http server drops its own socket error listener once it emits 'upgrade'; without one, a peer that resets
+    // the connection after a refusal would raise an uncaught ECONNRESET.
+    socket.on('error', () => socket.destroy());
     const refuse = (status: number, text: string) => {
-      socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+      socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, () =>
+        socket.destroy(),
+      );
     };
     const found = this.find(request);
     if (!found || found.rest !== 'ws') return refuse(404, 'Not Found');

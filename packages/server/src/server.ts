@@ -1215,6 +1215,13 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
   return { dir };
 }
 
+/** The share hub's recording grace from the control lease's `stim device lock --for` duration, such as `2m`. */
+function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
+  const [, amount, unit] = /^(\d+)(s|m|h)$/.exec(leaseFor) ?? [];
+  if (amount === undefined || unit === undefined) return {};
+  return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
+}
+
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
@@ -1698,6 +1705,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }),
     route: shareRoute,
     lookup: { adbEmulators },
+    limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
   });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));

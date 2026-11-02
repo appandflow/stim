@@ -204,6 +204,22 @@ describe('a web share', () => {
     }
   });
 
+  it('survives a client that resets the connection after a refused upgrade', async () => {
+    const share = await started(f);
+    const port = f.hub.port!;
+    const refused = tcpConnect(port, '127.0.0.1');
+    await new Promise<void>((resolve) => {
+      refused.once('connect', () => {
+        refused.write('GET /nope HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n', () => {
+          refused.resetAndDestroy();
+          resolve();
+        });
+      });
+    });
+    for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
+    expect((await http(local(share, port))).status).toBe(200);
+  });
+
   it('asks for the password, refuses a wrong one and locks the login after repeated failures', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);
