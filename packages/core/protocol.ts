@@ -278,6 +278,9 @@ export const METHODS = [
   'machines.update.status',
   'device-host.sessions',
   'device-host.sessions.stop',
+  'share.start',
+  'share.stop',
+  'share.list',
 ] as const;
 
 /**
@@ -1626,7 +1629,31 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
+/** A live web share, as `share.list` lists it; never its URL token or password. */
+export interface WebShareRow {
+  id: string;
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot: string;
+  physical: boolean;
+  control: boolean;
+  expiresAt: string;
+  viewers: number;
+}
+
+export interface WebShareStartParams {
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot?: string;
+  physical?: boolean;
+  control?: boolean;
+  expiresMinutes?: number;
+}
+
 export interface Methods {
+  'share.start': { params: WebShareStartParams; result: WebShareRow & { url: string; password: string } };
+  'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
+  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
   'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };

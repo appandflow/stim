@@ -36,6 +36,9 @@ type PhoneMethod = Exclude<
   | 'machines.update.status'
   | 'device-host.sessions'
   | 'device-host.sessions.stop'
+  | 'share.start'
+  | 'share.stop'
+  | 'share.list'
 >;
 
 type SharedMethod = PhoneMethod & keyof Mobile.Methods;

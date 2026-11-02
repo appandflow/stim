@@ -1,3 +1,4 @@
+import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
@@ -396,7 +397,10 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
     supervisor: false,
     managedLocks: false,
   });
-  if (run.ran) return run.value;
+  if (run.ran) {
+    await endWorkspaceShares(path);
+    return run.value;
+  }
   const kept: SkippedDevice = { name: `workspace ${dir}`, reason: `kept because ${run.reasons.join('; ')}` };
   return {
     path,

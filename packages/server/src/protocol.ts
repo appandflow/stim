@@ -2197,6 +2197,26 @@ export function protocolJsonSchema(): JsonSchema {
           request('server.update.status'),
           request('device-host.sessions'),
           request('device-host.sessions.stop', session({})),
+          request('share.start', {
+            type: 'object',
+            required: ['workspace', 'platform'],
+            additionalProperties: false,
+            properties: {
+              workspace: { type: 'string', minLength: 1 },
+              platform: { enum: ['ios', 'android'] },
+              slot: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$' },
+              physical: { type: 'boolean' },
+              control: { type: 'boolean' },
+              expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
+            },
+          }),
+          request('share.stop', {
+            type: 'object',
+            required: ['workspace'],
+            additionalProperties: false,
+            properties: { workspace: { type: 'string', minLength: 1 } },
+          }),
+          optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('machines.update.start', {
             type: 'object',
             required: ['machine'],

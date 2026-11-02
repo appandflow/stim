@@ -211,6 +211,8 @@ import {
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
+import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { recoverShareRoute, ShareRoute, tailscaleFunnel } from './share-route.ts';
 
 const INPUT_METHODS = [
   'input.touch',
@@ -1213,6 +1215,30 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
   return { dir };
 }
 
+/** Validates `share.start` params; returns why they are refused. */
+function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
+  if (!isJsonObject(params)) return 'params must be an object.';
+  const { workspace, platform, slot, physical, control, expiresMinutes, ...rest } = params;
+  if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
+  if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
+  if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
+  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot)))
+    return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
+  if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
+  if (control !== undefined && typeof control !== 'boolean') return 'params.control must be true or false.';
+  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
+    return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
+  return {
+    workspace,
+    platform,
+    ...(slot && slot !== 'default' ? { slot } : {}),
+    ...(physical ? { physical } : {}),
+    control: control === true,
+    expiresMinutes: minutes,
+  };
+}
+
 interface Replayable {
   seek: (at: number, rate: FramesSeekParams['rate']) => number | null;
   /** Returns why the subscription cannot go live, or null once it is live. */
@@ -1656,6 +1682,23 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     adbEmulators,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
+  const shareRouteRoot = join(serverDir(), 'share-route');
+  const funnel = tailscaleFunnel(
+    () => tailscale.snapshot().binary,
+    options.env,
+    () => tailscale.rawStatus(),
+  );
+  const shares = new ShareHub({
+    frames,
+    control,
+    subscribeStatus: (listener) =>
+      statusFeed.subscribe({
+        item: (payload) => listener.item(payload as unknown as StatusPayload),
+        failed: listener.failed,
+      }),
+    route: new ShareRoute(shareRouteRoot, funnel),
+    lookup: { adbEmulators },
+  });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -4640,6 +4683,37 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    async function shareMethod(
+      id: RequestId,
+      method: 'share.start' | 'share.stop' | 'share.list',
+      params: unknown,
+    ): Promise<void> {
+      if (!local) return error(id, 'forbidden', `${method} works only on this machine's local Unix socket.`);
+      if (method === 'share.list') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
+          return error(id, 'bad-request', 'share.list takes no parameters.');
+        return send(socket, { id, result: { shares: shares.list() } });
+      }
+      if (method === 'share.stop') {
+        if (
+          !isJsonObject(params) ||
+          typeof params.workspace !== 'string' ||
+          Object.keys(params).some((key) => key !== 'workspace')
+        )
+          return error(id, 'bad-request', 'share.stop needs params.workspace.');
+        return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+      }
+      const parsed = parseShareStart(params);
+      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
+      const resolved = registeredWorkspace(parsed.workspace);
+      if ('code' in resolved) return error(id, resolved.code, resolved.message);
+      if (viewHostedPlacement(resolved.dir, parsed.platform, parsed.slot, parsed.physical)) {
+        return error(id, 'action-failed', 'A device hosted on another machine cannot be shared from here.');
+      }
+      const started = await shares.start({ ...parsed, workspace: resolved.dir });
+      return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
+    }
+
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -4695,6 +4769,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
+      if (message.method === 'share.start' || message.method === 'share.stop' || message.method === 'share.list') {
+        return shareMethod(id, message.method, message.params);
+      }
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
@@ -5055,6 +5132,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       push.close();
       helperAbort.abort();
       sampler.stop();
+      await settle(shares.close());
       await settle(control.close());
       await settle(agentDrivers.close());
       await settle(hostedDevices.close());
@@ -5328,6 +5406,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       startup = { state: 'ready' };
       pruneSetup();
+      void recoverShareRoute(shareRouteRoot, funnel).catch((failure: Error) =>
+        console.error(`stim-server: could not remove a web share route left behind: ${failure.message}`),
+      );
       setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
       return settle(startup);
     }

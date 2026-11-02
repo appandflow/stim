@@ -1164,6 +1164,28 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   The live app was launched with embedded JavaScript. Run the platform command
   with a Debug configuration or variant first.`,
     },
+    STIM_SERVER_NOT_RUNNING: {
+      summary: 'stim share needs a running stim-server for this Stim home',
+      body: () => `STIM_SERVER_NOT_RUNNING
+  stim share found no stim-server on this Stim home's local socket
+  ($STIM_HOME/server/local.sock). Web shares live inside stim-server, so
+  there is nothing to share through. Open Stim Desktop, which runs one, or
+  install the background server with stim-server service install, then run
+  stim share again. Agents do not start stim-server without the user's
+  approval.`,
+    },
+    STIM_SHARE_REFUSED: {
+      summary: 'stim-server would not start, stop or list a web share; the message names why',
+      body: () => `STIM_SHARE_REFUSED
+  stim-server refused the share. The message names the reason: the device is
+  not booted or not owned by this workspace (run stim ios or stim android
+  first), Tailscale is not running, Funnel is not enabled for this node (a
+  tailnet admin enables it; Stim never changes tailnet settings), every Funnel
+  port already serves something (free one, see tailscale serve status), a
+  route claim left by a crash cannot be resolved (follow the claim remedy in
+  the message), or the running stim-server predates web shares (update it).
+  See stim guide share.`,
+    },
     STIM_RELOAD_STOPPED: {
       summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',
       aliases: ['STIM_RELOAD_UNOWNED', 'STIM_RELOAD_PROBE_FAILED'],
