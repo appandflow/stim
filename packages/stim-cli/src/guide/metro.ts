@@ -245,18 +245,21 @@ the workflow, stop the workspace and the specific unit you created:
   the newest of a Stim command in the workspace (start, ios, android, reload,
   revive, logs, worktree warm) or the end of its native run; a Metro bundle,
   manifest or HMR request; an agent-device action on its devices; an input a
-  stim-server client sent to one of its devices; and, on macOS, a person
-  using its device in the focused Simulator or emulator window within the
-  last two minutes. Device logs, in-app console logs, dev server output and
-  log file times never count, so an open app that only hot-reloads or logs
+  stim-server client sent to one of its devices; and, on macOS, a person's
+  keyboard or mouse input within the last two minutes while Simulator,
+  Device Hub or its emulator's window is frontmost. Device Hub does not say
+  which simulator it shows, so it counts for every booted simulator the home
+  owns, as Simulator does when its CurrentDeviceUDID cannot be read. Device
+  logs, in-app console logs, dev server output and log file times never count, so an open app that only hot-reloads or logs
   is idle, and a live view that only streams frames does not keep it. It
   stays running while a bundle response is in flight, while a build in the
   workspace is in progress, while a stim ios, android or stop run holds the
   workspace's native-run lock, while the workspace holds an unexpired device
   lease (\`stim device lock\` or a --device run, physical devices included),
-  while one of its devices is driven or its activity is unknown (\`guide
-  facts status\`; on Windows, which has no ps, the host driver-process probe
-  is skipped), while its owned Chrome or a hosted device runs, while
+  while one of its devices is driven, a live agent-device session included,
+  or its activity is unknown (\`guide facts status\`; on Windows, which has
+  no ps, the host driver-process probe is skipped), while simctl or adb cannot
+  list its devices, while its owned Chrome or a hosted device runs, while
   maintenance.keep pins it, and while a \`stim start\` holds its metro-start
   lock. A dev server whose requests Stim cannot see (metro.command, or an
   Expo SDK before 54) never stops for being idle. The pass records

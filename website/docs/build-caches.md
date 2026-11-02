@@ -594,8 +594,9 @@ shared caches on a different volume. The same values can live in the machine con
 The per-home [`stim-daemon`](./settings.md#stim-daemon) runs a maintenance
 pass on each of its ticks when a check is due, so the disk check runs each
 minute while anything runs in the Stim home even when no command does. While
-no daemon runs, on Windows or with `daemon.mode off`, `stim doctor` runs the
-same pass. In the default `on` mode a pass removes what `stim gc --delete`
+no daemon holds the home (on Windows, with `daemon.mode off`, or when it cannot
+start), `stim doctor` runs the same pass in its own process, and `stim start`,
+`stim ios` and `stim android` run it before they build. In the default `on` mode a pass removes what `stim gc --delete`
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
@@ -614,9 +615,10 @@ warning daemons; this does not prove continuous sampling. A warning without
 eligible recorded history keeps daemons.
 Disk-level-3 version cleanup remains independent of memory pressure and retains
 its existing known-iOS allowance. Below disk pressure level 3 a pass stops a dev
-server only after
-`maintenance.idleStopHours` without real activity, through `stim gc --delete`,
-and stops no other helper. Idle devices and dev servers are the daemon's
+server only in a workspace whose device is hosted on a remote Mac, after
+`maintenance.idleStopHours` without real activity, and stops no other helper;
+`stim gc --delete` stops any workspace idle that long. Other idle devices and
+dev servers are the daemon's
 [idle stage](./dev-server-and-logs.md#idle-stop), not a maintenance check; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 Removing a finished worktree or orphaned directory does tear down that
@@ -663,8 +665,8 @@ stops the disk-driven ones once free space is back above the floor:
    means no dev server, native run, build, lease, managed lock, driven or busy
    device, and no recorded use. The next run recreates them.
 
-The daily sweep runs in the background of Stim commands every `maintenance.sweepHours` (24), never at a
-set hour, and waits while the host load is over `maintenance.maxLoadPerCore`.
+The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android`; never at a
+set hour. It waits while the host load is over `maintenance.maxLoadPerCore`.
 `maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
 and the sweep removes nothing in them by age. Step 1, step 7 (which
 `maintenance.deviceIdleDays` controls), finished worktrees, and the cap and

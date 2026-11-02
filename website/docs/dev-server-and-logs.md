@@ -122,15 +122,19 @@ Activity is the newest of:
 - an input a `stim-server` client (the phone app or Stim Desktop) sent to one
   of its devices; a live view that only streams frames does not count;
 - a `stim device lock` lease on one of its devices, for as long as it lasts;
-- on macOS, you using one of its devices in the focused Simulator or emulator
-  window within the last two minutes.
+- on macOS, your keyboard or mouse input within the last two minutes while
+  Simulator, Device Hub or one of its emulators' windows is frontmost. Device
+  Hub does not say which simulator it shows, so it counts for every booted
+  simulator the home owns, as Simulator does when it does not name its current
+  device.
 
 Device logs, in-app console logs, dev server output and log file times never
 count, so a chatty app does not keep a workspace awake. Nothing is stopped
 while a bundle is being served, while a build or another `stim ios`,
 `stim android` or `stim stop` runs in the workspace, while one of its devices is
-driven or its activity cannot be read, while its owned Chrome or a hosted
-device runs, while `maintenance.keep` pins it, or while `stim start` is
+driven, by an agent-device session too, or its activity cannot be read, while
+the simulator or emulator list cannot be read, while its owned Chrome or a
+hosted device runs, while `maintenance.keep` pins it, or while `stim start` is
 running. The daemon checks all of this again under the workspace's locks just
 before it acts. A dev server whose requests Stim cannot see, `metro.command`
 or an Expo SDK before 54, never stops for being idle. Set `idle.minutes` to
@@ -173,8 +177,10 @@ the app's UI again and check stim logs --errors.
 
 ## Idle workspace stop
 
-`stim gc --delete`, while `maintenance.mode` is not `off`, stops a workspace whose dev server runs, whose
-owned simulator or emulator is booted, or whose device is hosted on a remote Mac once it has had no real activity for
+While `maintenance.mode` is not `off`, automatic maintenance stops a workspace
+whose device is hosted on a remote Mac, and `stim gc --delete` stops any
+workspace whose dev server runs, whose owned simulator or emulator is booted, or
+whose device is hosted, once it has had no real activity for
 `maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
 a lunch break, a meeting or an agent's pause between tasks, and still frees the
 memory overnight. The setting takes machine and project layers, accepts
@@ -190,7 +196,8 @@ Real activity is the newest of:
 - an agent-device command in the workspace's agent-device sessions;
 - an input sent to the device through stim-server, from Stim Desktop or the
   phone app;
-- on macOS, use of the device in the focused Simulator or emulator window.
+- on macOS, use of the device in the frontmost Simulator, Device Hub or
+  emulator window.
 
 Device and system log lines, in-app console logs, dev server output and
 maintenance's own records never count, and an app that only stays connected to
@@ -206,12 +213,11 @@ emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
 emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it. Maintenance logs each stop with the idle time and
 each workspace kept past the window with its reason (`stim logs --source maintenance`).
 The port is released, so `stim status` shows the workspace idle as after
-`stim stop`, and the timeline's `supervisor_stopped` line names automatic
-maintenance and the idle time as the requester. The next
+`stim stop`, and the timeline's `supervisor_stopped` line names the idle time
+and the requester, automatic maintenance or `stim gc --delete`. The next
 `stim start`, `stim ios` or `stim android` starts it again. A stop never
 targets the workspace of the command that started the pass, `stim gc --delete`
-included; a pass that a dev server supervisor or `stim status --watch` starts on
-its timer can stop its own workspace.
+included; a pass the `stim-daemon` runs can stop any workspace.
 
 A workspace whose iOS, Android or macOS device is hosted on a remote Mac is
 stopped the same way, once the host confirms the session is `ready`. The stop

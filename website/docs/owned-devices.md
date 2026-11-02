@@ -450,7 +450,7 @@ Activity is a Stim command or native build in the workspace, a Metro bundle or
 HMR request, an agent-device action, an input sent to the device through
 `stim-server` (the phone app or Stim Desktop; a view that only streams frames
 does not count), a `stim device lock`, and, on macOS, you using the device in
-the focused Simulator or emulator window. App and device logs never count,
+the frontmost Simulator, Device Hub or emulator window. App and device logs never count,
 whatever the device's last launch. A device stays up while a tool drives it,
 while `stim device lock` or an agent-device session holds it, while a build
 runs in the workspace, and while its activity cannot be read.
