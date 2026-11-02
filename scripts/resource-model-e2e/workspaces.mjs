@@ -143,7 +143,10 @@ export async function teardown(ctx) {
   emit('teardown', 'stim stop in every worktree');
   await pool(ctx.workspaces, 4, async (workspace) => {
     if (existsSync(workspace.path))
-      await stim.exec(`teardown-stop-${workspace.label}`, workspace.path, ['stop', '--json'], { timeoutMs: 180_000 });
+      await stim.exec(`teardown-stop-${workspace.label}`, workspace.path, ['stop', '--json'], {
+        timeoutMs: 180_000,
+        uninterruptible: true,
+      });
   }).catch(note);
 
   emit('teardown', 'stim worktree remove in every worktree');
@@ -153,7 +156,7 @@ export async function teardown(ctx) {
       `teardown-remove-${workspace.label}`,
       workspace.path,
       ['worktree', 'remove', '--force'],
-      { timeoutMs: 300_000 },
+      { timeoutMs: 300_000, uninterruptible: true },
     );
     if (!removed.ok || existsSync(workspace.path)) {
       await run('git', ['-C', project, 'worktree', 'remove', '--force', workspace.path], noAbort);

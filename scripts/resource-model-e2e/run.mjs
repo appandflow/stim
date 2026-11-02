@@ -168,7 +168,7 @@ function startSampler(ctx) {
 }
 
 function describeBuild(version, commit) {
-  return `stim ${version || 'unknown version'}${commit ? ` at ${commit.slice(0, 9)}` : ''}`;
+  return `stim ${version || 'unknown version'}${commit ? `, checkout at ${commit.slice(0, 9)}` : ''}`;
 }
 
 async function buildIdentity(ctx) {
@@ -259,7 +259,11 @@ async function runLocal(opts) {
   try {
     await SCENARIOS[opts.scenario](ctx);
   } catch (error) {
-    harnessError = error instanceof HarnessError ? error.message : String(error?.stack ?? error);
+    harnessError = ctx.signal.aborted
+      ? 'interrupted'
+      : error instanceof HarnessError
+        ? error.message
+        : String(error?.stack ?? error);
     ctx.emit('error', harnessError);
   } finally {
     ctx.setStage('teardown');

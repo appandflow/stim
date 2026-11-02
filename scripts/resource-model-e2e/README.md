@@ -215,11 +215,36 @@ workspaces (first, middle, last of those that went idle) revive at once.
 
 `worktrees` (created, warmed, repaired, one shared fingerprint) and `clocks` (the idle clock is written and read back).
 
+## What it reads from a build
+
+A field the build lacks makes its assertion `N/A`; nothing else depends on it. The harness reads:
+
+- `stim status --json`: per environment `path`, `workspaceId`, `stage.kind` (`idle` or `dormant` counts as the idle
+  stage), `metro.running`, `metro.idleStop`, `metro.lastStop.reason`, `ios.state`, `ios.idleShutdown`,
+  `ios.app.state`, the newest `lastActivityAt` anywhere under the environment, `build.state`, `build.phase` and
+  `build.waitingFor`; `capacity.devices.max` and `capacity.devices.holders[].booting`; a top-level `daemon`.
+- `stim ios --json`: `launched`, `cacheHit`, `udid`, `logs.dir` and, on failure, `code` and `message`.
+- `stim revive --json`: `revived.metro.restarted` and `revived.devices[].rebooted` and `.app.launched`.
+- The private home: `created-devices.json`, `workspaces/<id>/state.json` (recorded pids),
+  `workspaces/<id>/derived-data`, `workspaces/<id>/logs/metro.ndjson` (the newest `bundle_response_*`,
+  `expo_stdout` and `command_stdout` record, reported next to the idle-stage evidence), and the `daemon/` directory
+  (any `pid` in its JSON files, `snapshot.json` and `daemon.ndjson` kept as evidence).
+- Settings through `stim settings get` and `set`: `idle.minutes` (else `metro.idleStopMinutes` and
+  `devices.idleShutdownMinutes`) and `idle.dormantDays`.
+- Process titles `stim-supervisor`, `stim-collector` and `stim-daemon` in `ps`.
+
+`idle.dormantDays` has to accept a fraction of a day, or a build has to offer an environment override in minutes
+(passed with `--env`), for the dormant clock to be shortened; otherwise the dormant assertions are `N/A`.
+
 ## Limits
 
-- The `ssh` transport has not been run against a real host by its author; the package assembly and the argument
-  passing are unit tested and the assembly was run by hand.
-- A private `STIM_HOME` makes builds without the resource model run with the scoped-home defaults (no maintenance,
-  no disk floors, no parking). On such a build `disk` has nothing to observe. `--env` can pass the environment
-  overrides a build offers.
-- `disk` and `stress` were not run on the machine that developed the harness (see the pull request for what was).
+- The ssh transport has not been run against a real host: the package assembly and the argument passing are unit
+  tested, and the assembly was run by hand.
+- The `disk` scenario has not been run end to end. Its ballast, ladder ordering and assertion logic are unit tested; its
+  driver has not run, because it takes a volume down to 4.5 GB free.
+- A private `STIM_HOME` makes builds without the resource model run with the scoped-home defaults (no maintenance, no
+  disk floors, no parking). On such a build `disk` has nothing to observe. `--env` can pass the environment overrides a
+  build offers.
+- The idle assertions use the last activity the harness can see. A build that counts activity `stim status` does not
+  report (Metro stdout, client logs) can stop later than the computed deadline; the evidence names the newest Metro
+  record to show it.

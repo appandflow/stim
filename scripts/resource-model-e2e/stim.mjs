@@ -31,9 +31,14 @@ export function createStim({ cli, home, outDir, extraEnv = {}, signal }) {
   mkdirSync(runsDir, { recursive: true });
   let seq = 0;
 
-  async function exec(label, cwd, args, { timeoutMs = 30 * 60_000 } = {}) {
+  async function exec(label, cwd, args, { timeoutMs = 30 * 60_000, uninterruptible = false } = {}) {
     const id = String(++seq).padStart(3, '0');
-    const result = await run(process.execPath, [cli, ...args], { cwd, env, timeoutMs, signal });
+    const result = await run(process.execPath, [cli, ...args], {
+      cwd,
+      env,
+      timeoutMs,
+      signal: uninterruptible ? undefined : signal,
+    });
     writeFileSync(join(runsDir, `${id}-${label}.out`), result.stdout);
     writeFileSync(join(runsDir, `${id}-${label}.err`), result.stderr);
     const json = parseJsonOutput(result.stdout);

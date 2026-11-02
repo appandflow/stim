@@ -52,7 +52,7 @@ export function collectEvidence(home, out) {
       cpSync(source, join(target, name), { recursive: true, filter: (path) => !path.endsWith('.sock') });
   }
   for (const name of ['created-devices.json', 'config.json']) {
-    if (existsSync(join(home, name))) cpSync(join(home, name), join(target, name));
+    if (existsSync(join(home, name)) && !existsSync(join(target, name))) cpSync(join(home, name), join(target, name));
   }
   const workspaces = join(home, 'workspaces');
   if (!existsSync(workspaces)) return;

@@ -80,7 +80,8 @@ export function startPoller(ctx) {
     while (!state.stopped && !ctx.signal.aborted) {
       const began = Date.now();
       await pollStatus(ctx);
-      await sleep(Math.max(1000, POLL_MS - (Date.now() - began)), ctx.signal);
+      const took = Date.now() - began;
+      await sleep(Math.max(1000, POLL_MS - took, took), ctx.signal);
     }
   })();
   return {
