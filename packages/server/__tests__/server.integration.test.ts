@@ -5499,25 +5499,37 @@ describe('logs.subscribe', () => {
     const path = liveLogFixture();
     const port = await start();
     const first = await authed(port);
-    expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
-      id: 2,
-      result: { subscription: 's1' },
-    });
-    expect(await records(first, 2)).toEqual(RECORDS.slice(1));
     const second = await authed(port);
-    await second.request('logs.subscribe', { workspace, tail: 1 });
-    expect(await records(second, 1)).toEqual(RECORDS.slice(2));
-    const appended = { ts: 4, src: 'client', level: 'info', msg: 'new line' };
-    appendFileSync(path, JSON.stringify(appended) + '\n');
-    expect(await records(first, 1)).toEqual([appended]);
-    expect(await records(second, 1)).toEqual([appended]);
-    expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
-    const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
-    appendFileSync(path, JSON.stringify(later) + '\n');
-    expect(await records(second, 1)).toEqual([later]);
-    second.socket.close();
-    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
-    expect(childPids()).toEqual([]);
+    vi.useFakeTimers();
+    try {
+      expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
+        id: 2,
+        result: { subscription: 's1' },
+      });
+      const firstTail = records(first, 2);
+      await vi.waitFor(() => expect(firstTail).resolves.toEqual(RECORDS.slice(1)));
+      await second.request('logs.subscribe', { workspace, tail: 1 });
+      const secondTail = records(second, 1);
+      await vi.waitFor(() => expect(secondTail).resolves.toEqual(RECORDS.slice(2)));
+      const appended = { ts: 4, src: 'client', level: 'info', msg: 'new line' };
+      const firstAppend = records(first, 1);
+      const secondAppend = records(second, 1);
+      appendFileSync(path, JSON.stringify(appended) + '\n');
+      await vi.advanceTimersByTimeAsync(10100);
+      await vi.waitFor(() => expect(firstAppend).resolves.toEqual([appended]));
+      await vi.waitFor(() => expect(secondAppend).resolves.toEqual([appended]));
+      expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
+      const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
+      const secondLater = records(second, 1);
+      appendFileSync(path, JSON.stringify(later) + '\n');
+      await vi.advanceTimersByTimeAsync(10100);
+      await vi.waitFor(() => expect(secondLater).resolves.toEqual([later]));
+      second.socket.close();
+      expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+      expect(childPids()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('times out an unfinished backfill and keeps another socket responsive', async () => {
