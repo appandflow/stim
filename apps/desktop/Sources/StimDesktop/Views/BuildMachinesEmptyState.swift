@@ -36,18 +36,24 @@ struct BuildMachineArt: View {
 /// What the Remote Machines tab and the Machine page show while `remote.machines` is empty.
 struct BuildMachinesEmptyState: View {
   var add: () -> Void
+  var compact = false
   var addDisabled = false
   var needsTailscale = false
   var tailscaleOff = false
   var checking = false
 
   var body: some View {
-    VStack(spacing: Space.lg) {
+    VStack(spacing: compact ? Space.md : Space.lg) {
       if checking {
         ProgressView().controlSize(.regular).frame(height: 150)
         Text("Checking Tailscale\u{2026}").foregroundStyle(Palette.secondary)
       } else {
-        if tailscaleOff {
+        if compact {
+          Image(systemName: tailscaleOff ? "network.slash" : "desktopcomputer")
+            .font(.system(size: 24))
+            .foregroundStyle(Palette.secondary)
+            .accessibilityHidden(true)
+        } else if tailscaleOff {
           AddMachineIllustration(scene: .tailscaleOff)
         } else {
           BuildMachineArt()
@@ -62,7 +68,7 @@ struct BuildMachinesEmptyState: View {
         )
         .foregroundStyle(Palette.secondary)
         .multilineTextAlignment(.center)
-        .frame(maxWidth: 380)
+        .frame(maxWidth: compact ? 480 : 380)
       }
       if checking || !needsTailscale || tailscaleOff {
         Button("Add Remote Machine\u{2026}", action: add)
@@ -70,7 +76,7 @@ struct BuildMachinesEmptyState: View {
           .disabled(addDisabled)
       }
     }
-    .padding(Space.huge)
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
+    .padding(compact ? Space.xl : Space.huge)
+    .frame(maxWidth: .infinity, maxHeight: compact ? nil : .infinity)
   }
 }
