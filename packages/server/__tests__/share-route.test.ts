@@ -148,7 +148,7 @@ describe('the share Funnel route claim', () => {
     };
     funnel.add = failingAdd;
     const route = new ShareRoute(root, funnel);
-    await expect(route.open(51234)).rejects.toThrow();
+    await expect(route.open(51234)).rejects.toThrow('funnel --bg timed out');
     unreadable = false;
 
     let release = () => {};
