@@ -36,7 +36,25 @@ it.skipIf(process.platform !== 'darwin')(
         ).split('\n');
       expect(listing()).toContain(`${child.pid} ${executable}`);
       rmSync(executable);
-      expect(listing()).toContain(`${child.pid} ${executable}`);
+      const afterUnlink = listing().filter((line) => line.startsWith(`${child.pid} `));
+      if (!afterUnlink.includes(`${child.pid} ${executable}`)) {
+        const state = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pid=,ppid=,state=,etime=,comm='], {
+          encoding: 'utf8',
+          timeout: 2_000,
+        });
+        console.error('Owned process after unlink:', {
+          pid: child.pid,
+          exitCode: child.exitCode,
+          signalCode: child.signalCode,
+          adapterLines: afterUnlink,
+          processState: state.stdout,
+          status: state.status,
+          signal: state.signal,
+          error: state.error?.code,
+          stderr: state.stderr,
+        });
+      }
+      expect(afterUnlink).toContain(`${child.pid} ${executable}`);
       expect(spawnSync(adapter, ['-axww', '-o', 'pid=,command='], { timeout: 10_000 }).status).toBe(2);
     } finally {
       if (child && child.exitCode == null) {
