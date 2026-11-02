@@ -977,6 +977,21 @@ Turn on debug.logs, rerun the command that stalled, then read
 took the time.
 ```
 
+## Home daemon
+
+`daemon.enabled` is a machine setting, off by default, with the environment
+override `STIM_DAEMON`. While it is on, `start`, `ios` and `android` start one
+`stim-daemon` process per Stim home, and it exits on its own once no dev server,
+build, build slot or booted owned device remains. It stops a workspace's dev
+server and owned devices together after the smaller of `metro.idleStopMinutes`
+and `devices.idleShutdownMinutes`, shuts down owned devices that no dev server
+watches after `devices.idleShutdownMinutes`, and wakes a run waiting for a build
+slot as soon as one is released. Its log is `$STIM_HOME/daemon/daemon.log`. It
+is a prototype; without it the supervisor and automatic maintenance keep these
+timers. Windows has no daemon.
+
+<StimTabs code="stim settings set daemon.enabled true --scope machine" />
+
 ## Timing traces
 
 `STIM_TRACE=<path>` writes a timeline of one command to `<path>` as Chrome trace
