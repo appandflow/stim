@@ -1095,8 +1095,10 @@ THE ONE CASE GC WILL NOT REAP
   memoryPressureLevel off, invalid settings or an unreadable macOS signal keep
   daemons. Critical acts at once; warning needs maintenance.memoryWarningMinutes
   of recorded warning, and other platforms also use maintenance.minAvailableMemoryGb.
-  Warning history counts only with a fresh warning signal; manual reports never
-  record it. Without recorded history, a positive warning interval keeps daemons.
+  Warning history counts only with a fresh warning signal and a recorded check
+  within maintenance.pressureCheckMinutes. This limits observation age, not gaps
+  between observations. Manual reports never record history; without it, a positive
+  warning interval keeps daemons.
   Automatic maintenance shares the pressure decision; disk-level-3 version cleanup
   remains independent of memory pressure. Their common build checks allow known
   iOS builds that cannot use these daemons:

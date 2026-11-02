@@ -1,12 +1,13 @@
 import { createStim } from '../api.ts';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
 import { withAmbientContext } from '@stim-cli/core';
+import { maintenanceStateFile } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -536,9 +537,12 @@ test.skipIf(process.platform === 'win32')(
     writeFileSync(launcher, 'fixture launcher');
     const context = testContext({ home, env: { ...process.env, STIM_HOME: undefined, STIM_MAINTENANCE: 'off' } });
     let pressured = false;
+    let warning = false;
     let pressureReads = 0;
     let duringPressure: (() => void) | undefined;
     let extraBusy = false;
+    let secondDaemon = false;
+    let replacedSecond = false;
     let present = true;
     let stops = 0;
     const configure = (level = 'warning') =>
@@ -554,7 +558,7 @@ test.skipIf(process.platform === 'win32')(
     vi.spyOn(hostMemory, 'readHostMemoryPressureAsync').mockImplementation(async () => {
       pressureReads++;
       duringPressure?.();
-      return process.platform === 'darwin' ? (pressured ? 'critical' : 'normal') : null;
+      return process.platform === 'darwin' ? (warning ? 'warning' : pressured ? 'critical' : 'normal') : null;
     });
     const signals = vi.spyOn(process, 'kill').mockImplementation(() => {
       throw new Error('unexpected signal');
@@ -563,16 +567,21 @@ test.skipIf(process.platform === 'win32')(
       runFileQuiet: () => null,
       runQuiet: () => null,
       runFileAsync: async (file, args) => {
-        if (file === 'ps')
+        if (file === 'ps') {
+          const command = `/opt/jdk/bin/java -cp ${distribution}/lib/gradle-daemon-main-9.4.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1`;
           return present
-            ? PS_ROW(
-                1001,
-                `/opt/jdk/bin/java -cp ${distribution}/lib/gradle-daemon-main-9.4.1.jar org.gradle.launcher.daemon.bootstrap.GradleDaemon 9.4.1`,
-              )
+            ? [
+                PS_ROW(1001, command),
+                ...(secondDaemon
+                  ? [PS_ROW(1002, command).replace('Sep 28', replacedSecond ? 'Sep 29' : 'Sep 28')]
+                  : []),
+              ].join('\n')
             : '';
-        if (file === 'lsof') return `p1001\nf12\nn${gradleHome}/daemon/9.4.1/daemon-1001.out.log\n`;
+        }
+        if (file === 'lsof')
+          return `p1001\nf12\nn${gradleHome}/daemon/9.4.1/daemon-1001.out.log\n${secondDaemon ? `p1002\nf12\nn${gradleHome}/daemon/9.4.1/daemon-1002.out.log\n` : ''}`;
         if (file === launcher && args[0] === '--status')
-          return `1001 IDLE 9.4.1\n${extraBusy ? '2002 BUSY 9.4.1\n' : ''}`;
+          return `1001 IDLE 9.4.1\n${secondDaemon ? '1002 IDLE 9.4.1\n' : ''}${extraBusy ? '2002 BUSY 9.4.1\n' : ''}`;
         if (file === launcher && args[0] === '--stop') {
           stops++;
           present = false;
@@ -589,6 +598,33 @@ test.skipIf(process.platform === 'win32')(
     ]);
     expect(healthy.actionable).toBe(false);
     expect(stops).toBe(0);
+
+    const warningObservations = [];
+    if (process.platform === 'darwin') {
+      warning = true;
+      const file = withAmbientContext(context, maintenanceStateFile);
+      mkdirSync(dirname(file), { recursive: true });
+      const old = Date.now() - 7 * 24 * 60 * 60_000;
+      const history = {
+        version: 1,
+        lastAt: { pressure: old },
+        sizes: [],
+        recent: [],
+        plan: [],
+        lastPass: null,
+        pressure: { disk: [], memory: { level: 'warning', availableBytes: null, pressured: true }, warningSince: old },
+      };
+      writeFileSync(file, JSON.stringify(history));
+      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      history.lastAt.pressure = Date.now();
+      const fresh = JSON.stringify(history);
+      writeFileSync(file, fresh);
+      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      warningObservations.push(readFileSync(file, 'utf8') === fresh);
+      rmSync(file);
+      warning = false;
+    }
+    expect(warningObservations).toEqual(process.platform === 'darwin' ? [false, true, true] : []);
 
     pressured = true;
     configure();
@@ -619,15 +655,22 @@ test.skipIf(process.platform === 'win32')(
     rmSync(lock, { recursive: true, force: true });
 
     extraBusy = true;
+    secondDaemon = true;
     const captured = vi.spyOn(identities, 'captureProcessIdentity').mockReturnValue({ ok: true, token: 'owned-token' });
     const inspected = vi.spyOn(identities, 'inspectProcessIdentity').mockReturnValue('same');
     pressureReads = 0;
     duringPressure = () => {
-      if (pressureReads === 3) inspected.mockReturnValue('different');
+      if (pressureReads === 3) {
+        inspected.mockImplementation((record) => (record?.pid === 1001 ? 'different' : 'same'));
+        replacedSecond = true;
+      }
     };
     const replaced = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
     expect(replaced.report.results).toContainEqual(
-      expect.objectContaining({ status: 'kept', detail: expect.stringContaining('process changed') }),
+      expect.objectContaining({ id: '1001', status: 'kept', detail: expect.stringContaining('process changed') }),
+    );
+    expect(replaced.report.results).toContainEqual(
+      expect.objectContaining({ id: '1002', status: 'kept', detail: expect.stringContaining('process changed') }),
     );
     expect(stops).toBe(0);
     expect(signals).not.toHaveBeenCalled();
@@ -635,6 +678,7 @@ test.skipIf(process.platform === 'win32')(
     inspected.mockRestore();
 
     extraBusy = false;
+    secondDaemon = false;
     duringPressure = undefined;
     const eligible = await client.collectGarbage({ cache: 'gradle-daemons', delete: true });
     expect(eligible.exitCode).toBe(0);

@@ -773,8 +773,7 @@ export function memorySweepIsScoped(env: NodeJS.ProcessEnv = process.env): boole
   return Boolean(env.STIM_HOME);
 }
 
-/** The report of a run whose STIM_HOME is set: the helpers are machine-global, so none is inspected or stopped. */
-export function scopedMemoryReport(): MemoryReport {
+function scopedMemoryReport(): MemoryReport {
   return {
     processes: [],
     watchmanRoots: [],
@@ -831,17 +830,24 @@ async function manualDaemonsKept(
   entry?: MemoryProcess,
 ): Promise<string | null> {
   if (memorySweepIsScoped(env)) return 'STIM_HOME scopes this config, so machine-global daemons are kept';
+  if (entry && !sameProcess(entry, await hostRows(operation))) return 'the process changed or exited since the check';
   const birth = entry ? captureProcessIdentity(entry.pid) : null;
   if (entry && !birth?.ok) return 'the process identity could not be verified';
   const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
   const settings = resolveMaintenanceSettings(undefined, env);
   if (settings.invalid) return `memory settings are invalid: ${settings.invalid}`;
   if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
-  const previous = readMaintenanceState()?.pressure ?? null;
+  const state = readMaintenanceState();
+  const now = Date.now();
+  const checkedAt = state?.lastAt.pressure;
+  const previous =
+    checkedAt !== undefined && checkedAt <= now && now - checkedAt <= settings.pressureCheckMinutes * 60_000
+      ? state?.pressure
+      : null;
   const pressure = memoryPressureFromObservations(
     settings,
     level === 'warning' && previous?.memory.level === 'warning' ? previous : null,
-    Date.now(),
+    now,
     level,
     process.platform === 'darwin' ? null : freemem(),
     totalmem(),
