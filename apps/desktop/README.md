@@ -1125,6 +1125,10 @@ viewers, time left) with **Cancel** (the default) and **Quit**. It shows nothing
 an adopted server (a background service or an auto-started `stim share` server),
 which keeps running, or when the list does not answer within 2 seconds.
 
+The quit closes an open share sheet first, so a generated password still on screen is gone
+even if you then choose Cancel; stop the share and make a new one to get a new password.
+A quit from `stim stop` or SIGTERM shows the alert for at most 3 seconds and then quits.
+
 ## Replay
 
 While Desktop's stim-server runs (see [stim-server](#stim-server)),
