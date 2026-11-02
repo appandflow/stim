@@ -48,6 +48,7 @@ export function readIdleStop(state: WorkspaceState | null | undefined): IdleStop
 }
 
 export const DEVICE_RECLAIM_REASON = 'reclaimed for a waiting run';
+export const DEVICE_METRO_IDLE_STOP_REASON = "Metro's idle stop";
 export const DEVICE_IDLE_SHUTDOWN_KEY = 'deviceIdleShutdowns';
 
 /** An owned simulator or emulator shut down after being idle. */

@@ -23,6 +23,7 @@ import {
   withWorkspaceStateLock,
 } from '../workspace/workspace-state.ts';
 import {
+  DEVICE_METRO_IDLE_STOP_REASON,
   DEV_SERVER_STOP_REQUEST_KEY,
   IDLE_STOP_KEY,
   readDevServerStopRequest,
@@ -396,8 +397,6 @@ export async function runSupervisor({
 
   closeHostedMetro = watchHostedMetro(root, port, processToken);
   const deviceIdleMs = deviceIdleMinutes * 60_000;
-  const shutDownIdleDevices = (idleMs: number) =>
-    deviceIdle.shutDown(root, idleMs, (entry) => writer.write({ src: 'metro', ...entry }));
 
   if (deviceIdleMinutes > 0) {
     stopWatchingDevices = watchIdleDevices({
@@ -410,7 +409,8 @@ export async function runSupervisor({
           await withIdleWorkspace(
             root,
             async () => {
-              if (!stopping) await shutDownIdleDevices(deviceIdleMs);
+              if (!stopping)
+                await deviceIdle.shutDown(root, deviceIdleMs, (entry) => writer.write({ src: 'metro', ...entry }));
             },
             { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },
           );
@@ -431,13 +431,23 @@ export async function runSupervisor({
         const stopIfStillIdle = async () => {
           const idleMinutes = idleMinutesNow();
           if (stopping || idleMinutes === null) return;
+          const devices: string[] = [];
           if (deviceIdleMinutes > 0) {
             try {
-              await shutDownIdleDevices(Math.min(deviceIdleMs, idleStopMinutes * 60_000));
+              await deviceIdle.shutDown(
+                root,
+                Math.min(deviceIdleMs, idleStopMinutes * 60_000),
+                (entry) => {
+                  writer.write({ src: 'metro', ...entry });
+                  devices.push(entry.msg);
+                },
+                now(),
+                { reason: DEVICE_METRO_IDLE_STOP_REASON, metroStopped: () => true, kept: (line) => devices.push(line) },
+              );
             } catch (err) {
               stderr(`Stim supervisor: could not shut down idle devices: ${describeError(err)}`);
             }
-          }
+          } else devices.push('devices.idleShutdownMinutes is 0, so no device was shut down');
           const stop = { reason: 'idle' as const, at: new Date(now()).toISOString(), idleMinutes };
           withWorkspaceStateLock(root, () => {
             if (readWorkspaceState(root)?.supervisor?.processToken === processToken) {
@@ -447,7 +457,7 @@ export async function runSupervisor({
           await shutdown(
             0,
             'supervisor_idle_stopped',
-            `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server`,
+            `no bundle request, client log or Stim command for ${idleMinutes} minutes (metro.idleStopMinutes is ${idleStopMinutes}); stopped the ${mode} dev server${devices.map((line) => `; ${line}`).join('')}`,
             stop,
           );
         };

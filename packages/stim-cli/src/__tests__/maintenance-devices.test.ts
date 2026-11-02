@@ -16,11 +16,12 @@ import * as teardown from '../devices/teardown.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { captureProcessToken } from '../process-identity.ts';
 import { planDeviceDeletion } from '../maintenance/devices.ts';
 import { maintenanceLine } from '../maintenance/status.ts';
 import { loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { takeGcResults } from '../commands/gc/results.ts';
 import { takeLease } from '../engine/device-lease.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
@@ -335,4 +336,46 @@ test('a maintenance pass shuts down devices idle past their workspace devices.id
   expect(records.filter((record) => record.event === 'maintenance_failure').map((record) => record.target)).toEqual([
     'UDID-broken',
   ]);
+});
+
+test("maintenance stops counting a Debug app's device logs once its workspace's supervisor is gone, and keeps counting them while it runs", async () => {
+  idlePass('on');
+  const gone = workspaceWithSim('gone', 30);
+  const live = workspaceWithSim('live', 30);
+  for (const [root, udid] of [
+    [gone, 'UDID-gone'],
+    [live, 'UDID-live'],
+  ] as const) {
+    writeWorkspaceState(root, {
+      launches: {
+        ios: { appId: 'com.example.app', deviceId: udid, metroPort: 8100, release: false, launchedAt: '' },
+      },
+    });
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(
+      join(workspaceLogsDir(root), 'device.ndjson'),
+      `${JSON.stringify({ src: 'device', platform: 'ios', ts: Date.now() - 5_000, msg: 'nw_connection retry' })}\n`,
+    );
+  }
+  writeWorkspaceState(live, {
+    supervisor: { pid: process.pid, processToken: captureProcessToken(process.pid), port: 8100, mode: 'expo-child' },
+  });
+  vi.spyOn(ios, 'listAllIosSims').mockReturnValue(
+    ['UDID-gone', 'UDID-live'].map((udid) => ({
+      udid,
+      name: `stim-${udid}`,
+      state: 'Booted',
+      runtime: 'iOS 27.0',
+      deviceTypeIdentifier: 'iPhone',
+      available: true,
+    })),
+  );
+  setExecutor({ ...getExecutor(), runFileQuiet: (file) => (file === 'ps' ? '' : null) });
+  const shutDown = vi
+    .spyOn(teardown, 'teardownOwnedIosSim')
+    .mockImplementation(async (id) => ({ status: 'torn-down', label: id }));
+
+  await runMaintenance('test');
+
+  expect(shutDown.mock.calls.map(([id]) => id)).toEqual(['UDID-gone']);
 });
