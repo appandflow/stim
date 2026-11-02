@@ -21,8 +21,6 @@ const LOGO_POP_SCALE = 1.2;
 const LOGO_POP_MS = 90;
 const LOGO_SHRINK_MS = 130;
 const PIXELS_DELAY_MS = 100;
-const APP_START_SCALE = 0.98;
-const APP_SETTLE_MS = 600;
 const CROSSFADE_MS = 250;
 /** The native animations start once this render reaches the UI thread, after the unmount timer starts. */
 const UNMOUNT_SLACK_MS = 50;
@@ -33,7 +31,7 @@ let played = false;
 /**
  * Wraps the app, draws the native splash over it, and hides the native splash once this frame is on screen. Then it
  * plays the dismiss once per app process: the logo pops and shrinks, and the purple breaks into pixels that vanish
- * outward from it while the app settles into place. Reduce Motion gets a crossfade.
+ * outward from it to reveal the app. Reduce Motion gets a crossfade.
  */
 export function SplashOverlay({ children }: { children: ReactNode }) {
   const [visible, setVisible] = useState(!played);
@@ -62,17 +60,7 @@ export function SplashOverlay({ children }: { children: ReactNode }) {
 
   return (
     <View style={styles.backdrop}>
-      <EaseView
-        style={styles.app}
-        animate={{ scale: started ? 1 : APP_START_SCALE }}
-        transition={
-          reduceMotion
-            ? { type: 'none' }
-            : { type: 'timing', duration: APP_SETTLE_MS, delay: PIXELS_DELAY_MS, easing: 'easeOut' }
-        }
-      >
-        {children}
-      </EaseView>
+      <View style={styles.app}>{children}</View>
       {visible && (
         <EaseView
           style={styles.overlay}

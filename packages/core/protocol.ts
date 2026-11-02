@@ -14,7 +14,6 @@ import type {
   HostedLogsCursor,
   HostedLogsPage,
   NdjsonRecord,
-  StatusPayload,
   ArchivedSummary,
   ArchivedUsage,
   ArchivedWorkspace,
@@ -60,6 +59,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * bringing it to the front, or with null resumes following the front window.
  * `hosted-ios-data` is iOS build handoff and native log queries, persisted before device deletion.
  * `hosted-android-data` is Android APK build handoff and native log queries, persisted before device deletion.
+ * `hosted-app-state` queries the current process state of an installed iOS or Android app attempt.
  * `hosted-ios-process` and `hosted-android-process` accept native app offers in process mode, with live process readiness and no Metro.
  * `hosted-metro-link` carries hosted Metro over `device-host.metro.link` connections the client opens, so the host never
  * connects to the client.
@@ -86,9 +86,8 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `build-reuse-artifact` accepts `reuseArtifact` with `podsOnWorker` on `build.start`.
  * `build-jdk` accepts `jdk` on `build.start`, the JDK major an Android build runs on; the machine finds an installed JDK of that
  * major when its default differs.
- * `status-views` is `workspaces.subscribe`, `workspace.subscribe`, `machine.subscribe`, `builds.history`,
- * `archived.list`, `worktrees.list` and `maintenance.get`.
  * `desktop-reports` serves cached doctor/GC reports to the authenticated local Desktop connection.
+ * `desktop-machine-history` adds machine-wide build and cleanup history to those reports.
  * `desktop-report-platform` accepts an optional ios/android selector for Desktop doctor reports.
  * `desktop-report-invalidate-target` accepts a report target in `desktop.reports.invalidate`, which then invalidates only it.
  * `desktop-settings` reads settings for a selected folder on the authenticated local Desktop connection.
@@ -121,6 +120,7 @@ export const FEATURES = [
   'hosted-congestion',
   'hosted-ios-data',
   'hosted-ios-process',
+  'hosted-app-state',
   'native-xcode-build',
   'native-xcode-toolchain',
   'build-artifact-cache',
@@ -143,8 +143,8 @@ export const FEATURES = [
   'build-compat',
   'build-jdk',
   'build-reuse-artifact',
-  'status-views',
   'desktop-reports',
+  'desktop-machine-history',
   'desktop-report-platform',
   'desktop-report-invalidate-target',
   'desktop-settings',
@@ -153,6 +153,8 @@ export const FEATURES = [
   'desktop-full-logs',
   'desktop-doctor-run',
   'desktop-machine-access',
+  'desktop-remedy',
+  'desktop-device-tools',
   'desktop-stop',
   'desktop-reload',
   'desktop-start',
@@ -178,6 +180,7 @@ export const METHODS = [
   'desktop.logs.subscribe',
   'desktop.doctor.run',
   'desktop.machine-access.subscribe',
+  'desktop.remedy.subscribe',
   'desktop.stop.subscribe',
   'desktop.reload.subscribe',
   'desktop.start.subscribe',
@@ -189,7 +192,6 @@ export const METHODS = [
   'desktop.plan.get',
   'desktop.plan.cancel',
   'route.setup',
-  'status.subscribe',
   'workspaces.subscribe',
   'workspace.subscribe',
   'machine.subscribe',
@@ -248,6 +250,7 @@ export const METHODS = [
   'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.app.state',
   'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.ports',
@@ -306,6 +309,7 @@ export const DEVICE_HOST_METHODS = [
   'device-host.app.handoff',
   'device-host.app.launch',
   'device-host.app.attach',
+  'device-host.app.state',
   'device-host.logs.query',
   'device-host.metro.open',
   'device-host.metro.ports',
@@ -487,7 +491,9 @@ export interface DesktopPlanRefusal {
   remedy: string | null;
 }
 
-export type DesktopReportTarget = { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' } | { report: 'gc' };
+export type DesktopReportTarget =
+  | { report: 'doctor'; cwd: string; platform?: 'ios' | 'android' }
+  | { report: 'gc' | 'gc-history' | 'builds' };
 
 export interface DesktopReportSnapshot {
   pending: boolean;
@@ -1653,6 +1659,10 @@ export interface Methods {
   };
   'device-host.app.launch': { params: { session: string; attempt: string }; result: HostedAppLaunch };
   'device-host.app.attach': { params: { session: string; attempt: string }; result: HostedAppLaunch };
+  'device-host.app.state': {
+    params: { session: string; attempt: string };
+    result: { state: 'running' | 'stopped' | 'unknown' };
+  };
   'device-host.logs.query': { params: { session: string; cursor?: HostedLogsCursor }; result: HostedLogsPage };
   'device-host.metro.open': {
     params: { session: string; clientMetroPort?: number };
@@ -1692,6 +1702,14 @@ export interface Methods {
     params: { cwd: string; platform?: 'ios' | 'android' };
     result: Record<string, unknown>;
   };
+  'desktop.remedy.subscribe': {
+    params: { cwd: string } & (
+      | { action: 'doctor-fix'; platform?: 'ios' | 'android' }
+      | { action: 'device-unlock'; platform?: 'ios' | 'android'; slot?: string }
+      | { action: 'device-tool'; request: DeviceToolRequest; slot?: string }
+    );
+    result: SubscribeResult;
+  };
   'desktop.machine-access.subscribe': { params: { cwd: string; ticket?: string }; result: SubscribeResult };
   'desktop.stop.subscribe': { params: { cwd: string; slot?: string }; result: SubscribeResult };
   'desktop.reload.subscribe': { params: { cwd: string; platform?: ReloadPlatform }; result: SubscribeResult };
@@ -1727,7 +1745,6 @@ export interface Methods {
     params: { cwd: string; target?: string; force?: boolean };
     result: SubscribeResult;
   };
-  'status.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspaces.subscribe': { params?: Record<string, never>; result: SubscribeResult };
   'workspace.subscribe': { params: WorkspaceRef; result: SubscribeResult };
   'machine.subscribe': { params?: Record<string, never>; result: SubscribeResult };
@@ -1822,16 +1839,6 @@ export interface UsageHistory {
   endAt: number;
   environments: (UsageSeries & { workspace: string })[];
   devices: DeviceUsageSeries[];
-}
-
-/** A full status payload, as `stim status --watch --json` prints it, and the server's usage history, when it has one. */
-export interface StatusEvent {
-  event: 'status';
-  subscription: string;
-  payload: StatusPayload;
-  usage?: UsageHistory;
-  /** `grantedAt` of the device leases this server holds for phones; absent when it holds none. */
-  ownLeases?: string[];
 }
 
 /**
@@ -2178,6 +2185,28 @@ export interface DesktopMachineAccessEndedEvent {
   message: string;
 }
 
+export type DeviceToolRequest =
+  | { tool: 'location'; platform: 'ios' | 'android'; set: string }
+  | { tool: 'location'; platform: 'ios' | 'android'; clear: true }
+  | { tool: 'permission'; platform: 'ios' | 'android'; action: 'grant' | 'revoke' | 'reset'; service: string }
+  | { tool: 'push'; platform: 'ios'; payload: string }
+  | { tool: 'network'; platform: 'android'; state: 'on' | 'off' };
+
+export interface DesktopRemedyProgressEvent {
+  event: 'desktop-remedy-progress';
+  subscription: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+export interface DesktopRemedyEndedEvent {
+  event: 'desktop-remedy-ended';
+  subscription: string;
+  exitCode: 0 | 1;
+  stdout: string;
+  message: string;
+}
+
 /**
  * Sent on a `device-host.metro.link` connection when the host pairs it with one Metro stream; binary frames follow.
  * Only device-host links receive it, so it is not a `ServerEvent`.
@@ -2187,6 +2216,8 @@ export interface MetroLinkOpenEvent {
 }
 
 export type ServerEvent =
+  | DesktopRemedyProgressEvent
+  | DesktopRemedyEndedEvent
   | DesktopMachineAccessProgressEvent
   | DesktopMachineAccessEndedEvent
   | DesktopWorktreeWarmProgressEvent
@@ -2208,7 +2239,6 @@ export type ServerEvent =
   | DesktopReportEvent
   | BuildProgressEvent
   | NotificationEvent
-  | StatusEvent
   | WorkspacesEvent
   | WorkspaceEvent
   | MachineEvent

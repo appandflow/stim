@@ -225,28 +225,42 @@ import Testing
   @Test func listsAHostedAppsWindowsAndPinsOrFollowsInTheControlSession() async throws {
     let (stream, server, session) = try await started()
     let sub = try #require(server.subs.first)
-    let window = { (id: Double, title: String) -> JSONValue in
+    let window = { (id: Double, title: String, width: Double) -> JSONValue in
       .object([
         "id": .number(id), "title": .string(title),
-        "frame": .object(["x": .number(0), "y": .number(0), "width": .number(800), "height": .number(600)]),
+        "frame": .object(["x": .number(0), "y": .number(0), "width": .number(width), "height": .number(600)]),
       ])
     }
     sub.onEvent(
       ServerEvent(
         name: "macos-windows", subscription: "s1",
         fields: [
-          "current": window(7, "Main"), "windows": .array([window(7, "Main"), window(1e300, "Huge"), window(9, "")]),
+          "current": window(7, "Main", 1600),
+          "windows": .array([window(7, "Main", 1600), window(1e300, "Huge", 800), window(9, "", 800)]),
           "pinned": .bool(false),
         ]))
     #expect(
       stream.windows?.windows == [MacosWindows.Window(id: 7, title: "Main"), MacosWindows.Window(id: 9, title: "")])
     #expect(stream.windows?.current == 7)
+    #expect(stream.windows?.currentPointSize == CGSize(width: 1600, height: 600))
     #expect(stream.windows?.pinned == false)
     stream.selectWindow(9)
     stream.selectWindow(nil)
     await settle()
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .number(9)])
     #expect(server.take("input.window")?.params == ["session": .string(session), "window": .null])
+    sub.onEvent(
+      ServerEvent(
+        name: "macos-windows", subscription: "s1",
+        fields: ["current": window(9, "", 800), "windows": .array([window(7, "Main", 1600), window(9, "", 800)])]))
+    #expect(stream.windows?.current == 9)
+    #expect(stream.windows?.currentPointSize == CGSize(width: 800, height: 600))
+    sub.onEvent(
+      ServerEvent(
+        name: "macos-windows", subscription: "s1",
+        fields: ["current": .object(["id": .number(9), "title": .string("")]), "windows": .array([])]))
+    #expect(stream.windows?.current == 9)
+    #expect(stream.windows?.currentPointSize == nil)
   }
 
   @Test func keepsOneKeyframeRequestOutstandingWhileTheServerDoesNotAnswer() async throws {

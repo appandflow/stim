@@ -1,3 +1,4 @@
+import * as desktopLinks from '../devices/stim-desktop.ts';
 import { testContext } from './_context.ts';
 import { recordBuild, recordedBuildKey } from '../engine/recorded-build.ts';
 import { createStim } from '../api.ts';
@@ -54,7 +55,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, parse } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Command } from 'commander';
 import { collectorProcessTitle } from '../collector/ownership.ts';
 import {
@@ -87,7 +88,6 @@ import {
   NO_DEVICE,
   NO_FINGERPRINT,
   androidDevClientScheme,
-  androidFacts,
   androidSystemImageSetting,
   androidVariantSetting,
   collectorLogFile,
@@ -99,7 +99,6 @@ import {
   dumpApkManifest,
   findAapt,
   parseXmltree,
-  displayPath,
   killPreviousCollector,
   lastBuildRecord,
   noDeviceDiagnostic,
@@ -565,6 +564,7 @@ function harness(overrides: Record<string, unknown> & Pick<ReactNativeAndroidDep
       readDeviceRecords: () => [],
       readNativeCrashes: () => [],
       deviceLogsThrough: () => null,
+      processAlive: async () => null,
       stop: () => {},
     }),
     ensureStorage: async (dir: string) => {
@@ -1048,6 +1048,8 @@ describe('explicit remote backend behavior', () => {
       expect(stats?.machine.android?.runs).toBe(1);
       expect(stats?.history).toBeUndefined();
       expect(result.ok).toBe(true);
+      expect(result.facts?.devicePlacement?.decision).toBe(backend === 'eas' ? 'eas' : undefined);
+      expect(result.facts?.devicePlacement?.machine).toBe(backend === 'eas' ? 'eas' : undefined);
       expect(selected).toEqual([backend]);
       expect(remoteCalls).toEqual(['ensureDevice', 'ensureDeviceBooted', 'install', 'launch']);
       expect(h.calls.ensureDevice).toEqual([]);
@@ -3825,66 +3827,6 @@ describe('the pure parts', () => {
     });
     expect(remoteNoSpace.remedy).toBe('Inspect the remote device.');
     expect(remoteNoSpace.logPath).toBe(null);
-  });
-
-  test('phaseLine lines the values up in one column', () => {
-    expect(phaseLine('device', 'x')).toBe('  device      x');
-    expect(phaseLine('fingerprint', 'x')).toBe('  fingerprint x');
-  });
-
-  test('displayPath shortens a workspace path and leaves a foreign one alone', () => {
-    expect(displayPath(root, join(root, '.stim', 'logs'))).toBe(join('.stim', 'logs'));
-    const foreign = join(parse(root).root, 'elsewhere', 'build.ndjson');
-    expect(displayPath(root, foreign)).toBe(foreign);
-  });
-
-  test('androidFacts and lastBuildRecord fill every field of their contracts', () => {
-    expect(androidFacts({ root })).toEqual({
-      platform: 'android',
-      buildMachine: 'auto',
-      serial: null,
-      avdName: null,
-      deviceName: null,
-      systemImage: null,
-      deviceProfile: null,
-      fingerprint: null,
-      cacheKey: null,
-      variant: null,
-      metroPort: null,
-      cacheHit: false,
-      cacheSkipped: false,
-      waitedForBuild: null,
-      appPath: null,
-      bundleId: null,
-      installSkipped: false,
-      launched: false,
-      ccache: { status: 'unavailable', hits: null, misses: null, hitRatePercent: null },
-      debugHttpHost: null,
-      debugHttpHostNote: null,
-      devClientUrl: null,
-      logs: null,
-      agentDevice: { stateDir: workspaceAgentDeviceDir(root) },
-      durationMs: null,
-    });
-    expect(androidFacts({ variant: 'productionDebug' }).variant).toBe('productionDebug');
-    expect(androidFacts({ cacheKey: `${FINGERPRINT}-productionrelease-sim` }).cacheKey).toBe(
-      `${FINGERPRINT}-productionrelease-sim`,
-    );
-    expect({
-      avdName: androidFacts({ avdName: 'stim-app-412' }).avdName,
-      deviceName: androidFacts({ avdName: 'stim-app-412' }).deviceName,
-    }).toEqual({ avdName: 'stim-app-412', deviceName: 'stim-app-412' });
-    expect(androidFacts({ cacheHit: 'remote' }).cacheHit).toBe('remote');
-    expect(androidFacts({ durationMs: 123 }).durationMs).toBe(123);
-    expect(androidFacts({ cacheHit: true }).cacheHit).toBe(false);
-    expect(androidFacts({ cacheHit: 'local', waitedForBuild: { pid: 41233, ms: 761000 } }).waitedForBuild).toEqual({
-      pid: 41233,
-      ms: 761000,
-    });
-    const record = lastBuildRecord({ startedAt: 'now', status: 'ok' });
-    expect(record.buildMachine).toBe('auto');
-    expect(record.builtOn).toBeUndefined();
-    expect(lastBuildRecord({ startedAt: 'now', status: 'failed', errorCode: BUILD_ERROR }).errorCode).toBe(BUILD_ERROR);
   });
 
   test('killPreviousCollector signals a pid proven ours and tolerates a dead one', () => {
@@ -7934,6 +7876,7 @@ describe('strict remote machine selection', () => {
 });
 
 describe('named Android hosting placement', () => {
+  afterEach(() => vi.restoreAllMocks());
   const session = '12345678-1234-1234-1234-123456789abc';
   const hostDevice = {
     avdName: 'stim-host-private',
@@ -8166,8 +8109,18 @@ describe('named Android hosting placement', () => {
     'builds for the offered ABI and records %s launch evidence without local adb',
     async (evidence) => {
       const order: string[] = [];
+      const links = { desktop: 'https://stim.appandflow.com/open?v=1&machine=fixture&workspace=fixture' };
+      vi.spyOn(desktopLinks, 'workspaceLinks').mockResolvedValue(links);
+      const delivered = {
+        ...placement,
+        agent: {
+          driver: 'agent-device',
+          remoteConfig: '/tmp/host-config',
+          command: 'agent-device <command> --remote-config /tmp/host-config',
+        },
+      };
       const h = harness({
-        json: true,
+        json: evidence !== 'release',
         remoteDevice: 'mini',
         variant: evidence === 'release' ? 'release' : 'debug',
         progress: { ...NO_BUILD_PROGRESS, durations: () => ({ install: 1000 }) },
@@ -8180,12 +8133,12 @@ describe('named Android hosting placement', () => {
         },
         placeHostedAndroid: async (
           _target: unknown,
-          args: { reserved: (value: typeof placement) => void; bundle: string; metroPort: number | null },
+          args: { reserved: (value: typeof delivered) => void; bundle: string; metroPort: number | null },
         ) => {
           order.push('reserve');
           expect(args.bundle).toBe(fakeApk());
-          args.reserved(placement);
-          return { placement, launched: evidence === 'release' ? true : 'unverified' };
+          args.reserved(delivered);
+          return { placement: delivered, launched: evidence === 'release' ? true : 'unverified' };
         },
         build: async (args) => {
           order.push('build');
@@ -8200,6 +8153,11 @@ describe('named Android hosting placement', () => {
       });
       const result = await h.run();
       expect(result.ok).toBe(true);
+      expect(result.facts?.devicePlacement).toMatchObject({ decision: 'hosted', machine: 'mini' });
+      const output = h.stdout.join('\n') + h.stderr.join('\n');
+      expect(output).toContain(delivered.agent.command);
+      expect(output).toContain(links.desktop);
+      expect(output).not.toContain('AGENT_DEVICE_STATE_DIR=');
       expect(order).toEqual(['offer', 'build', 'reserve']);
       expect(result.facts?.launched).toBe(
         evidence === 'release' || evidence === 'verified' ? true : evidence === 'requested' ? 'bundling' : 'unverified',
@@ -8212,17 +8170,18 @@ describe('named Android hosting placement', () => {
       expect(result.facts?.serial).not.toBe(hostDevice.serial);
       expect(result.facts?.avdName).not.toBe(hostDevice.avdName);
       expect(getProject(root)?.platforms?.android).toBeUndefined();
-      expect(readWorkspaceState(root)?.android).toMatchObject({ host: placement });
+      expect(readWorkspaceState(root)?.android).toMatchObject({ host: delivered });
       expect(h.calls.ensureDevice).toEqual([]);
       expect(h.calls.booted).toEqual([]);
       expect(h.calls.spawn).toEqual([]);
     },
   );
 
-  test("a hosted debug launch waits for the app's readiness in the host's copied device log", async () => {
+  test("a hosted debug launch waits for the app's readiness in the host's copied device log and checks its process", async () => {
     let at = 1000;
     const copied = () => at - 3000;
     const stop = vi.fn<() => void>();
+    const processAlive = vi.fn<() => Promise<boolean>>(async () => true);
     const readiness = (ts: number, state: string) => ({
       ts,
       src: 'device',
@@ -8243,6 +8202,7 @@ describe('named Android hosting placement', () => {
         readDeviceRecords: () => [readiness(1500, 'pending'), readiness(6000, 'ready')].filter((r) => r.ts <= copied()),
         readNativeCrashes: () => [],
         deviceLogsThrough: copied,
+        processAlive,
         stop,
       }),
       verifyLaunched: (args: Parameters<typeof verifyLaunch>[0]) =>
@@ -8264,6 +8224,7 @@ describe('named Android hosting placement', () => {
     expect(h.stderr.join('\n')).toContain('app reported ready');
     expect(result.facts?.launched).toBe(true);
     expect(stop).toHaveBeenCalledOnce();
+    expect(processAlive).toHaveBeenCalled();
   });
 
   test.each([

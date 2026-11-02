@@ -41,8 +41,8 @@ struct SetupDoctorFindings: View {
     ) { command in
       Button("Run the Fix") {
         lastFix = command
-        onboarding.runGuide("Fix \(folderName)", command) {
-          onboarding.runGuide("Check \(folderName)", checkCommand)
+        onboarding.runGuide("Fix \(folderName)", command) { [weak onboarding = onboarding, folderName, checkCommand] in
+          onboarding?.runGuide("Check \(folderName)", checkCommand)
         }
       }
     } message: { command in

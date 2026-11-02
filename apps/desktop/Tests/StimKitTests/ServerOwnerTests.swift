@@ -100,7 +100,8 @@ struct ServerOwnerTests {
   }
 
   @Test func aPairedServersSidebarIgnoresThisMacsHiddenPathsAndHidesOnlyItsOwn() throws {
-    let shared = try workspace(path: "/Users/me/app", udid: "1A2B")
+    var shared = try workspace(path: "/Users/me/app", udid: "1A2B")
+    shared.hidden = true
     let other = try workspace(path: "/Users/me/other", udid: "3C4D")
     var options = SidebarOptions()
     options.statuses = [.live, .idle]

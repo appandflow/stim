@@ -32,6 +32,10 @@ for (const provider of ['xcode', 'gradle'])
         const src = join(area, 'src');
         const blobs = join(area, 'blobs');
         mkdirSync(src);
+        if (provider === 'xcode') {
+          const initialized = spawnSync('git', ['init', '--quiet'], { cwd: src });
+          assert.equal(initialized.status, 0);
+        }
         writeFileSync(join(src, '.gitignore'), 'ignored*\n');
         writeFileSync(join(src, 'ignored-secret'), 'stale private bytes');
         mkdirSync(join(src, 'ignored-output'));
@@ -99,12 +103,14 @@ for (const provider of ['xcode', 'gradle'])
                   arch: 'arm64',
                 },
         };
-        const result = spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
-          input: JSON.stringify(job),
-          encoding: 'utf8',
-          timeout: 15000,
-          env: { ...process.env, STIM_HOME: join(area, 'home') },
-        });
+        const runWorker = () =>
+          spawnSync(process.execPath, [resolve('packages/stim-cli/dist/offload-worker.mjs'), 'build'], {
+            input: JSON.stringify(job),
+            encoding: 'utf8',
+            timeout: 15000,
+            env: { ...process.env, STIM_HOME: join(area, 'home') },
+          });
+        const result = runWorker();
         assert.equal(result.error, undefined);
         assert.equal(result.status, 0, result.stderr);
         const records = result.stdout
@@ -126,6 +132,16 @@ for (const provider of ['xcode', 'gradle'])
           records.some((record) => record.phase === 'build'),
           false,
         );
+        if (provider === 'xcode') {
+          const head = spawnSync('git', ['rev-parse', '--verify', 'HEAD'], { cwd: src, encoding: 'utf8' });
+          assert.equal(head.status, 0, head.stderr);
+          assert.equal(spawnSync('git', ['ls-tree', 'HEAD'], { cwd: src, encoding: 'utf8' }).stdout, '');
+          writeFileSync(join(src, 'Main.swift'), 'previous build mutation');
+          const repeated = runWorker();
+          assert.equal(repeated.status, 0, repeated.stderr);
+          assert.equal(readFileSync(join(src, 'Main.swift'), 'utf8'), 'new');
+          assert.equal(spawnSync('git', ['rev-parse', 'HEAD'], { cwd: src, encoding: 'utf8' }).stdout, head.stdout);
+        }
       } finally {
         rmSync(area, { recursive: true, force: true });
       }
@@ -353,6 +369,7 @@ console.log('BUILD SUCCESSFUL');
       true,
     );
     write(join(area, 'jdk/release'), 'JAVA_VERSION="17"\n');
+    write(join(area, 'gradle/gradle.properties'), 'org.gradle.daemon.idletimeout=60000\n');
     write(join(area, 'sdk/build-tools/35.0.0/source.properties'), 'Pkg.Revision=35.0.0\n');
     write(
       join(area, 'sdk/build-tools/35.0.0/apksigner'),
@@ -452,10 +469,7 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
       readFileSync(actions, 'utf8')
         .split('\n')
         .filter((line) => line === 'compile').length;
-    const daemonProperties = join(process.env.GRADLE_USER_HOME, 'gradle.properties');
-    write(daemonProperties, 'org.gradle.daemon.idletimeout=1800000\n');
     const fresh = run('first');
-    assert.equal(existsSync(daemonProperties), false);
     let completedArtifact = lastCompleted.cacheArtifact;
     assert.ok(completedArtifact);
     const query = (declaration = inputs, android = job.android, jdk) => {
@@ -539,12 +553,9 @@ console.log("package: name='dev.stim.worker' versionCode='1'");
       write(join(blobs, file.sha256.slice(0, 2), file.sha256), readFileSync(join(client, file.path)));
     job.manifest = undeclared.files;
     job.native.sourceDigest = undeclared.digest;
-    const customProperties = 'org.gradle.daemon.idletimeout=1800000\norg.gradle.parallel=true\n';
-    write(daemonProperties, customProperties);
     const beforeUndeclared = compilations();
     assert.deepEqual(run('undeclared-first'), fresh);
     assert.deepEqual(run('undeclared-again'), fresh);
-    assert.equal(readFileSync(daemonProperties, 'utf8'), customProperties);
     assert.equal(compilations(), beforeUndeclared + 2);
   } finally {
     try {

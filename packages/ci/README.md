@@ -122,7 +122,7 @@ environment plus these values:
 | Variable                | Value                                                                     |
 | ----------------------- | ------------------------------------------------------------------------- |
 | `STIM_CI_PLATFORM`      | Selected platform                                                         |
-| `STIM_CI_DEVICE_ID`     | Exact simulator UDID or emulator serial; empty for macOS/web              |
+| `STIM_CI_DEVICE_ID`     | Local simulator UDID or emulator serial; empty when unavailable           |
 | `STIM_CI_APP_ID`        | App bundle/package identifier when available                              |
 | `STIM_CI_METRO_PORT`    | Metro port when available                                                 |
 | `STIM_CI_ARTIFACTS_DIR` | Absolute results directory; empty without `--artifacts`                   |

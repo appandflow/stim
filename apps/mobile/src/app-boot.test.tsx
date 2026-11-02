@@ -3,6 +3,7 @@ import 'react-native-gesture-handler/jestSetup';
 
 import { act, renderRouter, screen } from 'expo-router/testing-library';
 import { AppState } from 'react-native';
+import { fireEvent } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import '@/design/unistyles';
@@ -13,6 +14,7 @@ import statusFixture from '../mock-server/fixtures/status.json';
 // expo-router/testing-library mocks Reanimated with `react-native-reanimated/mock`, which throws while loading under
 // Reanimated 4.7 and leaves an empty module, so the mock it loads is replaced.
 jest.mock('react-native-keyboard-controller', () => jest.requireActual('react-native-keyboard-controller/jest'));
+jest.mock('react-native-hinges', () => ({ useHinges: () => [] }));
 
 jest.mock('react-native-reanimated/mock', () => {
   const inert: () => unknown = () =>
@@ -70,7 +72,7 @@ jest.mock('react-native-drawer-layout', () => ({
 }));
 
 jest.mock('lottie-react-native', () => () => null);
-jest.mock('@/lib/socket', () => ({ createSocket: () => new MockSocket() }));
+jest.mock('@/lib/socket', () => ({ createSocket: (endpoint: string) => new MockSocket(endpoint) }));
 
 const mockStores = new Map<string, Map<string, string>>();
 const mockStore = (id: string) => {
@@ -121,20 +123,23 @@ const ENDPOINT = 'ws://mock-mac:7787';
 /** Answers `hello` and the status feeds like stim-server, with the mock server's captured status. */
 class MockSocket {
   static sent: string[] = [];
-  static features = ['status-views'];
-  static fullStatus: object = statusFixture.payload;
   static viewStatus = statusFixture.payload;
   static homeId: string | undefined;
   static holdWorkspaces = false;
+  static refuseViews = false;
+  static holdMachine = false;
+  static archiveReply: ((before: string | undefined, reply: (result: object) => void) => void) | null = null;
   static latest: MockSocket | null = null;
+  static all: MockSocket[] = [];
   onopen: ((serverKey: string) => void) | null = null;
   onmessage: ((text: string) => void) | null = null;
   onclose: ((event: { code: number; reason: string }) => void) | null = null;
   readyState = 0;
-  feed: ReturnType<typeof setInterval> | undefined;
+  releaseMachine: (() => void) | undefined;
 
-  constructor() {
+  constructor(readonly endpoint: string) {
     MockSocket.latest = this;
+    MockSocket.all.push(this);
     setTimeout(() => {
       this.readyState = 1;
       this.onopen?.('server-key');
@@ -142,14 +147,14 @@ class MockSocket {
   }
 
   send(raw: string) {
-    const { id, method } = JSON.parse(raw) as { id: number; method: string };
+    const { id, method, params } = JSON.parse(raw) as { id: number; method: string; params?: { before?: string } };
     MockSocket.sent.push(method);
     const reply = (message: object) => setTimeout(() => this.onmessage?.(JSON.stringify(message)), 0);
     if (method === 'hello') {
       reply({
         id,
         result: {
-          protocol: 1,
+          protocol: 2,
           server: {
             id: MockSocket.homeId,
             name: 'Mock Mac',
@@ -160,27 +165,53 @@ class MockSocket {
           capabilities: ['read', 'control'],
           actions: ['reload', 'stop'],
           device: { id: 'phone', name: 'Phone' },
-          features: MockSocket.features,
+          features: [],
         },
       });
-    } else if (method === 'status.subscribe') {
-      reply({ id, result: { subscription: 's0' } });
-      this.feed = setInterval(
-        () => reply({ event: 'status', subscription: 's0', payload: MockSocket.fullStatus }),
-        1000,
-      );
     } else if (method === 'workspaces.subscribe' || method === 'machine.subscribe') {
-      const views = statusViews(MockSocket.viewStatus as Parameters<typeof statusViews>[0]);
+      if (MockSocket.refuseViews) {
+        reply({ id, error: { code: 'unknown-method', message: 'unknown method' } });
+        return;
+      }
+      const views = statusViews(
+        (this.endpoint === ENDPOINT
+          ? MockSocket.viewStatus
+          : {
+              ...MockSocket.viewStatus,
+              environments: [],
+              unprovisionedWorktrees: [],
+              archived: [],
+            }) as Parameters<typeof statusViews>[0],
+      );
       const subscription = method === 'workspaces.subscribe' ? 's1' : 's2';
       reply({ id, result: { subscription } });
       const { workspaces, worktrees, archived, machine } = views;
       if (method === 'workspaces.subscribe' && MockSocket.holdWorkspaces) return;
+      if (method === 'machine.subscribe' && MockSocket.holdMachine) {
+        this.releaseMachine = () => reply({ event: 'machine', subscription, seq: 0, machine });
+        return;
+      }
       reply(
         method === 'workspaces.subscribe'
           ? { event: 'workspaces', subscription, seq: 0, snapshot: { workspaces, worktrees, archived } }
           : { event: 'machine', subscription, seq: 0, machine },
       );
     } else if (method === 'archived.list') {
+      if (this.endpoint !== ENDPOINT) {
+        reply({
+          id,
+          result: { archived: [], usage: { ...statusFixture.payload.archivedUsage, count: 0, bytes: 0 }, next: null },
+        });
+        return;
+      }
+      if (MockSocket.archiveReply) {
+        MockSocket.archiveReply(params?.before, (result) =>
+          reply(
+            result instanceof Error ? { id, error: { code: 'internal', message: result.message } } : { id, result },
+          ),
+        );
+        return;
+      }
       const archivedList = statusFixture.payload.archived ?? [];
       reply({ id, result: { archived: archivedList, usage: statusFixture.payload.archivedUsage, next: null } });
     } else {
@@ -189,7 +220,6 @@ class MockSocket {
   }
 
   close() {
-    clearInterval(this.feed);
     this.readyState = 3;
   }
 }
@@ -264,6 +294,12 @@ function launchInactive() {
 
 it("clears the previous release's derived data, keeps the pairing, and renders the live machine", async () => {
   seedPreviousInstall();
+  const paired = mockStore('secure-store').get('stim.macs')!;
+  const [mac] = JSON.parse(paired);
+  mockStore('secure-store').set(
+    'stim.macs',
+    JSON.stringify([mac, { ...mac, id: 'mac2', name: 'Quiet Mac', endpoint: 'ws://quiet-mac:7787' }]),
+  );
   const activate = launchInactive();
   const errors: string[] = [];
   const consoleError = jest
@@ -272,7 +308,12 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   const info = jest.spyOn(console, 'info').mockImplementation(() => {});
   const readyLogs = () => info.mock.calls.filter(([message]) => message === '[stim:readiness] ready').length;
 
-  await renderRouter('./src/app', { initialUrl: '/' });
+  const path = statusFixture.payload.environments[0]!.path;
+  MockSocket.holdMachine = true;
+  const route = renderRouter('./src/app', {
+    initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(path)}`,
+  });
+  const rendered = await route;
   expect(screen.getByTestId('splash-overlay')).toBeTruthy();
   await act(() => jest.advanceTimersByTimeAsync(0));
   expect(readyLogs()).toBe(0);
@@ -281,10 +322,22 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(readyLogs()).toBe(1);
   await act(() => jest.advanceTimersByTimeAsync(600));
   expect(MockSocket.sent).toContain('workspaces.subscribe');
+  expect(MockSocket.sent).not.toContain('archived.list');
   await act(async () => {
     activate();
     await jest.advanceTimersByTimeAsync(1000);
   });
+  expect(MockSocket.sent).not.toContain('archived.list');
+  await act(async () => {
+    for (const socket of MockSocket.all) socket.releaseMachine?.();
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  expect(screen.getByText('Work')).toBeTruthy();
+  MockSocket.holdMachine = false;
+  await act(() => router.replace('/'));
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  expect(MockSocket.sent).not.toContain('archived.list');
   consoleError.mockRestore();
 
   expect(errors).toEqual([]);
@@ -296,6 +349,165 @@ it("clears the previous release's derived data, keeps the pairing, and renders t
   expect(JSON.parse(mockStore('stim.notifications').get('prefs')!)).toMatchObject({ enabled: true });
   const state = JSON.parse(mockStore('stim.notifications').get('state')!) as Record<string, { workspaces?: object }>;
   expect(state[`status:${MAC_ID}`]?.workspaces).toBeDefined();
+
+  const [firstArchive, ...remaining] = statusFixture.payload.archived;
+  const archived = {
+    ...firstArchive,
+    projectRoot: firstArchive.projectRoot.replace('/stim/', '/archive-only-project/'),
+    worktree: { ...firstArchive.worktree, repository: '/Users/dev/Developer/archive-only-project' },
+  };
+  const usage = statusFixture.payload.archivedUsage;
+  const pages: (string | undefined)[] = [];
+  let firstPage: ((result: object) => void) | undefined;
+  MockSocket.archiveReply = (before, reply) => {
+    pages.push(before);
+    if (before) reply({ archived: remaining, usage, next: null });
+    else firstPage = reply;
+  };
+  await act(async () => {
+    router.push('/filters');
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  expect(pages).toEqual([undefined]);
+  const quiet = MockSocket.all.find((socket) => socket.endpoint !== ENDPOINT);
+  if (!quiet) throw new Error('the other Mac connected');
+  await act(async () => {
+    quiet.onmessage?.(
+      JSON.stringify({ event: 'workspaces', subscription: 's1', seq: 1, archived: { count: 0, bytes: 1, newest: [] } }),
+    );
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(pages).toEqual([undefined]);
+  await act(async () => {
+    firstPage?.({ archived: [archived], usage, next: 'next-page' });
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  expect(pages).toEqual([undefined, 'next-page']);
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  const moreProjects = screen.queryByLabelText(/Show \d+ more project/);
+  if (moreProjects) await fireEvent.press(moreProjects);
+  expect(screen.getByText('archive-only-project')).toBeTruthy();
+  await act(async () => {
+    router.back();
+    await jest.advanceTimersByTimeAsync(100);
+    router.push('/filters');
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(pages).toHaveLength(2);
+  await act(async () => {
+    router.back();
+    await jest.advanceTimersByTimeAsync(100);
+  });
+
+  const socket = MockSocket.all.find((socket) => socket.endpoint === ENDPOINT);
+  if (!socket) throw new Error('the paired Mac connected');
+  let seq = 1;
+  const changed = () =>
+    socket.onmessage?.(
+      JSON.stringify({
+        event: 'workspaces',
+        subscription: 's1',
+        seq: seq++,
+        archived: { count: seq + 3, bytes: seq * 1000, newest: [] },
+      }),
+    );
+  await act(async () => {
+    changed();
+    await jest.advanceTimersByTimeAsync(10_000);
+  });
+  expect(pages).toHaveLength(2);
+
+  let held: ((result: object) => void) | undefined;
+  let fail = true;
+  MockSocket.archiveReply = (before, reply) => {
+    pages.push(before);
+    if (fail) {
+      fail = false;
+      reply(new Error('archives temporarily unavailable'));
+    } else held = reply;
+  };
+  await act(async () => {
+    router.push('/filters');
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(pages).toHaveLength(3);
+  await act(() => jest.advanceTimersByTimeAsync(5100));
+  expect(pages).toHaveLength(4);
+  await act(async () => {
+    router.back();
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  await act(async () => {
+    held?.({ archived: [], usage, next: 'blurred-page' });
+    await jest.advanceTimersByTimeAsync(10_000);
+  });
+  expect(pages).toHaveLength(4);
+
+  MockSocket.archiveReply = (before, reply) => {
+    pages.push(before);
+    reply({ archived: [archived], usage, next: null });
+  };
+  await act(async () => {
+    router.push('/filters');
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(pages).toHaveLength(5);
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  await fireEvent.press(screen.getByText('Archived'));
+  await fireEvent.press(screen.getByText('Active'));
+  await fireEvent.press(screen.getByText('Idle'));
+  await act(async () => {
+    router.back();
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(pages).toHaveLength(5);
+  expect(screen.getByText('feat/archived-workspaces')).toBeTruthy();
+  await act(() => router.push('/filters'));
+  await fireEvent.press(screen.getByText('Reset'));
+  await act(() => router.back());
+  let previous = archived;
+  for (const destination of ['workspace', 'device'] as const) {
+    const newer = {
+      ...previous,
+      id: `${previous.id}-${destination}`,
+      removedAt: '2026-11-02T12:00:00.000Z',
+    };
+    let refreshed: ((result: object) => void) | undefined;
+    MockSocket.archiveReply = (_before, reply) => {
+      pages.push(undefined);
+      refreshed = reply;
+    };
+    await act(async () => {
+      changed();
+      await jest.advanceTimersByTimeAsync(100);
+      router.push({
+        pathname: `/mac/[id]/${destination}`,
+        params: { id: MAC_ID, path: previous.projectRoot, platform: 'ios', slot: 'duo' },
+      });
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(5100));
+    expect(route.getPathname()).toBe(`/mac/${MAC_ID}/${destination}`);
+    expect(screen.queryByText('Workspace Not Found')).toBeNull();
+    expect(refreshed).toBeDefined();
+    await act(async () => {
+      refreshed?.({ archived: [newer], usage, next: null });
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(100));
+    expect(route.getPathname()).toBe(`/mac/${MAC_ID}/archived`);
+    expect(route.getSearchParams().archive).toBe(newer.id);
+    await act(async () => {
+      router.replace('/');
+      await jest.advanceTimersByTimeAsync(100);
+    });
+    await act(() => jest.advanceTimersByTimeAsync(100));
+    previous = newer;
+  }
+  await rendered.unmount();
+  mockStore('secure-store').set('stim.macs', paired);
 }, 60_000);
 
 it('opens a workspace directly without relying on Home to provide the gesture root', async () => {
@@ -322,38 +534,14 @@ it('opens a workspace directly without relying on Home to provide the gesture ro
 }, 60_000);
 
 afterEach(() => {
-  MockSocket.features = ['status-views'];
-  MockSocket.fullStatus = statusFixture.payload;
   MockSocket.viewStatus = statusFixture.payload;
   MockSocket.homeId = undefined;
   MockSocket.holdWorkspaces = false;
+  MockSocket.refuseViews = false;
+  MockSocket.holdMachine = false;
+  MockSocket.archiveReply = null;
+  MockSocket.all = [];
 });
-
-it('follows the full status feed of a Mac whose server does not serve the status views', async () => {
-  jest.restoreAllMocks();
-  mockStores.clear();
-  MockSocket.sent = [];
-  MockSocket.features = [];
-  const [first, ...rest] = statusFixture.payload.environments;
-  if (!first) throw new Error('the captured status lists a workspace');
-  MockSocket.fullStatus = { ...statusFixture.payload, environments: [{ ...first, memoryMb: 9216 }, ...rest] };
-  seedPreviousInstall();
-  const activate = launchInactive();
-
-  await renderRouter('./src/app', {
-    initialUrl: `/mac/${MAC_ID}/workspace?path=${encodeURIComponent(first.path)}`,
-  });
-  await act(() => jest.advanceTimersByTimeAsync(1000));
-  await act(async () => {
-    activate();
-    await jest.advanceTimersByTimeAsync(1000);
-  });
-
-  expect(MockSocket.sent).toContain('status.subscribe');
-  expect(MockSocket.sent).not.toContain('workspaces.subscribe');
-  await act(() => jest.advanceTimersByTimeAsync(1000));
-  expect(screen.getByText(/^9\.0\sGB$/)).toBeTruthy();
-}, 60_000);
 
 it('does not resolve a shared link from previous workspace views after reconnect', async () => {
   jest.restoreAllMocks();
@@ -372,6 +560,15 @@ it('does not resolve a shared link from previous workspace views after reconnect
     activate();
     await jest.advanceTimersByTimeAsync(2000);
   });
+  let oldArchiveReply: ((result: object) => void) | undefined;
+  MockSocket.archiveReply = (_before, reply) => {
+    oldArchiveReply = reply;
+  };
+  const archiveReads = () => MockSocket.sent.filter((method) => method === 'archived.list').length;
+  const beforeArchives = archiveReads();
+  await act(() => router.push('/filters'));
+  await act(() => jest.advanceTimersByTimeAsync(100));
+  expect(archiveReads()).toBe(beforeArchives + 1);
   const previous = MockSocket.latest;
   if (!previous) throw new Error('the paired Mac connected');
   MockSocket.holdWorkspaces = true;
@@ -390,6 +587,15 @@ it('does not resolve a shared link from previous workspace views after reconnect
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
+  await act(async () => {
+    oldArchiveReply?.({
+      archived: statusFixture.payload.archived,
+      usage: statusFixture.payload.archivedUsage,
+      next: 'old-session',
+    });
+    await jest.advanceTimersByTimeAsync(100);
+  });
+  expect(archiveReads()).toBe(beforeArchives + 1);
   const current = MockSocket.latest;
   if (!current || current === previous) throw new Error('the paired Mac reconnected');
   await act(async () => {
@@ -404,4 +610,14 @@ it('does not resolve a shared link from previous workspace views after reconnect
     await jest.advanceTimersByTimeAsync(1000);
   });
   expect(result.getPathname()).toBe('/open');
+  MockSocket.refuseViews = true;
+  await act(async () => {
+    current.close();
+    current.onclose?.({ code: 1006, reason: 'reconnect' });
+    router.replace(`/mac/${MAC_ID}`);
+    await jest.advanceTimersByTimeAsync(6000);
+  });
+  expect(screen.getByText('Update stim-server on this Mac to load its live status.')).toBeTruthy();
+  expect(screen.queryByText(/Pair this machine again/)).toBeNull();
+  expect(MockSocket.sent).not.toContain('status.subscribe');
 }, 60_000);

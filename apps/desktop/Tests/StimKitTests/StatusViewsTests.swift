@@ -75,6 +75,15 @@ private func decoded(_ views: StatusViews) throws -> StatusPayload {
     "machine":null,"deviceLeases":[],"simctlAvailable":true,"maintenance":null}}
     """
   #expect(views.applyMachine(fields(machine)) == .changed)
+  let before = views.payload()
+  var historyOnly = fields(machine)
+  historyOnly["seq"] = .number(1)
+  historyOnly["usage"] = .object([
+    "intervalMs": .number(5000), "endAt": .number(1), "environments": .array([]), "devices": .array([]),
+  ])
+  historyOnly["ownLeases"] = .array([.string("2026-10-01T00:00:00Z")])
+  #expect(views.applyMachine(historyOnly) == .unchanged)
+  #expect(views.payload() == before)
   let archive = """
     {"id":"a","projectRoot":"/w/a","project":"a","workspace":"a--0","worktree":{},"removedAt":"2026-10-01T00:00:00Z",
     "removedBy":"gc","builds":{"count":0,"last":null,"lastErrorCount":0},"agents":[],

@@ -126,8 +126,9 @@ function lease(dir: string, fields: Record<string, unknown> = {}) {
 }
 
 test('unknown lease identities keep their runner entry in use', () => {
+  vi.stubEnv('TZ', 'America/Toronto');
   const dir = join(runner, 'derived', 'ios-simulator', 'cache-a');
-  const at = 'Tue Sep 29 10:12:06 2026';
+  const at = 'Sun Nov  1 01:50:03 2026';
   for (const fields of [
     { ownerPid: 42, ownerStartTime: at },
     { runnerPid: 42, runnerStartTime: at },
@@ -136,6 +137,12 @@ test('unknown lease identities keep their runner entry in use', () => {
       inUse: true,
       inUseReason: 'unreadable',
     });
+    expect(
+      runnerInUse(dir, [lease(dir, fields)], false, null, () => ({
+        status: 'running',
+        startedAtMs: Date.parse('2026-11-01T06:50:03Z'),
+      })),
+    ).toEqual({ inUse: true, inUseReason: 'unreadable' });
   }
 });
 

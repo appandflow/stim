@@ -126,8 +126,10 @@ public enum GcHistory {
   }
 }
 
-extension StimCLI {
-  public func gcHistory(limit: Int = 2000) async throws -> [GcHistoryItem] {
-    GcHistory.parse(try await run(["logs", "--source", "gc", "--json", "--tail", String(limit)], cwd: NSHomeDirectory()))
+extension GcHistory {
+  @MainActor public static func read(stimHome: String, connection: (client: ServerClient, home: String)?) async throws
+    -> [GcHistoryItem]
+  {
+    parse(try await readServerMachineHistory(report: "gc-history", stimHome: stimHome, connection: connection))
   }
 }

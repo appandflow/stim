@@ -142,8 +142,8 @@ it('serves its pairing code, pairs over protocol 2, streams, takes Control and t
   const hello = await first.request('hello');
   expect(hello.result).toMatchObject({ protocol: 2, device: { name: 'Live' }, capabilities: ['read', 'control'] });
 
-  await first.request('status.subscribe');
-  await vi.waitFor(() => expect(first.received.some((message) => message.event === 'status')).toBe(true));
+  await first.request('workspaces.subscribe');
+  await vi.waitFor(() => expect(first.received.some((message) => message.event === 'workspaces')).toBe(true));
 
   const target = { workspace: SEARCH, platform: 'ios', slot: 'default' };
   const frames = await first.request('frames.subscribe', target);

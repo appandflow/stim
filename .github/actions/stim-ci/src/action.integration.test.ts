@@ -89,11 +89,22 @@ it('validates explicit inputs and preserves command source and argument paths', 
     ['timeout', '0'],
     ['retention-days', '-1'],
     ['upload-artifacts', 'perhaps'],
+    ['build-only', 'perhaps'],
   ]) {
     expect(() => readInputs((key) => (key === name ? value! : (github.inputs[key] ?? '')), root, 'linux')).toThrow(
       /required|must/,
     );
   }
+  expect(() =>
+    readInputs((key) => (key === 'build-only' ? 'true' : (github.inputs[key] ?? '')), root, 'linux'),
+  ).toThrow('no native build');
+  expect(() =>
+    readInputs(
+      (key) => (key === 'platform' ? 'ios' : key === 'build-only' ? 'true' : (github.inputs[key] ?? '')),
+      root,
+      'linux',
+    ),
+  ).toThrow('command does not apply');
   github.inputs.arch = 'arm64';
   expect(() => readInputs((name) => github.inputs[name] ?? '', root, 'linux')).toThrow(
     'apply only when the action builds',
@@ -124,9 +135,15 @@ process.exitCode = ${exitCode};
   );
 }
 
-test.skipIf(process.platform === 'win32')(
-  'uploads failure evidence and preserves the original test exit code if transport fails',
-  async () => {
+test.each([false, true])(
+  'uploads failure evidence and preserves the original exit code if transport fails (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.platform = 'macos';
+      delete github.inputs.command;
+    }
     fixture(23);
     github.upload.mockRejectedValue(new Error('transport unavailable'));
     github.inputs.home = 'home with spaces';
@@ -135,7 +152,9 @@ test.skipIf(process.platform === 'win32')(
     const files = github.upload.mock.calls[0]![1];
     expect(files).toEqual([join(root, 'results/result.json'), join(root, 'results/test.stderr.log')]);
     const args = JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'));
-    expect(args.slice(-7)).toEqual(['--', 'bash', '-e', '-o', 'pipefail', '-c', github.inputs.command]);
+    expect(onlyBuild ? args[0] : args.slice(-7)).toEqual(
+      onlyBuild ? 'build' : ['--', 'bash', '-e', '-o', 'pipefail', '-c', github.inputs.command],
+    );
     expect(args).toContain(join(root, 'home with spaces'));
     expect(github.output).toHaveBeenCalledWith('result', join(root, 'results/result.json'));
   },
@@ -200,9 +219,15 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test.skipIf(process.platform === 'win32')(
-  'forwards cancellation while allowing the child to finish cleanup and retain evidence',
-  async () => {
+test.each([false, true])(
+  'forwards cancellation while allowing the child to finish cleanup and retain evidence (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.platform = 'macos';
+      delete github.inputs.command;
+    }
     fixture(
       0,
       `
@@ -218,6 +243,7 @@ writeFileSync(join(dir, 'ready'), 'ready');
     expect(existsSync(join(root, 'results/ready'))).toBe(true);
     process.emit('SIGTERM');
     expect(await running).toBe(130);
+    expect(JSON.parse(readFileSync(join(root, 'results/argv.json'), 'utf8'))[0]).toBe(onlyBuild ? 'build' : 'run');
     expect(JSON.parse(readFileSync(join(root, 'results/result.json'), 'utf8')).exitCode).toBe(130);
     expect(github.upload).toHaveBeenCalled();
   },
@@ -255,11 +281,14 @@ function recorder(): { calls(): string[][] } {
   };
 }
 
-test.skipIf(process.platform === 'win32')(
-  'builds once, then runs, and writes and uploads nothing without artifacts',
-  async () => {
+test.each([false, true])(
+  'builds once and writes and uploads nothing without artifacts (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
     const seen = recorder();
     github.inputs.platform = 'ios';
+    github.inputs['build-only'] = String(onlyBuild);
+    if (onlyBuild) delete github.inputs.command;
     delete github.inputs.artifacts;
     github.inputs.export = 'out/app.tar.gz';
     expect(await runAction()).toBe(0);
@@ -267,8 +296,8 @@ test.skipIf(process.platform === 'win32')(
     expect(build?.slice(0, 3)).toEqual(['build', '--platform', 'ios']);
     expect(build).toEqual(expect.arrayContaining(['--export', join(root, 'out/app.tar.gz')]));
     expect(build).not.toContain('--artifacts');
-    expect(run?.[0]).toBe('run');
-    expect(run).not.toContain('--artifacts');
+    expect(seen.calls().map((call) => call[0])).toEqual(onlyBuild ? ['build'] : ['build', 'run']);
+    expect(run ?? []).not.toContain('--artifacts');
     expect(github.upload).not.toHaveBeenCalled();
     expect(github.output).not.toHaveBeenCalledWith('result', expect.anything());
   },
@@ -353,6 +382,27 @@ else process.exitCode = 4;`,
     'exit-code': '4',
   });
 });
+
+test.each([true, false])(
+  'sets the macOS cache output from native facts (build-only=%s)',
+  { skip: process.platform === 'win32' },
+  async (onlyBuild) => {
+    github.inputs.platform = 'macos';
+    if (onlyBuild) {
+      github.inputs['build-only'] = 'true';
+      github.inputs.export = 'out/App.tar.gz';
+    }
+    delete github.inputs.command;
+    delete github.inputs.artifacts;
+    writeFileSync(
+      join(root, 'fixture.mjs'),
+      `if (process.argv[2] === 'build') console.log(JSON.stringify({ stage: 'build', artifactPath: '/out/App.tar.gz', build: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));
+else console.log(JSON.stringify({ exitCode: 0, run: { facts: { bundle: '/w/App.app', bundleId: 'com.example', build: { cacheHit: false } } } }));`,
+    );
+    expect(await runAction()).toBe(0);
+    expect(github.output).toHaveBeenCalledWith('cache-hit', 'false');
+  },
+);
 
 test.skipIf(process.platform === 'win32')('stops before run when the build fails, and never builds web', async () => {
   const seen = recorder();

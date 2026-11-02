@@ -34,6 +34,7 @@ jest.mock('expo-router', () => ({
   useRouter: () => ({ push: jest.fn() }),
 }));
 jest.mock('@/hooks/machines', () => ({
+  useArchives: () => {},
   useMachinePresence: () => mockPresence,
   useMachineStatus: () => mockStatus,
   useMachineUsage: () => null,

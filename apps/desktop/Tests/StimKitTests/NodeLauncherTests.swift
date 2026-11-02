@@ -47,17 +47,25 @@ private struct VersionManagerFixture {
 }
 
 @Suite struct NodeLauncherTests {
+  private func run(_ launcher: NodeLauncher, in fixture: VersionManagerFixture) async throws -> Data {
+    let command = try launcher.command(["--version"])
+    return try await ProcessRequest(
+      command.program, command.arguments, cwd: fixture.project, environment: fixture.environment
+    ).run().stdout
+  }
+
   @Test func runsStimOnTheHomeDirectorysNodeWhereAProjectPinsAnOlderOne() async throws {
     let fixture = try VersionManagerFixture()
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
     let stim = fixture.root + "/prefix/bin/stim"
 
-    let shebang = StimCLI(environment: fixture.environment, override: stim)
-    let pinned = try await shebang.run(["--version"], cwd: fixture.project)
+    let pinned = try await ProcessRequest(
+      stim, ["--version"], cwd: fixture.project, environment: fixture.environment
+    ).run().stdout
     #expect(String(decoding: pinned, as: UTF8.self).hasPrefix("node 18.20.0 "))
 
-    let cli = await StimCLI.resolve(environment: fixture.environment, override: stim)
-    let output = try await cli.run(["--version"], cwd: fixture.project)
+    let cli = try #require(await NodeLauncher.resolve(executable: stim, name: "stim", environment: fixture.environment))
+    let output = try await run(cli, in: fixture)
     #expect(String(decoding: output, as: UTF8.self) == "node 22.12.0 \(fixture.realScript) --version\n")
   }
 
@@ -129,23 +137,25 @@ private struct VersionManagerFixture {
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
     try fixture.installNode("20.11.0")
     try fixture.write(fixture.root + "/shims/node", "exec \"\(fixture.root)/v20/node\" \"$@\"")
-    let cli = await StimCLI.resolve(environment: fixture.environment, override: fixture.root + "/prefix/bin/stim") {
-      PackageManagerLayout()
-    }
+    let cli = try #require(
+      await NodeLauncher.resolve(
+        executable: fixture.root + "/prefix/bin/stim", name: "stim", environment: fixture.environment,
+        layout: { PackageManagerLayout() }))
 
     await #expect(throws: NodeLauncher.Unsupported(runtime: NodeRuntime(path: fixture.root + "/v20/node", version: "20.11.0"))) {
-      try await cli.run(["--version"], cwd: fixture.project)
+      try await run(cli, in: fixture)
     }
   }
 
   @Test func refusesFailedRedetectionInsteadOfRunningTheProjectsNode() async throws {
     let fixture = try VersionManagerFixture()
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
-    let cli = await StimCLI.resolve(environment: fixture.environment, override: fixture.root + "/prefix/bin/stim")
+    let cli = try #require(
+      await NodeLauncher.resolve(executable: fixture.root + "/prefix/bin/stim", name: "stim", environment: fixture.environment))
     try FileManager.default.removeItem(atPath: fixture.root + "/v22/node")
 
     await #expect(throws: NodeLauncher.Unavailable.self) {
-      try await cli.run(["--version"], cwd: fixture.project)
+      try await run(cli, in: fixture)
     }
   }
 
@@ -172,23 +182,26 @@ private struct VersionManagerFixture {
     defer { try? FileManager.default.removeItem(atPath: fixture.root) }
     let shim = fixture.root + "/shims/stim"
     try fixture.write(shim, "exec node \"\(fixture.script)\" \"$@\"")
-    let cli = await StimCLI.resolve(environment: fixture.environment, override: shim) { PackageManagerLayout() }
+    let cli = try #require(
+      await NodeLauncher.resolve(
+        executable: shim, name: "stim", environment: fixture.environment, layout: { PackageManagerLayout() }))
 
     await #expect(throws: NodeLauncher.ScriptUnavailable.self) {
-      try await cli.run(["--version"], cwd: fixture.project)
+      try await run(cli, in: fixture)
     }
 
-    let restored = await StimCLI.resolve(environment: fixture.environment, override: shim) {
-      PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm])
-    }
-    #expect(cli.launcher?.source == shim)
-    #expect(restored.launcher?.source != cli.launcher?.source)
-    let output = try await restored.run(["--version"], cwd: fixture.project)
+    let restored = try #require(
+      await NodeLauncher.resolve(
+        executable: shim, name: "stim", environment: fixture.environment,
+        layout: { PackageManagerLayout(npmPrefix: fixture.root + "/prefix", installed: [.npm]) }))
+    #expect(cli.source == shim)
+    #expect(restored.source != cli.source)
+    let output = try await run(restored, in: fixture)
     #expect(String(decoding: output, as: UTF8.self) == "node 22.12.0 \(fixture.realScript) --version\n")
 
     try FileManager.default.removeItem(atPath: fixture.script)
     await #expect(throws: NodeLauncher.ScriptUnavailable.self) {
-      try await restored.run(["--version"], cwd: fixture.project)
+      try await run(restored, in: fixture)
     }
   }
 

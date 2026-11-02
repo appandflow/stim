@@ -125,14 +125,27 @@ function runnerLease(over: Record<string, unknown> = {}): string {
 }
 
 describe('agent-device lease liveness', () => {
-  test('a device claim needs only its owner process', () => {
-    const claim = parseAgentDeviceRecord(
-      'claim',
-      '/claims/abc.json',
-      JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: OWNER_START }),
-    );
-    expect(claim.deviceId).toBe(UDID);
-    expect(agentDeviceLiveness(claim, starts({ 100: OWNER_START }))).toBe('live');
+  test('a device claim needs only its owner and preserves ambiguous repeated-hour identities', () => {
+    vi.stubEnv('TZ', 'America/Toronto');
+    try {
+      const claim = parseAgentDeviceRecord(
+        'claim',
+        '/claims/abc.json',
+        JSON.stringify({ device: { id: UDID }, ownerPid: 100, ownerStartTime: 'Sun Nov  1 01:50:03 2026' }),
+      );
+      expect(claim.deviceId).toBe(UDID);
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-01T05:50:03Z' }))).toBe('live');
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-01T06:50:03Z' }))).toBe('unknown');
+      expect(agentDeviceLiveness(claim, starts({ 100: '2026-11-02T06:50:03Z' }))).toBe('dead');
+      expect(
+        agentDeviceLiveness(
+          { ...claim, owner: { pid: 100, startTime: '2026-11-01T01:50:03-04:00' } },
+          starts({ 100: '2026-11-01T06:50:03Z' }),
+        ),
+      ).toBe('dead');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

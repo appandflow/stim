@@ -10,6 +10,7 @@ struct SetupGuideView: View {
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
   @ObservedObject private var flags = FeatureFlagStore.shared
+  @ObservedObject private var server = ServerSession.shared
   @AppStorage(AppPreferences.Key.offersTutorial) private var offersTutorial = true
 
   private var step: SetupStep {
@@ -19,6 +20,10 @@ struct SetupGuideView: View {
   private var installedVersion: String? {
     if case .compatible(let version)? = onboarding.report?.stim { return "\(version)" }
     return nil
+  }
+  private var canCheckProject: Bool {
+    guard let connection = server.statsConnection, case .open(let hello) = connection.client.state else { return false }
+    return hello.features?.contains("desktop-doctor-run") == true
   }
   private var busy: Bool { actions.active(for: Onboarding.actionKey) != nil }
 
@@ -155,8 +160,10 @@ struct SetupGuideView: View {
   private var cli: some View {
     VStack(alignment: .leading, spacing: Space.lg) {
       heading("Install the stim CLI")
-      Text("Stim Desktop reads and drives your workspaces through the stim command-line tool. It needs Node.js 22.12 or later.")
-        .foregroundStyle(Palette.secondary)
+      Text(
+        "Optional. Install the stim command-line tool for your coding agents and terminal. Desktop uses its bundled server and works without this installation. The CLI needs Node.js 22.12 or later."
+      )
+      .foregroundStyle(Palette.secondary)
       nodeStatus
       stimStatus
       if setup.state(of: .cli) == .blocked {
@@ -184,7 +191,7 @@ struct SetupGuideView: View {
           }
         ) { onboarding.runGuide("Install stim", command) }
       } else if onboarding.report?.stim.isCompatible == false {
-        Text("No package manager installed this stim, so update it where it came from, or choose another.")
+        Text("No package manager installed this stim, so update it where it came from, then check again.")
           .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
       }
     }
@@ -233,10 +240,6 @@ struct SetupGuideView: View {
               "stim \(version) at \(abbreviatingHome(report.stimPath ?? "stim"))", tone: .success,
               icon: "checkmark.circle.fill")
             Spacer(minLength: 0)
-            Button("Choose Another\u{2026}", action: onboarding.chooseStim).buttonStyle(.stim(.plain))
-          }
-          if report.needsRelaunch {
-            restartBanner("The app picks its stim when it starts. The guide reopens here.", action: onboarding.restartForSetup)
           }
         }
       case .outdated where report.nodeBlocksStim:
@@ -245,7 +248,7 @@ struct SetupGuideView: View {
           tone: .warning, icon: "exclamationmark.triangle.fill")
       case .outdated(let found):
         statusLine(
-          "\(abbreviatingHome(report.stimPath ?? "stim")) reports \(found ?? "no version"); Stim Desktop needs \(StimCLI.minimumVersion) or later.",
+          "\(abbreviatingHome(report.stimPath ?? "stim")) reports \(found ?? "no version"); the agent CLI needs \(SetupChecks.stimMinimum) or later.",
           tone: .warning, icon: "exclamationmark.triangle.fill")
       case .missing:
         EmptyView()
@@ -381,11 +384,10 @@ struct SetupGuideView: View {
             .lineLimit(1).truncationMode(.middle).foregroundStyle(Palette.secondary)
         }
       }
-      .disabled(!onboarding.runsStim)
-      if !onboarding.runsStim {
+      .disabled(!canCheckProject)
+      if !canCheckProject {
         statusLine(
-          onboarding.report?.stim.isCompatible == true
-            ? "Restart Stim Desktop to use the stim you installed." : "Install the stim CLI first.",
+          "Connect the bundled local server to check projects.",
           tone: .neutral, icon: "info.circle")
       } else if let folder = onboarding.projectFolder {
         let command = Onboarding.doctorCommand(in: folder)
@@ -431,9 +433,6 @@ struct SetupGuideView: View {
         .buttonStyle(.stim(.secondary, .regular))
         .accessibilityLabel("Take the Stim tutorial")
       }
-      if onboarding.report?.needsRelaunch == true {
-        restartBanner("The app picks its stim when it starts.", action: onboarding.finishAndRestart)
-      }
     }
   }
 
@@ -472,7 +471,7 @@ struct SetupGuideView: View {
     case .skill: return setup.state(of: .skill) == .pending
     case .notifications: return setup.notifications == .notDetermined
     case .phone: return false
-    case .check: return onboarding.runsStim && onboarding.projectFolder != nil
+    case .check: return canCheckProject && onboarding.projectFolder != nil
     default: return false
     }
   }
@@ -482,17 +481,6 @@ struct SetupGuideView: View {
   private func revealEnd(_ proxy: ScrollViewProxy) {
     DispatchQueue.main.async {
       withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { proxy.scrollTo(Self.end, anchor: .bottom) }
-    }
-  }
-
-  private func restartBanner(_ detail: String, action: @escaping () -> Void) -> some View {
-    Banner(tone: .accent, icon: "arrow.clockwise") {
-      Text("Restart Stim Desktop to use this stim.").font(.stim(.callout, weight: .semibold))
-      Text(detail).font(.stim(.footnote)).foregroundStyle(Palette.secondary)
-    } trailing: {
-      if onboarding.canRelaunch {
-        Button("Restart", action: action).buttonStyle(.stim(.primary))
-      }
     }
   }
 

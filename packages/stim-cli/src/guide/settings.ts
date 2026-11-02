@@ -1139,9 +1139,13 @@ Node the app pins, in its directory or the nearest one above it in the
 checkout, first on PATH, chosen as for Metro (see \`stim guide metro\`). On
 every offloaded iOS build, pinned or not, it writes the first node on its PATH
 (the pinned Node when it put one first) as NODE_BINARY in the iOS project's
-.xcode.env.local, replacing any export NODE_BINARY= line already there. A warm
-Gradle daemon keeps running React Native's node steps on the Node it started
-with. When no installed Node fits the pin, the steps run on the worker's node
+.xcode.env.local, replacing any export NODE_BINARY= line already there. Offloaded
+React Native and Expo Android builds keep a separate Gradle home for each
+selected Node executable and version, so a warm daemon cannot use a previous
+Node. Each Node choice starts with cold Gradle dependencies and can retain
+another warm daemon; switching back reuses its cache. The caches stay until the
+client is removed. Native Gradle projects keep their existing home.
+When no installed Node fits the pin, the steps run on the worker's node
 and a deps-failed or prebuild-failed reason names the pin and that Node's
 version. A change of the pinned Node's major reinstalls the dependencies.
 
@@ -1274,10 +1278,12 @@ and counts it as busy; the slot is freed when the build ends, is cancelled or
 its process is gone. Android builds there run on the JDK in stim-server's
 JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
 ~/Library/Android/sdk, or ~/Android/Sdk on Linux). The client's Gradle daemon stays warm there for
-Gradle's own idle timeout and never holds a build slot. stim-server stops it
-sooner only while no offloaded build runs and the machine has less than 2 GB
-of memory available, and deleting the client's directory under the worker
-root stops it too.
+\`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
+ends; a new value applies from the next daemon) and never holds a build
+slot. While none of the client's builds runs, stim-server stops it sooner
+when a build is cancelled, the client is revoked, or the machine has less
+than 2 GB of memory available, and deleting the client's directory under the
+worker root stops it too.
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install

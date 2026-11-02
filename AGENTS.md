@@ -68,15 +68,15 @@ hide dependencies from that graph. See [the local validation workflow](./docs/te
 for selection and timing commands.
 
 The macOS app lives in `apps/desktop`, a Swift package outside the pnpm
-workspace; see its README. It reads Stim state through the CLI's JSON output,
-or through the local stim-server protocol for stats, status and GC dry runs when its existing
-read-capable session serves the same Stim home, and for device replay and a leased physical
-device's screen. Status and explicit refresh use only the matching server's views;
-connection errors retain the last good display without a CLI status fallback. It runs remaining Stim commands
-through the CLI, never by reading or writing `$STIM_HOME`. It connects to its
-own Stim home's stim-server only over that server's Unix socket, normally
-`$STIM_HOME/server/local.sock`.
-When that path exceeds macOS's 103-byte limit, core and Desktop use
+workspace; see its README. It reads state and runs Stim operations through the
+matching-home local stim-server. It never reads or writes `$STIM_HOME` or falls
+back to an external Stim CLI. The bundled child proves its private Desktop
+authority for mutations; read-only or adopted connections retain their existing
+capability limits. A separately installed CLI is optional for coding agents and
+terminal use. External bootstrap tools run through `ProcessStream`.
+It connects to stim-server over the server's Unix socket, normally
+`$STIM_HOME/server/local.sock`. When that path exceeds macOS's 103-byte limit,
+core and Desktop use
 `/tmp/stim-sockets-<uid>/<sha256-of-normalized-socket-path>.sock`. Its directory
 is mode 0700 and owned by the server's user; the socket serves only that user
 without pairing or Noise. It may also pair, as a client, with another machine's
@@ -412,20 +412,18 @@ outside it moves to its own issue and pull request.
   client are approved for the same client key, and only bytes matching the
   client's verified bundle manifest. The worker builds each client and
   repository in its own area and Stim home under `server.workerRoot`, guarded by an ownership
-  claim whose child is the build's process group. Windows has no process
-  groups: there the claim follows the worker process, cancel stops its tree
-  with `taskkill /T`, and the checkout, linked from the area, and the
-  client's Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
-  because the NDK's ninja cannot open longer paths. A Gradle daemon leaves
-  that group, so it never holds a claim or build slot. After an Android
-  build is cancelled or its worker dies, the repository stays claimed for 15
-  seconds, past Gradle's 10-second cancel grace, so a rerun cannot change
-  sources the daemon still reads. The build itself has ended: its outcome is
-  sent and it no longer counts as running. A stim-server that exits during
-  the hold leaves a claim whose owner is gone, which the next one recovers. The client's daemon stays warm for Gradle's own idle timeout. stim-server stops the workers'
-  idle daemons only while the machine's available memory runs low and no
-  offloaded build runs, and on Windows before it deletes a removed client's
-  area. Gradle stops a daemon whose Gradle home is deleted. `stim-server service` installs,
+  claim. Non-Android claims follow the worker process group. Android claims
+  stay child-pending because Gradle daemons leave that group; cancellation
+  releases them only after this repository's verified daemon identities exit.
+  Unknown cleanup or a server crash retains unresolved repository and build-slot
+  claims for manual inspection and recovery. Windows has no process groups:
+  cancel stops the worker tree with `taskkill /T`; each checkout and repository's
+  Gradle home live in private `windowsShortDir`s under `<SystemDrive>\sw`,
+  because the NDK's ninja cannot open longer paths. The repository's daemon
+  stays warm after an Android build for `server.gradleDaemonIdleMinutes`.
+  Cancellation drains only that repository; whole-client revocation and low
+  memory retain their client-scoped cleanup. Gradle stops a daemon
+  whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is
   Stim's supervisor because Task Scheduler does not restart an exited process,

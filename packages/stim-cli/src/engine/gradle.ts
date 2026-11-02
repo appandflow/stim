@@ -16,6 +16,7 @@ import { HEARTBEAT_INTERVAL_MS, startBuildHeartbeat } from './xcode.ts';
 import type { CcacheActivity } from './build-facts.ts';
 import type { AndroidCasSetup } from './android-cas.ts';
 import { ambientContext } from '@stim-cli/core';
+import { withReleaseMetroCache } from './release-metro.ts';
 
 export const BUILD_ERROR = 'STIM_BUILD_FAILED';
 
@@ -378,7 +379,19 @@ export function gradleArgs(
   return [task, ...(buildCache ? ['--build-cache'] : ['--no-build-cache']), ...projectArgs];
 }
 
-export async function buildGradle(
+export function buildGradle(
+  input: Parameters<typeof buildGradleWithEnv>[0],
+  options: NonNullable<Parameters<typeof buildGradleWithEnv>[1]> = {},
+): Promise<BuildAndroidResult> {
+  return withReleaseMetroCache(
+    input.root,
+    /release$/i.test(input.variant ?? ''),
+    options.env ?? ambientContext()?.env ?? process.env,
+    (env) => buildGradleWithEnv(input, { ...options, env }),
+  );
+}
+
+async function buildGradleWithEnv(
   {
     root,
     logWriter,

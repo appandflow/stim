@@ -33,7 +33,7 @@ extension EnvironmentValues {
 struct PairedWorkspaceDetail: View {
   @ObservedObject var store: StatusStore
   var key: WorkspaceKey
-  var cli: Task<StimCLI, Never>
+  var environment: Task<[String: String], Never>
   var statsReader: StatsReader
   var inspector: InspectorPresentation
   @Binding var inspectorWidth: CGFloat
@@ -75,7 +75,7 @@ struct PairedWorkspaceDetail: View {
 
   private func screen(_ workspace: Workspace) -> some View {
     WorkspaceDetail(
-      cli: cli, statsReader: statsReader, env: workspace, page: WorktreePage.groups(environments: [workspace])[0],
+      environment: environment, statsReader: statsReader, env: workspace, page: WorktreePage.groups(environments: [workspace])[0],
       selectedPath: workspace.path, sampled: [:], usage: nil, machine: nil,
       reportsBundles: workspace.metro?.bundle != nil, history: OwnerHistory(), inspector: inspector,
       inspectorWidth: $inspectorWidth, focusedID: $focusedID, logQuery: .constant(LogQuery()),
@@ -125,7 +125,7 @@ struct PairedActionOutcome: Equatable {
   var message: String
 }
 
-private struct ObservedSession<Content: View>: View {
+struct ObservedSession<Content: View>: View {
   @ObservedObject var session: ServerSession
   @ViewBuilder var content: () -> Content
 

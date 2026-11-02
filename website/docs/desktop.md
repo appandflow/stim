@@ -8,19 +8,22 @@ import PromptBox from '@site/src/components/PromptBox';
 
 Stim Desktop is a macOS app for watching and steering the work Stim runs:
 every workspace with its live simulators and emulators, builds, logs and the
-agents driving them. It runs `stim` for you, so it needs the CLI from
-[Getting started](./getting-started.md).
+agents driving them. It includes its local server; a separately installed CLI is optional for
+[agents and terminal use](./getting-started.md).
 
 ![The workspace page in Stim Desktop: two iPhone simulators side by side with the build stage, git branch and pull request above them](/img/desktop/workspace.webp)
 
-Apps in one linked worktree share a detail page and one sidebar row, with platform
-badges for each app. Selecting the row opens the page; a link or action for one app
-scrolls to that app. The row's context menu has per-app submenus, **Stop All** and
-**Remove Worktree**. The canvas combines all devices, with one stage and git chip. Build cards keep platform titles, adding project
-subtitles only for repeated platforms. The inspector aggregates resources,
-labels each Metro and deduplicates agents. The logs drawer follows app selection
-and has an **App** picker. The actions menu keeps each app's commands plus
-**Stop All** and one **Remove Worktree** action.
+Apps sharing a reported checkout, including a primary checkout, share a detail
+page and one sidebar row, with platform badges for each app. Older servers retain
+linked-worktree grouping. Selecting the row opens the page; a link or action for
+one app scrolls to that app. Each app keeps its own commands, devices and log
+routes. The context and actions menus have per-app submenus and **Stop All**;
+**Remove Worktree** appears only for linked worktrees. The canvas combines all
+devices, with one stage and git chip. Build cards keep platform titles, adding
+project subtitles only for repeated platforms. The inspector aggregates process
+resources, shows each app's dependency disk breakdown separately, labels each
+Metro and deduplicates agents. The logs drawer follows app selection and has an
+**App** picker.
 
 ## Download
 
@@ -33,9 +36,12 @@ brew install --cask appandflow/tap/stim
 ```
 
 - macOS 14 or later, on Apple silicon or Intel.
-- The `stim` CLI, installed globally with npm, pnpm, bun or Homebrew, or set in
-  **Stim > Settings > App**. See [Install Stim](./getting-started.md#install-stim).
+- Desktop includes its local server and works without a separately installed CLI.
+  For agent and terminal commands, [install Stim](./getting-started.md#install-stim)
+  or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
+
+Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
 
 Hosted iOS simulators and Android emulators started with
 `stim ios --remote <machine>` or `stim android --remote <machine>` appear as device
@@ -55,6 +61,7 @@ Desktop passes no `--remote` flag for new iOS and Android runs, so the project's
 settings apply. Recorded hosted sessions stay fixed until `stim stop`.
 When a device is not on this Mac, its tile, workspace page, viewer toolbar and
 sidebar row show the machine's name with a computer icon, with the placement reason as hover text.
+EAS Simulator sessions show an **EAS** placement label in those views.
 Local devices show no placement label. See [iOS on an approved Mac](./owned-devices#run-ios-on-another-mac).
 
 Desktop runs no login shell. It finds Node, the `stim` CLI, Homebrew, the
@@ -257,14 +264,19 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   "..." menu moves a worktree, a multi-app worktree, a Not set up worktree or an
   archive out of the list. Turn on **Hidden** in the sidebar's Status filter, or
   use the "3 hidden - Show" line at the foot of the sidebar, to see them again;
-  **Hide again** turns it off. Hidden is not part of All. A hidden workspace
-  that becomes active (its dev server runs, a build starts, a device boots or
-  connects, or a run starts) shows again. The list lives in this Desktop's own
-  preferences on this Mac and is not shared with the phone app.
+  **Hide again** turns it off. Hidden is not part of All. Provisioned local
+  apps use the shared `workspace.hidden` setting, so the CLI and phone agree;
+  a multi-app row changes each represented app. Mixed checkouts show only the
+  apps selected by the filters. Starting, reloading or warming clears the
+  setting. Old Desktop hides migrate after every app reports the intended shared state, including retries, with
+  progress and failures in Activity. Archives, Not Set Up worktrees and paired
+  row masks keep their existing Desktop-local behavior. A missing-folder row stays local until its
+  folder returns; Unhide requires restoring that folder when the row is already shared-hidden.
 - **Watch and take over a device.** Open a device to see its screen large,
   take it over with your mouse and keyboard, and read what the agent did
   and when. Hardware, rotation and posture controls sit in groups below the
-  screen, wrapping when space is tight.
+  screen, wrapping when space is tight. An already-running app stays visible
+  during rebuilds; take **Control** to keep using it while the next build compiles.
   Local iOS input connects in the background and drops clicks and keys while
   the screen shows **Connecting input** or **Input unavailable**. Lookups time
   out after 10 seconds; Desktop stays responsive and waits for CoreSimulator's
@@ -276,10 +288,10 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   and errors marked on the timeline.
 - **Simulator Options.** While **Control** is on for a running local iOS
   simulator, change appearance, text size, contrast, motion, transparency and
-  button borders in its options popover. Values come from the selected device;
+  button borders or color filters in its options popover. Values come from the selected device;
   **Refresh** reads changes made elsewhere. Unsupported options say
-  **Unavailable**. Requires Xcode's simulator appearance API; location,
-  VoiceOver, color filters and Liquid Glass options are not included.
+  **Unavailable**. Requires Xcode's simulator appearance API; VoiceOver,
+  color-filter type/intensity and Liquid Glass options are not included.
   **Sound** turns an owned simulator's output volume off or back on; turning it
   back on restores the level it had before.
   Without Control the popover shows only **Show device frame**. Its **Development** section also offers **Slow animations** and **Shake**
@@ -295,6 +307,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   older images startup warns that it could not mute the emulator. Your Mac's
   volume and physical phones are unchanged. Hosted simulators and emulators are
   muted when the host boots them, but the Sound toggles do not reach them.
+- **Device tools.** The options popover of a local simulator or emulator has a
+  **Tools** section while **Control** is on: set or clear a simulated location,
+  grant, revoke or reset an app permission, send a test push to an iOS app, and
+  turn an Android emulator's network off or on. Each button runs the matching
+  [`stim device`](./commands.md#device-location-permission-push-and-network)
+  command, so the same ownership checks apply, and the line under the buttons
+  shows what the device reported back where the platform can say. Hosted, remote
+  and physical devices have no Tools section.
 - **Logs.** Separate Metro and App / native inspector sections open the same
   viewer with their source filters selected. Filters remain editable; repeated
   errors are grouped. **Build output > Readable** simplifies Xcode output; **Raw** restores
@@ -305,7 +325,9 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   slot waits with capacity counts and elapsed wait time, cache lookup and
   full miss reason with changed sources and baseline, remote machine and offload
   fallback reason, compiler diagnostics, retained output, and the next-build
-  plan. While a run boots its simulator or emulator, builds the app's first JS
+  plan. Completed runs show the selected build destination and recorded compilation
+  machine. Cache hits never claim compilation, and missing compilation data stays unknown;
+  `STIM_OFFLOAD_REFUSED` reads **Build destination refused**. While a run boots its simulator or emulator, builds the app's first JS
   bundle in Metro, or waits for the app to report ready, the progress and the
   current phase say so with that step's own elapsed time: **Booting
   simulator**, **Bundling JS 45%** (Metro's own percentage, once it reports
@@ -340,9 +362,14 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   **This Mac > Overview** shows compact memory, tracked-process CPU and free-disk
   cards, the three largest process groups, and a cleanup summary. **View all
   processes** expands the list; the information button explains the measurements.
+  A process row's trailing Actions menu names **Stop workspace** or **Stop devices in slot**
+  for owned work. Shared Watchman, Gradle and Kotlin reclaim actions describe their category-wide
+  scope in a confirmation. Worktree rows use the same trailing menu presentation.
   **Review cleanup** opens **Storage**, where you can inspect devices, caches,
   repositories and cleanup candidates before choosing what to free. The summary
   includes optional caches, so it is not an amount selected for deletion.
+  The cleanup checklist shows a selected-row count; changing checkboxes performs no cleanup.
+  Mixed cleanup confirmations name the selected items and consequences before command details.
   **Builds** shows recent build placements and explains when history is unavailable.
   Overview includes the latest three placements when available. Remote machine
   choices show their reported readiness; only the selected choice uses the accent color.
@@ -603,8 +630,15 @@ Click a card or its header to open the workspace (on the Active Workspaces page,
 project), or the stream to open the workspace with that device focused. Cards that scroll out of view
 stop streaming and reconnect when you return to them.
 
+Right-click a card for the sidebar row's workspace menu behind **Open Workspace**: open in your editor or
+Terminal, **Reveal in Finder**, **Copy Path**, **Last Output**, **Run on** each platform the app supports,
+**Reload App**, **Start Dev Server** or **Stop**, **Show Logs** and **Remove Worktree...**. A card with several apps shows
+the worktree menu with per-app submenus, **Stop All**, **Hide** and **Remove Worktree...** instead. Right-click the stream or a device button for **Open Device Viewer** and, on a simulator,
+emulator or macOS app, **Build and Run** and **Stop**. Right-click an Idle project card for **Open Project**,
+**Reveal in Finder** and **Copy Path**. Stop and Remove Worktree ask for the same confirmation as in the sidebar.
+
 Run, Reload App, Start Dev Server and Stop from the workspace or sidebar menus keep
-you on the workspace page, as do Stop or Shut down in the now band and Build and Run and Stop
+you on the workspace page, as do Stop workspace or Stop devices in slot in the resource list and Build and Run and Stop
 on a macOS app card. Open **Last Output** or **Operations** for command details,
 including failed runs. The device viewer's Run, Stop (including a remote session's), Reload web and Close web
 also run without opening a sheet. Progress and failures appear on a line under
@@ -744,6 +778,9 @@ machine, `stim-server devices grant <id> --control`. Choose **Reconnect** in
 **Settings > Paired Machines** after the grant. The machine checks its record on
 every request, so `stim-server devices grant <id> --read` ends control at once.
 
+The paired workspace's sidebar menu also offers **Reload App** and **Stop** with
+the same permissions. **Stop** asks for confirmation naming the owning machine.
+
 Building, running a device, logs, replay, files, worktrees, cleanup and settings
 stay on the machine itself; Desktop does not start work there.
 
@@ -804,7 +841,7 @@ See [automatic machine pools](./remote-machines.md#automatic-machine-pools) for 
 (**Approved**, **Waiting for approval**, the layer that stopped an unreachable machine (such as **Server not ready** or **Mac is offline**), **Needs update** or the reason it is not offloading),
 a line with its running builds and free disk, what each does (**Builds**, **Simulators**), up and down buttons, **Details** and
 **Remove...**. The status shows only a state that stops this Mac using the machine; notes, such as an
-Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
+Android SDK package Gradle downloads on the first build, never change it. With two or more machines each row shows its place in the list. The order is the placement priority: builds, simulators, emulators and macOS apps go to the first machine that has room and a load under its own limit, and to the next only when it has none. The buttons write the new order to `remote.machines`. Right-clicking a row shows the same actions. A machine's page also lists the ten newest builds that ran there, each opening to its phases and failure like the **Builds** page. It updates itself; there is no Refresh button. With none, it
 offers **Add Remote Machine…**, which guides you through five steps:
 
 1. Check Tailscale and pick a Mac, Linux or Windows machine on your tailnet.

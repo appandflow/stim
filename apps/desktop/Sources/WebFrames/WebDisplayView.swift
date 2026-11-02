@@ -64,6 +64,7 @@ public final class WebDisplayNSView: NSView {
   private var target: Target?
   private var page: WebPage?
   private var generation = 0
+  private var framesSeen = 0
   private var retryTimer: Timer?
   private var status: WebStreamStatus?
   private var shownSize: CGSize?
@@ -137,16 +138,17 @@ public final class WebDisplayNSView: NSView {
 
   private func stream(_ page: WebPage, generation current: Int) {
     let key = target?.targetId
-    var framesSeen = 0
+    framesSeen = 0
     page.onFrame { [weak self] frame in
-      framesSeen += 1
-      if framesSeen > 1, let key { ScreenActivity.shared.record(key) }
-      guard let source = CGImageSourceCreateWithData(frame.jpeg as CFData, nil),
-        let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-      else { return }
+      let image = CGImageSourceCreateWithData(frame.jpeg as CFData, nil)
+        .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
       DispatchQueue.main.async {
-        self?.cssWidth = frame.cssWidth
-        self?.frameArrived(image, generation: current)
+        guard let self, self.generation == current else { return }
+        self.framesSeen += 1
+        if self.framesSeen > 1, let key { ScreenActivity.shared.record(key) }
+        guard let image else { return }
+        self.cssWidth = frame.cssWidth
+        self.frameArrived(image, generation: current)
       }
     }
     page.onEnd { [weak self] _ in
@@ -161,9 +163,13 @@ public final class WebDisplayNSView: NSView {
   }
 
   private func retry() {
+    let current = generation
     retryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
-      self?.retryTimer = nil
-      self?.connect()
+      DispatchQueue.main.async {
+        guard let self, self.generation == current else { return }
+        self.retryTimer = nil
+        self.connect()
+      }
     }
   }
 

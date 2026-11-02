@@ -12,6 +12,7 @@ struct Sidebar: View {
   @ObservedObject private var openRequests = OpenRequests.shared
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @ObservedObject private var pairedState = PairedViewState.shared
+  @State private var migratedHidden: [String: Bool] = [:]
   @State private var showsViewOptions = false
   @AppStorage(AppPreferences.Key.expandedProjects) private var expandedProjects = Data()
   @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -20,7 +21,13 @@ struct Sidebar: View {
 
   var body: some View {
     let options = prefs.options
-    let pages = WorktreePage.groups(environments: store.environments(in: nil))
+    let pages = store.sidebarList(options).compactMap { entry -> WorktreePage? in
+      switch entry {
+      case .workspace(let app): return WorktreePage(path: app.path, environments: [app])
+      case .worktreeGroup(let page): return page
+      default: return nil
+      }
+    }
     let rowSelection = listSelection(pages: pages)
     List(selection: rowSelection) {
       Section {
@@ -110,13 +117,19 @@ struct Sidebar: View {
       }
       .background(Palette.sidebar)
     }
-    .onAppear { forgetStaleHidden() }
+    .onAppear {
+      forgetStaleHidden()
+      migrateHidden(store.payload)
+    }
     .onReceive(openRequests.$showsViewOptions) { requested in
       guard requested else { return }
       showsViewOptions = true
       openRequests.showsViewOptions = false
     }
     .onChange(of: staleHidden) { forgetStaleHidden() }
+    .onChange(of: prefs.hiddenWorkspacesRaw) { migrateHidden(store.payload) }
+    .onReceive(store.$payload) { migrateHidden($0) }
+    .onReceive(ServerSession.shared.$client) { _ in migrateHidden(store.payload) }
     .onChange(of: store.payload == nil, initial: true) { _, missing in
       if !missing { LaunchMilestones.reach("sidebar-rows") }
     }
@@ -136,6 +149,17 @@ struct Sidebar: View {
 
   private func forgetStaleHidden() {
     if let reconciled = reconciledHidden() { prefs.hiddenWorkspacesRaw = HiddenWorkspaces.encode(reconciled) }
+  }
+
+  private func migrateHidden(_ payload: StatusPayload?) {
+    let legacyPaths = prefs.hiddenWorkspaces.paths
+    migratedHidden = migratedHidden.filter { legacyPaths.contains($0.key) }
+    guard let payload, ServerSession.shared.localActionConnection?.home == store.stimHome else { return }
+    for item in prefs.hiddenWorkspaces.migrations(environments: payload.environments) {
+      guard migratedHidden[item.path] != item.hidden else { continue }
+      let run = prefs.setHidden(item.hidden, apps: item.apps, actions: actions, migrating: true)
+      if run != nil { migratedHidden[item.path] = item.hidden }
+    }
   }
 
   private func listSelection(pages: [WorktreePage]) -> Binding<SidebarItem?> {
@@ -368,66 +392,18 @@ struct WorkspaceRow: View {
   var showsGit: Bool
   var selection: SidebarItem?
   var openLogs: (String) -> Void
-  @EnvironmentObject private var actions: ActionCenter
-  @State private var confirmingStop = false
-  @State private var removal: WorktreeRemoval?
   @Environment(\.tutorialHint) private var tutorialHint
   let prefs = SidebarPreferences()
 
   var body: some View {
-    let isHidden = prefs.hiddenWorkspaces.paths.contains(env.path)
-    TimelineView(.everyMinute) { _ in
-      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
-    }
-    .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
-    .sidebarTag(.environment(env.path), selection: selection)
-    .contextMenu {
-      WorkspaceActionsMenu(
-        kind: .workspace(
-          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
-          linkedWorktree: env.worktree != nil),
-        path: env.path,
-        busy: actions.active(for: env.path) != nil,
-        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
-        building: env.build?.isRunning == true,
-        reloadAllowed: env.canReload,
-        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
-        onRun: { platform in actions.runApp(env, platform: platform) },
-        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
-        onStartDevServer: {
-          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
-        },
-        onStopDevServer: {
-          if env.remoteDevices?.isEmpty == false {
-            confirmingStop = true
-          } else {
-            actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
-          }
-        },
-        onShowLogs: { openLogs(env.path) },
-        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
-        hidden: isHidden,
-        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
-        onToggleHidden: { prefs.setHidden(!isHidden, path: env.path) })
-    }
-    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
-      Button("Run stim stop", role: .destructive) {
-        actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
+    WorkspaceActions(env: env, openLogs: openLogs) { menu in
+      TimelineView(.everyMinute) { _ in
+        WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: openLogs, isHidden: isHidden)
       }
-    } message: {
-      Text("This also ends the workspace's billable EAS Simulator session.")
-    }
-    .confirmationDialog(
-      "Remove This Worktree?",
-      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
-      titleVisibility: .visible,
-      presenting: removal
-    ) { _ in
-      Button("Run stim worktree remove", role: .destructive) {
-        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
-      }
-    } message: { removal in
-      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
+      .tutorialGlowInPlace(tutorialHint, .sidebarRow, workspaces: [env.path])
+      .sidebarTag(.environment(env.path), selection: selection)
+      .contextMenu { menu }
     }
   }
 }
@@ -659,24 +635,6 @@ struct SidebarFooter: View {
 
   @ViewBuilder private var leftStatus: some View {
     switch status {
-    case .stimUnavailable(let compatibility):
-      let text = compatibility == .missing ? "Install stim" : "stim update available"
-      if onboarding.installCLICommand == nil {
-        statusLabel(dot: Palette.warning, text: text)
-          .help(
-            "This stim is older than Stim Desktop needs, and no package manager installed it. Update it where it came from"
-          )
-      } else {
-        Button(action: onboarding.installStim) {
-          statusLabel(dot: Palette.warning, text: text)
-        }
-        .buttonStyle(.hoverRow(outset: Space.sm))
-        .help(
-          compatibility == .missing
-            ? "Stim Desktop cannot find stim \u{2014} click to install it with \(onboarding.installer.rawValue)"
-            : "This stim is older than Stim Desktop needs, or its version is unreadable \u{2014} click to update it with \(onboarding.report?.stimOwner?.rawValue ?? "its package manager")"
-        )
-      }
     case .stimUpdateAvailable(let installed, let latest):
       Button(action: onboarding.installStim) {
         statusLabel(dot: Palette.primary, text: "stim \(latest.description) available")
@@ -709,7 +667,7 @@ struct SidebarFooter: View {
       .help("Free disk is under the Stim budget \u{2014} click to open Machine")
     case .normal(let version):
       let help: String =
-        version.map { "stim \($0) is installed and works with this Stim Desktop" } ?? "Checking the installed stim"
+        version.map { "Optional agent CLI stim \($0) is installed" } ?? "Stim Desktop uses its bundled server"
       statusLabel(dot: Palette.success, text: version.map { "Stim \($0)" } ?? "Stim")
         .help(help)
     }

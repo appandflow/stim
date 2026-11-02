@@ -34,8 +34,8 @@ describe('the Expo Metro config adapter', () => {
     'observes delivery without replacing project settings (shared store: %s)',
     (storeRoot) => {
       writeFileSync(
-        join(project, 'metro.config.cjs'),
-        `module.exports = { cacheStores: [{ _root: '/project/store' }], server: {
+        join(project, 'metro.config.mjs'),
+        `await Promise.resolve(); export default { cacheStores: [{ _root: '/project/store' }], server: {
       port: 8123,
       enhanceMiddleware(middleware) { return (req, res, next) => {
         res.setHeader('x-project', 'kept'); return middleware(req, res, next);
@@ -109,7 +109,7 @@ describe('the Expo Metro config adapter', () => {
     expect(JSON.parse(result.stdout)).toEqual({ status: 500, body: 'project middleware failed' });
   });
 
-  test('a missing FileStore is a warning and leaves the project stores usable', () => {
+  test('a missing FileStore preserves development stores but refuses isolated Release bundling', () => {
     writeFileSync(
       join(project, 'metro.config.cjs'),
       `module.exports = { cacheStores: [{ _root: '/project/store' }] };\n`,
@@ -134,5 +134,30 @@ describe('the Expo Metro config adapter', () => {
     expect(JSON.parse(result.stdout)).toEqual(['/project/store']);
     expect(result.stderr).toContain('warning: Stim could not share');
     expect(result.stderr).not.toContain('stim-metro-store:');
+    const isolatedEnv = {
+      ...process.env,
+      ADAPTER: adapter,
+      STIM_PROJECT_ROOT: project,
+      STIM_METRO_STORE: '/cache/private-release',
+      STIM_METRO_ISOLATED: '1',
+    };
+    const refused = spawnSync(process.execPath, ['-e', script], { cwd: project, encoding: 'utf8', env: isolatedEnv });
+    expect(refused.status).not.toBe(0);
+    expect(refused.stderr).toContain('cannot isolate the Release Metro transform cache');
+    const isolated = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `
+      Promise.resolve(require(process.env.ADAPTER)).then(config => {
+        const stores = config.cacheStores({ FileStore: class { constructor(options) { this._root = options.root; } } });
+        console.log(JSON.stringify(stores.map(store => store._root)));
+      });
+    `,
+      ],
+      { cwd: project, encoding: 'utf8', env: isolatedEnv },
+    );
+    expect(isolated.status).toBe(0);
+    expect(JSON.parse(isolated.stdout)).toEqual(['/cache/private-release']);
   });
 });

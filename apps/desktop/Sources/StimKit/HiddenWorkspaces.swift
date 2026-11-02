@@ -1,7 +1,7 @@
 import Foundation
 
 extension Workspace {
-  public var worktreeActionKey: String { "worktree:\(worktree?.path ?? path)" }
+  public var worktreeActionKey: String { "worktree:\(checkoutPath ?? path)" }
 }
 
 public struct HiddenWorkspaces: Codable, Equatable, Sendable {
@@ -17,6 +17,8 @@ public struct HiddenWorkspaces: Codable, Equatable, Sendable {
 
   public func contains(_ entry: SidebarEntry) -> Bool {
     switch entry {
+    case .workspace(let app): app.hidden == true || paths.contains(app.path)
+    case .worktreeGroup(let page): paths.contains(page.id) || page.apps.allSatisfy { contains(.workspace($0)) }
     case .archived(let archive): archives.contains(archive.id)
     case .archivedGroup(let group): group.allSatisfy { archives.contains($0.id) }
     default: paths.contains(entry.path)
@@ -53,19 +55,34 @@ public struct HiddenWorkspaces: Codable, Equatable, Sendable {
     var archives: [String]
   }
 
+  public func migrations(environments: [Workspace]) -> [(path: String, apps: [Workspace], hidden: Bool)] {
+    let pages = WorktreePage.groups(environments: environments)
+    return paths.sorted().compactMap { path in
+      let apps = pages.first(where: { $0.id == path })?.apps ?? environments.filter { $0.path == path }
+      guard !apps.isEmpty, !apps.contains(where: { $0.pathMissing == true }) else { return nil }
+      return (path, apps, !apps.contains(where: \.isActive))
+    }
+  }
+
   public func reconciled(
     environments: [Workspace], unprovisioned: [UnprovisionedWorktree]?, archived: [ArchivedWorkspace]?,
     isBusy: (String) -> Bool
   ) -> HiddenWorkspaces {
     let pages = WorktreePage.groups(environments: environments)
     var kept = self
+    for item in migrations(environments: environments)
+    where item.apps.allSatisfy({ ($0.hidden == true) == item.hidden }) {
+      kept.paths.remove(item.path)
+    }
     for path in paths {
-      if let page = pages.first(where: { $0.id == path }) {
-        if page.apps.contains(where: \.isActive) || isBusy(page.actionKey) || page.apps.contains(where: { isBusy($0.path) }) {
+      let apps = pages.first(where: { $0.id == path })?.apps ?? environments.filter { $0.path == path }
+      if !apps.isEmpty {
+        if apps.count == 1, let app = apps.first, app.pathMissing == true,
+          app.isActive || isBusy(app.path) || isBusy(app.worktreeActionKey)
+        {
           kept.paths.remove(path)
         }
-      } else if let env = environments.first(where: { $0.path == path }) {
-        if env.isActive || isBusy(env.path) { kept.paths.remove(path) }
+        continue
       } else if let unprovisioned {
         if unprovisioned.contains(where: { $0.path == path }) {
           if isBusy(path) { kept.paths.remove(path) }

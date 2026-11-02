@@ -112,12 +112,12 @@ struct ArchiveStatusSection: View {
     let started = actions.run(
       "Delete \(page.record.title) \(kind.noun)",
       steps: [page.record.clearCommand(kind, cwd: NSHomeDirectory())], key: ActionCenter.machineKey, present: false
-    ) { run in
-      clearing.remove(part.id)
+    ) { [clearing = $clearing, cleared = $cleared, weak actions] run in
+      clearing.wrappedValue.remove(part.id)
       if run.exitStatus == 0 {
-        cleared.insert(part.id)
+        cleared.wrappedValue.insert(part.id)
       } else {
-        actions.presented = run
+        actions?.presented = run
       }
     }
     if started == nil { clearing.remove(part.id) }

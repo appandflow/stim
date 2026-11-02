@@ -261,7 +261,7 @@ struct ActivitySheet: View {
           }
       }
       if let status = run.exitStatus, status != 0 {
-        Button("Retry") { actions.run(run.title, steps: run.steps, key: run.key) }
+        Button("Retry") { actions.retry(run) }
           .buttonStyle(.stim(.primary))
       }
       Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)

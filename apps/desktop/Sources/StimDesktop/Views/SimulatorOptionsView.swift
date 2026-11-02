@@ -34,6 +34,7 @@ struct SimulatorOptionsView: View {
   var clipboard: ClipboardOptionsView? = nil
   var frame: DeviceFrameOption?
   var audio: DeviceAudioTarget?
+  var tools: DeviceToolsView?
   @State private var appearance: SimulatorAppearance?
   @State private var busy = false
   @State private var error: String?
@@ -59,16 +60,36 @@ struct SimulatorOptionsView: View {
 
   init(
     udid: String, canControl: Bool, clipboard: ClipboardOptionsView? = nil, frame: DeviceFrameOption? = nil,
-    audio: DeviceAudioTarget? = nil
+    audio: DeviceAudioTarget? = nil, tools: DeviceToolsView? = nil
   ) {
     self.udid = udid
     self.canControl = canControl
     self.clipboard = clipboard
     self.frame = frame
     self.audio = audio
+    self.tools = tools
   }
 
   var body: some View {
+    Group {
+      if tools != nil {
+        ScrollView { options }
+          .frame(width: 300 + Space.lg * 2, height: 600)
+      } else {
+        options
+      }
+    }
+    .task(id: canControl) {
+      guard canControl else { return }
+      await SimulatorOptionsPolling.run { await poll() }
+    }
+    .onDisappear { operation?.cancel() }
+    .onChange(of: canControl) { _, allowed in
+      if !allowed { operation?.cancel() }
+    }
+  }
+
+  private var options: some View {
     VStack(alignment: .leading, spacing: Space.md) {
       HStack {
         Text("Simulator Options").font(.stim(.headline))
@@ -96,6 +117,7 @@ struct SimulatorOptionsView: View {
           "Reduce transparency", value: appearance.reduceTransparency?.enabled, change: SimulatorOptions.Change.reduceTransparency
         )
         toggle("Show button borders", value: appearance.showBorders?.enabled, change: SimulatorOptions.Change.showBorders)
+        toggle("Color filters", value: appearance.colorFilter?.enabled, change: SimulatorOptions.Change.colorFilter)
       } else if !busy && (loaded || !canControl) {
         Text("Appearance settings are unavailable.").foregroundStyle(Palette.secondary)
       }
@@ -108,6 +130,10 @@ struct SimulatorOptionsView: View {
       if let clipboard {
         Divider()
         clipboard
+      }
+      if let tools {
+        Divider()
+        tools
       }
       #if DEBUG
         if fixture == nil {
@@ -123,14 +149,6 @@ struct SimulatorOptionsView: View {
     .controlSize(.small)
     .frame(width: 300)
     .padding(Space.lg)
-    .task(id: canControl) {
-      guard canControl else { return }
-      await SimulatorOptionsPolling.run { await poll() }
-    }
-    .onDisappear { operation?.cancel() }
-    .onChange(of: canControl) { _, allowed in
-      if !allowed { operation?.cancel() }
-    }
   }
 
   @ViewBuilder private func mode(_ appearance: SimulatorAppearance) -> some View {

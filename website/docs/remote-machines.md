@@ -151,6 +151,12 @@ reports live process readiness. That needs a host that advertises
 stim-server on it, or use `--remote auto`, which skips it. See
 [native Xcode apps](./commands.md) for the build limits.
 
+A host advertising `hosted-app-state` checks the current installed app attempt's
+process when a Debug launch verifies its bundle. Release and native process
+launches wait three seconds before requiring a live process. Older hosts print
+an update hint and their release/process result stays `unverified`. A failed
+process query is unknown; it does not establish a crash.
+
 `--remote` also accepts two backend names: `eas` creates an EAS Simulator
 session; `proxy` uses an existing agent-device daemon configured with
 `AGENT_DEVICE_DAEMON_BASE_URL` and `AGENT_DEVICE_DAEMON_AUTH_TOKEN`, without
@@ -288,7 +294,10 @@ changing hosts or moving between local and hosted devices. `--device` with
 Native Gradle apps run on a hosted emulator too, without Metro; the host reports
 live process readiness. That needs a host that advertises `hosted-android-process`.
 An older host refuses before reservation or upload; update stim-server on it, or
-use `--remote auto`, which skips it.
+use `--remote auto`, which skips it. Hosted Android uses the same
+`hosted-app-state` liveness check and three-second release/process wait as hosted
+iOS. Update older hosts to verify process state; an unknown query does not
+establish a crash.
 
 The owned emulator boots headless and is parked on stop within the host's
 `pool.androidParkedMax` limit, or deleted when ineligible. Debug keeps Metro
@@ -492,9 +501,11 @@ Volta, asdf, mise or linked Homebrew `node`/`node@NN` install. On every
 offloaded iOS build, pinned or not, the worker also writes the first `node` on
 its `PATH` (the pinned Node when it put one first) as `NODE_BINARY` in the iOS
 project's `.xcode.env.local`, replacing any `export NODE_BINARY=` line already
-there. A warm Gradle daemon keeps
-running React Native's Node steps on the Node it started with
-([#4081](https://github.com/appandflow/stim/issues/4081)). A pin naming a version the
+there. Offloaded React Native and Expo Android builds keep a separate Gradle
+home for each selected Node executable and version. Changing Node starts a cold
+Gradle dependency cache and can retain another warm daemon; switching back reuses
+that Node's cache. These caches stay until the client is removed. Native Gradle
+projects keep their existing home. A pin naming a version the
 worker does not have, such as `22.22.0`, uses the newest installed Node of that
 major that is not older than the pin, such as Homebrew's `node@22` at 22.23.2.
 Without one, the steps run on the worker's own `node`, and a failed install or

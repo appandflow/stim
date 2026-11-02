@@ -468,15 +468,29 @@ struct DeviceTile: View {
         if let udid = simulatorOptionsUDID {
           SimulatorOptionsView(
             udid: udid, canControl: simulatorOptionsUDID == udid, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions),
-            frame: frameOption, audio: simulatorAudioTarget
+            frame: frameOption, audio: simulatorAudioTarget, tools: deviceToolsView
           )
           .id(udid)
         } else {
           EmulatorOptionsView(
             title: optionsTitle, clipboard: clipboardOptions(dismiss: $showsSimulatorOptions), frame: frameOption,
-            audio: emulatorAudioTarget)
+            audio: emulatorAudioTarget, tools: deviceToolsView)
         }
       }
+  }
+
+  private var deviceToolsView: DeviceToolsView? {
+    guard owner.isLocal, viewer, interactive, !replaying, device.isRunning, let workspace else { return nil }
+    let platform: String
+    switch device {
+    case .ios(_, let sim) where sim.owned && !sim.physical && device.localSimulatorUDID != nil: platform = "ios"
+    case .android(_, let avd) where avd.owned && !avd.physical && device.localEmulatorSerial != nil: platform = "android"
+    default: return nil
+    }
+    let slot = device.slot
+    return DeviceToolsView(platform: platform) { [actions] tool in
+      try await actions.deviceTool(tool, platform: platform, slot: slot, cwd: workspace)
+    }
   }
 
   private var optionsTitle: String {
@@ -565,8 +579,7 @@ struct DeviceTile: View {
   }
 
   private var buildCovered: Bool {
-    guard showsCovers, !interactive, let build else { return false }
-    return build.phase != "launch" || device.app?.state != "running"
+    showsCovers && !interactive && build != nil && device.app?.state != "running"
   }
 
   @ViewBuilder private var screenCover: some View {
@@ -1073,6 +1086,9 @@ struct DeviceTile: View {
         .id([device.id, owned.activityKey].compactMap { $0 }.joined(separator: "|"))
         .frame(width: screenWidth(1))
         .padding(screenPadding)
+        .onReceive(choice.$currentPointSize) { size in
+          if case .macos = device, let size { pixelSizes[1] = size }
+        }
       } else {
         placeholder("A workspace is required to view this hosted device.")
       }
@@ -1181,7 +1197,7 @@ struct DeviceTile: View {
   /// A macOS window is sized in points, so its tile fits it at native size; other screens only use the aspect.
   private func pointSize(_ pixels: CGSize) -> CGSize {
     guard case .macos = device else { return pixels }
-    return CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
+    return choice.currentPointSize ?? CGSize(width: pixels.width / displayScale, height: pixels.height / displayScale)
   }
 
   private func placeholder(_ text: String) -> some View {

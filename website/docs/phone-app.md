@@ -192,6 +192,10 @@ workspace page, build sheet and device tiles show it too. Each row stays under
 the server that owns it, and the phone pairs only with those servers. See
 [remote machines](./remote-machines.md).
 
+The last build shows the selected build destination and the compilation machine
+when compilation is recorded. Cache hits omit the compilation line;
+`STIM_OFFLOAD_REFUSED` reads **Build destination refused**.
+
 The build sheet shows build and device slot waits alongside the current phase,
 with the number of slots in use and a live elapsed wait timer. A device slot
 wait can overlap compilation. Older CLIs omit this information. While the run

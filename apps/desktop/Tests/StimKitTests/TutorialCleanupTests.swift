@@ -11,12 +11,12 @@ final class TutorialCleanupTests: XCTestCase {
     let cleanup = TutorialCleanup(
       stop: { path in
         stopped.withLock { $0.append(path) }
-        throw StimCLI.Failure.exited(7, stderr: "Server stop refused")
+        throw CommandFailure.exited(7, stderr: "Server stop refused")
       }, removeWorktree: { _, _ in XCTFail("Removal must not start after stop fails") })
     do {
       try await cleanup.remove(base: dir.path, worktrees: [])
       XCTFail("Removal must stop after the server refuses teardown")
-    } catch StimCLI.Failure.exited(let status, let stderr) {
+    } catch CommandFailure.exited(let status, let stderr) {
       XCTAssertEqual(status, 7)
       XCTAssertEqual(stderr, "Server stop refused")
     }
@@ -34,12 +34,12 @@ final class TutorialCleanupTests: XCTestCase {
       stop: { path in steps.withLock { $0.append("stop " + path) } },
       removeWorktree: { path, base in
         steps.withLock { $0.append("remove " + path + " from " + base) }
-        throw StimCLI.Failure.exited(1, stderr: "Branch cleanup failed")
+        throw CommandFailure.exited(1, stderr: "Branch cleanup failed")
       })
     do {
       try await cleanup.remove(base: dir.path, worktrees: [linked.path])
       XCTFail("Removal failure must preserve the tutorial clone")
-    } catch StimCLI.Failure.exited(let status, let stderr) {
+    } catch CommandFailure.exited(let status, let stderr) {
       XCTAssertEqual(status, 1)
       XCTAssertEqual(stderr, "Branch cleanup failed")
     }

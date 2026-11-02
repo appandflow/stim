@@ -23,8 +23,8 @@ export interface MachineLink {
   home: string | null;
   /** When the connection last dropped; null while connected or before the first connection. */
   disconnectedAt: number | null;
-  /** Whether the Mac's last `hello` listed the `status-views` feature; null before the first `hello`. */
-  statusViews: boolean | null;
+  archiveSummary?: string | null;
+  archivesRead?: string | null;
 }
 
 export interface MachineSnapshot {
@@ -56,7 +56,6 @@ export const IDLE_LINK: MachineLink = {
   missing: false,
   home: null,
   disconnectedAt: null,
-  statusViews: null,
 };
 
 const CACHE_WRITE_DELAY_MS = 5000;

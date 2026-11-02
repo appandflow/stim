@@ -40,8 +40,8 @@ function worktreeRoot(path: string): string | null {
 /** The parents of the payload's worktrees, and every other checkout, which can hold a nested app. */
 export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'unprovisionedWorktrees'>): string[] {
   const roots = new Set<string>();
-  for (const { path, worktree } of payload.environments) {
-    roots.add(worktreeRoot(path) ?? worktree?.repository ?? path);
+  for (const { path, worktree, checkout } of payload.environments) {
+    roots.add(worktree?.repository ?? checkout ?? worktreeRoot(path) ?? path);
   }
   for (const { path, repository } of payload.unprovisionedWorktrees ?? []) {
     const root = worktreeRoot(path) ?? repository;
@@ -54,8 +54,8 @@ export function repositoryRoots(payload: Pick<StatusPayload, 'environments' | 'u
  * The phone cannot run git, so a checkout joins the outermost known root that contains it, and is its
  * own project otherwise.
  */
-export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): ProjectRef {
-  const own = worktreeRoot(env.path) ?? env.worktree?.repository;
+export function projectOf(env: Pick<EnvironmentState, 'path' | 'worktree' | 'checkout'>, roots: string[]): ProjectRef {
+  const own = env.worktree?.repository ?? env.checkout ?? worktreeRoot(env.path);
   const root =
     own ??
     roots
@@ -82,19 +82,20 @@ export function workspaceCheckout(path: string, repository?: string | null): str
 }
 
 /** Where the workspace sits inside its checkout, such as `apps/tlon-mobile`; null at the checkout root. */
-export function pathInCheckout(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string | null {
-  const checkout = markedCheckout(env.path) ?? env.worktree?.path ?? projectOf(env, roots).key;
+export function pathInCheckout(
+  env: Pick<EnvironmentState, 'path' | 'worktree' | 'checkout'>,
+  roots: string[],
+): string | null {
+  const checkout = env.checkout ?? markedCheckout(env.path) ?? env.worktree?.path ?? projectOf(env, roots).key;
   return env.path.startsWith(`${checkout}/`) ? env.path.slice(checkout.length + 1) : null;
 }
 
 /**
  * A workspace's name: its worktree's branch, else the worktree's folder, else the project for a main checkout.
- * `stim status` reports worktree facts only for linked worktrees, so a nested app in a repository with no known
- * worktree is its own project and is named after its folder.
  */
-export function workspaceTitle(env: Pick<EnvironmentState, 'path' | 'worktree'>, roots: string[]): string {
+export function workspaceTitle(env: Pick<EnvironmentState, 'path' | 'worktree' | 'checkout'>, roots: string[]): string {
   if (env.worktree?.branch) return env.worktree.branch;
-  const checkout = env.worktree?.path ?? markedCheckout(env.path);
+  const checkout = env.checkout ?? env.worktree?.path ?? markedCheckout(env.path);
   return checkout ? basename(checkout) : projectOf(env, roots).name;
 }
 

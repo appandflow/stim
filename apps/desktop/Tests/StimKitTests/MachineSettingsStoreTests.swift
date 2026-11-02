@@ -27,7 +27,7 @@ private actor Backend {
 
   func read() throws -> SettingsPayload {
     reads += 1
-    if failReads { throw StimCLI.Failure.exited(1, stderr: "boom") }
+    if failReads { throw CommandFailure.exited(1, stderr: "boom") }
     return payload(machines)
   }
 

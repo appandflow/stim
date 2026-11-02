@@ -19,16 +19,17 @@ struct SettingsView: View {
   private let actions: ActionCenter
 
   init(
-    cli: Task<StimCLI, Never>, store: StatusStore, machine: MachineSettingsStore, buildMachines: BuildMachinesModel,
+    environment: Task<[String: String], Never>, store: StatusStore, machine: MachineSettingsStore,
+    buildMachines: BuildMachinesModel,
     actions: ActionCenter
   ) {
     self.store = store
     self.actions = actions
     self.machine = machine
     self.buildMachines = buildMachines
-    _model = StateObject(wrappedValue: SettingsModel(cli: cli, machine: machine))
-    _history = StateObject(wrappedValue: GcHistoryModel(cli: cli))
-    _builds = StateObject(wrappedValue: BuildLedgerModel(cli: cli))
+    _model = StateObject(wrappedValue: SettingsModel(environment: environment, machine: machine))
+    _history = StateObject(wrappedValue: GcHistoryModel(environment: environment))
+    _builds = StateObject(wrappedValue: BuildLedgerModel(environment: environment))
   }
 
   var body: some View {

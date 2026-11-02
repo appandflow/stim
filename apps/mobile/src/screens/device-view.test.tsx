@@ -61,6 +61,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@/hooks/settings', () => ({ useSettings: () => ({ videoQuality: 'auto' }) }));
 jest.mock('@/hooks/machines', () => ({
+  useArchivesPending: () => false,
   useHasStatus: () => true,
   useMachinePresence: () => ({ online: true, cached: false, lastSeenAt: null }),
   useMachineStatus: () => null,
