@@ -1096,8 +1096,10 @@ THE ONE CASE GC WILL NOT REAP
   daemons. Critical acts at once; warning needs maintenance.memoryWarningMinutes
   of recorded warning, and other platforms also use maintenance.minAvailableMemoryGb.
   Warning history counts only with a fresh warning signal and a recorded check
-  within maintenance.pressureCheckMinutes. This limits observation age, not gaps
-  between observations. Manual reports never record history; without it, a positive
+  within maintenance.pressureCheckMinutes, inside the last completed, unblocked
+  maintenance pass. An interrupted, blocked or later unrelated pass conservatively
+  keeps warning daemons until another eligible observation. This does not prove
+  continuous sampling. Manual reports never record history; without it, a positive
   warning interval keeps daemons.
   Automatic maintenance shares the pressure decision; disk-level-3 version cleanup
   remains independent of memory pressure. Their common build checks allow known

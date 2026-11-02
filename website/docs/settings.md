@@ -945,7 +945,9 @@ manual `stim gc --delete --cache gradle-daemons` requires fresh configured press
 and no local build, including iOS, independently of `maintenance.mode`.
 `memoryPressureLevel: off`, invalid settings or an unreadable macOS signal keep
 daemons; a manual report does not update warning history and ignores observations
-older than `maintenance.pressureCheckMinutes`. Disk-level-3 version
+older than `maintenance.pressureCheckMinutes` or outside the last completed,
+unblocked pass. A later unrelated pass can conservatively keep warning daemons.
+Disk-level-3 version
 cleanup remains independent of memory pressure and allows known iOS builds.
 Below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.

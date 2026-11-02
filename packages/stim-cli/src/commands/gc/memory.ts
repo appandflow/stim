@@ -840,8 +840,15 @@ async function manualDaemonsKept(
   const state = readMaintenanceState();
   const now = Date.now();
   const checkedAt = state?.lastAt.pressure;
+  const completed = state?.lastPass;
   const previous =
-    checkedAt !== undefined && checkedAt <= now && now - checkedAt <= settings.pressureCheckMinutes * 60_000
+    checkedAt !== undefined &&
+    completed &&
+    completed.blocked.length === 0 &&
+    checkedAt >= completed.startedAt &&
+    checkedAt <= completed.startedAt + completed.durationMs &&
+    checkedAt <= now &&
+    now - checkedAt <= settings.pressureCheckMinutes * 60_000
       ? state?.pressure
       : null;
   const pressure = memoryPressureFromObservations(

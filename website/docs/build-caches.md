@@ -607,8 +607,10 @@ can use them. Manual `stim gc --delete --cache gradle-daemons` also requires fre
 configured pressure and no local build, including iOS; it works independently of
 `maintenance.mode`. Off or invalid memory settings keep daemons. Manual reports do
 not update warning history. Warning history older than
-`maintenance.pressureCheckMinutes` is ignored; this limits observation age without
-proving continuous sampling. A warning without recorded history keeps daemons.
+`maintenance.pressureCheckMinutes` or outside the last completed, unblocked pass
+is ignored. Interrupted, blocked or later unrelated passes can conservatively keep
+warning daemons; this does not prove continuous sampling. A warning without
+eligible recorded history keeps daemons.
 Disk-level-3 version cleanup remains independent of memory pressure and retains
 its existing known-iOS allowance. Below disk pressure level 3 a pass stops a dev
 server only after

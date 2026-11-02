@@ -7,7 +7,7 @@ import { stripVTControlCharacters } from 'node:util';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { runGc, withGcMaintenanceClaim } from '../commands/gc.ts';
 import { withAmbientContext } from '@stim-cli/core';
-import { maintenanceStateFile } from '@stim-cli/core/state';
+import { maintenanceStateFile, type MaintenancePass } from '@stim-cli/core/state';
 import { testContext } from './_context.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
@@ -605,18 +605,40 @@ test.skipIf(process.platform === 'win32')(
       const file = withAmbientContext(context, maintenanceStateFile);
       mkdirSync(dirname(file), { recursive: true });
       const old = Date.now() - 7 * 24 * 60 * 60_000;
+      const completed: MaintenancePass = {
+        startedAt: old - 1000,
+        durationMs: 1000,
+        trigger: 'fixture',
+        mode: 'report',
+        freedBytes: 0,
+        actions: 0,
+        stopped: 0,
+        blocked: [],
+      };
       const history = {
         version: 1,
         lastAt: { pressure: old },
         sizes: [],
         recent: [],
         plan: [],
-        lastPass: null,
+        lastPass: completed,
         pressure: { disk: [], memory: { level: 'warning', availableBytes: null, pressured: true }, warningSince: old },
       };
       writeFileSync(file, JSON.stringify(history));
       warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
-      history.lastAt.pressure = Date.now();
+      const recent = Date.now() - 1000;
+      history.lastAt.pressure = recent;
+      writeFileSync(file, JSON.stringify(history));
+      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      completed.startedAt = recent - 1000;
+      completed.blocked = ['pressure check failed'];
+      writeFileSync(file, JSON.stringify(history));
+      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      completed.startedAt = recent + 500;
+      completed.blocked = [];
+      writeFileSync(file, JSON.stringify(history));
+      warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
+      completed.startedAt = recent - 1000;
       const fresh = JSON.stringify(history);
       writeFileSync(file, fresh);
       warningObservations.push((await client.gc({ cache: 'gradle-daemons' })).sections.memory[0]?.reclaimable);
@@ -624,7 +646,7 @@ test.skipIf(process.platform === 'win32')(
       rmSync(file);
       warning = false;
     }
-    expect(warningObservations).toEqual(process.platform === 'darwin' ? [false, true, true] : []);
+    expect(warningObservations).toEqual(process.platform === 'darwin' ? [false, false, false, false, true, true] : []);
 
     pressured = true;
     configure();
