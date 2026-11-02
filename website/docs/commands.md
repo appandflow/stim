@@ -126,11 +126,11 @@ Homebrew `node`/`node@NN` install. When no install has the version the pin
 names, it names the newest installed Node of the pinned major that is not older
 than the pin, and says so. `--json` adds this as `toolchain`.
 
-A `budget` line reports the free disk on the volumes that hold the app and
-`$STIM_HOME`, and the estimated committed memory, against the
-[machine budget](./settings.md#machine-settings). When the machine is over
-budget, a finding lists what the next `start`, `ios`, or `android` would reclaim
-first. Doctor itself never reclaims. `--json` adds this report as `budget`.
+A `pressure` line reports the machine's pressure level, normal, high or
+critical, and why, against the
+[disk thresholds](./settings.md#machine-settings); above normal a finding says
+what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
+`pressure`.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
@@ -395,15 +395,14 @@ can compile on a paired remote machine instead: see `remote.build` in
   can lease. It ignores `ios.remote` and cannot be combined with `--remote`
   other than `--remote local`. Stim never creates, boots, or deletes hardware.
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
-  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
-  owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue. At the cap, only the queue head
-  reclaims the longest-idle eligible owned device in another workspace, one
-  per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
-  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
-  never deletes, and excludes this workspace, physical, hosted, remote,
-  parked and other homes' devices. Failed reclaim is logged and skipped.
+  `0` refuses immediately if busy). Without `--device`, it bounds the
+  owned-device slot wait across the Stim home; without it, a waiting run
+  refuses once its queue position has not improved for max(10 minutes,
+  position x 5 minutes). Remote targets do not join this local slot queue.
+  While a run waits to boot at a full cap, the `stim-daemon` shuts down the
+  longest-idle owned device of another workspace idle 2 minutes, one per
+  tick. Reclaim shuts down, never deletes, and excludes this workspace,
+  physical, hosted, remote, parked and other homes' devices.
 - `--no-wait` bypasses leasing, including when another workspace holds the
   device. Installing the same app terminates that workspace's running app.
   Without `--device`, it refuses a full device cap or existing slot queue
@@ -683,15 +682,14 @@ can compile on a paired remote machine instead: see `remote.build` in
   ignores `android.remote` and cannot be combined with `--remote` other than
   `--remote local`.
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
-  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
-  owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue. At the cap, only the queue head
-  reclaims the longest-idle eligible owned device in another workspace, one
-  per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
-  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
-  never deletes, and excludes this workspace, physical, hosted, remote,
-  parked and other homes' devices. Failed reclaim is logged and skipped.
+  `0` refuses immediately if busy). Without `--device`, it bounds the
+  owned-device slot wait across the Stim home; without it, a waiting run
+  refuses once its queue position has not improved for max(10 minutes,
+  position x 5 minutes). Remote targets do not join this local slot queue.
+  While a run waits to boot at a full cap, the `stim-daemon` shuts down the
+  longest-idle owned device of another workspace idle 2 minutes, one per
+  tick. Reclaim shuts down, never deletes, and excludes this workspace,
+  physical, hosted, remote, parked and other homes' devices.
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
@@ -1024,7 +1022,7 @@ result.
   and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
 - `--source gc` shows the machine-wide gc log: one record per item that
-  `stim gc`, automatic maintenance or the budget gate cleared, kept or failed to
+  `stim gc` or automatic maintenance cleared, kept or failed to
   clear, with the trigger, size and reason. It works from any directory, stands
   alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
   and `--follow`; `--errors` shows only failed items.
@@ -1534,8 +1532,8 @@ owners' `memoryMb` falls back to resident memory, which counts pages shared
 between processes once per process, so a simulator reads many times its
 footprint. An environment's `memoryMb` sums its own owners' footprints, builds
 included, with `memorySource: "footprint"`. Without a footprint, or when
-nothing runs and `machine` is `null`, it is the fixed estimate the memory
-budget uses, with `memorySource: "estimate"`. `stim guide facts status`
+nothing runs and `machine` is `null`, it is a fixed estimate, with
+`memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
 Status always shows this Mac's load, as a `load 17.6/core (busy at 2)` line and
@@ -1616,8 +1614,8 @@ cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
-`cleanup` covers an acting local budget-reclaim plan, including its resource
-remeasurements, and restores the interrupted phase on success. It has no learned
+`cleanup` covers the pressure ladder a run waits for under the disk hard
+floor, and restores the interrupted phase on success. It has no learned
 duration. Raw elapsed time and history include cleanup; estimates and progress
 comparisons exclude it and pause while cleanup is current.
 `expectedMs` and `expectedPhaseMs` are
@@ -1920,8 +1918,8 @@ only when present. This cache is shared by every SwiftPM build on the machine;
 Stim reports it and never deletes it. `$STIM_HOME/swiftpm-cache-usage.json`
 caches `du -sk` measurements for 10 minutes, keyed on the resolved directory,
 with a 20-second timeout. Only `stats` and unscoped `gc` measure it; server and
-phone stats read the cache. `status`, `start`, `ios`, `android` and the budget
-gate never measure it.
+phone stats read the cache. `status`, `start`, `ios`, `android` and the
+pressure ladder never measure it.
 
 Try it with an agent:
 
@@ -2046,7 +2044,8 @@ process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with th
 ambient `TMPDIR`, because SwiftPM keeps the locks for its shared caches there, so
 their temp directories land here too. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
-them. Automatic maintenance runs the same deletion at disk pressure level 2.
+them. The `stim-daemon`'s pressure ladder runs the same deletion daily and at
+once under disk pressure.
 
 `gc` lists each entry of `$STIM_HOME/trash` under "Worktree trash" with its
 size and the worktree it came from: the ignored directories `worktree remove`
@@ -2124,8 +2123,8 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   automatic maintenance never touch those directories. `modules-2`,
   `build-cache-1`, `jdks` and other shared Gradle caches are never deleted,
   and `--cache all` never includes these versions. With `STIM_HOME` set, gc
-  deletes nothing in a Gradle home outside that directory. At disk pressure
-  level 3, automatic maintenance first stops the idle Gradle and Kotlin
+  deletes nothing in a Gradle home outside that directory. Pressure ladder
+  rung 6, daily and at once under disk pressure, first stops the idle Gradle and Kotlin
   daemons `stim gc --delete --cache gradle-daemons` would stop, only when
   every Gradle process that keeps a version is such a daemon, and waits up to
   3 seconds for them to exit, then does the
@@ -2501,11 +2500,10 @@ Commands exit with code 0 on success. Build, launch, ownership, or input errors
 exit with a nonzero code and print an error code, message, and remedy. An empty
 `logs` result exits with code 0.
 
-When `start`, `ios`, or `android` reclaimed disk or memory before it started,
-its `--json` payload, on success or failure, carries a `reclaimed` array with
-one `{ step, targets, failures, freedMb }` entry per step that acted. A machine
-still below `budget.hardFloorDiskGb` after reclaiming refuses with
-`STIM_LOW_DISK`, naming the largest uses of disk. Run `stim guide errors
+A `start`, `ios` or `android` run that finds free disk under
+`budget.hardFloorDiskGb` has the `stim-daemon` run its pressure ladder first
+and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
+free disk stays under it. Run `stim guide errors
 STIM_LOW_DISK` for the remedies.
 
 ### Archive cache selectors

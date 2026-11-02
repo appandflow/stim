@@ -463,36 +463,21 @@ every tick. With `daemon.mode off`, the workspace's dev server supervisor
 checks once a minute and shuts its own devices down after `idle.minutes`; a
 device with no dev server then stays booted.
 
-Queue reclaim is a separate, faster path. With `concurrency.maxDevices` or a per-platform cap set,
-the waiting run uses its own effective `devices.reclaimIdleMinutes`, default 10, to shut down the
-longest-idle eligible owned device across this Stim home's other workspaces.
-Only the FIFO head reclaims, or a run behind a head that is held back only by its own platform's cap and has no earlier waiter on its own platform, one device at a time, at most once every 15
-seconds, then checks the queue and capacity before another. `0` disables
-reclaim; the supervisor's own idle shutdown defaults to 15 minutes.
-
-The same idle check applies: no driver, Stim or agent-device lock, build or
-device lock, and no Stim command, Metro bundle, agent action, stim-server input
-or use of its Simulator or emulator window within the interval; app and device
-logs do not count. Reclaim rechecks idleness under the
-target workspace's native-run lock and re-resolves ownership through
-centralized teardown. It shuts down, never deletes, and excludes the waiting
-workspace, physical, hosted, remote, parked and other homes' devices. Lock or
-teardown failures are reported once per device and skipped for the rest of
-the wait. It
-can reclaim the device of any workspace of this Stim home that is idle for
-`devices.reclaimIdleMinutes`, even when the target has no supervisor and even
-when its own `idle.minutes` is `0`.
-
-The waiting run prints the reclaimed device, workspace and idle minutes on
-stderr. The reclaimed workspace's status and `device_idle_shutdown` log say
-`reclaimed for a waiting run`; wait stats include a positive `reclaimed` count.
-
-Opt out machine-wide with the command below; the waiter's effective setting
-decides.
-
-```bash
-stim settings set devices.reclaimIdleMinutes 0 --scope machine
-```
+Queue reclaim is a separate, faster path. Every boot waits for a device slot
+under a derived cap (`concurrency.maxDevices` overrides it; see
+[settings](./settings.md#machine-settings)). While a run waits to boot because
+the booted devices fill a cap, the `stim-daemon` shuts down, once per tick, the
+longest-idle booted owned device of another workspace of this Stim home that
+has had no activity for 2 minutes and has no blocker, then wakes the waiter.
+The same activity counts as for idle shutdown: no driver, Stim or agent-device
+lock, build or device lock, and no Stim command, Metro bundle, agent action,
+stim-server input or use of its Simulator or emulator window; app and device
+logs do not count. Reclaim rechecks under the target workspace's native-run
+lock and re-resolves ownership through centralized teardown. It shuts down,
+never deletes, and excludes the waiting workspace, physical, hosted, remote,
+parked and other homes' devices. The reclaimed workspace's status and
+`device_idle_shutdown` log say `reclaimed for a waiting run`. With no daemon,
+waiters wait without reclaim. `devices.reclaimIdleMinutes` is no longer read.
 
 Agent prompt:
 
@@ -664,15 +649,16 @@ back through it in the Stim phone app.
   Android emulators for another workspace. Each platform keeps up to three
   parked devices by default and deletes the oldest when full. Disabling
   parking makes removal delete the device; see [settings](/docs/settings).
-  Under disk pressure level 2 or 3 removal deletes the devices instead of
-  parking them, and says so in its output.
-- Automatic maintenance treats owned simulators and emulators as disposable:
-  the next run recreates them. It deletes the owned devices of a workspace
-  that is idle, meaning no dev server, native run, build, lease, managed lock,
-  driven or busy device, and no recorded use, for a threshold: 10 minutes
-  (`maintenance.pressureProtectMinutes`) under disk pressure level 2 or 3,
-  3 days (`maintenance.deviceIdleDays`) otherwise, and `gc.worktreeGraceMinutes`
-  for a workspace whose worktree is finished but kept. A workspace pinned with
+  While the disk pressure level is high or critical removal deletes the
+  devices instead of parking them, and says so in its output.
+- Stim treats owned simulators and emulators as disposable: the next run
+  recreates them. The `stim-daemon`'s dormant stage deletes the owned devices
+  of a workspace with nothing running and no activity for `idle.dormantDays`
+  (3 days; fractions allowed; `0` never), the parked pool untouched; its
+  pressure ladder does so after 10 minutes at high disk pressure and for every
+  idle workspace at critical. Automatic maintenance deletes them after
+  `gc.worktreeGraceMinutes` for a workspace whose worktree is finished but
+  kept. A workspace pinned with
   `maintenance.keep` keeps its devices. `stim status` shows the disk they use.
   Its daily age sweep also deletes parked simulators and emulators parked for
   `maintenance.olderThanDays` (7 days; 0 never), through centralized teardown.

@@ -285,14 +285,14 @@ stop and worktree remove release this workspace's leases. On a physical
 iPhone, stop also closes the app by ending its log collector; it does not
 shut down the phone or uninstall the app.
 
-Owned-device caps wait in FIFO order across the Stim home for 600s by default.
-Use --wait <seconds> to change the bound or --no-wait to refuse at once.
-At the cap, the queue head shuts down one longest-idle eligible owned device
-from another workspace, at most once every 15 seconds, then rechecks capacity.
-devices.reclaimIdleMinutes is 10 by default; 0 off.
-It never deletes devices or touches this workspace, physical, hosted, remote,
-parked or other homes' devices. Drivers, locks, builds, viewers and recent
-activity prevent reclaim. The supervisor's own idle shutdown default is 15m.
+Builds and boots of owned devices take a slot under caps derived from the
+machine (concurrency.* overrides them). A run past a cap waits in arrival
+order and prints its queue position every 10s; it refuses with
+STIM_AT_CAPACITY once its position has not improved for max(10m, position x
+5m). Use --wait <seconds> to bound a device wait or --no-wait to refuse at once.
+While a run waits to boot, the stim-daemon shuts down one idle device (2m) of
+another workspace per tick; it never deletes devices or touches this
+workspace, physical, hosted, remote, parked or other homes' devices.
 Read the holder names in progress and build.waitingFor in status; do not start
 replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 
@@ -390,7 +390,7 @@ Read the matching guide before acting in these situations:
 | App shows could not connect or blank after a pause    | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
-| budget lines, reclaimed field, or low disk            | stim guide lifecycle budget      |
+| Pressure level, STIM_LOW_DISK, or the dormant stage   | stim guide lifecycle budget      |
 | Cache statistics from stim stats                      | stim guide facts stats           |
 | Worktree carry-over                                   | stim guide lifecycle options     |
 | Doctor finding: seed checkout or cross-volume copy    | stim guide lifecycle options     |
@@ -428,7 +428,7 @@ FULL TOPIC LIST
   stim guide lifecycle readiness  # add recommended app readiness logs; no package required
   stim guide lifecycle builds     # build optimizations, optional cache warm-up, fingerprints
   stim guide lifecycle concurrency # shared builds, wait timeouts, capacity limits
-  stim guide lifecycle budget     # disk and memory budgets, automatic reclaim
+  stim guide lifecycle budget     # pressure level, the ladder, the dormant stage
   stim guide lifecycle options    # every flag, Android variants, --device-type, --system-image, --device-profile
   stim guide lifecycle devices    # ios --device and android --device on a physical phone
   stim guide lifecycle tools      # device location|permission|push|network on the owned simulator or emulator

@@ -532,8 +532,8 @@ clears the outputs and nothing else, and `--cache all` includes them.
 parked simulators and emulators (see [owned devices](./owned-devices.md)). The
 workspace keeps its `workspace.json`, `state.json`, logs, devices, ports and
 running dev server, along with `macos/` itself, `macos/runtime.lock`, its claim
-set and other macOS files. Automatic maintenance at disk pressure level 2
-clears them by the same rule; level 1 keeps its own rules.
+set and other macOS files. Under disk pressure the ladder's idle stage clears
+them for a workspace idle 2 minutes.
 
 The next build of an unchanged app installs from the shared build cache. After
 a native change, the Xcode compilation cache speeds up the rebuild. On React
@@ -599,21 +599,15 @@ same pass. In the default `on` mode a pass removes what `stim gc --delete`
 would remove, under the caps and floors in
 [settings](./settings.md#automatic-maintenance). In `report` mode it only
 measures, plans and logs.
-Disk and memory pressure are checked every minute, Stim-owned directory sizes every hour,
-finished worktrees every 15 minutes and the age sweep once a day.
+Disk and memory are read every minute for `stim status`, Stim-owned directory
+sizes every hour, finished worktrees every 15 minutes and the age sweep once a
+day. Pressure itself is the `stim-daemon`'s level and ladder (see
+[disk pressure](#disk-pressure)), whatever `maintenance.mode` says.
 On macOS the memory signal is the sysctl pressure level, with no signal when
-sysctl fails. Only other platforms use `os.freemem()`. Under memory pressure
-a pass stops verified idle Gradle and Kotlin daemons, and none while a build
-can use them. Manual `stim gc --delete --cache gradle-daemons` also requires fresh
-configured pressure and no local build, including iOS; it works independently of
-`maintenance.mode`. Off or invalid memory settings keep daemons. Manual reports do
-not update warning history. Warning history older than
-`maintenance.pressureCheckMinutes` or outside the last completed, unblocked pass
-is ignored. Interrupted, blocked or later unrelated passes can conservatively keep
-warning daemons; this does not prove continuous sampling. A warning without
-eligible recorded history keeps daemons.
-Disk-level-3 version cleanup remains independent of memory pressure and retains
-its existing known-iOS allowance. Below disk pressure level 3 a pass stops a dev
+sysctl fails. Only other platforms use `os.freemem()`. Manual
+`stim gc --delete --cache gradle-daemons` requires sustained memory pressure
+(the daemon's high or critical memory level) and no local build, including iOS;
+it works independently of `maintenance.mode`. A pass stops a dev
 server only after
 `maintenance.idleStopHours` without real activity, through `stim gc --delete`,
 and stops no other helper. Idle devices and dev servers are the daemon's
@@ -679,31 +673,39 @@ kept. Pin a workspace against all of this with `maintenance.keep`. ccache
 limits itself through `caches.ccacheMaxGb`. The first build after a clear
 rebuilds what was removed.
 
-### Disk pressure levels
+### Disk pressure
 
-When free disk keeps falling, maintenance escalates:
+Pressure is the `stim-daemon`'s, not a maintenance check. Each tick classifies
+the machine **normal**, **high** (free disk under `budget.minFreeDiskGb`, 20 GB,
+on any volume Stim writes to; macOS memory pressure warning for 10 minutes; or
+under 10% of RAM available) or **critical** (under `disk.criticalFreeGb`, 6 GB;
+or critical memory pressure), and above normal runs one ladder top-down until
+the level clears:
 
-| Level | When                                                                                           | What a pass adds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ----- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1     | Under `budget.minFreeDiskGb` (20 GB)                                                           | The steps above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| 2     | Under `maintenance.urgentFreeDiskGb` (12 GB), or level 1 could not get back above the floor    | Build outputs of workspaces that did not run `stim ios`, `stim android` or `stim macos` in the last 15 minutes, as `stim gc --delete` lightens them (a running dev server does not keep them, a build does); parked simulators and emulators; build directories of those worktrees (`android/app/build`, `android/build`, `android/.gradle`, SwiftPM `.build`, at the worktree root, a project root, or `apps/*` and `packages/*`; `ios/build` stays, because `pod install` writes files there); owned simulators and emulators of workspaces idle for the short window; Stim temp directories, xctrace recordings and SwiftPM temp directories in TMPDIR unmodified for 24 hours, with the checks of `stim gc --delete`.                                                                              |
-| 3     | Under `maintenance.criticalFreeDiskGb` (6 GB) or `budget.hardFloorDiskGb`, where builds refuse | The Swift compilation cache; finished worktrees, and clean, pushed worktrees with no commits of their own beyond the default branch, with the short window as their grace period, unless `maintenance.removeFinishedWorktrees` is false; workspaces whose dev server runs but that are otherwise inactive for the short window, whose dev server stops and whose owned simulators and emulators are deleted; `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout; idle Gradle and Kotlin daemons, using the common identity, idle and build checks, only when they are all that keeps an unpinned Gradle version, and then Gradle version caches and wrapper distributions no registered project pins, once unmodified for `maintenance.gradleVersionIdleDays` (7) days. |
+| Rung | High                                                                                                | Critical                                                                                                                |
+| ---- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| 1    | The idle stage for every workspace idle 2 minutes; build outputs of workspaces with nothing running | Same                                                                                                                    |
+| 2    | Parked simulators and emulators, oldest first, until the level clears                               | All parked devices                                                                                                      |
+| 3    | Build and Metro caches trimmed, least recently used first, to half their caps                       | Metro and Swift compilation caches emptied; build cache trimmed to the entries a workspace, parked device or build uses |
+| 4    | The dormant stage for workspaces idle 10 minutes                                                    | The dormant stage for every idle workspace                                                                              |
+| 5    | Nothing                                                                                             | `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout, restored by `stim worktree warm`     |
+| 6    | Idle Gradle and Kotlin daemons, unpinned Gradle versions, TMPDIR leftovers, the worktree trash      | Same                                                                                                                    |
 
-Each step re-measures free disk first and stops once it is back above its
-level's floor: the budget floor for levels 1 and 2, the level 3 floor for level 3. A directory is cleared only when it is a real directory inside its worktree,
-git tracks nothing in it, its worktree is not in use, locked, building or
-pinned, and, for the `node_modules` and `ios/Pods` of level 3, nothing under it, nor the worktree's git index, HEAD or Stim
-state, changed within the short window. A level 2 build directory also stays in a worktree where no Stim workspace has recorded any state. A dirty or unpushed worktree can still be
-stopped and have these directories cleared; only its removal is refused. Caches
-owned by other tools, such as the pnpm and npm stores, CocoaPods, SwiftPM and
-the shared Gradle caches, are never deleted; at level 3 only the version
-caches and wrapper distributions of Gradle versions no registered project pins
-go, with the checks of `stim gc --cache gradle-versions`.
-
-`stim status` shows the current level. At level 3 the last pass names the
-shortfall in `stim status`. When a build keeps the Swift compilation cache, it
-also names the cache's size and that build. While the last check, at most 10
-minutes old, measured level 3, every Stim command prints one warning on stderr.
+Each rung measures free disk and memory again first, never touches a
+workspace with a build, a driver, a lease or lock, a hosted placement or
+`maintenance.keep`, and takes the longest-idle workspace first. A level raised
+by memory alone runs only the idle stage and the Gradle daemons. The age sweep
+runs rung 6 daily. A directory is cleared only when it is a real directory
+inside its worktree, git tracks nothing in it, and its worktree is not in use,
+locked, building or pinned. Caches owned by other tools, such as the pnpm and
+npm stores, CocoaPods, SwiftPM and the shared Gradle caches, are never deleted.
+Every action goes to `$STIM_HOME/daemon/daemon.ndjson` and the workspace's
+`metro.ndjson` with its reason, the bytes it freed and the command that brings
+it back. `stim status` shows the level and why. While the daemon's last tick,
+at most 10 minutes old, found the disk critical, every Stim command prints one
+warning on stderr. `stim start`, `stim ios` and `stim android` refuse with
+`STIM_LOW_DISK` only while free disk stays under `budget.hardFloorDiskGb` after
+the ladder ran.
 
 `stim status` shows the last plan and any running pass. `stim gc` previews the
 next pass using live pressure and cached sizes; it does not rescan sizes for
@@ -720,9 +722,9 @@ size, and pass records carry the bytes freed. Removed worktrees and orphaned
 directories appear in the machine log only.
 Every run that deletes or changes something also appends one record per item
 to the machine gc log, `$STIM_HOME/gc/gc.ndjson`: `stim gc --delete`, `--idle`
-and `--cache`, each maintenance action taken, and what the budget gate reclaims
-before a build. A dry run writes nothing. Each record has the run, the trigger
-(`manual`, `desktop`, `maintenance` or `budget`), the item's kind, label, path,
+and `--cache`, and each maintenance action taken. A dry run writes nothing.
+Each record has the run, the trigger (`manual`, `desktop` or `maintenance`;
+`budget` on older records), the item's kind, label, path,
 bytes freed and status (`done`, `kept` or `failed`), and the reason a kept or
 failed item was left. It rotates and expires with the maintenance log. Read it
 from any directory with `stim logs --source gc`, add `--json` for raw records

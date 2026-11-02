@@ -445,15 +445,6 @@ leased until <time>" for each one.`,
   logs            the workspace log directory
   agentDevice     { stateDir }: absolute workspace agent-device state path
   durationMs      wall time for the whole run
-  reclaimed       present only when the run was over its disk or memory
-                  budget and reclaimed first (\`start\`, \`ios\` and
-                  \`android\`, on success and failure alike). One entry per
-                  step that acted, in order:
-                    { step, targets, failures, freedMb }
-                  step is "idle-devices", "idle-dev-servers",
-                  "workspace-outputs" or "stale-cache-entries"; targets names
-                  the devices, workspaces or caches it acted on; freedMb is the
-                  free disk the step added. See \`guide lifecycle budget\`
   devServer       present only when this run started the workspace's dev
                   server because none was running (\`ios\` and \`android\`):
                     { started: true, reason }
@@ -556,14 +547,11 @@ leased until <time>" for each one.`,
                   PATH and the version each reports. resolvedIsOlder is true
                   only when that first executable is below the highest version
                   available from this invocation or PATH
-  budget          { budget, volumes, memory, plan } or null when a budget
-                  setting is invalid. budget echoes minFreeDiskGb,
-                  hardFloorDiskGb, maxCommittedMemoryGb and maxLiveWorkspaces;
-                  volumes is { volume, freeGb } for the volumes holding the app
-                  and $STIM_HOME; memory is { committedGb, liveWorkspaces } or
-                  null when off; plan lists what the next start, ios or
-                  android would reclaim, in the \`reclaimed\` shape without
-                  freedMb, and is empty while under budget
+  pressure        { level, disk, memory, reasons, memoryWarningSince }
+                  measured now, or null when a disk threshold setting is
+                  invalid. level is the higher of disk and memory, each
+                  "normal", "high" or "critical"; reasons names each
+                  condition above normal (\`guide lifecycle budget\`)
   deviceHosts     one { machine, state, dnsName?, fingerprint?, deviceId?, requestedAt?,
                   expiresAt?, host? } per remote.machines entry. state is "approved",
                   "pending", "not-asked", "revoked", "lapsed", "key-changed",
@@ -679,8 +667,6 @@ ON FAILURE
   \`ccache\` (Android) or \`compilationCache\` (iOS), with the status and
   counters described above. This includes failed builds and later install
   or launch failures. The field is absent when no native build returned.
-  \`reclaimed\` is present the same way as on success when the run reclaimed
-  before failing, including a STIM_LOW_DISK refusal.
 
   An \`ios\` or \`android\` run that \`stim stop\` or Ctrl-C interrupted
   reports STIM_CANCELLED and exits 130. A
@@ -1459,7 +1445,12 @@ RULES
 
   idleStage     { at, idleMinutes, freedBytes }
   freedBytes is the regenerable build output the stage deleted; stim revive
-  resumes the workspace.
+  resumes the workspace. A workspace the daemon moved into the dormant stage,
+  with no Stim command since, carries dormantStage and a plain stage line:
+
+  dormantStage  { at, dormantDays, deletedDevices, archived }
+  deletedDevices names the owned devices it deleted; archived says its logs
+  moved to the archive. The next stim ios or stim android creates a device.
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
@@ -1547,8 +1538,8 @@ RULES
                    Never treat a stale record as a build in progress.
   phase            prepare | cleanup | cache-lookup | wait | prebuild | pods |
                    compile | device | install | launch. prepare covers
-                   settings and Metro; cleanup covers an acting local
-                   budget-reclaim plan, including remeasurement, and
+                   settings and Metro; cleanup covers the pressure ladder a
+                   run waits for under the disk hard floor, and
                    restores the interrupted phase on success. Cleanup has
                    no learned duration; elapsed time and history retain it,
                    while estimates/progress comparisons exclude it and
@@ -1887,18 +1878,22 @@ RULES
            Each key is present only while its cap is set, whether or not
            concurrency.maxDevices is.
 
-  The memory budget plans before a boot
-  and always uses the estimate. What is using CPU and memory now is the
-  top-level machine section:
+  What is using CPU and memory now is the top-level machine section:
 
-  daemon { mode, running: { pid, since } | null, lastTickAt, intervalMs, claim? }
+  daemon { mode, running: { pid, since } | null, lastTickAt, intervalMs, claim?,
+           pressure?, waiting? }
     mode is on, report or off (daemon.mode; always off on Windows). running
     comes from a live claim at $STIM_HOME/daemon/claim. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
     the tick's measurement and each running workspace's decision; null
     before a first tick. A last tick older than three intervals while it runs
     means it stopped ticking (\`stim doctor\`). claim is an unresolved claim's
-    path and reason with removeCommand.
+    path and reason with removeCommand. pressure is the last tick's
+    { level, disk, memory, reasons, memoryWarningSince } (\`guide lifecycle
+    budget\`), absent until a tick measured it; the snapshot also lists the
+    ladder's actions. waiting lists the runs queued for a build slot or a
+    device boot now, { resource: "build" | "boot", position, workspace,
+    label, platform?, since }, absent when none waits.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
@@ -2088,7 +2083,7 @@ SWIFTPM CACHE DISK USAGE
   $STIM_HOME/swiftpm-cache-usage.json caches the measurement for 10 minutes,
   keyed on the resolved dir. stats and unscoped gc alone run du -sk with a
   20-second timeout. Server stats.get reads only the cached value. status,
-  start, ios, android and the budget gate never measure it. gc reports it as
+  start, ios, android and the pressure ladder never measure it. gc reports it as
   sections.swiftpmCache, never in caches or actionable; --delete and
   --older-than leave it untouched, and any --cache scope reports null.
 

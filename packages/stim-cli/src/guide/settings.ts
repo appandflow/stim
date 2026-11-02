@@ -48,7 +48,7 @@ Resolution order, first match wins:
                      ios.deviceType, ios.runtime, android.systemImage,
                      android.deviceProfile, idle.minutes,
                      devices.idleShutdownMinutes, devices.reclaimIdleMinutes
-                     and archive.enabled
+                     and archive.enabled; idle.dormantDays is machine-only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -506,13 +506,14 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         read as idle.minutes while that is unset (default 15).
                         Machine or project layers.
   devices.reclaimIdleMinutes
-                        minutes idle before the head of the device slot queue
-                        shuts down the longest-idle eligible owned device in
-                        another workspace of this Stim home. Default 10; 0 off.
-                        Machine or project layers, resolved for the waiting
-                        workspace on each poll. Same idle checks as supervisor
-                        shutdown, one device per poll, never deleted. See
+                        no longer read: while a run waits to boot, the
+                        stim-daemon shuts down the longest-idle device of
+                        another workspace idle 2 minutes. See
                         \`guide lifecycle concurrency\`.
+  idle.dormantDays      days without activity before a workspace goes
+                        dormant: its owned devices are deleted and its logs
+                        archived (default 3; fractions allowed; 0 never).
+                        Machine layer. See \`guide lifecycle budget\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,
@@ -641,22 +642,26 @@ or via the environment, which overrides the file:
   concurrency.maxAndroidDevices  STIM_MAX_ANDROID_DEVICES
   concurrency.maxMacosApps       STIM_MAX_MACOS_APPS
 
-Unset, 0, or any non-positive value means NO enforcement -- the default, where
-Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
-does.
+Unset or 0 means the derived cap: concurrency.maxBuilds max(1, floor(CPU
+cores / 6)), concurrency.maxDevices max(2, floor((RAM - 4 GB) / 1.5 GB)). The
+per-platform caps stay unlimited at 0. See \`guide lifecycle concurrency\` for
+what each cap does.
 
-DISK AND MEMORY BUDGETS ARE MACHINE-LEVEL AND ON BY DEFAULT
-Top-level \`budget\` in ~/.stim/config.json, or the environment, which
-overrides the file:
+DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
+In ~/.stim/config.json, or the environment, which overrides the file:
 
   budget.minFreeDiskGb          STIM_BUDGET_MIN_FREE_DISK_GB         default 20
+  disk.criticalFreeGb           STIM_DISK_CRITICAL_FREE_GB           default 6
   budget.hardFloorDiskGb        STIM_BUDGET_HARD_FLOOR_DISK_GB       default 5
-  budget.maxCommittedMemoryGb   STIM_BUDGET_MAX_COMMITTED_MEMORY_GB  60% of RAM
-  budget.maxLiveWorkspaces      STIM_BUDGET_MAX_LIVE_WORKSPACES      unset
 
-0 turns a check off. With STIM_HOME set and no environment variable, the
-budget is off. A value of the wrong shape refuses start, ios and android with
-STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
+Under budget.minFreeDiskGb on a volume Stim writes to the pressure level is
+high, under disk.criticalFreeGb critical, and under budget.hardFloorDiskGb
+start, ios and android refuse with STIM_LOW_DISK after the pressure ladder
+ran. 0 turns a threshold off. They apply in every Stim home, STIM_HOME ones
+included. A value of the wrong shape refuses start, ios and android with
+STIM_BAD_ARG. budget.maxCommittedMemoryGb (STIM_BUDGET_MAX_COMMITTED_MEMORY_GB)
+and budget.maxLiveWorkspaces (STIM_BUDGET_MAX_LIVE_WORKSPACES) are no longer
+read. See \`guide lifecycle budget\` for the ladder.
 
 DEBUG LOGS ARE MACHINE-LEVEL AND OFF BY DEFAULT
 debug.logs STIM_DEBUG  default false. STIM_DEBUG=1 (or 0) overrides the setting
@@ -673,8 +678,11 @@ THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
 daemon.mode STIM_DAEMON  default on. start, ios, android, web, macos and
 revive start one stim-daemon per Stim home, scoped homes included; it exits two
 minutes after nothing runs there. Each minute it measures the machine once,
-moves idle workspaces into the idle stage (idle.minutes) and runs automatic
-maintenance. report logs what it would do and acts on nothing. off runs no
+classifies the pressure level, moves idle workspaces into the idle stage
+(idle.minutes) and dormant ones into the dormant stage (idle.dormantDays), runs
+the pressure ladder above normal, reclaims a device for a run waiting to boot,
+and runs automatic maintenance. report logs what it would do and acts on
+nothing. off runs no
 daemon: each dev server supervisor stops its own dev server and devices after
 idle.minutes, and nothing times a device with no dev server. It is off in CI
 unless STIM_DAEMON is set. Windows has no daemon; there stim doctor runs the
@@ -702,9 +710,8 @@ ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^cache
   )
   .join('\n')}
 
-Maintenance uses the sysctl pressure level on macOS, with no memory signal
-when sysctl fails. os.freemem() and maintenance.minAvailableMemoryGb apply
-only on other platforms.
+Maintenance reads the sysctl pressure level on macOS for status, with no memory
+signal when sysctl fails, and os.freemem() on other platforms.
 
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that

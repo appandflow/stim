@@ -2137,73 +2137,68 @@ WHAT MAKES THE CACHE ACTUALLY HIT: .FINGERPRINTIGNORE
   --json payload reports cacheSkipped: true so a caller can tell that run apart
   from a plain miss.
 
-OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
-  Stim imposes NO limits of its own: unset is exactly the behaviour above --
-  every build compiles, every device boots. When a machine cannot host as many
-  parallel builds or booted simulators as there are agents, two MACHINE-level
-  caps rein it in. They live under a top-level \`concurrency\` key in
-  ~/.stim/config.json (not per-project -- the resource being shared is the
-  machine's), and STIM_MAX_BUILDS / STIM_MAX_DEVICES override the file.
-  Absent, 0, or any non-positive value means NO enforcement.
+ADMISSION: DERIVED CONCURRENCY LIMITS
+  Every native build and every boot of an owned simulator or emulator takes a
+  slot. The caps are derived from the machine; MACHINE-level settings under a
+  top-level \`concurrency\` key in ~/.stim/config.json (or STIM_MAX_BUILDS /
+  STIM_MAX_DEVICES) override them, and 0 or unset means the derived value:
 
-    concurrency.maxBuilds   how many builds COMPILE at once. It is a semaphore
+    concurrency.maxBuilds   how many builds COMPILE at once; derived
+                            max(1, floor(CPU cores / 6)). It is a semaphore
                             of N slots (~/.stim/build-slots). A run takes a
                             slot AFTER the single-flight lock -- a workspace
                             waiting to install another's identical artifact
                             never burns a slot -- so it caps distinct compiles,
-                            not waiters. A full slate WAITS (this is batch work),
-                            printing the same kind of progress line the build
-                            lock does, and a dead builder frees its slot within
-                            a poll (process identity, like the lock).
+                            not waiters. stim-server's offloaded builds take
+                            the same slots. A dead builder frees its slot
+                            within a poll (process identity, like the lock).
 
-    concurrency.maxDevices  how many Stim-owned devices are BOOTED at once,
+    concurrency.maxDevices  how many Stim-owned devices are BOOTED at once;
+                            derived max(2, floor((RAM - 4 GB) / 1.5 GB)),
                             counting sims that are booting, emulators adb lists
                             in any state, and devices other runs are booting.
-                            Admission and the boot claim are taken under one
-                            lock in $STIM_HOME. At the cap, a new owned device
-                            waits in FIFO order across this Stim home, for
-                            600 seconds by default. \`--wait <seconds>\` changes
-                            the bound; \`--no-wait\` or \`--wait 0\` refuses at
-                            once with STIM_AT_CAPACITY and cannot jump queued
-                            runs. A workspace's own booted or booting device
-                            bypasses the queue. iOS waits beside its build.
-                            Waiting prints the count, holder workspace names
-                            and elapsed time at once and about every 10s, then
-                            the queue position, head workspace name and
-                            $STIM_HOME/device-waits path. Workspaces that
-                            share a project name show the directory that tells
-                            them apart, as in mobile (qa-b-p2). Timeout names
-                            the same head and path. Stop cancels a queued run and
-                            releases its ticket without booting its device.
-                            Status JSON adds build.waitingFor independently
-                            of phase: { kind: "device-slot" | "build-slot",
-                            inUse, max, since }. Overlapping waits show the
-                            one that started first, then the remaining wait.
-                            Positive deviceSlotWaitMs is recorded beside
-                            slotWaitMs in compiling run placements; every
-                            wait also records a capacityWaits event in stats,
-                            with reclaimed when one or more devices were
-                            shut down for it.
-                            While at the cap, only the queue head reclaims (or a run behind a
-                            head held back only by its own platform's cap):
-                            it shuts down the longest-idle eligible owned
-                            device in another workspace of this Stim home,
-                            one per attempt, at most once every 15 seconds,
-                            then rechecks queue and capacity.
-                            devices.reclaimIdleMinutes defaults to 10; 0 off.
-                            The waiter's effective setting applies.
-                            Idle checks are the same as supervisor
-                            idle shutdown below: no driver, lock, build,
-                            viewer or recent activity. Physical, hosted,
-                            remote, parked and other homes' devices, and
-                            the waiting workspace itself, are excluded.
-                            Shutdown never deletes. Reclaim failures are
-                            logged and skipped without failing the run.
-                            A listing failure leaves the count unknown and
-                            admission refuses with STIM_NO_DEVICE. Unresolved
-                            wait or boot claims refuse with the claim code
-                            and the command to remove that exact claim.
-                            See \`guide errors STIM_AT_CAPACITY\`.
+                            A workspace's own booted or booting device
+                            bypasses the queue.
+
+  Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
+  starts while the stim-daemon's last tick measured macOS memory pressure
+  critical, or warning with under 2 GB available.
+
+  A run past a cap WAITS in arrival order per resource: builds in
+  $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
+  freed slot only when every run ahead of it has one, and the stim-daemon
+  wakes the oldest waiter as soon as a build or boot finishes; without a
+  daemon each waiter polls (1s for builds, 2s for boots). Every 10s a waiting
+  run prints its queue position and what it waits for:
+
+    build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency
+    device      waiting for a device slot (8/8 devices booted, concurrency.maxDevices) held by app-a, app-b: queue position 1 of 1, 10s elapsed -- stim guide lifecycle concurrency
+
+  A run whose queue position has not improved for max(10 minutes, position x
+  5 minutes) refuses with STIM_AT_CAPACITY and the queue state.
+  \`--wait <seconds>\` bounds a device wait instead; \`--no-wait\` or
+  \`--wait 0\` refuses at once and cannot jump queued runs. iOS waits
+  beside its build. Stop cancels a queued run and releases its ticket.
+  Status JSON adds build.waitingFor independently of phase: { kind:
+  "device-slot" | "build-slot", inUse, max, since, position, resource }, and
+  the top-level daemon.waiting lists every waiting run. Positive
+  deviceSlotWaitMs is recorded beside slotWaitMs in compiling run placements;
+  every device wait also records a capacityWaits event in stats.
+
+  RECLAIM: while a run waits to boot because the booted devices fill a cap,
+  the stim-daemon shuts down, once per tick, the longest-idle booted owned
+  device of another workspace that has had no activity for 2 minutes and has
+  no blocker (driver, lock, lease, build, recent input or window use), then
+  wakes the waiter. It shuts down through centralized teardown and never
+  deletes; the device's workspace records "reclaimed for a waiting run".
+  daemon.mode report logs the device it would reclaim and acts on nothing.
+  With no daemon, waiters wait without reclaim.
+
+  A listing failure under a set cap leaves the count unknown and admission
+  refuses with STIM_NO_DEVICE; under the derived cap alone the boot goes ahead
+  with only the boots in flight counted. Unresolved wait or boot claims refuse
+  with the claim code and the command to remove that exact claim. See
+  \`guide errors STIM_AT_CAPACITY\`.
 
     concurrency.maxIosDevices      booted owned iOS simulators at once.
     concurrency.maxAndroidDevices  booted owned Android emulators at once.
@@ -2214,84 +2209,97 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             simulators and emulators together, local and
                             hosted, and counts hosted macOS apps as a pool of
                             their own, so a macOS app is bounded by
-                            maxMacosApps and by maxDevices, and never adds to
-                            the simulator and emulator total. Leaving the new
-                            settings unset changes no existing cap.
+                            maxMacosApps and by maxDevices as set (a derived
+                            maxDevices does not bound macOS apps), and never
+                            adds to the simulator and emulator total.
                             Local admission applies the iOS and Android caps
-                            with the same queue and reclaim as maxDevices; a
-                            waiter held back only by its own platform's cap
-                            does not hold up a waiter of another platform.
-                            Reclaim for a full platform cap only shuts down
-                            devices of that platform. Hosted admission on a
-                            worker (offer and reserve) applies all three,
-                            counting the worker's local devices too.
-                            Local \`stim macos\` counts running owned app
-                            workspaces in this Stim home in a separate pool
-                            from hosted reservations. At capacity it refuses
-                            immediately; builds remain parallel. Replacing
-                            this workspace's app does not add to the count.
-                            A refusal names the full limit, its count and its
-                            cap, for example "1 Stim iOS simulator(s) are
-                            already booted and concurrency.maxIosDevices is 1".
+                            with the same queue; a waiter held back only by
+                            its own platform's cap does not hold up a waiter
+                            of another platform, and reclaim for a full
+                            platform cap only shuts down devices of that
+                            platform. Hosted admission on a worker (offer and
+                            reserve) applies the caps as set, counting the
+                            worker's local devices too. Local \`stim macos\`
+                            counts running owned app workspaces in this Stim
+                            home in a separate pool from hosted reservations.
+                            At capacity it refuses immediately. A refusal
+                            names the full limit, its count and its cap.
                             Status JSON capacity.platformDevices reports
                             { max, inUse } for each of ios and android whose
                             cap is set.
 
-  \`stim doctor\` prints one note echoing the caps and the current active count,
-  but ONLY when a cap is set. \`stim gc\` reports stale build slots the way it
-  reports stale build locks, and \`gc --delete\` clears them. Set the caps
-  with \`stim settings set concurrency.maxBuilds 2\`, by editing
-  ~/.stim/config.json, or via the two env vars (see \`guide settings\`).`,
+  \`stim status\` shows capacity.builds and capacity.devices with their
+  holders, booting devices marked booting. \`stim gc\` reports stale build
+  slots the way it reports stale build locks, and \`gc --delete\` clears them.
+  Set a cap with \`stim settings set concurrency.maxBuilds 2\`, by editing
+  ~/.stim/config.json, or via the env vars (see \`guide settings\`).`,
     },
     budget: {
-      summary: 'disk and memory budgets: what start, ios and android reclaim first, and STIM_LOW_DISK',
-      body: () => `DISK AND MEMORY BUDGETS (ON BY DEFAULT)
-  Before \`start\`, \`ios\` and \`android\` build or boot anything, they
-  compare the machine against four MACHINE-level settings:
+      summary: 'the pressure level, the ladder that reclaims under it, the dormant stage, and STIM_LOW_DISK',
+      body: () => `PRESSURE: ONE LEVEL, ONE LADDER (ON BY DEFAULT)
+  Each stim-daemon tick (every 60s, and when a run asks) classifies the
+  machine from free disk on every volume Stim writes to ($STIM_HOME, every
+  registered project, the build worker root) and memory:
 
-    budget.minFreeDiskGb         free disk on the volumes holding the app and
-                                 $STIM_HOME. Default 20. Below it, Stim reclaims.
-    budget.hardFloorDiskGb       default 5. Still below it after reclaiming,
-                                 the run refuses with STIM_LOW_DISK.
-    budget.maxCommittedMemoryGb  the rough memory of active environments, the
-                                 figure \`stim status\` prints (a booted
-                                 simulator 1.5 GB, an emulator 2.5 GB, a dev
-                                 server 0.7 GB). Default 60% of physical memory.
-    budget.maxLiveWorkspaces     workspaces with a booted device or running dev
-                                 server. Unset by default.
+    normal    otherwise
+    high      free disk under budget.minFreeDiskGb (20 GB) on any volume,
+              macOS memory pressure warning for 10 minutes, or available
+              memory under 10% of RAM
+    critical  free disk under disk.criticalFreeGb (6 GB), or under
+              budget.hardFloorDiskGb when that is higher, or macOS memory
+              pressure critical
 
-  0 turns a check off; with budget.minFreeDiskGb at 0, Stim still reclaims
-  below the hard floor before refusing. A \`start\` whose dev server already
-  answers checks nothing; \`start --reset-cache\` checks before it stops the
-  server.
+  The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
+  the level and why. Above normal, the tick runs the ladder top-down until the
+  level clears. Each rung measures again before it acts, never touches a
+  workspace with a blocker (a build, a driver, a lease or lock, a hosted
+  placement, unreadable evidence, maintenance.keep), and takes the
+  longest-idle workspace first:
 
-  Over budget, Stim reclaims in this order and stops as soon as it is back
-  under budget. Each step prints a \`budget\` line on stderr, and the \`--json\`
-  payload lists the steps that acted under \`reclaimed\`:
+    1. idle stage: every workspace idle 2 minutes or more goes into the idle
+       stage now (\`guide metro\`, IDLE STOP), and the regenerable build
+       outputs of workspaces with nothing running are deleted
+    2. parked devices: at high the oldest deleted until the level clears, at
+       critical all of them
+    3. shared caches: at high the build and Metro caches trimmed least
+       recently used first to half their caches.*MaxGb caps (the compilation
+       cache, which can only be emptied whole, emptied once over half its
+       cap); at critical the Metro and compilation caches emptied, the build
+       cache trimmed to the entries a workspace, parked device or build still
+       uses, and the fingerprint memo emptied
+    4. dormant stage now: at high for workspaces idle 10 minutes, at critical
+       for every idle one
+    5. at critical only: node_modules and Pods of idle linked worktrees,
+       recorded so the next start, ios or android runs \`stim worktree warm\`
+    6. idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified for
+       maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
+       24 hours, and the worktree trash; automatic maintenance's daily sweep
+       runs this rung at normal
 
-    1. shut down idle owned devices in other workspaces: booted, no driver,
-       no Stim or agent-device lock, no activity for 10 minutes, and no build
-       in progress (\`gc --idle\` semantics; shut down, never deleted)
-    2. stop idle dev servers in other workspaces: a Stim supervisor with no
-       bundle request, Stim command or supervisor start for 10
-       minutes, no build in progress, and no device in that workspace that is
-       driven, active, or of unknown activity. Stim rechecks under that
-       workspace's native-run and metro-start locks before it stops the
-       server, and skips the step when simulators cannot be listed. The next
-       \`start\`, \`ios\` or \`android\` there brings it back
-    3. clear the build outputs of workspaces not in use and idle for 10
-       minutes, least recently used first, re-measuring after each
-       (\`gc --delete\` semantics; the next build installs from the shared
-       cache). A workspace whose last use is unknown is kept
-    4. trim shared cache entries nothing has used for 14 days
-       (\`gc --delete --older-than 14\` for the caches). Caches with nothing
-       to trim print one line, not one each. A trim that removed nothing is
-       recorded in $STIM_HOME/budget-sweep.json and not repeated for 5
-       minutes while the set of caches is the same and free disk has not
-       fallen by more than 1 GB since; the run prints one budget line saying
-       it skipped. \`gc\` and automatic maintenance never skip, and a dry
-       run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
-       measures the largest uses of disk at the same time.
+  A level raised only by memory runs only what frees memory: the idle stage
+  of rung 1, which shuts devices down, and the Gradle daemons of rung 6.
+  Memory never refuses: it holds boots (\`guide lifecycle concurrency\`).
+
+  Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
+  metro.ndjson as a pressure_action record with its reason, bytes freed and
+  the command that brings back what it removed. daemon.mode report logs each
+  action it would take and acts on nothing.
+
+  7. refuse: \`start\`, \`ios\` and \`android\` refuse with STIM_LOW_DISK only
+     while free disk on the workspace's or $STIM_HOME's volume is under
+     budget.hardFloorDiskGb (5 GB) after the ladder ran: they ask the daemon
+     for a tick first, or run the ladder themselves when no daemon holds the
+     home. With no daemon holding the home (always on Windows), they run the
+     activity and pressure passes in the command before building.
+
+  DORMANT STAGE: a workspace with nothing running and no activity for
+  idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
+  simulators and emulators are deleted through centralized teardown (the
+  parked pool is untouched) and its logs are archived when archive.enabled is
+  on. node_modules and Pods stay. \`stim status\` shows a dormant stage line,
+  and --json \`dormantStage\` { at, dormantDays, deletedDevices, archived },
+  until the next Stim command in it; the next \`stim ios\` or \`stim
+  android\` creates a device.
 
   IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators
@@ -2303,54 +2311,22 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   to the device (the phone app's or Stim Desktop's controls; frames streamed
   without input do not count), a stim device lock, and, on macOS, a person
   using the device in the focused Simulator or emulator window. Device logs
-  and in-app logs never count, whatever the device's last launch. The idle
-  stage rechecks under the workspace's native-run lock and shuts devices down
-  through the same teardown as \`stop\`: never deleted, and physical devices
-  are never touched. It records deviceIdleShutdowns in state.json, so \`stim
-  status\` shows "shut down after 15m idle" on the device until the next
-  \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
-  or while no daemon runs, the workspace's supervisor checks once a minute and
-  shuts its own devices down after idle.minutes; a device with no supervisor
-  then stays booted. Change the clock with
-  \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns it
-  off, and an explicit 0 stays 0.
+  and in-app logs never count. The idle stage rechecks under the workspace's
+  native-run lock and shuts devices down through the same teardown as
+  \`stop\`: never deleted, and physical devices are never touched. It records
+  deviceIdleShutdowns in state.json, so \`stim status\` shows "shut down after
+  15m idle" on the device until the next \`ios\`, \`android\` or \`revive\` run
+  boots it again. With daemon.mode off, or while no daemon runs, the
+  workspace's supervisor checks once a minute and shuts its own devices down
+  after idle.minutes. Change the clock with
+  \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
+  and dormant off.
 
-  QUEUE RECLAIM (10 MINUTES BY DEFAULT): a run waiting at concurrency.maxDevices
-  uses devices.reclaimIdleMinutes from its own effective workspace settings.
-  Only the FIFO head shuts down the longest-idle eligible device across this
-  Stim home's other workspaces, one per attempt, at most once every 15 seconds,
-  rechecking capacity before another. 0 disables it. The supervisor's own idle
-  shutdown defaults to 15 minutes.
-  Reclaim uses the same idle check: no driver, Stim or agent-device lock,
-  build or device lock, and no Stim command, Metro bundle, agent action,
-  stim-server input or use of its Simulator or emulator window within that
-  interval; app and device logs do not count. It rechecks under the
-  target workspace's native-run lock and re-resolves ownership in centralized
-  teardown. It shuts down, never deletes, and excludes the waiting workspace,
-  physical, hosted, remote, parked and other homes' devices. Failed locks or
-  teardown are reported once per device and skipped for the rest of the wait.
-  Progress on stderr names the reclaimed
-  device and workspace; the target's status and device_idle_shutdown log
-  record "reclaimed for a waiting run", and the wait's stats carry reclaimed.
-  Any workspace of this Stim home with a device idle for
-  devices.reclaimIdleMinutes is eligible, even with no supervisor and even
-  when its own idle.minutes is 0.
-  \`stim settings set devices.reclaimIdleMinutes 0 --scope machine\` opts out
-  machine-wide; the waiter's effective setting decides.
-
-  Steps 3 and 4 run only for disk. Memory and workspace limits never refuse;
-  a run still over them prints one \`budget\` warning and continues. The
-  current workspace is never reclaimed.
-
-  With STIM_HOME set, the budget is off unless its environment variable is
-  set (STIM_BUDGET_MIN_FREE_DISK_GB, STIM_BUDGET_HARD_FLOOR_DISK_GB,
-  STIM_BUDGET_MAX_COMMITTED_MEMORY_GB, STIM_BUDGET_MAX_LIVE_WORKSPACES), and
-  step 1 never runs because devices are machine-global.
-
-  \`stim doctor\` prints a \`budget\` line with the free disk and committed
-  memory against the budget, and a finding with the reclaim plan when over it.
-  Change a limit with \`stim settings set budget.minFreeDiskGb 30\`.
-  See \`guide errors STIM_LOW_DISK\`.`,
+  The thresholds apply in every Stim home, a STIM_HOME one included. Change
+  one with \`stim settings set budget.minFreeDiskGb 30\`;
+  budget.maxCommittedMemoryGb and budget.maxLiveWorkspaces are no longer read.
+  \`stim doctor\` prints the current level and a finding while it is above
+  normal. See \`guide errors STIM_LOW_DISK\`.`,
     },
     options: {
       summary:
