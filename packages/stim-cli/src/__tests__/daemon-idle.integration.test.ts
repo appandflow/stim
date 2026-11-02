@@ -141,6 +141,13 @@ test('a live agent-device session keeps the workspace however old its last comma
 test('a serving workspace whose simulators cannot be listed is kept, not stopped', async () => {
   const { root, derivedData } = bootedWorkspace('unlisted', 20 * MINUTE_MS);
   writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true } });
+  writeLog(root, 'metro.ndjson', {
+    ts: Date.now() - 20 * MINUTE_MS,
+    src: 'metro',
+    event: 'bundle_response_finished',
+    platform: 'ios',
+    requestId: 'r1',
+  });
   const stopped = vi.spyOn(stopCommand, 'runIdleStop').mockRejectedValue(new Error('unexpected idle stop'));
   const config = loadConfig();
 

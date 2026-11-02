@@ -4,7 +4,7 @@ import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { SpawnOptions } from 'node:child_process';
+import { spawn as spawnChild, type SpawnOptions } from 'node:child_process';
 import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
@@ -169,7 +169,7 @@ test('a tick that fails hands the timers back: the daemon releases its claim and
   expect(existsSync(daemonSocket())).toBe(false);
 }, 20_000);
 
-test('a command starts the daemon in the mode it resolved, STIM_DAEMON included, and passes it locations but no setting overrides', async () => {
+test('a command starts the daemon in the mode it resolved, with its locations, CI and setting overrides only', async () => {
   const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
   setExecutor({
     ...getExecutor(),
@@ -179,24 +179,42 @@ test('a command starts the daemon in the mode it resolved, STIM_DAEMON included,
     },
   });
   onTestFinished(() => resetExecutor());
-
-  await ensureDaemon({
+  const kept = {
     PATH: '/usr/bin:/bin',
+    CI: '1',
     STIM_HOME: home,
-    AGENT_DEVICE_CLAIMS_DIR: '/claims',
     STIM_DAEMON: 'report',
     STIM_MAINTENANCE: 'off',
-    API_TOKEN: 'secret',
-  });
+    STIM_MAINTENANCE_IDLE_STOP_HOURS: '2',
+    AGENT_DEVICE_CLAIMS_DIR: '/claims',
+    ANDROID_SDK_HOME: '/android',
+    ANDROID_ADB_SERVER_PORT: '5038',
+    GRADLE_USER_HOME: '/gradle',
+    XDG_CACHE_HOME: '/cache',
+  };
+
+  expect(await ensureDaemon({ ...kept, API_TOKEN: 'secret', NODE_OPTIONS: '--inspect' })).toBe(false);
 
   expect(spawned).toHaveLength(1);
   expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
-  expect(spawned[0]?.options?.env).toEqual({
-    PATH: '/usr/bin:/bin',
-    STIM_HOME: home,
-    AGENT_DEVICE_CLAIMS_DIR: '/claims',
-  });
+  expect(spawned[0]?.options?.env).toEqual(kept);
 });
+
+test('a command counts the home as held only once the daemon it started takes the claim', async () => {
+  const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
+  setExecutor({ ...getExecutor(), spawn: () => spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' }) });
+  try {
+    expect(await ensureDaemon(env)).toBe(false);
+  } finally {
+    resetExecutor();
+  }
+
+  expect(await ensureDaemon(env)).toBe(true);
+  const [holder] = readClaimSet(daemonClaimRoot()).live;
+  assert(holder);
+  process.kill(holder.owner.pid, 'SIGTERM');
+  await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
+}, 20_000);
 
 test('a daemon started in report mode stays in report mode', async () => {
   await runDaemon({ tickMs: 50, mode: 'report' });
