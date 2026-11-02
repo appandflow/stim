@@ -68,6 +68,7 @@ import { registerCollector } from '../collector/state.ts';
 import { LOG_ROTATE_BYTES, buildCacheRoot, withAmbientContext } from '@stim-cli/core';
 import { captureProcessIdentity, inspectProcessIdentity, waitForProcessExit } from '@stim-cli/core/process-identity';
 import * as identities from '../process-identity.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { diskUsageCacheFile, gitMergeCacheFile, pullRequestCacheFile, worktreeArchiveRoot } from '@stim-cli/core/state';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
 
@@ -132,6 +133,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 const GIT_REMOVAL_TIMEOUT_MS = process.platform === 'win32' ? 240_000 : undefined;
 let tmpHome: string;
 let projects: string;
+let scope: ReturnType<typeof vi.spyOn> | undefined;
+
+function unscopedHome() {
+  scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+}
 
 beforeEach(() => {
   tmpHome = realpathSync.native(mkdtempSync(join(tmpdir(), 'stim-test-')));
@@ -158,6 +164,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  scope?.mockRestore();
+  scope = undefined;
   logIo.afterWrite = undefined;
   logIo.afterRename = undefined;
   logIo.afterRemove = undefined;
@@ -1044,6 +1052,12 @@ describe('linked worktree sweep classification', () => {
 
   test('a clean, pushed, idle linked worktree is removable', () => {
     expect(worktreeSkipReason(linked(), 7)).toBe(null);
+  });
+
+  test('a merged worktree the scoped home does not list is kept', () => {
+    const facts = linked({ idleDays: 0, merge: merged() });
+    expect(worktreeSkipReason({ ...facts, unregistered: true }, null)).toMatchObject({ code: 'not-registered' });
+    expect(worktreeSkipReason({ ...facts, unregistered: false }, null)).toBe(null);
   });
 
   test('a merged worktree is removable without the idle rule, even when used today', () => {
@@ -2340,6 +2354,7 @@ test('gc keeps a merged worktree that holds another worktree under an ignored pa
 }, 240_000);
 
 test('gc --delete also removes merged linked worktrees of a registered repository where no stim command ran', async () => {
+  unscopedHome();
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
 
   const at = (name: string) => worktrees[name] ?? name;
@@ -2347,6 +2362,15 @@ test('gc --delete also removes merged linked worktrees of a registered repositor
   await captureLog(() => runGc({ delete: true }));
   for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(at(name))).toBe(false);
   for (const name of ['fresh', 'evil', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
+  expect(existsSync(join(repo, 'package.json'))).toBe(true);
+}, 240_000);
+
+test('a scoped STIM_HOME keeps merged linked worktrees of a registered repository that it does not list', async () => {
+  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
+
+  const output = await captureLog(() => runGc({ delete: true }));
+  for (const name of ['merged', 'squashed', 'rebased']) expect(existsSync(worktrees[name] ?? name)).toBe(true);
+  expect(output).toContain('kept: not registered in this Stim home');
   expect(existsSync(join(repo, 'package.json'))).toBe(true);
 }, 240_000);
 
@@ -2567,6 +2591,7 @@ function backdateWorktreeActivity(path: string, when: Date): void {
 }
 
 test('gc --worktrees --delete removes idle worktrees with no commits of their own where no stim command ran', async () => {
+  unscopedHome();
   const { worktrees, git } = repoWithMergedBranches({ registerWorktrees: false });
   const at = (name: string) => worktrees[name] ?? name;
   for (const name of ['fresh', 'followup', 'reused', 'open']) {
@@ -2676,6 +2701,7 @@ test('the grace period of a dirty finished worktree counts changes to its uncomm
 }, 240_000);
 
 test('gc --delete removes a clean detached worktree on the default branch once idle, and keeps a fresh one', async () => {
+  unscopedHome();
   const { worktrees, git } = repoWithTwoBranches({ registerWorktrees: false });
   const baseline = join(projects, 'baseline');
   git(`worktree add -q --detach "${baseline}" origin/main`);
@@ -2694,6 +2720,7 @@ test('gc --delete removes a clean detached worktree on the default branch once i
 }, 240_000);
 
 test('gc keeps a finished worktree that holds the running stim, and worktree remove refuses it', async () => {
+  unscopedHome();
   const { worktrees, git, upstream } = repoWithTwoBranches({ registerWorktrees: false });
   git('merge -q --no-ff origin/open -m merge-control', upstream);
   git('push -q origin HEAD', upstream);
@@ -2726,6 +2753,7 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
 }, 240_000);
 
 test('disk pressure level 3 removes a worktree with no commits of its own once idle for the pressure window', async () => {
+  unscopedHome();
   const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
   const at = (name: string) => worktrees[name] ?? name;
   backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
@@ -2753,6 +2781,7 @@ test('disk pressure level 3 removes a worktree with no commits of its own once i
 test.skipIf(process.platform === 'win32')(
   'disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window',
   async () => {
+    unscopedHome();
     const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
     const at = (name: string) => worktrees[name] ?? name;
     backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 1000));
@@ -2792,6 +2821,7 @@ test.skipIf(process.platform === 'win32')(
 );
 
 test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
+  unscopedHome();
   const { repo, worktrees, git } = gitRepoWithWorktrees(['fresh']);
   git('remote set-head origin --auto');
   upsertProject(repo, { metroPort: null });
