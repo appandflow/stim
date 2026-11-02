@@ -7,7 +7,7 @@ import {
   configuredAndroidEmulatorApp,
   openEmulatorInStimDesktop,
 } from './android-emulator-viewer.ts';
-import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
+import { recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
@@ -425,7 +425,6 @@ export async function deleteAvd(avdName: string, operation?: StimContext): Promi
       ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
     },
   );
-  await forgetCreatedDeviceAsync('android', avdName);
 }
 
 export function parseAvdList(text: string): string[] {

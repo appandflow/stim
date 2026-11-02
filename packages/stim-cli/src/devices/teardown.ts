@@ -818,6 +818,7 @@ async function teardownClaimedAvd(
       const remaining = paths.filter(avdPathExists);
       if (remaining.length)
         throw new Error(`AVD ${avdName} was only partially deleted; data remains at ${remaining.join(', ')}.`);
+      await forgetCreatedDeviceAsync('android', avdName);
     }
     return {
       status: 'torn-down',

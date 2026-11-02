@@ -9,6 +9,7 @@ import { createIosSimSnapshot } from '../devices/ios.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { loadConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
 
 let base: string;
 let project: string;
@@ -38,6 +39,8 @@ beforeEach(() => {
     platforms: { ios: { owned: true, deviceUdid: 'S1' }, android: { owned: true, avdName: 'stim-a' } },
     deviceSlots: { second: { android: { owned: true, avdName: 'stim-b' } } },
   });
+  recordCreatedDevice('ios', 'S1');
+  for (const avd of ['stim-a', 'stim-b']) recordCreatedDevice('android', avd);
   recordWorkspaceUse(project, new Date(NOW - 3_600_000));
 });
 

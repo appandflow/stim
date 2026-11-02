@@ -7790,6 +7790,10 @@ const timer = setInterval(() => {
           projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
         }),
       );
+      writeFileSync(
+        join(root, 'home', 'created-devices.json'),
+        JSON.stringify({ version: 1, ios: [], android: [avd], web: [] }),
+      );
       const port = await start({
         env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
       });
