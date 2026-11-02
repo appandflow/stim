@@ -721,8 +721,8 @@ export async function eraseIosSim(udid: string, operation?: StimContext): Promis
   });
 }
 
-// A privacy or keychain reset can take most of a minute while a simulator's
-// services are still starting (#4819).
+// `simctl privacy reset all` took 52 s on a stock iOS 26.5 simulator minutes
+// after its boot (#4819).
 const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;
 
 export async function resetIosPrivacy(udid: string): Promise<void> {

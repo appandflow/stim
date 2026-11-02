@@ -853,7 +853,6 @@ function iosExecutor(devices: SimEntry[]) {
   const run: string[] = [];
   const files: string[][] = [];
   const spawned: string[] = [];
-  // Adoption's resets run under their own deadline: a stock simulator can take 52 s right after boot (#4819).
   const resetDeadlines: Record<string, number | undefined> = {};
   return {
     run,

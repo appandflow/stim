@@ -3276,9 +3276,9 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Booted and a working screenshot do not prove that simulator processes can
   start. Stim checks a bounded process spawn before install and bounds local
   simulator launch operations. Simulator discovery waits up to 30 seconds,
-  boot (including the initial boot request) up to 10 minutes, the privacy and
-  keychain resets of an adoption or a clean app state up to 3 minutes each, and
-  app installation up to 5 minutes. Process termination confirmation can take another 10 seconds;
+  boot (including the initial boot request) up to 10 minutes, an adoption's
+  privacy and keychain resets and a clean app state's keychain reset up to 3
+  minutes each, and app installation up to 5 minutes. Process termination confirmation can take another 10 seconds;
   a final boot-state query can take 30 seconds. After boot, Stim opens the owned
   simulator in Stim Desktop while it is installed, otherwise in the selected
   Xcode's Device Hub on Xcode 27, or Simulator on older Xcode. Top-level
