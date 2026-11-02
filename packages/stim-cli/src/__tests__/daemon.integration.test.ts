@@ -4,11 +4,14 @@ import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { SpawnOptions } from 'node:child_process';
 import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } from '@stim-cli/core/state';
-import { getExecutor } from '../exec.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { ensureDaemon } from '../daemon/client.ts';
 import { runDaemon } from '../daemon/run.ts';
+import { saveConfig } from '../workspace/config.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
@@ -119,4 +122,47 @@ test('a tick that fails hands the timers back: the daemon releases its claim and
   await runDaemon({ tickMs: 50 });
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);
+}, 20_000);
+
+test('a command starts the daemon in the mode it resolved, STIM_DAEMON included, and passes it locations but no setting overrides', async () => {
+  const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
+  setExecutor({
+    ...getExecutor(),
+    spawn(_file, args = [], options) {
+      spawned.push({ args, options });
+      throw new Error('not started in this test');
+    },
+  });
+  onTestFinished(() => resetExecutor());
+
+  await ensureDaemon({
+    PATH: '/usr/bin:/bin',
+    STIM_HOME: home,
+    AGENT_DEVICE_CLAIMS_DIR: '/claims',
+    STIM_DAEMON: 'report',
+    STIM_MAINTENANCE: 'off',
+    API_TOKEN: 'secret',
+  });
+
+  expect(spawned).toHaveLength(1);
+  expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
+  expect(spawned[0]?.options?.env).toEqual({
+    PATH: '/usr/bin:/bin',
+    STIM_HOME: home,
+    AGENT_DEVICE_CLAIMS_DIR: '/claims',
+  });
+});
+
+test('a daemon started in report mode stays in report mode', async () => {
+  await runDaemon({ tickMs: 50, mode: 'report' });
+  expect(readDaemonSnapshot()).toMatchObject({ mode: 'report' });
+}, 20_000);
+
+test('daemon.mode turned off in config after the daemon started stops it on its next tick', async () => {
+  const run = runDaemon({ tickMs: 1500, mode: 'on' });
+  await listening();
+  saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
+  await run;
+  expect(daemonLog()).toContain('exiting: daemon.mode is off');
+  expect(daemonLog()).not.toContain('"event":"daemon_tick"');
 }, 20_000);

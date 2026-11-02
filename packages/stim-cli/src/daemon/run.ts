@@ -12,6 +12,7 @@ import {
   isJsonObject,
   macosAppState,
   readMacosRecord,
+  type DaemonMode,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
 import {
@@ -29,7 +30,7 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { daemonMode } from './client.ts';
+import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './client.ts';
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { runHomePasses } from './passes.ts';
@@ -140,7 +141,15 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
  * after two ticks in a row with nothing running in the home and no contact, when `daemon.mode` turns off, or when a
  * tick throws, releasing its claim so each supervisor's own idle timer takes over.
  */
-export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}): Promise<void> {
+export async function runDaemon({
+  tickMs = TICK_MS,
+  mode: startMode = daemonMode({}),
+}: {
+  tickMs?: number;
+  /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
+  mode?: DaemonMode;
+} = {}): Promise<void> {
+  const configAtStart = configuredDaemonMode();
   const started = performance.now();
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
@@ -250,7 +259,8 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     interrupt = null;
     if (closing) break;
     tickRequested = false;
-    const mode = daemonMode({});
+    const configured = configuredDaemonMode();
+    const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
       shutdown('daemon.mode is off');
       break;
@@ -300,18 +310,21 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.title = 'stim-daemon';
-  runDaemon().catch((error: unknown) => {
-    const message =
-      isClaimRefusal(error) || isClaimUnavailable(error)
-        ? error.message
-        : error instanceof Error
-          ? (error.stack ?? error.message)
-          : String(error);
-    try {
-      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-      writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
-      writer.close();
-    } catch {}
-    process.exitCode = 1;
-  });
+  const at = process.argv.indexOf('--mode');
+  runDaemon({ mode: parseDaemonMode(at > 0 ? process.argv[at + 1] : undefined) ?? daemonMode({}) }).catch(
+    (error: unknown) => {
+      const message =
+        isClaimRefusal(error) || isClaimUnavailable(error)
+          ? error.message
+          : error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+      try {
+        const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+        writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
+        writer.close();
+      } catch {}
+      process.exitCode = 1;
+    },
+  );
 }
