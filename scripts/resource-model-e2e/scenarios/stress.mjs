@@ -1,0 +1,187 @@
+import { readFileSync } from 'node:fs';
+import { derivedDeviceCap, longestStreak, maxOf } from '../analysis.mjs';
+import { clock, outcome, STATUS } from '../assertions.mjs';
+import {
+  assertIdleDown,
+  launch,
+  loadGate,
+  pollStatus,
+  reviveWorkspaces,
+  setup,
+  startPoller,
+  waitForIdle,
+} from '../phases.mjs';
+import { parseCsv } from '../platform.mjs';
+
+const SCENARIO = 'stress';
+const REFUSALS = ['STIM_AT_CAPACITY', 'STIM_LOW_DISK'];
+const CRITICAL_LEVEL = 4;
+const CRITICAL_ALLOWED_MS = 60_000;
+const MAX_BOOTS_IN_FLIGHT = 2;
+
+const verdict = (A, ok, ...args) => (ok ? A.pass(...args) : A.fail(...args));
+
+function failureLine(result) {
+  if (result.ok) return '';
+  const message = result.json?.message ?? result.stderr.trim().split('\n').at(-1) ?? '';
+  return `, ${result.json?.code ?? 'no failure payload'}: ${message.slice(0, 160)}`;
+}
+
+export function batchAssertions(ctx, { startedAt, runs }, rows) {
+  const A = ctx.assertions;
+  const window = rows.filter((row) => row.epoch * 1000 >= startedAt - 5000);
+  const interval = ctx.sampleIntervalSec;
+
+  A.fromItems(
+    SCENARIO,
+    'exit-zero',
+    'every concurrent `stim ios` exits 0',
+    runs.map(({ workspace, result }) =>
+      outcome(
+        workspace.label,
+        result.ok ? STATUS.pass : STATUS.fail,
+        `exit ${result.code} after ${Math.round(result.ms / 1000)} s${failureLine(result)}`,
+      ),
+    ),
+  );
+
+  const cap = ctx.deviceCap;
+  const peak = Math.max(0, ...window.map((row) => (row.booted_ours ?? 0) + (row.booting_ours ?? 0)));
+  const reported = ctx.snapshots.map((poll) => poll.deviceSlots?.max).find((max) => max !== undefined);
+  verdict(
+    A,
+    peak <= cap,
+    SCENARIO,
+    'booted-cap',
+    `owned booted or booting devices never exceed the derived cap of ${cap}`,
+    [
+      `peak ${peak} over ${window.length} samples of ${interval} s`,
+      `status capacity.devices.max: ${reported ?? 'not available on this build'}`,
+    ],
+  );
+
+  const exposed = ctx.snapshots.filter((poll) => poll.bootsInFlight !== null);
+  const title = `boots in flight never exceed ${MAX_BOOTS_IN_FLIGHT} (status capacity.devices holders)`;
+  if (exposed.length) {
+    const most = Math.max(...exposed.map((poll) => poll.bootsInFlight));
+    verdict(A, most <= MAX_BOOTS_IN_FLIGHT, SCENARIO, 'boots-in-flight', title, [
+      `peak ${most} over ${exposed.length} status polls`,
+    ]);
+  } else {
+    A.unavailable(SCENARIO, 'boots-in-flight', title, [
+      'not available on this build: status lists boot holders only while a device cap is set',
+    ]);
+  }
+  const booting = maxOf(window, 'booting_ours');
+  verdict(
+    A,
+    booting === null || booting <= MAX_BOOTS_IN_FLIGHT,
+    SCENARIO,
+    'booting-sampled',
+    `at most ${MAX_BOOTS_IN_FLIGHT} owned simulators are in the Booting state at once (sampler, supplementary)`,
+    [`peak ${booting ?? 'n/a'} simulators in simctl state Booting, sampled every ${interval} s`],
+  );
+
+  A.fromItems(
+    SCENARIO,
+    'no-refusals',
+    'zero STIM_AT_CAPACITY or STIM_LOW_DISK refusals',
+    runs.map(({ workspace, result }) => {
+      const hit = REFUSALS.find(
+        (code) => result.json?.code === code || result.stdout.includes(code) || result.stderr.includes(code),
+      );
+      return outcome(workspace.label, hit ? STATUS.fail : STATUS.pass, hit ? `refused with ${hit}` : 'not refused');
+    }),
+  );
+
+  const critical = longestStreak(window, (row) => row.pressure === CRITICAL_LEVEL, interval);
+  verdict(
+    A,
+    critical.ms <= CRITICAL_ALLOWED_MS,
+    SCENARIO,
+    'pressure-critical',
+    'memory pressure is never critical for more than one 60 s tick',
+    [
+      `longest critical run ${Math.round(critical.ms / 1000)} s (${critical.samples} samples${critical.startEpoch ? ` from ${clock(critical.startEpoch * 1000)}` : ''}), peak level ${maxOf(window, 'pressure') ?? 'n/a'}`,
+    ],
+  );
+
+  ctx.emit(
+    'stress',
+    `most runs waiting at once (status build.waitingFor): ${Math.max(0, ...ctx.snapshots.map((poll) => poll.waitingRuns))}`,
+  );
+}
+
+export async function runStress(ctx) {
+  await setup(ctx, ctx.opts.workspaces);
+  for (const workspace of ctx.workspaces) workspace.role = 'workspace';
+  ctx.deviceCap = derivedDeviceCap(ctx.machine.ramBytes);
+  const poller = startPoller(ctx);
+  try {
+    const seed = ctx.workspaces[0];
+    await loadGate(ctx, 'the seed build');
+    const seeded = await launch(ctx, seed);
+    ctx.assertions.fromItems(
+      SCENARIO,
+      'seed',
+      'the seed build in the first worktree launches and fills the build cache',
+      [
+        outcome(
+          seed.label,
+          seeded.ok ? STATUS.pass : STATUS.fail,
+          `ios exit ${seeded.ios.code}, cache ${ctx.record(seed).cacheHit}`,
+        ),
+      ],
+    );
+    if (!seeded.ok) return;
+    await ctx.stim.exec(`stop-${seed.label}`, seed.path, ['stop', '--json'], { timeoutMs: 5 * 60_000 });
+
+    await loadGate(ctx, `the ${ctx.workspaces.length} concurrent runs`);
+    ctx.setStage('batch');
+    const startedAt = Date.now();
+    ctx.emit('stress', `starting ${ctx.workspaces.length} stim ios at once`);
+    const timeoutMs = Math.max(30, ctx.workspaces.length * 3) * 60_000;
+    const runs = await Promise.all(
+      ctx.workspaces.map(async (workspace) => ({
+        workspace,
+        result: await ctx.stim.exec(`ios-batch-${workspace.label}`, workspace.path, ['ios', '--json'], { timeoutMs }),
+      })),
+    );
+    for (const { workspace, result } of runs) {
+      Object.assign(ctx.record(workspace), {
+        iosExit: result.code,
+        iosMs: result.ms,
+        launchedAt: result.endedAt,
+        cacheHit: result.json?.cacheHit ?? null,
+        launched: result.json?.launched ?? null,
+        errorCode: result.ok ? null : (result.json?.code ?? 'no JSON failure payload'),
+      });
+    }
+    ctx.emit(
+      'stress',
+      `batch finished in ${Math.round((Date.now() - startedAt) / 1000)} s; ${runs.filter(({ result }) => result.ok).length} of ${runs.length} exited 0`,
+    );
+    await pollStatus(ctx);
+
+    const survivors = runs
+      .filter(({ result }) => result.ok)
+      .map(({ workspace, result }) => ({ workspace, commandEndMs: result.endedAt }));
+    const waited = survivors.length
+      ? await waitForIdle(ctx, survivors, { windowMs: ctx.idleWindowMs, graceMs: 5 * 60_000 })
+      : new Map();
+    if (survivors.length) assertIdleDown(ctx, SCENARIO, waited, ctx.idleWindowMs);
+
+    const idle = [...waited.values()].filter((entry) => entry.resolved).map((entry) => entry.workspace);
+    const chosen = [...new Set([idle[0], idle[Math.floor(idle.length / 2)], idle.at(-1)].filter(Boolean))];
+    if (chosen.length) await reviveWorkspaces(ctx, SCENARIO, chosen, { concurrent: true });
+    else
+      ctx.assertions.fail(SCENARIO, 'revive', 'three chosen workspaces revive', [
+        'no workspace reached the idle stage, so none could be revived',
+      ]);
+
+    ctx.setStage('analysis');
+    batchAssertions(ctx, { startedAt, runs }, parseCsv(readFileSync(`${ctx.out}/samples.csv`, 'utf8')));
+  } finally {
+    await poller.stop();
+  }
+}
