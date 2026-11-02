@@ -65,7 +65,12 @@ export interface ShareDeps {
   frames: Pick<FramePool, 'subscribe'>;
   control: Pick<ControlHub, 'begin' | 'input' | 'targetOf' | 'endFor'>;
   subscribeStatus: (listener: StatusListener) => () => void;
-  route: { open: (target: number) => Promise<OpenedRoute>; close: () => Promise<void>; stranded: () => boolean };
+  route: {
+    open: (target: number) => Promise<OpenedRoute>;
+    close: () => Promise<void>;
+    /** The loopback port a route that could not be removed still points at, or null. */
+    stranded: () => number | null;
+  };
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
@@ -177,7 +182,7 @@ export class ShareHub {
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
   private base: string | null = null;
-  private stranded: Server | null = null;
+  private readonly stranded = new Map<number, Server>();
   private opening: Promise<string> | null = null;
   private closingRoute: Promise<void> = Promise.resolve();
   private closed = false;
@@ -283,8 +288,8 @@ export class ShareHub {
     await this.opening?.catch(() => {});
     await this.stop(null, 'stim-server stopped.');
     await this.teardown();
-    if (this.stranded) closeServer(this.stranded);
-    this.stranded = null;
+    for (const server of this.stranded.values()) closeServer(server);
+    this.stranded.clear();
   }
 
   private row(share: Share): ShareRow {
@@ -333,19 +338,20 @@ export class ShareHub {
           server.once('error', reject);
           server.listen(0, '127.0.0.1', () => resolve());
         });
+        const address = server.address();
+        const port = typeof address === 'object' && address ? address.port : null;
         try {
-          const address = server.address();
-          if (typeof address !== 'object' || !address) throw new Error('The share listener has no port.');
+          if (port === null) throw new Error('The share listener has no port.');
           if (this.closed) throw new Error('stim-server is stopping.');
-          const opened = await this.deps.route.open(address.port);
+          const opened = await this.deps.route.open(port);
           this.listener = server;
           this.base = opened.url;
-          if (this.stranded) closeServer(this.stranded);
-          this.stranded = null;
+          this.pruneStranded();
           return opened.url;
         } catch (cause) {
-          if (this.deps.route.stranded()) this.strand(server);
+          if (port !== null && this.deps.route.stranded() === port) this.stranded.set(port, server);
           else closeServer(server);
+          this.pruneStranded();
           throw cause;
         }
       })
@@ -394,16 +400,25 @@ export class ShareHub {
         () => closeServer(listener),
         (cause: unknown) => {
           console.error(`stim-server: could not remove the share's Funnel route: ${String(cause)}`);
-          this.strand(listener);
+          const address = listener.address();
+          if (typeof address === 'object' && address) this.stranded.set(address.port, listener);
+          this.pruneStranded();
         },
       );
     return this.closingRoute;
   }
 
-  /** Keeps a listener whose public route could not be removed bound, answering 404, so its port is never free. */
-  private strand(listener: Server): void {
-    if (this.stranded && this.stranded !== listener) closeServer(this.stranded);
-    this.stranded = listener;
+  /**
+   * Keeps bound, answering 404, only the listener a route that could not be removed still points at, so that public
+   * route never reaches a free port; closes the others.
+   */
+  private pruneStranded(): void {
+    const routed = this.deps.route.stranded();
+    for (const [port, server] of this.stranded) {
+      if (port === routed) continue;
+      closeServer(server);
+      this.stranded.delete(port);
+    }
   }
 
   private holdRecording(share: Share): void {

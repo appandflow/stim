@@ -21,6 +21,8 @@ interface Fixture {
   routeOpens: number[];
   routeCloses: number;
   refuseControl: boolean;
+  strandedPort: number | null;
+  failRoute: { open: boolean; close: boolean };
   listenerBoundAtRouteClose: boolean[];
   status: (value: ReturnType<typeof payload>) => void;
 }
@@ -35,6 +37,8 @@ function fixture(): Fixture {
     routeOpens: [],
     routeCloses: 0,
     refuseControl: false,
+    strandedPort: null,
+    failRoute: { open: false, close: false },
     listenerBoundAtRouteClose: [],
     status: (value) => {
       latest = value;
@@ -72,13 +76,19 @@ function fixture(): Fixture {
     },
     route: {
       open: async (target) => {
+        if (f.failRoute.open) throw new Error('tailscale is not running');
+        f.strandedPort = null;
         f.routeOpens.push(target);
         return { url: 'https://mac.tail.ts.net:10000', port: 10000 };
       },
-      stranded: () => false,
+      stranded: () => f.strandedPort,
       close: async () => {
         f.routeCloses++;
         const port = f.routeOpens.at(-1)!;
+        if (f.failRoute.close) {
+          f.strandedPort = port;
+          throw new Error('funnel off timed out');
+        }
         f.listenerBoundAtRouteClose.push(
           await new Promise<boolean>((resolve) => {
             const probe = tcpConnect(port, '127.0.0.1', () => {
@@ -111,6 +121,16 @@ async function started(f: Fixture, overrides: Partial<ShareRequest> = {}): Promi
 
 function local(share: StartedShare, port: number): string {
   return new URL(share.url).pathname.replace(/^/, `http://127.0.0.1:${port}`);
+}
+
+function bound(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = tcpConnect(port, '127.0.0.1', () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once('error', () => resolve(false));
+  });
 }
 
 function http(
@@ -291,6 +311,23 @@ describe('a web share', () => {
     expect(f.listenerBoundAtRouteClose).toEqual([true]);
     expect(f.hub.port).toBeNull();
     expect(f.hub.list()).toEqual([]);
+  });
+
+  it('keeps the port a route that failed to be removed still points at bound until a later route replaces it', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await started(f);
+    const first = f.hub.port!;
+    f.failRoute.close = true;
+    await f.hub.stop(WORKSPACE);
+    expect(await bound(first)).toBe(true);
+
+    f.failRoute = { open: true, close: false };
+    expect(await f.hub.start(shareRequest())).toMatchObject({ code: 'action-failed' });
+    expect(await bound(first)).toBe(true);
+
+    f.failRoute.open = false;
+    await started(f);
+    expect(await bound(first)).toBe(false);
   });
 
   it('ends at its expiry, and when its device stops', async () => {

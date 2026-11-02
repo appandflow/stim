@@ -110,13 +110,13 @@ describe('the share Funnel route claim', () => {
     };
     const route = new ShareRoute(root, funnel);
     await expect(route.open(51234)).rejects.toThrow('funnel --bg timed out');
-    expect(route.stranded()).toBe(true);
+    expect(route.stranded()).toBe(51234);
 
     unreadable = false;
     funnel.add = add;
     expect(await route.open(51235)).toMatchObject({ port: 443 });
     expect(funnel.removed).toEqual([443]);
-    expect(route.stranded()).toBe(false);
+    expect(route.stranded()).toBeNull();
   });
 
   it('refuses without the Funnel capability and never touches the serve config', async () => {

@@ -172,9 +172,9 @@ export class ShareRoute {
     return { url: port === 443 ? `https://${dnsName}` : `https://${dnsName}:${port}`, port };
   }
 
-  /** Whether a route this server added could not be removed yet, so it may still point at its listener's port. */
-  stranded(): boolean {
-    return this.leftover !== null;
+  /** The loopback port a route this server added and could not remove yet still points at, or null. */
+  stranded(): number | null {
+    return this.leftover?.route.target ?? null;
   }
 
   /** Removes the route and releases the claim; on failure keeps the claim, so the next open or stim-server retries. */
