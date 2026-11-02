@@ -721,9 +721,8 @@ export async function eraseIosSim(udid: string, operation?: StimContext): Promis
   });
 }
 
-// Adoption resets run right after a boot, before SimSlim trims the services
-// that slow it: `privacy reset all` was measured at 52 s there, so the
-// general simctl deadline killed it.
+// A privacy or keychain reset can take most of a minute while a simulator's
+// services are still starting (#4819).
 const SIMCTL_RESET_OPTIONS = { timeoutMs: 180_000, killSignal: 'SIGKILL' } as const;
 
 export async function resetIosPrivacy(udid: string): Promise<void> {

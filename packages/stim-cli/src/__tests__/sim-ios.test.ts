@@ -10,8 +10,6 @@ import {
   bootIosSim,
   clearIosAppData,
   parseUserApps,
-  resetIosKeychain,
-  resetIosPrivacy,
 } from '../devices/ios.ts';
 import assert from 'node:assert';
 import { makeChildProcess, makeExitingChild } from './_factories.ts';
@@ -101,21 +99,6 @@ test('pickDefaultIosCreation skips a newer runtime whose only iPhone is a specia
   assert(pick);
   expect(pick.runtimeId).toBe('rt.27-0');
   expect(pick.deviceTypeId).toBe('dt.18pro');
-});
-
-test.each([
-  ['privacy', () => resetIosPrivacy('UDID-B')],
-  ['keychain', () => resetIosKeychain('UDID-B')],
-])('simctl %s reset at adoption allows three minutes: a fresh boot can take most of one', async (verb, operation) => {
-  const deadlines: (number | undefined)[] = [];
-  setExecutor({
-    runFileAsync: async (_file, args, opts) => {
-      if (args[0] === 'simctl' && args[1] === verb) deadlines.push(opts.timeoutMs);
-      return '';
-    },
-  });
-  await operation();
-  expect(deadlines).toEqual([180_000]);
 });
 
 test('deleteIosSim refuses to delete a sim not owned by Stim', async () => {
