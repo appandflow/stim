@@ -6,14 +6,18 @@ import {
   daemonSocket,
   loadConfig,
   settingDefinition,
+  SETTINGS,
   type DaemonMode,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep } from '../cancellation.ts';
+import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
+const CLAIM_WAIT_MS = 5000;
+const CLAIM_POLL_MS = 50;
 const MODE = settingDefinition('daemon.mode');
 
 const DAEMON_MODES: readonly DaemonMode[] = ['on', 'report', 'off'];
@@ -91,8 +95,12 @@ function answersHello(timeoutMs: number): Promise<boolean> {
   });
 }
 
-/** What the daemon inherits from the command that starts it: where things are, never a setting override. */
-const DAEMON_ENV = [
+/**
+ * What the daemon inherits from the command that starts it: where things are, `CI`, and every setting's environment
+ * override, which then holds for the daemon's lifetime. Nothing else, so one command's unrelated environment does not
+ * live on in it.
+ */
+const DAEMON_ENV = new Set<string>([
   'PATH',
   'HOME',
   'USERPROFILE',
@@ -102,14 +110,11 @@ const DAEMON_ENV = [
   'TMPDIR',
   'LANG',
   'LC_ALL',
+  'CI',
   'DEVELOPER_DIR',
   'JAVA_HOME',
-  'ANDROID_HOME',
-  'ANDROID_SDK_ROOT',
-  'ANDROID_AVD_HOME',
-  'ANDROID_USER_HOME',
-  'ANDROID_EMULATOR_HOME',
-  'XDG_CONFIG_HOME',
+  ...ANDROID_LOCATION_VARIABLES,
+  'ANDROID_ADB_SERVER_PORT',
   'AGENT_DEVICE_STATE_DIR',
   'AGENT_DEVICE_CLAIMS_DIR',
   'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR',
@@ -117,26 +122,54 @@ const DAEMON_ENV = [
   'STIM_BUILD_CACHE',
   'STIM_METRO_CACHE',
   'STIM_TMPDIR',
-];
+  ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
+]);
+const DAEMON_ENV_PREFIXES = ['GRADLE_', 'XDG_'];
 
-function spawnDaemon(env: NodeJS.ProcessEnv, mode: DaemonMode): void {
+function daemonEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const kept: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(env))
+    if (value !== undefined && (DAEMON_ENV.has(name) || DAEMON_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))))
+      kept[name] = value;
+  return kept;
+}
+
+/** Starts a daemon; `settled` resolves once it has exited or failed to spawn. */
+function spawnDaemon(env: NodeJS.ProcessEnv, mode: DaemonMode): { settled: Promise<void>; exited: () => boolean } {
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-  const daemonEnv: NodeJS.ProcessEnv = {};
-  for (const name of DAEMON_ENV) if (env[name] !== undefined) daemonEnv[name] = env[name];
   const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run'), '--mode', mode], {
     cwd: daemonDir(),
     detached: true,
     stdio: 'ignore',
-    env: daemonEnv,
+    env: daemonEnv(env),
   });
-  child.on?.('error', () => {});
+  let exited = false;
+  const settled = new Promise<void>((done) => {
+    const end = () => {
+      exited = true;
+      done();
+    };
+    child.once?.('exit', end);
+    child.once?.('error', end);
+  });
   child.unref?.();
+  return { settled, exited: () => exited };
+}
+
+/** Whether a live daemon claim shows up within `CLAIM_WAIT_MS`, checking again as soon as the started daemon exits. */
+async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): Promise<boolean> {
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  for (;;) {
+    if (daemonLive()) return true;
+    if (exited() || Date.now() >= deadline) return daemonLive();
+    await Promise.race([new Promise((done) => setTimeout(done, CLAIM_POLL_MS)), settled]);
+  }
 }
 
 /**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
- * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included. Never
- * blocks the command on the daemon. Returns whether a daemon holds the home or was started; a claim Stim cannot
+ * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
+ * waits up to five seconds for it to take the claim. Returns whether a daemon holds the home; a claim Stim cannot
  * resolve is reported and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
@@ -152,8 +185,7 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
       return true;
     }
     if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return true;
-    spawnDaemon(env, mode);
-    return true;
+    return await claimTaken(spawnDaemon(env, mode));
   } catch {
     return false;
   }
