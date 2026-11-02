@@ -545,6 +545,24 @@ test.each<[string, string, Partial<ReloadDeps>, string]>([
     { resolveAndroid: async () => ({ serial: 'emulator-5556' }) },
     '`stim android`',
   ],
+  [
+    'a shut-down owned simulator, from a Release launch revive skips',
+    'ios',
+    {
+      readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
+      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+    },
+    '`stim ios`',
+  ],
+  [
+    'an owned emulator that is not running, from a native-process launch revive skips',
+    'android',
+    {
+      readLaunches: () => ({ android: { ...androidLaunch, runtime: 'process', metroPort: null } }),
+      resolveAndroid: async () => ({ notRunning: true }),
+    },
+    '`stim android`',
+  ],
 ])('a recorded app on %s gets the remedy that brings it back', async (_name, platform, overrides, remedy) => {
   const result = await runReload({
     root: '/project',

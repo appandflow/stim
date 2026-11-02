@@ -963,12 +963,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   From \`revive\`: the simulator or emulator a recorded launch ran on is no
   longer this workspace's owned device. It was deleted, parked, or taken over
   by another workspace, or the slot now records a different one. Revive never
-  creates or adopts a device and never boots one the workspace does not own,
-  so nothing was started. Run the printed \`stim ios\` or \`stim android\`
-  command; it boots or creates this workspace's owned device. Revive run by
-  agent-device's boot hook also refuses, starting nothing, when the device
-  agent-device asked for (AGENT_DEVICE_BOOT_HOOK_DEVICE_ID) is not one a
-  recorded launch ran on: drive one of the devices \`stim status\` lists.
+  creates or adopts a device and never boots one the workspace does not own.
+  It checks every launch before it starts anything; a device that changes
+  after that check is refused by the run that boots it, and Metro, which
+  revive restarted by then, keeps running. Run the printed \`stim ios\` or
+  \`stim android\` command; it boots or creates this workspace's owned
+  device. Revive run by agent-device's boot hook also refuses, starting
+  nothing, when the device agent-device asked for
+  (AGENT_DEVICE_BOOT_HOOK_DEVICE_ID) is neither one a recorded launch ran on
+  nor one this workspace owns: drive one of the devices \`stim status\`
+  lists.
 
   On a \`--device\` run: the run held a lease, and the raise before the
   install found it gone or held under another token -- another workspace took
@@ -1349,9 +1353,13 @@ captured"  (in metro.ndjson, bare RN)
   launch installed, never the build output path, which a later build can
   overwrite. That entry is gone (\`gc\` or automatic maintenance evicted it),
   or the launch names none: its app was never cached, or the launch was
-  recorded by a Stim version before revive. Revive never fingerprints or
-  builds, so nothing was started. Run the printed \`stim ios\` or
-  \`stim android\` command; it restores the app from the cache or builds it.
+  recorded by a Stim version before revive. Run as agent-device's boot hook
+  for a device this workspace owns, it also refuses with this code when the
+  last launch on that device is one revive does not relaunch: a Release or
+  native-process launch, or one whose record does not name that device.
+  Revive never fingerprints or builds, so nothing was started. Run the
+  printed \`stim ios\` or \`stim android\` command; it restores the app
+  from the cache or builds it.
 
   The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the
   app the last build with the same iOS scheme and configuration, or Android

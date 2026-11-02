@@ -182,6 +182,39 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
   expect(calls).toEqual([]);
 });
 
+test.each<[string, string, WorkspaceLaunchRecord, string]>([
+  ['a Release build', 'U1', { ...iosLaunch, release: true, metroPort: null }, '`stim ios`'],
+  [
+    'a native-process launch',
+    'stim-avd',
+    { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-avd', runtime: 'process', metroPort: null },
+    '`stim android`',
+  ],
+  [
+    'an emulator launch an older Stim recorded without its AVD name',
+    'stim-avd',
+    { ...iosLaunch, deviceId: 'emulator-5554', artifact: undefined },
+    '`stim android`',
+  ],
+])(
+  "run as agent-device's boot hook for its own device whose last launch was %s, revive refuses with that slot's command",
+  async (_name, requestedDevice, launch, command) => {
+    const platform = command === '`stim ios`' ? 'ios' : 'android';
+    const { deps, calls } = harness({
+      getProject: () => ({
+        ...project,
+        platforms: { ...project.platforms, android: { avdName: 'stim-avd', owned: true } },
+      }),
+      readLaunches: () => ({ [platform]: launch }),
+    });
+    const result = await runRevive({ root: '/project', note: () => {}, requestedDevice, deps });
+    assert(!result.ok);
+    expect(result.error.code).toBe('STIM_NO_RECORDED_BUILD');
+    expect(result.error.remedy).toContain(command);
+    expect(calls).toEqual([]);
+  },
+);
+
 test.each<[string, string, Partial<ReviveDeps>, string]>([
   ['the simulator UDID', 'U1', { resolveAndroid: async () => ({ missing: true }) }, 'ios'],
   ["the stopped emulator's AVD name", 'stim-avd', { resolveIos: async () => ({ missing: true }) }, 'android'],

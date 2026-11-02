@@ -947,7 +947,8 @@ and restores exactly what the stop paused, never more:
 - **Metro.** When the dev server's last stop was an idle stop, it starts it
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
-- **Devices.** For each recorded Debug launch, it boots the owned simulator or
+- **Devices.** For each recorded launch except Release and native-process
+  launches (see below), it boots the owned simulator or
   emulator the app ran on (the same UDID or AVD), on this machine and through
   the same device admission as `ios` and `android` (`concurrency.maxDevices`
   included). It never creates or adopts another device.
@@ -965,12 +966,18 @@ belong to their host, so revive does not relaunch them; run `stim ios` or
   stop.
 - `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
   this workspace's owned device, or, when agent-device runs it as its boot
-  hook, when the device agent-device asked for is not one of them.
+  hook, when the device agent-device asked for is neither one of them nor one
+  this workspace owns.
 - `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
   gone, for example after `stim gc`, or the launch names none (never cached, or
-  recorded before revive); the remedy names `stim ios` or `stim android`.
+  recorded before revive). Run as agent-device's boot hook for a device this
+  workspace owns, it also refuses with this code when the last launch on that
+  device is one revive does not relaunch. The remedy names `stim ios` or
+  `stim android`.
 
-It checks all three before starting anything. Each line on stderr says what came
+It checks all three before starting anything. Only a device that changes after
+that check is refused later, by the run that boots it, with Metro already
+restarted. Each line on stderr says what came
 back:
 
 ```text
@@ -1493,7 +1500,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `revive`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the

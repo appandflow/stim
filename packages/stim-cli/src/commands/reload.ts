@@ -219,6 +219,7 @@ async function inspectTarget(
   slot = 'default',
 ): Promise<LiveTarget | TargetFailure> {
   const runCommand = nativeRunCommand(platform, slot);
+  const revivable = !record.release && record.runtime !== 'process';
   if (platform === 'ios') {
     const configured = project.platforms?.ios;
     if (!configured?.owned || configured.deviceUdid !== record.deviceId) {
@@ -250,7 +251,7 @@ async function inspectTarget(
         error: failure(
           'STIM_RELOAD_STOPPED',
           `The recorded iOS app is not running on a booted owned simulator.`,
-          resolved.sim ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
+          resolved.sim && revivable ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
         ),
       };
     }
@@ -290,7 +291,7 @@ async function inspectTarget(
       error: failure(
         'STIM_RELOAD_STOPPED',
         `The recorded Android app is not running on this workspace's owned emulator.`,
-        resolved.notRunning ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
+        resolved.notRunning && revivable ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
       ),
     };
   }

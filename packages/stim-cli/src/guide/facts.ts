@@ -508,8 +508,9 @@ leased until <time>" for each one.`,
                   when revive started the dev server an idle stop had
                   stopped; stoppedAt and reason ("idle") describe that stop,
                   and are null when Metro was already running
-  devices         one entry per recorded Debug launch on a local owned
-                  simulator or emulator: { platform, slot, deviceId, deviceName,
+  devices         one entry per recorded launch on a local owned
+                  simulator or emulator, except Release, native-process and
+                  hosted launches, which revive does not relaunch: { platform, slot, deviceId, deviceName,
                   rebooted, app: { bundleId, relaunched, launched } }.
                   rebooted is true when revive booted the device;
                   relaunched is true when it relaunched the app from cold,

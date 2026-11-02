@@ -105,7 +105,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 A dev server holds about 450 MB. The supervisor stops it after
 [`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 60 by
 default, with no bundle request, no client log record and no Stim command
-(`start`, `ios`, `android`, `reload`, `logs` or `worktree warm`) in the workspace. For
+(`start`, `ios`, `android`, `reload`, `revive`, `logs` or `worktree warm`) in the workspace. For
 Expo, every line the Expo CLI prints on stdout counts as a client log. The
 supervisor never stops the server while a bundle is still being served, while
 a build or another `stim ios`, `stim android` or `stim stop` runs in the
@@ -168,7 +168,7 @@ fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
 Real activity is the newest of:
 
 - a Stim command in the workspace: `start`, `ios`, `android`, `macos`, `web`,
-  `reload`, `logs` or `worktree warm`;
+  `reload`, `revive`, `logs` or `worktree warm`;
 - the end of the workspace's last native build;
 - the start, progress or end of a Metro bundle or Expo manifest request, or an
   HMR update;

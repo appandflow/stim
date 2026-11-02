@@ -100,6 +100,39 @@ function launchDeviceNames(record: WorkspaceLaunchRecord): string[] {
   return [record.deviceId, ...(record.avdName ? [record.avdName] : [])];
 }
 
+interface RecordedLaunch {
+  platform: Platform;
+  slot: string;
+  record: WorkspaceLaunchRecord;
+}
+
+function revivable(record: WorkspaceLaunchRecord): boolean {
+  return !record.release && record.runtime !== 'process';
+}
+
+function unrevivableLaunch(
+  project: ProjectRecord,
+  launches: RecordedLaunch[],
+  requestedDevice: string,
+): { ok: false; error: ReviveFailure } | null {
+  const own = launches.find(({ platform, slot, record }) => {
+    const owned = deviceSlotPlatforms(project, slot)?.[platform];
+    const ownName = owned?.owned ? (platform === 'ios' ? owned.deviceUdid : owned.avdName) : undefined;
+    return ownName === requestedDevice || (!revivable(record) && launchDeviceNames(record).includes(requestedDevice));
+  });
+  if (!own) return null;
+  const why = own.record.release
+    ? 'a Release build'
+    : own.record.runtime === 'process'
+      ? 'a native-process launch'
+      : 'its record does not name this device';
+  return failure(
+    'STIM_NO_RECORDED_BUILD',
+    `${own.platform === 'ios' ? 'Simulator' : 'Emulator'} ${requestedDevice} belongs to this workspace, but revive does not relaunch the last launch on it (${why}).`,
+    `Run \`${nativeRunCommand(own.platform, own.slot)}\` to boot it, install the app and launch it.`,
+  );
+}
+
 function launchedCacheEntry(record: WorkspaceLaunchRecord) {
   const artifact = record.artifact;
   if (!artifact || typeof artifact.fingerprint !== 'string' || typeof artifact.cacheKey !== 'string') return null;
@@ -222,16 +255,18 @@ export async function runRevive({
     );
   }
 
-  const launches = Object.entries(d.readLaunches(root)).flatMap(([key, record]) => {
+  const recorded = Object.entries(d.readLaunches(root)).flatMap(([key, record]): RecordedLaunch[] => {
     const parsed = parseDeviceSlotKey(key);
-    if (!parsed || record.release || record.runtime === 'process') return [];
-    if (hostedNativeRecords(state, parsed.platform)[parsed.slot]) return [];
+    if (!parsed || hostedNativeRecords(state, parsed.platform)[parsed.slot]) return [];
     return [{ ...parsed, record }];
   });
+  const launches = recorded.filter(({ record }) => revivable(record));
   const selected = requestedDevice
     ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))
     : launches;
   if (requestedDevice && selected.length === 0) {
+    const unrevivable = unrevivableLaunch(project, recorded, requestedDevice);
+    if (unrevivable) return unrevivable;
     return failure(
       'STIM_DEVICE_LOST',
       `Device ${requestedDevice} is not a simulator or emulator this workspace last launched its app on, so revive started nothing for it.`,
