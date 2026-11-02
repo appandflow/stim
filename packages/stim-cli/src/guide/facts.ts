@@ -3,7 +3,7 @@ import type { GuideTopic } from './types.ts';
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract',
+    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `revive`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract',
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -12,7 +12,7 @@ Named collector, lease-holder, and launch keys use platform:slot internally.
 
 FACTS CONTRACT
 
-\`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
+\`start\`, \`ios\`, \`android\`, \`web\`, \`reload\`, \`revive\`, \`stop\`, \`status\`, \`stats\`, \`doctor\`,
 \`gc\`, \`device lock\`/\`device unlock\`, and \`device location|permission|push|network\` each print exactly ONE line of JSON on
 stdout for \`--json\`. Every other line goes to stderr, so it is always safe
 to pipe. \`logs --json\` is the one exception: it is NDJSON, one record per
@@ -172,7 +172,7 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web and reload payloads, the error contract, the device rules',
+        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -500,6 +500,22 @@ leased until <time>" for each one.`,
   reverseRestored the Android serials whose adb reverse for metroPort was
                   missing and that Stim re-applied before reloading; [] when
                   none was, and always [] for iOS and web
+
+  stim revive --json
+
+  { revived: { metro, devices } }. Human lines on stderr say the same.
+  metro           { port, stoppedAt, reason, restarted }. restarted is true
+                  when revive started the dev server an idle stop had
+                  stopped; stoppedAt and reason ("idle") describe that stop,
+                  and are null when Metro was already running
+  devices         one entry per recorded Debug launch on an owned simulator
+                  or emulator: { platform, slot, deviceId, deviceName,
+                  rebooted, app: { bundleId, relaunched, launched } }.
+                  rebooted is true when revive booted the device;
+                  relaunched is true when it relaunched the app from cold,
+                  so in-app state is gone. launched is the relaunch's launch
+                  state as in ios and android, or null when the app was
+                  left running
 
   stim web --json
 

@@ -138,7 +138,7 @@ import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
-import { lookupRecordedBuild } from '../engine/recorded-build.ts';
+import { lookupRecordedBuild, type RecordedBuildRequest } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
@@ -172,7 +172,7 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
-  recordedBuild?: boolean;
+  recordedBuild?: RecordedBuildRequest;
   cleanAppState?: boolean;
   slot?: string;
   json?: boolean;
@@ -343,7 +343,7 @@ interface RunAndroidOptions {
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
-  recordedBuild?: boolean;
+  recordedBuild?: RecordedBuildRequest;
   cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;

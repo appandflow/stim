@@ -18,6 +18,7 @@ const commands = new Map<string, () => Promise<CommandModule>>([
   ['web', () => import('../src/commands/web.ts')],
   ['macos', () => import('../src/commands/macos.ts')],
   ['reload', () => import('../src/commands/reload.ts')],
+  ['revive', () => import('../src/commands/revive.ts')],
   ['device', () => import('../src/commands/device.ts')],
   ['logs', () => import('../src/commands/logs.ts')],
   ['remote', () => import('../src/commands/remote.ts')],

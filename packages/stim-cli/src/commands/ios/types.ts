@@ -1,6 +1,7 @@
 import type { BuildMissReason } from '@stim-cli/core/state';
 import type { LaunchErrorRecord } from '../../command-output.ts';
 import type { LeaseFacts } from '../../engine/device-lease-run.ts';
+import type { RecordedBuildRequest } from '../../engine/recorded-build.ts';
 
 export interface DeviceLike {
   deviceName?: string | null;
@@ -65,7 +66,7 @@ export interface IosCommandOptions {
   configuration?: string;
   scheme?: string;
   easProfile?: string;
-  recordedBuild?: boolean;
+  recordedBuild?: RecordedBuildRequest;
   cleanAppState?: boolean;
   deviceType?: string;
   runtime?: string;

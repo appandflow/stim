@@ -88,11 +88,18 @@ Branch on the code, never on the message.`,
   which workspace owns it.`,
     },
     STIM_NO_METRO: {
-      summary: "the recorded launch's port is not this workspace's live dev server (reload)",
+      summary: "the recorded launch's port is not this workspace's live dev server (reload), or nothing to revive",
       body: () => `STIM_NO_METRO
   Reload requires the recorded launch's port to be this workspace's live
   Metro. It refuses a missing, changed, unresponsive, or foreign port. Run
   \`stim start\`, or run \`ios\` or \`android\` again.
+
+  \`revive\` resumes only an idle stop. It refuses when this workspace's Metro
+  is not running and was never started, or was last stopped for another
+  reason (\`stim stop\`, automatic maintenance, a signal, a crash): there is
+  nothing paused to resume, and revive never starts a Metro the workspace did
+  not have. Nothing was started. Run \`stim start\`, then \`stim ios\` or
+  \`stim android\`.
 
   \`ios\` and \`android\` do not emit this code. A Debug run with no healthy
   dev server on the reserved port starts one, as \`stim start\` would, and
@@ -950,9 +957,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   when the step also timed out and even during a signer-conflict reinstall.`,
     },
     STIM_DEVICE_LOST: {
-      summary: 'the lease was gone or re-held at the pre-install check; rerun',
+      summary: 'the lease was gone or re-held at the pre-install check, or revive found the owned device gone; rerun',
       body: () => `STIM_DEVICE_LOST
-  Only on a \`--device\` run. The run held a lease, and the raise before the
+  From \`revive\`: the simulator or emulator a recorded launch ran on is no
+  longer this workspace's owned device. It was deleted, parked, or taken over
+  by another workspace, or the slot now records a different one. Revive never
+  creates or adopts a device and never boots one the workspace does not own,
+  so nothing was started. Run the printed \`stim ios\` or \`stim android\`
+  command; it boots or creates this workspace's owned device.
+
+  On a \`--device\` run: the run held a lease, and the raise before the
   install found it gone or held under another token -- another workspace took
   the device in that window. The message names the new holder and its expiry.
   Run the command again; it waits for that lease under \`--wait <seconds>\`.
@@ -1157,7 +1171,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   device (--device) or an EAS Simulator session; STOPPED then means no app is
   connected to that Metro, so launch it or, for an Android phone, restore its
   adb reverse. No launch or device lifecycle action is taken; follow the
-  printed platform-command or process-probe remedy.`,
+  printed remedy. When the recorded device is shut down, as after an idle
+  stop, the remedy is \`stim revive\`.`,
     },
     STIM_RELOAD_FAILED: {
       summary: 'the reload failed; the remedy differs by shape -- read it before acting',
@@ -1324,8 +1339,14 @@ captured"  (in metro.ndjson, bare RN)
   name, port, or wall-clock timestamp.`,
     },
     STIM_NO_RECORDED_BUILD: {
-      summary: 'a recordedBuild run found no recorded build for its selectors',
+      summary: 'a recordedBuild run or revive found no app to install',
       body: () => `STIM_NO_RECORDED_BUILD
+  From \`revive\`: the app the last successful \`ios\` or \`android\` run
+  installed is gone, usually because \`gc\` or a newer build removed it, or no
+  successful run of the launched app is recorded. Revive never fingerprints or
+  builds, so nothing was started. Run the printed \`stim ios\` or
+  \`stim android\` command; it restores the app from the cache or builds it.
+
   The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the
   app the last build with the same iOS scheme and configuration, or Android
   variant, recorded in this workspace's state. None is recorded, or its app was
