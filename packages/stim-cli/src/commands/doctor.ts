@@ -5,7 +5,6 @@ import {
   type DaemonPressure,
   type DaemonStatus,
 } from '@stim-cli/core/state';
-import { runPassesWithoutDaemon } from '../daemon/passes.ts';
 import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
@@ -638,12 +637,6 @@ async function assembleDoctorReport(
   };
 }
 
-/**
- * With no daemon holding this Stim home, runs its passes here: the activity pass and automatic maintenance. Windows
- * has no daemon, so this is where they run there. `daemon.mode off` on another platform leaves idle to the
- * supervisors.
- */
-
 export default function doctorCommand(
   program: Command,
   version: string,
@@ -679,7 +672,6 @@ export default function doctorCommand(
         process.exitCode = 1;
       }
 
-      await runPassesWithoutDaemon('doctor');
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
       const { findings, stim, toolchain, maintenance, daemon } = report;
       const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);

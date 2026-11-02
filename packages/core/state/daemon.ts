@@ -17,8 +17,11 @@ export interface DaemonMeasurement {
   bootedSimulators: number | null;
   /** Running emulators from the tick's one `adb devices`; null when it failed or no workspace owns an emulator. */
   runningEmulators: number | null;
-  /** The focused Simulator or emulator window a person used within the last two minutes, when there was one. */
-  interaction: { platform: 'ios' | 'android'; id: string; at: string } | null;
+  /**
+   * The owned devices a person used in the focused Simulator, Device Hub or emulator window within the last two
+   * minutes, when there were some. Without a readable focused simulator, every booted owned simulator counts.
+   */
+  interaction: { platform: 'ios' | 'android'; ids: string[]; at: string } | null;
 }
 
 /** What one tick decided for a workspace that had something running. */

@@ -19,8 +19,11 @@ import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
 import type { GcOutput } from '../commands/gc/results.ts';
+import { executeAction } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
+import { previewMaintenance } from '../maintenance/preview.ts';
 import { runMaintenance } from '../maintenance/run.ts';
+import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -526,14 +529,39 @@ test('a stray file in the agent-device sessions directory does not keep the work
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });
 
-test('an automatic maintenance pass plans no idle stop, which only the stim-daemon decides', async () => {
-  const { root } = bootedWorkspace('self', 7 * HOUR_MS);
+test('an automatic maintenance pass plans the idle stop of a hosted workspace only, the gc dry run of both', async () => {
+  const { root: local } = bootedWorkspace('local', 7 * HOUR_MS);
+  const hosted = hostedWorkspace('hosted', 7 * HOUR_MS);
+  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
   vi.stubEnv('STIM_MAINTENANCE', 'report');
 
   await runMaintenance('daemon');
 
-  expect(readMaintenanceState()?.plan.filter((action) => action.workspace === root)).toEqual([]);
+  const planned = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
+  expect(planned.map((action) => action.target)).toEqual([hosted]);
+  const preview = await previewMaintenance();
+  expect(
+    preview.actions
+      .filter((action) => action.check === 'idle')
+      .map((action) => action.target)
+      .toSorted(),
+  ).toEqual([hosted, local].toSorted());
+});
+
+test('a daemon pass may stop the hosted workspace a command runs in, a command-started one may not', async () => {
+  const root = hostedWorkspace('timer', 7 * HOUR_MS);
+  vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
+  const stopped = vi.spyOn(stopCommand, 'runStop').mockRejectedValue(new Error('the stop was reached'));
+  const { actions } = await plan();
+  const context = { settings: resolveMaintenanceSettings(), protectedRoot: root };
+
+  expect(await Promise.all(actions.map((action) => executeAction(action, context)))).toEqual([
+    expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/command that started this pass/) }),
+  ]);
+  expect(stopped).not.toHaveBeenCalled();
+  await Promise.allSettled(actions.map((action) => executeAction(action, { ...context, background: true })));
+  expect(stopped).toHaveBeenCalledTimes(1);
 });
 
 test.each([

@@ -4,12 +4,16 @@ import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { SpawnOptions } from 'node:child_process';
 import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } from '@stim-cli/core/state';
-import { getExecutor } from '../exec.ts';
-import { readClaimSet } from '../ownership-claim.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
+import { beforeCommand, ensureDaemon, requestDaemonTick } from '../daemon/client.ts';
+import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
-import { requestDaemonTick } from '../daemon/client.ts';
+import * as maintenanceRun from '../maintenance/run.ts';
+import { saveConfig } from '../workspace/config.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
@@ -164,3 +168,68 @@ test('a tick that fails hands the timers back: the daemon releases its claim and
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);
 }, 20_000);
+
+test('a command starts the daemon in the mode it resolved, STIM_DAEMON included, and passes it locations but no setting overrides', async () => {
+  const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
+  setExecutor({
+    ...getExecutor(),
+    spawn(_file, args = [], options) {
+      spawned.push({ args, options });
+      throw new Error('not started in this test');
+    },
+  });
+  onTestFinished(() => resetExecutor());
+
+  await ensureDaemon({
+    PATH: '/usr/bin:/bin',
+    STIM_HOME: home,
+    AGENT_DEVICE_CLAIMS_DIR: '/claims',
+    STIM_DAEMON: 'report',
+    STIM_MAINTENANCE: 'off',
+    API_TOKEN: 'secret',
+  });
+
+  expect(spawned).toHaveLength(1);
+  expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
+  expect(spawned[0]?.options?.env).toEqual({
+    PATH: '/usr/bin:/bin',
+    STIM_HOME: home,
+    AGENT_DEVICE_CLAIMS_DIR: '/claims',
+  });
+});
+
+test('a daemon started in report mode stays in report mode', async () => {
+  await runDaemon({ tickMs: 50, mode: 'report' });
+  expect(readDaemonSnapshot()).toMatchObject({ mode: 'report' });
+}, 20_000);
+
+test('daemon.mode turned off in config after the daemon started stops it on its next tick', async () => {
+  const run = runDaemon({ tickMs: 1500, mode: 'on' });
+  await listening();
+  saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
+  await run;
+  expect(daemonLog()).toContain('exiting: daemon.mode is off');
+  expect(daemonLog()).not.toContain('"event":"daemon_tick"');
+}, 20_000);
+
+test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process', async () => {
+  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'off' };
+  delete env[HOME_PASSES_TEST_GUARD_ENV];
+
+  for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
+    await beforeCommand(name, env);
+  expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+
+  ran.mockClear();
+  await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
+  const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
+  assert(claim);
+  try {
+    await beforeCommand('doctor', env);
+    await beforeCommand('start', env);
+  } finally {
+    releaseClaim(claim);
+  }
+  expect(ran).not.toHaveBeenCalled();
+});

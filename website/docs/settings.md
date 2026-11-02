@@ -350,8 +350,8 @@ While a run waits to boot because the booted devices fill a cap, the
 another workspace that has had no activity for 2 minutes and has no blocker,
 then wakes the waiter. The same activity as
 [idle shutdown](./owned-devices.md#idle-shutdown) counts: input sent through
-stim-server and use of the device in the focused Simulator or emulator window
-do, app and device logs do not. Reclaim never deletes and excludes the waiting
+stim-server and use of the device in the frontmost Simulator, Device Hub or
+emulator window do, app and device logs do not. Reclaim never deletes and excludes the waiting
 workspace, physical, hosted, remote, parked and other homes' devices. With no
 daemon running, waiters wait without reclaim. `devices.reclaimIdleMinutes` is
 no longer read.
@@ -941,7 +941,8 @@ them), and deletes TMPDIR leftovers and the worktree trash.
 `maintenance.removeFinishedWorktrees` controls the worktree check. Manual
 `stim gc --delete --cache gradle-daemons` requires sustained memory pressure
 (the daemon's high or critical memory level) and no local build, including
-iOS, independently of `maintenance.mode`. A pass stops a dev server only after
+iOS, independently of `maintenance.mode`. A pass stops a dev server only in a
+workspace whose device is hosted on a remote Mac, after
 `maintenance.idleStopHours` without real activity (removing a finished worktree
 tears down that workspace's own, as `gc --delete` does). Debug check logs are
 off by default.
@@ -980,9 +981,12 @@ the [idle stage](./dev-server-and-logs.md#idle-stop), and runs automatic
 maintenance. It also wakes the oldest run waiting for a build slot as soon as
 one is released. `report` logs what it would do and acts on nothing. `off`
 runs no daemon: each dev server supervisor stops its own dev server and
-devices after `idle.minutes`, and nothing times a device with no dev server.
-It is `off` in CI unless `STIM_DAEMON` is set. Windows has no daemon; there
-`stim doctor` runs the same passes. Its log is
+devices after `idle.minutes`, nothing times a device with no dev server, and
+`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
+maintenance in their own process. It is `off` in CI unless `STIM_DAEMON` is
+set. Windows has no daemon and works as `off`. A command starts the daemon in
+the mode it resolves, `STIM_DAEMON` included; a later change to the machine
+setting can make a running daemon stricter, never laxer. Its log is
 `$STIM_HOME/daemon/daemon.ndjson`, rotated like workspace logs, and its last
 tick's measurement and decisions are in `$STIM_HOME/daemon/snapshot.json`.
 `stim status` shows whether it runs and when it last ticked, and `stim doctor`

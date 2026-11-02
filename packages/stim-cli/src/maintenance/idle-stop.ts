@@ -167,10 +167,17 @@ async function hostedKeepReasons(facts: ReturnType<typeof hostedFacts>): Promise
   return keep;
 }
 
-function deviceKeepReason(device: OwnedDeviceActivity, platform: NodeJS.Platform): string | null {
+function deviceKeepReason(
+  device: OwnedDeviceActivity,
+  platform: NodeJS.Platform,
+  driversBlock: boolean,
+): string | null {
   const { activity } = device;
   const what = `its ${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name}`;
-  if (activity.state === 'driven' && !activity.basis.every((basis) => AGENT_DEVICE_DRIVERS.has(basis)))
+  if (
+    activity.state === 'driven' &&
+    (driversBlock || !activity.basis.every((basis) => AGENT_DEVICE_DRIVERS.has(basis)))
+  )
     return `${what} is driven by ${activity.driver?.tool ?? 'an unknown tool'}`;
   if (activity.basis.includes('agent-device-claim') && !activity.recent?.['agent-action'])
     return `${what} has a live agent-device claim whose session activity cannot be found`;
@@ -262,8 +269,9 @@ async function keepReasons(
     now,
     platform,
     locked,
+    driversBlock,
     operation,
-  }: { now: number; platform: NodeJS.Platform; locked: boolean; operation?: StimContext },
+  }: { now: number; platform: NodeJS.Platform; locked: boolean; driversBlock: boolean; operation?: StimContext },
 ) {
   const checks = { devServer: false, nativeRun: !locked, hosted: false, hostedMacos: false };
   const keep = operation
@@ -280,7 +288,7 @@ async function keepReasons(
   const browser = webFacts(readWebRecord(root));
   if (browser && browser.status !== 'stopped') keep.push(`its owned Chrome is ${browser.status}`);
   for (const device of devices) {
-    const reason = deviceKeepReason(device, platform);
+    const reason = deviceKeepReason(device, platform, driversBlock);
     if (reason) keep.push(reason);
   }
   const viewers = devices.length ? unreadableViewers() : null;
@@ -290,7 +298,8 @@ async function keepReasons(
 
 /**
  * The workspace's activity and what keeps it running regardless. `locked` says the caller holds its native-run lock;
- * `serving` that its dev server runs, so a missing Metro log is unreadable evidence.
+ * `serving` that its dev server runs, so a missing Metro log is unreadable evidence. `driversBlock` keeps a device an
+ * agent-device claim or lease holds even when its session's actions are readable activity.
  */
 export async function idleStopEvidence(
   root: string,
@@ -301,6 +310,7 @@ export async function idleStopEvidence(
     platform = process.platform,
     locked = false,
     serving = false,
+    driversBlock = false,
     operation,
   }: {
     now: number;
@@ -308,6 +318,7 @@ export async function idleStopEvidence(
     platform?: NodeJS.Platform;
     locked?: boolean;
     serving?: boolean;
+    driversBlock?: boolean;
     operation?: StimContext;
   },
 ): Promise<IdleStopEvidence> {
@@ -332,7 +343,7 @@ export async function idleStopEvidence(
     })),
   ].filter(({ at }) => Number.isFinite(at));
   if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep: [] };
-  const keep = await keepReasons(root, devices, { now, platform, locked, operation });
+  const keep = await keepReasons(root, devices, { now, platform, locked, driversBlock, operation });
   if (keep.length) return { activity, keep };
   const metro = metroRequestAt(root, now - idleMs, serving);
   if (typeof metro === 'string') return { activity, keep: [metro] };
@@ -393,6 +404,7 @@ async function candidate(
   env: NodeJS.ProcessEnv,
   devices: DeviceReader,
   operation?: StimContext,
+  hostedOnly = false,
 ): Promise<IdleStopCandidate | { skip: string } | null> {
   const signal = operation?.signal;
   const project = loadConfig()?.projects?.[path];
@@ -407,6 +419,7 @@ async function candidate(
   const owns = ownsIos || slots.some(({ platforms }) => platforms.android?.owned === true);
   const hosted = hostedFacts(path);
   const isHosted = hosted.placements.length > 0 || hosted.unreadable.length > 0;
+  if (hostedOnly && !isHosted) return null;
   if (!owns && !isHosted && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
   const setting = await idleStopHours(path, env, operation);
   if ('invalid' in setting) return { skip: setting.invalid };
@@ -454,6 +467,7 @@ export async function planIdleStop({
   env = process.env,
   platform = process.platform,
   operation,
+  hostedOnly = false,
 }: {
   protectedRoot: string;
   now: number;
@@ -461,6 +475,8 @@ export async function planIdleStop({
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   operation?: StimContext;
+  /** Plan only workspaces with a hosted device, which the stim-daemon's idle stage leaves running. */
+  hostedOnly?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (deviceSweepIsScoped(env)) return plan;
@@ -468,7 +484,7 @@ export async function planIdleStop({
     const root = canonicalPath(path);
     if (root === protectedRoot) continue;
     operation?.signal.throwIfAborted();
-    const found = await candidate(path, env, devices, operation);
+    const found = await candidate(path, env, devices, operation, hostedOnly);
     if (!found) continue;
     if ('skip' in found) {
       plan.skips.push({ target: root, reason: found.skip, workspace: root });
@@ -519,12 +535,14 @@ export async function stopIdleWorkspace(
     operation,
     env = operation?.env ?? process.env,
     by = 'automatic maintenance',
+    hostedOnly = false,
   }: {
     protectedRoot: string;
     devices: () => DeviceReader;
     operation?: StimContext;
     env?: NodeJS.ProcessEnv;
     by?: string;
+    hostedOnly?: boolean;
   },
 ): Promise<IdleStopOutcome> {
   const root = action.workspace ?? action.target;
@@ -533,8 +551,8 @@ export async function stopIdleWorkspace(
   const path = Object.keys(loadConfig()?.projects ?? {}).find((entry) => canonicalPath(entry) === root) ?? root;
   const stillIdle = async (): Promise<string | null> => {
     const now = Date.now();
-    const found = await candidate(path, env, devices(), operation);
-    if (!found) return 'nothing of it runs any more';
+    const found = await candidate(path, env, devices(), operation, hostedOnly);
+    if (!found) return hostedOnly ? 'it has no hosted device any more' : 'nothing of it runs any more';
     if ('skip' in found) return found.skip;
     const idleMs = found.hours * HOUR_MS;
     const evidence = await idleStopEvidence(path, found.devices, {

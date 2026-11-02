@@ -9,6 +9,7 @@ import { getExecutor } from '../exec.ts';
 import { readHostMemoryPressureAsync } from '../host-memory.ts';
 import type { Config } from '../workspace/config.ts';
 import { updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
+import { ownedHere } from './idle.ts';
 import { probeFocusedDeviceUse, type FocusedDeviceUse } from './probe.ts';
 
 const SIM_LIST_TIMEOUT_MS = 10_000;
@@ -65,25 +66,37 @@ function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean
   );
 }
 
-/** Records a person's use of a workspace's focused device under its slot, for the activity pass that follows. */
-async function recordFocusedUse(config: Config | null, use: FocusedDeviceUse, now: number): Promise<string | null> {
-  for (const [root, project] of Object.entries(config?.projects ?? {})) {
-    for (const { slot, platforms } of projectDeviceSlots(project)) {
-      const matches =
+/**
+ * The device slots a person is using in the focused window: the focused simulator or emulator when it can be read,
+ * else every booted simulator this home owns.
+ */
+export function focusedSlots(
+  use: FocusedDeviceUse,
+  config: Config | null,
+  devices: readonly OwnedDeviceActivity[],
+): { root: string; key: string; id: string }[] {
+  if (use.platform === 'ios' && use.udid === null)
+    return devices
+      .filter((device) => device.kind === 'ios' && ownedHere(device))
+      .map((device) => ({ root: device.project, key: deviceSlotKey('ios', device.slot), id: device.id }));
+  return Object.entries(config?.projects ?? {}).flatMap(([root, project]) =>
+    projectDeviceSlots(project).flatMap(({ slot, platforms }) => {
+      const id =
         use.platform === 'ios'
-          ? platforms.ios?.owned && platforms.ios.deviceUdid === use.udid
-          : platforms.android?.owned && platforms.android.avdName === use.avdName;
-      if (!matches) continue;
-      const at = new Date(now - use.idleMs).toISOString();
-      const key = deviceSlotKey(use.platform, slot);
-      await updateWorkspaceStateAsync(root, (state) => ({
-        ...state,
-        [INTERACTIONS_KEY]: { ...readInteractions(state), [key]: at },
-      }));
-      return at;
-    }
-  }
-  return null;
+          ? platforms.ios?.owned && platforms.ios.deviceUdid === use.udid && use.udid
+          : platforms.android?.owned && platforms.android.avdName === use.avdName && use.avdName;
+      return id ? [{ root, key: deviceSlotKey(use.platform, slot), id }] : [];
+    }),
+  );
+}
+
+/** Records a person's use of focused devices under their slots, for the activity pass that follows. */
+async function recordFocusedUse(slots: ReturnType<typeof focusedSlots>, at: string): Promise<void> {
+  for (const { root, key } of slots)
+    await updateWorkspaceStateAsync(root, (state) => ({
+      ...state,
+      [INTERACTIONS_KEY]: { ...readInteractions(state), [key]: at },
+    }));
 }
 
 /**
@@ -105,7 +118,9 @@ export async function measureTick(config: Config | null, now: number): Promise<T
   }
   const devices = await collectOwnedDeviceActivityAsync(config, sims ?? [], now);
   const use = await probeFocusedDeviceUse();
-  const usedAt = use ? await recordFocusedUse(config, use, now) : null;
+  const used = use ? focusedSlots(use, config, devices) : [];
+  const usedAt = use ? new Date(now - use.idleMs).toISOString() : '';
+  await recordFocusedUse(used, usedAt);
   return {
     sims,
     simsError,
@@ -119,10 +134,7 @@ export async function measureTick(config: Config | null, now: number): Promise<T
       runningEmulators: ownsDevice(config, 'android')
         ? devices.filter((device) => device.kind === 'android').length
         : null,
-      interaction:
-        use && usedAt
-          ? { platform: use.platform, id: use.platform === 'ios' ? use.udid : use.avdName, at: usedAt }
-          : null,
+      interaction: use && used.length ? { platform: use.platform, ids: used.map(({ id }) => id), at: usedAt } : null,
     },
   };
 }

@@ -11,7 +11,7 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { derivedDeviceCap, saveConfig, loadConfig } from '../workspace/config.ts';
+import { admissionLimits, saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -157,6 +157,19 @@ test('status says nothing extra for a project that has only a Metro port', async
   const logs = await runStatus();
 
   expect(logs.some((l) => /!/.test(l))).toBe(false);
+});
+
+test('the idle stage line names stim revive only when the dev server recorded an idle stop', async () => {
+  const project = join(tmpHome, 'proj-idle');
+  mkdirSync(project);
+  saveConfig(makeConfig({ version: 2, projects: { [project]: { label: 'idle', metroPort: 8083, platforms: {} } } }));
+  const idleStage = { at: '2026-11-02T10:00:00.000Z', idleMinutes: 15, freedBytes: 1024 };
+  writeWorkspaceState(project, { idleStage });
+
+  expect((await runStatus()).join('\n')).toContain('`stim ios` or `stim android` resumes it');
+
+  writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
+  expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');
 });
 
 test('status detects the framework of an app registered only through a named port', async () => {
@@ -448,7 +461,7 @@ test('status --json reports the machine load against server.maxLoadPerCore, and 
   expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
   expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
   expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
-  expect(capacity.devices).toEqual({ max: derivedDeviceCap(), inUse: 0, holders: [] });
+  expect(capacity.devices).toEqual({ max: admissionLimits().maxDevices, inUse: 0, holders: [] });
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {

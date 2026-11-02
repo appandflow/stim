@@ -10,7 +10,7 @@ import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { formatSpace } from '../status.ts';
 import { getConfigDir, loadConfig } from '../workspace/config.ts';
 import { sharedBuildCache } from '../workspace/paths.ts';
-import { runLadderNow, runPassesUnlessDaemon } from './passes.ts';
+import { runLadderNow } from './passes.ts';
 import { diskThresholds } from './pressure.ts';
 
 const USAGE_TIMEOUT_MS = 10_000;
@@ -56,10 +56,10 @@ const LOW_DISK_REMEDY =
   'Run `stim status` to see what the stim-daemon reclaimed, `stim gc` to see what else Stim can reclaim, then `stim gc --delete` (add `--cache all` to empty the shared caches, or `--worktrees` to remove finished worktrees). Free space outside Stim from the largest uses listed, or lower budget.hardFloorDiskGb.';
 
 /**
- * What `start`, `ios` and `android` run before their work. Without a daemon holding the home, the activity and
- * pressure passes in this process. Then rung 7 of the pressure ladder: while free disk on the workspace's or the Stim
- * home's volume is under `budget.hardFloorDiskGb`, the ladder runs now (one daemon tick, unless this process just ran
- * it) and the run refuses with `STIM_LOW_DISK` when free disk is still under the floor after it.
+ * Rung 7 of the pressure ladder, before `start`, `ios` and `android` do their work: while free disk on the
+ * workspace's or the Stim home's volume is under `budget.hardFloorDiskGb`, the ladder runs now (one daemon tick, or
+ * in this process without a daemon) and the run refuses with `STIM_LOW_DISK` when free disk is still under the floor
+ * after it.
  */
 export async function diskFloorGate({
   root,
@@ -76,8 +76,6 @@ export async function diskFloorGate({
 }): Promise<{ refusal: BudgetRefusal | null }> {
   const { thresholds, error } = diskThresholds(loadConfig(), env);
   if (error) return { refusal: { code: 'STIM_BAD_ARG', message: error, remedy: SETTING_REMEDY } };
-  const ranHere = await runPassesUnlessDaemon(env, signal);
-  signal?.throwIfAborted();
   if (thresholds.hardFloorMb <= 0) return { refusal: null };
   const paths = [root, getConfigDir()];
   const under = async () =>
@@ -96,7 +94,7 @@ export async function diskFloorGate({
   onReclaim?.('start');
   let completed = false;
   try {
-    if (!ranHere) await runLadderNow(env, signal);
+    await runLadderNow(env, signal);
     signal?.throwIfAborted();
     low = await under();
     completed = true;

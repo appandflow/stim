@@ -3,9 +3,11 @@ import { getExecutor, type Executor } from '../exec.ts';
 const RECENT_INPUT_MS = 120_000;
 const PROBE_TIMEOUT_MS = 5000;
 const SIMULATOR_BUNDLE_ID = 'com.apple.iphonesimulator';
+const DEVICE_HUB_BUNDLE_ID = 'com.apple.dt.Devices';
 
+/** `udid` null: the focused simulator cannot be read, so every booted simulator counts as in use. */
 export type FocusedDeviceUse =
-  | { platform: 'ios'; udid: string; idleMs: number }
+  | { platform: 'ios'; udid: string | null; idleMs: number }
   | { platform: 'android'; avdName: string; idleMs: number };
 
 /** Milliseconds since the last keyboard, mouse or trackpad input, from `ioreg`'s IOHIDSystem `HIDIdleTime` (ns). */
@@ -40,10 +42,10 @@ async function read(exec: Executor, file: string, args: string[]): Promise<strin
 }
 
 /**
- * The Simulator or emulator window a person used within the last two minutes: the frontmost app is Simulator.app
- * (its focused device from `CurrentDeviceUDID`) or an emulator's `qemu-system-*` window (its AVD from the process
- * arguments), and the HID idle time is under two minutes. These reads need no permission. Null elsewhere, and on
- * any other platform than macOS.
+ * The Simulator or emulator window a person used within the last two minutes: the HID idle time is under two
+ * minutes and the frontmost app is Simulator.app (its focused device from `CurrentDeviceUDID` when readable),
+ * Xcode 27's Device Hub, which records no readable focused device, or an emulator's `qemu-system-*` window (its AVD
+ * from the process arguments). These reads need no permission. Null elsewhere, and on any other platform than macOS.
  */
 export async function probeFocusedDeviceUse({
   platform = process.platform,
@@ -60,9 +62,10 @@ export async function probeFocusedDeviceUse({
     (await read(exec, 'lsappinfo', ['info', '-only', 'bundleid', '-only', 'pid', '-only', 'executablepath', asn])) ??
       '',
   );
+  if (front.bundleId === DEVICE_HUB_BUNDLE_ID) return { platform: 'ios', udid: null, idleMs };
   if (front.bundleId === SIMULATOR_BUNDLE_ID) {
     const udid = (await read(exec, 'defaults', ['read', 'com.apple.iphonesimulator', 'CurrentDeviceUDID']))?.trim();
-    return udid ? { platform: 'ios', udid, idleMs } : null;
+    return { platform: 'ios', udid: udid || null, idleMs };
   }
   if (front.pid !== null && /(?:^|\/)qemu-system-[^/]*$/.test(front.executable ?? '')) {
     const avdName = parseAvdName((await read(exec, 'ps', ['-o', 'args=', '-p', String(front.pid)])) ?? '');

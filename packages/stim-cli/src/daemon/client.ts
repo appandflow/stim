@@ -18,8 +18,22 @@ const MODE = settingDefinition('daemon.mode');
 
 const DAEMON_MODES: readonly DaemonMode[] = ['on', 'report', 'off'];
 
-function parseMode(value: unknown): DaemonMode | null {
+export function parseDaemonMode(value: unknown): DaemonMode | null {
   return DAEMON_MODES.find((mode) => mode === value) ?? null;
+}
+
+/** The machine setting `daemon.mode` alone, or null when it is unset or invalid. */
+export function configuredDaemonMode(): DaemonMode | null {
+  try {
+    return parseDaemonMode(loadConfig()?.daemon?.mode);
+  } catch {
+    return null;
+  }
+}
+
+/** Whichever of two modes acts less: off, then report, then on. */
+export function stricterDaemonMode(a: DaemonMode, b: DaemonMode): DaemonMode {
+  return DAEMON_MODES.indexOf(a) >= DAEMON_MODES.indexOf(b) ? a : b;
 }
 
 /** `daemon.mode` from `STIM_DAEMON` in `env`, else off in CI, else the machine setting, else on. Windows has none. */
@@ -28,14 +42,10 @@ export function daemonMode(
   platform: NodeJS.Platform = process.platform,
 ): DaemonMode {
   if (platform === 'win32') return 'off';
-  const fromEnv = MODE?.env ? parseMode(env[MODE.env]) : null;
+  const fromEnv = MODE?.env ? parseDaemonMode(env[MODE.env]) : null;
   if (fromEnv) return fromEnv;
   if (env.CI) return 'off';
-  try {
-    return parseMode(loadConfig()?.daemon?.mode) ?? 'on';
-  } catch {
-    return 'on';
-  }
+  return configuredDaemonMode() ?? 'on';
 }
 
 /**
@@ -81,11 +91,39 @@ function answersHello(timeoutMs: number): Promise<boolean> {
   });
 }
 
-function spawnDaemon(env: NodeJS.ProcessEnv): void {
+/** What the daemon inherits from the command that starts it: where things are, never a setting override. */
+const DAEMON_ENV = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'DEVELOPER_DIR',
+  'JAVA_HOME',
+  'ANDROID_HOME',
+  'ANDROID_SDK_ROOT',
+  'ANDROID_AVD_HOME',
+  'ANDROID_USER_HOME',
+  'ANDROID_EMULATOR_HOME',
+  'XDG_CONFIG_HOME',
+  'AGENT_DEVICE_STATE_DIR',
+  'AGENT_DEVICE_CLAIMS_DIR',
+  'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR',
+  'STIM_HOME',
+  'STIM_BUILD_CACHE',
+  'STIM_METRO_CACHE',
+  'STIM_TMPDIR',
+];
+
+function spawnDaemon(env: NodeJS.ProcessEnv, mode: DaemonMode): void {
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-  const daemonEnv = { ...env };
-  if (MODE?.env) delete daemonEnv[MODE.env];
-  const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run')], {
+  const daemonEnv: NodeJS.ProcessEnv = {};
+  for (const name of DAEMON_ENV) if (env[name] !== undefined) daemonEnv[name] = env[name];
+  const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run'), '--mode', mode], {
     cwd: daemonDir(),
     detached: true,
     stdio: 'ignore',
@@ -97,11 +135,13 @@ function spawnDaemon(env: NodeJS.ProcessEnv): void {
 
 /**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
- * it does not exit under the command, or starts one. Never blocks the command on the daemon: a claim Stim cannot
- * resolve is reported and the command goes on, with each supervisor keeping its own idle timer.
+ * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included. Never
+ * blocks the command on the daemon. Returns whether a daemon holds the home or was started; a claim Stim cannot
+ * resolve is reported and counts as held.
  */
-export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  if (daemonMode(env) === 'off') return;
+export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
+  const mode = daemonMode(env);
+  if (mode === 'off') return false;
   try {
     const survey = readClaimSet(daemonClaimRoot());
     const [claim] = survey.unresolved;
@@ -109,11 +149,28 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
       console.error(
         `Stim: the stim-daemon claim at ${claim.path} cannot be resolved (${claim.reason}), so no daemon decides idle in this Stim home. If no stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
       );
-      return;
+      return true;
     }
-    if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return;
-    spawnDaemon(env);
-  } catch {}
+    if (survey.live.length && (await answersHello(CONTACT_TIMEOUT_MS))) return true;
+    spawnDaemon(env, mode);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
+const PASS_COMMANDS = ['start', 'ios', 'android'];
+
+/**
+ * Before a top-level command runs: commands that create running state make sure the home's daemon runs; `doctor`,
+ * and `start`, `ios` and `android` when no daemon holds the home, run automatic maintenance in this process.
+ */
+export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const held = DAEMON_COMMANDS.includes(name) && (await ensureDaemon(env));
+  if (name !== 'doctor' && (held || !PASS_COMMANDS.includes(name))) return;
+  const { runPassesInProcess } = await import('./passes.ts');
+  await runPassesInProcess(name, env);
 }
 
 function send(op: string): void {

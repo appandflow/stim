@@ -1,10 +1,12 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { daemonClaimRoot, readDormantStage } from '@stim-cli/core/state';
+import { daemonClaimRoot, daemonNdjsonFile, readDormantStage } from '@stim-cli/core/state';
 import * as budget from '../budget.ts';
 import * as client from '../daemon/client.ts';
 import { diskFloorGate } from '../daemon/floor.ts';
+import { runPassesInProcess } from '../daemon/passes.ts';
+import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
@@ -67,23 +69,44 @@ describe('with a daemon holding the home', () => {
   });
 });
 
-test('with no daemon holding the home, as on Windows, the activity and pressure passes run in the command', async () => {
-  const real = getExecutor();
-  setExecutor({ ...real, runFileQuiet: (file) => (file === 'ps' ? '' : null) });
-  const tick = vi.spyOn(client, 'requestDaemonTick');
-  const root = join(home, 'old');
-  mkdirSync(root);
-  ensureWorkspaceStorage(root);
-  upsertProject(root, {});
-  recordWorkspaceUse(root, new Date(Date.now() - 4 * 24 * 60 * 60_000));
-  mkdirSync(workspaceLogsDir(root), { recursive: true });
-  writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '');
-  writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
+describe('with no daemon holding the home, as on Windows', () => {
+  let root: string;
 
-  const pending = gate({ ...process.env, STIM_DAEMON: 'on' });
-  await vi.advanceTimersByTimeAsync(3_100);
-  await expect(pending).resolves.toEqual({ refusal: null });
+  beforeEach(() => {
+    const real = getExecutor();
+    setExecutor({ ...real, runFileQuiet: (file) => (file === 'ps' ? '' : null) });
+    root = join(home, 'old');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, {});
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * 24 * 60 * 60_000));
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '');
+    writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
+  });
 
-  expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ dormantDays: 3 });
-  expect(tick).not.toHaveBeenCalled();
+  test('under the hard floor the gate runs the ladder in the command from rung 2', async () => {
+    free = 4 * GB;
+    const tick = vi.spyOn(client, 'requestDaemonTick').mockResolvedValue(false);
+    await expect(gate({ ...process.env, STIM_DAEMON: 'on' })).resolves.toMatchObject({
+      refusal: { code: 'STIM_LOW_DISK' },
+    });
+    expect(tick).toHaveBeenCalledOnce();
+    expect(readDormantStage(readWorkspaceState(root))).toMatchObject({ dormantDays: 3 });
+    const rungs = readFileSync(daemonNdjsonFile(), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((entry) => typeof entry.rung === 'number');
+    expect(rungs.length).toBeGreaterThan(0);
+    expect(rungs.every((entry) => entry.src === 'command' && entry.rung >= 2)).toBe(true);
+  });
+
+  test('at normal pressure the command runs no activity pass, so it takes no workspace dormant', async () => {
+    const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on', HOME: home, USERPROFILE: home };
+    delete env[HOME_PASSES_TEST_GUARD_ENV];
+    await runPassesInProcess('ios', env);
+    expect(readDormantStage(readWorkspaceState(root))).toBeNull();
+    expect(existsSync(join(workspaceLogsDir(root), 'device.ndjson'))).toBe(true);
+  });
 });

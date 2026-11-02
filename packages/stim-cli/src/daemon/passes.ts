@@ -1,17 +1,18 @@
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
+  readDaemonSnapshot,
   type DaemonLadderAction,
   type DaemonPressure,
   type DaemonWorkspaceDecision,
 } from '@stim-cli/core/state';
-import { cancellableSleep } from '../cancellation.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, daemonMode, requestDaemonTick } from './client.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { runLadder } from './ladder.ts';
+import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
 import { runDormantPass } from './stages.ts';
@@ -28,9 +29,8 @@ export interface HomePasses {
 /**
  * One measurement, the activity pass (the idle stage, taking every workspace idle 2 minutes while the level is high
  * or critical, then the dormant stage), the pressure ladder while the level stays above normal, and an automatic
- * maintenance pass, in this process. The daemon runs them each tick; `stim doctor` and the disk floor gate run them
- * when no daemon holds the home. `act: false` decides and logs without acting. `memoryWarningSince` carries the
- * memory warning clock from the last tick.
+ * maintenance pass, in this process, as the daemon runs them each tick. `act: false` decides and logs without
+ * acting. `memoryWarningSince` carries the memory warning clock from the last tick.
  */
 export async function runHomePasses({
   act,
@@ -113,51 +113,68 @@ export async function runHomePasses({
 }
 
 /**
- * The home passes in this process while no daemon holds the home, as `stim doctor` and the disk floor gate run them:
- * always on Windows, which has no daemon, and elsewhere unless `daemon.mode` is off.
+ * The pressure ladder in this process, for a command with no daemon holding the home: from rung 2, because the idle
+ * stage of rung 1 is the activity pass, which only the daemon runs. Measures and lists devices only when the level is
+ * above normal. Logs to `daemon.ndjson` under `trigger`.
  */
-export async function runPassesWithoutDaemon(trigger: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const config = loadConfig();
+  if (!config) return;
+  const { thresholds } = diskThresholds(config, env);
+  let warningSince = readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null;
+  const classify = async () => {
+    const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+    const pressure = classifyPressure({
+      disk,
+      memory,
+      thresholds,
+      previousWarningSince: warningSince,
+      now: Date.now(),
+    });
+    warningSince = pressure.memoryWarningSince;
+    return pressure;
+  };
+  const pressure = await classify();
+  if (pressure.level === 'normal') return;
+  const measured = await measureTick(config, Date.now());
+  const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
   try {
-    if (daemonClaimHeld() || (process.platform !== 'win32' && daemonMode(env) === 'off')) return;
-    const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-    try {
-      await runHomePasses({
+    await runLadder(
+      {
+        config,
         act: daemonMode(env) !== 'report',
-        trigger,
         log: (level, event, msg, fields = {}) => writer.write({ src: trigger, level, event, msg, ...fields }),
-      });
-    } finally {
-      writer.close();
-    }
-  } catch {}
-}
-
-const DAEMON_START_WAIT_MS = 3000;
-
-/** Whether a daemon holds this home, waiting briefly for one the command's own start spawned. */
-async function daemonHolds(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<boolean> {
-  if (process.platform === 'win32' || daemonMode(env) === 'off') return daemonClaimHeld();
-  for (let waited = 0; ; waited += 100) {
-    if (daemonClaimHeld()) return true;
-    if (waited >= DAEMON_START_WAIT_MS) return false;
-    await cancellableSleep(100, { signal, what: 'stim-daemon' });
+        devices: measured.devices,
+        simsFailed: measured.sims === null,
+        remeasure: classify,
+        fromRung: 2,
+      },
+      pressure,
+    );
+  } finally {
+    writer.close();
   }
 }
 
-/**
- * Before `start`, `ios` or `android` work: the activity and pressure passes in this process unless a daemon holds the
- * home, so Windows and a home whose daemon is not running still idle workspaces and run the ladder. True when this
- * process ran them.
- */
-export async function runPassesUnlessDaemon(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<boolean> {
-  if (await daemonHolds(env, signal)) return false;
-  await runPassesWithoutDaemon('command', env);
-  return true;
-}
-
-/** Runs the pressure ladder now: one daemon tick when a daemon runs, else the passes in this process. */
+/** Runs the pressure ladder now: one daemon tick when a daemon runs, else the ladder in this process. */
 export async function runLadderNow(env: NodeJS.ProcessEnv, signal?: AbortSignal): Promise<void> {
   if (await requestDaemonTick(env, signal)) return;
   signal?.throwIfAborted();
-  await runPassesWithoutDaemon('command', env);
+  try {
+    await runCommandLadder('command', env);
+  } catch {}
+}
+
+/**
+ * Automatic maintenance and the pressure ladder at command time, for a command that found no daemon holding the
+ * home: Windows, `daemon.mode off`, or a daemon that could not start. The activity pass, idle stage included, is the
+ * daemon's alone; without one, each dev server supervisor times its own idle stop. The pass never stops the command's
+ * own workspace.
+ */
+export async function runPassesInProcess(trigger: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  try {
+    if (env[HOME_PASSES_TEST_GUARD_ENV] || daemonClaimHeld()) return;
+    await runMaintenance(trigger, { report: daemonMode(env) === 'report' });
+    await runCommandLadder(trigger, env);
+  } catch {}
 }

@@ -40,7 +40,13 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 export interface ActionOutcome {
@@ -419,7 +425,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-shutdown-device':
       return kept('automatic maintenance does not stop devices or dev servers for disk');
     case 'would-stop-workspace':
-      return kept('the stim-daemon stops idle workspaces');
+      return action.check === 'idle'
+        ? stopIdleWorkspace(action, {
+            protectedRoot: context.background ? '' : context.protectedRoot,
+            devices: () => cachedDeviceActivity(Date.now()),
+            hostedOnly: true,
+          })
+        : kept(
+            'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
+          );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);

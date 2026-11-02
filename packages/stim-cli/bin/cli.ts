@@ -65,14 +65,10 @@ try {
       const { warnCriticalDisk } = await import('../src/maintenance/trigger.ts');
       warnCriticalDisk();
     } catch {}
-    if (
-      path.length === 1 &&
-      ['start', 'ios', 'android', 'web', 'macos', 'revive'].includes(path[0] ?? '') &&
-      !process.argv.includes('--plan')
-    ) {
+    if (path.length === 1 && !process.argv.includes('--plan')) {
       try {
-        const { ensureDaemon } = await import('../src/daemon/client.ts');
-        await ensureDaemon();
+        const { beforeCommand } = await import('../src/daemon/client.ts');
+        await beforeCommand(path[0] ?? '');
       } catch {}
     }
   });

@@ -2310,17 +2310,19 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   runs, Metro requests, agent-device actions, input a stim-server client sent
   to the device (the phone app's or Stim Desktop's controls; frames streamed
   without input do not count), a stim device lock, and, on macOS, a person
-  using the device in the focused Simulator or emulator window. Device logs
-  and in-app logs never count. The idle stage rechecks under the workspace's
-  native-run lock and shuts devices down through the same teardown as
-  \`stop\`: never deleted, and physical devices are never touched. It records
-  deviceIdleShutdowns in state.json, so \`stim status\` shows "shut down after
-  15m idle" on the device until the next \`ios\`, \`android\` or \`revive\` run
-  boots it again. With daemon.mode off, or while no daemon runs, the
-  workspace's supervisor checks once a minute and shuts its own devices down
-  after idle.minutes. Change the clock with
+  using the device in the frontmost Simulator, Device Hub or emulator
+  window (guide metro). Device logs
+  and in-app logs never count, whatever the device's last launch. The idle
+  stage rechecks under the workspace's native-run lock and shuts devices down
+  through the same teardown as \`stop\`: never deleted, and physical devices
+  are never touched. It records deviceIdleShutdowns in state.json, so \`stim
+  status\` shows "shut down after 15m idle" on the device until the next
+  \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
+  or while no daemon runs, the workspace's supervisor checks once a minute and
+  shuts its own devices down after idle.minutes; a device with no supervisor
+  then stays booted. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
-  and dormant off.
+  and dormant off, and an explicit 0 stays 0.
 
   The thresholds apply in every Stim home, a STIM_HOME one included. Change
   one with \`stim settings set budget.minFreeDiskGb 30\`;

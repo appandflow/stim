@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { isScopedHome } from '@stim-cli/core';
 import {
   coerceSettingText,
   isJsonObject,
@@ -202,7 +203,7 @@ export function settingEntry(context: SettingsContext, setting: SettingDefinitio
   }
   const envValue = setting.env ? context.env[setting.env] : undefined;
   const env = setting.env && envValue ? { name: setting.env, value: String(masked(setting, envValue)) } : undefined;
-  const scopedHome = !env && setting.scopedHomeValue !== undefined && context.env.STIM_HOME;
+  const scopedHome = !env && setting.scopedHomeValue !== undefined && isScopedHome(context.env);
   const ci = !env && setting.ciValue !== undefined && context.env.CI;
   const winner = PRECEDENCE.find((scope) => scope in layers);
   let value: unknown = null;

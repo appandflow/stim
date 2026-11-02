@@ -3,10 +3,12 @@ import { workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { idleShutdownDueMs, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
+import { countLiveOwnedDevicesByPlatform } from '../engine/device-capacity.ts';
 import { liveWaiters } from '../engine/wait-queue.ts';
 import { admissionLimits, getPlatformDeviceLimits } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
-import type { IdlePassInput } from './idle.ts';
+import { ownedHere, type IdlePassInput } from './idle.ts';
 
 /** A booted device of another workspace idle this long may be shut down for a run waiting to boot. */
 const RECLAIM_IDLE_MS = 2 * 60_000;
@@ -20,17 +22,21 @@ function safeCanonical(path: string): string | null {
 }
 
 /**
- * The admission reclaim: while a run waits to boot because the booted devices fill a cap, shuts down the longest-idle
- * booted owned device of another workspace that has been idle 2 minutes or more and has no blocker, through
- * teardown, one per tick. Returns the action, or null when nothing waits on a cap or no device qualifies.
+ * The admission reclaim: while a run waits to boot because the booted devices fill a cap, counted as admission counts
+ * them, shuts down the longest-idle booted device this home owns in another workspace that has been idle 2 minutes or
+ * more and has no blocker, through teardown, one per tick. Returns the action, or null when nothing waits on a cap,
+ * the devices cannot be counted, or no device qualifies.
  */
 export async function reclaimForBootWaiters({
   devices,
+  sims,
   act,
   log,
   now = Date.now(),
 }: {
   devices: readonly OwnedDeviceActivity[];
+  /** The tick's simulator listing; null when it failed. */
+  sims: IosSimRecord[] | null;
   act: boolean;
   log: IdlePassInput['log'];
   now?: number;
@@ -41,16 +47,18 @@ export async function reclaimForBootWaiters({
   } catch {
     return null;
   }
-  if (!waiters.length) return null;
+  if (!waiters.length || sims === null) return null;
+  const counts = countLiveOwnedDevicesByPlatform({ sims });
+  if ('unknown' in counts) return null;
   const { maxDevices } = admissionLimits();
   const platformCaps = getPlatformDeviceLimits();
-  const count = (platform: string) => devices.filter((device) => device.kind === platform).length;
-  const totalFull = devices.length >= maxDevices;
+  const totalFull = counts.ios + counts.android >= maxDevices;
   const fullPlatforms = new Set(
     waiters.flatMap(({ details }) => {
       const platform = String(details.platform);
-      const cap = platform === 'ios' || platform === 'android' ? platformCaps[platform] : 0;
-      return cap > 0 && count(platform) >= cap ? [platform] : [];
+      if (platform !== 'ios' && platform !== 'android') return [];
+      const cap = platformCaps[platform];
+      return cap > 0 && counts[platform] >= cap ? [platform] : [];
     }),
   );
   if (!totalFull && fullPlatforms.size === 0) return null;
@@ -62,6 +70,7 @@ export async function reclaimForBootWaiters({
   );
   const candidates = devices
     .flatMap((device) => {
+      if (!ownedHere(device)) return [];
       const project = safeCanonical(device.project);
       if (!project || waiting.has(project)) return [];
       if (!totalFull && !fullPlatforms.has(device.kind)) return [];

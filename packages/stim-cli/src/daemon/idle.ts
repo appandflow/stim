@@ -7,6 +7,7 @@ import {
   DEVICE_METRO_IDLE_STOP_REASON,
   IDLE_STAGE_KEY,
   readDeviceIdleShutdowns,
+  readIdleStop,
   type DaemonWorkspaceDecision,
   type IdleStageRecord,
 } from '@stim-cli/core/state';
@@ -15,6 +16,7 @@ import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../co
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
 import { runIdleStop } from '../commands/stop.ts';
+import { isStimOwnedAvd, isStimOwnedSim } from '../devices/device-ownership.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
@@ -30,7 +32,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { metroStoreRoot } from '../supervisor/metro-store.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND } from '../supervisor/state.ts';
-import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { getProject, type Config, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
@@ -73,6 +75,11 @@ function thresholdWhy(input: Pick<IdlePassInput, 'pressure'>, minutes: number): 
     : `${SETTING} is ${minutes}`;
 }
 
+/** Whether this Stim home owns the device: config records alone do not prove it in a scoped home. */
+export function ownedHere(device: OwnedDeviceActivity): boolean {
+  return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvd(device.id);
+}
+
 function supervisorOf(path: string, project: ProjectRecord) {
   return resolveSupervisorTarget({
     state: readWorkspaceState(path)?.supervisor,
@@ -89,15 +96,20 @@ function supervisorOf(path: string, project: ProjectRecord) {
 async function candidate(path: string, project: ProjectRecord, input: IdlePassInput): Promise<Candidate> {
   const supervisor = supervisorOf(path, project);
   const state = readWorkspaceState(path);
-  const booted = input.devices.filter((device) => device.project === path);
+  const booted = input.devices.filter((device) => device.project === path && ownedHere(device));
   const slots = projectDeviceSlots(project);
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const orphan = supervisor.status === 'stale' ? survivingServer(state?.supervisor) : null;
   const serving = supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null;
+  if (ownsIos && input.sims === null)
+    return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
   if (!serving && booted.length === 0) {
-    if (ownsIos && input.sims === null)
-      return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
-    return { runs: false };
+    const foreign = input.devices.filter((device) => device.project === path && !ownedHere(device));
+    if (!foreign.length) return { runs: false };
+    return {
+      runs: true,
+      kept: `${foreign.map((device) => device.name).join(', ')} not in this Stim home's created-devices ledger, so the idle stage leaves it`,
+    };
   }
   let minutes: number;
   try {
@@ -160,6 +172,7 @@ async function decide(
     idleMs: found.idleMs,
     locked,
     serving: found.serving,
+    driversBlock: true,
   });
   return {
     candidate: found,
@@ -210,6 +223,11 @@ export function writeWorkspaceEvent(
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   writer.write({ src: 'metro', level, event, msg, ...fields });
   writer.close();
+}
+
+/** Whether `stim revive` resumes the workspace: its dev server recorded an idle stop and its port is still reserved. */
+function revivable(path: string): boolean {
+  return readIdleStop(readWorkspaceState(path)) !== null && typeof getProject(path)?.metroPort === 'number';
 }
 
 async function recordStage(path: string, minutes: number, shutDown: readonly string[], freedBytes: number) {
@@ -269,8 +287,9 @@ async function enterIdleStage(
             const freed = await deleteOutputs(outputs.paths);
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
-            const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run stim revive to resume it.`;
-            writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore: 'stim revive' });
+            const restore = revivable(path) ? 'stim revive' : 'stim ios or stim android';
+            const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run ${restore} to resume it.`;
+            writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore });
             return { outcome: 'idle' as const, detail: msg, freedBytes: freed };
           },
           { external: true, waitMs: 0, ownerPurpose: 'idle stage' },

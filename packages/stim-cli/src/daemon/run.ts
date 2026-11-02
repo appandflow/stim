@@ -12,6 +12,7 @@ import {
   isJsonObject,
   macosAppState,
   readMacosRecord,
+  type DaemonMode,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
 import {
@@ -29,7 +30,8 @@ import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { daemonMode } from './client.ts';
+import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './client.ts';
+import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses } from './passes.ts';
@@ -133,7 +135,8 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
     if (macos && macos.state !== 'stopped') return `${path} has a macOS app`;
   }
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
-  if (measured.devices.length) return `${measured.devices.length} owned device(s) running`;
+  const owned = measured.devices.filter(ownedHere);
+  if (owned.length) return `${owned.length} owned device(s) running`;
   const ownsIos = Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true),
   );
@@ -147,7 +150,15 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
  * after two ticks in a row with nothing running in the home and no contact, when `daemon.mode` turns off, or when a
  * tick throws, releasing its claim so each supervisor's own idle timer takes over.
  */
-export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}): Promise<void> {
+export async function runDaemon({
+  tickMs = TICK_MS,
+  mode: startMode = daemonMode({}),
+}: {
+  tickMs?: number;
+  /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
+  mode?: DaemonMode;
+} = {}): Promise<void> {
+  const configAtStart = configuredDaemonMode();
   const started = performance.now();
   const startedAt = new Date().toISOString();
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
@@ -259,6 +270,7 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
   );
   let emptyTicks = 0;
+  const kept = new Map<string, string>();
   for (;;) {
     if (!tickRequested) {
       await new Promise<void>((done) => {
@@ -272,7 +284,8 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     interrupt = null;
     if (closing) break;
     tickRequested = false;
-    const mode = daemonMode({});
+    const configured = configuredDaemonMode();
+    const mode = configured === configAtStart ? startMode : stricterDaemonMode(startMode, configured ?? 'on');
     if (mode === 'off') {
       shutdown('daemon.mode is off');
       break;
@@ -289,7 +302,12 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
-      const reclaimed = await reclaimForBootWaiters({ devices: measured.devices, act: mode === 'on', log });
+      const reclaimed = await reclaimForBootWaiters({
+        devices: measured.devices,
+        sims: measured.sims,
+        act: mode === 'on',
+        log,
+      });
       if (reclaimed) {
         actions.push(reclaimed);
         if (reclaimed.outcome === 'done') wakeOldest('boot');
@@ -299,6 +317,13 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
         waiters.build.length || waiters.boot.length || waiting.length
           ? 'a run waits for a build slot or a device boot'
           : homeAlive(config, measured);
+      for (const { path: workspace, outcome, detail } of workspaces) {
+        if (outcome !== 'kept') kept.delete(workspace);
+        else if (kept.get(workspace) !== detail) {
+          kept.set(workspace, detail);
+          log('info', 'workspace_kept', `${workspace}: ${detail}`, { workspace });
+        }
+      }
       lastSnapshot = {
         version: 1,
         pid: process.pid,
@@ -336,18 +361,21 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.title = 'stim-daemon';
-  runDaemon().catch((error: unknown) => {
-    const message =
-      isClaimRefusal(error) || isClaimUnavailable(error)
-        ? error.message
-        : error instanceof Error
-          ? (error.stack ?? error.message)
-          : String(error);
-    try {
-      const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-      writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
-      writer.close();
-    } catch {}
-    process.exitCode = 1;
-  });
+  const at = process.argv.indexOf('--mode');
+  runDaemon({ mode: parseDaemonMode(at > 0 ? process.argv[at + 1] : undefined) ?? daemonMode({}) }).catch(
+    (error: unknown) => {
+      const message =
+        isClaimRefusal(error) || isClaimUnavailable(error)
+          ? error.message
+          : error instanceof Error
+            ? (error.stack ?? error.message)
+            : String(error);
+      try {
+        const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
+        writer.write({ src: 'daemon', level: 'error', event: 'daemon_failed', msg: message });
+        writer.close();
+      } catch {}
+      process.exitCode = 1;
+    },
+  );
 }

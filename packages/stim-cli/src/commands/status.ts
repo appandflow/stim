@@ -38,6 +38,7 @@ import {
   archiveRoot,
   readArchives,
   type ArchivedWorkspace,
+  type DormantStageRecord,
   DEVICE_METRO_IDLE_STOP_REASON,
   DEVICE_RECLAIM_REASON,
   loadPerCore,
@@ -150,6 +151,10 @@ export default function statusCommand(program: Command): void {
     });
 }
 
+function dormantStageLine({ at, deletedDevices, archived }: DormantStageRecord): string {
+  return `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+}
+
 function renderStatus(
   {
     archived,
@@ -239,20 +244,14 @@ function renderStatus(
 
     if (state.idleStage) {
       const { at, idleMinutes, freedBytes } = state.idleStage;
+      const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
       out.push(
         chalk.dim(
-          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; \`stim revive\` resumes it`,
+          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`,
         ),
       );
     }
-    if (state.dormantStage) {
-      const { at, deletedDevices, archived: logsArchived } = state.dormantStage;
-      out.push(
-        chalk.dim(
-          `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${logsArchived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`,
-        ),
-      );
-    }
+    if (state.dormantStage) out.push(chalk.dim(dormantStageLine(state.dormantStage)));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)

@@ -49,6 +49,8 @@ export interface LadderInput {
   simsFailed: boolean;
   /** Measures disk and memory again and classifies them. */
   remeasure: () => Promise<DaemonPressure>;
+  /** The first rung to run; a command with no daemon starts at 2, since rung 1 belongs to the activity pass. */
+  fromRung?: number;
 }
 
 interface RungContext extends LadderInput {
@@ -407,6 +409,7 @@ export async function runLadder(
   const settings = resolveMaintenanceSettings(input.config);
   let current = pressure;
   for (const { rung, relieves, act } of RUNGS) {
+    if (rung < (input.fromRung ?? 1)) continue;
     current = await input.remeasure();
     if (current.level === 'normal') break;
     const causes = causesOf(current, relieves);

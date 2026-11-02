@@ -20,7 +20,8 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
   } catch (error) {
     unresolved = { path: daemonClaimRoot(), reason: error instanceof Error ? error.message : String(error) };
   }
-  const snapshot = readDaemonSnapshot();
+  const read = readDaemonSnapshot();
+  const snapshot = holder && read?.pid !== holder.owner.pid ? null : read;
   const waiting = listWaiting();
   return {
     mode,
@@ -98,7 +99,10 @@ export function daemonFindings(
   if (status.mode === 'off') return findings;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const late = 3 * (status.intervalMs ?? 60_000);
-  if (status.running && (!Number.isFinite(tickAt) || now - tickAt > late))
+  const since = status.running
+    ? Math.max(Number.isFinite(tickAt) ? tickAt : 0, Date.parse(status.running.since) || 0)
+    : NaN;
+  if (status.running && now - since > late)
     findings.push({
       level: 'cost',
       title: 'The stim-daemon has stopped ticking',

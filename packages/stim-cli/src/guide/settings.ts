@@ -491,12 +491,13 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         command, a Metro bundle, manifest or HMR request, an
                         agent-device action, an input stim-server forwarded to
                         one of its devices, a stim device lock, or a person
-                        using its focused Simulator or emulator window; device
-                        logs, in-app logs, dev server output and log file
-                        times are not. Idle, the stim-daemon stops the dev
-                        server with its port kept, shuts the owned simulators
-                        and emulators down, and deletes the workspace's
-                        regenerable build outputs; \`stim revive\` resumes it.
+                        using its frontmost Simulator, Device Hub or emulator
+                        window; device logs, in-app logs, dev server output
+                        and log file times are not. Idle, the stim-daemon
+                        stops the dev server with its port kept, shuts the
+                        owned simulators and emulators down, and deletes the
+                        workspace's regenerable build outputs; \`stim
+                        revive\` resumes it.
                         Unset, the smaller of metro.idleStopMinutes and
                         devices.idleShutdownMinutes, so a 0 in either keeps
                         both running. Machine or project layers. See
@@ -684,9 +685,12 @@ the pressure ladder above normal, reclaims a device for a run waiting to boot,
 and runs automatic maintenance. report logs what it would do and acts on
 nothing. off runs no
 daemon: each dev server supervisor stops its own dev server and devices after
-idle.minutes, and nothing times a device with no dev server. It is off in CI
-unless STIM_DAEMON is set. Windows has no daemon; there stim doctor runs the
-same passes. Its log is
+idle.minutes, nothing times a device with no dev server, and stim doctor,
+start, ios and android run automatic maintenance in their own process. It is
+off in CI unless STIM_DAEMON is set. Windows has no daemon and works as off.
+A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
+later change to the machine setting can make a running daemon stricter, never
+laxer. Its log is
 STIM_HOME/daemon/daemon.ndjson and its last tick STIM_HOME/daemon/snapshot.json.
   stim settings set daemon.mode report --scope machine
 

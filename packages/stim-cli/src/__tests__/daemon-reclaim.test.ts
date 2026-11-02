@@ -14,6 +14,8 @@ import { INTERACTIONS_KEY, readDeviceIdleShutdowns } from '@stim-cli/core/state'
 import { collectOwnedDeviceActivity, workspaceBuildInProgress, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { resetExecutor } from '../exec.ts';
 import { reclaimForBootWaiters } from '../daemon/reclaim.ts';
+import { recordCreatedDevice } from '../devices/created-devices.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
 import { takeWaitTicket } from '../engine/wait-queue.ts';
@@ -40,6 +42,7 @@ const MINUTE = 60_000;
 let home: string;
 let waiter: string;
 let devices: OwnedDeviceActivity[];
+let otherSims: IosSimRecord[];
 let ticket: ClaimHandle | undefined;
 const log = vi.fn<(level: string, event: string, msg: string) => void>();
 
@@ -49,6 +52,7 @@ beforeEach(() => {
   waiter = join(home, 'waiter');
   mkdirSync(waiter);
   devices = [];
+  otherSims = [];
   log.mockReset();
   vi.setSystemTime(NOW);
   process.env.STIM_MAX_DEVICES = '2';
@@ -72,8 +76,13 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function add(id: string, idleMinutes: number, root = join(home, id)): OwnedDeviceActivity {
+function bootedSim(udid: string, name: string): IosSimRecord {
+  return { udid, name, state: 'Booted', runtime: 'iOS 27.0', deviceTypeIdentifier: 'iPhone', available: true };
+}
+
+function add(id: string, idleMinutes: number, root = join(home, id), owned = true): OwnedDeviceActivity {
   mkdirSync(root, { recursive: true });
+  if (owned) recordCreatedDevice('ios', id);
   upsertProject(root, { label: id, platforms: { ios: { deviceUdid: id, owned: true } } });
   const device: OwnedDeviceActivity = {
     kind: 'ios',
@@ -90,7 +99,17 @@ function add(id: string, idleMinutes: number, root = join(home, id)): OwnedDevic
   devices.push(device);
   return device;
 }
-const reclaim = (act = true) => reclaimForBootWaiters({ devices, act, log, now: NOW });
+const reclaim = (act = true) =>
+  reclaimForBootWaiters({
+    devices,
+    sims: [
+      ...devices.filter((device) => device.kind === 'ios').map((device) => bootedSim(device.id, device.name)),
+      ...otherSims,
+    ],
+    act,
+    log,
+    now: NOW,
+  });
 
 test('shuts down exactly the longest-idle device of another workspace and records the reason and log', async () => {
   add('younger', 4);
@@ -123,6 +142,29 @@ test('a device idle under 2 minutes, or one the caps leave room for, is never sh
   add('idle', 30);
   add('other', 30);
   await expect(reclaim()).resolves.toBeNull();
+  expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+});
+
+test('a device of another Stim home counts toward the cap, and only a device this home created is reclaimed', async () => {
+  otherSims = [bootedSim('foreign', 'stim-foreign')];
+  add('unledgered', 60, undefined, false);
+  const mine = add('mine', 30);
+  devices = devices.filter((device) => device.id !== 'unledgered');
+  await expect(reclaim()).resolves.toMatchObject({ target: 'mine', outcome: 'done' });
+  expect(teardownOwnedIosSim).toHaveBeenCalledWith('mine', { label: 'stim-mine', workspace: mine.project });
+
+  vi.mocked(teardownOwnedIosSim).mockClear();
+  otherSims = [];
+  add('unledgered-2', 60, undefined, false);
+  add('mine-2', 30);
+  await expect(reclaim()).resolves.toMatchObject({ target: 'mine-2', outcome: 'done' });
+  expect(teardownOwnedIosSim).not.toHaveBeenCalledWith('unledgered-2', expect.anything());
+});
+
+test('a failed simulator listing reclaims nothing', async () => {
+  add('idle', 30);
+  add('other', 40);
+  await expect(reclaimForBootWaiters({ devices, sims: null, act: true, log, now: NOW })).resolves.toBeNull();
   expect(teardownOwnedIosSim).not.toHaveBeenCalled();
 });
 

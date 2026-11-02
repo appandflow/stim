@@ -1,3 +1,4 @@
+import { isScopedHome } from '@stim-cli/core';
 import { settingDefinition, settingValueError } from '@stim-cli/core/state';
 import type { Config } from './workspace/config.ts';
 
@@ -24,7 +25,7 @@ export function machineNumber(
       ? { value: undefined, error: `Invalid ${setting.env} value ${JSON.stringify(fromEnv)}. Expected ${problem}.` }
       : { value, error: null };
   }
-  if (env.STIM_HOME && typeof setting.scopedHomeValue === 'number')
+  if (isScopedHome(env) && typeof setting.scopedHomeValue === 'number')
     return { value: setting.scopedHomeValue, error: null };
   const raw = valueAt(config, key);
   if (raw === undefined)

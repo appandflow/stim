@@ -2,7 +2,7 @@ import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-loc
 import { cancellableSleep } from '../../cancellation.ts';
 import { runOperationFile, runOperationFileQuiet } from '../../engine/operation-exec.ts';
 import { childEnvironment } from '../../workspace/git-read.ts';
-import type { StimContext } from '@stim-cli/core';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { freemem, totalmem } from 'node:os';
@@ -770,7 +770,7 @@ function watchmanClientDescriber(rows: readonly HostProcess[]): (client: Watchma
 }
 
 export function memorySweepIsScoped(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.STIM_HOME);
+  return isScopedHome(env);
 }
 
 function scopedMemoryReport(): MemoryReport {
