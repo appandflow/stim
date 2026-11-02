@@ -256,7 +256,7 @@ Open for a decision, not fixed here:
 
 ## Recommendation
 
-**Open a draft PR, as a prototype behind `daemon.enabled` (off), not as a shipping default.** Rows 2 and 3 pass the
+**Opened as draft PR #4792, a prototype behind `daemon.enabled` (off), not as a shipping default.** Rows 2 and 3 pass the
 bars set before the numbers, and row 6 is well inside its budget:
 
 - Row 2 is the one result only a daemon can produce: an owned simulator booted with no dev server shuts down one tick
