@@ -62,7 +62,7 @@ import { recordPullRequestLookup } from '../../status-measures.ts';
 import { worktreeArchiveLimits } from '../../archive.ts';
 import { stimCliEntries, stimCliUseOf } from '../../workspace/service-guard.ts';
 import { uncommittedActivityOf, type WorktreeArchive } from '../../workspace/worktree-archive.ts';
-import { DEVICE_LIST_TIMEOUT_MS } from './devices.ts';
+import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from './devices.ts';
 import { canonicalPath } from './paths.ts';
 import { listWorkspaceDirs } from './workspaces.ts';
 import { eachLimited, readConcurrency } from './limited.ts';
@@ -94,6 +94,8 @@ export interface WorktreeFacts {
   source: 'source' | 'linked' | { refusal: string };
   bare: boolean;
   locked: boolean;
+  /** A scoped STIM_HOME does not list this worktree, so its registry cannot say the worktree is this home's. */
+  unregistered?: boolean;
   nested?: string[];
   porcelain: string[] | null;
   unpushed: string[] | null;
@@ -112,6 +114,7 @@ export type WorktreeSkipCode =
   | 'bare-repository'
   | 'source-checkout-unknown'
   | 'source-checkout'
+  | 'not-registered'
   | 'locked'
   | 'nested-worktree'
   | 'in-use'
@@ -277,6 +280,9 @@ function removalBlocker(
     return skip('source-checkout-unknown', `source checkout unknown: ${facts.source.refusal}`);
   }
   if (facts.source === 'source') return skip('source-checkout', 'source checkout');
+  if (facts.unregistered) {
+    return skip('not-registered', 'not registered in this Stim home: STIM_HOME scopes this config');
+  }
   if (facts.locked) return skip('locked', LOCKED_REASON);
   if (facts.nested?.length) return skip('nested-worktree', `contains the worktree ${facts.nested.join(', ')}`);
   if (facts.inUse.length) return skip('in-use', `in use: ${facts.inUse.join('; ')}`);
@@ -583,10 +589,15 @@ async function porcelainOf(
   return lines?.length ? lines : null;
 }
 
-export function candidateRoots(): string[] {
+export function listedRoots(): string[] {
   const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
   const recorded = listWorkspaceDirs().flatMap((entry) => (entry.projectRoot ? [entry.projectRoot] : []));
-  return [...new Set([...registered, ...recorded, ...linkedWorktreesOf(registered)])]
+  return [...new Set([...registered, ...recorded])];
+}
+
+export function candidateRoots(): string[] {
+  const registered = Object.keys(loadConfig()?.projects ?? {}).filter(isAbsolute);
+  return [...new Set([...listedRoots(), ...linkedWorktreesOf(registered)])]
     .filter((root) => existsSync(root))
     .toSorted();
 }
@@ -783,6 +794,8 @@ export async function collectWorktreeSweep({
     }
     groups.set(entry.path, [...(groups.get(entry.path) ?? []), root]);
   }
+  const scoped = deviceSweepIsScoped(operation?.env);
+  const registry = new Set(listedRoots());
   const inspected: Inspected[] = [];
   await eachLimited([...[...groups].entries()], readConcurrency(operation), async ([index, [path, roots]]) => {
     operation?.signal.throwIfAborted();
@@ -805,6 +818,7 @@ export async function collectWorktreeSweep({
       source: 'refusal' in source ? source : linked ? 'linked' : 'source',
       bare: Boolean(entry?.bare),
       locked: Boolean(entry?.locked),
+      unregistered: scoped && !roots.some((root) => registry.has(root)),
       nested: entry ? nestedWorktrees(entries, entry.path) : [],
       porcelain,
       unpushed: linked ? await unlessTimedOut(() => unpushedCommitsAsync(path, read), null) : null,
