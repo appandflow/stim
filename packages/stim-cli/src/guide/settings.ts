@@ -46,8 +46,9 @@ Resolution order, first match wins:
   3. committed       .stim.json beside the app's package.json or Package.swift
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
-                     android.deviceProfile, devices.idleShutdownMinutes,
-                     devices.reclaimIdleMinutes and archive.enabled
+                     android.deviceProfile, idle.minutes,
+                     devices.idleShutdownMinutes, devices.reclaimIdleMinutes
+                     and archive.enabled
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -485,29 +486,25 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         validates the shape and platform but cannot discover
                         runtime entry-point or dev-menu overrides or auto-fix
                         them. See \`guide metro\` for warmup behavior.
-  metro.idleStopMinutes minutes without a bundle request, client log record or
-                        Stim command before the supervisor stops the dev
-                        server (default 15). 0 never stops it. Never during a
-                        build or bundle response, while the workspace holds
-                        a device lock, or while a workspace device is
-                        driven. Unless devices.idleShutdownMinutes is 0,
-                        the stop first shuts down the workspace's owned
-                        devices idle for the shorter window, and from then
-                        on a Debug launch's device logs do not count as
-                        activity. Read
-                        when \`start\` spawns the supervisor; see
-                        \`guide metro\`.
-  devices.idleShutdownMinutes
-                        minutes an owned simulator or emulator stays idle
-                        (\`gc --idle\` conditions; an open stim-server viewer
-                        counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 15; 0 never,
-                        not even at Metro's idle stop. A device whose last
-                        launch needs Metro goes down with Metro's idle stop
-                        even when this is longer: from then on its device
-                        logs do not count as activity. Machine or project
-                        layers. Read when the supervisor starts; see
+  idle.minutes          minutes without activity before the workspace goes
+                        idle (default 15; 0 never). Activity is a Stim
+                        command, a Metro bundle, manifest or HMR request, an
+                        agent-device action, an input stim-server forwarded to
+                        one of its devices, a stim device lock, or a person
+                        using its focused Simulator or emulator window; device
+                        logs, in-app logs, dev server output and log file
+                        times are not. Idle, the stim-daemon stops the dev
+                        server with its port kept, shuts the owned simulators
+                        and emulators down, and deletes the workspace's
+                        regenerable build outputs; \`stim revive\` resumes it.
+                        Unset, the smaller of metro.idleStopMinutes and
+                        devices.idleShutdownMinutes, so a 0 in either keeps
+                        both running. Machine or project layers. See
                         \`guide lifecycle budget\`.
+  metro.idleStopMinutes read as idle.minutes while that is unset (default 15).
+  devices.idleShutdownMinutes
+                        read as idle.minutes while that is unset (default 15).
+                        Machine or project layers.
   devices.reclaimIdleMinutes
                         minutes idle before the head of the device slot queue
                         shuts down the longest-idle eligible owned device in
@@ -672,16 +669,18 @@ generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
 
-THE HOME DAEMON IS MACHINE-LEVEL AND OFF BY DEFAULT
-daemon.enabled STIM_DAEMON  default false. While on, start, ios and android
-start one stim-daemon process per Stim home, which exits once no dev server,
-build, build slot or owned booted device remains. It stops a workspace's dev
-server and owned devices together after the smaller of metro.idleStopMinutes
-and devices.idleShutdownMinutes, shuts down owned devices idle for
-devices.idleShutdownMinutes when no dev server runs, and wakes a run waiting for
-a build slot as soon as one is released. Without it, or on Windows, the
-supervisor and automatic maintenance keep these timers. Its log is
-STIM_HOME/daemon/daemon.log.
+THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
+daemon.mode STIM_DAEMON  default on. start, ios, android, web, macos and
+revive start one stim-daemon per Stim home, scoped homes included; it exits two
+minutes after nothing runs there. Each minute it measures the machine once,
+moves idle workspaces into the idle stage (idle.minutes) and runs automatic
+maintenance. report logs what it would do and acts on nothing. off runs no
+daemon: each dev server supervisor stops its own dev server and devices after
+idle.minutes, and nothing times a device with no dev server. It is off in CI
+unless STIM_DAEMON is set. Windows has no daemon; there stim doctor runs the
+same passes. Its log is
+STIM_HOME/daemon/daemon.ndjson and its last tick STIM_HOME/daemon/snapshot.json.
+  stim settings set daemon.mode report --scope machine
 
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
 maintenance.mode on (the default) removes what gc would under the caps and

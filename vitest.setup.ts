@@ -13,6 +13,8 @@ for (const key of Object.keys(process.env)) {
   if (key.startsWith('STIM_')) delete process.env[key];
 }
 
+process.env.STIM_DAEMON = 'off';
+
 // Must run before a test can redirect HOME, so this captures the real root
 // (see assertEasMachineRootWritable in eas-session-ledger.ts).
 process.env[EAS_TEST_GUARD_ROOT_ENV] = join(homedir(), '.stim', 'machine', 'eas');

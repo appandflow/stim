@@ -1,78 +1,211 @@
-import { statSync } from 'node:fs';
-import { isJsonObject } from '@stim-cli/core/state';
+import { existsSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
-import { runStop } from '../commands/stop.ts';
-import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
+import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import {
+  DEVICE_IDLE_SHUTDOWN_KEY,
+  DEVICE_METRO_IDLE_STOP_REASON,
+  IDLE_STAGE_KEY,
+  readDeviceIdleShutdowns,
+  type DaemonWorkspaceDecision,
+  type IdleStageRecord,
+} from '@stim-cli/core/state';
+import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
+import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import { canonicalPath } from '../commands/gc/paths.ts';
+import { workspaceOutputPaths } from '../commands/gc/workspaces.ts';
+import { runIdleStop } from '../commands/stop.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
-import { dueIdleDevices, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
-import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
+import type { IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
-import { decideIdleStop, idleStopEvidence, unseenEmulatorError } from '../maintenance/idle-stop.ts';
+import {
+  decideIdleStop,
+  hostedFacts,
+  idleStopEvidence,
+  survivingServer,
+  unseenEmulatorError,
+  type IdleStopDecision,
+} from '../maintenance/idle-stop.ts';
+import { createNdjsonWriter } from '../ndjson.ts';
+import { metroStoreRoot } from '../supervisor/metro-store.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { loadConfig, type ProjectRecord } from '../workspace/config.ts';
+import { MODE_COMMAND } from '../supervisor/state.ts';
+import type { Config, ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import { deviceIdleShutdownMinutesSetting, resolveProjectSettings } from '../workspace/settings.ts';
-import { readWorkspaceState } from '../workspace/workspace-state.ts';
-import { daemonOwnsSupervisedIdle } from './client.ts';
+import { ARTIFACT_DIRS, existingDirsOf, regenerableDirProblem } from '../workspace/regenerable-dirs.ts';
+import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 
 const MINUTE_MS = 60_000;
-const SIM_LIST_TIMEOUT_MS = 10_000;
+const SIZE_TIMEOUT_MS = 60_000;
+const SETTING = 'idle.minutes';
 
-export function listSims(): IosSimRecord[] {
-  return listAllIosSims({ timeoutMs: SIM_LIST_TIMEOUT_MS });
+export interface IdlePassInput {
+  config: Config | null;
+  now: number;
+  sims: IosSimRecord[] | null;
+  simsError: string | null;
+  devices: OwnedDeviceActivity[];
+  /** False in `daemon.mode report`: decide and log, act on nothing. */
+  act: boolean;
+  log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 }
 
-function clientLogAt(root: string): number {
-  try {
-    return statSync(join(workspaceLogsDir(root), 'client.ndjson')).mtimeMs;
-  } catch {
-    return NaN;
-  }
-}
+type Candidate =
+  | { runs: false }
+  | { runs: true; kept: string }
+  | { runs: true; idleMs: number; minutes: number; serving: boolean; booted: OwnedDeviceActivity[] };
 
-function bootedDevices(path: string, project: ProjectRecord, now: number): OwnedDeviceActivity[] {
-  const config = loadConfig();
-  if (!config) return [];
-  return collectOwnedDeviceActivity({ ...config, projects: { [path]: project } }, listSims(), now);
+function supervisorOf(path: string, project: ProjectRecord) {
+  return resolveSupervisorTarget({
+    state: readWorkspaceState(path)?.supervisor,
+    record: project.supervisor,
+    reservedPort: project.metroPort,
+  });
 }
 
 /**
- * Decides with the same evidence as maintenance's idle stop. A device list that cannot be read, or an owned emulator
- * that runs but whose activity was not read, keeps the workspace, so `runStop` never takes down a device in use.
+ * Whether anything of the workspace runs, and what keeps it out of the idle stage whatever its activity: a dev
+ * server whose requests Stim cannot see or whose owner it cannot verify, a hosted placement, `maintenance.keep`, an
+ * owned device it cannot see, or `idle.minutes` 0.
  */
-async function decideTogether(path: string, project: ProjectRecord, idleMs: number, locked: boolean) {
-  const now = Date.now();
-  const devices = bootedDevices(path, project, now);
-  const seen = new Set(devices.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
-  const unseen = projectDeviceSlots(project).flatMap(({ platforms }) =>
+async function candidate(path: string, project: ProjectRecord, input: IdlePassInput): Promise<Candidate> {
+  const supervisor = supervisorOf(path, project);
+  const state = readWorkspaceState(path);
+  const booted = input.devices.filter((device) => device.project === path);
+  const slots = projectDeviceSlots(project);
+  const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
+  const orphan = supervisor.status === 'stale' ? survivingServer(state?.supervisor) : null;
+  const serving = supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null;
+  if (!serving && booted.length === 0) {
+    if (ownsIos && input.sims === null)
+      return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
+    return { runs: false };
+  }
+  let minutes: number;
+  try {
+    const { settings } = resolveProjectSettings(path);
+    if (maintenanceKeepSetting(settings)) return { runs: true, kept: 'pinned by maintenance.keep' };
+    minutes = idleMinutesSetting(settings);
+  } catch (error) {
+    return {
+      runs: true,
+      kept: `its settings cannot be resolved: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (minutes === 0) return { runs: true, kept: `${SETTING} is 0` };
+  if (supervisor.status === 'unverified')
+    return {
+      runs: true,
+      kept: `its dev server supervisor cannot be verified: ${supervisor.reason ?? 'unknown identity'}`,
+    };
+  if (orphan) return { runs: true, kept: orphan };
+  if (supervisor.status === 'ours' && state?.supervisor?.mode === MODE_COMMAND)
+    return { runs: true, kept: 'its dev server runs metro.command, whose bundle and HMR requests Stim cannot see' };
+  if (supervisor.status === 'ours' && state?.supervisor?.hmrUpdates !== true)
+    return {
+      runs: true,
+      kept: 'its dev server does not report its requests to Stim: an Expo SDK before 54, or a server an older Stim started, which stim stop and stim start restart',
+    };
+  const hosted = hostedFacts(path);
+  if (hosted.unreadable.length) return { runs: true, kept: hosted.unreadable.join('; ') };
+  const [placement] = hosted.placements;
+  if (placement) return { runs: true, kept: `its ${placement.label} runs on ${placement.machine}` };
+  const seen = new Set(booted.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
+  const unseen = slots.flatMap(({ platforms }) =>
     platforms.android?.owned && platforms.android.avdName && !seen.has(platforms.android.avdName)
       ? [platforms.android.avdName]
       : [],
   );
   const emulators = unseen.length ? await unseenEmulatorError(unseen) : null;
-  if (emulators) return { stop: false as const, reason: emulators };
-  const evidence = await idleStopEvidence(path, devices, {
+  if (emulators) return { runs: true, kept: emulators };
+  return { runs: true, idleMs: minutes * MINUTE_MS, minutes, serving: supervisor.status === 'ours', booted };
+}
+
+async function decide(
+  path: string,
+  project: ProjectRecord,
+  input: IdlePassInput,
+  locked: boolean,
+): Promise<{ candidate: Candidate; decision: IdleStopDecision | null }> {
+  const found = await candidate(path, project, input);
+  if (!found.runs || 'kept' in found) return { candidate: found, decision: null };
+  const now = Date.now();
+  const evidence = await idleStopEvidence(path, found.booted, {
     now,
-    idleMs,
+    idleMs: found.idleMs,
     locked,
-    serving: true,
+    serving: found.serving,
   });
-  const clientLog = clientLogAt(path);
-  if (Number.isFinite(clientLog)) evidence.activity.push({ basis: 'client log', at: clientLog });
-  return decideIdleStop(evidence, { idleMs, now });
+  return { candidate: found, decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: SETTING }) };
+}
+
+/** The regenerable outputs the idle stage deletes, and why each other one stays. */
+async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
+  const paths = workspaceOutputPaths(workspaceDir(path));
+  const kept: string[] = [];
+  for (const dir of existingDirsOf(path, ARTIFACT_DIRS.build)) {
+    const problem = await regenerableDirProblem(path, dir);
+    if (problem) kept.push(`kept ${dir}: ${problem}`);
+    else paths.push(dir);
+  }
+  const store = metroStoreRoot(path);
+  if (existsSync(store)) {
+    const sharer = Object.entries(config.projects).find(
+      ([other, project]) =>
+        canonicalPath(other) !== canonicalPath(path) &&
+        canonicalPath(metroStoreRoot(other)) === canonicalPath(store) &&
+        supervisorOf(other, project).status !== 'none' &&
+        supervisorOf(other, project).status !== 'stale',
+    );
+    if (sharer) kept.push(`kept the Metro store ${store}: the running dev server of ${sharer[0]} shares it`);
+    else paths.push(store);
+  }
+  return { paths, kept };
+}
+
+async function deleteOutputs(paths: readonly string[]): Promise<number> {
+  let freed = 0;
+  for (const path of paths) {
+    freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
+    await rm(path, { recursive: true, force: true });
+  }
+  return freed;
+}
+
+function writeWorkspaceEvent(root: string, level: 'info' | 'warn', event: string, msg: string, fields = {}): void {
+  const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
+  writer.write({ src: 'metro', level, event, msg, ...fields });
+  writer.close();
+}
+
+async function recordStage(path: string, minutes: number, shutDown: readonly string[], freedBytes: number) {
+  const at = new Date().toISOString();
+  const stage: IdleStageRecord = { at, idleMinutes: minutes, freedBytes };
+  await updateWorkspaceStateAsync(path, (state) => {
+    const shutdowns = { ...readDeviceIdleShutdowns(state) };
+    for (const key of shutDown) shutdowns[key] = { at, idleMinutes: minutes, reason: DEVICE_METRO_IDLE_STOP_REASON };
+    return {
+      ...state,
+      [IDLE_STAGE_KEY]: stage,
+      ...(shutDown.length ? { [DEVICE_IDLE_SHUTDOWN_KEY]: shutdowns } : {}),
+    };
+  });
 }
 
 /**
- * Stops a supervised workspace's dev server and its owned devices in one `stim stop` once the workspace has had no
- * activity, of either, for the smaller of metro.idleStopMinutes and devices.idleShutdownMinutes.
+ * The idle stage, in one pass under the workspace's native-run and metro-start locks after deciding again: the idle
+ * stop (Metro stopped with its port and launch records kept, the owned devices shut down through teardown, their
+ * collectors ended), then the workspace's regenerable build outputs, its in-tree build directories and its Metro
+ * store deleted.
  */
-async function stopTogether(path: string, project: ProjectRecord, minutes: number, log: (line: string) => void) {
-  const idleMs = minutes * MINUTE_MS;
-  if (Date.now() - workspaceDeviceLastUseAt(path) < idleMs) return;
-  const first = await decideTogether(path, project, idleMs, false);
-  if (!first.stop) return;
+async function enterIdleStage(
+  path: string,
+  project: ProjectRecord,
+  config: Config,
+  input: IdlePassInput,
+): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string }> {
   const run = await withIdleWorkspace(
     path,
     async () => {
@@ -81,80 +214,92 @@ async function stopTogether(path: string, project: ProjectRecord, minutes: numbe
           workspaceDir(path),
           'metro-start',
           async () => {
-            const again = await decideTogether(path, project, idleMs, true);
-            if (!again.stop) return `kept: ${again.reason}`;
-            const idleMinutes = Math.floor(again.idleMs / MINUTE_MS);
-            const stopped = await runStop({
-              root: path,
-              report: () => {},
-              requester: { by: `stim daemon (no activity for ${idleMinutes} minutes)` },
-              releaseLeases: () => [],
+            const devices = await collectOwnedDeviceActivityAsync(
+              { ...config, projects: { [path]: project } },
+              input.sims ?? [],
+              Date.now(),
+            );
+            const again = await decide(path, project, { ...input, devices }, true);
+            if (!again.candidate.runs) return { outcome: 'kept' as const, detail: 'nothing of it runs any more' };
+            if ('kept' in again.candidate) return { outcome: 'kept' as const, detail: again.candidate.kept };
+            if (!again.decision?.stop)
+              return { outcome: 'kept' as const, detail: again.decision?.reason ?? 'its activity cannot be read' };
+            const minutes = again.candidate.minutes;
+            const booted = new Set(again.candidate.booted.map((device) => `${device.kind}:${device.slot}`));
+            const lines: string[] = [];
+            const stopped = await runIdleStop({ root: path, idleMinutes: minutes, report: (line) => lines.push(line) });
+            if (!stopped.ok) return { outcome: 'failed' as const, detail: stopped.summary };
+            const shutDown = Object.entries(stopped.outcomes.device).flatMap(([key, outcome]) => {
+              const [kind, slot = 'default'] = key.split(':');
+              return outcome?.status === 'shut-down' && booted.has(`${kind}:${slot}`) ? [key] : [];
             });
-            return stopped.summary;
+            const outputs = await idleOutputs(path, config);
+            const freed = await deleteOutputs(outputs.paths);
+            await recordStage(path, minutes, shutDown, freed);
+            const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
+            const msg = `no activity for ${idle} minutes (${SETTING} is ${minutes}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run stim revive to resume it.`;
+            writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore: 'stim revive' });
+            return { outcome: 'idle' as const, detail: msg };
           },
-          { external: true, waitMs: 0, ownerPurpose: 'idle stop' },
+          { external: true, waitMs: 0, ownerPurpose: 'idle stage' },
         );
       } catch (error) {
-        if (workspaceProcessLockError(error)) return 'kept: a stim start holds its metro-start lock';
+        if (workspaceProcessLockError(error))
+          return { outcome: 'kept' as const, detail: 'a stim start holds its metro-start lock' };
         throw error;
       }
     },
-    { purpose: 'daemon idle stop', devServer: false, hosted: false, hostedMacos: false },
+    { purpose: 'idle stage', devServer: false, hosted: false, hostedMacos: false },
   );
-  log(`${path}: ${run.ran ? run.value : `kept: ${run.reasons.join('; ')}`}`);
+  return run.ran ? run.value : { outcome: 'kept', detail: `in use: ${run.reasons.join('; ')}` };
 }
 
-async function shutDownUnsupervised(path: string, minutes: number, now: number, log: (line: string) => void) {
-  const idleMs = minutes * MINUTE_MS;
-  if (!dueIdleDevices(path, idleMs, now).length) return;
-  const run = await withIdleWorkspace(
-    path,
-    () =>
-      shutDownIdleDevices(path, idleMs, (event) => {
-        writeIdleShutdownEvent(path, event);
-        log(`${path}: ${event.msg}`);
-      }),
-    { purpose: 'daemon device idle shutdown' },
-  );
-  if (!run.ran) log(`${path}: kept its idle devices: ${run.reasons.join('; ')}`);
-}
-
-/** One pass of the home's idle timers over every registered workspace. */
-export async function runIdlePass(log: (line: string) => void, now: number = Date.now()): Promise<void> {
-  for (const [path, project] of Object.entries(loadConfig()?.projects ?? {})) {
+/**
+ * The activity pass: every registered workspace with something running whose last activity is older than its
+ * `idle.minutes`, and that nothing keeps, goes into the idle stage.
+ */
+export async function runIdlePass(input: IdlePassInput): Promise<DaemonWorkspaceDecision[]> {
+  const decisions: DaemonWorkspaceDecision[] = [];
+  const config = input.config;
+  if (!config) return decisions;
+  for (const [path, project] of Object.entries(config.projects)) {
+    let entry: DaemonWorkspaceDecision;
     try {
-      const state = readWorkspaceState(path);
-      const supervisor = resolveSupervisorTarget({
-        state: state?.supervisor,
-        record: project.supervisor,
-        reservedPort: project.metroPort,
-      });
-      if (supervisor.status === 'unverified') continue;
-      if (supervisor.status === 'ours') {
-        const record = state?.supervisor;
-        const minutes = isJsonObject(record?.idleMinutes) ? record.idleMinutes : {};
-        const metroMinutes = typeof minutes.metro === 'number' ? minutes.metro : 0;
-        const deviceMinutes = typeof minutes.devices === 'number' ? minutes.devices : 0;
-        if (
-          daemonOwnsSupervisedIdle({
-            mode: record?.mode,
-            hmrUpdates: record?.hmrUpdates,
-            idleStopMinutes: metroMinutes,
-            deviceIdleMinutes: deviceMinutes,
-          })
-        )
-          await stopTogether(path, project, Math.min(metroMinutes, deviceMinutes), log);
-        continue;
-      }
-      const deviceMinutes = deviceIdleShutdownMinutesSetting(resolveProjectSettings(path).settings);
-      if (
-        deviceMinutes > 0 &&
-        projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned)
-      ) {
-        await shutDownUnsupervised(path, deviceMinutes, now, log);
+      const { candidate: found, decision } = await decide(path, project, input, false);
+      if (!found.runs) continue;
+      const last = decision?.last ? { basis: decision.last.basis, at: new Date(decision.last.at).toISOString() } : null;
+      if (!decision) entry = { path, lastActivity: last, outcome: 'kept', detail: 'kept' in found ? found.kept : '' };
+      else if (!decision.stop)
+        entry = { path, lastActivity: last, outcome: decision.active ? 'active' : 'kept', detail: decision.reason };
+      else if (!input.act) {
+        entry = {
+          path,
+          lastActivity: last,
+          outcome: 'would-idle',
+          detail: `no activity for ${Math.floor(decision.idleMs / MINUTE_MS)} minutes; daemon.mode report acts on nothing`,
+        };
+      } else {
+        const result = await enterIdleStage(path, project, config, input);
+        entry = { path, lastActivity: last, ...result };
       }
     } catch (error) {
-      log(`${path}: idle check failed: ${error instanceof Error ? error.message : String(error)}`);
+      entry = {
+        path,
+        lastActivity: null,
+        outcome: 'failed',
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
+    decisions.push(entry);
+    if (entry.outcome === 'idle' || entry.outcome === 'would-idle' || entry.outcome === 'failed')
+      input.log(
+        entry.outcome === 'failed' ? 'warn' : 'info',
+        `workspace_${entry.outcome.replace('-', '_')}`,
+        `${path}: ${entry.detail}`,
+        {
+          workspace: path,
+        },
+      );
   }
+  return decisions;
 }

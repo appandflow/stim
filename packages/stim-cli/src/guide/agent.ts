@@ -296,12 +296,15 @@ activity prevent reclaim. The supervisor's own idle shutdown default is 15m.
 Read the holder names in progress and build.waitingFor in status; do not start
 replacement runs while one is queued. See \`stim guide lifecycle concurrency\`.
 
-After maintenance.idleStopHours (default 6) with no Stim command, native run,
-Metro bundle or HMR request, agent-device command or live view, automatic
-maintenance stops the workspace as stim stop does. Device and app logs do not
-count. A device hosted on a remote Mac stops with it, and stim-server stops a hosted
-session whose client has been gone that long. After a long pause, run stim ios or android again before driving the
-app; see \`stim guide cleanup\`.
+After idle.minutes (default 15) with no Stim command, native run, Metro
+request, agent-device action or input to its devices, the stim-daemon puts the
+workspace in the idle stage: Metro stops with its port kept, its owned devices
+shut down and its regenerable build outputs are deleted. Device and app logs do
+not count. stim status shows the stage; after a pause, run stim revive to
+restart Metro, boot the device and relaunch the app before driving it. A device
+hosted on a remote Mac keeps its workspace out of the idle stage, and
+stim-server stops a hosted session whose client has been gone for
+maintenance.idleStopHours; see \`stim guide cleanup\`.
 
 Treat a refusal as an ownership or state mismatch: read its code and remedy.
 Never reach for --force first.

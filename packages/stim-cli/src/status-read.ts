@@ -80,7 +80,9 @@ import {
   readMacosRecord,
   readBuildDetail,
   readDeviceIdleShutdowns,
+  readIdleStage,
   readIdleStop,
+  type IdleStageRecord,
   readBuildHistory,
   readLastBuilds,
   readDevicePlacement,
@@ -279,6 +281,12 @@ export function readStatus({
   return withStateReadCache(() => readStatusFacts(probes, git, cwd));
 }
 
+/** The idle stage the daemon recorded, while no Stim command has run in the workspace since. */
+function currentIdleStage(state: WorkspaceState | null): IdleStageRecord | null {
+  const stage = readIdleStage(state);
+  return stage && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at)) ? stage : null;
+}
+
 async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: string): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
@@ -457,6 +465,8 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
+      const idleStage = state.live ? null : currentIdleStage(saved);
+      if (idleStage) state.idleStage = idleStage;
       const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
       const phase = workspacePhase(state.live, saved, { now: leaseNow });
       Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {

@@ -964,6 +964,14 @@ export function deviceIdleShutdownMinutesSetting(settings: SettingsObject): numb
   return minutesSetting(settings, 'devices', 'idleShutdownMinutes');
 }
 
+/** `idle.minutes` when it is set, else the smaller of `metro.idleStopMinutes` and `devices.idleShutdownMinutes`. */
+export function idleMinutesSetting(settings: SettingsObject): number {
+  const setting = settingDefinition('idle.minutes');
+  const value = settingValueAt(settings, 'idle.minutes');
+  if (setting && typeof value === 'number' && settingValueError(setting, value) === null) return value;
+  return Math.min(metroIdleStopMinutesSetting(settings), deviceIdleShutdownMinutesSetting(settings));
+}
+
 export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): number {
   return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
 }

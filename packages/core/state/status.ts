@@ -1,10 +1,11 @@
 import type { HostedAndroidStatus } from './hosted-android.ts';
 import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
+import type { DaemonStatus } from './daemon.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
-import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type { DeviceIdleShutdownRecord, IdleStageRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 /** A platform whose build reports phases: the stats platforms and `macos`. */
@@ -670,6 +671,8 @@ export interface EnvironmentState {
   hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
+  /** Present while the workspace is in the idle stage: no activity since the daemon stopped it. */
+  idleStage?: IdleStageRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
@@ -871,6 +874,7 @@ export interface MachineUsageState {
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
   maintenance?: MaintenanceStatus;
+  daemon?: DaemonStatus;
   archived?: ArchivedWorkspace[];
   archivedUsage?: ArchivedUsage;
   environments: (EnvironmentState & { labelOnly?: true })[];

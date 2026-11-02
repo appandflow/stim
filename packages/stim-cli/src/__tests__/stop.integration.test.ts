@@ -15,6 +15,7 @@ import stopCommand, {
   readSupervisorState,
   resolveCollectorTargets,
   resolveSupervisorTarget,
+  runIdleStop,
   runStop,
 } from '../commands/stop.ts';
 import { makeConfig, makeError, makeExecutor, makeMetroResolution } from './_factories.ts';
@@ -907,6 +908,43 @@ withWorkspaceStateLock(process.argv[2], () => {
   const state = JSON.parse(readFileSync(workspaceStateFile(tmpRoot), 'utf-8'));
   expect(state.supervisor).toBeUndefined();
   expect(state.remoteDevice.sessionId).toBe('drs_B');
+});
+
+test('the idle stop asks the supervisor to record an idle stop, and keeps its port, launch records and leases', async () => {
+  saveConfig(
+    makeConfig({
+      projects: { [tmpRoot]: { metroPort: 8083, platforms: { ios: { deviceUdid: 'U1', owned: true } } } },
+    }),
+  );
+  const supervisor = { pid: 4242, processToken: 'upid1.supervisor', port: 8083, mode: 'expo-child' };
+  const launches = { ios: { appId: 'com.example', deviceId: 'U1', metroPort: 8083, release: false, launchedAt: '' } };
+  writeFileSync(workspaceStateFile(tmpRoot), JSON.stringify({ supervisor, launches }));
+  await takeLease({ root: tmpRoot, platform: 'android', id: 'PHONE', kind: 'declared' });
+  let request: unknown;
+
+  const r = await runIdleStop({
+    root: tmpRoot,
+    idleMinutes: 15,
+    report: () => {},
+    state: supervisor,
+    isAlive: (pid: number) => pid === 4242,
+    inspectIdentity: () => 'same',
+    killGroup: () => {
+      request = readWorkspaceState(tmpRoot)?.devServerStopRequest;
+      return true;
+    },
+    waitForDeath: async () => true,
+    resolveMetro: async () => makeMetroResolution.missing(),
+    teardownIos: async () => ({ status: 'torn-down', label: 'stim-a' }),
+  });
+
+  expect(r.ok).toBe(true);
+  expect(request).toMatchObject({ by: 'stim daemon', idleMinutes: 15 });
+  expect(r.outcomes.port).toMatchObject({ status: 'kept', port: 8083 });
+  expect(getProject(tmpRoot)?.metroPort).toBe(8083);
+  expect(readWorkspaceState(tmpRoot)?.launches).toEqual(launches);
+  expect(r.outcomes.releasedLeases).toEqual([]);
+  expect(listLeaseFiles().map((entry) => entry.id)).toEqual(['PHONE']);
 });
 
 test('stopping frees the reserved port in the registry and keeps the device record', async () => {

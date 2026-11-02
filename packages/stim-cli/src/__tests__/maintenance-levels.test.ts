@@ -28,7 +28,7 @@ import { executeAction } from '../maintenance/act.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { runMaintenance } from '../maintenance/run.ts';
 import { liveClaimOwner, plantClaim } from './_factories.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
+import { warnCriticalDisk } from '../maintenance/trigger.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
@@ -317,7 +317,7 @@ test('a pass that cannot write its state or log still frees space', async () => 
   expect(existsSync(old.outputs)).toBe(false);
 });
 
-test('the next command, report-only gc included, warns on stderr at disk pressure level 3, and status --watch and gc --delete do not', () => {
+test('the next command, report-only gc included, warns on stderr at disk pressure level 3, and gc --delete does not', () => {
   mkdirSync(maintenanceDir(), { recursive: true });
   writeFileSync(
     maintenanceStateFile(),
@@ -340,14 +340,12 @@ test('the next command, report-only gc included, warns on stderr at disk pressur
   vi.spyOn(console, 'error').mockImplementation((...args) => void errors.push(args.join(' ')));
   delete process.env.STIM_MAINTENANCE;
 
-  triggerMaintenance('status-watch', { argv: ['status', '--watch'], warn: false });
+  warnCriticalDisk(['gc', '--delete']);
   expect(errors).toEqual([]);
-  triggerMaintenance('gc', { argv: ['gc', '--delete'] });
-  expect(errors).toEqual([]);
-  triggerMaintenance('gc', { argv: ['gc', '--json'] });
+  warnCriticalDisk(['gc', '--json']);
   expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
   errors.length = 0;
-  triggerMaintenance('ios', { argv: ['ios'] });
+  warnCriticalDisk(['ios']);
   expect(errors).toEqual([expect.stringContaining('disk pressure level 3 (4.0 GB free on /)')]);
 });
 

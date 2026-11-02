@@ -1583,8 +1583,8 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "
       reason === 'reclaimed for a waiting run'
         ? 'reclaimed for a waiting run'
         : reason === "Metro's idle stop"
-          ? "with Metro's idle stop; metro.idleStopMinutes"
-          : 'devices.idleShutdownMinutes',
+          ? "with Metro's idle stop; idle.minutes"
+          : 'idle.minutes',
     );
     const payload = await runStatusJson();
     expect(

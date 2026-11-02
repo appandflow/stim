@@ -27,7 +27,8 @@ import { operationState } from '../engine/operation-state.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
+import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { macosDir } from '../macos/state.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as androidDevices from '../devices/android.ts';
@@ -760,14 +761,9 @@ test.each([
     writeFileSync(join(home, 'config.json'), config);
     const ledger = JSON.stringify({ version: 1, ios: [id], android: [], web: [] });
     writeFileSync(join(home, 'created-devices.json'), ledger);
-    withAmbientContext(testContext({ home, env, projectRoot: item.root, cwd: item.root }), () => {
-      const logs = workspaceLogsDir(item.root);
-      mkdirSync(logs, { recursive: true });
-      writeFileSync(
-        join(logs, 'device.ndjson'),
-        JSON.stringify({ ts: Date.now() - 3_600_000, src: 'device', platform: 'ios', msg: 'old app log' }) + '\n',
-      );
-    });
+    withAmbientContext(testContext({ home, env, projectRoot: item.root, cwd: item.root }), () =>
+      recordWorkspaceUse(item.root, new Date(Date.now() - 3_600_000)),
+    );
     const controller = new AbortController();
     const executor = getExecutor();
     const original = executor.runFileAsync.bind(executor);

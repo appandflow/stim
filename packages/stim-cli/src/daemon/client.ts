@@ -1,61 +1,57 @@
-import { closeSync, mkdirSync, openSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import {
-  coerceSettingText,
   daemonClaimRoot,
   daemonDir,
-  daemonLogFile,
   daemonSocket,
   loadConfig,
   settingDefinition,
-  settingValueError,
+  type DaemonMode,
 } from '@stim-cli/core/state';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { cancellableSleep } from '../cancellation.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { MODE_COMMAND } from '../supervisor/state.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
+const MODE = settingDefinition('daemon.mode');
 
-/** `STIM_DAEMON` (1/true on, 0/false off), else the machine setting `daemon.enabled`. Windows has no daemon. */
-export function daemonEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (process.platform === 'win32') return false;
-  const definition = settingDefinition('daemon.enabled');
-  if (!definition?.env) return false;
-  const raw = env[definition.env];
-  if (raw !== undefined && raw !== '') {
-    const value = coerceSettingText(definition, raw);
-    return settingValueError(definition, value) === null && value === true;
-  }
+const DAEMON_MODES: readonly DaemonMode[] = ['on', 'report', 'off'];
+
+function parseMode(value: unknown): DaemonMode | null {
+  return DAEMON_MODES.find((mode) => mode === value) ?? null;
+}
+
+/** `daemon.mode` from `STIM_DAEMON` in `env`, else off in CI, else the machine setting, else on. Windows has none. */
+export function daemonMode(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): DaemonMode {
+  if (platform === 'win32') return 'off';
+  const fromEnv = MODE?.env ? parseMode(env[MODE.env]) : null;
+  if (fromEnv) return fromEnv;
+  if (env.CI) return 'off';
   try {
-    return loadConfig()?.daemon?.enabled === true;
+    return parseMode(loadConfig()?.daemon?.mode) ?? 'on';
   } catch {
-    return false;
+    return 'on';
   }
 }
 
 /**
- * Whether the daemon, rather than the workspace's supervisor, times a supervised workspace's idle stop: only when
- * the supervisor reports its bundle and HMR requests, so they reach the Metro log the daemon reads, and both idle
- * settings are on, so stopping the two together never overrides a 0.
+ * Whether a stim-daemon holds this home's claim. A claim Stim cannot resolve counts as held, so nothing else takes
+ * an idle decision while it stands; `stim doctor` names the command that removes it.
  */
-export function daemonOwnsSupervisedIdle({
-  mode,
-  hmrUpdates,
-  idleStopMinutes,
-  deviceIdleMinutes,
-}: {
-  mode: unknown;
-  hmrUpdates: unknown;
-  idleStopMinutes: number;
-  deviceIdleMinutes: number;
-}): boolean {
-  return mode !== MODE_COMMAND && hmrUpdates === true && idleStopMinutes > 0 && deviceIdleMinutes > 0;
+export function daemonClaimHeld(): boolean {
+  try {
+    const survey = readClaimSet(daemonClaimRoot());
+    return survey.live.length > 0 || survey.unresolved.length > 0;
+  } catch {
+    return true;
+  }
 }
 
-/** Whether this home's daemon holds its claim with a process proven alive. */
-export function daemonLive(): boolean {
+function daemonLive(): boolean {
   try {
     return readClaimSet(daemonClaimRoot()).live.length > 0;
   } catch {
@@ -87,34 +83,31 @@ function answersHello(timeoutMs: number): Promise<boolean> {
 
 function spawnDaemon(env: NodeJS.ProcessEnv): void {
   mkdirSync(daemonDir(), { recursive: true, mode: 0o700 });
-  const fd = openSync(daemonLogFile(), 'a');
-  try {
-    const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run')], {
-      cwd: daemonDir(),
-      detached: true,
-      stdio: ['ignore', fd, fd],
-      env,
-    });
-    child.on?.('error', () => {});
-    child.unref?.();
-  } finally {
-    closeSync(fd);
-  }
+  const daemonEnv = { ...env };
+  if (MODE?.env) delete daemonEnv[MODE.env];
+  const child = getExecutor().spawn(process.execPath, [spawnEntry('daemon-run')], {
+    cwd: daemonDir(),
+    detached: true,
+    stdio: 'ignore',
+    env: daemonEnv,
+  });
+  child.on?.('error', () => {});
+  child.unref?.();
 }
 
 /**
- * Makes sure this home's daemon runs before a command creates a resource: tells a live one about the contact so it
- * does not exit under the command, or starts one. Never blocks the command on the daemon: a claim Stim cannot
- * resolve is reported and the command goes on with the timers of its own processes.
+ * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
+ * it does not exit under the command, or starts one. Never blocks the command on the daemon: a claim Stim cannot
+ * resolve is reported and the command goes on, with each supervisor keeping its own idle timer.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  if (!daemonEnabled(env)) return;
+  if (daemonMode(env) === 'off') return;
   try {
     const survey = readClaimSet(daemonClaimRoot());
     const [claim] = survey.unresolved;
     if (claim) {
       console.error(
-        `Stim: the home daemon's claim at ${claim.path} cannot be resolved (${claim.reason}); running without the daemon. If no stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
+        `Stim: the stim-daemon claim at ${claim.path} cannot be resolved (${claim.reason}), so no daemon decides idle in this Stim home. If no stim-daemon process runs, remove it with \`${claimRemoveCommand(claim.path)}\`.`,
       );
       return;
     }
@@ -123,13 +116,17 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
   } catch {}
 }
 
-/** Tells a live daemon that this process released a build slot, so it wakes the runs waiting for one. */
-export function notifyBuildSlotReleased(): void {
-  if (!daemonEnabled() || !daemonLive()) return;
+function send(op: string): void {
+  if (!daemonLive()) return;
   const socket = connect(daemonSocket());
   socket.setTimeout(CONTACT_TIMEOUT_MS, () => socket.destroy());
   socket.once('error', () => {});
-  socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'slot.released' })}\n`));
+  socket.once('connect', () => socket.end(`${JSON.stringify({ op })}\n`));
+}
+
+/** Tells a live daemon that this process released a build slot, so it wakes the oldest run waiting for one. */
+export function notifyBuildSlotReleased(): void {
+  send('slot.released');
 }
 
 export interface BuildSlotWaiter {
@@ -138,16 +135,16 @@ export interface BuildSlotWaiter {
 }
 
 /**
- * Subscribes once to the daemon's build-slot releases for one acquisition, so a waiting build retries as soon as a
- * slot frees instead of on its next poll; a release that arrives while it is trying counts for its next wait.
- * Without a reachable daemon each wait is a plain sleep.
+ * Subscribes once to the daemon's build-slot releases for one acquisition, so the oldest waiting build retries as
+ * soon as a slot frees instead of on its next poll; a release that arrives while it is trying counts for its next
+ * wait. Without a reachable daemon each wait is a plain sleep.
  */
 export function buildSlotWaiter(): BuildSlotWaiter {
   let socket: Socket | null = null;
   let released = false;
   let wake: (() => void) | null = null;
   const subscribe = () => {
-    if (socket || !daemonEnabled() || !daemonLive()) return;
+    if (socket || !daemonLive()) return;
     const opened = connect(daemonSocket());
     socket = opened;
     opened.setEncoding('utf8');

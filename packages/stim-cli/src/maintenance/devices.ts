@@ -3,21 +3,14 @@ import type { StimContext } from '@stim-cli/core';
 import { DEVICE_LIST_TIMEOUT_MS, deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { worktreeRemovalReason, type WorktreeSweep } from '../commands/gc/worktrees.ts';
-import { formatLongDuration } from '../command-output.ts';
-import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
-import { dueIdleDevices } from '../devices/idle-shutdown.ts';
-import { daemonLive } from '../daemon/client.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
-import { getProject, loadConfig } from '../workspace/config.ts';
-import { deviceIdleShutdownMinutesSetting, resolveProjectSettings } from '../workspace/settings.ts';
+import { loadConfig } from '../workspace/config.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
-import { readWorkspaceState, workspaceLastUsed } from '../workspace/workspace-state.ts';
-import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
-import { survivingServer } from './idle-stop.ts';
+import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { endedPullRequest } from '../workspace/pull-request.ts';
 import {
   cachedDeviceActivity,
@@ -226,73 +219,4 @@ export function finishedWorkspaces(
     const reason = `its worktree is finished (${worktreeRemovalReason(worktree, sweep)}) but kept`;
     return worktree.keys.map((root) => ({ root: canonicalPath(root), reason }));
   });
-}
-
-/** Each workspace's effective devices.idleShutdownMinutes, or 0 when it cannot be resolved. */
-export function idleShutdownMinutes(root: string): number {
-  try {
-    return deviceIdleShutdownMinutesSetting(resolveProjectSettings(root).settings);
-  } catch {
-    return 0;
-  }
-}
-
-/**
- * Whether the workspace's dev server is gone, by the supervisor identity check `status` uses. A supervisor whose
- * identity cannot be verified, or one that exited while the dev server it started may still run, counts as running.
- */
-export function metroGone(root: string): boolean {
-  const project = getProject(root);
-  const state = readWorkspaceState(root);
-  const { status } = resolveSupervisorTarget({
-    state: state?.supervisor,
-    record: project?.supervisor,
-    reservedPort: project?.metroPort,
-  });
-  return status === 'none' || (status === 'stale' && survivingServer(state?.supervisor) === null);
-}
-
-/**
- * Plans shutting down each booted owned simulator and emulator idle for its workspace's devices.idleShutdownMinutes,
- * whether or not a supervisor runs there. Without a supervisor, the device logs of a slot whose last launch needs
- * Metro do not count as use. The devices are shut down, never deleted.
- */
-export function planIdleShutdown({
-  protectedRoot,
-  now,
-  env = process.env,
-}: {
-  protectedRoot: string;
-  now: number;
-  env?: NodeJS.ProcessEnv;
-}): MaintenancePlan {
-  const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
-  if (deviceSweepIsScoped(env) || daemonLive()) return plan;
-  const minutes = new Map(
-    Object.entries(loadConfig()?.projects ?? {}).flatMap(([root, project]) => {
-      const owns = projectDeviceSlots(project).some(
-        ({ platforms }) => platforms.ios?.owned === true || platforms.android?.owned === true,
-      );
-      const value = !owns || canonicalPath(root) === protectedRoot ? 0 : idleShutdownMinutes(root);
-      return value > 0 ? [[root, value] as const] : [];
-    }),
-  );
-  if (minutes.size === 0) return plan;
-  const window = Math.min(...minutes.values()) * 60_000;
-  const gone = new Map([...minutes.keys()].map((root) => [root, metroGone(root)] as const));
-  const metroStopped = (root: string) => gone.get(root) ?? false;
-  for (const { device, idleForMs } of dueIdleDevices(undefined, window, now, { metroStopped })) {
-    const own = minutes.get(device.project);
-    const usedAt = workspaceDeviceLastUseAt(device.project, { countDeviceLogs: !metroStopped(device.project) });
-    if (own === undefined || idleForMs < own * 60_000 || now - usedAt < own * 60_000) continue;
-    const root = canonicalPath(device.project);
-    plan.actions.push({
-      kind: 'would-shutdown-device',
-      target: device.id,
-      workspace: root,
-      bytes: 0,
-      reason: `${device.kind === 'ios' ? 'simulator' : 'emulator'} ${device.name} idle ${formatLongDuration(idleForMs)}, over devices.idleShutdownMinutes ${own}`,
-    });
-  }
-  return plan;
 }

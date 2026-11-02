@@ -385,19 +385,26 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Bundle URL `stim android` prefetches to warm Metro',
   },
   {
+    key: 'idle.minutes',
+    type: { kind: 'number', integer: true, minimum: 0 },
+    scopes: EVERY,
+    default: 15,
+    description:
+      'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. Unset, the smaller of metro.idleStopMinutes and devices.idleShutdownMinutes; 0 never',
+  },
+  {
     key: 'metro.idleStopMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: PROJECT,
     default: 15,
-    description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
+    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
   },
   {
     key: 'devices.idleShutdownMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
     default: 15,
-    description:
-      'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
+    description: 'Read as idle.minutes while idle.minutes is unset, when it is the smaller of the two; 0 never',
   },
   {
     key: 'devices.reclaimIdleMinutes',
@@ -961,13 +968,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     description: 'Parked emulators kept for adoption; 0 turns parking off',
   },
   {
-    key: 'daemon.enabled',
-    type: BOOLEAN,
+    key: 'daemon.mode',
+    type: { kind: 'choice', choices: ['on', 'report', 'off'] },
     scopes: MACHINE,
-    default: false,
+    default: 'on',
     env: 'STIM_DAEMON',
+    ciValue: 'off',
     description:
-      'Run one background daemon per Stim home, started by start, ios and android and gone once nothing runs there: it owns the idle timers, stopping a workspace dev server and its owned devices together, also with no dev server, and wakes runs waiting for a build slot',
+      'The per-home stim-daemon that start, ios, android, web, macos and revive start and that exits once nothing runs in the home. on: it decides idle, stopping idle workspaces and deleting their regenerable build outputs, and runs automatic maintenance. report: it logs what it would do and acts on nothing. off: no daemon; each dev server supervisor times its own idle stop. Off in CI unless STIM_DAEMON is set. Windows has no daemon',
   },
   {
     key: 'debug.logs',

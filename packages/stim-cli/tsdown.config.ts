@@ -14,7 +14,6 @@ export default defineConfig({
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'pull-requests': 'src/workspace/pull-request.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
-    'maintenance-run': 'src/maintenance/run.ts',
     'daemon-run': 'src/daemon/run.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',

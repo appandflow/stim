@@ -1,18 +1,31 @@
 import { hostedNativeRecords, parseHostedNativePlacement } from '@stim-cli/core/state';
-import { readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { createActivityReader, type ActivityTarget } from '../devices/activity.ts';
+import { readFileSync } from 'node:fs';
+import { createActivityReader, workspaceDeviceLastUseAt, type ActivityTarget } from '../devices/activity.ts';
 import { ownedAvdSerialResolver } from '../devices/android.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
 import { getProject } from '../workspace/config.ts';
-import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { describeError } from './errors.ts';
 
 const IDLE_CHECK_MS = 60_000;
 const MINUTE_MS = 60_000;
+
+/** The Metro log events that are a client's request: a bundle, a manifest or an HMR update. */
+export const METRO_REQUEST_EVENTS: ReadonlySet<string> = new Set([
+  'bundle_response_started',
+  'bundle_response_progress',
+  'bundle_response_finished',
+  'bundle_response_failed',
+  'bundle_build_started',
+  'bundle_build_done',
+  'bundle_build_failed',
+  'manifest_request_started',
+  'manifest_request_finished',
+  'manifest_request_failed',
+  'hmr_update',
+]);
 
 export interface DevServerActivity {
   record(entry: unknown): void;
@@ -25,12 +38,10 @@ export function trackDevServerActivity(now: () => number): DevServerActivity {
   return {
     record(entry) {
       const { event, requestId } = (entry ?? {}) as { event?: unknown; requestId?: unknown };
-      if (event === 'bundle_response_started') {
-        if (typeof requestId === 'string') open.add(requestId);
-      } else if (event === 'bundle_response_finished' || event === 'bundle_response_failed') {
-        if (typeof requestId === 'string') open.delete(requestId);
-      } else if (event !== 'expo_stdout' && event !== 'command_stdout') {
-        return;
+      if (typeof event !== 'string' || !METRO_REQUEST_EVENTS.has(event)) return;
+      if (typeof requestId === 'string') {
+        if (event === 'bundle_response_started') open.add(requestId);
+        else if (event === 'bundle_response_finished' || event === 'bundle_response_failed') open.delete(requestId);
       }
       last = now();
     },
@@ -80,15 +91,7 @@ export function workspaceIdleProbe(
   { platform = process.platform }: { platform?: NodeJS.Platform } = {},
 ): IdleProbe {
   return {
-    lastActivityAt() {
-      const used = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? ''));
-      let clientLog = NaN;
-      try {
-        clientLog = statSync(join(workspaceLogsDir(root), 'client.ndjson')).mtimeMs;
-      } catch {}
-      const times = [used, clientLog].filter(Number.isFinite);
-      return times.length ? Math.max(...times) : NaN;
-    },
+    lastActivityAt: () => workspaceDeviceLastUseAt(root),
     blocker() {
       if (workspaceBuildInProgress(root)) return 'a build is in progress';
       for (const native of ['ios', 'android'] as const) {

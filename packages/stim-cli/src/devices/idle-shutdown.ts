@@ -14,7 +14,6 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
-import { launchWithoutMetro, readWorkspaceLaunches } from '../supervisor/state.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
 import { workspaceDeviceLastUseAt } from './activity.ts';
 import { deviceSlotKey } from './device-slots.ts';
@@ -26,9 +25,8 @@ const MINUTE_MS = 60_000;
 
 /**
  * How long a booted owned device has been idle, when that is at least `idleMs` and nothing keeps it in use: no
- * driver, Stim or agent-device lock, or unreadable activity evidence, no build in the workspace, and no activity
- * (including an open stim-server viewer) for `idleMs`. `countDeviceLogs: false` leaves device log records out of
- * that activity. Null keeps the device running.
+ * driver, Stim or agent-device lock, or unreadable activity evidence, no build in the workspace, and no activity for
+ * `idleMs`. Null keeps the device running.
  */
 export function idleShutdownDueMs(
   activity: DeviceActivity,
@@ -37,43 +35,22 @@ export function idleShutdownDueMs(
     now,
     buildInProgress,
     platform = process.platform,
-    countDeviceLogs = true,
-  }: { idleMs: number; now: number; buildInProgress: boolean; platform?: NodeJS.Platform; countDeviceLogs?: boolean },
+  }: { idleMs: number; now: number; buildInProgress: boolean; platform?: NodeJS.Platform },
 ): number | null {
   if (buildInProgress || activity.state === 'driven') return null;
   // The host driver probe runs `ps -axww`, which Windows lacks. Stim drives only Android there, and Android
   // drivers run on-device instrumentation the adb probe reads.
   const unknown = platform === 'win32' ? activity.basis.filter((basis) => basis !== 'driver-process') : activity.basis;
   if (activity.state === 'unknown' && unknown.length > 0) return null;
-  const last = countDeviceLogs
-    ? Date.parse(activity.lastActivityAt ?? '')
-    : (newestActivity(activity, false)?.at ?? NaN);
+  const last = Date.parse(activity.lastActivityAt ?? '');
   if (!Number.isFinite(last)) return null;
   const idle = now - last;
   return idle >= idleMs ? idle : null;
 }
 
-function newestActivity(activity: DeviceActivity, countDeviceLogs: boolean): { basis: string; at: number } | null {
-  let newest: { basis: string; at: number } | null = null;
-  for (const [basis, iso] of Object.entries(activity.recent ?? {})) {
-    const at = Date.parse(iso ?? '');
-    if ((countDeviceLogs || basis !== 'device-log') && Number.isFinite(at) && !(newest && newest.at >= at))
-      newest = { basis, at };
-  }
-  return newest;
-}
-
 export interface DueDevice {
   device: OwnedDeviceActivity;
   idleForMs: number;
-}
-
-export interface DeviceLogRule {
-  /**
-   * Whether the workspace's Metro is stopped or stopping. Its device log records then stop counting as use of a slot
-   * whose last launch loads its JS from Metro, since that app cannot run without it.
-   */
-  metroStopped?: (project: string) => boolean;
 }
 
 interface IdleDecision {
@@ -90,71 +67,37 @@ function listSims(): IosSimRecord[] {
   }
 }
 
-function idleDecisions(
-  root: string | undefined,
-  idleMs: number,
-  now: number,
-  { metroStopped }: DeviceLogRule,
-): IdleDecision[] {
+function idleDecisions(root: string | undefined, idleMs: number, now: number): IdleDecision[] {
   const config = loadConfig();
   if (!config) return [];
   const self = root === undefined ? undefined : canonicalPath(root);
-  const stopped = new Set<string>();
   const projects = Object.fromEntries(
     Object.entries(config.projects).filter(([path]) => {
       if (self !== undefined && canonicalPath(path) !== self) return false;
-      if (metroStopped?.(path)) stopped.add(path);
-      const usedAt = workspaceDeviceLastUseAt(path, { countDeviceLogs: !stopped.has(path) });
+      const usedAt = workspaceDeviceLastUseAt(path);
       return !Number.isFinite(usedAt) || now - usedAt >= idleMs;
     }),
   );
   if (!Object.keys(projects).length) return [];
   const builds = new Map(Object.keys(projects).map((path) => [path, workspaceBuildInProgress(path)]));
   return collectOwnedDeviceActivity({ ...config, projects }, listSims(), now).map((device) => {
-    const metroGone = stopped.has(device.project);
-    const launch = metroGone
-      ? readWorkspaceLaunches(device.project)[deviceSlotKey(device.kind, device.slot)]
-      : undefined;
-    const withoutMetro = launch ? launchWithoutMetro(launch) : null;
-    const countDeviceLogs = !launch || withoutMetro !== null;
     const buildInProgress = builds.get(device.project) ?? true;
-    const logChangedAt = metroGone && countDeviceLogs ? workspaceDeviceLastUseAt(device.project) : NaN;
-    const idleForMs =
-      now - logChangedAt < idleMs
-        ? null
-        : idleShutdownDueMs(device.activity, { idleMs, now, buildInProgress, countDeviceLogs });
     return {
       device,
-      idleForMs,
-      keptBecause: () => {
-        const newest =
-          !buildInProgress && (device.activity.state === 'idle' || device.activity.state === 'active')
-            ? newestActivity(device.activity, countDeviceLogs)
-            : null;
-        if (newest?.basis === 'viewer') return 'a stim-server client is viewing it';
-        if (metroGone && (newest?.basis === 'device-log' || now - logChangedAt < idleMs)) {
-          const logged =
-            newest?.basis === 'device-log'
-              ? `it logged ${formatLongDuration(Math.max(0, now - newest.at))} ago`
-              : `the workspace's device log changed ${formatLongDuration(Math.max(0, now - logChangedAt))} ago`;
-          return withoutMetro
-            ? `its last launch, ${withoutMetro}, runs without Metro, and ${logged}`
-            : `no launch is recorded on its slot, and ${logged}`;
-        }
-        return `it is not idle for ${formatLongDuration(idleMs)}`;
-      },
+      idleForMs: idleShutdownDueMs(device.activity, { idleMs, now, buildInProgress }),
+      keptBecause: () =>
+        !buildInProgress &&
+        device.activity.recent?.viewer &&
+        device.activity.lastActivityAt === device.activity.recent.viewer
+          ? 'a stim-server client sent it input'
+          : `it is not idle for ${formatLongDuration(idleMs)}`,
     };
   });
 }
 
 /** Booted owned devices idle for `idleMs`, in one workspace or all registered workspaces when root is absent. */
-export function dueIdleDevices(
-  root: string | undefined,
-  idleMs: number,
-  now: number = Date.now(),
-  rule: DeviceLogRule = {},
-): DueDevice[] {
-  return idleDecisions(root, idleMs, now, rule).flatMap(({ device, idleForMs }) =>
+export function dueIdleDevices(root: string | undefined, idleMs: number, now: number = Date.now()): DueDevice[] {
+  return idleDecisions(root, idleMs, now).flatMap(({ device, idleForMs }) =>
     idleForMs === null ? [] : [{ device, idleForMs }],
   );
 }
@@ -187,15 +130,14 @@ export async function shutDownIdleDevices(
     only,
     reason,
     kept,
-    ...rule
   }: {
     only?: OwnedDeviceActivity;
     reason?: DeviceIdleShutdownRecord['reason'];
     kept?: (line: string) => void;
-  } & DeviceLogRule = {},
+  } = {},
 ): Promise<number> {
   let shutDown = 0;
-  for (const { device, idleForMs, keptBecause } of idleDecisions(root, idleMs, now, rule)) {
+  for (const { device, idleForMs, keptBecause } of idleDecisions(root, idleMs, now)) {
     if (
       only &&
       (device.kind !== only.kind ||

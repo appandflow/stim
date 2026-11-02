@@ -8,6 +8,7 @@ import {
   parseHostedNativePlacement,
   readMacosRecord,
   unreadableHostedNative,
+  readInteractions,
   readJsonObject,
   parseNdjsonText,
   settingDefinition,
@@ -36,6 +37,7 @@ import {
 } from '../engine/workspace-process-lock.ts';
 import { pidExists } from '../metro.ts';
 import { inspectProcessIdentity } from '../process-identity.ts';
+import { METRO_REQUEST_EVENTS } from '../supervisor/idle-stop.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { MODE_COMMAND, readRemoteSession } from '../supervisor/state.ts';
 import { loadConfig } from '../workspace/config.ts';
@@ -48,42 +50,36 @@ import type { MaintenancePlan } from './plan.ts';
 
 const HOUR_MS = 3_600_000;
 const SETTING = 'maintenance.idleStopHours';
-const METRO_REQUESTS = new Set([
-  'bundle_response_started',
-  'bundle_response_progress',
-  'bundle_response_finished',
-  'bundle_response_failed',
-  'bundle_build_started',
-  'bundle_build_done',
-  'bundle_build_failed',
-  'manifest_request_started',
-  'manifest_request_finished',
-  'manifest_request_failed',
-  'hmr_update',
-]);
 const STIM_SESSION = 'stim-teardown-inventory';
 const AGENT_DEVICE_DRIVERS = new Set(['agent-device-claim', 'agent-device-lease']);
 
+/**
+ * The activity signals: a Stim command or the native run it started, a Metro bundle, manifest or HMR request, an
+ * agent-device action, an input stim-server forwarded, and a person using the focused Simulator or emulator window.
+ * Device logs, in-app logs, dev server output and log modification times are not activity.
+ */
 type IdleStopBasis =
   | 'stim command'
   | 'native run'
   | 'Metro request'
-  | 'client log'
   | 'agent-device command'
-  | 'live view';
+  | 'stim-server input'
+  | 'Simulator or emulator window';
 
-interface IdleStopEvidence {
+export interface IdleStopEvidence {
   activity: { basis: IdleStopBasis; at: number }[];
   keep: string[];
 }
 
-type IdleStopDecision = { stop: true; idleMs: number } | { stop: false; reason: string; active?: true };
+export type IdleStopDecision =
+  | { stop: true; idleMs: number; last: IdleStopEvidence['activity'][number] }
+  | { stop: false; reason: string; active?: true; last?: IdleStopEvidence['activity'][number] };
 
 export function decideIdleStop(
   evidence: IdleStopEvidence,
-  { idleMs, now }: { idleMs: number; now: number },
+  { idleMs, now, setting = SETTING }: { idleMs: number; now: number; setting?: string },
 ): IdleStopDecision {
-  if (!(idleMs > 0)) return { stop: false, reason: `${SETTING} is 0` };
+  if (!(idleMs > 0)) return { stop: false, reason: `${setting} is 0` };
   const last = evidence.activity
     .filter(({ at }) => Number.isFinite(at))
     .reduce<IdleStopEvidence['activity'][number] | null>(
@@ -95,11 +91,12 @@ export function decideIdleStop(
     return {
       stop: false,
       active: true,
-      reason: `its last ${last.basis} was ${formatLongDuration(Math.max(0, idle))} ago, within ${SETTING}`,
+      last,
+      reason: `its last ${last.basis} was ${formatLongDuration(Math.max(0, idle))} ago, within ${setting}`,
     };
-  if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; ') };
+  if (evidence.keep.length) return { stop: false, reason: evidence.keep.join('; '), ...(last ? { last } : {}) };
   if (!last) return { stop: false, reason: 'its last activity is unknown' };
-  return { stop: true, idleMs: idle };
+  return { stop: true, idleMs: idle, last };
 }
 
 async function idleStopHours(
@@ -138,7 +135,7 @@ interface HostedPlacementFact {
   platform?: 'ios' | 'android';
 }
 
-function hostedFacts(root: string): { placements: HostedPlacementFact[]; unreadable: string[] } {
+export function hostedFacts(root: string): { placements: HostedPlacementFact[]; unreadable: string[] } {
   const placements: HostedPlacementFact[] = [];
   const unreadable: string[] = [];
   for (const platform of ['ios', 'android'] as const) {
@@ -232,7 +229,7 @@ function metroRequestAt(root: string, since: number, serving: boolean): number |
   for (const record of records) {
     if (typeof record.ts !== 'number') continue;
     earliest = Math.min(earliest, record.ts);
-    if (typeof record.event === 'string' && METRO_REQUESTS.has(record.event) && !(record.ts <= latest))
+    if (typeof record.event === 'string' && METRO_REQUEST_EVENTS.has(record.event) && !(record.ts <= latest))
       latest = record.ts;
   }
   if (!Number.isFinite(latest) && earliest > since && existsSync(rotated))
@@ -291,6 +288,10 @@ async function keepReasons(
   return keep;
 }
 
+/**
+ * The workspace's activity and what keeps it running regardless. `locked` says the caller holds its native-run lock;
+ * `serving` that its dev server runs, so a missing Metro log is unreadable evidence.
+ */
 export async function idleStopEvidence(
   root: string,
   devices: readonly OwnedDeviceActivity[],
@@ -323,8 +324,12 @@ export async function idleStopEvidence(
     { basis: 'agent-device command' as const, at: typeof sessions === 'number' ? sessions : NaN },
     ...devices.flatMap(({ activity: device }) => [
       { basis: 'agent-device command' as const, at: recentAt(device, 'agent-action') },
-      { basis: 'live view' as const, at: recentAt(device, 'viewer') },
+      { basis: 'stim-server input' as const, at: recentAt(device, 'viewer') },
     ]),
+    ...Object.values(readInteractions(state)).map((at) => ({
+      basis: 'Simulator or emulator window' as const,
+      at: Date.parse(at),
+    })),
   ].filter(({ at }) => Number.isFinite(at));
   if (activity.some(({ at }) => now - at < idleMs)) return { activity, keep: [] };
   const keep = await keepReasons(root, devices, { now, platform, locked, operation });

@@ -506,10 +506,9 @@ function toMinute(iso: string): string {
  */
 export function statusActivity(activity: DeviceActivity): DeviceActivity {
   const at = Date.parse(activity.lastActivityAt ?? '');
-  if (!Number.isFinite(at)) return activity;
   return {
     ...activity,
-    lastActivityAt: toMinute(activity.lastActivityAt!),
+    ...(Number.isFinite(at) ? { lastActivityAt: toMinute(activity.lastActivityAt!) } : {}),
     ...(activity.recent
       ? {
           recent: Object.fromEntries(

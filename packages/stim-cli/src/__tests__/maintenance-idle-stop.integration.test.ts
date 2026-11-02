@@ -17,13 +17,10 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import * as stopCommand from '../commands/stop.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { resolveBudget } from '../budget.ts';
 import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
 import type { GcOutput } from '../commands/gc/results.ts';
-import { executeAction } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { runMaintenance } from '../maintenance/run.ts';
-import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import { withWorkspaceProcessLock } from '../engine/workspace-process-lock.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -381,21 +378,6 @@ test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async ()
   ]);
 });
 
-test('a timer-started pass may stop the workspace it started in, a command-started one may not', async () => {
-  const { root } = bootedWorkspace('timer', 7 * HOUR_MS);
-  vi.spyOn(teardown, 'teardownOwnedIosSim').mockResolvedValue({ status: 'torn-down' });
-  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  const { actions } = await plan();
-  const context = { settings: resolveMaintenanceSettings(), budget: resolveBudget().budget, protectedRoot: root };
-
-  expect(await Promise.all(actions.map((action) => executeAction(action, context)))).toEqual([
-    expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/command that started this pass/) }),
-  ]);
-  expect(await Promise.all(actions.map((action) => executeAction(action, { ...context, background: true })))).toEqual([
-    expect.objectContaining({ status: 'done' }),
-  ]);
-});
-
 test('gc --delete stops idle workspaces only while maintenance is not off, and counts a failed stop', async () => {
   const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
   vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
@@ -544,24 +526,14 @@ test('a stray file in the agent-device sessions directory does not keep the work
   expect((await plan()).actions.map((action) => action.target)).toEqual([root]);
 });
 
-test.each([
-  ['supervisor', true],
-  ['command', false],
-])('a %s-triggered pass in an idle workspace plans its stop: %s', async (trigger, planned) => {
+test('an automatic maintenance pass plans no idle stop, which only the stim-daemon decides', async () => {
   const { root } = bootedWorkspace('self', 7 * HOUR_MS);
-  writeFileSync(join(root, 'package.json'), JSON.stringify({ name: 'self' }));
   vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
   vi.stubEnv('STIM_MAINTENANCE', 'report');
-  const cwd = process.cwd();
-  process.chdir(root);
-  try {
-    await runMaintenance(trigger);
-  } finally {
-    process.chdir(cwd);
-  }
 
-  const stops = (readMaintenanceState()?.plan ?? []).filter((action) => action.check === 'idle');
-  expect(stops.map((action) => action.target)).toEqual(planned ? [root] : []);
+  await runMaintenance('daemon');
+
+  expect(readMaintenanceState()?.plan.filter((action) => action.workspace === root)).toEqual([]);
 });
 
 test.each([

@@ -882,7 +882,7 @@ workspace-state key to inspect. Only that slot's ios run refuses; restore its
 recorded machine and session from the host, then run stim stop for that slot.
 Reload returns a JSON error with that remedy when no other app can reload;
 logs remain readable. Unknown selection or agent metadata is normalized
-without discarding the owner. devices.idleShutdownMinutes
+without discarding the owner. idle.minutes
 does not stop a hosted simulator in this phase; its recorded session keeps Metro
 from idle stopping. Reruns upload only missing manifest and file digests from a
 session-scoped store; the host verifies bytes before reuse. When the iOS build
@@ -2273,7 +2273,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        no Stim or agent-device lock, no activity for 10 minutes, and no build
        in progress (\`gc --idle\` semantics; shut down, never deleted)
     2. stop idle dev servers in other workspaces: a Stim supervisor with no
-       bundle request, device log, Stim command or supervisor start for 10
+       bundle request, Stim command or supervisor start for 10
        minutes, no build in progress, and no device in that workspace that is
        driven, active, or of unknown activity. Stim rechecks under that
        workspace's native-run and metro-start locks before it stops the
@@ -2293,41 +2293,27 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
        measures the largest uses of disk at the same time.
 
-  IDLE SHUTDOWN (15 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
-  0, a workspace's supervisor shuts down that workspace's owned simulators and
-  emulators once they have been idle that long, without waiting for a run
-  to go over budget. Idle is step 1 with that many minutes in place of 10:
-  booted, no driver, no Stim or agent-device lock, no build in progress, and
-  no activity. A stim-server client viewing the device (the phone app's
-  device viewer) counts as activity, here and in step 1. The supervisor
-  checks once a minute after the workspace's last Stim command, in-app log
-  and device log are all that old, rechecks under the workspace's native-run lock, and shuts devices down
-  through the same teardown as \`stop\`: never deleted, and physical
-  devices are never touched. It writes a device_idle_shutdown line to
-  metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
+  IDLE SHUTDOWN (15 MINUTES BY DEFAULT): once a workspace has had no activity
+  for idle.minutes, the stim-daemon shuts its owned simulators and emulators
+  down together with its dev server, in the idle stage (\`guide metro\`, IDLE
+  STOP), whether or not a dev server runs. A device stays booted while it is
+  driven, locked or leased, while a build runs in its workspace, and while its
+  activity is unknown. Activity is the workspace's Stim commands and native
+  runs, Metro requests, agent-device actions, input a stim-server client sent
+  to the device (the phone app's or Stim Desktop's controls; frames streamed
+  without input do not count), a stim device lock, and, on macOS, a person
+  using the device in the focused Simulator or emulator window. Device logs
+  and in-app logs never count, whatever the device's last launch. The idle
+  stage rechecks under the workspace's native-run lock and shuts devices down
+  through the same teardown as \`stop\`: never deleted, and physical devices
+  are never touched. It records deviceIdleShutdowns in state.json, so \`stim
   status\` shows "shut down after 15m idle" on the device until the next
-  \`ios\` or \`android\` run boots it again. The dev server's idle stop
-  (\`guide metro\`) first shuts down the devices idle for the shorter of
-  metro.idleStopMinutes and devices.idleShutdownMinutes, because no
-  supervisor is left to check afterwards; status then says "with Metro's
-  idle stop". From the idle stop on, and whenever neither a supervisor nor
-  the dev server it started runs in the workspace, device log lines stop
-  counting as activity of a slot whose last launch loads its JS from Metro,
-  so a Debug app's device goes down with the dev server and its reconnect
-  logs cannot keep it booted. Device logs still count for a Release or
-  native-process launch and for a slot with no recorded launch; for those any
-  change to the workspace's device.ndjson counts, so another slot's
-  reconnect logs keep them booted until that slot's device is shut down.
-  Devices with no
-  supervisor (release runs, a dev server that exited) are shut down by
-  automatic maintenance while maintenance.mode is on (guide cleanup): every maintenance.idleCheckMinutes
-  (5) a command starts a background check that applies each workspace's
-  current setting with the same idle rules, native-run lock recheck, status
-  and log record, and skips the workspace of the command that started it.
-  The supervisor reads the setting when it starts. Stim Desktop's simulator view is not a
-  stim-server client and does not count as a viewer. Change it with
-  \`stim settings set devices.idleShutdownMinutes <minutes> --scope machine\`;
-  0 turns it off, and an explicit 0 stays 0.
+  \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
+  or while no daemon runs, the workspace's supervisor checks once a minute and
+  shuts its own devices down after idle.minutes; a device with no supervisor
+  then stays booted. Change the clock with
+  \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns it
+  off, and an explicit 0 stays 0.
 
   QUEUE RECLAIM (10 MINUTES BY DEFAULT): a run waiting at concurrency.maxDevices
   uses devices.reclaimIdleMinutes from its own effective workspace settings.
@@ -2336,8 +2322,9 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   rechecking capacity before another. 0 disables it. The supervisor's own idle
   shutdown defaults to 15 minutes.
   Reclaim uses the same idle check: no driver, Stim or agent-device lock,
-  build, device lock or viewer, and no Stim command, app or device log,
-  Metro bundle or agent action within that interval. It rechecks under the
+  build or device lock, and no Stim command, Metro bundle, agent action,
+  stim-server input or use of its Simulator or emulator window within that
+  interval; app and device logs do not count. It rechecks under the
   target workspace's native-run lock and re-resolves ownership in centralized
   teardown. It shuts down, never deletes, and excludes the waiting workspace,
   physical, hosted, remote, parked and other homes' devices. Failed locks or
@@ -2347,8 +2334,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   record "reclaimed for a waiting run", and the wait's stats carry reclaimed.
   Any workspace of this Stim home with a device idle for
   devices.reclaimIdleMinutes is eligible, even with no supervisor and even
-  when its own devices.idleShutdownMinutes is 0. Stim Desktop's simulator view
-  and manual input in Simulator.app do not count as activity.
+  when its own idle.minutes is 0.
   \`stim settings set devices.reclaimIdleMinutes 0 --scope machine\` opts out
   machine-wide; the waiter's effective setting decides.
 

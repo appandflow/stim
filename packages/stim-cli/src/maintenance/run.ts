@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { basename, join } from 'node:path';
 import { withDirLock } from '@stim-cli/core';
 import {
   maintenanceChildLogFile,
@@ -15,7 +14,6 @@ import {
   type MaintenanceRecord,
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
-import { relaunchWithLogFile } from '../detached-entry.ts';
 import { formatBytes } from '../fs-util.ts';
 import { memoryCulpritsUnder } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
@@ -182,9 +180,14 @@ const stableText = (text: string) => text.replace(/\d+(?:\.\d+)?/g, '#');
 const sameSet = (before: Set<string>, after: Set<string>) =>
   before.size === after.size && [...before].every((key) => after.has(key));
 
-const BACKGROUND_TRIGGERS = new Set(['supervisor', 'status-watch']);
+const BACKGROUND_TRIGGERS = new Set(['daemon']);
 
-export async function runMaintenance(trigger: string): Promise<void> {
+/**
+ * One automatic maintenance pass in this process, when a check is due. The daemon's activity pass decides idle, so
+ * the pass never runs maintenance's own idle check. `report` plans and logs without acting, whatever
+ * `maintenance.mode` says.
+ */
+export async function runMaintenance(trigger: string, { report = false }: { report?: boolean } = {}): Promise<void> {
   const startedAt = Date.now();
   let claim: ClaimHandle | undefined;
   try {
@@ -197,7 +200,8 @@ export async function runMaintenance(trigger: string): Promise<void> {
   let logger: ReturnType<typeof maintenanceLogger> | undefined;
   let gcLog: GcLog | undefined;
   try {
-    const settings = resolveMaintenanceSettings();
+    const resolved = resolveMaintenanceSettings();
+    const settings = report && resolved.mode === 'on' ? { ...resolved, mode: 'report' as const } : resolved;
     if (settings.mode === 'off') return;
     const state: MaintenanceState = readMaintenanceState() ?? {
       version: 1,
@@ -208,7 +212,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt);
+    const checks = due(state, settings, startedAt).filter((check) => check !== 'idle');
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
@@ -267,7 +271,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       delete state.deferredAt?.[check];
       keepState();
       try {
-        if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
+        if (check === 'worktree' || check === 'sweep') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
           state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
@@ -337,8 +341,6 @@ export async function runMaintenance(trigger: string): Promise<void> {
       result = await plannedMaintenance(state.pressure, state.sizes, settings, {
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
-        idle: ran.has('idle'),
-        background,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -414,11 +416,7 @@ export async function runMaintenance(trigger: string): Promise<void> {
       return results;
     }
     const retained = state.plan.filter(
-      (action) =>
-        (action.check === 'sweep' && !ran.has('sweep')) ||
-        (action.check === 'worktree' && !plannedWorktrees) ||
-        (action.kind === 'would-shutdown-device' && action.check === undefined && !ran.has('idle')) ||
-        (action.check === 'idle' && !ran.has('idle')),
+      (action) => (action.check === 'sweep' && !ran.has('sweep')) || (action.check === 'worktree' && !plannedWorktrees),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
@@ -555,8 +553,4 @@ function crashLine(error: unknown): void {
     capChildLog();
     appendFileSync(file, `${String(error).replaceAll('\n', ' ')}\n`);
   } catch {}
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  if (!relaunchWithLogFile(process.argv.slice(2))) await runMaintenance(process.argv[2] ?? 'command');
 }

@@ -183,10 +183,6 @@ export function maintenanceStateFile(): string {
   return join(maintenanceDir(), 'state.json');
 }
 
-export function maintenanceAttemptFile(): string {
-  return join(maintenanceDir(), 'attempt.json');
-}
-
 export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }
@@ -262,7 +258,7 @@ export function serverLocalSocket(): string {
   return localSocket(join(configDir(), 'server', 'local.sock'));
 }
 
-/** The home daemon's directory: its claim, log and, when the path fits, its socket. */
+/** The home daemon's directory: its claim, log, snapshot and, when the path fits, its socket. */
 export function daemonDir(): string {
   return join(configDir(), 'daemon');
 }
@@ -276,8 +272,14 @@ export function daemonSocket(): string {
   return localSocket(join(daemonDir(), 'daemon.sock'));
 }
 
-export function daemonLogFile(): string {
-  return join(daemonDir(), 'daemon.log');
+/** The daemon's own log, rotated like workspace logs. */
+export function daemonNdjsonFile(): string {
+  return join(daemonDir(), 'daemon.ndjson');
+}
+
+/** What the daemon's last tick measured and decided, written atomically each tick. */
+export function daemonSnapshotFile(): string {
+  return join(daemonDir(), 'snapshot.json');
 }
 
 export function serverSetupDir(): string {

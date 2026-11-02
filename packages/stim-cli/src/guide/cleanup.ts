@@ -24,16 +24,13 @@ below through gc's own removal code and logs each one. report measures, plans
 and logs, and never deletes anything. off disables it. It is off in CI and
 scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
 or CI run never deletes on its own.
-Commands trigger a detached pass when a check is due: disk and memory pressure
-(every minute), idle devices (every 5 minutes, maintenance.idleCheckMinutes),
+The stim-daemon (guide settings, daemon.mode) runs a pass in its own process
+on each tick when a check is due: disk and memory pressure (every minute),
 directory sizes (hourly), finished worktrees (every 15 minutes) and the age
-sweep (daily). guide, settings, help and every gc
-invocation do not trigger it; gc without --delete prints the maintenance plan
-itself.
-status --watch and every running dev server supervisor also trigger checks
-each minute, so the disk check runs while no command does.
-Size, idle, worktree and sweep checks defer under high load. Attempts back off for at
-least one minute. Measured directories are workspace build outputs and Stim's
+sweep (daily). While no daemon runs, on Windows or with daemon.mode off,
+stim doctor runs the same pass; no other command starts one. gc without
+--delete prints the maintenance plan itself.
+Size, worktree and sweep checks defer under high load. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches. The size
 check also records the disk of each owned and parked simulator and emulator
 (category owned-devices); status prints the total as "owned devices".
@@ -43,19 +40,12 @@ signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Under memory pressure a pass stops the idle Gradle and Kotlin
 daemons verified idle by the common daemon inventory, with its build-running
 gates; stopping devices, dev servers and other helpers for memory is not automatic.
-The idle check shuts down (never
-deletes) owned simulators and emulators idle for their workspace's
-devices.idleShutdownMinutes, also with no supervisor running, through the
-supervisor's idle rules and records (guide lifecycle budget). When neither a
-supervisor nor the dev server it started runs, device log lines do not count
-as activity of a slot whose last launch loads its JS from Metro; they still
-count for a Release or native-process launch and for a slot with no recorded
-launch, where any change to the workspace's device.ndjson counts. While the level is warning or critical, the
+Idle devices and dev servers are the daemon's activity pass, not a
+maintenance check (guide metro, IDLE STOP). While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
-IDLE STOP: the idle check, and gc --delete unless maintenance.mode is off (its
-dry run lists them in the maintenance plan), stop a workspace whose dev server
+IDLE STOP: gc --delete, unless maintenance.mode is off, stops a workspace whose dev server
 runs, whose owned simulator or emulator is booted, or whose device is hosted on a remote Mac once it has had no real
 activity for maintenance.idleStopHours (default 6; 0 never; machine or project
 layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
@@ -238,7 +228,7 @@ DISK PRESSURE LEVELS
 
 The machine log is $STIM_HOME/maintenance/maintenance.ndjson, rotated at
 maintenance.logMaxMb with the old generation retained for
-maintenance.logRetentionDays. Child crashes use maintenance/child.log.
+maintenance.logRetentionDays. A pass that crashes writes maintenance/child.log.
 In report mode actions and explaining skips are logged only when newly
 planned; in on mode every action taken, failure and explaining skip is logged
 with its bytes, and a pass record carries the bytes freed. Removal of a

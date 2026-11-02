@@ -457,8 +457,8 @@ leased until <time>" for each one.`,
   devServer       present only when this run started the workspace's dev
                   server because none was running (\`ios\` and \`android\`):
                     { started: true, reason }
-                  reason is "not running" or "stopped (idle)" when the
-                  supervisor had stopped it after metro.idleStopMinutes
+                  reason is "not running" or "stopped (idle)" when it was
+                  stopped after idle.minutes without activity
   links           as in start, with &platform= and, for a named slot, &slot=,
                   so Stim Desktop can focus that device
 
@@ -1409,18 +1409,18 @@ RULES
                    lock, argent, xcodebuild, idb, maestro, appium, simctl,
                    uiautomator or instrumentation; pid and since are null when
                    the claim does not record them
-  lastActivityAt   the newest of this device's app log records, changes to
-                   the workspace's client.ndjson and device.ndjson logs,
-                   this platform's Metro bundle requests, the workspace's
-                   last Stim run, while agent-device drives it the agent's last
-                   recorded action, and now while a stim-server client views
-                   it, rounded down to the minute; absent when none is
-                   recorded
-  recent           the newest time of each kind of evidence behind
-                   lastActivityAt: agent-action, device-log, metro-bundle,
-                   workspace-use, supervisor-start, page-log or viewer, each
-                   rounded down to the minute. viewer is now while a
-                   stim-server client streams the device's frames
+  lastActivityAt   the newest of this platform's Metro bundle requests, the
+                   workspace's last Stim run, while agent-device drives it
+                   the agent's last recorded action, and the last input a
+                   stim-server client sent it, rounded down to the minute;
+                   absent when none is recorded. Device and app logs never
+                   count
+  recent           the newest time of each kind of evidence: agent-action,
+                   device-log, metro-bundle, workspace-use, supervisor-start,
+                   page-log or viewer, each rounded down to the minute.
+                   device-log is shown but is not activity. viewer is the
+                   last input a stim-server client sent the device; frames it
+                   only streams leave it out
   unknown          for "driven" only: the checks that could not be read, in
                    basis's vocabulary; absent when every check was read
   basis            the evidence behind state, strongest first:
@@ -1450,9 +1450,16 @@ RULES
 
   idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run"
                   | "Metro's idle stop" }
-  Absent reason or "idle" means supervisor idle shutdown; reclaim adds
-  "reclaimed for a waiting run" to plain status, and a shutdown at Metro's
-  idle stop adds "with Metro's idle stop".
+  Absent reason or "idle" means a supervisor's own idle shutdown; reclaim
+  adds "reclaimed for a waiting run" to plain status, and the idle stage,
+  which stops Metro and devices together, adds "with Metro's idle stop".
+
+  A workspace the stim-daemon moved into the idle stage, with no Stim command
+  since, carries idleStage, and plain status prints a stage line:
+
+  idleStage     { at, idleMinutes, freedBytes }
+  freedBytes is the regenerable build output the stage deleted; stim revive
+  resumes the workspace.
   \`gc --idle <duration>\` shuts down owned devices idle that long
   (\`guide cleanup gc\`).
 
@@ -1883,6 +1890,15 @@ RULES
   The memory budget plans before a boot
   and always uses the estimate. What is using CPU and memory now is the
   top-level machine section:
+
+  daemon { mode, running: { pid, since } | null, lastTickAt, intervalMs, claim? }
+    mode is on, report or off (daemon.mode; always off on Windows). running
+    comes from a live claim at $STIM_HOME/daemon/claim. lastTickAt and
+    intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
+    the tick's measurement and each running workspace's decision; null
+    before a first tick. A last tick older than three intervals while it runs
+    means it stopped ticking (\`stim doctor\`). claim is an unresolved claim's
+    path and reason with removeCommand.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
