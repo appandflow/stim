@@ -315,7 +315,7 @@ stats records `capacityWaits` and positive placement `deviceSlotWaitMs`.
 
 `concurrency.maxIosDevices`, `concurrency.maxAndroidDevices` and
 `concurrency.maxMacosApps` cap one platform each: booted owned iOS simulators,
-booted owned Android emulators and hosted macOS apps on a worker. They default
+booted owned Android emulators and macOS apps. They default
 to `0`, no per-platform limit, and they only tighten. A run must fit its
 platform's cap and `concurrency.maxDevices`: `maxDevices` counts simulators and
 emulators together, local and hosted, and counts hosted macOS apps as a pool of
@@ -327,8 +327,11 @@ back only by its own platform's cap does not hold up a run on the other
 platform; reclaim for a full platform cap shuts down only devices of that
 platform. A stim-server worker applies all three caps when it offers and
 reserves a hosted session, counting its own local simulators and emulators.
-Local `stim macos` runs are not counted, so `maxMacosApps` limits hosted macOS
-apps only. A refusal names the full limit with its count and cap, such as
+Local `stim macos` counts running owned app workspaces in this Stim home,
+separately from hosted reservations. At capacity it refuses immediately;
+builds remain parallel, and replacing this workspace's app does not add to
+the count. Both macOS pools fit `maxMacosApps` and `maxDevices` separately.
+A refusal names the full limit with its count and cap, such as
 `1 Stim iOS simulator(s) are already booted and concurrency.maxIosDevices is 1`.
 
 ```bash

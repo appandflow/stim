@@ -617,7 +617,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     env: 'STIM_MAX_DEVICES',
     description:
-      'Booted owned iOS simulators and Android emulators together, and, separately, hosted macOS apps; 0 means no limit',
+      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 means no limit',
   },
   {
     key: 'concurrency.maxIosDevices',
@@ -642,7 +642,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_MACOS_APPS',
-    description: 'Hosted macOS apps, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
+    description:
+      'Local and hosted macOS apps in separate pools, also bounded by concurrency.maxDevices; 0 means no per-platform limit',
   },
   {
     key: 'budget.minFreeDiskGb',

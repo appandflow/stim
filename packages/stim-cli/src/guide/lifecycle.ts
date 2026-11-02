@@ -818,7 +818,7 @@ the offered simulator architecture, not this machine's. --remote-build remains
 independent and selects a compatible build worker for a cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
-(concurrency.maxIosDevices, concurrency.maxAndroidDevices; hosted macOS apps use concurrency.maxMacosApps).
+(concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
@@ -2207,7 +2207,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
     concurrency.maxIosDevices      booted owned iOS simulators at once.
     concurrency.maxAndroidDevices  booted owned Android emulators at once.
-    concurrency.maxMacosApps       hosted macOS apps on a worker at once.
+    concurrency.maxMacosApps       local or hosted macOS apps at once.
                             Each is 0 (no per-platform limit) unless set, and
                             each only tightens: a run must fit its platform's
                             cap AND concurrency.maxDevices. maxDevices counts
@@ -2225,8 +2225,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             devices of that platform. Hosted admission on a
                             worker (offer and reserve) applies all three,
                             counting the worker's local devices too.
-                            Local \`stim macos\` runs are not counted, so
-                            maxMacosApps limits hosted macOS apps only.
+                            Local \`stim macos\` counts running owned app
+                            workspaces in this Stim home in a separate pool
+                            from hosted reservations. At capacity it refuses
+                            immediately; builds remain parallel. Replacing
+                            this workspace's app does not add to the count.
                             A refusal names the full limit, its count and its
                             cap, for example "1 Stim iOS simulator(s) are
                             already booted and concurrency.maxIosDevices is 1".
