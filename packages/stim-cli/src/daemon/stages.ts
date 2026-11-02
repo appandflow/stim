@@ -143,24 +143,28 @@ export function stoppedOutputCandidates(
 
 type StageResult = Pick<DaemonLadderAction, 'outcome' | 'bytes' | 'detail'>;
 
-/** Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. */
+/**
+ * Deletes a stopped workspace's regenerable build outputs under its native-run and metro-start locks. Null when every
+ * output it has is kept, such as a Metro store a running dev server shares.
+ */
 export async function clearStoppedOutputs(
   candidate: StageCandidate,
   config: Config,
   thresholdMs: number,
-): Promise<StageResult> {
+): Promise<StageResult | null> {
   const { path } = candidate;
   const run = await withIdleWorkspace(
     path,
-    async (): Promise<StageResult> => {
+    async (): Promise<StageResult | null> => {
       try {
         return await withWorkspaceProcessLock(
           workspaceDir(path),
           'metro-start',
-          async (): Promise<StageResult> => {
+          async (): Promise<StageResult | null> => {
             if ((await idleFor(path, thresholdMs, 'the pressure idle threshold', true)) === null)
               return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle' };
             const outputs = await idleOutputs(path, config);
+            if (!outputs.paths.length) return null;
             const bytes = await deleteOutputs(outputs.paths);
             return {
               outcome: 'done',

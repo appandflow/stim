@@ -231,6 +231,21 @@ describe('the pressure ladder', () => {
     expect(deleted).toEqual([]);
   });
 
+  test('rung 1 records nothing for a stopped workspace whose only output is a Metro store a running dev server shares', async () => {
+    workspace('stopped', 5 * MINUTE_MS, 'Shutdown');
+    const sharer = join(projects, 'sharer');
+    mkdirSync(sharer);
+    upsertProject(sharer, { metroPort: 59124, supervisor: { pid: process.pid, port: 59999 } });
+    const store = join(metroCache(), 'app');
+    mkdirSync(store, { recursive: true });
+    const { actions } = await runLadder(
+      input(true, async () => pressure('high')),
+      pressure('high'),
+    );
+    expect(existsSync(store)).toBe(true);
+    expect(actions.filter((action) => action.rung === 1)).toEqual([]);
+  });
+
   test('a memory-only level never trims a cache or deletes a device', async () => {
     workspace('idle-hour', 60 * MINUTE_MS, 'Shutdown');
     caches('kept-key');

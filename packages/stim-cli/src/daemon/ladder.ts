@@ -151,6 +151,7 @@ async function idleOutputsRung(context: RungContext): Promise<void> {
     const result = context.act
       ? await clearStoppedOutputs(candidate, context.config, PRESSURE_IDLE_MS)
       : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing' };
+    if (!result) continue;
     recordAction(
       context,
       {
@@ -323,6 +324,8 @@ async function dependenciesRung(context: RungContext): Promise<void> {
   const options = { now: Date.now(), windowMs: PRESSURE_IDLE_MS, protectedRoot: '', pinned: maintenancePinned };
   const found = await collectArtifactsAsync('dependencies', options, new AbortController().signal);
   const worktrees = artifactWorktrees();
+  // Clearing one directory writes the worktree's restore record, which counts as use within the window, so a second
+  // directory of the same worktree waits for a tick 2 minutes later.
   for (const candidate of found.candidates) {
     const [workspace] = workspaceKeys(candidate.keys);
     if (!workspace) continue;
