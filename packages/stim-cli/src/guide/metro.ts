@@ -232,7 +232,7 @@ the workflow, stop the workspace and the specific unit you created:
   systemctl --user stop stim-metro-my-worktree.service
 
   IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
-  (default 60; 0 never stops) with no bundle request, no client log record
+  (default 15; 0 never stops) with no bundle request, no client log record
   (in-app console logs; for Expo or metro.command, any stdout line of the
   dev server) and no Stim
   command in the workspace (start, ios, android, reload, logs, worktree
@@ -250,7 +250,7 @@ the workflow, stop the workspace and the specific unit you created:
   connected app alone does not keep the server. It records a
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  Devices stay booted, unless devices.idleShutdownMinutes is above 0 (the default is 30): then the
+  Devices stay booted, unless devices.idleShutdownMinutes is above 0 (the default is 15): then the
   idle stop first shuts down the workspace's owned devices idle for the
   shorter of the two (\`guide lifecycle budget\`). The next \`stim start\`
   starts it again and clears the

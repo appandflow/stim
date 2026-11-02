@@ -788,9 +788,9 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       '--port',
       String(port),
       '--idle-stop-minutes',
-      '60',
+      '15',
       '--device-idle-minutes',
-      '30',
+      '15',
     ]);
     expect(spawned.opts.cwd).toBe(root);
     expect(spawned.opts.detached).toBe(true);
@@ -853,7 +853,7 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
     expect(spawned.args.at(-1)).toContain('[System.Diagnostics.Process]::Start($start)');
     expect(spawned.opts.env).toMatchObject({
       STIM_WINDOWS_LAUNCH_FILE: process.execPath,
-      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--idle-stop-minutes" "60" "--device-idle-minutes" "30" "--log-file" "${supervisorLogFile(root)}"`,
+      STIM_WINDOWS_LAUNCH_ARGS: `"${supervisorEntry()}" "--root" "${root}" "--port" "${port}" "--idle-stop-minutes" "15" "--device-idle-minutes" "15" "--log-file" "${supervisorLogFile(root)}"`,
       STIM_WINDOWS_LAUNCH_CWD: root,
     });
     const facts = JSON.parse(result.logs[0] ?? '');
@@ -997,9 +997,9 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       String(port),
       '--tunnel',
       '--idle-stop-minutes',
-      '60',
+      '15',
       '--device-idle-minutes',
-      '30',
+      '15',
     ]);
   });
 
@@ -1038,9 +1038,9 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       '--port',
       String(port),
       '--idle-stop-minutes',
-      '60',
+      '15',
       '--device-idle-minutes',
-      '30',
+      '15',
     ]);
   });
 
@@ -1140,9 +1140,9 @@ describe('action: spawning the supervisor', { timeout: 30_000 }, () => {
       String(port),
       '--tunnel',
       '--idle-stop-minutes',
-      '60',
+      '15',
       '--device-idle-minutes',
-      '30',
+      '15',
     ]);
   });
 

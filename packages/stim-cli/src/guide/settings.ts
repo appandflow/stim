@@ -487,7 +487,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         them. See \`guide metro\` for warmup behavior.
   metro.idleStopMinutes minutes without a bundle request, client log record or
                         Stim command before the supervisor stops the dev
-                        server (default 60). 0 never stops it. Never during a
+                        server (default 15). 0 never stops it. Never during a
                         build or bundle response, while the workspace holds
                         a device lock, or while a workspace device is
                         driven. Read
@@ -497,7 +497,7 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         minutes an owned simulator or emulator stays idle
                         (\`gc --idle\` conditions; an open stim-server viewer
                         counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 30; 0 never.
+                        shuts it down, never deletes it. Default 15; 0 never.
                         Machine or project layers. Read when the supervisor
                         starts; see \`guide lifecycle budget\`.
   devices.reclaimIdleMinutes
