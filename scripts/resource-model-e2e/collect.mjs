@@ -34,7 +34,7 @@ export function newestRecordMs(file, events, beforeMs) {
     .split('\n')) {
     try {
       const record = JSON.parse(line);
-      const at = Date.parse(record.ts ?? record.time ?? record.timestamp);
+      const at = typeof record.ts === 'number' ? record.ts : Date.parse(record.ts);
       if (events.has(record.event) && Number.isFinite(at) && at <= beforeMs && (best === null || at > best.at)) {
         best = { at, event: record.event };
       }
