@@ -360,13 +360,24 @@ describe('phaseSteps', () => {
     const cleaning = phaseSteps(repeated, history, NOW);
     expect(cleaning.find((step) => step.phase === 'cleanup')).toMatchObject({
       state: 'current',
-      elapsedMs: 47_000,
       expectedMs: null,
       fraction: null,
     });
     expect(barSteps(cleaning)[0]).toMatchObject({ phase: 'prepare', state: 'current', fraction: null });
-    const resumed = phaseSteps({ ...repeated, phase: 'prepare', completedPhaseMs: { cleanup: 7000 } }, history, NOW);
+    const resumed = phaseSteps(
+      {
+        ...repeated,
+        phase: 'prepare',
+        phaseStartedAt: iso(10_000),
+        expectedPhaseMs: 60_000,
+        completedPhaseMs: { prepare: 20_000, cleanup: 7000 },
+      },
+      history,
+      NOW,
+    );
+    expect(resumed.find((step) => step.phase === 'prepare')).toMatchObject({ elapsedMs: 30_000, fraction: 0.5 });
     expect(resumed.find((step) => step.phase === 'cleanup')).toMatchObject({ state: 'done', elapsedMs: 7000 });
+    expect(cleaning.find((step) => step.phase === 'cleanup')?.elapsedMs).toBe(50_000);
   });
 
   it('keeps the time of a phase that came before the current one in phase order', () => {

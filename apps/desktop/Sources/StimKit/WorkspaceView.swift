@@ -446,7 +446,9 @@ extension Build {
   public func phaseSteps(history: [BuildHistoryEntry], now: Date) -> [PhaseStep] {
     let reference = plannedDurations(history)
     let currentIndex = PhaseStep.order.firstIndex(of: phase) ?? -1
-    let inPhase = parseTimestamp(phaseStartedAt).map { max(0, now.timeIntervalSince($0) * 1000) }
+    let inPhase = parseTimestamp(phaseStartedAt).map {
+      max(0, now.timeIntervalSince($0) * 1000) + (completedPhaseMs?[phase] ?? 0)
+    }
     return PhaseStep.order.enumerated().filter {
       $0.offset == currentIndex || reference[$0.element] != nil || completedPhaseMs?[$0.element] != nil
     }.map {

@@ -487,7 +487,7 @@ export function phaseSteps(build: BuildReport, history: readonly BuildHistoryEnt
     (phase, i) => i === currentIndex || reference[phase] !== undefined || completed[phase] !== undefined,
   );
   const phaseStart = Date.parse(build.phaseStartedAt);
-  const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) : null;
+  const inPhase = Number.isFinite(phaseStart) ? Math.max(0, now - phaseStart) + (completed[build.phase] ?? 0) : null;
   if (currentIndex < 0)
     return [{ phase: 'unknown', state: 'current', elapsedMs: inPhase, expectedMs: null, fraction: null }];
   return phases.map((phase) => {
