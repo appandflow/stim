@@ -93,12 +93,20 @@ function failure(code: string, message: string, remedy: string | null): { ok: fa
   return { ok: false, error: { code, message, remedy } };
 }
 
-function lastSuccessfulRun(state: WorkspaceState | null, platform: Platform, appId: string) {
+function lastSuccessfulRun(
+  state: WorkspaceState | null,
+  platform: Platform,
+  appId: string,
+): { build: RecordedBuild; configuration: string | null } | null {
   const record = state?.[LAST_BUILD_KEYS[platform]];
   if (!isJsonObject(record) || record.status !== 'ok' || record.bundleId !== appId) return null;
   if (typeof record.appPath !== 'string') return null;
+  const { fingerprint, cacheKey, cacheHit } = record;
+  const hit: 'local' | 'remote' | null = cacheHit === 'local' || cacheHit === 'remote' ? cacheHit : null;
+  const cache =
+    typeof fingerprint === 'string' && typeof cacheKey === 'string' && hit ? { fingerprint, key: cacheKey, hit } : null;
   return {
-    build: { appPath: record.appPath, bundleId: appId, builtAt: '' },
+    build: { appPath: record.appPath, bundleId: appId, builtAt: '', ...(cache ? { cache } : {}) },
     configuration: typeof record.configuration === 'string' ? record.configuration : null,
   };
 }
@@ -284,7 +292,12 @@ function writeNote(line: string): void {
 }
 
 function nestedContext(context: StimContext): StimContext {
-  return { ...context, output: (_stream, text) => context.output('stderr', text) };
+  return {
+    ...context,
+    output: (stream, text) => {
+      if (stream === 'stderr') context.output('stderr', text);
+    },
+  };
 }
 
 function defaultDeps(context: StimContext): ReviveDeps {

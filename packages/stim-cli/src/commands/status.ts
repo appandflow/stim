@@ -237,7 +237,7 @@ function renderStatus(
         ? chalk.green(`running (pid ${state.metro.pid})`)
         : state.metro.idleStop
           ? chalk.dim(
-              `stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim start\`, \`ios\` or \`android\` restarts it`,
+              `stopped (idle) after ${state.metro.idleStop.idleMinutes}m; \`stim revive\` restarts it and relaunches the app`,
             )
           : state.metro.lastStop
             ? chalk.dim(

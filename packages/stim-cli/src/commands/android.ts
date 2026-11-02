@@ -1417,6 +1417,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const { artifact } = acquiredArtifact;
+    const recordedCache = recordedLookup.build?.cache;
+    if (recordedCache) {
+      record.fingerprint = recordedCache.fingerprint;
+      record.cacheKey = recordedCache.key;
+      record.cacheHit = recordedCache.hit;
+    }
     preparedArtifact = artifact;
     const { apkPath } = artifact;
     ccacheActivity = artifact.ccache;

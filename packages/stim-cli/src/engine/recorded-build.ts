@@ -11,6 +11,8 @@ export interface RecordedBuild {
   appPath: string;
   bundleId: string | null;
   builtAt: string;
+  /** The cache entry `appPath` came from, so a run that installs it records a hit of that entry. */
+  cache?: { fingerprint: string; key: string; hit: 'local' | 'remote' };
 }
 
 export function recordedBuildKey(selectors: {

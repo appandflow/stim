@@ -4914,6 +4914,24 @@ describe('a recorded build', () => {
     for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle']) expect(calls.order).not.toContain(step);
   });
 
+  test('that names its cache entry is recorded as a hit of that entry, not as a compile', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    const cache = { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' as const };
+    const { exitCode, calls } = await run({
+      recordedBuild: { appPath: recorded, bundleId: 'dev.fixture.app', builtAt: '', cache },
+    });
+    expect(exitCode).toBe(null);
+    expect(calls.order).not.toContain('resolveBuild');
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
+      status: 'ok',
+      cacheHit: 'local',
+      cacheSkipped: false,
+      fingerprint: 'f1',
+    });
+  });
+
   test('is refused when the selectors differ from the recorded build', async () => {
     reserve();
     const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');

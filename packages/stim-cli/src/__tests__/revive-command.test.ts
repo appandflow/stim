@@ -28,6 +28,9 @@ const idleState: WorkspaceState = {
     bundleId: 'com.example.app',
     configuration: 'Debug',
     startedAt: '2026-11-01T09:59:00.000Z',
+    fingerprint: 'f1',
+    cacheKey: 'f1-debug-sim-arm64',
+    cacheHit: 'local',
   },
 };
 
@@ -73,7 +76,12 @@ test('an idle-stopped workspace gets Metro, its simulator and its last app back,
     {
       slot: 'default',
       configuration: 'Debug',
-      recordedBuild: { appPath: APP, bundleId: 'com.example.app', builtAt: '' },
+      recordedBuild: {
+        appPath: APP,
+        bundleId: 'com.example.app',
+        builtAt: '',
+        cache: { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' },
+      },
     },
   ]);
   expect(result.facts.revived).toEqual({

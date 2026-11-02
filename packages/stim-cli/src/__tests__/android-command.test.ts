@@ -4801,6 +4801,24 @@ describe('a recorded build', () => {
     expect(result.ok).toBe(true);
     expect(h.calls.install[0]?.apkPath).toBe(recorded);
   });
+
+  test('that names its cache entry is recorded as a hit of that entry, not as a compile', async () => {
+    const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
+    mkdirSync(dirname(recorded), { recursive: true });
+    writeFileSync(recorded, 'apk');
+    const cache = { fingerprint: 'f1', key: 'f1-debug', hit: 'local' as const };
+    const h = harness({
+      recordedBuild: { appPath: recorded, bundleId: 'dev.fixture', builtAt: '', cache },
+      resolveCached: never('the cache lookup'),
+      build: never('the build'),
+    });
+    expect((await h.run()).ok).toBe(true);
+    expect(readLastBuilds(readWorkspaceState(root)).android).toMatchObject({
+      status: 'ok',
+      cacheHit: 'local',
+      fingerprint: 'f1',
+    });
+  });
 });
 
 describe('clean app state', () => {
