@@ -169,7 +169,7 @@ test('a tick that fails hands the timers back: the daemon releases its claim and
   expect(existsSync(daemonSocket())).toBe(false);
 }, 20_000);
 
-test('a command starts the daemon in the mode it resolved, with its locations, CI and setting overrides only', async () => {
+test('a command starts the daemon in the mode it resolved, with its locations, CI and non-sensitive setting overrides only', async () => {
   const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
   setExecutor({
     ...getExecutor(),
@@ -190,10 +190,19 @@ test('a command starts the daemon in the mode it resolved, with its locations, C
     ANDROID_SDK_HOME: '/android',
     ANDROID_ADB_SERVER_PORT: '5038',
     GRADLE_USER_HOME: '/gradle',
+    XDG_CONFIG_HOME: '/config',
     XDG_CACHE_HOME: '/cache',
   };
+  const dropped = {
+    API_TOKEN: 'secret',
+    NODE_OPTIONS: '--inspect',
+    GRADLE_ENTERPRISE_ACCESS_KEY: 'secret',
+    GRADLE_OPTS: '-Dorg.gradle.project.signingPassword=secret',
+    XDG_RUNTIME_DIR: '/run',
+    STIM_ASC_KEY_PATH: '/keys/AuthKey.p8',
+  };
 
-  expect(await ensureDaemon({ ...kept, API_TOKEN: 'secret', NODE_OPTIONS: '--inspect' })).toBe(false);
+  expect(await ensureDaemon({ ...kept, ...dropped })).toBe(false);
 
   expect(spawned).toHaveLength(1);
   expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);

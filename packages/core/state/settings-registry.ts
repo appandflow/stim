@@ -989,7 +989,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     env: 'STIM_DAEMON',
     ciValue: 'off',
     description:
-      'The per-home stim-daemon that start, ios, android, web, macos and revive start and that exits once nothing runs in the home. on: it decides idle, stopping idle workspaces and deleting their regenerable build outputs, and runs automatic maintenance. report: it logs what it would do and acts on nothing. off: no daemon; each dev server supervisor times its own idle stop, and doctor, start, ios and android run automatic maintenance in their own process. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set. Windows has no daemon and works as off',
+      'The per-home stim-daemon that start, ios, android, web, macos and revive start and that exits once nothing runs in the home. on: it decides idle, stopping idle workspaces and deleting their regenerable build outputs, and runs automatic maintenance. report: it logs what it would do and acts on nothing. off: no daemon; each dev server supervisor times its own idle stop, and doctor, start, ios and android run automatic maintenance in their own process. The daemon keeps the mode it started with, STIM_DAEMON included, unless the machine setting later turns stricter, and the CI and non-sensitive setting environment overrides of the command that started it for its whole life. Off in CI unless STIM_DAEMON is set. Windows has no daemon and works as off',
   },
   {
     key: 'debug.logs',
