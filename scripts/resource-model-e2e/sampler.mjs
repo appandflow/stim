@@ -14,8 +14,14 @@ const env = stimEnvironment(config.home, config.extraEnv ?? {});
 let statusBusy = false;
 let lastStatusAt = 0;
 const state = { stopping: false };
-process.on('SIGTERM', () => (state.stopping = true));
-process.on('SIGINT', () => (state.stopping = true));
+const abort = new AbortController();
+for (const name of ['SIGTERM', 'SIGINT']) {
+  process.on(name, () => {
+    state.stopping = true;
+    abort.abort();
+    setTimeout(() => process.exit(0), 500).unref();
+  });
+}
 
 function parentAlive() {
   try {
@@ -29,7 +35,12 @@ function parentAlive() {
 function snapshotStatus() {
   statusBusy = true;
   lastStatusAt = Date.now();
-  run(process.execPath, [config.cli, 'status', '--json'], { cwd: config.out, env, timeoutMs: 120_000 })
+  run(process.execPath, [config.cli, 'status', '--json'], {
+    cwd: config.out,
+    env,
+    timeoutMs: 120_000,
+    signal: abort.signal,
+  })
     .then((result) => {
       const payload = result.code === 0 ? parseJsonOutput(result.stdout) : null;
       writeFileSync(

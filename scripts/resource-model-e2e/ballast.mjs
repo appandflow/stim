@@ -43,11 +43,12 @@ export function createBallast({
       return written;
     },
     free,
-    async stepTo(targetBytes) {
+    async stepTo(targetBytes, signal) {
       const target = Math.max(targetBytes, floorBytes);
       const before = free();
       let remaining = before - target;
       while (remaining > 0) {
+        if (signal?.aborted) break;
         await append(Math.min(remaining, chunkBytes));
         remaining = free() - target;
       }

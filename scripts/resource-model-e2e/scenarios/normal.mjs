@@ -38,7 +38,11 @@ async function dormantPhase(ctx, live, reviveEndMs) {
   const previousPollStartMs = new Map(live.map((workspace) => [workspace.label, null]));
   while (Date.now() < end && seen.size < live.length && !ctx.signal.aborted) {
     const began = Date.now();
-    const sims = (await readSimulators(60_000)) ?? [];
+    const sims = await readSimulators(60_000);
+    if (sims === null) {
+      await sleep(POLL_MS, ctx.signal);
+      continue;
+    }
     const names = new Set(sims.map((sim) => sim.udid));
     for (const workspace of live) {
       if (seen.has(workspace.label)) continue;

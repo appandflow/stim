@@ -70,7 +70,8 @@ the machine running the harness), copies that tree and the harness to `~/rm-e2e/
 `run.mjs --target local` there through `ssh`, streams its output back, copies the results into `--out`, and deletes the
 remote copy. Requirements on the host: key-based ssh, Node 22.18 or later on the PATH of a login shell, Xcode, and the
 project at `--project`. `--home-dir` and `--work-dir` are paths on the host. `pnpm` is needed only where the harness
-starts. If the connection drops, the remote harness receives SIGHUP and tears down.
+starts. The session has a pty (`ssh -tt`), so a dropped connection sends SIGHUP to the remote harness, which tears down;
+a local interrupt hangs up the session the same way and then fetches the results.
 
 ## Where the work happens
 
@@ -102,13 +103,14 @@ from the environment, so no command reads or writes a real `~/.stim`. The harnes
 Teardown runs on success, failure and SIGINT, SIGTERM or SIGHUP, and removes only what the run created:
 
 1. `stim stop` in each worktree;
-2. `stim worktree remove --force` in each worktree (`git worktree remove --force` if that leaves one behind), then
-   `git worktree prune`;
+2. `stim worktree remove --force` in each worktree (`git worktree remove --force` if that leaves one behind);
 3. `xcrun simctl shutdown` and `delete` for simulators that were in the private ledger at any point and still exist;
 4. a bounded wait for the home's `trash` to empty and for the run's supervisors, collectors, daemon and Metro to exit,
-   then SIGTERM and SIGKILL for pids recorded in the private home whose command line still matches;
+   then SIGTERM and SIGKILL for pids recorded in the private home that are alive, started after the run did, and
+   still carry a stim title or a path of the run;
 5. the ballast file, the private home (after copying `evidence/`, below), and then the work and home directories if
-   the run created them and they are empty.
+   the run created them and they are empty. The home is kept, with a note in the report, when `simctl list` failed
+   or a simulator of the run could not be deleted, because its ledger is the proof that the simulator is the run's.
 
 Each worktree gets `stim worktree warm`, then, when `ios/Pods` holds dangling symlinks (the source checkout's Pods can
 point into an `ios/build` that was cleaned), `bundle exec pod install` in `ios/` (`pod install` without a Gemfile)
@@ -126,8 +128,8 @@ Every build waits for the 1-minute load to drop under `--max-load`. The `stress`
 `metro.idleStopMinutes` (workspace layer, in the private home) and `devices.idleShutdownMinutes` (machine layer).
 `--dormant-minutes N` writes `idle.dormantDays` as `N / 1440`; a build without that setting, or one that refuses a
 fraction of a day, reports the dormant assertions as `N/A`. Settings are written after `worktree warm` and before the
-first command that starts anything, and read back with `stim settings get`; the effective idle value is the window the
-assertions use. The `disk` scenario relies on the ladder's fixed rules (idle for 2 minutes at high pressure, 10 minutes
+first command that starts anything, and read back with `stim settings get`; the effective idle value (the larger of the two
+legacy settings, since a workspace is idle only when both have fired) is the window the assertions use. The `disk` scenario relies on the ladder's fixed rules (idle for 2 minutes at high pressure, 10 minutes
 for dormancy), so leave `--idle-minutes` unset there.
 
 ## Sampler and report
@@ -146,7 +148,7 @@ sampler as one table of per-bucket extremes (a bar column for load; no images), 
 `samples.csv`, `status/`, `runs/` (stdout, stderr and an index of every stim command), `events.ndjson`,
 `assertions.json`, and `evidence/` (the daemon log and snapshot, the maintenance log, the device ledger, and each
 workspace's state and the tail of its Metro log, copied before the home is deleted). Exit status: 0 when no assertion
-failed, 1 when one did, 2 when the harness stopped early.
+failed, 1 when one did, 2 when the harness stopped early or its teardown did not finish cleanly.
 
 ## Assertions
 
@@ -161,9 +163,9 @@ N workspaces start (`stim start`) and launch (`stim ios`) one after another, the
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `launch`                  | each `stim start` and `stim ios` exits 0 with `launched` true or `bundling`                                                                                                                       |
 | `idle-stage`              | each workspace is seen idle within its idle window plus one 60 s tick of its last activity (see below)                                                                                            |
-| `idle-metro-down`         | at that poll `metro.running` is false and Metro's idle stop is recorded                                                                                                                           |
+| `idle-metro-down`         | at that poll `metro.running` is false (the idle-stop record is shown as evidence)                                                                                                                 |
 | `idle-devices-down`       | at that poll none of the workspace's iOS devices is `Booted` or `Booting`                                                                                                                         |
-| `idle-stage-reported`     | `stage.kind` is `idle` or `dormant`; `N/A` on builds whose stage kinds have no idle stage                                                                                                         |
+| `idle-stage-reported`     | `stage.kind` is `idle` or `dormant`; fails on `running` or `building`; `N/A` for any other kind, as on builds whose stage kinds have no idle stage                                                |
 | `idle-derived-data-gone`  | the workspace's `derived-data/` held files after launch and is empty or gone after the idle stop; `N/A` for a cache-hit run that built nothing                                                    |
 | `revive`                  | `stim revive --json` exits 0 with `revived.metro.restarted` true and every device's app `launched` true or `bundling`, and status then shows Metro running, a device up                           |
 | `dormant-devices-deleted` | with `--dormant-minutes`: after the revives, each workspace's recorded simulators are gone from `simctl` within the dormant window plus one tick; `N/A` where the build has no `idle.dormantDays` |
@@ -173,7 +175,8 @@ Idle timing: the last activity is bounded above by the end of the last stim comm
 `lastActivityAt` in status plus one minute (status rounds it down to the minute), and never later than the poll that
 read it. The deadline is that time plus the window plus 60 s. The assertion fails when a poll that started after the
 deadline still saw the workspace working, or when the workspace is not idle by the end of the deadline plus five
-minutes; with polls 15 s apart, an idle stop is confirmed on time to within one poll.
+minutes. Polls are 15 s apart, or twice the length of a status call when that is longer, so an idle stop is placed
+to within one poll gap.
 
 ### `disk`
 

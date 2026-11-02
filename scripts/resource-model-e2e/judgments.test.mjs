@@ -100,6 +100,15 @@ describe('idle facts from status', () => {
   it('does not call a workspace idle while its simulator is booted', () => {
     expect(idleFacts({ ...stopped, ios: { udid: 'U', state: 'Booted' } }).idle).toBe(false);
   });
+  it('takes the idle stage from the idleStage record the daemon writes', () => {
+    const facts = idleFacts({
+      stage: { kind: 'stopped' },
+      idleStage: { at: 'x', idleMinutes: 15, freedBytes: 42 },
+      metro: { running: false },
+      ios: { udid: 'U', state: 'Shutdown' },
+    });
+    expect(facts).toMatchObject({ idle: true, stageIdle: true });
+  });
   it('takes an idle stage from the build when it reports one', () => {
     expect(
       idleFacts({ stage: { kind: 'idle' }, metro: { running: true }, ios: { udid: 'U', state: 'Booted' } }).idle,

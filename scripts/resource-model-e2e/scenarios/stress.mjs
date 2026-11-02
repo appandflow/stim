@@ -31,6 +31,10 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   const A = ctx.assertions;
   const window = rows.filter((row) => row.epoch * 1000 >= startedAt - 5000);
   const interval = ctx.sampleIntervalSec;
+  const sampled = (ok, id, title, evidence) =>
+    window.length
+      ? verdict(A, ok, SCENARIO, id, title, evidence)
+      : A.unavailable(SCENARIO, id, title, ['the sampler recorded no rows for the batch']);
 
   A.fromItems(
     SCENARIO,
@@ -48,17 +52,10 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   const cap = ctx.deviceCap;
   const peak = Math.max(0, ...window.map((row) => (row.booted_ours ?? 0) + (row.booting_ours ?? 0)));
   const reported = ctx.snapshots.map((poll) => poll.deviceSlots?.max).find((max) => max !== undefined);
-  verdict(
-    A,
-    peak <= cap,
-    SCENARIO,
-    'booted-cap',
-    `owned booted or booting devices never exceed the derived cap of ${cap}`,
-    [
-      `peak ${peak} over ${window.length} samples of ${interval} s`,
-      `status capacity.devices.max: ${reported ?? 'not available on this build'}`,
-    ],
-  );
+  sampled(peak <= cap, 'booted-cap', `owned booted or booting devices never exceed the derived cap of ${cap}`, [
+    `peak ${peak} over ${window.length} samples of ${interval} s`,
+    `status capacity.devices.max: ${reported ?? 'not available on this build'}`,
+  ]);
 
   const exposed = ctx.snapshots.filter((poll) => poll.bootsInFlight !== null);
   const title = `boots in flight never exceed ${MAX_BOOTS_IN_FLIGHT} (status capacity.devices holders)`;
@@ -73,10 +70,8 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
     ]);
   }
   const booting = maxOf(window, 'booting_ours');
-  verdict(
-    A,
+  sampled(
     booting === null || booting <= MAX_BOOTS_IN_FLIGHT,
-    SCENARIO,
     'booting-sampled',
     `at most ${MAX_BOOTS_IN_FLIGHT} owned simulators are in the Booting state at once (sampler, supplementary)`,
     [`peak ${booting ?? 'n/a'} simulators in simctl state Booting, sampled every ${interval} s`],
@@ -95,10 +90,8 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   );
 
   const critical = longestStreak(window, (row) => row.pressure === CRITICAL_LEVEL, interval);
-  verdict(
-    A,
+  sampled(
     critical.ms <= CRITICAL_ALLOWED_MS,
-    SCENARIO,
     'pressure-critical',
     'memory pressure is never critical for more than one 60 s tick',
     [

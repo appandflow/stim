@@ -37,11 +37,13 @@ export function idleFacts(env) {
   const metroIdleStop = Boolean(env.metro?.idleStop) || env.metro?.lastStop?.reason === 'idle';
   const devicesUp = devices.filter((device) => device.state === 'Booted' || device.state === 'Booting');
   const idleShutdowns = devices.filter((device) => device.idleShutdown).length;
-  const stageIdle = IDLE_STAGES.has(stageKind);
+  const idleStage = env.idleStage ?? null;
+  const stageIdle = IDLE_STAGES.has(stageKind) || idleStage !== null;
   return {
     present: true,
     stageKind,
     stageIdle,
+    idleStage,
     metroRunning,
     metroIdleStop,
     deviceCount: devices.length,

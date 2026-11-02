@@ -14,6 +14,12 @@ export const sleep = (ms, signal) =>
 
 export const shq = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
 
+function killGroupOnly(pid, signal) {
+  try {
+    process.kill(-pid, signal);
+  } catch {}
+}
+
 function killGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
@@ -51,7 +57,7 @@ export function run(cmd, args = [], { cwd, env, timeoutMs = 0, input, signal } =
     const stop = () => {
       if (!child?.pid) return;
       killGroup(child.pid, 'SIGTERM');
-      setTimeout(() => killGroup(child.pid, 'SIGKILL'), 5000).unref();
+      setTimeout(() => killGroupOnly(child.pid, 'SIGKILL'), 5000).unref();
     };
     const onAbort = () => stop();
     const timer = timeoutMs

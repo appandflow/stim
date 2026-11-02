@@ -111,16 +111,23 @@ export async function createWorkspaces(ctx, count) {
   return ctx.workspaces;
 }
 
-async function liveOurs(pids, { home, worktreePrefix }) {
+// A recorded pid is the run's only if it is alive, started after the run did, and still carries a stim title or path of this run.
+async function liveOurs(pids, { home, worktreePrefix, sinceMs }) {
   if (!pids.size) return [];
-  const listed = await run('ps', ['-ww', '-o', 'pid=,command=', '-p', [...pids].join(',')]);
+  const listed = await run('ps', ['-ww', '-o', 'pid=,lstart=,command=', '-p', [...pids].join(',')]);
   const ours = (cmd) =>
     /^stim-(supervisor|collector|daemon)/.test(cmd) || cmd.includes(home) || cmd.includes(worktreePrefix);
   return listed.stdout
     .split('\n')
-    .map((line) => /^\s*(\d+)\s+(.*)$/.exec(line))
-    .filter((match) => match && ours(match[2]))
+    .map((line) => /^\s*(\d+)\s+(\w{3} \w{3}\s+\d+ [\d:]{8} \d{4})\s+(.*)$/.exec(line))
+    .filter((match) => match && Date.parse(match[2]) >= sinceMs - 2000 && ours(match[3]))
     .map((match) => Number(match[1]));
+}
+
+function signal(pid, name) {
+  try {
+    process.kill(pid, name);
+  } catch {}
 }
 
 async function waitFor(check, timeoutMs, stepMs = 2000) {
@@ -164,12 +171,12 @@ export async function teardown(ctx) {
     }
     report.worktrees.push({ label: workspace.label, removed: !existsSync(workspace.path) });
   }).catch(note);
-  await run('git', ['-C', project, 'worktree', 'prune'], noAbort);
 
   emit('teardown', 'deleting leftover simulators from the run ledger');
   const owned = ctx.createdUdids;
-  const sims = (await readSimulators(60_000)) ?? [];
-  for (const sim of sims.filter((s) => owned.has(s.udid))) {
+  const sims = await readSimulators(60_000);
+  if (sims === null) note("simctl list failed, so the run's simulators could not be checked");
+  for (const sim of (sims ?? []).filter((s) => owned.has(s.udid))) {
     if (sim.state === 'Booted' || sim.state === 'Booting')
       await run('xcrun', ['simctl', 'shutdown', sim.udid], { timeoutMs: 120_000 });
     const deleted = await run('xcrun', ['simctl', 'delete', sim.udid], { timeoutMs: 120_000 });
@@ -180,18 +187,23 @@ export async function teardown(ctx) {
   report.trashEmpty = await waitFor(() => !existsSync(trash) || readdirSync(trash).length === 0, 180_000);
 
   emit('teardown', "waiting for the run's stim processes to exit");
-  const scope = { home, worktreePrefix: ctx.worktreePrefix };
+  const scope = { home, worktreePrefix: ctx.worktreePrefix, sinceMs: ctx.startedAt };
   await waitFor(async () => (await liveOurs(pids, scope)).length === 0, 200_000);
   report.processes = await liveOurs(pids, scope);
-  for (const pid of report.processes) process.kill(pid, 'SIGTERM');
+  for (const pid of report.processes) signal(pid, 'SIGTERM');
   if (report.processes.length) {
     await sleep(3000);
-    for (const pid of await liveOurs(new Set(report.processes), scope)) process.kill(pid, 'SIGKILL');
+    for (const pid of await liveOurs(new Set(report.processes), scope)) signal(pid, 'SIGKILL');
   }
 
   try {
     await ctx.beforeHomeDelete?.();
-    if (dirname(home) === ctx.homeDir && basename(home).startsWith(ctx.runId)) {
+    const survivors = report.simulators.filter((sim) => !sim.deleted).length;
+    if (sims === null || survivors) {
+      note(
+        `the private home ${home} is kept: its ledger is the proof that ${sims === null ? 'the' : survivors} simulator(s) are the run's`,
+      );
+    } else if (dirname(home) === ctx.homeDir && basename(home).startsWith(ctx.runId)) {
       rmSync(home, { recursive: true, force: true });
       report.homeDeleted = !existsSync(home);
     }

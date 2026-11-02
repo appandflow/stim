@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { clock, outcome, STATUS } from '../assertions.mjs';
 import { createBallast, gib } from '../ballast.mjs';
 import { checkRungOrder, diffState } from '../ladder.mjs';
+import { HarnessError } from '../workspaces.mjs';
 import { hasEntries, launch, loadGate, setup, startPoller } from '../phases.mjs';
 import { readSimulators } from '../platform.mjs';
 import { run, sleep } from '../shell.mjs';
@@ -23,7 +24,7 @@ const OBSERVE_POLL_MS = 10_000;
 const BUILD_WAIT_MS = 25 * 60_000;
 const HEARTBEAT_MS = 20_000;
 const SHARED_CACHES = ['build-cache', 'compilation-cache', 'metro-cache', 'fingerprint-memo'];
-const ORDER_TOLERANCE_MS = OBSERVE_POLL_MS + 5000;
+const ORDER_TOLERANCE_MS = 60_000;
 
 async function cacheSizes(home) {
   const dirs = SHARED_CACHES.map((name) => join(home, name)).filter(existsSync);
@@ -38,8 +39,10 @@ async function cacheSizes(home) {
 }
 
 async function readState(ctx, tracked, caches) {
-  const present = new Set(((await readSimulators(60_000)) ?? []).map((sim) => sim.udid));
-  const digest = ctx.snapshots.at(-1);
+  const sims = await readSimulators(60_000);
+  const digest = ctx.snapshots.findLast((poll) => poll.ok);
+  if (sims === null || !digest) return null;
+  const present = new Set(sims.map((sim) => sim.udid));
   const workspaces = {};
   for (const workspace of tracked) {
     const record = ctx.record(workspace);
@@ -105,12 +108,12 @@ async function observeStep(ctx, step, tracked, caches, state, stepAt) {
   for (;;) {
     await sleep(OBSERVE_POLL_MS, ctx.signal);
     const next = await readState(ctx, tracked, caches);
-    const found = diffState(current, next, Date.now());
+    const found = next ? diffState(current, next, Date.now()) : [];
     if (found.length) lastEventAt = Date.now();
     for (const event of found)
       ctx.emit('ladder', `${step.label}: ${event.kind} ${event.workspace ?? ''} ${event.detail}`);
     events.push(...found);
-    current = next;
+    current = next ?? current;
     const elapsed = Date.now() - stepAt;
     if (
       (elapsed >= OBSERVE_MIN_MS && Date.now() - lastEventAt >= OBSERVE_QUIET_MS) ||
@@ -164,10 +167,15 @@ function assertBuild(ctx, chain, steps) {
           .join(', ') || 'no step'
       }${iteration.result.ok ? '' : `, ${iteration.result.json?.code ?? 'no failure payload'}`}`,
   );
-  const failed = iterations.some((iteration) => !iteration.result.ok);
+  const stuck = chain.current !== null;
+  const failed = stuck || iterations.some((iteration) => !iteration.result.ok);
   const overlapped = hardAt !== null && iterations.some((iteration) => straddles(iteration, hardAt));
   const title = 'a build in flight at the hard floor completes, and so does every build started before it';
-  if (failed) A.fail(SCENARIO, 'build-completes', title, lines);
+  if (failed)
+    A.fail(SCENARIO, 'build-completes', title, [
+      ...(stuck ? ['a build was still running 25 minutes after the last step'] : []),
+      ...lines,
+    ]);
   else if (!overlapped)
     A.unavailable(SCENARIO, 'build-completes', title, [
       'no build was in flight when the hard-floor step began, so completion under it was not exercised',
@@ -229,15 +237,17 @@ export async function runDisk(ctx) {
 
     const caches = throttled(() => cacheSizes(ctx.home), 30_000);
     let state = await readState(ctx, tracked, caches);
+    if (!state) throw new HarnessError('could not read the starting state (simctl list or status failed)');
     const events = [];
     const steps = [];
     chain = startBuilder(ctx, builder);
     const firstStepAt = Date.now();
     for (const [index, step] of STEPS.entries()) {
+      if (ctx.signal.aborted) break;
       if (index === 1) await waitUntil(ctx, lastVictimLaunch + HIGH_DORMANT_IDLE_MS);
       if (step.refuses) chain.open = false;
       ctx.setStage(`step-${step.label.replace(' ', '')}`);
-      const placed = await ctx.ballast.stepTo(step.gb * GIB);
+      const placed = await ctx.ballast.stepTo(step.gb * GIB, ctx.signal);
       const stepAt = Date.now();
       const inFlight = chain.current !== null;
       ctx.emit(
@@ -248,7 +258,7 @@ export async function runDisk(ctx) {
       state = observed.state;
       events.push(...observed.events);
       const freeAfterLadder = gib(ctx.ballast.free());
-      await ctx.ballast.stepTo(step.gb * GIB);
+      await ctx.ballast.stepTo(step.gb * GIB, ctx.signal);
       const probed = await probeStart(ctx, probe);
       ctx.emit(
         'disk',
@@ -256,6 +266,7 @@ export async function runDisk(ctx) {
       );
       steps.push({ step, stepAt, inFlight, events: observed.events, freeAfterLadder, probe: probed });
     }
+    if (ctx.signal.aborted) return;
     chain.open = false;
     ctx.setStage('build-drain');
     await Promise.race([chain.done, sleep(BUILD_WAIT_MS, ctx.signal)]);

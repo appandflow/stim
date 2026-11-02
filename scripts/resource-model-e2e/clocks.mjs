@@ -63,7 +63,7 @@ export async function configureClocks(stim, worktrees, { idleMinutes, dormantMin
   }
   const values = (await Promise.all(idleKeys.map((key) => effective(stim, worktrees, key)))).flat();
   const numbers = values.filter((value) => typeof value === 'number' && value > 0);
-  const idleWindowMinutes = numbers.length ? Math.min(...numbers) : null;
+  const idleWindowMinutes = numbers.length ? Math.max(...numbers) : null;
   notes.push(`effective idle clock: ${idleKeys.join(' and ')} = ${idleWindowMinutes ?? 'unreadable'} min`);
 
   const dormant = { available: false, reason: null, minutes: dormantMinutes };

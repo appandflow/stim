@@ -131,8 +131,15 @@ export async function runRemote(opts, { runId, localOut, emit }) {
     const command = `cd ${shq(base)} && command -v node >/dev/null || { echo 'node is not on the PATH of a login shell on this host' >&2; exit 127; }; exec node harness/run.mjs ${args.map(shq).join(' ')}`;
     emit('ssh', `running ${opts.scenario} on ${host}`);
     const code = await new Promise((resolveCode) => {
-      const child = spawn('ssh', [...SSH_OPTIONS, host, `exec "$SHELL" -l -c ${shq(command)}`], { stdio: 'inherit' });
-      child.on('close', (exit) => resolveCode(exit ?? 1));
+      const child = spawn('ssh', ['-tt', ...SSH_OPTIONS, host, `exec "$SHELL" -l -c ${shq(command)}`], {
+        stdio: 'inherit',
+      });
+      const hangUp = () => child.kill('SIGHUP');
+      for (const name of ['SIGINT', 'SIGTERM']) process.on(name, hangUp);
+      child.on('close', (exit) => {
+        for (const name of ['SIGINT', 'SIGTERM']) process.off(name, hangUp);
+        resolveCode(exit ?? 1);
+      });
       child.on('error', () => resolveCode(255));
     });
 

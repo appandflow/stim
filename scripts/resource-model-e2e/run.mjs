@@ -8,6 +8,7 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  rmSync,
   rmdirSync,
   writeFileSync,
 } from 'node:fs';
@@ -161,7 +162,9 @@ function startSampler(ctx) {
   return {
     async stop() {
       writeFileSync(join(ctx.out, 'STOP'), '');
-      await Promise.race([exited, sleep(20_000)]);
+      await Promise.race([exited, sleep(30_000)]);
+      if (child.exitCode === null) child.kill('SIGTERM');
+      await Promise.race([exited, sleep(15_000)]);
       if (child.exitCode === null) child.kill('SIGKILL');
     },
   };
@@ -182,7 +185,10 @@ async function buildIdentity(ctx) {
 
 function daemonLabel(ctx) {
   const reported = ctx.snapshots.findLast((poll) => poll.daemon !== null && poll.daemon !== undefined);
-  if (reported) return `status daemon line: ${JSON.stringify(reported.daemon).slice(0, 200)}`;
+  if (reported) {
+    const { mode, running, lastTickAt } = reported.daemon;
+    return `mode ${mode ?? 'unknown'}, ${running ? `running since ${running.since}` : 'not running'}, last tick ${lastTickAt ?? 'never'}`;
+  }
   return existsSync(join(ctx.out, 'evidence', 'daemon', 'snapshot.json'))
     ? 'daemon snapshot.json present (evidence/daemon)'
     : null;
@@ -207,23 +213,8 @@ async function prepare(ctx) {
   console.log(`private STIM_HOME ${ctx.home}`);
   await reportVolumes(ctx);
   mkdirSync(ctx.home, { recursive: true, mode: 0o700 });
-}
-
-async function runLocal(opts) {
-  if (process.platform !== 'darwin') throw new UsageError('the harness drives iOS simulators and runs only on macOS');
-  if (!existsSync(resolve(opts.project))) throw new UsageError(`--project ${opts.project} does not exist`);
-  const runId = `rme${Math.random().toString(16).slice(2, 6)}`;
-  const ctx = createContext(opts, runId);
-  mkdirSync(ctx.out, { recursive: true });
-  try {
-    await prepare(ctx);
-  } catch (error) {
-    removeCreatedDirs(ctx);
-    throw error;
-  }
-  const stimPath = resolve(opts.stim);
   ctx.stim = createStim({
-    cli: stimPath,
+    cli: resolve(opts.stim),
     home: ctx.home,
     outDir: ctx.out,
     extraEnv: opts.extraEnv,
@@ -234,7 +225,23 @@ async function runLocal(opts) {
   ctx.deviceCap = derivedDeviceCap(ctx.machine.ramBytes);
   if ((await readSimulators()) === null)
     throw new HarnessError('xcrun simctl list devices failed; is Xcode installed and selected?');
-  const build = await buildIdentity(ctx);
+  return buildIdentity(ctx);
+}
+
+async function runLocal(opts) {
+  if (process.platform !== 'darwin') throw new UsageError('the harness drives iOS simulators and runs only on macOS');
+  if (!existsSync(resolve(opts.project))) throw new UsageError(`--project ${opts.project} does not exist`);
+  const runId = `rme${Math.random().toString(16).slice(2, 6)}`;
+  const ctx = createContext(opts, runId);
+  mkdirSync(ctx.out, { recursive: true });
+  let build;
+  try {
+    build = await prepare(ctx);
+  } catch (error) {
+    rmSync(ctx.home, { recursive: true, force: true });
+    removeCreatedDirs(ctx);
+    throw error;
+  }
   ctx.emit(
     'run',
     `${opts.scenario} with ${opts.workspaces} workspaces against ${describeBuild(build.version, build.commit)}`,
@@ -321,7 +328,9 @@ async function runLocal(opts) {
   console.log(
     `report: ${join(ctx.out, 'report.md')} (${failed} failed assertions${harnessError ? ', harness stopped early' : ''})`,
   );
-  return harnessError ? 2 : failed ? 1 : 0;
+  const tearDownFailed = torn.errors.length > 0 || torn.worktrees.some((w) => !w.removed) || !torn.homeDeleted;
+  if (tearDownFailed) console.log('teardown did not finish cleanly: see the Teardown section of the report');
+  return harnessError || tearDownFailed ? 2 : failed ? 1 : 0;
 }
 
 async function main() {

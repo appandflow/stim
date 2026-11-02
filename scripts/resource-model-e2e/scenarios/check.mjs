@@ -17,5 +17,10 @@ export async function runCheck(ctx) {
         : `dormant clock not available on this build: ${dormant.reason}`,
     );
   }
-  ctx.assertions.pass('check', 'clocks', 'the idle clock can be set and read back', lines);
+  const wanted = ctx.opts.idleMinutes === null ? null : ctx.opts.idleMinutes * 60_000;
+  const readable = ctx.clocks.idleWindowMs !== null && (wanted === null || ctx.clocks.idleWindowMs === wanted);
+  (readable ? ctx.assertions.pass : ctx.assertions.fail)('check', 'clocks', 'the idle clock can be set and read back', [
+    ...lines,
+    ...ctx.clocks.notes,
+  ]);
 }

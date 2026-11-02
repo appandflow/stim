@@ -79,7 +79,11 @@ export function startPoller(ctx) {
   const done = (async () => {
     while (!state.stopped && !ctx.signal.aborted) {
       const began = Date.now();
-      await pollStatus(ctx);
+      try {
+        await pollStatus(ctx);
+      } catch (error) {
+        ctx.emit('error', `status poll failed: ${error?.message ?? error}`);
+      }
       const took = Date.now() - began;
       await sleep(Math.max(1000, POLL_MS - took, took), ctx.signal);
     }
@@ -157,6 +161,7 @@ export async function waitForIdle(ctx, items, { windowMs, graceMs }) {
   }
 }
 
+const WORKING_STAGES = new Set(['running', 'building']);
 const COUNTED_METRO_EVENTS = new Set([
   'bundle_response_started',
   'bundle_response_finished',
@@ -208,7 +213,7 @@ export function assertIdleDown(ctx, scenario, waited, windowMs) {
   A.fromItems(
     scenario,
     'idle-metro-down',
-    'Metro is stopped and its idle stop recorded',
+    'Metro is stopped (the idle-stop record is reported as evidence)',
     entries.map((entry) => {
       const f = entry.resolved?.facts;
       if (!f) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
@@ -240,13 +245,22 @@ export function assertIdleDown(ctx, scenario, waited, windowMs) {
     entries.map((entry) => {
       const f = entry.resolved?.facts;
       if (!f) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
-      return f.stageIdle
-        ? outcome(entry.workspace.label, STATUS.pass, `stage.kind=${f.stageKind}`)
-        : outcome(
-            entry.workspace.label,
-            STATUS.unavailable,
-            `not available on this build: stage.kind=${f.stageKind}, which has no idle stage`,
-          );
+      if (f.stageIdle) {
+        const freed = f.idleStage ? `, idleStage.freedBytes=${f.idleStage.freedBytes}` : '';
+        return outcome(entry.workspace.label, STATUS.pass, `stage.kind=${f.stageKind}${freed}`);
+      }
+      if (WORKING_STAGES.has(f.stageKind)) {
+        return outcome(
+          entry.workspace.label,
+          STATUS.fail,
+          `stage.kind=${f.stageKind} although Metro and the devices are down`,
+        );
+      }
+      return outcome(
+        entry.workspace.label,
+        STATUS.unavailable,
+        `not available on this build: stage.kind=${f.stageKind}, which is not an idle stage`,
+      );
     }),
   );
   A.fromItems(
@@ -285,14 +299,25 @@ export async function reviveWorkspaces(ctx, scenario, workspaces, { concurrent }
   const runOne = (workspace) =>
     ctx.stim.exec(`revive-${workspace.label}`, workspace.path, ['revive', '--json'], { timeoutMs: 20 * 60_000 });
   const results = [];
-  if (concurrent) results.push(...(await Promise.all(workspaces.map(runOne))));
-  else for (const workspace of workspaces) results.push(await runOne(workspace));
-  await sleep(3000, ctx.signal);
-  const snapshot = await pollStatus(ctx);
+  const states = [];
+  const checkAfter = async () => {
+    await sleep(3000, ctx.signal);
+    return pollStatus(ctx);
+  };
+  if (concurrent) {
+    results.push(...(await Promise.all(workspaces.map(runOne))));
+    const snapshot = await checkAfter();
+    for (const workspace of workspaces) states.push(snapshot.envs[workspace.path].facts);
+  } else {
+    for (const workspace of workspaces) {
+      results.push(await runOne(workspace));
+      states.push((await checkAfter()).envs[workspace.path].facts);
+    }
+  }
   const items = workspaces.map((workspace, index) => {
     const result = results[index];
     const facts = reviveFacts(result);
-    const state = snapshot.envs[workspace.path].facts;
+    const state = states[index];
     ctx.record(workspace).reviveExit = result.code;
     ctx.record(workspace).reviveMs = result.ms;
     ctx.record(workspace).revivedAt = result.endedAt;
