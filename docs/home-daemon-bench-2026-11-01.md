@@ -69,21 +69,22 @@ Not built: device-lease expiry (a lease carries its own expiry and needs no acti
  packages/core/state/paths.ts                   |  28 ++-  localSocket helper, daemon paths
  packages/core/state/settings-registry.ts       |   9 +   daemon.enabled / STIM_DAEMON
  packages/stim-cli/bin/cli.ts                   |   6 +   ensureDaemon for start, ios, android
- packages/stim-cli/src/daemon/client.ts         | 190 +  enable check, liveness, spawn, slot waiter
- packages/stim-cli/src/daemon/idle.ts           | 151 +  idle pass
- packages/stim-cli/src/daemon/run.ts            | 198 +  entry, claim, socket, ticks, exit
+ packages/stim-cli/src/daemon/client.ts         | 191 +  enable check, liveness, spawn, slot waiter
+ packages/stim-cli/src/daemon/idle.ts           | 160 +  idle pass
+ packages/stim-cli/src/daemon/run.ts            | 222 +  entry, claim, socket, ticks, exit
  packages/stim-cli/src/engine/build-slots.ts    |  12 +-  wake-or-poll, release notification
  packages/stim-cli/src/guide/settings.ts        |  11 +   setting documented
  packages/stim-cli/src/maintenance/devices.ts   |   3 +-  planIdleShutdown stands down
- packages/stim-cli/src/maintenance/idle-stop.ts |  12 +-  export evidence, 'client log' basis
+ packages/stim-cli/src/maintenance/idle-stop.ts |  14 +-  export evidence helpers, 'client log' basis
  packages/stim-cli/src/spawn-entry.ts           |   9 +-  daemon-run entry
- packages/stim-cli/src/supervisor/run.ts        |   5 +   watchers stand down while the daemon owns idle
+ packages/stim-cli/src/supervisor/run.ts        |   7 +-  stand down while the daemon owns idle; record idle minutes
  packages/stim-cli/tsdown.config.ts             |   1 +
- tests: daemon.integration.test.ts (3), supervisor-run.test.ts (+1)
+ tests: daemon.integration.test.ts (4), supervisor-run.test.ts (+1)
 ```
 
 New surface: the machine setting `daemon.enabled` and its environment override `STIM_DAEMON`; the `daemon-run`
-spawn entry and `stim-daemon` process; the files under `$STIM_HOME/daemon/` (claim, socket, `daemon.log`). No new
+spawn entry and `stim-daemon` process; the files under `$STIM_HOME/daemon/` (claim, socket, `daemon.log`); an
+`idleMinutes` field in the supervisor's `state.json` record; a `client log` idle basis. No new
 command or flag.
 
 ## Method
