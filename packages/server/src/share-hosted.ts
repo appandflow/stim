@@ -127,7 +127,7 @@ export class HostedShareSource implements ShareSource {
       this.opening = false;
       if (lease && subscription) release(lease, 'device-host.unsubscribe', { subscription });
       else lease?.release();
-      this.fail(reason(cause));
+      this.fail(messageOf(cause));
     }
   }
 
@@ -230,7 +230,7 @@ export class HostedShareSource implements ShareSource {
       record({ ok: true });
       return { session };
     } catch (cause) {
-      const message = `${this.host.machine}: ${reason(cause)}`;
+      const message = `${this.host.machine}: ${messageOf(cause)}`;
       if (lease && hostSession) release(lease, 'device-host.control.end', { session: hostSession });
       else lease?.release();
       const error: ProtocolError = { code: 'action-failed', message };
@@ -257,7 +257,7 @@ export class HostedShareSource implements ShareSource {
       const reply = await control.lease.connection.request(`device-host.${method}`, { ...params, session });
       return 'error' in reply ? reply.error : null;
     } catch (cause) {
-      return { code: 'action-failed', message: `${this.host.machine}: ${reason(cause)}` };
+      return { code: 'action-failed', message: `${this.host.machine}: ${messageOf(cause)}` };
     }
   }
 
@@ -301,6 +301,6 @@ function release(lease: Lease, method: string, params: unknown): void {
     .finally(lease.release);
 }
 
-function reason(cause: unknown): string {
+function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
