@@ -56,6 +56,7 @@ export interface StatsRun {
   coldBuildMs?: number;
   podsMs?: number;
   phases?: Record<string, number>;
+  cleanupMs?: number;
   deviceSetup?: boolean;
   placement?: RunPlacement;
 }
@@ -98,7 +99,7 @@ export function updateStats(record: StatsRecord, run: StatsRun, now: number): St
   const phases = {
     coldBuildMs: wholeMs(run.coldBuildMs),
     podsMs: wholeMs(run.podsMs),
-    cleanupMs: Math.min(durationMs, wholeMs(run.phases?.cleanup)),
+    cleanupMs: Math.min(durationMs, wholeMs(run.cleanupMs ?? run.phases?.cleanup)),
   };
   const projects: Record<string, StatsScope> = { ...record.projects };
   const scope: StatsScope = { ...projects[run.projectKey] };
@@ -319,7 +320,7 @@ export function createRunRecorder({
     }: RunOutcome): void {
       if (!projectKey || !cacheKey || recorded) return;
       recorded = true;
-      const ran = failed || remoteDevice ? {} : (phases?.() ?? {});
+      const ran = failed ? {} : (phases?.() ?? {});
       try {
         const outcome = write(
           {
@@ -332,7 +333,8 @@ export function createRunRecorder({
             ...(offloadedTo ? { offloadedTo } : {}),
             ...(coldBuildMs > 0 ? { coldBuildMs } : {}),
             ...(podsMs > 0 ? { podsMs } : {}),
-            ...(Object.keys(ran).length ? { phases: ran } : {}),
+            ...(!remoteDevice && Object.keys(ran).length ? { phases: ran } : {}),
+            ...(ran.cleanup === undefined ? {} : { cleanupMs: ran.cleanup }),
             ...(failed || deviceSetup?.() === undefined ? {} : { deviceSetup: deviceSetup()! }),
             ...(placement
               ? { placement: { ...placement, ...(deviceSlotWaitMs > 0 ? { deviceSlotWaitMs } : {}) } }
