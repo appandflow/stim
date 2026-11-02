@@ -1,4 +1,5 @@
 import { statSync } from 'node:fs';
+import { isJsonObject } from '@stim-cli/core/state';
 import { join } from 'node:path';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { runStop } from '../commands/stop.ts';
@@ -7,16 +8,12 @@ import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { dueIdleDevices, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
-import { decideIdleStop, idleStopEvidence } from '../maintenance/idle-stop.ts';
+import { decideIdleStop, idleStopEvidence, unseenEmulatorError } from '../maintenance/idle-stop.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { loadConfig, type ProjectRecord } from '../workspace/config.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
-import {
-  deviceIdleShutdownMinutesSetting,
-  metroIdleStopMinutesSetting,
-  resolveProjectSettings,
-} from '../workspace/settings.ts';
+import { deviceIdleShutdownMinutesSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { daemonOwnsSupervisedIdle } from './client.ts';
 
@@ -24,11 +21,7 @@ const MINUTE_MS = 60_000;
 const SIM_LIST_TIMEOUT_MS = 10_000;
 
 export function listSims(): IosSimRecord[] {
-  try {
-    return listAllIosSims({ timeoutMs: SIM_LIST_TIMEOUT_MS });
-  } catch {
-    return [];
-  }
+  return listAllIosSims({ timeoutMs: SIM_LIST_TIMEOUT_MS });
 }
 
 function clientLogAt(root: string): number {
@@ -45,9 +38,22 @@ function bootedDevices(path: string, project: ProjectRecord, now: number): Owned
   return collectOwnedDeviceActivity({ ...config, projects: { [path]: project } }, listSims(), now);
 }
 
+/**
+ * Decides with the same evidence as maintenance's idle stop. A device list that cannot be read, or an owned emulator
+ * that runs but whose activity was not read, keeps the workspace, so `runStop` never takes down a device in use.
+ */
 async function decideTogether(path: string, project: ProjectRecord, idleMs: number, locked: boolean) {
   const now = Date.now();
-  const evidence = await idleStopEvidence(path, bootedDevices(path, project, now), {
+  const devices = bootedDevices(path, project, now);
+  const seen = new Set(devices.flatMap((device) => (device.kind === 'android' ? [device.id] : [])));
+  const unseen = projectDeviceSlots(project).flatMap(({ platforms }) =>
+    platforms.android?.owned && platforms.android.avdName && !seen.has(platforms.android.avdName)
+      ? [platforms.android.avdName]
+      : [],
+  );
+  const emulators = unseen.length ? await unseenEmulatorError(unseen) : null;
+  if (emulators) return { stop: false as const, reason: emulators };
+  const evidence = await idleStopEvidence(path, devices, {
     now,
     idleMs,
     locked,
@@ -124,11 +130,11 @@ export async function runIdlePass(log: (line: string) => void, now: number = Dat
         reservedPort: project.metroPort,
       });
       if (supervisor.status === 'unverified') continue;
-      const settings = resolveProjectSettings(path).settings;
-      const metroMinutes = metroIdleStopMinutesSetting(settings);
-      const deviceMinutes = deviceIdleShutdownMinutesSetting(settings);
       if (supervisor.status === 'ours') {
         const record = state?.supervisor;
+        const minutes = isJsonObject(record?.idleMinutes) ? record.idleMinutes : {};
+        const metroMinutes = typeof minutes.metro === 'number' ? minutes.metro : 0;
+        const deviceMinutes = typeof minutes.devices === 'number' ? minutes.devices : 0;
         if (
           daemonOwnsSupervisedIdle({
             mode: record?.mode,
@@ -138,7 +144,10 @@ export async function runIdlePass(log: (line: string) => void, now: number = Dat
           })
         )
           await stopTogether(path, project, Math.min(metroMinutes, deviceMinutes), log);
-      } else if (
+        continue;
+      }
+      const deviceMinutes = deviceIdleShutdownMinutesSetting(resolveProjectSettings(path).settings);
+      if (
         deviceMinutes > 0 &&
         projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned)
       ) {

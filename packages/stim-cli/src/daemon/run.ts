@@ -24,6 +24,7 @@ const TICK_MS = 60_000;
 const CLAIM_TRIES = 30;
 const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
+const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 function log(line: string): void {
   process.stdout.write(`${new Date().toISOString()} ${line}\n`);
@@ -80,7 +81,10 @@ async function listen(path: string, server: Server): Promise<void> {
   chmodSync(path, 0o600);
 }
 
-/** What keeps the daemon running: a dev server, a build, a held build slot or a booted owned device. */
+/**
+ * What keeps the daemon running: a dev server, a build, a held build slot or a booted owned device. A device list
+ * that cannot be read keeps it running.
+ */
 function homeAlive(): string | null {
   const config = loadConfig();
   for (const [path, project] of Object.entries(config?.projects ?? {})) {
@@ -97,7 +101,13 @@ function homeAlive(): string | null {
     projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned),
   );
   if (!ownsDevices) return null;
-  const booted = collectOwnedDeviceActivity(config, listSims(), Date.now());
+  let sims;
+  try {
+    sims = listSims();
+  } catch (error) {
+    return `its simulators cannot be listed (${error instanceof Error ? error.message : String(error)})`;
+  }
+  const booted = collectOwnedDeviceActivity(config, sims, Date.now());
   if (booted.length) return `${booted.length} owned device(s) booted`;
   return null;
 }
@@ -144,23 +154,26 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     });
   });
   let interrupt: (() => void) | null = null;
+  let bound = false;
+  const onSignal = (signal: NodeJS.Signals) => shutdown(signal);
   const shutdown = (why: string) => {
     if (closing) return;
     closing = true;
     interrupt?.();
     server.close();
     for (const waiter of waiters) waiter.destroy();
-    rmSync(path, { force: true });
+    if (bound) rmSync(path, { force: true });
     releaseClaim(claim);
+    for (const signal of SIGNALS) process.off(signal, onSignal);
     log(`exiting: ${why}`);
   };
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => shutdown(signal));
+  for (const signal of SIGNALS) process.once(signal, onSignal);
   try {
     await listen(path, server);
+    bound = true;
   } catch (error) {
     shutdown(`cannot listen on ${path}: ${error instanceof Error ? error.message : String(error)}`);
-    process.exitCode = 1;
-    return;
+    throw error;
   }
   log(`pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`);
   let emptyTicks = 0;
@@ -178,13 +191,24 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
       break;
     }
     const tickStarted = performance.now();
-    await runIdlePass(log);
-    triggerMaintenance('daemon', { argv: [], warn: false });
-    const alive = waiters.size ? 'a build waits for a slot' : homeAlive();
+    let alive: string | null;
+    try {
+      await runIdlePass(log);
+      triggerMaintenance('daemon', { argv: [], warn: false });
+      alive = waiters.size ? 'a build waits for a slot' : homeAlive();
+    } catch (error) {
+      shutdown(
+        `the tick failed, so the supervisors keep their own timers: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      break;
+    }
     const idle = !alive && Date.now() - lastContact >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
     log(`tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? 'nothing alive'}`);
-    if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) shutdown('nothing alive in this home');
+    if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
+      shutdown('nothing alive in this home');
+      break;
+    }
   }
 }
 

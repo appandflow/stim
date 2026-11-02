@@ -1,5 +1,5 @@
 import assert from 'node:assert';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -85,10 +85,19 @@ test('a released build slot wakes a registered waiter at once instead of on its 
   const woken = readLine(waiter, 'slot.changed');
   expect(releaseBuildSlot(holder)).toBe(true);
   await woken;
-  expect(tryAcquireBuildSlot({ max: 1 })).not.toBeNull();
+  const next = tryAcquireBuildSlot({ max: 1 });
+  expect(next).not.toBeNull();
+  releaseBuildSlot(next);
 }, 20_000);
 
 test('exits once nothing runs in its home, releasing its claim and removing its socket', async () => {
+  await runDaemon({ tickMs: 50 });
+  expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
+  expect(existsSync(daemonSocket())).toBe(false);
+}, 20_000);
+
+test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
+  writeFileSync(join(home, 'config.json'), '{ not json');
   await runDaemon({ tickMs: 50 });
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);

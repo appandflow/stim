@@ -127,6 +127,7 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
 export function notifyBuildSlotReleased(): void {
   if (!daemonEnabled() || !daemonLive()) return;
   const socket = connect(daemonSocket());
+  socket.setTimeout(CONTACT_TIMEOUT_MS, () => socket.destroy());
   socket.once('error', () => {});
   socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'slot.released' })}\n`));
 }

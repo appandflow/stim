@@ -351,7 +351,7 @@ function rethrowCleanup(error: unknown, signal: AbortSignal | undefined): void {
   signal?.throwIfAborted();
 }
 
-async function unseenEmulatorError(unseen: readonly string[], operation?: StimContext): Promise<string | null> {
+export async function unseenEmulatorError(unseen: readonly string[], operation?: StimContext): Promise<string | null> {
   try {
     const signal = operation?.signal;
     const adb = operation

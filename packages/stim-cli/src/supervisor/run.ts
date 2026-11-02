@@ -381,7 +381,7 @@ export async function runSupervisor({
           supervisor: {
             ...record,
             ...(serverPid ? { serverPid, ...(serverProcessToken ? { serverProcessToken } : {}) } : {}),
-            ...(hmrUpdates ? { hmrUpdates } : {}),
+            ...(hmrUpdates ? { hmrUpdates, idleMinutes: { metro: idleStopMinutes, devices: deviceIdleMinutes } } : {}),
           },
         });
       }
