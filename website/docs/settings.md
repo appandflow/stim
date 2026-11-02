@@ -994,8 +994,8 @@ maintenance in their own process. It is `off` in CI unless `STIM_DAEMON` is
 set. Windows has no daemon and works as `off`. A command starts the daemon in
 the mode it resolves, `STIM_DAEMON` included; a later change to the machine
 setting can make a running daemon stricter, never laxer. The daemon also keeps
-the starting command's `CI` and setting environment overrides, such as
-`STIM_MAINTENANCE`, for its whole life: one exported after it started applies
+the starting command's `CI` and the environment overrides of settings that are
+not sensitive, such as `STIM_MAINTENANCE`, for its whole life: one exported after it started applies
 to the daemon only once it exits and a command starts a new one. Its log is
 `$STIM_HOME/daemon/daemon.ndjson`, rotated like workspace logs, and its last
 tick's measurement and decisions are in `$STIM_HOME/daemon/snapshot.json`.

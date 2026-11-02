@@ -96,9 +96,9 @@ function answersHello(timeoutMs: number): Promise<boolean> {
 }
 
 /**
- * What the daemon inherits from the command that starts it: where things are, `CI`, and every setting's environment
- * override, which then holds for the daemon's lifetime. Nothing else, so one command's unrelated environment does not
- * live on in it.
+ * What the daemon inherits from the command that starts it: where things are, `CI`, and the environment override of
+ * every setting that is not sensitive, which then holds for the daemon's lifetime. Nothing else, so one command's
+ * credentials and unrelated environment do not live on in it and its children.
  */
 const DAEMON_ENV = new Set<string>([
   'PATH',
@@ -115,6 +115,9 @@ const DAEMON_ENV = new Set<string>([
   'JAVA_HOME',
   ...ANDROID_LOCATION_VARIABLES,
   'ANDROID_ADB_SERVER_PORT',
+  'GRADLE_USER_HOME',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
   'AGENT_DEVICE_STATE_DIR',
   'AGENT_DEVICE_CLAIMS_DIR',
   'AGENT_DEVICE_IOS_RUNNER_LEASE_DIR',
@@ -122,15 +125,12 @@ const DAEMON_ENV = new Set<string>([
   'STIM_BUILD_CACHE',
   'STIM_METRO_CACHE',
   'STIM_TMPDIR',
-  ...SETTINGS.flatMap((setting) => (setting.env ? [setting.env] : [])),
+  ...SETTINGS.flatMap((setting) => (setting.env && !setting.sensitive ? [setting.env] : [])),
 ]);
-const DAEMON_ENV_PREFIXES = ['GRADLE_', 'XDG_'];
 
 function daemonEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const kept: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(env))
-    if (value !== undefined && (DAEMON_ENV.has(name) || DAEMON_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))))
-      kept[name] = value;
+  for (const [name, value] of Object.entries(env)) if (value !== undefined && DAEMON_ENV.has(name)) kept[name] = value;
   return kept;
 }
 
