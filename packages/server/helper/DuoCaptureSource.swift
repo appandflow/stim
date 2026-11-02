@@ -98,13 +98,13 @@ final class DuoCaptureSource {
       DispatchQueue.main.async {
         MainActor.assumeIsolated {
           guard let self, self.monitor === process else { return }
-          let received = self.angle != nil
+          let restart = self.angle != nil || self.input == nil
           self.monitor = nil
           self.input = nil
           self.angle = nil
           self.publish(false)
           self.changed()
-          if received {
+          if restart {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
               MainActor.assumeIsolated { self.startMonitor() }
             }
