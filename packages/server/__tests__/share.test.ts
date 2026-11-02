@@ -89,6 +89,10 @@ function fixture(): Fixture {
         return { url: 'https://mac.tail.ts.net:10000', port: 10000 };
       },
       stranded: () => f.strandedPort,
+      removeStranded: async () => {
+        if (f.failRoute.close) throw new Error('funnel off timed out');
+        f.strandedPort = null;
+      },
       close: async () => {
         f.routeCloses++;
         const port = f.routeOpens.at(-1)!;
@@ -341,7 +345,9 @@ describe('a web share', () => {
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     const refused = new Promise<string>((resolve) => socket.once('message', (data) => resolve(String(data))));
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
-    expect(JSON.parse(await refused)).toMatchObject({ type: 'control', message: expect.stringContaining('Desktop') });
+    const told = JSON.parse(await refused);
+    expect(told).toMatchObject({ type: 'control' });
+    expect(told.message).not.toContain('Desktop');
     expect(f.inputs).toEqual([]);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
     socket.close();
@@ -399,6 +405,24 @@ describe('a web share', () => {
 
     expect(await f.hub.start(shareRequest({ platform: 'android' }))).toMatchObject({ code: 'action-failed' });
     await vi.waitFor(() => expect(f.idle).toBe(2));
+  });
+
+  it('is not idle while a share is starting, nor while a route it could not remove is public', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const pending = f.hub.start(shareRequest());
+    expect(f.hub.isIdle()).toBe(false);
+    await pending;
+
+    f.failRoute.close = true;
+    await f.hub.stop(WORKSPACE);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(f.hub.isIdle()).toBe(false);
+    expect(f.idle).toBe(0);
+
+    f.failRoute.close = false;
+    vi.advanceTimersByTime(30_000);
+    await vi.waitFor(() => expect(f.idle).toBe(1));
+    expect(f.strandedPort).toBeNull();
   });
 
   it('ends at its expiry, and when its device stops', async () => {

@@ -128,11 +128,7 @@ export class ShareRoute {
         'Tailscale Funnel is not enabled for this node. A tailnet admin enables it in the tailnet policy file (https://tailscale.com/kb/1223/funnel); Stim never changes tailnet settings.',
       );
     }
-    if (this.leftover) {
-      await removeIfHeld(this.tool, this.leftover.route);
-      releaseClaim(this.leftover.claim);
-      this.leftover = null;
-    }
+    await this.removeStranded();
     await this.recover();
     const port = freeFunnelPort(await this.tool.serveConfig(), allowed);
     if (port === null) {
@@ -170,6 +166,14 @@ export class ShareRoute {
     this.claim = claim;
     this.route = route;
     return { url: port === 443 ? `https://${dnsName}` : `https://${dnsName}:${port}`, port };
+  }
+
+  /** Removes the route this server added and could not remove before, if any, and releases its claim. */
+  async removeStranded(): Promise<void> {
+    if (!this.leftover) return;
+    await removeIfHeld(this.tool, this.leftover.route);
+    releaseClaim(this.leftover.claim);
+    this.leftover = null;
   }
 
   /** The loopback port a route this server added and could not remove yet still points at, or null. */

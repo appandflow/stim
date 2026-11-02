@@ -5436,7 +5436,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (options.shareServer && !shareServerGrace) {
         const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
         shareServerGrace = setTimeout(() => {
-          if (!shares.list().length) idle();
+          if (shares.isIdle()) idle();
         }, graceMs);
         shareServerGrace.unref?.();
       }

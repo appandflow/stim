@@ -55,7 +55,9 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
   that reports that version. It prints the server's pid and log
   (`$STIM_HOME/server/share-server.log`) on stderr. That server stops on its
   own when its last share ends, or after 2 minutes without one, and removes its
-  Funnel route first; `stim share stop` also stops it. A server Stim Desktop or
+  Funnel route first, and stays up retrying while that removal fails;
+  `stim share stop` also stops it. If the Stim home does not answer when it
+  starts, it exits at once and `stim share` reports its log. A server Stim Desktop or
   the background service runs is never stopped. Without a matching
   `@stim-cli/server`, `stim share` refuses with `STIM_SERVER_NOT_RUNNING` and
   the install command.

@@ -289,7 +289,7 @@ export function registerShare(program: Command, version: string, deps: Partial<S
   program
     .command('share <action>')
     .description(
-      "Share this workspace's running app through a public, password-protected web link: share ios|android starts one, share stop ends this workspace's shares, share list lists live shares. Needs a running stim-server.",
+      "Share this workspace's running app through a public web link, with a generated password unless you set or drop it: share ios|android starts one (and a stim-server, when none runs), share stop ends this workspace's shares, share list lists live shares.",
     )
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')

@@ -182,12 +182,17 @@ async function serve(
   const stim = bundledStim();
   let shareClaim: ClaimHandle | null = null;
   if (shareOnly) {
-    const attempt = tryAcquireClaim({
-      root: join(configDir(), 'server', 'share-server'),
-      mode: 'exclusive',
-      label: 'web share server',
-      details: { port },
-    });
+    let attempt;
+    try {
+      attempt = tryAcquireClaim({
+        root: join(configDir(), 'server', 'share-server'),
+        mode: 'exclusive',
+        label: 'web share server',
+        details: { port },
+      });
+    } catch (error) {
+      fail(`cannot record this server as the one stim share started: ${(error as Error).message}`);
+    }
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
       fail(`a stim-server started for web shares already runs (pid ${attempt.held?.owner.pid ?? 'unknown'}).`);
@@ -283,6 +288,15 @@ async function serve(
   process.on('SIGTERM', shutdown);
   process.on('SIGHUP', shutdown);
   void desktopInput?.closed.then(shutdown);
+  if (shareOnly) {
+    const startup = await server.ready;
+    if (startup.state !== 'ready') {
+      console.error(
+        `stim-server: not serving web shares, because ${startup.state === 'degraded' ? startup.reason : 'it did not start'}; stopping.`,
+      );
+      shutdown();
+    }
+  }
   if (!loopbackOnly) await announce(tailscale);
 }
 

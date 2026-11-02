@@ -82,6 +82,8 @@ export interface ShareDeps {
     close: () => Promise<void>;
     /** The loopback port a route that could not be removed still points at, or null. */
     stranded: () => number | null;
+    /** Retries removing the route `stranded` reports. */
+    removeStranded: () => Promise<void>;
   };
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
@@ -111,6 +113,14 @@ const REQUEST_TIMEOUT_MS = 30_000;
 const IDLE_SOCKET_MS = 2 * PING_MS + 10_000;
 const MAX_CONNECTIONS = 64;
 const CLOSE_GRACE_MS = 2000;
+const STRANDED_RETRY_MS = 30_000;
+/** What public viewers are told; the reasons, which can name workspaces and clients, go to the server log only. */
+const VIEWER_TEXT = {
+  ended: 'This share has ended.',
+  controlRefused: 'Control is not available right now. Try again in a moment.',
+  inputRefused: 'That input was not accepted.',
+  controlEnded: 'Control ended.',
+} as const;
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
@@ -214,6 +224,7 @@ export class ShareHub {
   private closed = false;
   private next = 1;
   private starting = 0;
+  private retrying: NodeJS.Timeout | null = null;
 
   constructor(deps: ShareDeps) {
     this.deps = deps;
@@ -236,8 +247,31 @@ export class ShareHub {
     }
   }
 
+  /**
+   * Whether nothing is shared, starting or still public: no share, no listener, no start in progress and no route
+   * that could not be removed.
+   */
+  isIdle(): boolean {
+    return (
+      !this.shares.size && !this.listener && !this.starting && !this.opening && this.deps.route.stranded() === null
+    );
+  }
+
   private checkIdle(): void {
-    if (!this.shares.size && !this.listener && !this.closed && !this.starting && !this.opening) this.deps.idle?.();
+    if (this.closed) return;
+    if (this.isIdle()) return this.deps.idle?.();
+    if (this.shares.size || this.listener || this.retrying || this.deps.route.stranded() === null) return;
+    this.retrying = setTimeout(() => {
+      this.retrying = null;
+      void this.deps.route
+        .removeStranded()
+        .then(() => this.pruneStranded())
+        .catch((cause: unknown) =>
+          console.error(`stim-server: could not remove the share's Funnel route: ${String(cause)}`),
+        )
+        .finally(() => this.checkIdle());
+    }, STRANDED_RETRY_MS);
+    this.retrying.unref?.();
   }
 
   private async begin(request: ShareRequest): Promise<StartedShare | Refusal> {
@@ -334,6 +368,8 @@ export class ShareHub {
     await this.opening?.catch(() => {});
     await this.stop(null, 'stim-server stopped.');
     await this.teardown();
+    if (this.retrying) clearTimeout(this.retrying);
+    await this.deps.route.removeStranded().catch(() => {});
     for (const server of this.stranded.values()) closeServer(server);
     this.stranded.clear();
   }
@@ -423,6 +459,7 @@ export class ShareHub {
     clearTimeout(share.timer);
     share.unwatch();
     this.shares.delete(share.key);
+    console.error(`stim-server: web share ${share.id} ended: ${message}`);
     for (const viewer of share.viewers) {
       viewer.stop();
       const { socket } = viewer;
@@ -430,7 +467,7 @@ export class ShareHub {
         socket.terminate();
         continue;
       }
-      socket.send(JSON.stringify({ type: 'ended', message }));
+      socket.send(JSON.stringify({ type: 'ended', message: VIEWER_TEXT.ended }));
       socket.close(1000, 'share ended');
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
@@ -639,7 +676,7 @@ export class ShareHub {
       share.device,
       {
         frame: (frame) => delivery.push(frame),
-        delayed: (delayed, reason) => json({ type: 'delayed', delayed, ...(reason ? { reason } : {}) }),
+        delayed: (delayed) => json({ type: 'delayed', delayed }),
         failed: (message) => queueMicrotask(() => void this.end(share, message)),
       },
       VIEW_HINT,
@@ -716,8 +753,11 @@ export class ShareHub {
       return;
     }
     const refused = await this.deps.control.input(share.owner, session, command);
-    if (refused && 'code' in refused && viewer.socket.readyState === viewer.socket.OPEN) {
-      viewer.socket.send(JSON.stringify({ type: 'control', message: refused.message }));
+    if (refused && 'code' in refused) {
+      console.error(`stim-server: web share ${share.id} input refused: ${refused.message}`);
+      if (viewer.socket.readyState === viewer.socket.OPEN) {
+        viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.inputRefused }));
+      }
     }
   }
 
@@ -738,8 +778,9 @@ export class ShareHub {
         if ('code' in outcome) {
           share.controlRetryAt = Date.now() + 5000;
           this.releaseRecording(share, outcome.code !== 'device-busy');
+          console.error(`stim-server: web share ${share.id} control refused: ${outcome.message}`);
           if (viewer.socket.readyState === viewer.socket.OPEN) {
-            viewer.socket.send(JSON.stringify({ type: 'control', message: outcome.message }));
+            viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.controlRefused }));
           }
           return null;
         }
@@ -762,9 +803,10 @@ export class ShareHub {
     if (message.session !== share.controlSession) return;
     share.controlSession = null;
     this.releaseRecording(share);
+    console.error(`stim-server: web share ${share.id} control ended: ${message.message}`);
     for (const viewer of share.viewers) {
       if (viewer.socket.readyState === viewer.socket.OPEN) {
-        viewer.socket.send(JSON.stringify({ type: 'control', message: `Control ended: ${message.message}` }));
+        viewer.socket.send(JSON.stringify({ type: 'control', message: VIEWER_TEXT.controlEnded }));
       }
     }
   }

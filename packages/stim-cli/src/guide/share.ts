@@ -42,7 +42,9 @@ WHAT IT NEEDS
   with the server's pid and log ($STIM_HOME/server/share-server.log). That
   server stops on its own when its last share ends (stim share stop, expiry,
   stim stop, worktree remove) or when no share starts within 2 minutes, and
-  removes its Funnel route on the way out; stim share stop also stops it. A
+  removes its Funnel route on the way out (it stays up, retrying, while that
+  removal fails); stim share stop also stops it. When the Stim home does not
+  answer at its startup it exits at once with the reason in its log. A
   server Stim Desktop, the LaunchAgent or you started is never stopped. When
   no matching stim-server is installed, or it does not start, stim share
   refuses with STIM_SERVER_NOT_RUNNING.
