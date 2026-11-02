@@ -54,6 +54,13 @@ WHAT IT NEEDS
   in tailscale serve status uses.
 - The device booted and owned by this workspace (or leased with --device).
   A physical iPhone is view only; --control with ios --device is refused.
+- Or a ready hosted session (ios|android --remote <machine>): this machine's
+  stim-server relays frames and input through its existing device-host
+  connection, one host stream for all viewers, none while nobody watches. The
+  host needs no new approval. A session that is not ready refuses the share;
+  the share ends when the session stops or is replaced, or the host stream or
+  its connection fails; control the host refuses reaches the viewer as
+  "Control is not available right now".
 
 SECURITY MODEL
 

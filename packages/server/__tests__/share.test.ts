@@ -2,6 +2,7 @@ import { request } from 'node:http';
 import { connect as tcpConnect } from 'node:net';
 import { WebSocket } from 'ws';
 import type { Device, FrameListener } from '../src/frames.ts';
+import type { ShareSource } from '../src/share-hosted.ts';
 import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
 
 const WORKSPACE = '/work/app';
@@ -29,6 +30,7 @@ interface Fixture {
   failRoute: { open: boolean; close: boolean };
   listenerBoundAtRouteClose: boolean[];
   status: (value: ReturnType<typeof payload>) => void;
+  hostedSources: { subscribed: FrameListener[]; unsubscribed: number; inputs: unknown[]; closed: number }[];
 }
 
 function fixture(): Fixture {
@@ -50,6 +52,7 @@ function fixture(): Fixture {
       latest = value;
       for (const listener of listeners) listener.item(value as never);
     },
+    hostedSources: [],
     hub: null as unknown as ShareHub,
   };
   f.hub = new ShareHub({
@@ -110,6 +113,29 @@ function fixture(): Fixture {
           }),
         );
       },
+    },
+    hosted: () => {
+      const record = { subscribed: [] as FrameListener[], unsubscribed: 0, inputs: [] as unknown[], closed: 0 };
+      f.hostedSources.push(record);
+      const source: ShareSource = {
+        subscribe: (listener) => {
+          record.subscribed.push(listener as FrameListener);
+          return () => {
+            record.unsubscribed++;
+          };
+        },
+        begin: async () => ({ session: 'h1', platform: 'ios', lease: { grantedAt: 'l', expiresAt: '' }, postures: [] }),
+        targetOf: (_owner, session) => (session === 'h1' ? { platform: 'ios', postures: [] } : null),
+        input: async (_owner, session, method, params) => {
+          record.inputs.push({ session, method, params });
+          return null;
+        },
+        endFor: () => {},
+        close: () => {
+          record.closed++;
+        },
+      };
+      return source;
     },
     limits: { maxFailures: 3 },
     idle: () => f.idle++,
@@ -445,5 +471,72 @@ describe('a web share', () => {
     expect(await f.hub.start(shareRequest({ platform: 'android' }))).toMatchObject({ code: 'action-failed' });
     expect(await f.hub.start(shareRequest({ physical: true, control: true }))).toMatchObject({ code: 'bad-request' });
     expect(f.routeOpens).toEqual([]);
+  });
+
+  describe('of a device a host Mac runs', () => {
+    const hostedPayload = (session = 'sess-1', ready = true) => ({
+      environments: [
+        {
+          path: WORKSPACE,
+          ios: {
+            owned: false,
+            state: 'Shutdown',
+            host: { machine: 'mini', session, device: ready ? { name: 'iPhone', runtime: '27' } : null },
+          },
+        },
+      ],
+    });
+
+    it('streams and drives through the hosted source, never the local frame pool or control hub', async () => {
+      f.status(hostedPayload() as never);
+      const share = await started(f, { control: true });
+      const url = local(share, f.hub.port!);
+      expect(f.hostedSources[0]!.subscribed).toEqual([]);
+      const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
+      expect(f.subscribed).toEqual([]);
+      const record = f.hostedSources[0]!;
+      expect(record.subscribed).toHaveLength(1);
+      const frame = new Promise<Buffer>((resolve) => socket.once('message', (data) => resolve(data as Buffer)));
+      record.subscribed[0]!.frame({ width: 1, height: 1, capturedAt: '', data: JPEG.toString('base64') });
+      expect(Buffer.compare(await frame, JPEG)).toBe(0);
+      socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.75 }));
+      await vi.waitFor(() => expect(record.inputs).toHaveLength(1));
+      expect(record.inputs).toEqual([
+        { session: 'h1', method: 'input.touch', params: { phase: 'down', x: 0.25, y: 0.75 } },
+      ]);
+      expect(f.begins).toEqual([]);
+      expect(f.inputs).toEqual([]);
+      expect(f.hub.unrecordedTargets()).toEqual(new Set());
+      socket.close();
+      await vi.waitFor(() => expect(record.unsubscribed).toBe(1));
+    });
+
+    it('refuses a session that is not ready, and ends when the session is replaced or gone', async () => {
+      f.status(hostedPayload('sess-1', false) as never);
+      expect(await f.hub.start(shareRequest())).toMatchObject({
+        code: 'action-failed',
+        message: expect.stringContaining('not ready yet'),
+      });
+      f.status(hostedPayload() as never);
+      await started(f);
+      f.status(hostedPayload('sess-2') as never);
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      expect(f.hostedSources[0]!.closed).toBe(1);
+
+      f.status(hostedPayload() as never);
+      await started(f);
+      f.status(payload('Shutdown'));
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+    });
+
+    it('ends when the host stream fails', async () => {
+      f.status(hostedPayload() as never);
+      const share = await started(f);
+      const url = local(share, f.hub.port!);
+      const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
+      f.hostedSources[0]!.subscribed[0]!.failed?.('mini: the host connection closed');
+      await vi.waitFor(() => expect(f.hub.list()).toEqual([]));
+      socket.close();
+    });
   });
 });

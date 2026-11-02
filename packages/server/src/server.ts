@@ -211,6 +211,7 @@ import {
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
+import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
@@ -1719,6 +1720,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         failed: listener.failed,
       }),
     route: shareRoute,
+    hosted: (host, request) => new HostedShareSource(hostConnections, host, request, auditSafely),
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
@@ -4733,9 +4735,6 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
       const resolved = registeredWorkspace(parsed.workspace);
       if ('code' in resolved) return error(id, resolved.code, resolved.message);
-      if (viewHostedPlacement(resolved.dir, parsed.platform, parsed.slot, parsed.physical)) {
-        return error(id, 'action-failed', 'A device hosted on another machine cannot be shared from here.');
-      }
       const started = await shares.start({ ...parsed, workspace: resolved.dir });
       return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
     }
