@@ -79,20 +79,31 @@ function targetKey(target: Pick<FrameTarget, 'workspace' | 'platform' | 'slot'>)
   return JSON.stringify([target.workspace, target.platform, target.slot ?? 'default']);
 }
 
-function isDriven(activity: DeviceActivity | undefined): boolean {
-  return activity?.state === 'driven';
+function isDriven(activity: DeviceActivity | undefined, unrecorded: ReadonlySet<string>): boolean {
+  if (activity?.state !== 'driven') return false;
+  const { tool, since } = activity.driver ?? {};
+  return !(tool === 'stim device lock' && typeof since === 'string' && unrecorded.has(since));
 }
 
-/** Each recordable device slot of an environment, and whether an automation tool drives it now. */
-function environmentTargets(environment: EnvironmentState): { target: Target; driven: boolean }[] {
+/**
+ * Each recordable device slot of an environment, and whether an automation tool drives it now. A device driven only
+ * through a lease in `unrecorded` does not count.
+ */
+function environmentTargets(
+  environment: EnvironmentState,
+  unrecorded: ReadonlySet<string>,
+): { target: Target; driven: boolean }[] {
   const workspace = environment.path;
   const slots = [{ slot: 'default', ios: environment.ios, android: environment.android }, ...(environment.slots ?? [])];
   return [
     ...slots.flatMap(({ slot, ios, android }) => [
-      { target: { workspace, platform: 'ios' as const, slot }, driven: isDriven(ios?.activity) },
-      { target: { workspace, platform: 'android' as const, slot }, driven: isDriven(android?.activity) },
+      { target: { workspace, platform: 'ios' as const, slot }, driven: isDriven(ios?.activity, unrecorded) },
+      { target: { workspace, platform: 'android' as const, slot }, driven: isDriven(android?.activity, unrecorded) },
     ]),
-    { target: { workspace, platform: 'web' as const, slot: 'default' }, driven: isDriven(environment.web?.activity) },
+    {
+      target: { workspace, platform: 'web' as const, slot: 'default' },
+      driven: isDriven(environment.web?.activity, unrecorded),
+    },
   ];
 }
 
@@ -217,6 +228,7 @@ export class Recorder {
   private readonly subscribeStatus: (listener: FeedListener) => () => void;
   private readonly limits: RecordLimits;
   private readonly now: () => number;
+  private readonly unrecorded: () => ReadonlySet<string>;
   private readonly viewers = new Map<string, number>();
   private readonly sessions = new Map<string, DeviceRecording>();
   private unsubscribe: (() => void) | null = null;
@@ -233,8 +245,11 @@ export class Recorder {
     subscribeStatus: (listener: FeedListener) => () => void;
     limits?: Partial<RecordLimits>;
     now?: () => number;
+    /** `grantedAt` of the device leases whose driving is not recorded: those web shares take for control. */
+    unrecordedLeases?: () => ReadonlySet<string>;
   }) {
     this.frames = options.frames;
+    this.unrecorded = options.unrecordedLeases ?? (() => new Set());
     this.subscribeStatus = options.subscribeStatus;
     this.limits = { ...DEFAULT_RECORD_LIMITS, ...options.limits };
     this.now = options.now ?? Date.now;
@@ -337,12 +352,13 @@ export class Recorder {
     const payload = this.payload;
     if (this.closed || !payload || !Array.isArray(payload.environments) || !this.owns()) return;
     const wanted = new Map<string, Device>();
+    const unrecorded = this.unrecorded();
     for (const environment of payload.environments) {
       if (environment.recording?.enabled === false) {
         this.forget(environment.path);
         continue;
       }
-      for (const { target, driven } of environmentTargets(environment)) {
+      for (const { target, driven } of environmentTargets(environment, unrecorded)) {
         const key = targetKey(target);
         if (!driven && !this.viewers.has(key)) continue;
         const current = this.sessions.get(key);

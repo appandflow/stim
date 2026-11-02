@@ -1827,6 +1827,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         frames,
         subscribeStatus: (listener) => statusFeed.subscribe(listener),
         limits: options.recordLimits,
+        unrecordedLeases: () => shares.leaseTimes(),
       });
     }
   };

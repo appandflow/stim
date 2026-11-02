@@ -82,6 +82,7 @@ const PASSWORD_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const PASSWORD_LENGTH = 16;
 const MAX_LOGIN_BYTES = 1024;
 const MAX_MESSAGE_BYTES = 4096;
+const MAX_LEASE_TIMES = 256;
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
@@ -159,6 +160,7 @@ export class ShareHub {
   private readonly deps: ShareDeps;
   private readonly limits: ShareLimits;
   private readonly shares = new Map<string, Share>();
+  private readonly leases = new Set<string>();
   private readonly wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
   private listener: Server | null = null;
   private base: string | null = null;
@@ -233,6 +235,14 @@ export class ShareHub {
       failed: () => {},
     });
     return { ...this.row(share), url: `${base}/s/${secret}/`, password: shown };
+  }
+
+  /**
+   * `grantedAt` of the device leases shares took for control, kept after their sessions end because status shows the
+   * lease until its release lands, so their driving is never recorded.
+   */
+  leaseTimes(): ReadonlySet<string> {
+    return this.leases;
   }
 
   list(): ShareRow[] {
@@ -564,6 +574,12 @@ export class ShareHub {
           return null;
         }
         share.controlSession = outcome.session;
+        const grantedAt = outcome.lease?.grantedAt;
+        if (grantedAt) {
+          this.leases.add(grantedAt);
+          const [oldest] = this.leases;
+          if (this.leases.size > MAX_LEASE_TIMES && oldest !== undefined) this.leases.delete(oldest);
+        }
         return outcome.session;
       })
       .finally(() => {

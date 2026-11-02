@@ -50,7 +50,7 @@ function fixture(): Fixture {
     control: {
       begin: async (_owner, target) => {
         f.begins.push(target);
-        return { session: 'c1', platform: 'ios', lease: null, postures: [] };
+        return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
       targetOf: (_owner, session) => (session === 'c1' ? { platform: 'ios', postures: [] } : null),
       input: async (_owner, session, command) => {
@@ -239,6 +239,7 @@ describe('a web share', () => {
     await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
     expect(f.begins).toEqual([{ workspace: WORKSPACE, platform: 'ios' }]);
     expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.75 } }]);
+    expect(f.hub.leaseTimes()).toEqual(new Set(['lease-1']));
     socket.close();
   });
 

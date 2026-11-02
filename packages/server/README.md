@@ -2593,8 +2593,9 @@ waiting records the server ends that subscription with `slow-client`.
 The server records owned simulators, emulators and the Stim-owned Chrome page
 so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
-`driven`), or while a client has a `frames.subscribe` subscription to it. It
-records nothing else, holds no device awake and changes no device setting. To
+`driven`), or while a client has a `frames.subscribe` subscription to it. A
+device driven only through the lease a web share's control took is not
+recorded, and a web share viewer is not a subscription here. It records nothing else, holds no device awake and changes no device setting. To
 see drivers, it reads the status watch the server runs for as long as it
 runs, shared with status subscribers.
 
