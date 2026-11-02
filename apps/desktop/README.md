@@ -1098,6 +1098,33 @@ profile. A failed page load shows a "Page failed to load" pill and an
 item that reruns `stim web`, and a tool attached to the DevTools
 endpoint, such as Playwright MCP, shows as the driver.
 
+## Web shares
+
+A running iOS simulator or Android emulator on this Mac has a **Share...** item in
+its tile menu and wall context menu. The sheet takes the options
+of `stim share`: view only or **Let viewers tap, type and press buttons**, an expiry
+from 15 minutes to 8 hours (60 minutes by default), and a **Generated** password
+(the default), one you **Choose** (8 to 128 characters) or **None**, which warns
+that the link alone opens the share. It sends `share.start` over the local Unix
+socket and shows the link and, for a generated password, the password, each with a
+Copy button. The password appears once: Desktop keeps neither it nor a chosen
+one, and the sheet's state is dropped when it closes. Physical devices, hosted
+devices and macOS apps have no Share item.
+
+**Stim > Settings > Web Shares** lists the server's live shares, read with
+`share.list` every 5 seconds: one section per workspace, one row per share with
+its platform, **View only** or **View and control**, **No password** when it has none,
+viewers and time left. `share.stop` takes a workspace, so the section's **Stop** ends
+every share of that workspace (**Stop All** when it has several). An older server
+that does not answer `share.*` shows a message instead. The methods work only on
+the local Unix socket and need no Desktop authority.
+
+Quitting Desktop asks first when Desktop started the stim-server it runs and
+`share.list` shows live shares: an alert lists each (workspace, platform, control,
+viewers, time left) with **Cancel** (the default) and **Quit**. It shows nothing for
+an adopted server (a background service or an auto-started `stim share` server),
+which keeps running, or when the list does not answer within 2 seconds.
+
 ## Replay
 
 While Desktop's stim-server runs (see [stim-server](#stim-server)),
