@@ -14,9 +14,12 @@ function localLimit(context: StimContext): { max: number; setting: string } | un
     .toSorted((a, b) => a.max - b.max)[0];
 }
 
-export async function assertLocalMacosCapacity(root: string, context: StimContext): Promise<void> {
+export async function peekLocalMacosCapacity(
+  root: string,
+  context: StimContext,
+): Promise<{ count: number; max: number; limit?: string; queued: number; localLive: boolean }> {
   const limit = localLimit(context);
-  if (!limit) return;
+  if (!limit) return { count: 0, max: 0, queued: 0, localLive: false };
   let running = 0;
   for (const project of Object.keys(loadConfig()?.projects ?? {})) {
     context.signal.throwIfAborted();
@@ -30,12 +33,21 @@ export async function assertLocalMacosCapacity(root: string, context: StimContex
       });
     }
     if (identity === 'same' || (await runningBundleInstancesAsync(project, context)).length > 0) running++;
-    if (running >= limit.max) {
-      throw Object.assign(new Error(`${running} local macOS apps are running and ${limit.setting} is ${limit.max}.`), {
+    if (running >= limit.max) break;
+  }
+  return { count: running, max: limit.max, limit: limit.setting, queued: 0, localLive: false };
+}
+
+export async function assertLocalMacosCapacity(root: string, context: StimContext): Promise<void> {
+  const capacity = await peekLocalMacosCapacity(root, context);
+  if (capacity.max > 0 && capacity.count >= capacity.max) {
+    throw Object.assign(
+      new Error(`${capacity.count} local macOS apps are running and ${capacity.limit} is ${capacity.max}.`),
+      {
         code: 'STIM_AT_CAPACITY',
-        remedy: `Run stim stop in another workspace or raise ${limit.setting}.`,
-      });
-    }
+        remedy: `Run stim stop in another workspace or raise ${capacity.limit}.`,
+      },
+    );
   }
 }
 

@@ -32,7 +32,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
 import { macosDir, macosLogFile, macosProcess, requiredMacosRecord } from '../macos/state.ts';
 import { workspaceAppName } from '../macos/app-name.ts';
-import { assertLocalMacosCapacity, withLocalMacosAdmission } from '../macos/admission.ts';
+import { assertLocalMacosCapacity, peekLocalMacosCapacity, withLocalMacosAdmission } from '../macos/admission.ts';
 import { buildMacosBundle } from '../macos/build.ts';
 import { planMacos } from '../macos/plan.ts';
 import { waitForMacosRegistration } from '../macos/registration.ts';
@@ -104,7 +104,15 @@ export async function runMacos(
         'macos-launch',
         async () => {
           const previous = requiredMacosRecord(root);
-          const remote = await macosHost({ requested, previous, root, buildMachine, note, signal: context.signal });
+          const remote = await macosHost({
+            context,
+            requested,
+            previous,
+            root,
+            buildMachine,
+            note,
+            signal: context.signal,
+          });
           if (previous?.host && previous.host.machine !== remote) {
             throw new Error(
               `This workspace's macOS app runs on ${previous.host.machine}. Run stim stop first, then stim macos${remote ? ` --remote ${remote}` : ''}.`,
@@ -156,7 +164,13 @@ export async function runMacos(
           };
           if (!remote) {
             // https://github.com/appandflow/stim/issues/4483: capacity can fill during compilation; builds stay parallel without an app reservation.
-            const here = await withLocalMacosAdmission(root, context, () => launchHere(context, root, record, note));
+            const { record: here, deadline } = await withLocalMacosAdmission(root, context, () =>
+              launchHere(context, root, record),
+            );
+            if ((await waitForLaunchServices(here, deadline)) === 'timeout')
+              note(
+                'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
+              );
             launched();
             return here;
           }
@@ -213,6 +227,7 @@ function refuseDeviceBackend(requested: string | undefined): void {
 }
 
 async function macosHost({
+  context,
   requested,
   previous,
   root,
@@ -220,6 +235,7 @@ async function macosHost({
   note,
   signal,
 }: {
+  context: StimContext;
   requested: string | undefined;
   previous: MacosAppRecord | null | undefined;
   root: string;
@@ -232,17 +248,20 @@ async function macosHost({
   if (word === 'local') return undefined;
   if (word === null) return requested.trim();
   if (previous?.host) return previous.host.machine;
-  const placed = await automaticDevicePlacement({
-    root,
-    slot: 'default',
-    platform: 'macos',
-    placement: word,
-    selectors: {},
-    buildMachine,
-    noWait: false,
-    onWait: (line) => note(phaseLine('placement:', line)),
-    signal,
-  });
+  const placed = await automaticDevicePlacement(
+    {
+      root,
+      slot: 'default',
+      platform: 'macos',
+      placement: word,
+      selectors: {},
+      buildMachine,
+      noWait: false,
+      onWait: (line) => note(phaseLine('placement:', line)),
+      signal,
+    },
+    word === 'auto' ? { peek: () => peekLocalMacosCapacity(root, context) } : {},
+  );
   note(phaseLine('placement:', devicePlacementLine(placed.placement, placed.skipped)));
   return placed.placement.decision === 'hosted' ? placed.placement.machine : undefined;
 }
@@ -357,8 +376,7 @@ async function launchHere(
   context: StimContext,
   root: string,
   record: MacosAppRecord,
-  note: (line: string) => void,
-): Promise<MacosAppRecord> {
+): Promise<{ record: MacosAppRecord; deadline: number }> {
   await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
   const claims = [...operationState(context).declaring];
@@ -385,13 +403,7 @@ async function launchHere(
         throw new Error('The macOS launch supervisor changed before handoff.');
       for (const claim of claims) clearClaimChild(claim);
     });
-    if (current) {
-      if ((await waitForLaunchServices(current, deadline)) === 'timeout')
-        note(
-          'macOS LaunchServices does not list the app yet. agent-device open may start a second copy; wait and check lsappinfo.',
-        );
-      return current;
-    }
+    if (current) return { record: current, deadline };
     throw new Error('The macOS app did not register. See macos-supervisor.log in the workspace logs.');
   } catch (error) {
     try {

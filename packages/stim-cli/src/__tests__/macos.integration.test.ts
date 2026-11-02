@@ -1,7 +1,7 @@
 import { type StimContext, withAmbientContext } from '@stim-cli/core';
 import { parseWorkspaceLink } from '@stim-cli/core/workspace-link';
 import { testContext } from './_context.ts';
-import { writeConfigSetting, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
+import { writeConfigSetting, loadConfig, saveConfig, upsertProject, getConfigDir } from '../workspace/config.ts';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
@@ -34,6 +34,7 @@ import { resolveBundleExtras, stageBundle } from '../macos/stage.ts';
 import * as worktree from '../workspace/worktree.ts';
 import * as stopping from '../macos/stop.ts';
 import { buildMacosBundle } from '../macos/build.ts';
+import * as nativeBuild from '../macos/build.ts';
 import type { MacosArtifactRecipe } from '../integrations/macos-project.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import { planMacos } from '../macos/plan.ts';
@@ -43,6 +44,7 @@ import * as offload from '../offload/client.ts';
 import * as machines from '../offload/build-machines.ts';
 import * as slots from '../engine/build-slots.ts';
 import * as spawns from '../engine/spawn-claims.ts';
+import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { markClaimChildPending, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { macosDir, macosProcess, macosRuntimeClaim, requiredMacosRecord } from '../macos/state.ts';
 import * as registration from '../macos/registration.ts';
@@ -53,7 +55,7 @@ import { buildMacosOperation } from '../commands/macos-build.ts';
 import macosCommand, { runMacos, waitForLaunchServices } from '../commands/macos.ts';
 import { Command } from 'commander';
 import * as nativeRun from '../engine/native-run.ts';
-import { workspaceAgentDeviceDir, workspaceDir } from '../workspace/paths.ts';
+import { workspaceAgentDeviceDir, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { runStop } from '../commands/stop.ts';
 import { stopMacosApp } from '../macos/stop.ts';
 import { captureProcessToken, inspectProcessIdentity, waitForProcessExit } from '../process-identity.ts';
@@ -610,6 +612,77 @@ describe('macOS build placement and promotion', () => {
       }
     });
   });
+
+  test.skipIf(process.platform !== 'darwin')(
+    'a registered app waiting for LaunchServices leaves spare admission available',
+    async () => {
+      const mocked = getExecutor();
+      resetExecutor();
+      const app = await ownedProcess();
+      const supervisor = await ownedProcess();
+      const child = children.at(-1)!;
+      let enter!: () => void;
+      let release!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.product', 'Sample');
+      writeConfigSetting({ scope: 'workspace', projectPath: root }, 'macos.infoPlist', 'Info.plist');
+      writeConfigSetting({ scope: 'machine' }, 'concurrency.maxMacosApps', 2);
+      vi.spyOn(nativeBuild, 'buildMacosBundle').mockImplementation(
+        async ({ bundle: targetBundle, bundleId: targetId }) => {
+          mkdirSync(workspaceLogsDir(root), { recursive: true });
+          mkdirSync(join(targetBundle, 'Contents', 'MacOS'), { recursive: true });
+          writeFileSync(join(targetBundle, 'Contents', 'MacOS', 'Sample'), 'fixture');
+          return { bundleId: targetId, offloadedTo: null, offloadFallback: null, handoff: null };
+        },
+      );
+      vi.spyOn(registration, 'waitForMacosRegistration').mockImplementation(
+        async (project, _launch, _child, _deadline, accept) => {
+          const current = { ...requiredMacosRecord(project)!, app, supervisor };
+          writeWorkspaceState(project, { macos: current });
+          accept?.(current);
+          return current;
+        },
+      );
+      setExecutor({
+        ...mocked,
+        spawn: () => child,
+        runFileAsync: async (file, args, options) => {
+          if (file !== 'lsappinfo') return mocked.runFile(file, args, options);
+          enter();
+          await gate;
+          return 'ASN:0x0-0x1:';
+        },
+      });
+      const pending = runMacos(testContext(), root, () => {}, undefined, 'local');
+      try {
+        await Promise.race([
+          entered,
+          pending.then(() => {
+            throw new Error('The app returned before its LaunchServices lookup.');
+          }),
+        ]);
+        const attempt = tryAcquireClaim({
+          root: workspaceProcessLockPath(getConfigDir(), 'macos-admission', true),
+          mode: 'exclusive',
+          label: 'another workspace admission',
+        });
+        if (attempt.pending) releaseClaim(attempt.pending);
+        if (attempt.acquired) releaseClaim(attempt.acquired);
+        expect(attempt.acquired).toBeDefined();
+        const other = join(dir, 'other');
+        await expect(withLocalMacosAdmission(other, testContext(), async () => 'admitted')).resolves.toBe('admitted');
+      } finally {
+        release();
+        await pending;
+      }
+      expect((await pending).app).toEqual(app);
+    },
+  );
 
   it('inputs changed during compilation are installed without publishing a completed cache entry', async () => {
     const store = vi.fn<NonNullable<MacosArtifactRecipe['cache']>['store']>();

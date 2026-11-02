@@ -31,7 +31,10 @@ import { stopMacosApp } from '../macos/stop.ts';
 import * as offload from '../offload/client.ts';
 import { BuildConnection } from '../offload/client.ts';
 import * as buildMachines from '../offload/build-machines.ts';
-import { getConfigPath } from '../workspace/config.ts';
+import { getConfigPath, upsertProject, writeConfigSetting } from '../workspace/config.ts';
+import * as automatic from '../device-host/auto-placement.ts';
+import { macosProcess } from '../macos/state.ts';
+import { writeWorkspaceState } from '../workspace/workspace-state.ts';
 import { workspaceInUse } from '../workspace/in-use.ts';
 import { workspaceAgentDeviceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import * as settings from '../workspace/settings.ts';
@@ -532,14 +535,59 @@ describe.skipIf(process.platform !== 'darwin')('stim macos --remote (SwiftPM and
         JSON.stringify({ macos: { product: 'Fixture', infoPlist: 'Info.plist', ...macos } }),
       );
 
-    test.each(['remote-only', 'remote', 'mini'])(
+    test.each(['remote-only', 'remote', 'mini', 'auto'])(
       'macos.remote %s launches the app on the hosting Mac that offers a macOS session',
       async (remote) => {
         configure({ remote });
-        const record = await runMacos(testContext(), root, () => {});
-        expect(record.host).toMatchObject({ machine: 'mini' });
-        expect(host.methods).toContain('device-host.reserve');
-        expect(readMacosRecord(root)?.host?.machine).toBe('mini');
+        const place = automatic.automaticDevicePlacement;
+        const healthy = vi.spyOn(automatic, 'automaticDevicePlacement').mockImplementation((args, deps) =>
+          place(args, {
+            ...deps,
+            capacity: () => ({ cpus: 4, loadPerCore: 0, builds: 0, maxBuilds: 0, maxLoadPerCore: 2 }),
+            memory: () => 'normal',
+            budget: async () => null,
+          }),
+        );
+        if (remote === 'auto') {
+          const other = join(dir, 'other');
+          mkdirSync(other);
+          upsertProject(other, {});
+          writeWorkspaceState(other, {
+            macos: {
+              product: 'Other',
+              bundle: join(other, 'Other.app'),
+              bundleId: 'dev.other',
+              executable: process.execPath,
+              launchId: randomUUID(),
+              arguments: [],
+              app: macosProcess(process.pid),
+              build: { state: 'ok', startedAt: 'now' },
+            },
+          });
+          writeConfigSetting({ scope: 'machine' }, 'concurrency.maxMacosApps', 1);
+        }
+        try {
+          const record = await runMacos(testContext(), root, () => {});
+          expect(record.host).toMatchObject({ machine: 'mini' });
+          expect(host.methods).toContain('device-host.reserve');
+          expect(readMacosRecord(root)?.host?.machine).toBe('mini');
+          const reserves = host.methods.filter((method) => method === 'device-host.reserve').length;
+          const spawns = spawned.length;
+          let refusal: unknown = null;
+          if (remote === 'auto') {
+            await stopMacosApp(root);
+            host.offer = macosOffer({ declined: 'no room' });
+            refusal = await runMacos(testContext(), root, () => {}).then(
+              () => undefined,
+              (error: unknown) => (error instanceof Error && 'code' in error ? error.code : error),
+            );
+          }
+          expect(refusal).toBe(remote === 'auto' ? 'STIM_AT_CAPACITY' : null);
+          expect(host.methods.filter((method) => method === 'device-host.reserve')).toHaveLength(reserves);
+          expect(spawned).toHaveLength(spawns);
+        } finally {
+          healthy.mockRestore();
+        }
       },
     );
 
