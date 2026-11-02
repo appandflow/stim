@@ -2045,8 +2045,8 @@ workspace device with three methods that only the local Unix socket may call
 
 - `share.start` takes `workspace`, `platform` (`ios` or `android`), `slot`,
   `physical`, `control` and `expiresMinutes` (1 to 480, 60 by default) and
-  returns `{ id, workspace, platform, slot, physical, control, expiresAt,
-viewers, url, password }`. It refuses a device the workspace does not own or
+  returns
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, url, password }`. It refuses a device the workspace does not own or
   lease, a hosted device, and `control` on a physical iPhone.
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`.
 - `share.list` returns `shares`, the same rows without `url` or `password`.

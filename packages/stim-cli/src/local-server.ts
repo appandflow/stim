@@ -12,7 +12,7 @@ export type LocalServerAnswer<M extends ShareMethod> =
 /** No stim-server answered on this Stim home's local Unix socket. */
 export class LocalServerUnavailable extends Error {}
 
-const TIMEOUT_MS = 90_000;
+const TIMEOUT_MS = 120_000;
 
 /**
  * Sends one request to this Stim home's own stim-server over its local Unix socket, after `hello`, and returns the

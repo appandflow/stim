@@ -20,6 +20,7 @@ interface Fixture {
   inputs: unknown[];
   routeOpens: number[];
   routeCloses: number;
+  refuseControl: boolean;
   listenerBoundAtRouteClose: boolean[];
   status: (value: ReturnType<typeof payload>) => void;
 }
@@ -33,6 +34,7 @@ function fixture(): Fixture {
     inputs: [],
     routeOpens: [],
     routeCloses: 0,
+    refuseControl: false,
     listenerBoundAtRouteClose: [],
     status: (value) => {
       latest = value;
@@ -53,6 +55,7 @@ function fixture(): Fixture {
     control: {
       begin: async (_owner, target) => {
         f.begins.push(target);
+        if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
         return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
       targetOf: (_owner, session) => (session === 'c1' ? { platform: 'ios', postures: [] } : null),
@@ -72,6 +75,7 @@ function fixture(): Fixture {
         f.routeOpens.push(target);
         return { url: 'https://mac.tail.ts.net:10000', port: 10000 };
       },
+      stranded: () => false,
       close: async () => {
         f.routeCloses++;
         const port = f.routeOpens.at(-1)!;
@@ -259,6 +263,20 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set([key]));
     vi.advanceTimersByTime(2 * 60_000);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
+  });
+
+  it('keeps no recording exemption for a device whose control another client holds', async () => {
+    f.refuseControl = true;
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port!);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const refused = new Promise<string>((resolve) => socket.once('message', (data) => resolve(String(data))));
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    expect(JSON.parse(await refused)).toMatchObject({ type: 'control', message: expect.stringContaining('Desktop') });
+    expect(f.inputs).toEqual([]);
+    vi.advanceTimersByTime(2 * 60_000);
+    expect(f.hub.unrecordedTargets()).toEqual(new Set());
+    socket.close();
   });
 
   it('ends when stopped: closes viewers, stops capture and removes the route with the last share', async () => {

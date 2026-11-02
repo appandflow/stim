@@ -163,12 +163,18 @@ export class ShareRoute {
         releaseClaim(claim);
       } catch (removal) {
         console.error(`stim-server: could not remove the share route: ${String(removal)}`);
+        this.leftover = { claim, route };
       }
       throw cause;
     }
     this.claim = claim;
     this.route = route;
     return { url: port === 443 ? `https://${dnsName}` : `https://${dnsName}:${port}`, port };
+  }
+
+  /** Whether a route this server added could not be removed yet, so it may still point at its listener's port. */
+  stranded(): boolean {
+    return this.leftover !== null;
   }
 
   /** Removes the route and releases the claim; on failure keeps the claim, so the next open or stim-server retries. */

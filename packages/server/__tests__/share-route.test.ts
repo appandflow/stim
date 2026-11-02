@@ -94,6 +94,31 @@ describe('the share Funnel route claim', () => {
     expect(existsSync(root)).toBe(false);
   });
 
+  it('keeps a route it could not remove after a failed open, and removes it before the next open', async () => {
+    const funnel = tool({});
+    let unreadable = false;
+    const read = funnel.serveConfig;
+    funnel.serveConfig = async () => {
+      if (unreadable) throw new Error('tailscale timed out');
+      return read();
+    };
+    const add = funnel.add;
+    funnel.add = async (route) => {
+      await add(route);
+      unreadable = true;
+      throw new Error('funnel --bg timed out');
+    };
+    const route = new ShareRoute(root, funnel);
+    await expect(route.open(51234)).rejects.toThrow('funnel --bg timed out');
+    expect(route.stranded()).toBe(true);
+
+    unreadable = false;
+    funnel.add = add;
+    expect(await route.open(51235)).toMatchObject({ port: 443 });
+    expect(funnel.removed).toEqual([443]);
+    expect(route.stranded()).toBe(false);
+  });
+
   it('refuses without the Funnel capability and never touches the serve config', async () => {
     const funnel = tool({});
     funnel.status = async () => ({ Self: { DNSName: `${HOST}.`, CapMap: { https: null } } });
