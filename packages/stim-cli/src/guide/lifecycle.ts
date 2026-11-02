@@ -2306,9 +2306,19 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   devices are never touched. It writes a device_idle_shutdown line to
   metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
   status\` shows "shut down after 15m idle" on the device until the next
-  \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
-  shorter, the dev server's idle stop first shuts down the devices idle that
-  long, because no supervisor is left to check afterwards. Devices with no
+  \`ios\` or \`android\` run boots it again. The dev server's idle stop
+  (\`guide metro\`) first shuts down the devices idle for the shorter of
+  metro.idleStopMinutes and devices.idleShutdownMinutes, because no
+  supervisor is left to check afterwards; status then says "with Metro's
+  idle stop". From the idle stop on, and whenever neither a supervisor nor
+  the dev server it started runs in the workspace, device log lines stop
+  counting as activity of a slot whose last launch loads its JS from Metro,
+  so a Debug app's device goes down with the dev server and its reconnect
+  logs cannot keep it booted. Device logs still count for a Release or
+  native-process launch and for a slot with no recorded launch; for those any
+  change to the workspace's device.ndjson counts, so another slot's
+  reconnect logs keep them booted until that slot's device is shut down.
+  Devices with no
   supervisor (release runs, a dev server that exited) are shut down by
   automatic maintenance while maintenance.mode is on (guide cleanup): every maintenance.idleCheckMinutes
   (5) a command starts a background check that applies each workspace's

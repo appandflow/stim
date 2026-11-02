@@ -125,9 +125,21 @@ without reloading and without console output therefore counts as idle. Raise
 `metro.idleStopMinutes` for that workflow.
 
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
-`stim status` shows the port as `stopped (idle)` instead of a crash. The devices
-stay booted, except owned ones idle for `devices.idleShutdownMinutes` (15 by
-default; `0` never), which the stop shuts down first. The next `stim start` starts the server again, or reuses one that
+`stim status` shows the port as `stopped (idle)` instead of a crash. Unless
+`devices.idleShutdownMinutes` is `0`, the stop first shuts down the
+workspace's owned simulators and emulators idle for the shorter of
+`metro.idleStopMinutes` and `devices.idleShutdownMinutes`. From then on, device log lines no
+longer count as use of a device whose app loads its JavaScript from Metro: a
+Debug app cannot run without its dev server, and its reconnect attempts fill
+the device log. A Debug app's device therefore goes down with the dev server,
+even when `devices.idleShutdownMinutes` is longer than
+`metro.idleStopMinutes`. A phone app viewing the device through `stim-server`
+keeps it booted, and device logs still count for a Release or native-process
+launch, whose app runs without Metro. The `supervisor_idle_stopped` message
+names each device the stop shut down and why it kept any other, and
+`stim status` shows the device as `shut down ... (with Metro's idle stop)`.
+`stim revive` brings back the dev server, the device and the app. With
+`devices.idleShutdownMinutes` at `0`, the devices stay booted. The next `stim start` starts the server again, or reuses one that
 another process started, and clears that state. A Debug `stim ios` or
 `stim android` run starts it again too, and its JSON result reports
 `devServer: { "started": true, "reason": "stopped (idle)" }`. The setting is

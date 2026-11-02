@@ -115,6 +115,12 @@ function parseWorkspaceLaunchRecord(value: unknown): WorkspaceLaunchRecord | nul
   return record as WorkspaceLaunchRecord;
 }
 
+/** What lets the launched app run without Metro, or null when it loads its JS from Metro. */
+export function launchWithoutMetro(record: WorkspaceLaunchRecord): string | null {
+  if (record.release) return 'a Release build';
+  return record.runtime === 'process' ? 'a native-process launch' : null;
+}
+
 export function readWorkspaceLaunches(root: string): Record<string, WorkspaceLaunchRecord> {
   const launches = readWorkspaceState(root)?.launches;
   if (!launches || typeof launches !== 'object' || Array.isArray(launches)) return {};

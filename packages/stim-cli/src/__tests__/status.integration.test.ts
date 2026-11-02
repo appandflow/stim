@@ -1564,7 +1564,7 @@ test('status emits one archive payload and links earlier runs to a live environm
   }
 });
 
-test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const])(
+test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "Metro's idle stop" as const])(
   'status displays idle shutdown reason %s and includes it in JSON',
   async (reason) => {
     const root = join(tmpHome, 'idle-project');
@@ -1580,7 +1580,11 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const])(
     const line = lines.find((entry) => entry.includes('shut down after 14m idle'));
     expect(line).toBeDefined();
     expect(line).toContain(
-      reason === 'reclaimed for a waiting run' ? 'reclaimed for a waiting run' : 'devices.idleShutdownMinutes',
+      reason === 'reclaimed for a waiting run'
+        ? 'reclaimed for a waiting run'
+        : reason === "Metro's idle stop"
+          ? "with Metro's idle stop; metro.idleStopMinutes"
+          : 'devices.idleShutdownMinutes',
     );
     const payload = await runStatusJson();
     expect(
