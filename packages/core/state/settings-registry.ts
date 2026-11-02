@@ -393,6 +393,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
       'Minutes without activity before a workspace goes idle: its dev server stops with its port kept, its owned simulators and emulators shut down, and its regenerable build outputs are deleted; stim revive resumes it. Unset, the smaller of metro.idleStopMinutes and devices.idleShutdownMinutes; 0 never',
   },
   {
+    key: 'idle.dormantDays',
+    type: { kind: 'number', minimum: 0 },
+    scopes: MACHINE,
+    default: 3,
+    description:
+      'Days without activity before a workspace goes dormant: its owned simulators and emulators are deleted (the parked pool is untouched) and its logs are archived, while node_modules and Pods stay; any Stim command run in it leaves the stage. Fractions of a day are allowed; 0 never',
+  },
+  {
     key: 'metro.idleStopMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: PROJECT,
@@ -412,7 +420,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: EVERY,
     default: 10,
     description:
-      'Minutes an owned simulator or emulator stays idle before a waiting run reclaims its device slot; 0 never',
+      'Not read: while a run waits for a device slot, the stim-daemon shuts down the longest-idle device of another workspace idle 2 minutes or more',
   },
   {
     key: 'macos.product',
@@ -615,7 +623,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 0,
     env: 'STIM_MAX_BUILDS',
-    description: 'Concurrent native builds; 0 means no limit',
+    description: 'Concurrent native builds; 0 derives max(1, floor(CPU cores / 6))',
   },
   {
     key: 'concurrency.maxDevices',
@@ -624,7 +632,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 0,
     env: 'STIM_MAX_DEVICES',
     description:
-      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 means no limit',
+      'Booted owned iOS simulators and Android emulators together; local and hosted macOS apps use separate pools; 0 derives max(2, floor((RAM - 4 GB) / 1.5 GB))',
   },
   {
     key: 'concurrency.maxIosDevices',
@@ -658,8 +666,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 20,
     env: 'STIM_BUDGET_MIN_FREE_DISK_GB',
-    scopedHomeValue: 0,
-    description: 'Free disk, in GB, ios, android and start reclaim toward; 0 reclaims only below the hard floor',
+    description:
+      'Free disk, in GB, on a volume Stim writes to below which the pressure level is high and the stim-daemon reclaims; 0 turns the high disk level off',
   },
   {
     key: 'budget.hardFloorDiskGb',
@@ -667,8 +675,17 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 5,
     env: 'STIM_BUDGET_HARD_FLOOR_DISK_GB',
-    scopedHomeValue: 0,
-    description: 'Free disk, in GB, below which ios, android and start refuse with STIM_LOW_DISK; 0 never refuses',
+    description:
+      "Free disk, in GB, below which start, ios and android refuse with STIM_LOW_DISK after the stim-daemon's pressure ladder ran; 0 never refuses",
+  },
+  {
+    key: 'disk.criticalFreeGb',
+    type: GIGABYTES,
+    scopes: MACHINE,
+    default: 6,
+    env: 'STIM_DISK_CRITICAL_FREE_GB',
+    description:
+      'Free disk, in GB, on a volume Stim writes to below which the pressure level is critical: the stim-daemon empties the Metro and compilation caches and deletes the devices of idle workspaces and their node_modules and Pods; 0 turns the critical disk level off',
   },
   {
     key: 'budget.maxCommittedMemoryGb',
@@ -676,8 +693,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     env: 'STIM_BUDGET_MAX_COMMITTED_MEMORY_GB',
     scopedHomeValue: 0,
-    description:
-      'Estimated memory, in GB, of active environments before idle ones are reclaimed; unset is 60% of RAM, 0 is off',
+    description: "Not read: the stim-daemon's pressure ladder replaced the per-command budget",
   },
   {
     key: 'budget.maxLiveWorkspaces',
@@ -685,7 +701,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     env: 'STIM_BUDGET_MAX_LIVE_WORKSPACES',
     scopedHomeValue: 0,
-    description: 'Active workspaces before idle ones are reclaimed; unset or 0 means no limit',
+    description: "Not read: the stim-daemon's pressure ladder replaced the per-command budget",
   },
   {
     key: 'maintenance.mode',
@@ -704,7 +720,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 1,
     env: 'STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES',
-    description: 'Disk and memory check interval in minutes',
+    description: 'Not read: the stim-daemon measures disk and memory every tick',
   },
   {
     key: 'maintenance.sizeCheckMinutes',
@@ -752,7 +768,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'warning',
     env: 'STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL',
-    description: 'Lowest macOS memory pressure level considered; off disables memory pressure reporting',
+    description:
+      "Not read: the stim-daemon's pressure level counts macOS memory pressure warning for 10 minutes, or critical",
   },
   {
     key: 'maintenance.memoryWarningMinutes',
@@ -760,14 +777,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 10,
     env: 'STIM_MAINTENANCE_MEMORY_WARNING_MINUTES',
-    description: 'Consecutive warning minutes before memory counts as pressure',
+    description: "Not read: the stim-daemon's pressure level counts macOS memory pressure warning for 10 minutes",
   },
   {
     key: 'maintenance.minAvailableMemoryGb',
     type: { kind: 'number', minimum: 0 },
     scopes: MACHINE,
     env: 'STIM_MAINTENANCE_MIN_AVAILABLE_MEMORY_GB',
-    description: 'Available-memory threshold in GiB; unset is 10% of RAM',
+    description: "Not read: the stim-daemon's pressure level is high while available memory is under 10% of RAM",
   },
   {
     key: 'maintenance.capTargetPercent',
@@ -826,8 +843,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 3,
     env: 'STIM_MAINTENANCE_DEVICE_IDLE_DAYS',
-    description:
-      'Days a workspace stays idle before the age sweep deletes its owned simulators and emulators; 0 turns that off',
+    description: 'Not read: idle.dormantDays deletes the owned devices of a workspace without activity',
   },
   {
     key: 'maintenance.protectRecentHours',
@@ -843,8 +859,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 12,
     env: 'STIM_MAINTENANCE_URGENT_FREE_DISK_GB',
-    description:
-      'Free disk, in GB, below which automatic maintenance reports disk pressure level 2; 0 turns that threshold off',
+    description: "Not read: budget.minFreeDiskGb and disk.criticalFreeGb set the stim-daemon's pressure levels",
   },
   {
     key: 'maintenance.criticalFreeDiskGb',
@@ -852,8 +867,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 6,
     env: 'STIM_MAINTENANCE_CRITICAL_FREE_DISK_GB',
-    description:
-      'Free disk, in GB, below which automatic maintenance enters disk pressure level 3, also at or below budget.hardFloorDiskGb; 0 leaves only the hard floor',
+    description: "Not read: disk.criticalFreeGb sets the stim-daemon's critical pressure level",
   },
   {
     key: 'maintenance.pressureProtectMinutes',
@@ -862,7 +876,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 10,
     env: 'STIM_MAINTENANCE_PRESSURE_PROTECT_MINUTES',
     description:
-      'Protection window, in minutes, that replaces maintenance.protectRecentHours at disk pressure levels 2 and 3, except for workspace build outputs and build directories, which level 2 keeps for 15 minutes after the last ios, android or macos run',
+      "Not read: the stim-daemon's pressure ladder never touches a workspace with a blocker and takes the longest-idle first",
   },
   {
     key: 'maintenance.gradleVersionIdleDays',
@@ -871,7 +885,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: 7,
     env: 'STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS',
     description:
-      'At disk pressure level 3, stop idle Gradle and Kotlin daemons, then delete the Gradle version caches and wrapper distributions no registered project pins once their directories are unmodified this many days; 0 turns this off',
+      "Days an unpinned Gradle version's caches and wrapper distribution stay unmodified before the stim-daemon deletes them, on its daily sweep or at once under disk pressure, after stopping the idle Gradle and Kotlin daemons that keep them; 0 turns this off",
   },
   {
     key: 'maintenance.removeFinishedWorktrees',

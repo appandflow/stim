@@ -5,7 +5,13 @@ import type { DaemonStatus } from './daemon.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
-import type { DeviceIdleShutdownRecord, IdleStageRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type {
+  DeviceIdleShutdownRecord,
+  DormantStageRecord,
+  IdleStageRecord,
+  IdleStopRecord,
+  MetroLastStop,
+} from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 /** A platform whose build reports phases: the stats platforms and `macos`. */
@@ -41,6 +47,10 @@ export interface BuildWaitingFor {
   inUse: number;
   max: number;
   since: string;
+  /** The run's 1-based place in its admission queue; absent from records written before the queue existed. */
+  position?: number;
+  /** What holds it: `build slots`, `booted devices`, `boots in flight`, `memory`, or `its turn`. */
+  resource?: string;
 }
 
 export interface BuildReport {
@@ -673,6 +683,8 @@ export interface EnvironmentState {
   stage?: WorkspaceStage;
   /** Present while the workspace is in the idle stage: no activity since the daemon stopped it. */
   idleStage?: IdleStageRecord;
+  /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
+  dormantStage?: DormantStageRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
