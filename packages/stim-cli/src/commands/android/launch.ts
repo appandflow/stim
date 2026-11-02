@@ -41,7 +41,7 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../supervisor/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import type {
   VerifyLaunchResultLike,
@@ -685,6 +685,20 @@ async function cleanEmulatorAppState(
   return null;
 }
 
+function launchedArtifact(
+  apkPath: string,
+  variant: string | null | undefined,
+  record: AndroidRecord,
+): LaunchedArtifact {
+  return {
+    appPath: apkPath,
+    configuration: variant ?? null,
+    fingerprint: record.fingerprint ?? null,
+    cacheKey: record.cacheKey ?? null,
+    cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+  };
+}
+
 export async function finishAndroidRun({
   operation,
   runtime,
@@ -975,6 +989,7 @@ export async function finishAndroidRun({
         release,
         ...(runtime.kind === 'process' ? { runtime: 'process' as const } : {}),
         launchedAt: new Date(launchedAt).toISOString(),
+        ...(apkPath ? { artifact: launchedArtifact(apkPath, variant, record) } : {}),
       });
     } catch (error) {
       out(phaseLine('state', chalk.yellow(`could not record Android launch: ${(error as Error)?.message || error}`)));

@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import type { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
-import { LAST_BUILD_KEYS, isJsonObject, readIdleStop, type WorkspaceState } from '@stim-cli/core/state';
+import { hostedNativeRecords, readIdleStop, type WorkspaceState } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
 import { formatLongDuration, phaseLine, refuseNoProject } from '../command-output.ts';
 import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
@@ -63,6 +63,7 @@ interface RunRequest {
 }
 
 export interface ReviveDeps {
+  findWorkspace: (cwd: string) => Promise<string | null>;
   getProject: typeof getProject;
   readState: (root: string) => WorkspaceState | null;
   readLaunches: typeof readWorkspaceLaunches;
@@ -74,7 +75,7 @@ export interface ReviveDeps {
   startMetro: (
     root: string,
     note: (line: string) => void,
-  ) => Promise<{ ok: true } | { ok: false; error: ReviveFailure }>;
+  ) => Promise<{ ok: true; port: number } | { ok: false; error: ReviveFailure }>;
   run: (platform: Platform, root: string, request: RunRequest) => Promise<RunOutcome>;
 }
 
@@ -84,6 +85,7 @@ interface Target {
   record: WorkspaceLaunchRecord;
   deviceId: string;
   deviceName: string | null;
+  names: string[];
   booted: boolean;
   build: RecordedBuild;
   configuration: string | null;
@@ -93,27 +95,22 @@ function failure(code: string, message: string, remedy: string | null): { ok: fa
   return { ok: false, error: { code, message, remedy } };
 }
 
-function lastSuccessfulRun(
-  state: WorkspaceState | null,
-  platform: Platform,
-  appId: string,
-): { build: RecordedBuild; configuration: string | null } | null {
-  const record = state?.[LAST_BUILD_KEYS[platform]];
-  if (!isJsonObject(record) || record.status !== 'ok' || record.bundleId !== appId) return null;
-  if (typeof record.appPath !== 'string') return null;
-  const { fingerprint, cacheKey, cacheHit } = record;
-  const hit: 'local' | 'remote' | null = cacheHit === 'local' || cacheHit === 'remote' ? cacheHit : null;
+function launchedBuild(record: WorkspaceLaunchRecord): { build: RecordedBuild; configuration: string | null } | null {
+  const artifact = record.artifact;
+  if (!artifact || typeof artifact.appPath !== 'string') return null;
+  const { fingerprint, cacheKey, cacheHit } = artifact;
   const cache =
-    typeof fingerprint === 'string' && typeof cacheKey === 'string' && hit ? { fingerprint, key: cacheKey, hit } : null;
+    typeof fingerprint === 'string' && typeof cacheKey === 'string'
+      ? { fingerprint, key: cacheKey, hit: cacheHit === 'remote' ? ('remote' as const) : ('local' as const) }
+      : null;
   return {
-    build: { appPath: record.appPath, bundleId: appId, builtAt: '', ...(cache ? { cache } : {}) },
-    configuration: typeof record.configuration === 'string' ? record.configuration : null,
+    build: { appPath: artifact.appPath, bundleId: record.appId, builtAt: '', ...(cache ? { cache } : {}) },
+    configuration: typeof artifact.configuration === 'string' ? artifact.configuration : null,
   };
 }
 
 async function inspectTarget(
   project: ProjectRecord,
-  state: WorkspaceState | null,
   platform: Platform,
   slot: string,
   record: WorkspaceLaunchRecord,
@@ -129,6 +126,7 @@ async function inspectTarget(
     );
   let deviceId: string;
   let deviceName: string | null;
+  let names: string[];
   let booted: boolean;
   if (platform === 'ios') {
     const owned = slotDevices?.ios;
@@ -139,6 +137,7 @@ async function inspectTarget(
     if (!resolved.sim) return lost(`Simulator ${record.deviceId} no longer exists as a Stim-owned simulator`);
     deviceId = resolved.sim.udid;
     deviceName = resolved.sim.name;
+    names = [resolved.sim.udid];
     booted = resolved.sim.state === 'Booted';
   } else {
     const owned = slotDevices?.android;
@@ -149,34 +148,36 @@ async function inspectTarget(
     }
     deviceId = resolved.serial ?? owned.avdName;
     deviceName = owned.avdName;
+    names = resolved.serial ? [owned.avdName, resolved.serial] : [owned.avdName];
     booted = Boolean(resolved.serial);
   }
-  const last = lastSuccessfulRun(state, platform, record.appId);
-  if (!last) {
+  const launched = launchedBuild(record);
+  if (!launched) {
     return failure(
       'STIM_NO_RECORDED_BUILD',
-      `No successful ${platform} run of ${record.appId} is recorded for this workspace, so there is no app to relaunch.`,
+      `The ${platform} launch of ${record.appId} records no installed app, so there is no app to relaunch.`,
       `Run \`${run}\` to build or restore it from the cache and launch it.`,
     );
   }
-  if (!d.artifactExists(last.build.appPath)) {
+  if (!d.artifactExists(launched.build.appPath)) {
     return failure(
       'STIM_NO_RECORDED_BUILD',
-      `The app the last ${platform} run installed, ${last.build.appPath}, no longer exists.`,
+      `The app the last ${platform} launch installed, ${launched.build.appPath}, no longer exists.`,
       `Run \`${run}\` to build or restore it from the cache and launch it.`,
     );
   }
-  return { platform, slot, record, deviceId, deviceName, booted, ...last };
+  return { platform, slot, record, deviceId, deviceName, names, booted, ...launched };
 }
 
-/** Resumes what an idle stop paused: the dev server, each recorded owned device, and the app last launched on it. */
 export async function runRevive({
   root,
   note,
+  requestedDevice = null,
   deps,
 }: {
   root: string;
   note: (line: string) => void;
+  requestedDevice?: string | null;
   deps: ReviveDeps;
 }): Promise<ReviveResult> {
   const d = deps;
@@ -188,13 +189,15 @@ export async function runRevive({
   const port = typeof project.metroPort === 'number' ? project.metroPort : null;
   const live = port === null ? null : d.liveSupervisor({ state, project, port });
   const idle = readIdleStop(state);
-  if (!live && !idle) {
+  if (!live && (!idle || port === null)) {
     const stop = metroLastStop(state, null);
     return failure(
       'STIM_NO_METRO',
-      stop
-        ? `This workspace's Metro was not stopped for being idle (${describeMetroLastStop(stop)}), so there is nothing to resume.`
-        : "This workspace's Metro was never started, so there is nothing to resume.",
+      idle
+        ? "This workspace was stopped after Metro's idle stop and its Metro port was released, so there is nothing to resume."
+        : stop
+          ? `This workspace's Metro was not stopped for being idle (${describeMetroLastStop(stop)}), so there is nothing to resume.`
+          : "This workspace's Metro was never started, so there is nothing to resume.",
       'Run `stim start`, then `stim ios` or `stim android`.',
     );
   }
@@ -202,18 +205,26 @@ export async function runRevive({
   const targets: Target[] = [];
   for (const [key, record] of Object.entries(d.readLaunches(root))) {
     const parsed = parseDeviceSlotKey(key);
-    // A Release or native-process app does not load JS from Metro, and reinstalling its cached artifact could
-    // replace the JS a release run injected; `stim ios|android` relaunches it.
     if (!parsed || record.release || record.runtime === 'process') continue;
-    const target = await inspectTarget(project, state, parsed.platform, parsed.slot, record, d);
+    if (hostedNativeRecords(state, parsed.platform)[parsed.slot]) continue;
+    const target = await inspectTarget(project, parsed.platform, parsed.slot, record, d);
     if ('ok' in target) return target;
     targets.push(target);
   }
+  if (requestedDevice && !targets.some((target) => target.names.includes(requestedDevice))) {
+    return failure(
+      'STIM_DEVICE_LOST',
+      `Device ${requestedDevice} is not a simulator or emulator this workspace last launched its app on, so revive started nothing for it.`,
+      "Stim boots only this workspace's owned devices. Run `stim status` to see them, and drive one of those.",
+    );
+  }
 
+  let metroPort = port;
   let restarted = false;
   if (!live) {
     const started = await d.startMetro(root, note);
     if (!started.ok) return started;
+    metroPort = started.port;
     restarted = true;
   }
 
@@ -255,7 +266,12 @@ export async function runRevive({
     ok: true,
     facts: {
       revived: {
-        metro: { port, stoppedAt: live ? null : (idle?.at ?? null), reason: live ? null : 'idle', restarted },
+        metro: {
+          port: metroPort,
+          stoppedAt: live ? null : (idle?.at ?? null),
+          reason: live ? null : 'idle',
+          restarted,
+        },
         devices,
       },
     },
@@ -300,8 +316,13 @@ function nestedContext(context: StimContext): StimContext {
   };
 }
 
+function findWorkspace(cwd: string): Promise<string | null> {
+  return findCommandWorkspaceAsync(cwd, repoRootAsync, writeNote);
+}
+
 function defaultDeps(context: StimContext): ReviveDeps {
   return {
+    findWorkspace,
     getProject,
     readState: readWorkspaceState,
     readLaunches: readWorkspaceLaunches,
@@ -317,10 +338,8 @@ function defaultDeps(context: StimContext): ReviveDeps {
       const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root);
       const [shapeError] = settingShapeErrors(settings);
       if (shapeError) return failure('STIM_BAD_ARG', shapeError, SETTING_SHAPE_REMEDY);
-      // `stim start` records no flags, so an explicit `--remote` is not restored; settings that select a
-      // remote device still are, because startDevServer derives them from settings.
       const started = await startDevServer({ root, settings, settingsContext, out: note, note });
-      return started.ok ? { ok: true } : { ok: false, error: started.error };
+      return started.ok ? { ok: true, port: started.facts.port } : { ok: false, error: started.error };
     },
     run: async (platform, root, { slot, configuration, recordedBuild }) => {
       const nested = nestedContext(context);
@@ -329,7 +348,7 @@ function defaultDeps(context: StimContext): ReviveDeps {
         const result = await runIosOperation(
           nested,
           root,
-          { slot, recordedBuild, ...(configuration ? { configuration } : {}) },
+          { slot, recordedBuild, remote: 'local', ...(configuration ? { configuration } : {}) },
           {},
           (failed) => {
             error = failed;
@@ -347,6 +366,7 @@ function defaultDeps(context: StimContext): ReviveDeps {
       const result = await runAndroidOperation(nested, root, {
         slot,
         recordedBuild,
+        remote: 'local',
         ...(configuration ? { variant: configuration } : {}),
       });
       return result.ok && result.facts
@@ -370,14 +390,19 @@ export function registerRevive(program: Command, overrides: Partial<ReviveDeps> 
     .option('--json', 'Emit the revived facts as one JSON line; every other line goes to stderr')
     .action(async (opts: { json?: boolean }) => {
       const json = Boolean(opts.json);
-      const root = await findCommandWorkspaceAsync(process.cwd(), repoRootAsync, writeNote);
+      const root = await (overrides.findWorkspace ?? findWorkspace)(process.cwd());
       if (!root) {
         refuseNoProject({ json });
         return;
       }
       await recordWorkspaceUseAsync(root);
       const { value: result, interrupted } = await runProcessOperation(root, (context) =>
-        runRevive({ root, note: writeNote, deps: { ...defaultDeps(context), ...overrides } }),
+        runRevive({
+          root,
+          note: writeNote,
+          requestedDevice: context.env.AGENT_DEVICE_BOOT_HOOK_DEVICE_ID || null,
+          deps: { ...defaultDeps(context), ...overrides },
+        }),
       );
       if (!result.ok) {
         if (json) console.log(JSON.stringify(result.error));

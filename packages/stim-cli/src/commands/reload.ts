@@ -250,7 +250,7 @@ async function inspectTarget(
         error: failure(
           'STIM_RELOAD_STOPPED',
           `The recorded iOS app is not running on a booted owned simulator.`,
-          REVIVE_REMEDY,
+          resolved.sim ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
         ),
       };
     }
@@ -290,7 +290,7 @@ async function inspectTarget(
       error: failure(
         'STIM_RELOAD_STOPPED',
         `The recorded Android app is not running on this workspace's owned emulator.`,
-        REVIVE_REMEDY,
+        resolved.notRunning ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
       ),
     };
   }

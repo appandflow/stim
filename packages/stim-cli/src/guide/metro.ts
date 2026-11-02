@@ -258,13 +258,14 @@ the workflow, stop the workspace and the specific unit you created:
   Debug \`ios\` or \`android\` run starts it the same way and reports
   devServer.reason "stopped (idle)". \`stim revive\` resumes exactly what the
   idle stop paused: it restarts the dev server, boots each owned simulator or
-  emulator a recorded Debug launch ran on (through the same admission as
-  \`ios\` and \`android\`), and relaunches that app from cold from its last
-  installed artifact, without fingerprinting or building. In-app state is
-  gone. An app that is still running is left alone unless Metro restarted.
-  Release and native-process launches are not relaunched. It refuses with
-  STIM_NO_METRO when the last stop was not an idle stop, STIM_DEVICE_LOST when
-  the owned device is gone, and STIM_NO_RECORDED_BUILD when the app is. The
+  emulator a recorded Debug launch ran on, on this machine and through the
+  same admission as \`ios\` and \`android\`, and relaunches that app from
+  cold from the artifact the launch recorded, without fingerprinting or
+  building. In-app state is gone. An app that is still running is left alone
+  unless Metro restarted. Release, native-process and hosted launches are not
+  relaunched. It refuses with STIM_NO_METRO when the last stop was not an idle
+  stop or the workspace was stopped since, STIM_DEVICE_LOST when the owned
+  device is gone, and STIM_NO_RECORDED_BUILD when the app is. The
   setting
   is read when \`start\` spawns the supervisor; a value that is not a whole
   number of 0 or more is refused, as \`stim settings set\` refuses it.

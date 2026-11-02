@@ -948,23 +948,26 @@ and restores exactly what the stop paused, never more:
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
 - **Devices.** For each recorded Debug launch, it boots the owned simulator or
-  emulator the app ran on, through the same device admission as `ios` and
-  `android` (`concurrency.maxDevices` included).
-- **App.** It relaunches the app from cold with the artifact the last
-  successful `ios` or `android` run installed, without fingerprinting or
-  building. In-app state is gone. An app still running is left alone unless
-  Metro restarted.
+  emulator the app ran on, on this machine and through the same device
+  admission as `ios` and `android` (`concurrency.maxDevices` included).
+- **App.** It relaunches the app from cold with the artifact that launch
+  installed, without fingerprinting or building. In-app state is gone. An app
+  still running is left alone unless Metro restarted.
 
-Release and native-process launches do not use Metro and are not relaunched;
-run `stim ios` or `stim android` for them. Revive refuses instead of widening:
+Release and native-process launches do not use Metro, and hosted launches
+belong to their host, so revive does not relaunch them; run `stim ios` or
+`stim android` for them. Revive refuses instead of widening:
 
 - `STIM_NO_METRO` when Metro is not running and its last stop was not an idle
-  stop: it was never started, or was stopped by `stim stop`, automatic
-  maintenance, a signal or a crash.
+  stop (it was never started, or a signal or crash stopped it), or when
+  `stim stop` or automatic maintenance stopped the workspace after the idle
+  stop.
 - `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
-  this workspace's owned device.
-- `STIM_NO_RECORDED_BUILD` when the app the last run installed is gone, for
-  example after `stim gc`; the remedy names `stim ios` or `stim android`.
+  this workspace's owned device, or, when agent-device runs it as its boot
+  hook, when the device agent-device asked for is not one of them.
+- `STIM_NO_RECORDED_BUILD` when the app a launch installed is gone, for
+  example after `stim gc`, or the launch predates revive and records none; the
+  remedy names `stim ios` or `stim android`.
 
 It checks all three before starting anything. Each line on stderr says what came
 back:

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 export type SpawnEntryName = 'cli' | 'supervisor-run' | 'collector-run' | 'web-run' | 'macos-run' | 'maintenance-run';
 
 const DEV_ENTRIES: Record<SpawnEntryName, string> = {
-  cli: '../bin/node-check.ts',
+  cli: '../bin/cli.ts',
   'supervisor-run': './supervisor/run.ts',
   'collector-run': './collector/run.ts',
   'web-run': './web/run.ts',

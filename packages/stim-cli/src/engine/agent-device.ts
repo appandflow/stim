@@ -146,10 +146,6 @@ export async function readRemoteSimulatorArch(
   }
 }
 
-/**
- * Points agent-device, when its state directory is this workspace's, at `stim revive` for a shut-down simulator or
- * emulator, so the device boots through Stim's admission and the app comes back with this workspace's Metro.
- */
 export function writeAgentDeviceBootHook(root: string): void {
   const dir = workspaceAgentDeviceDir(root);
   const file = join(dir, 'boot-hook.json');

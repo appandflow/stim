@@ -11,7 +11,6 @@ export interface RecordedBuild {
   appPath: string;
   bundleId: string | null;
   builtAt: string;
-  /** The cache entry `appPath` came from, so a run that installs it records a hit of that entry. */
   cache?: { fingerprint: string; key: string; hit: 'local' | 'remote' };
 }
 
@@ -71,7 +70,6 @@ function readRecordedBuild(root: string, key: string): RecordedBuild | null {
 
 const NO_RECORDED_BUILD = 'STIM_NO_RECORDED_BUILD';
 
-/** `true` installs the workspace's recorded build for the selectors; a build installs that app as is. */
 export type RecordedBuildRequest = boolean | RecordedBuild;
 
 export interface RecordedBuildRefusal {

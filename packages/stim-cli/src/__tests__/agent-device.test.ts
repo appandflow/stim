@@ -1,4 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { workspaceAgentDeviceDir } from '@stim-cli/core/state';
@@ -65,9 +66,10 @@ test("the boot hook agent-device reads runs this Stim's revive from the workspac
     writeAgentDeviceBootHook('/work/app');
     const hook = JSON.parse(readFileSync(join(workspaceAgentDeviceDir('/work/app'), 'boot-hook.json'), 'utf8'));
     expect(hook.cwd).toBe('/work/app');
-    expect(hook.command[0]).toBe(process.execPath);
-    expect(existsSync(hook.command[1])).toBe(true);
     expect(hook.command.slice(2)).toEqual(['revive', '--json']);
+    const help = spawnSync(hook.command[0], [hook.command[1], 'revive', '--help'], { encoding: 'utf8' });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('Usage: stim revive');
   } finally {
     delete process.env.STIM_HOME;
     rmSync(home, { recursive: true, force: true });

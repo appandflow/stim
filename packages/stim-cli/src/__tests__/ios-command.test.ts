@@ -4930,6 +4930,13 @@ describe('a recorded build', () => {
       cacheSkipped: false,
       fingerprint: 'f1',
     });
+    expect(readWorkspaceLaunches(root).ios?.artifact).toEqual({
+      appPath: recorded,
+      configuration: null,
+      fingerprint: 'f1',
+      cacheKey: 'f1-debug-sim-arm64',
+      cacheHit: 'local',
+    });
   });
 
   test('is refused when the selectors differ from the recorded build', async () => {
@@ -5163,6 +5170,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       metroPort: 8082,
       release: false,
       launchedAt: expect.any(String),
+      artifact: expect.objectContaining({ fingerprint: null, cacheKey: null, cacheHit: false }),
     });
     expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
   });
