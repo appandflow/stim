@@ -268,9 +268,9 @@ export function ownedSimFailure(error: unknown): { code: string; message: string
 }
 
 export function isReleaseConfiguration(configuration: string | null | undefined): boolean {
-  return (
-    typeof configuration === 'string' && configuration.trim() !== '' && configuration.trim().toLowerCase() !== 'debug'
-  );
+  const name = typeof configuration === 'string' ? configuration.trim() : '';
+  // react-native-xcode.sh skips the simulator bundle for any configuration matching `*Debug*`.
+  return name !== '' && name.toLowerCase() !== 'debug' && !name.includes('Debug');
 }
 
 export function simulatorBuildArch({
