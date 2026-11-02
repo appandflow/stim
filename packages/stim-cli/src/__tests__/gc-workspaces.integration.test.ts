@@ -1,6 +1,5 @@
 import { execSync } from 'node:child_process';
 import {
-  chmodSync,
   existsSync,
   lstatSync,
   readFileSync,
@@ -34,7 +33,6 @@ import {
 } from '../commands/gc/workspaces.ts';
 import {
   collectWorktreeSweep,
-  removeWorktrees,
   worktreeRemovalReason,
   worktreeSkipReason,
   type WorktreeFacts,
@@ -50,7 +48,7 @@ import {
 } from '../workspace/pull-request.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceName } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
@@ -1271,11 +1269,11 @@ describe('linked worktree sweep classification', () => {
       const reason = (candidate: Partial<Parameters<typeof worktreeRemovalReason>[0]>, idleMs: number | null) =>
         worktreeRemovalReason(
           { merge: noOwnCommits, pullRequest: null, idleDays: null, activity: null, ...candidate },
-          { now, noOwnCommitsIdleMs: idleMs, underPressure: true },
+          { now, noOwnCommitsIdleMs: idleMs },
         );
       expect(reason({ idleDays: 12 }, null)).toBe('no commits of its own beyond origin/main, idle 12d');
       expect(reason({ idleDays: 0, activity: { at: now - 12 * 60_000, basis: 'a git index write' } }, 600_000)).toBe(
-        'no commits of its own beyond origin/main, inactive for 12m under disk pressure',
+        'no commits of its own beyond origin/main, inactive for 12m',
       );
     });
   });
@@ -1319,7 +1317,7 @@ describe('linked worktree sweep classification', () => {
       );
     });
 
-    test('decides a worktree with no commits of its own under disk pressure by its activity, and never without it', () => {
+    test('decides a worktree with no commits of its own by its activity, and never without it', () => {
       const ownless = linked({ idleDays: 0, merge: noOwnCommits, activity: activity(30) });
       const off = { ms: 0, now };
       expect(worktreeSkipReason(ownless, null, off, 10 * 60_000)).toBe(null);
@@ -2723,95 +2721,6 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
     error.mockRestore();
   }
   expect(existsSync(merged)).toBe(true);
-}, 240_000);
-
-test('disk pressure level 3 removes a worktree with no commits of its own once idle for the pressure window', async () => {
-  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
-  const at = (name: string) => worktrees[name] ?? name;
-  backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
-  backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
-  const options = { protectedRoot: realpathSync.native(repo), pinned: () => false, graceMs: 10 * 60_000 };
-
-  const regular = await planWorktrees({ ...options, now: Date.now() });
-  expect(regular.actions.map((action) => action.target)).not.toContain(at('fresh'));
-
-  const pressured = await planWorktrees({ ...options, now: Date.now(), level: 3 });
-  const planned = pressured.actions.filter((action) => [at('fresh'), at('reused')].includes(action.target));
-  expect(planned.map((action) => action.reason)).toEqual([
-    expect.stringMatching(/^no commits of its own beyond origin\/main, inactive for 30m\d*s? under disk pressure$/),
-    expect.stringMatching(/^no commits of its own beyond origin\/main, inactive for 30m\d*s? under disk pressure$/),
-  ]);
-  const targets = pressured.actions.map((action) => action.target);
-  expect(targets).not.toContain(at('followup'));
-  expect(targets).not.toContain(at('open'));
-
-  await captureLog(() => removeWorktrees(pressured.sweep));
-  for (const name of ['fresh', 'reused']) expect(existsSync(at(name))).toBe(false);
-  for (const name of ['followup', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
-}, 240_000);
-
-test.skipIf(process.platform === 'win32')(
-  'disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window',
-  async () => {
-    const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
-    const at = (name: string) => worktrees[name] ?? name;
-    backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 1000));
-    backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
-    upsertProject(at('reused'), { metroPort: null });
-    const logs = workspaceLogsDir(at('reused'));
-    mkdirSync(logs, { recursive: true });
-    chmodSync(logs, 0o000);
-    try {
-      const pressured = await planWorktrees({
-        protectedRoot: realpathSync.native(repo),
-        pinned: () => false,
-        now: Date.now(),
-        level: 3,
-        graceMs: 0,
-      });
-      const verdicts = Object.fromEntries(
-        (
-          await collectWorktreeSweep({
-            idle: false,
-            olderThan: null,
-            now: Date.now(),
-            graceMs: 0,
-            underPressure: true,
-          })
-        ).worktrees.map((w) => [w.path, w.skipCode]),
-      );
-      expect(pressured.actions.map((action) => action.target)).not.toContain(at('fresh'));
-      expect(pressured.actions.map((action) => action.target)).not.toContain(at('reused'));
-      expect(verdicts[at('fresh')]).toBe('recent-activity');
-      expect(verdicts[at('reused')]).toBe('activity-unknown');
-    } finally {
-      chmodSync(logs, 0o755);
-    }
-  },
-  240_000,
-);
-
-test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
-  const { repo, worktrees, git } = gitRepoWithWorktrees(['fresh']);
-  git('remote set-head origin --auto');
-  upsertProject(repo, { metroPort: null });
-  recordWorkspaceUse(repo);
-  const at = (name: string) => worktrees[name] ?? name;
-  backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
-  const pressured = await planWorktrees({
-    protectedRoot: realpathSync.native(repo),
-    pinned: () => false,
-    now: Date.now(),
-    level: 3,
-    graceMs: 0,
-  });
-  expect(pressured.actions.map((action) => action.target)).toContain(at('fresh'));
-  backdateWorktreeActivity(at('fresh'), new Date());
-
-  const output = await captureLog(() => removeWorktrees(pressured.sweep));
-
-  expect(existsSync(at('fresh'))).toBe(true);
-  expect(output).toContain(`Kept the worktree ${at('fresh')}: recent activity: a git `);
 }, 240_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {

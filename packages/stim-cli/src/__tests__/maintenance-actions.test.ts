@@ -271,7 +271,6 @@ test('the age sweep removes only what is provably stale', async () => {
 describe('executing single actions', () => {
   const context = (overrides: Partial<ActContext> = {}): ActContext => ({
     settings: resolveMaintenanceSettings(),
-    budget: { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
     protectedRoot: '/nowhere',
     ...overrides,
   });
@@ -309,20 +308,6 @@ describe('executing single actions', () => {
     const emptied = await executeAction(empty, context());
     expect(emptied.status).toBe('done');
     expect(existsSync(join(dir, 'objects'))).toBe(false);
-  });
-
-  test('a level 3 compilation cache emptying is kept once free disk is back above the level 3 floor', async () => {
-    const dir = sharedCompilationCache();
-    mkdirSync(join(dir, 'objects'), { recursive: true });
-    writeFileSync(join(dir, 'objects', 'blob'), 'x'.repeat(4096));
-    register({ dir, name: 'Swift compilation cache', prune: 'atomic' });
-    vi.spyOn(measurements, 'measureDisk').mockReturnValue([{ volume: '/', freeMb: 100 * 1024 }]);
-    const outcome = await executeAction(
-      action({ kind: 'would-empty-cache', target: dir, bytes: 4096, level: 3 }),
-      context(),
-    );
-    expect(outcome.status).toBe('kept');
-    expect(existsSync(join(dir, 'objects'))).toBe(true);
   });
 
   test('a stale registration is kept when its directory exists again', async () => {

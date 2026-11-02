@@ -16,7 +16,6 @@ import {
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
-import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
@@ -85,29 +84,6 @@ afterEach(() => {
   for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
     delete process.env[key];
   process.exitCode = 0;
-});
-
-test('report-only child passes dryRun to every budget step and stamps checks before running them', async () => {
-  const original = budget.enforceBudget;
-  const seen: boolean[] = [];
-  vi.spyOn(budget, 'enforceBudget').mockImplementation((args, overrides) =>
-    original(args, {
-      ...overrides,
-      step: async (step, context) => {
-        seen.push(context.dryRun);
-        expect(readMaintenanceState()?.lastAt.pressure).toEqual(expect.any(Number));
-        return { targets: step === 'workspace-outputs' ? ['/idle'] : [], failures: 0 };
-      },
-    }),
-  );
-  await runMaintenance('status');
-  expect(seen).toEqual([true, true, true, true]);
-  const state = readMaintenanceState()!;
-  expect(state.lastPass).toMatchObject({ mode: 'report', freedBytes: 0, stopped: 0, actions: 1 });
-  expect(state.plan).toContainEqual(expect.objectContaining({ kind: 'would-clear-outputs', target: '/idle' }));
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).not.toContain('maintenance_check');
-  await runMaintenance('status');
-  expect(seen).toHaveLength(4);
 });
 
 test('load deferral leaves the size check due and a failing pressure check is not retried by the next command', async () => {
@@ -285,12 +261,7 @@ test('cached Swift CAS observations refresh build protection before each plan', 
     },
   ];
   const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
-  const emergency = {
-    disk: [{ volume: '/', freeMb: 1024 }],
-    memory: { level: 'normal' as const, availableBytes: null, pressured: false },
-    warningSince: null,
-  };
-  expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
+  expect((await preview.plannedMaintenance(sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
   const build = tryAcquireClaim({
@@ -300,12 +271,9 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   }).acquired;
   const using = `the ios build (pid ${process.pid} in /w/app) may be using it`;
   try {
-    const busy = await preview.plannedMaintenance(emergency, sizes, settings);
+    const busy = await preview.plannedMaintenance(sizes, settings);
     expect(busy.actions).toEqual([]);
     expect(busy.skips).toContainEqual(expect.objectContaining({ target: sharedCompilationCache(), reason: using }));
-    expect(busy.blocked).toContainEqual(
-      `the Swift compilation cache (16.0G) can only be emptied whole and is kept: ${using}`,
-    );
   } finally {
     releaseClaim(build);
   }

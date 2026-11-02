@@ -31,12 +31,6 @@ afterEach(() => {
 });
 
 const settings = resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'report' })!;
-const budget = {
-  minFreeDiskMb: 20 * 1024,
-  hardFloorDiskMb: 5 * 1024,
-  maxCommittedMemoryMb: 0,
-  maxLiveWorkspaces: 0,
-};
 const emptyState = (): MaintenanceState => ({
   version: 1,
   lastAt: {},
@@ -45,11 +39,6 @@ const emptyState = (): MaintenanceState => ({
   lastPass: null,
   recent: [],
   plan: [],
-});
-const pressure = (freeMb = 30 * 1024, pressured = false) => ({
-  disk: [{ volume: '/', freeMb }],
-  memory: { level: 'normal' as const, availableBytes: null, pressured },
-  warningSince: null,
 });
 const size = (
   category: MaintenanceSize['category'],
@@ -64,53 +53,11 @@ const size = (
   ...extra,
 });
 
-test('disk shortfall maps existing dry-run targets while excluding the triggering workspace and scoped devices', () => {
-  const input = {
-    pressure: pressure(4 * 1024),
-    sizes: [],
-    settings,
-    budget,
-    protectedRoot: '/self',
-    projects: ['/self', '/idle'],
-    diskSteps: [
-      {
-        step: 'idle-devices' as const,
-        targets: ['ios sim in /idle'],
-        failures: 0,
-      },
-      {
-        step: 'idle-dev-servers' as const,
-        targets: ['/self', '/idle'],
-        failures: 0,
-      },
-      { step: 'workspace-outputs' as const, targets: ['/idle'], failures: 0 },
-      {
-        step: 'stale-cache-entries' as const,
-        targets: ['cache /cache'],
-        failures: 0,
-      },
-    ],
-  };
-  expect(plan(input).actions.map((action) => action.kind)).toEqual([
-    'would-shutdown-device',
-    'would-stop-workspace',
-    'would-clear-outputs',
-    'would-trim-cache',
-  ]);
-  expect(plan({ ...input, scoped: true }).actions.map((action) => action.kind)).not.toContain('would-shutdown-device');
-  expect(
-    plan(input).actions.every((action) => action.workspace !== '/self' && action.reason.includes('20.0G floor')),
-  ).toBe(true);
-  expect(plan({ ...input, diskSteps: [] }).blocked).toEqual([expect.stringContaining('no reclaimable disk targets')]);
-});
-
 describe('the Swift compilation cache cap', () => {
   const planFor = (bytes: number, capGb: number, extra: Partial<MaintenanceSize> = {}) =>
     plan({
-      pressure: pressure(),
       sizes: [size('compilation-cache', bytes, extra)],
       settings: { ...settings, swiftCompilationCacheMaxGb: capGb },
-      budget,
       protectedRoot: '/self',
     });
 
@@ -144,7 +91,6 @@ describe('the Swift compilation cache cap', () => {
 
 test('caps aggregate Metro stores and target 80 percent while retaining busy outputs', () => {
   const result = plan({
-    pressure: pressure(),
     sizes: [
       size('build-cache', 12 * 1024 ** 3),
       size('metro-cache', 3 * 1024 ** 3, { dir: '/metro/a' }),
@@ -156,7 +102,6 @@ test('caps aggregate Metro stores and target 80 percent while retaining busy out
       }),
     ],
     settings: { ...settings, swiftCompilationCacheMaxGb: 15 },
-    budget,
     protectedRoot: '/self',
   });
   expect(result.actions).toEqual(

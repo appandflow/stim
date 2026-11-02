@@ -12,6 +12,7 @@ import {
   releaseBuildSlot,
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
+import { liveWaiters, positionCeilingMs, positionClock } from '../engine/wait-queue.ts';
 
 let tmpHome: string;
 
@@ -105,15 +106,18 @@ describe('acquireBuildSlot', () => {
       },
     });
     expect(acquired.slotWaitMs).toBe(90_000);
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(8);
     expect(lines.every((line) => line.endsWith(' -- stim guide lifecycle concurrency'))).toBe(true);
-    expect(lines[0]).toContain('30s elapsed');
-    expect(lines[1]).toContain('1m00s elapsed');
+    expect(lines[0]).toContain('queue position 1 of 1');
+    expect(lines[0]).toContain('10s elapsed');
+    expect(lines[7]).toContain('1m20s elapsed');
     expect(waitingFor.mock.calls[0]?.[0]).toEqual({
       kind: 'build-slot',
       inUse: 1,
       max: 1,
       since: new Date(0).toISOString(),
+      position: 1,
+      resource: 'build slots',
     });
     expect(waitingFor).toHaveBeenLastCalledWith(null);
     releaseBuildSlot(acquired);
@@ -131,6 +135,75 @@ describe('acquireBuildSlot', () => {
     expect(got.slotWaitMs).toBe(0);
     releaseBuildSlot(got);
   });
+
+  test('a freed slot goes to the oldest waiting build, never to a later one', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const slowTick = async () => {
+      for (let turn = 0; turn < 5; turn++) await tick();
+    };
+    const first = acquireBuildSlot({ max: 1, root: '/w/first', sleep: slowTick });
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(1));
+    const second = acquireBuildSlot({ max: 1, root: '/w/second', sleep: tick });
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(2));
+    releaseBuildSlot(held);
+    const firstHandle = await first;
+    expect(firstHandle.slot?.projectRoot).toBe('/w/first');
+    await vi.waitFor(() => expect(liveWaiters('build').map((holder) => holder.details.root)).toEqual(['/w/second']));
+    releaseBuildSlot(firstHandle);
+    const secondHandle = await second;
+    expect(secondHandle.slot?.projectRoot).toBe('/w/second');
+    releaseBuildSlot(secondHandle);
+    expect(liveWaiters('build')).toEqual([]);
+  });
+
+  test('a build whose queue position does not improve for 10 minutes refuses with the queue state', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    let clock = 0;
+    try {
+      await expect(
+        acquireBuildSlot({
+          max: 1,
+          root: '/w/waiting',
+          now: () => clock,
+          sleep: async () => {
+            clock += 60_000;
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: 'STIM_AT_CAPACITY',
+        message: expect.stringMatching(/10m00s of it at queue position 1 of 1; held: slot 0 \(\/w\/held/),
+      });
+      expect(clock).toBe(600_000);
+      expect(liveWaiters('build')).toEqual([]);
+    } finally {
+      releaseBuildSlot(held);
+    }
+  });
+});
+
+test.each([
+  { position: 1, minutes: 10 },
+  { position: 2, minutes: 10 },
+  { position: 3, minutes: 15 },
+  { position: 6, minutes: 30 },
+])('position $position waits $minutes minutes without progress', ({ position, minutes }) => {
+  expect(positionCeilingMs(position)).toBe(minutes * 60_000);
+});
+
+test('a better queue position restarts the ceiling clock', () => {
+  let clock = 0;
+  const waited = positionClock(() => clock);
+  waited.update(3);
+  clock = 14 * 60_000;
+  expect(waited.overdue()).toBeNull();
+  waited.update(2);
+  clock = 23 * 60_000;
+  expect(waited.overdue()).toBeNull();
+  clock = 24 * 60_000;
+  expect(waited.overdue()).toEqual({ position: 2, waitedMs: 10 * 60_000 });
 });
 
 test('status slot usage counts the live and unresolved slots a build could take, with each holder', () => {

@@ -2,14 +2,13 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import * as os from 'node:os';
 import { join } from 'node:path';
 import { sharedCompilationCache } from '@stim-cli/core/state';
-import { cacheBlocked, measurePressure, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
+import { cacheBlocked, measureSizes, sizeScanDeferred } from '../maintenance/measure.ts';
 import { buildLockPath } from '../engine/build-lock.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { captureProcessToken } from '../process-identity.ts';
 import { plantClaim } from './_factories.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
-import * as hostMemory from '../host-memory.ts';
 import { resetExecutor, setExecutor } from '../exec.ts';
 import { saveConfig } from '../workspace/config.ts';
 import { ensureWorkspaceStorage } from '../workspace/paths.ts';
@@ -36,26 +35,6 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
-
-test.skipIf(process.platform === 'darwin')(
-  'available memory uses 10 percent of RAM when unset and honors an explicit threshold',
-  () => {
-    const settings = resolveMaintenanceSettings(null, {})!;
-    vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue(null);
-    vi.spyOn(os, 'totalmem').mockReturnValue(20 * 1024 ** 3);
-    vi.spyOn(os, 'freemem').mockReturnValue(1024 ** 3);
-    expect(measurePressure(settings, null, 0).memory.pressured).toBe(true);
-    expect(measurePressure({ ...settings, minAvailableMemoryGb: 0 }, null, 0).memory.pressured).toBe(false);
-    expect(measurePressure({ ...settings, memoryPressureLevel: 'off' }, null, 0).memory.pressured).toBe(false);
-    const warning = vi.spyOn(hostMemory, 'readHostMemoryPressure').mockReturnValue('warning');
-    const sustained = { ...settings, minAvailableMemoryGb: 0, memoryWarningMinutes: 10 };
-    const first = measurePressure(sustained, null, 100);
-    expect(first.memory.pressured).toBe(false);
-    expect(measurePressure(sustained, first, 600_100).memory.pressured).toBe(true);
-    warning.mockReturnValue('normal');
-    expect(measurePressure(sustained, first, 600_100).warningSince).toBeNull();
-  },
-);
 
 test('high load defers scans and every measured output/cache uses a bounded du call without deleting data', async () => {
   const app = join(home, 'app');

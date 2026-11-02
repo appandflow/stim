@@ -9,6 +9,7 @@ import { getExecutor } from '../exec.ts';
 import { readClaimSet } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
 import { runDaemon } from '../daemon/run.ts';
+import { requestDaemonTick } from '../daemon/client.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
@@ -51,20 +52,23 @@ function lines(socket: Socket): string[] {
   return received;
 }
 
-async function waiter(): Promise<{ socket: Socket; received: string[] }> {
+async function waiter(resource: 'slot' | 'boot' = 'slot'): Promise<{ socket: Socket; received: string[] }> {
   const socket = connect(daemonSocket());
   onTestFinished(() => {
     socket.destroy();
   });
   const received = lines(socket);
-  socket.write(`${JSON.stringify({ op: 'slot.wait' })}\n`);
-  await vi.waitFor(() => expect(received.join()).toContain('"op":"slot.waiting"'), { timeout: 10_000, interval: 20 });
+  socket.write(`${JSON.stringify({ op: `${resource}.wait` })}\n`);
+  await vi.waitFor(() => expect(received.join()).toContain(`"op":"${resource}.waiting"`), {
+    timeout: 10_000,
+    interval: 20,
+  });
   return { socket, received };
 }
 
-function release(): void {
+function release(resource: 'slot' | 'boot' = 'slot'): void {
   const socket = connect(daemonSocket());
-  socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'slot.released' })}\n`));
+  socket.once('connect', () => socket.end(`${JSON.stringify({ op: `${resource}.released` })}\n`));
 }
 
 test('one daemon per home: a second one exits and leaves the first one holding the claim and socket', async () => {
@@ -103,6 +107,46 @@ test('a released build slot wakes the oldest waiter at once, and the next releas
   await vi.waitFor(() => expect(second.received.join()).toContain('"op":"slot.changed"'), {
     timeout: 10_000,
     interval: 20,
+  });
+}, 20_000);
+
+test('a finished boot wakes the oldest boot waiter only, never a build waiter', async () => {
+  const daemon = startDaemonProcess();
+  onTestFinished(async () => {
+    daemon.child.kill('SIGTERM');
+    await daemon.exited;
+  });
+  await listening();
+  const build = await waiter('slot');
+  const first = await waiter('boot');
+  const second = await waiter('boot');
+  release('boot');
+  await vi.waitFor(() => expect(first.received.join()).toContain('"op":"boot.changed"'), {
+    timeout: 10_000,
+    interval: 20,
+  });
+  expect(second.received.join()).not.toContain('"op":"boot.changed"');
+  expect(build.received.join()).not.toContain('changed');
+  first.socket.destroy();
+  release('boot');
+  await vi.waitFor(() => expect(second.received.join()).toContain('"op":"boot.changed"'), {
+    timeout: 10_000,
+    interval: 20,
+  });
+}, 20_000);
+
+test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {
+  const daemon = startDaemonProcess();
+  onTestFinished(async () => {
+    daemon.child.kill('SIGTERM');
+    await daemon.exited;
+  });
+  await listening();
+  await expect(requestDaemonTick({ STIM_DAEMON: 'on' })).resolves.toBe(true);
+  expect(readDaemonSnapshot()).toMatchObject({
+    pressure: { level: expect.stringMatching(/^(normal|high|critical)$/) },
+    actions: expect.any(Array),
+    waiting: [],
   });
 }, 20_000);
 

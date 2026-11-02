@@ -14,7 +14,6 @@ import {
 } from '../engine/device-capacity.ts';
 import { ClaimRefusedError, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
-import { enforceBudget } from '../budget.ts';
 import {
   allConsolePortsAndSerials,
   getProject,
@@ -1243,7 +1242,7 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
-  test('the budget gate, capacity check and device setup of a cache hit share one simctl list', async () => {
+  test('the capacity check and device setup of a cache hit share one simctl list', async () => {
     const root = projectDir();
     try {
       setDevice(root, 'ios', { deviceUdid: 'U1', owned: true, deviceName: 'stim-app (iPhone 17 Pro 26.2)' });
@@ -1258,15 +1257,13 @@ describe('ensureOwnedDevice: ios', () => {
       ]);
       setExecutor(exec);
       const simSnapshot = createIosSimSnapshot();
-      const limits = { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 1_000_000, maxLiveWorkspaces: 10 };
-      const outcome = await enforceBudget({ root, note: () => {}, budget: limits, simSnapshot });
-      expect(outcome.status).toBe('ok');
       expect(
         await checkDeviceCapacity({
           platform: 'ios',
           project: getProject(root),
           max: 5,
-          sims: () => simSnapshot.read().filter((sim) => sim.available),
+          sims: async () =>
+            (simSnapshot.readAsync ? await simSnapshot.readAsync() : simSnapshot.read()).filter((sim) => sim.available),
           adb: () => makeAdbDevices(),
           booting: [],
         }),
@@ -1397,7 +1394,6 @@ describe('ensureOwnedDevice: ios', () => {
           note: (line) => notes.push(String(line)),
           flags: {
             deviceSlotWait: {
-              reclaimIdleMinutes: 0,
               sleep: async () => {
                 waits++;
                 if (when === 'during admission') sim.name = 'Renamed-By-User';
