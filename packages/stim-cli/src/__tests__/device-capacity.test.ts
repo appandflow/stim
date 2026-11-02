@@ -444,13 +444,12 @@ describe('boot admission beyond the device caps', () => {
   ])(
     'memory $memory.level with $memory.availableBytes bytes available admits: $admitted',
     async ({ memory, admitted }) => {
-      const run = admit({ memory: () => memory });
-      if (admitted) await expect(run).resolves.toBe('booted');
-      else
-        await expect(run).rejects.toMatchObject({
-          code: 'STIM_AT_CAPACITY',
-          message: expect.stringContaining('memory'),
-        });
+      const outcome = await admit({ memory: () => memory }).then(
+        (value) => value,
+        (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`,
+      );
+      expect(outcome === 'booted').toBe(admitted);
+      expect(outcome).toMatch(admitted ? /^booted$/ : /^STIM_AT_CAPACITY: .*memory/);
     },
   );
 

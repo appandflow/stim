@@ -256,7 +256,8 @@ describe('the pressure ladder', () => {
     expect(sims.some((sim) => sim.udid === udid)).toBe(true);
     expect(actions.length).toBeGreaterThan(0);
     expect(actions.every((action) => action.outcome === 'would')).toBe(true);
-    expect(actions.map((action) => action.rung)).toEqual([...actions.map((action) => action.rung)].sort());
+    const rungs = actions.map((action) => action.rung);
+    expect(rungs).toEqual(rungs.toSorted((a, b) => a - b));
     expect(actions.some((action) => action.rung === 4 && action.kind === 'dormant-stage')).toBe(true);
   });
 });
