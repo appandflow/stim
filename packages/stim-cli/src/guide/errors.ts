@@ -1355,9 +1355,9 @@ captured"  (in metro.ndjson, bare RN)
   or the launch names none: its app was never cached, or the launch was
   recorded by a Stim version before revive. Run as agent-device's boot hook
   for a device this workspace owns, it also refuses with this code when the
-  last launch on that device is one revive does not relaunch: a Release or
-  native-process launch, or one whose record does not name that device.
-  Revive never fingerprints or builds, so nothing was started. Run the
+  last launch on that device is one revive does not relaunch (a Release or
+  native-process launch, or one whose record does not name that device), or
+  when no launch is recorded on that device. Revive never fingerprints or builds, so nothing was started. Run the
   printed \`stim ios\` or \`stim android\` command; it restores the app
   from the cache or builds it.
 

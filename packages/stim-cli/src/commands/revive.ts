@@ -1,10 +1,10 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
 import type { StimContext } from '@stim-cli/core';
-import { hostedNativeRecords, readIdleStop, type WorkspaceState } from '@stim-cli/core/state';
+import { hostedNativeRecords, readIdleStop, type PlatformRecords, type WorkspaceState } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
 import { formatLongDuration, phaseLine, refuseNoProject } from '../command-output.ts';
-import { deviceSlotPlatforms, parseDeviceSlotKey } from '../devices/device-slots.ts';
+import { deviceSlotPlatforms, parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { resolveOwnedAvdSerialAsync, type ResolvedAvdSerial } from '../devices/android.ts';
 import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '../devices/ios.ts';
 import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
@@ -110,17 +110,39 @@ function revivable(record: WorkspaceLaunchRecord): boolean {
   return !record.release && record.runtime !== 'process';
 }
 
+function ownedDeviceName(platforms: PlatformRecords | undefined, platform: Platform): string | undefined {
+  if (platform === 'ios') return platforms?.ios?.owned ? platforms.ios.deviceUdid : undefined;
+  return platforms?.android?.owned ? platforms.android.avdName : undefined;
+}
+
+function unrecordedOwnedDevice(
+  project: ProjectRecord,
+  requestedDevice: string,
+): { ok: false; error: ReviveFailure } | null {
+  for (const { slot, platforms } of projectDeviceSlots(project)) {
+    for (const platform of ['ios', 'android'] as const) {
+      if (ownedDeviceName(platforms, platform) !== requestedDevice) continue;
+      return failure(
+        'STIM_NO_RECORDED_BUILD',
+        `${platform === 'ios' ? 'Simulator' : 'Emulator'} ${requestedDevice} belongs to this workspace, but no launch is recorded on it.`,
+        `Run \`${nativeRunCommand(platform, slot)}\` to boot it, install the app and launch it.`,
+      );
+    }
+  }
+  return null;
+}
+
 function unrevivableLaunch(
   project: ProjectRecord,
   launches: RecordedLaunch[],
   requestedDevice: string,
 ): { ok: false; error: ReviveFailure } | null {
-  const own = launches.find(({ platform, slot, record }) => {
-    const owned = deviceSlotPlatforms(project, slot)?.[platform];
-    const ownName = owned?.owned ? (platform === 'ios' ? owned.deviceUdid : owned.avdName) : undefined;
-    return ownName === requestedDevice || (!revivable(record) && launchDeviceNames(record).includes(requestedDevice));
-  });
-  if (!own) return null;
+  const own = launches.find(
+    ({ platform, slot, record }) =>
+      ownedDeviceName(deviceSlotPlatforms(project, slot), platform) === requestedDevice ||
+      (!revivable(record) && launchDeviceNames(record).includes(requestedDevice)),
+  );
+  if (!own) return unrecordedOwnedDevice(project, requestedDevice);
   const why = own.record.release
     ? 'a Release build'
     : own.record.runtime === 'process'

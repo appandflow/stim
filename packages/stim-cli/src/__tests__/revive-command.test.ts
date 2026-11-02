@@ -182,30 +182,44 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
   expect(calls).toEqual([]);
 });
 
-test.each<[string, string, WorkspaceLaunchRecord, string]>([
-  ['a Release build', 'U1', { ...iosLaunch, release: true, metroPort: null }, '`stim ios`'],
+test.each<[string, string, Partial<ReviveDeps>, string]>([
   [
-    'a native-process launch',
+    'a Release build as its last launch',
+    'U1',
+    { readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }) },
+    '`stim ios`',
+  ],
+  [
+    'a native-process launch as its last launch',
     'stim-avd',
-    { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-avd', runtime: 'process', metroPort: null },
+    {
+      readLaunches: () => ({
+        android: { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-avd', runtime: 'process', metroPort: null },
+      }),
+    },
     '`stim android`',
   ],
   [
     'an emulator launch an older Stim recorded without its AVD name',
     'stim-avd',
-    { ...iosLaunch, deviceId: 'emulator-5554', artifact: undefined },
+    { readLaunches: () => ({ android: { ...iosLaunch, deviceId: 'emulator-5554', artifact: undefined } }) },
     '`stim android`',
   ],
+  [
+    'no launch recorded on its slot',
+    'stim-avd',
+    { getProject: () => ({ ...project, deviceSlots: { tablet: { android: { avdName: 'stim-avd', owned: true } } } }) },
+    '`stim android --slot tablet`',
+  ],
 ])(
-  "run as agent-device's boot hook for its own device whose last launch was %s, revive refuses with that slot's command",
-  async (_name, requestedDevice, launch, command) => {
-    const platform = command === '`stim ios`' ? 'ios' : 'android';
+  "run as agent-device's boot hook for its own device with %s, revive refuses with that slot's command",
+  async (_name, requestedDevice, overrides, command) => {
     const { deps, calls } = harness({
       getProject: () => ({
         ...project,
         platforms: { ...project.platforms, android: { avdName: 'stim-avd', owned: true } },
       }),
-      readLaunches: () => ({ [platform]: launch }),
+      ...overrides,
     });
     const result = await runRevive({ root: '/project', note: () => {}, requestedDevice, deps });
     assert(!result.ok);

@@ -972,8 +972,8 @@ belong to their host, so revive does not relaunch them; run `stim ios` or
   gone, for example after `stim gc`, or the launch names none (never cached, or
   recorded before revive). Run as agent-device's boot hook for a device this
   workspace owns, it also refuses with this code when the last launch on that
-  device is one revive does not relaunch. The remedy names `stim ios` or
-  `stim android`.
+  device is one revive does not relaunch, or no launch is recorded on it. The
+  remedy names `stim ios` or `stim android`.
 
 It checks all three before starting anything. Only a device that changes after
 that check is refused later, by the run that boots it, with Metro already
