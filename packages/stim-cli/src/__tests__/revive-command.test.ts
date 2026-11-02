@@ -149,19 +149,25 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
   expect(calls).toEqual([]);
 });
 
-test("run as agent-device's boot hook, revive restores only the launch on the requested device", async () => {
-  const { deps, calls } = harness({
-    getProject: () => ({
-      ...project,
-      platforms: { ...project.platforms, android: { avdName: 'stim-app', owned: true } },
-    }),
-    readLaunches: () => ({ ios: iosLaunch, android: { ...iosLaunch, deviceId: 'emulator-5554' } }),
-    resolveAndroid: async () => ({ missing: true }),
-  });
-  const result = await runRevive({ root: '/project', note: () => {}, requestedDevice: 'U1', deps });
-  assert(result.ok);
-  expect(calls).toEqual(['metro', 'ios']);
-});
+test.each<[string, string, Partial<ReviveDeps>, string]>([
+  ['the simulator UDID', 'U1', { resolveAndroid: async () => ({ missing: true }) }, 'ios'],
+  ["the stopped emulator's AVD name", 'stim-avd', { resolveIos: async () => ({ missing: true }) }, 'android'],
+])(
+  "run as agent-device's boot hook for %s, revive restores only that launch",
+  async (_name, requestedDevice, overrides, revived) => {
+    const { deps, calls } = harness({
+      getProject: () => ({
+        ...project,
+        platforms: { ...project.platforms, android: { avdName: 'stim-avd', owned: true } },
+      }),
+      readLaunches: () => ({ ios: iosLaunch, android: { ...iosLaunch, deviceId: 'emulator-5554' } }),
+      ...overrides,
+    });
+    const result = await runRevive({ root: '/project', note: () => {}, requestedDevice, deps });
+    assert(result.ok);
+    expect(calls).toEqual(['metro', revived]);
+  },
+);
 
 test.each<[string, Partial<ReviveDeps>]>([
   ['the installed artifact is gone', { artifactExists: () => false }],
