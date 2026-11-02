@@ -50,6 +50,7 @@ import {
   loadConfig,
   settingsJsonSchema,
   serverLocalSocket,
+  workspaceStateFile,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -101,7 +102,7 @@ import { localTransport } from '@stim-cli/transport-local';
 import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
-import { workspaceName, workspaceStateDir } from '@stim-cli/core';
+import { workspaceName, workspaceStateDir, withDirLockTransaction } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
 import { ClaimUnavailableError, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
@@ -202,9 +203,6 @@ if (command === 'status') {
   }
   const grantedAt = env.FAKE_STIM_LOCK_GRANTED ?? new Date().toISOString();
   print({ platform: args[2], id: args[3], grantedAt, expiresAt: new Date(Date.now() + 120000).toISOString() });
-  exit(0);
-} else if (command === 'device' && args[1] === 'unlock') {
-  print([]);
   exit(0);
 } else if (command === 'doctor') {
   print({ project: process.cwd(), remoteMachines: [{ machine: 'mini', state: 'approved', args: args.join(' ') }] });
@@ -9781,6 +9779,7 @@ describe('frames.subscribe', () => {
     pushEndpoint?: string,
     hostedRelay?: ServerOptions['hostedRelay'],
   ) {
+    writeFileSync(join(workspace, 'package.json'), '{}');
     const bin = join(root, 'bin');
     mkdirSync(bin);
     for (const tool of ['xcrun', 'sips', 'adb']) {
@@ -9814,6 +9813,39 @@ describe('frames.subscribe', () => {
     return stimCalls()
       .map((call) => call.args)
       .filter((args) => args.startsWith('device '));
+  }
+
+  function controlLease(holder: string, id: string, platform = 'ios', slot = 'default') {
+    const directory = join(process.env.STIM_HOME!, 'device-locks');
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, `${platform}-${id}.json`);
+    const token = randomUUID();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        platform,
+        id,
+        holder,
+        slot,
+        token,
+        grantedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      }),
+    );
+    mkdirSync(workspaceStateDir(holder), { recursive: true });
+    const state = readWorkspaceState(holder) ?? {};
+    writeFileSync(
+      workspaceStateFile(holder),
+      JSON.stringify({
+        ...state,
+        deviceLeases: {
+          ...(isJsonObject(state.deviceLeases) ? state.deviceLeases : {}),
+          [slot === 'default' ? platform : `${platform}:${slot}`]: { id, token, kind: 'declared' },
+        },
+      }),
+    );
+    return { path, lock: join(directory, `${platform}-${id}.lock`) };
   }
 
   test.skipIf(!fakeTailscale)(
@@ -9961,6 +9993,10 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'sends input to the helper under a device lease and releases the lease when the session ends',
     async () => {
+      const leaseFile = controlLease(workspace, 'SIM-1');
+      const samePlatform = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
+      const otherPlatform = controlLease(workspace, 'EMULATOR', 'android');
+      const foreign = controlLease(join(root, 'other'), 'FOREIGN');
       const port = await startControl({}, { shapeChangesPerSecond: 1 });
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
@@ -10003,8 +10039,12 @@ describe('frames.subscribe', () => {
         { input: 'button', button: 'home' },
         { input: 'rotate', direction: 'left' },
       ]);
-      await until(() => lockCalls().length === 2);
-      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json', 'device unlock ios --json']);
+      await until(() => !existsSync(leaseFile.path));
+      expect(existsSync(samePlatform.path)).toBe(false);
+      expect(existsSync(otherPlatform.path)).toBe(true);
+      expect(existsSync(foreign.path)).toBe(true);
+      expect(readWorkspaceState(workspace)?.deviceLeases).toMatchObject({ android: { id: 'EMULATOR' } });
+      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json']);
       expect(readAudit().map((record) => record.action)).toEqual(['control.begin', 'control.end']);
     },
     10_000,
@@ -10429,24 +10469,33 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'lets one client control a device at a time, and ends the session another takes over',
     async () => {
-      const port = await startControl();
+      const lease = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
+      const kept = controlLease(workspace, 'SIM-1');
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: statusWith({
+          slots: [{ slot: 'tablet', ios: { ...OWNED_SIM, udid: 'SIM-2' }, android: null }],
+        }),
+      });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      const begun = await first.request('control.begin', { workspace, platform: 'ios' });
+      const target = { workspace, platform: 'ios', slot: 'tablet' };
+      const begun = await first.request('control.begin', target);
       const { session } = (begun as { result: { session: string } }).result;
-      expect(await second.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
+      expect(await second.request('control.begin', target)).toMatchObject({
         error: { code: 'device-busy', message: expect.stringContaining('Test phone') },
       });
-      expect(await second.request('control.begin', { workspace, platform: 'ios', takeOver: true })).toMatchObject({
+      expect(await second.request('control.begin', { ...target, takeOver: true })).toMatchObject({
         result: { session: expect.any(String) },
       });
       expect(await first.next()).toMatchObject({ event: 'control-ended', session, reason: 'taken-over' });
       expect(await first.request('input.touch', { session, phase: 'down', x: 0, y: 0 })).toMatchObject({
         error: { code: 'unknown-session' },
       });
+      expect(existsSync(lease.path)).toBe(true);
       second.socket.close();
-      await until(() => lockCalls().includes('device unlock ios --json'));
-      expect(lockCalls().filter((args) => args.startsWith('device unlock'))).toHaveLength(1);
+      await until(() => !existsSync(lease.path));
+      expect(existsSync(kept.path)).toBe(true);
+      expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
     },
     10_000,
   );
@@ -10520,6 +10569,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)('ends an idle session, and caps the input and typing rates', async () => {
+    const lease = controlLease(workspace, 'SIM-1');
     const port = await startControl({}, { idleMs: 700, inputPerSecond: 3, textCharsPerSecond: 1 });
     const client = await authed(port, true);
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
@@ -10537,24 +10587,56 @@ describe('frames.subscribe', () => {
       error: { code: 'limit-exceeded' },
     });
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
-    await until(() => lockCalls().includes('device unlock ios --json'));
+    await until(() => !existsSync(lease.path));
   });
 
   test.each([false, true])(
     'ends a control session with watch events dropped: %s',
     { skip: !fakeTailscale },
     async (dropEvents) => {
+      const lease = controlLease(workspace, 'SIM-1');
       registryWatch.dropEvents = dropEvents;
       const port = await startControl();
       const { id, keyPair } = await pair(port, undefined, true);
       const client = await returning(port, keyPair);
+      const reader = await authed(port);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
-      grantDevice(id, capabilitiesFor(false));
-      expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
-      await server!.close();
-      server = null;
-      expect(lockCalls()).toContain('device unlock ios --json');
+      let entered = () => {};
+      const locked = new Promise<void>((resolve) => (entered = resolve));
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const barrier = withDirLockTransaction(lease.lock, () => {
+        entered();
+        return held;
+      });
+      let closing: Promise<void> | undefined;
+      try {
+        await locked;
+        grantDevice(id, capabilitiesFor(false));
+        expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+        expect(await reader.request('machine.get')).toMatchObject({ result: expect.any(Object) });
+        expect(existsSync(lease.path)).toBe(true);
+        let closed = false;
+        closing = server!.close().then(() => {
+          closed = true;
+          return undefined;
+        });
+        await Promise.all([client.closed, reader.closed]);
+        await until(() => helperRuns().length === 1);
+        expect(closed).toBe(false);
+        release();
+        await barrier;
+        await closing;
+        server = null;
+        expect(existsSync(lease.path)).toBe(false);
+        expect(readClaimSet(`${lease.lock}.claims`)).toMatchObject({ live: [], unresolved: [], orphans: [] });
+        expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
+      } finally {
+        release();
+        await barrier;
+        await closing;
+      }
     },
   );
 
