@@ -1466,8 +1466,8 @@ with its run, so to keep a phone listed after the run, hold it with
 `stim device lock`. Stim Desktop and the Stim phone app show each one as a
 tile with a Physical badge.
 
-A dev server that its supervisor stopped after
-[`metro.idleStopMinutes`](./dev-server-and-logs.md#idle-stop) with no use
+A dev server stopped after
+[`idle.minutes`](./dev-server-and-logs.md#idle-stop) with no activity
 prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 `metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`. Any other
 known cause prints after `not running`, and `metro.lastStop` carries it; see
