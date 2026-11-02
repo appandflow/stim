@@ -18,7 +18,7 @@ import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { cacheUser } from '../cache/cache-claim.ts';
-import { diskPressureLevel, lowestFree } from './pressure.ts';
+import { diskPressureLevel, lowestFree, memoryPressureFromObservations } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
@@ -66,23 +66,16 @@ function pressureFromObservations(
   level: HostMemoryPressure | null,
   disk: MaintenancePressure['disk'],
 ): MaintenancePressure {
-  const availableBytes = process.platform === 'darwin' ? null : freemem();
-  const warningSince = level === 'warning' ? (previous?.warningSince ?? now) : null;
-  const pressured =
-    settings.memoryPressureLevel !== 'off' &&
-    (level === 'critical' ||
-      (settings.memoryPressureLevel === 'warning' &&
-        warningSince !== null &&
-        now - warningSince >= settings.memoryWarningMinutes * 60_000) ||
-      (availableBytes !== null &&
-        availableBytes <
-          (settings.minAvailableMemoryGb === undefined
-            ? totalmem() * 0.1
-            : settings.minAvailableMemoryGb * 1024 ** 3)));
   return {
     disk,
-    memory: { level, availableBytes, pressured },
-    warningSince,
+    ...memoryPressureFromObservations(
+      settings,
+      previous,
+      now,
+      level,
+      process.platform === 'darwin' ? null : freemem(),
+      totalmem(),
+    ),
   };
 }
 

@@ -54,7 +54,7 @@ import {
 } from './activity.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
-import { idleShutdownMinutes } from './devices.ts';
+import { idleShutdownMinutes, metroGone } from './devices.ts';
 import { stopIdleWorkspace } from './idle-stop.ts';
 
 export interface ActionOutcome {
@@ -224,7 +224,9 @@ async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutc
   const minutes = idleShutdownMinutes(root);
   if (minutes === 0) return kept('devices.idleShutdownMinutes is 0 for this workspace');
   const idleMs = minutes * 60_000;
-  const due = dueIdleDevices(root, idleMs).find(({ device }) => device.id === action.target);
+  const due = dueIdleDevices(root, idleMs, Date.now(), { metroStopped: metroGone }).find(
+    ({ device }) => device.id === action.target,
+  );
   if (!due) return kept(`it is no longer idle for ${minutes} minutes`);
   const failures: string[] = [];
   const skips: string[] = [];
@@ -234,7 +236,7 @@ async function shutDownIdleDevice(action: MaintenanceAction): Promise<ActionOutc
   };
   const run = await withIdleWorkspace(
     root,
-    () => shutDownIdleDevices(root, idleMs, log, Date.now(), { only: due.device }),
+    () => shutDownIdleDevices(root, idleMs, log, Date.now(), { only: due.device, metroStopped: metroGone }),
     { purpose: 'automatic maintenance idle shutdown', supervisor: false, managedLocks: false },
   );
   if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);

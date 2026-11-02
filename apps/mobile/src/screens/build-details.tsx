@@ -21,7 +21,7 @@ import { useArchiveDetail } from '@/hooks/archive-detail';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
 import { useBuildPlan } from '@/hooks/build-plans';
-import { useMacConnection, useStatus } from '@/hooks/machines';
+import { useArchivesPending, useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { formatDateTime, formatDuration } from '@/intl/format';
@@ -100,6 +100,8 @@ export function BuildDetails(
 }
 
 function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: string; platform: Platform | 'macos' }) {
+  const { mac } = useMacConnection();
+  const pending = useArchivesPending(mac?.id ?? '');
   const archive = useStatus()?.archived?.find((entry) => entry.id === id);
   const detail = useArchiveDetail(id);
   const now = useNow(30_000);
@@ -128,6 +130,8 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
           platform={selected}
           archive={id}
         />
+      ) : pending ? (
+        <ActivityIndicator />
       ) : (
         <Note>{t`This archive is no longer available.`}</Note>
       )}

@@ -13,6 +13,7 @@ import {
   recordBuildPhase,
   recordFinishedBuild,
   startBuildProgress,
+  observeBuildCleanup,
   type ActiveBuildRecord,
 } from '../engine/build-progress.ts';
 import { BUILD_HISTORY_LIMIT, readBuildDetail, readBuildHistory, readLastBuilds } from '@stim-cli/core/state';
@@ -205,11 +206,24 @@ describe('active build record', () => {
     const claim = takeClaim();
     let now = T0;
     const progress = startBuildProgress({ root, platform: 'ios', slot: 'default', claim, now: () => now });
+    const reclaim = observeBuildCleanup(progress);
     expect(activeRecord()).toMatchObject({ phase: 'prepare', startedAt: '2026-09-24T10:00:00.000Z' });
     expect(buildReport(activeRecord()!, { state: 'running', history: undefined })).not.toHaveProperty(
       'completedPhaseMs',
     );
 
+    now += 2_000;
+    reclaim('start');
+    now += 4_000;
+    reclaim('complete');
+    now += 1_000;
+    reclaim('start');
+    expect(activeRecord()?.phase).toBe('cleanup');
+    expect(buildReport(activeRecord()!, { state: 'running', history: undefined }).completedPhaseMs?.cleanup).toBe(
+      4_000,
+    );
+    now += 3_000;
+    reclaim('complete');
     now += 2_000;
     progress.step('cache-lookup');
     now += 3_000;
@@ -219,14 +233,27 @@ describe('active build record', () => {
 
     const record = activeRecord()!;
     expect(record.phase).toBe('compile');
-    expect(record.phaseStartedAt).toBe('2026-09-24T10:00:05.000Z');
-    expect(record.phases.map((entry) => entry.phase)).toEqual(['prepare', 'cache-lookup', 'compile']);
+    expect(record.phaseStartedAt).toBe('2026-09-24T10:00:15.000Z');
+    expect(record.phases.map((entry) => entry.phase)).toEqual([
+      'prepare',
+      'cleanup',
+      'prepare',
+      'cleanup',
+      'prepare',
+      'cache-lookup',
+      'compile',
+    ]);
     expect(activeBuildState(record.claim)).toBe('running');
-    expect(progress.durations()).toEqual({ prepare: 2_000, 'cache-lookup': 3_000, compile: 60_000 });
+    expect(progress.durations()).toEqual({ prepare: 5_000, cleanup: 7_000, 'cache-lookup': 3_000, compile: 60_000 });
     expect(buildReport(record, { state: 'running', history: undefined }).completedPhaseMs).toEqual({
-      prepare: 2000,
+      prepare: 5000,
+      cleanup: 7000,
       'cache-lookup': 3000,
     });
+
+    reclaim('start');
+    reclaim('failed');
+    expect(activeRecord()?.phase).toBe('cleanup');
 
     progress.clear();
     expect(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY]).toBeUndefined();
@@ -374,10 +401,10 @@ describe('estimates', () => {
   const history: RunHistory = {
     ios: {
       cold: [
-        histSample(100_000, { prepare: 1_000, compile: 80_000 }),
-        histSample(300_000, { prepare: 3_000, pods: 40_000, compile: 250_000 }),
-        histSample(200_000, { prepare: 2_000, compile: 150_000 }),
-        histSample(400_000, { prepare: 2_000 }),
+        histSample(130_000, { prepare: 1_000, cleanup: 30_000, compile: 80_000 }),
+        histSample(330_000, { prepare: 3_000, cleanup: 30_000, pods: 40_000, compile: 250_000 }),
+        histSample(230_000, { prepare: 2_000, cleanup: 30_000, compile: 150_000 }),
+        histSample(430_000, { prepare: 2_000, cleanup: 30_000 }),
       ],
       hit: [histSample(20_000, { install: 5_000 }, T0 + 1)],
     },
@@ -416,6 +443,10 @@ describe('estimates', () => {
     expect(buildStatusLine(report, T0 + 300_000)).toBe(
       'build: ios pods, 5m00s elapsed (usually ~4m10s, median of 4 cold runs)',
     );
+    expect(buildStatusLine({ ...report, completedPhaseMs: { cleanup: 60_000 } }, T0 + 300_000)).toBe(
+      'build: ios pods, 5m00s elapsed -- under a minute left (median of 4 cold runs)',
+    );
+    expect(buildStatusLine({ ...report, phase: 'cleanup' }, T0 + 70_000)).toBe('build: ios cleanup, 1m10s elapsed');
     const { outcome: _, ...unsettled } = record;
     expect(buildReport(unsettled, { state: 'running', history })).toMatchObject({
       outcome: 'hit',

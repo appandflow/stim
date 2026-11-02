@@ -51,18 +51,25 @@ public struct Build: Decodable, Hashable, Sendable {
 
   public var startedDate: Date? { parseTimestamp(startedAt) }
 
+  /// The comparable estimate suffix, excluding cleanup from elapsed time and hidden while cleanup runs.
+  public func estimateSuffix(at now: Date) -> String {
+    let elapsedMs = max(0, now.timeIntervalSince(startedDate ?? now) * 1000 - (completedPhaseMs?["cleanup"] ?? 0))
+    return Format.estimateSuffix(elapsedMs: elapsedMs, expectedMs: phase == "cleanup" ? nil : expectedMs)
+  }
+
   public func progress(at now: Date) -> BuildProgress {
     let started = startedDate ?? now
     let elapsedMs = max(0, now.timeIntervalSince(started) * 1000)
-    guard let expectedMs, expectedMs > 0 else {
+    guard phase != "cleanup", let expectedMs, expectedMs > 0 else {
       return BuildProgress(elapsedMs: elapsedMs, fraction: nil, remaining: nil)
     }
-    let remainingMs = expectedMs - elapsedMs
+    let comparedMs = max(0, elapsedMs - (completedPhaseMs?["cleanup"] ?? 0))
+    let remainingMs = expectedMs - comparedMs
     let remaining =
       remainingMs <= 0
       ? "longer than usual"
       : remainingMs < 60_000 ? "under a minute left" : "about \(Format.int((remainingMs / 60_000).rounded(.up))) min left"
-    let fraction = steadyFraction("\(key)|top", min(elapsedMs / expectedMs, 0.99))
+    let fraction = steadyFraction("\(key)|top", min(comparedMs / expectedMs, 0.99))
     return BuildProgress(elapsedMs: elapsedMs, fraction: fraction, remaining: remaining)
   }
 }

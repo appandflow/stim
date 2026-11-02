@@ -14,6 +14,7 @@ public final class ActionRun: ObservableObject, Identifiable {
   public let title: String
   public let steps: [StimCommand]
   public let key: String
+  fileprivate var completion: ((ActionRun) -> Void)?
   public let startedAt = Date()
   public private(set) var finishedAt: Date?
   @Published public private(set) var output: ActionOutput
@@ -183,6 +184,7 @@ public final class ActionCenter: ObservableObject {
       return nil
     }
     let run = ActionRun(title: title, steps: steps, key: key)
+    run.completion = completion
     runs[key] = run
     operations.began(run)
     if present { presented = run }
@@ -303,6 +305,11 @@ public final class ActionCenter: ObservableObject {
       }
     }
     return run
+  }
+
+  @discardableResult
+  public func retry(_ run: ActionRun) -> ActionRun? {
+    self.run(run.title, steps: run.steps, key: run.key, completion: run.completion)
   }
 
   public func runApp(_ env: Workspace, platform: String) {

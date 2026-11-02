@@ -413,20 +413,6 @@ function serve(socket, device) {
       authed = true;
       return { result: hello(device.key, device.name) };
     },
-    'status.subscribe'() {
-      const event = (id) => {
-        const payload = status();
-        return {
-          event: 'status',
-          subscription: id,
-          payload,
-          usage: usageHistory(payload.machine?.owners ?? [], Date.now()),
-        };
-      };
-      const subscription = every(5000, (id) => send(event(id)));
-      setImmediate(() => send(event(subscription)));
-      return { result: { subscription } };
-    },
     'workspaces.subscribe'() {
       return stream((views, seq) => ({
         event: 'workspaces',
@@ -736,15 +722,7 @@ function hello(clientKey, deviceName) {
     protocol: 2,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: [
-      'ios-hosted',
-      'android-hosted',
-      'physical-ios',
-      'physical-android',
-      'notifications',
-      'workspace-diff',
-      'status-views',
-    ],
+    features: ['ios-hosted', 'android-hosted', 'physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(clientKey).slice(0, 8), name: deviceName },
   };

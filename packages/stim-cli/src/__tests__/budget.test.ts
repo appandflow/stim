@@ -122,7 +122,28 @@ function fakeDeps(freeAfterStep: number[], memory: number[] = []) {
 describe('enforceBudget', () => {
   test('reclaims in order and stops as soon as free disk is back above the floor', async () => {
     const { deps, steps } = fakeDeps([10 * GB, 12 * GB, 25 * GB]);
-    const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);
+    const events: string[] = [];
+    let reclaiming = false;
+    const remeasurements: boolean[] = [];
+    const volumes = deps.volumes!;
+    deps.volumes = (paths) => {
+      if (steps.length) remeasurements.push(reclaiming);
+      return volumes(paths);
+    };
+    const outcome = await enforceBudget(
+      {
+        root: apps,
+        note: () => {},
+        budget: limits(),
+        onReclaim: (event) => {
+          events.push(event);
+          reclaiming = event === 'start';
+        },
+      },
+      deps,
+    );
+    expect(events).toEqual(['start', 'complete']);
+    expect(remeasurements).toEqual([true, true]);
     expect(steps).toEqual(['idle-devices', 'idle-dev-servers']);
     expect(outcome).toMatchObject({
       status: 'ok',
@@ -181,7 +202,9 @@ describe('enforceBudget', () => {
 
   test('under budget it measures and reclaims nothing', async () => {
     const { deps, steps } = fakeDeps([200 * GB]);
-    const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits() }, deps);
+    const onReclaim = vi.fn<(state: 'start' | 'complete' | 'failed') => void>();
+    const outcome = await enforceBudget({ root: apps, note: () => {}, budget: limits(), onReclaim }, deps);
+    expect(onReclaim).not.toHaveBeenCalled();
     expect(steps).toEqual([]);
     expect(outcome).toMatchObject({ status: 'ok', reclaimed: [] });
   });
@@ -220,7 +243,12 @@ describe('reclaiming in a scratch STIM_HOME with a floor above the free disk', (
     process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '1000000000';
     const current = workspaceWithOutputs('current');
     const other = workspaceWithOutputs('other');
-    const outcome = await enforceBudget({ root: current, note: () => {} }, { usage: () => [] });
+    const events: string[] = [];
+    const outcome = await enforceBudget(
+      { root: current, note: () => {}, onReclaim: (event) => events.push(event) },
+      { usage: () => [] },
+    );
+    expect(events).toEqual(['start', 'failed']);
     expect(outcome.status).toBe('refused');
     if (outcome.status !== 'refused') return;
     expect(outcome.refusal.code).toBe('STIM_LOW_DISK');

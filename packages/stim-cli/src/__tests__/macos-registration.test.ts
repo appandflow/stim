@@ -36,6 +36,10 @@ beforeEach(() => {
   };
   writeWorkspaceState(root, { macos: { ...record, app: undefined } });
   child = makeChildProcess({ connected: true });
+  child.send = () => {
+    queueMicrotask(() => child.emit('message', 'macos-accepted'));
+    return true;
+  };
   child.disconnect = vi.fn<() => void>(() => {
     Object.assign(child, { connected: false });
     child.emit('disconnect');
@@ -84,7 +88,7 @@ test.each(['launch', 'app', 'supervisor', 'app identity', 'supervisor identity']
 );
 
 test.each(['missing message', 'disconnected channel'])(
-  'registration repairs a %s without changing its deadline',
+  'registration handles a %s without changing its deadline',
   async (failure) => {
     let registered: MacosAppRecord | null | undefined;
     const pending = waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000).then((value) => {
@@ -96,7 +100,7 @@ test.each(['missing message', 'disconnected channel'])(
       if (failure === 'disconnected channel') child.disconnect();
       writeWorkspaceState(root, { macos: record });
       await vi.advanceTimersByTimeAsync(1000);
-      expect(registered).toEqual(record);
+      expect(registered).toEqual(failure === 'missing message' ? record : null);
       expect(child.connected).toBe(false);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
@@ -135,7 +139,7 @@ test('supervisor exit ends an unregistered launch before its deadline', async ()
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test('a spawn error rejects registration and releases IPC', async () => {
+test('startup and handoff errors reject registration and release IPC', async () => {
   const pending = waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000);
   queueMicrotask(() => child.emit('error', new Error('spawn denied')));
   await expect(pending).rejects.toThrow('spawn denied');
@@ -145,4 +149,14 @@ test('a spawn error rejects registration and releases IPC', async () => {
   expect(child.listenerCount('exit')).toBe(0);
   expect(child.listenerCount('error')).toBe(0);
   expect(child.listenerCount('disconnect')).toBe(0);
+
+  Object.assign(child, { connected: true });
+  writeWorkspaceState(root, { macos: record });
+  await expect(
+    waitForMacosRegistration(root, record.launchId, child, Date.now() + 20_000, () => {
+      throw new Error('claim child clear denied');
+    }),
+  ).rejects.toThrow('claim child clear denied');
+  expect(child.connected).toBe(false);
+  expect(vi.getTimerCount()).toBe(0);
 });

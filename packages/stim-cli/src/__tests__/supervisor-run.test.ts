@@ -18,15 +18,22 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { readIdleStop } from '@stim-cli/core/state';
+import {
+  DEVICE_METRO_IDLE_STOP_REASON,
+  deviceViewersDir,
+  readDeviceIdleShutdowns,
+  readIdleStop,
+} from '@stim-cli/core/state';
+import * as ios from '../devices/ios.ts';
+import * as teardown from '../devices/teardown.ts';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
 import { deviceLeasePath, takeLease } from '../engine/device-lease.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
 import { type ExecOptions, getExecutor, resetExecutor, setExecutor } from '../exec.ts';
-import { inspectProcessIdentity } from '../process-identity.ts';
-import { MODE_COMMAND } from '../supervisor/state.ts';
+import { captureProcessToken, inspectProcessIdentity } from '../process-identity.ts';
+import { MODE_COMMAND, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import {
   MODE_BARE,
   MODE_EXPO,
@@ -694,5 +701,161 @@ describe('device idle shutdown', () => {
     await vi.advanceTimersByTimeAsync(60 * MINUTE);
     expect(seen.shutDowns).toEqual([60 * MINUTE]);
     expect(seen.closed).toBe(1);
+  });
+
+  test("devices.idleShutdownMinutes 0 keeps every device through Metro's idle stop, and the stop says so", async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 0, metroMinutes: 60 });
+    await vi.advanceTimersByTimeAsync(60 * MINUTE);
+    expect(seen.closed).toBe(1);
+    expect(seen.shutDowns).toEqual([]);
+    expect(readMetroLog().find((record) => record.event === 'supervisor_idle_stopped')?.msg).toContain(
+      'devices.idleShutdownMinutes is 0, so no device was shut down',
+    );
+  });
+
+  describe("at Metro's idle stop", () => {
+    let tornDown: string[];
+
+    beforeEach(() => {
+      const real = getExecutor();
+      setExecutor({
+        ...real,
+        runFileQuiet: (file, args, opts) => (file === 'ps' ? '' : real.runFileQuiet(file, args, opts)),
+      });
+      vi.stubEnv('HOME', tmpHome);
+      vi.stubEnv('USERPROFILE', tmpHome);
+      tornDown = [];
+      vi.spyOn(teardown, 'teardownOwnedIosSim').mockImplementation(async (udid) => {
+        tornDown.push(udid);
+        return { status: 'torn-down', label: `stim-${udid}` };
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+    });
+
+    const launch = (deviceId: string, release: boolean): WorkspaceLaunchRecord => ({
+      appId: 'com.example.app',
+      deviceId,
+      metroPort: release ? null : 8097,
+      release,
+      launchedAt: new Date().toISOString(),
+    });
+
+    function bootedSims(...udids: string[]) {
+      vi.spyOn(ios, 'listAllIosSims').mockReturnValue(
+        udids.map((udid) => ({
+          udid,
+          name: `stim-${udid}`,
+          state: 'Booted',
+          runtime: 'iOS 27.0',
+          deviceTypeIdentifier: 'iPhone',
+          available: true,
+        })),
+      );
+    }
+
+    function writeDeviceLogs(slots: (string | undefined)[]) {
+      const file = join(workspaceLogsDir(root), 'device.ndjson');
+      mkdirSync(workspaceLogsDir(root), { recursive: true });
+      const ts = Date.now();
+      writeFileSync(
+        file,
+        slots
+          .map((slot) => JSON.stringify({ src: 'device', platform: 'ios', ts, msg: 'nw_connection retry', slot }))
+          .join('\n') + '\n',
+      );
+      utimesSync(file, new Date(ts), new Date(ts));
+    }
+
+    async function startSupervisor() {
+      recordWorkspaceUse(root);
+      const running = await runSupervisor({
+        root,
+        port: 8097,
+        isExpo: () => false,
+        attachSignals: false,
+        onExit: () => {},
+        idleStopMinutes: 15,
+        deviceIdleMinutes: 15,
+        startBare: async () => ({ close() {} }),
+      });
+      assert(running);
+    }
+
+    const idleStopMessage = () => readMetroLog().find((record) => record.event === 'supervisor_idle_stopped')?.msg;
+
+    test('with both windows at 15, a Debug app logging 11 minutes before the stop no longer keeps its simulator booted', async () => {
+      upsertProject(root, { metroPort: 8097, platforms: { ios: { deviceUdid: 'DEBUG', owned: true } } });
+      writeWorkspaceState(root, { launches: { ios: launch('DEBUG', false) } });
+      bootedSims('DEBUG');
+      await startSupervisor();
+      await vi.advanceTimersByTimeAsync(4 * MINUTE);
+      writeDeviceLogs([undefined]);
+
+      await vi.advanceTimersByTimeAsync(11 * MINUTE);
+
+      expect(tornDown).toEqual(['DEBUG']);
+      const events = readMetroLog().map((record) => record.event);
+      expect(events.indexOf('device_idle_shutdown')).toBeGreaterThan(-1);
+      expect(events.indexOf('device_idle_shutdown')).toBeLessThan(events.indexOf('supervisor_idle_stopped'));
+      expect(idleStopMessage()).toContain('shut down simulator stim-DEBUG');
+      expect(readDeviceIdleShutdowns(readWorkspaceState(root)).ios).toEqual(
+        expect.objectContaining({ idleMinutes: 15, reason: DEVICE_METRO_IDLE_STOP_REASON }),
+      );
+    });
+
+    test('a simulator a stim-server client is viewing stays booted, and the stop says why', async () => {
+      upsertProject(root, { metroPort: 8097, platforms: { ios: { deviceUdid: 'VIEWED', owned: true } } });
+      writeWorkspaceState(root, { launches: { ios: launch('VIEWED', false) } });
+      bootedSims('VIEWED');
+      mkdirSync(deviceViewersDir(), { recursive: true });
+      writeFileSync(
+        join(deviceViewersDir(), 'server.json'),
+        JSON.stringify({
+          pid: process.pid,
+          processToken: captureProcessToken(process.pid),
+          devices: [{ platform: 'ios', id: 'VIEWED' }],
+        }),
+      );
+      await startSupervisor();
+      await vi.advanceTimersByTimeAsync(4 * MINUTE);
+      writeDeviceLogs([undefined]);
+
+      await vi.advanceTimersByTimeAsync(11 * MINUTE);
+
+      expect(tornDown).toEqual([]);
+      expect(idleStopMessage()).toContain('kept simulator stim-VIEWED up: a stim-server client is viewing it');
+    });
+
+    test('device logs still keep a Release launch, whose app runs without Metro, and a slot with no recorded launch', async () => {
+      upsertProject(root, {
+        metroPort: 8097,
+        platforms: { ios: { deviceUdid: 'RELEASE', owned: true } },
+        deviceSlots: {
+          debug: { ios: { deviceUdid: 'DEBUG', owned: true } },
+          bare: { ios: { deviceUdid: 'BARE', owned: true } },
+        },
+      });
+      writeWorkspaceState(root, {
+        launches: { ios: launch('RELEASE', true), 'ios:debug': launch('DEBUG', false) },
+      });
+      bootedSims('RELEASE', 'DEBUG', 'BARE');
+      await startSupervisor();
+      await vi.advanceTimersByTimeAsync(14 * MINUTE);
+      writeDeviceLogs([undefined, 'debug', 'bare']);
+
+      await vi.advanceTimersByTimeAsync(MINUTE);
+
+      expect(tornDown).toEqual(['DEBUG']);
+      expect(idleStopMessage()).toEqual(
+        expect.stringContaining(
+          'kept simulator stim-RELEASE up: its last launch, a Release build, runs without Metro, and it logged',
+        ),
+      );
+      expect(idleStopMessage()).toContain('kept simulator stim-BARE up: no launch is recorded on its slot');
+    });
   });
 });

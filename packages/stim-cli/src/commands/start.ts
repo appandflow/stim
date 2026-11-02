@@ -29,6 +29,7 @@ import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
+import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
@@ -90,7 +91,7 @@ import {
   type TerminableChild,
   type TunnelRecord,
 } from '../engine/tunnel.ts';
-import { budgetGate, type ReclaimedStep } from '../budget.ts';
+import { budgetGate, type ReclaimedStep, type ReclaimObserver } from '../budget.ts';
 import { cancellableSleep, throwIfCancelled } from '../cancellation.ts';
 import { groupExitBudgetMs, waitForGroupExit } from '../process-group-exit.ts';
 import { ambientContext, ambientEnv } from '@stim-cli/core';
@@ -528,6 +529,7 @@ function portBindRace(lines: readonly string[], port: number): boolean {
 }
 
 export interface StartDevServerRequest {
+  onReclaim?: ReclaimObserver;
   root: string;
   settings: SettingsObject;
   settingsContext: ProjectSettingsContext;
@@ -559,6 +561,7 @@ export async function startDevServer(
     remote: remoteFlag = false,
     resetCache = false,
     hostedPorts,
+    onReclaim,
     out,
     note,
   }: StartDevServerRequest,
@@ -690,7 +693,7 @@ export async function startDevServer(
       }, operationSignal);
 
       const gateBudget = async () => {
-        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal });
+        const budget = await d.budgetGate({ root, note, env: ambientEnv(), signal: operationSignal, onReclaim });
         reclaimed = [...reclaimed, ...budget.reclaimed];
         if (budget.refusal) return fail(budget.refusal);
       };
@@ -1554,6 +1557,11 @@ export async function startDevServer(
   };
   try {
     const facts = await run();
+    try {
+      writeAgentDeviceBootHook(root);
+    } catch (error) {
+      note(chalk.yellow(`Could not write agent-device's boot hook: ${error instanceof Error ? error.message : error}`));
+    }
     return { ok: true, facts, waited: waitTimer(), reclaimed };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) {

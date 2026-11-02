@@ -818,7 +818,7 @@ the offered simulator architecture, not this machine's. --remote-build remains
 independent and selects a compatible build worker for a cache miss.
 
 The host's own owned devices count toward concurrency.maxDevices and its per-platform cap
-(concurrency.maxIosDevices, concurrency.maxAndroidDevices; hosted macOS apps use concurrency.maxMacosApps).
+(concurrency.maxIosDevices, concurrency.maxAndroidDevices; macOS apps use concurrency.maxMacosApps).
 
 The host's person sees Hosted here rows in stim-server devices; --json adds
 hostedSessions beside devices. Rows show client, platform, device, installed
@@ -2207,7 +2207,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
 
     concurrency.maxIosDevices      booted owned iOS simulators at once.
     concurrency.maxAndroidDevices  booted owned Android emulators at once.
-    concurrency.maxMacosApps       hosted macOS apps on a worker at once.
+    concurrency.maxMacosApps       local or hosted macOS apps at once.
                             Each is 0 (no per-platform limit) unless set, and
                             each only tightens: a run must fit its platform's
                             cap AND concurrency.maxDevices. maxDevices counts
@@ -2225,8 +2225,11 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
                             devices of that platform. Hosted admission on a
                             worker (offer and reserve) applies all three,
                             counting the worker's local devices too.
-                            Local \`stim macos\` runs are not counted, so
-                            maxMacosApps limits hosted macOS apps only.
+                            Local \`stim macos\` counts running owned app
+                            workspaces in this Stim home in a separate pool
+                            from hosted reservations. At capacity it refuses
+                            immediately; builds remain parallel. Replacing
+                            this workspace's app does not add to the count.
                             A refusal names the full limit, its count and its
                             cap, for example "1 Stim iOS simulator(s) are
                             already booted and concurrency.maxIosDevices is 1".
@@ -2290,7 +2293,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
        measures the largest uses of disk at the same time.
 
-  IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
+  IDLE SHUTDOWN (15 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
   0, a workspace's supervisor shuts down that workspace's owned simulators and
   emulators once they have been idle that long, without waiting for a run
   to go over budget. Idle is step 1 with that many minutes in place of 10:
@@ -2302,10 +2305,20 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   through the same teardown as \`stop\`: never deleted, and physical
   devices are never touched. It writes a device_idle_shutdown line to
   metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
-  status\` shows "shut down after 30m idle" on the device until the next
-  \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
-  shorter, the dev server's idle stop first shuts down the devices idle that
-  long, because no supervisor is left to check afterwards. Devices with no
+  status\` shows "shut down after 15m idle" on the device until the next
+  \`ios\` or \`android\` run boots it again. The dev server's idle stop
+  (\`guide metro\`) first shuts down the devices idle for the shorter of
+  metro.idleStopMinutes and devices.idleShutdownMinutes, because no
+  supervisor is left to check afterwards; status then says "with Metro's
+  idle stop". From the idle stop on, and whenever neither a supervisor nor
+  the dev server it started runs in the workspace, device log lines stop
+  counting as activity of a slot whose last launch loads its JS from Metro,
+  so a Debug app's device goes down with the dev server and its reconnect
+  logs cannot keep it booted. Device logs still count for a Release or
+  native-process launch and for a slot with no recorded launch; for those any
+  change to the workspace's device.ndjson counts, so another slot's
+  reconnect logs keep them booted until that slot's device is shut down.
+  Devices with no
   supervisor (release runs, a dev server that exited) are shut down by
   automatic maintenance while maintenance.mode is on (guide cleanup): every maintenance.idleCheckMinutes
   (5) a command starts a background check that applies each workspace's
@@ -2321,7 +2334,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Only the FIFO head shuts down the longest-idle eligible device across this
   Stim home's other workspaces, one per attempt, at most once every 15 seconds,
   rechecking capacity before another. 0 disables it. The supervisor's own idle
-  shutdown defaults to 30 minutes.
+  shutdown defaults to 15 minutes.
   Reclaim uses the same idle check: no driver, Stim or agent-device lock,
   build, device lock or viewer, and no Stim command, app or device log,
   Metro bundle or agent action within that interval. It rechecks under the
@@ -3102,6 +3115,24 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   not fix Gradle skipping its bundle task after environment-only changes
   (https://github.com/expo/expo/pull/49839). The same isolation applies to
   non-Debug iOS configurations.
+
+  SDK 53 projects can opt in through metro.config.js. After creating and
+  merging the existing config, before exporting it:
+
+  \`\`\`js
+  const { createHash } = require('node:crypto');
+  const publicEnv = Object.entries(process.env)
+    .filter(([name]) => name.startsWith('EXPO_PUBLIC_'))
+    .sort(([a], [b]) => a.localeCompare(b));
+  const publicEnvKey = createHash('sha256')
+    .update(JSON.stringify(publicEnv))
+    .digest('hex');
+  config.cacheVersion = \`\${config.cacheVersion ?? ''}:\${publicEnvKey}\`;
+  \`\`\`
+
+  This preserves existing cacheVersion and cacheStores and varies the key for
+  effective EXPO_PUBLIC_ values. It does not make Gradle execute a skipped
+  bundle task.
 
   AN EXPO-UPDATES APP GETS A FRESH EMBEDDED UPDATE. expo-updates launches the
   update with the newest commitTime for the binary's runtime version, and the

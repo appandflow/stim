@@ -13,9 +13,9 @@ test('finds the Gradle and Kotlin daemons in CRLF Windows listings by each clien
     `6 java.exe -cp ${home('b')}\\wrapper\\gradle-daemon-main-9.4.1.jar ${DAEMON}`,
     `7 java.exe -cp C:\\elsewhere\\gradle-daemon-main-9.4.1.jar ${DAEMON}`,
     '8 ',
-    `9 java.exe -cp ${home('a', 'one')}\\wrapper\\gradle-daemon-main.jar ${DAEMON}`,
+    `9 java.exe -cp ${home('a', 'one')}\\n0123456789ab\\wrapper\\gradle-daemon-main.jar ${DAEMON}`,
     `10 java.exe -cp ${home('a', 'two')}\\wrapper\\gradle-daemon-main.jar ${DAEMON}`,
-    `11 java.exe -cp ${home('a', 'one')}\\caches\\kotlin-compiler.jar KotlinCompileDaemon`,
+    `11 java.exe -cp ${home('a', 'one')}\\n0123456789ab\\caches\\kotlin-compiler.jar KotlinCompileDaemon`,
   ].join('\r\n');
   expect(workerGradleDaemons(listing, root, 'win32', [{ client: 'a' }, { client: 'a', repo: 'one' }])).toEqual([
     { pid: 4, client: 'a' },

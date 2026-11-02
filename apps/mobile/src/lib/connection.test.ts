@@ -4,7 +4,7 @@ import capturedStatus from '../../mock-server/fixtures/status.json';
 import {
   receiveStatus,
   replaceReceivedField,
-  statusEnumPaths,
+  workspaceEnumPaths,
   resultEnumCases,
   eventEnumCases,
   archivedLogsEnded,
@@ -100,12 +100,6 @@ class FakeSocket {
 }
 
 const flush = () => jest.advanceTimersByTimeAsync(0);
-const status = {
-  environments: [],
-  capacity: { liveCount: 0, committedMb: 0, totalMemoryMb: 1024, overCapacity: false },
-  deviceLeases: [],
-  simctlAvailable: true,
-};
 const currentWorkspace = { path: '/current', live: false, memoryMb: 0, warnings: [], issues: [] };
 const hello = { protocol: 2, server: { name: 'Mac', version: '1', stim: '1.9.0' }, capabilities: ['read'] };
 
@@ -133,15 +127,15 @@ describe('StimConnection', () => {
   it('resubscribes after a reconnect and routes events by the new subscription id', async () => {
     const { connection, sockets, timers } = setup();
     const events: ServerEvent[] = [];
-    connection.subscribe('status.subscribe', {}, (event) => events.push(event));
+    connection.subscribe('workspace.subscribe', { workspace: '/w' }, (event) => events.push(event));
     connection.start();
 
     sockets[0].onopen?.('k');
     sockets[0].reply('hello', hello);
     await flush();
-    sockets[0].reply('status.subscribe', { subscription: 's1' });
+    sockets[0].reply('workspace.subscribe', { subscription: 's1' });
     await flush();
-    sockets[0].emit({ event: 'status', subscription: 's1', payload: status });
+    sockets[0].emit({ event: 'workspace', subscription: 's1', seq: 0, environment: null });
 
     sockets[0].close();
     expect(timers.map((t) => t.ms)).toEqual([1000]);
@@ -149,13 +143,16 @@ describe('StimConnection', () => {
     sockets[1].onopen?.('k');
     sockets[1].reply('hello', hello);
     await flush();
-    expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
-    sockets[1].reply('status.subscribe', { subscription: 's9' });
+    expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'workspace.subscribe']);
+    sockets[1].reply('workspace.subscribe', { subscription: 's9' });
     await flush();
-    sockets[1].emit({ event: 'status', subscription: 's1', payload: { environments: [1] } });
-    sockets[1].emit({ event: 'status', subscription: 's9', payload: { ...status, environments: [currentWorkspace] } });
+    sockets[1].emit({ event: 'workspace', subscription: 's1', seq: 0, environment: 1 });
+    sockets[1].emit({ event: 'workspace', subscription: 's9', seq: 0, environment: currentWorkspace });
 
-    expect(events.map((e) => (e.event === 'status' ? e.payload.environments : null))).toEqual([[], [currentWorkspace]]);
+    expect(events.map((e) => (e.event === 'workspace' ? e.environment : 'other-event'))).toEqual([
+      null,
+      currentWorkspace,
+    ]);
   });
 
   it('gives each H.264 subscription its own stream and clears it before disposing it', async () => {
@@ -304,7 +301,7 @@ describe('StimConnection', () => {
 
   it('sends video subscriptions with hello, and the others once hello is accepted', async () => {
     const { connection, sockets } = setup();
-    connection.subscribe('status.subscribe', {}, () => {});
+    connection.subscribe('workspace.subscribe', { workspace: '/w' }, () => {});
     connection.subscribe(
       'frames.subscribe',
       { workspace: '/w', platform: 'ios' },
@@ -321,7 +318,7 @@ describe('StimConnection', () => {
     expect(sockets[0].sent.map((m) => m.method)).toEqual([
       'hello',
       'frames.subscribe',
-      'status.subscribe',
+      'workspace.subscribe',
       'logs.subscribe',
     ]);
   });
@@ -344,7 +341,7 @@ describe('StimConnection', () => {
     expect(events).toEqual([]);
   });
 
-  it('stops retrying when the server refuses the device token', async () => {
+  it('stops retrying when the server refuses the token or required live views', async () => {
     const { connection, sockets, timers, states } = setup();
     connection.start();
     sockets[0].onopen?.('k');
@@ -352,6 +349,26 @@ describe('StimConnection', () => {
     await flush();
     expect(timers).toHaveLength(0);
     expect(states.at(-1)).toEqual({ kind: 'refused', code: 'unauthorized', reason: 'unauthorized' });
+    for (const [method, params, refused] of [
+      ['workspaces.subscribe', {}, true],
+      ['machine.subscribe', {}, true],
+      ['logs.subscribe', { workspace: '/w' }, false],
+    ] as const) {
+      const next = setup();
+      next.connection.subscribe(method, params, () => {});
+      next.connection.start();
+      next.sockets[0].onopen?.('k');
+      next.sockets[0].reply('hello', hello);
+      await flush();
+      next.sockets[0].fail(method, 'unknown-method');
+      await flush();
+      expect(next.sockets[0].closed).toBe(refused);
+      expect(next.states.at(-1)).toMatchObject(
+        refused ? { kind: 'refused', code: 'server-outdated' } : { kind: 'open' },
+      );
+      expect(next.timers).toEqual([]);
+      next.connection.close();
+    }
   });
 
   it('reports the actions and features hello grants, and their defaults from a server that predates them', async () => {
@@ -371,7 +388,7 @@ describe('StimConnection', () => {
 
   it('reconnects at once on request, so a grant made on the Mac shows without waiting for a drop', async () => {
     const { connection, sockets, timers, states } = setup();
-    connection.subscribe('status.subscribe', {}, () => {});
+    connection.subscribe('workspace.subscribe', { workspace: '/w' }, () => {});
     connection.start();
     sockets[0].onopen?.('k');
     sockets[0].reply('hello', { ...hello, actions: [], device: { id: '1a2b3c4d', name: 'Phone' } });
@@ -384,13 +401,13 @@ describe('StimConnection', () => {
     expect(sockets[0].closed).toBe(true);
     expect(timers).toHaveLength(0);
     sockets[0].onopen?.('k');
-    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
+    expect(sockets[0].sent.map((m) => m.method)).toEqual(['hello', 'workspace.subscribe']);
     sockets[1].onopen?.('k');
     sockets[1].reply('hello', { ...hello, capabilities: ['read', 'control'], actions: ['reload', 'stop'] });
     await flush();
     expect(states.at(-1)).toMatchObject({ kind: 'open', actions: ['reload', 'stop'], deviceId: null });
     expect(pairingScope(states.at(-1)!)).toBe('control');
-    expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'status.subscribe']);
+    expect(sockets[1].sent.map((m) => m.method)).toEqual(['hello', 'workspace.subscribe']);
   });
 
   it('reports each resubscribe so a log list can drop the history it already shows', async () => {
@@ -604,22 +621,27 @@ describe('RPC receive validation', () => {
 });
 
 test.each([
-  ...statusEnumPaths.map((path) => [path, 'future-kind'] as const),
-  ['environments.0.build.missProvisional', false] as const,
-])('keeps the socket open when status has a future value at %s', async (path, value) => {
+  ...workspaceEnumPaths.map((path) => [path, 'future-kind'] as const),
+  ['build.missProvisional', false] as const,
+])('keeps the socket open when a workspace has a future value at %s', async (path, value) => {
   const { connection, sockets, timers } = setup();
   const seen: ServerEvent[] = [];
-  connection.subscribe('status.subscribe', {}, (event) => seen.push(event));
+  connection.subscribe('workspace.subscribe', { workspace: '/w' }, (event) => seen.push(event));
   connection.start();
   sockets[0]!.onopen?.('k');
   sockets[0]!.reply('hello', hello);
   await flush();
-  sockets[0]!.reply('status.subscribe', { subscription: 's' });
+  sockets[0]!.reply('workspace.subscribe', { subscription: 's' });
   await flush();
   sockets[0]!.emit({
-    event: 'status',
+    event: 'workspace',
     subscription: 's',
-    payload: replaceReceivedField(receiveStatus(capturedStatus.payload as StatusPayload), path, value),
+    seq: 0,
+    environment: replaceReceivedField(
+      receiveStatus(capturedStatus.payload as StatusPayload).environments[0],
+      path,
+      value,
+    ),
   });
   expect(seen).toHaveLength(1);
   expect(sockets[0]!.closed).toBe(false);
@@ -700,12 +722,12 @@ describe('failure reports', () => {
 
   it('reports an invalid event by event name and schema location without its payload', async () => {
     const { connection, sockets } = setup();
-    connection.subscribe('status.subscribe', {}, () => {});
+    connection.subscribe('workspace.subscribe', { workspace: '/w' }, () => {});
     connection.start();
     sockets[0].onopen?.('k');
     sockets[0].reply('hello', hello);
     await flush();
-    sockets[0].reply('status.subscribe', { subscription: 's1' });
+    sockets[0].reply('workspace.subscribe', { subscription: 's1' });
     await flush();
     sockets[0].emit({ event: 'notification', payload: { leaked: '/Users/janic/secret-app' } });
 

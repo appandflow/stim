@@ -61,7 +61,9 @@ describe('the shared phone protocol', () => {
 
   it('reads every result and event the server sends', () => {
     expectTypeOf<ResultsTheAppMisreads>().toBeNever();
-    expectTypeOf<Server.StatusEvent extends Mobile.StatusEvent ? never : 'status'>().toBeNever();
+    expectTypeOf<Server.WorkspacesEvent>().toExtend<Mobile.WorkspacesEvent>();
+    expectTypeOf<Server.WorkspaceEvent>().toExtend<Mobile.WorkspaceEvent>();
+    expectTypeOf<Server.MachineEvent>().toExtend<Mobile.MachineEvent>();
     expectTypeOf<Server.ErrorEvent>().toExtend<Mobile.ErrorEvent>();
     expectTypeOf<Server.FrameEvent>().toExtend<Mobile.FrameEvent>();
     expectTypeOf<Server.MacosWindowsEvent>().toExtend<Mobile.MacosWindowsEvent>();

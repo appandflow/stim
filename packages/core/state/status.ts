@@ -14,6 +14,7 @@ export type RunOutcomeKind = 'hit' | 'cold';
 
 export const BUILD_PHASES = [
   'prepare',
+  'cleanup',
   'cache-lookup',
   'wait',
   'prebuild',

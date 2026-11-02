@@ -67,7 +67,9 @@ export function devServerStopRecord(
 }
 
 export function describeDevServerStop(record: DevServerStopRecord): string {
-  if (record.reason === 'idle') return `idle for ${record.idleMinutes} minutes (metro.idleStopMinutes)`;
+  if (record.reason === 'idle') {
+    return `idle for ${record.idleMinutes} minutes (metro.idleStopMinutes); run stim revive to resume it`;
+  }
   if (record.reason === 'requested') {
     return `stop requested by ${record.by} (pid ${record.byPid}${record.byWorkspace ? ` in ${record.byWorkspace}` : ''})`;
   }

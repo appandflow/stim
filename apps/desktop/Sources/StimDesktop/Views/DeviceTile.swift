@@ -156,17 +156,16 @@ struct DeviceTile: View {
       observedHingeAngle = nil
       guard hingeAvailable, let udid = dualSimulatorUDID else { return }
       while !Task.isCancelled {
-        let started = ContinuousClock.now
         var received = false
         for await angle in SimulatorHingeAngle.angles(udid: udid) {
           observedHingeAngle = angle
           received = true
         }
+        observedHingeAngle = nil
         guard !Task.isCancelled, received else {
-          observedHingeAngle = nil
           return
         }
-        try? await Task.sleep(for: max(.zero, .seconds(60) - started.duration(to: .now)))
+        try? await Task.sleep(for: .seconds(0.5))
       }
     }
     .onChange(of: observedHingeAngle) { _, angle in

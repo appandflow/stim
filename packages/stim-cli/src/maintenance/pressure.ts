@@ -1,6 +1,30 @@
 import type { DiskPressureLevel, MaintenanceAction, MaintenancePressure } from '@stim-cli/core/state';
 import type { Budget } from '../budget.ts';
 import type { MaintenanceSettings } from './settings.ts';
+import type { HostMemoryPressure } from '../host-memory.ts';
+
+export function memoryPressureFromObservations(
+  settings: Pick<MaintenanceSettings, 'memoryPressureLevel' | 'memoryWarningMinutes' | 'minAvailableMemoryGb'>,
+  previous: Pick<MaintenancePressure, 'warningSince'> | null,
+  now: number,
+  level: HostMemoryPressure | null,
+  availableBytes: number | null,
+  totalBytes: number,
+): Pick<MaintenancePressure, 'memory' | 'warningSince'> {
+  const warningSince = level === 'warning' ? (previous?.warningSince ?? now) : null;
+  const pressured =
+    settings.memoryPressureLevel !== 'off' &&
+    (level === 'critical' ||
+      (settings.memoryPressureLevel === 'warning' &&
+        warningSince !== null &&
+        now - warningSince >= settings.memoryWarningMinutes * 60_000) ||
+      (availableBytes !== null &&
+        availableBytes <
+          (settings.minAvailableMemoryGb === undefined
+            ? totalBytes * 0.1
+            : settings.minAvailableMemoryGb * 1024 ** 3)));
+  return { memory: { level, availableBytes, pressured }, warningSince };
+}
 
 type LevelSettings = Pick<MaintenanceSettings, 'urgentFreeDiskGb' | 'criticalFreeDiskGb'>;
 

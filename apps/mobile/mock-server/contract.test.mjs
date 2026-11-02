@@ -11,17 +11,17 @@ for (const [slotWaits, capacity] of [
 ]) {
   const fixtures = loadFixtures({ slotWaits, capacity });
 
-  test(`every status environment passes the phone validator (slot waits ${slotWaits}, capacity ${capacity})`, () => {
-    const statusEvent = (environments) => ({
-      event: 'status',
+  test(`every workspace environment passes the phone validator (slot waits ${slotWaits}, capacity ${capacity})`, () => {
+    const workspaceEvent = (environment) => ({
+      event: 'workspace',
       subscription: 'mock',
-      payload: { ...fixtures.status, environments },
+      seq: 0,
+      environment,
     });
     const rejected = fixtures.status.environments
-      .filter((environment) => !event(statusEvent([environment])))
+      .filter((environment) => !event(workspaceEvent(environment)))
       .map((environment) => environment.path);
     assert.deepEqual(rejected, []);
-    assert.ok(event(statusEvent(fixtures.status.environments)));
   });
 }
 

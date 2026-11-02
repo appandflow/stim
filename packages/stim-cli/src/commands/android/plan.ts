@@ -1,5 +1,5 @@
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
-import { lookupRecordedBuild } from '../../engine/recorded-build.ts';
+import { lookupRecordedBuild, type RecordedBuildRequest } from '../../engine/recorded-build.ts';
 import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
@@ -82,7 +82,7 @@ export interface AndroidBuildPlanInputs {
 export interface AndroidPlanInputs extends AndroidBuildPlanInputs {
   readonly slot: string;
   /** Set when the run installs a recorded build: refuses before any device work if there is none. */
-  readonly recordedBuild?: boolean;
+  readonly recordedBuild?: RecordedBuildRequest;
   readonly signal?: AbortSignal;
   readonly systemImage: string | null;
   readonly deviceProfile?: string | null;

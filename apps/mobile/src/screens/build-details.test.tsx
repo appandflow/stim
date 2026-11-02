@@ -16,6 +16,7 @@ let mockEnvironments: EnvironmentState[] = [];
 const mockPush = jest.fn();
 jest.mock('expo-router', () => ({ useRouter: () => ({ push: mockPush }) }));
 jest.mock('@/hooks/machines', () => ({
+  useArchivesPending: () => false,
   useStatus: () => ({ environments: mockEnvironments, archived: [mockRealArchive] }),
   useMacConnection: () => ({ mac: { id: 'mac' }, home: null }),
 }));

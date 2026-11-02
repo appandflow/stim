@@ -139,16 +139,30 @@ test('a missing executable throws ENOENT', () => {
   expect(failure.code).toBe('ENOENT');
 });
 
-test('file commands write the given input to stdin and preserve raw stdout when requested', async () => {
+test('file commands isolate child environment and preserve stdin and raw stdout', async () => {
   resetExecutor();
-  const echo = ['-e', 'process.stdin.pipe(process.stdout)'];
+  const echo = [
+    '-e',
+    'if (Object.keys(process.env).some(key => key.toLowerCase() === "psmodulepath") || process.env.STIM_EXEC_KEPT !== "kept") process.exit(3); process.stdin.pipe(process.stdout)',
+  ];
   const input = ' \t<plist/> \n';
   const executor = getExecutor();
-  expect(await executor.runFileAsync(process.execPath, echo, { input, timeoutMs: 60_000 })).toBe('<plist/>');
-  expect(await executor.runFileAsync(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(
-    input,
-  );
-  expect(executor.runFile(process.execPath, echo, { input, untrimmed: true, timeoutMs: 60_000 })).toBe(input);
+  for (const [index, key] of ['PSModulePath', 'PSMODULEPATH', 'psmodulepath'].entries()) {
+    const env = { [key]: 'omitted', STIM_EXEC_KEPT: 'kept' };
+    const options = {
+      input,
+      env,
+      omitEnv: Object.keys({ ...process.env, ...env }).filter((envKey) => envKey.toLowerCase() === 'psmodulepath'),
+      timeoutMs: 60_000,
+      ...(index > 0 ? { untrimmed: true } : {}),
+    };
+    const output =
+      index === 2
+        ? executor.runFile(process.execPath, echo, options)
+        : await executor.runFileAsync(process.execPath, echo, options);
+    expect(output).toBe(index === 0 ? '<plist/>' : input);
+    expect(env[key]).toBe('omitted');
+  }
 });
 
 test('file commands can reject stderr on a successful exit without changing the default', async () => {

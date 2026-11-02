@@ -105,6 +105,13 @@ describe('buildProgress', () => {
 
   it('is indeterminate without comparable runs', () => {
     expect(buildProgress(build(null), now)).toEqual({ elapsedMs: 90_000, fraction: null, remaining: null });
+    const cleanup = { ...build(300_000), phase: 'cleanup', completedPhaseMs: { cleanup: 30_000 } };
+    expect(buildProgress(cleanup, now)).toEqual({ elapsedMs: 90_000, fraction: null, remaining: null });
+    expect(buildProgress({ ...cleanup, phase: 'compile', slot: 'cleaned' }, now)).toMatchObject({
+      elapsedMs: 90_000,
+      fraction: 0.2,
+      remaining: 'about 4 min left',
+    });
   });
 
   it('does not move backwards when the run revises its estimate', () => {
@@ -140,6 +147,7 @@ describe('buildTiming', () => {
 
   it('has no estimate without comparable runs', () => {
     expect(buildTiming(build(null), now)).toEqual({ elapsed: '1:30', estimate: null });
+    expect(buildTiming({ ...build(300_000), phase: 'cleanup' }, now)).toEqual({ elapsed: '1:30', estimate: null });
   });
 
   it('times slot waits from their own start during any phase and skips absent or future kinds', () => {

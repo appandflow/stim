@@ -98,6 +98,7 @@ public final class StatusStore: ObservableObject {
     for (id, client) in clients where client.isRemote {
       if pairedFeeds[id] == nil {
         let feed = ServerStatusFeed(
+          readsArchives: false,
           onPayload: { [weak self] result, source, _ in self?.acceptPaired(result, id: id, client: source) },
           onDelivering: { [weak self, weak client] delivering in
             guard let self, let client, self.pairedFeeds[id]?.client === client else { return }

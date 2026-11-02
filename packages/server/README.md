@@ -1919,15 +1919,21 @@ connected since stim-server started keeps its directory when revoked.
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
   Gradle daemon leaves the build's process group. Each repository has its own
   Gradle home, so cancellation can stop its verified daemons without waiting
-  for or stopping another repository's build. Android claims remain pending
+  for or stopping another repository's build. RN/Expo Android workers choose
+  an `n<12 hex>` child home by the selected Node executable and version;
+  switching Node keeps separate dependency caches and warm daemons. Cleanup
+  covers the parent and these children. Native Gradle keeps the parent home.
+  Android claims remain pending
   until cancellation cleanup proves those identities exited; unknown cleanup
   retains the repository and build-slot claims. A daemon exiting between process
   inventory and identity capture also requires inspection and manual claim
-  recovery before retrying. The daemon stays warm with
-  `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
-  Gradle fixes that timeout at daemon startup. Once no build of a client runs,
-  stim-server also stops its daemons when the client loses `build` or the
-  machine has less than 2 GB of available memory. The periodic sweep still
+  recovery before retrying. Daemons follow Gradle's idle policy. Each Android
+  build removes only Stim's old generated timeout line in its selected owned
+  Gradle home; other properties and inactive homes stay unchanged. Existing
+  daemons keep their startup timeout until they exit. Once no build of a client runs,
+  stim-server also stops its daemons when the client loses `build`. The
+  low-memory sweep waits until no offloaded build is running and the machine
+  has less than 2 GB of available memory. The periodic sweep still
   recognizes legacy client-home daemons; changing home namespaces does not
   migrate or delete the old cache. A live process named in a legacy daemon log
   refuses new Android admissions until it has been inspected and retired.
@@ -2054,41 +2060,10 @@ Events are `{ "event", "subscription", ... }`.
   `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
   `~/...`.
-- `status.subscribe` returns a subscription id. Each `status` event carries a
-  full payload as `stim status --watch --json` prints it, including each
-  environment's `physicalDevices`, the phones it leases, and its `agents`, the
-  Claude Code and Codex sessions working in it. Those carry the session id,
-  working directory, the short session name the tool keeps, and times, never
-  prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
-  that only the machine can open; the server has no action that opens it. `webUrl`
-  is a Claude Code session's `https://claude.ai/code/` link while Remote Control
-  is connected, which a phone opens in the Claude app or a browser.
-  `endedAgents` lists the sessions that stopped running there in the last 3
-  days, with the same fields as last found, no `pid`, and `endedAt`. The server
-  drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
-  the `stim` commands it runs, so a phone's reload is not recorded as the work
-  of the agent session that started the server. The server runs the status
-  watch itself, in a worker thread, from the moment it is ready, so a
-  subscriber gets the latest payload at once; all subscribers share it.
-  While any status subscription is open, the server keeps a CPU
-  and memory history from each payload's `machine.owners`, and every `status`
-  event carries it beside the payload as `usage`, once it holds a reading:
-  `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
-  minutes in 15-second slots, the cadence at which `status --watch` rereads
-  machine usage, oldest first, at most 40 points: point `i` of `n`
-  is at `endAt - (n - 1 - i) * intervalMs`, and a slot no payload fell in is
-  `null`. Each `environments` entry is `{ "workspace", "cpuPercent",
-"memoryMb" }` and sums every machine owner of that environment path; each
-  `devices` entry is `{ "kind", "id", "workspace", "slot"?, "cpuPercent",
-"memoryMb" }` for a simulator (`id` its UDID) or emulator (`id` its AVD name).
-  `cpuPercent` is ps %CPU, where 100 is one core. The history lives in the
-  server's memory only. While the server holds `stim device lock` leases for
-  phones that control a device, every `status` event also carries their
-  `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
-  device from an agent driving it: an `activity.driver` of `stim device lock`
-  whose `since` is in `ownLeases` is a phone.
-- A server that offers the following status views lists `status-views` in its
-  `hello` features.
+  App clients require the live view subscriptions below. They do not negotiate
+  these views through `hello` features or fall back to a full-status subscription.
+  Update the server and app clients together.
+
 - `workspaces.subscribe` returns a subscription id and sends `workspaces`
   events, each with a `seq` that starts at 0 and grows by one. The first
   carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each
@@ -2106,10 +2081,29 @@ Events are `{ "event", "subscription", ... }`.
   subscribes again for a new snapshot.
 - `workspace.subscribe` with `{ "workspace" }` sends `workspace` events with
   that workspace's full `environment`, on subscribing and on every change to
-  it, or `null` while no workspace has that path.
+  it, or `null` while no workspace has that path. The full environment includes
+  leased `physicalDevices`, active `agents` and the sessions ended in the last
+  three days as `endedAgents`. Agent records contain attribution and times,
+  never prompts or conversation. `openUrl` is a machine-only Claude/Codex link;
+  `webUrl` is a Claude Remote Control link the phone can open. Server-run Stim
+  commands omit `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` so their work is
+  not attributed to the agent that started the server.
 - `machine.subscribe` sends `machine` events with `capacity`, `machine`,
   `deviceLeases`, `simctlAvailable` and `maintenance` without `recent` and
-  `sizes`, plus `usage` and `ownLeases` as on `status` events.
+  `sizes`, plus `usage` and `ownLeases` when present. While a machine subscription
+  is open, the server records CPU and memory history from status machine owners.
+  `usage` is `{ "intervalMs", "endAt", "environments", "devices" }`: the last
+  ten minutes in 15-second slots, oldest first, at most 40 points. Point `i` of
+  `n` is at `endAt - (n - 1 - i) * intervalMs`; a missing reading is `null`.
+  Each environment series is `{ "workspace", "cpuPercent", "memoryMb" }`,
+  summed across that workspace's machine owners. Each device series is
+  `{ "kind", "id", "workspace", "slot"?, "cpuPercent", "memoryMb" }`, with
+  simulator UDID or emulator AVD name as `id`. CPU percent is ps %CPU, where 100
+  is one core; the history lives only in server memory. `ownLeases` holds the
+  `grantedAt` times of device leases the server holds for controlling phones.
+  A `stim device lock` activity whose `since` occurs there is a phone rather
+  than an agent. All views share the server's status watch; clients do not
+  start an external CLI status watcher.
 - `builds.history` with `{ "workspace" }` returns that workspace's full
   `{ "builds" }`. `archived.list` with optional `before` and `limit` (at most 50) returns `{ "archived", "usage", "next" }`: archives newest removal first,
   and the `before` of the next page, or null. `worktrees.list` returns the full

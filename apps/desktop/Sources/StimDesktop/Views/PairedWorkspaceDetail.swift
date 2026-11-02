@@ -125,7 +125,7 @@ struct PairedActionOutcome: Equatable {
   var message: String
 }
 
-private struct ObservedSession<Content: View>: View {
+struct ObservedSession<Content: View>: View {
   @ObservedObject var session: ServerSession
   @ViewBuilder var content: () -> Content
 

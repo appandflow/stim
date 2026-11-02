@@ -308,7 +308,9 @@ when `OwnedDevice.offersControl` finds the server granting `control`. **Reload A
 `PairedAccess`: the known actions (`reload`, `stop`) the open connection's `hello.actions` lists, run with the
 server's `action` method by `ServerSession.runPairedAction`. A read-only pairing shows both disabled with the grant
 command Desktop builds from the `hello` device id; a `forbidden` answer reconnects to pick up the new access. The
-page has no logs, files or settings, and no context menu beyond Hide. **Machines** lists each paired server after the
+page has no logs, files or settings. The sidebar row's context menu offers the same **Reload App** and **Stop** actions,
+with the same access checks and a confirmation naming the owning server before Stop, alongside **Hide**.
+**Machines** lists each paired server after the
 build machines, with its reported capacity, its hosted devices and its offloaded builds. A hosted session two
 servers report shows once, under the first. A pairing whose server says it is this Mac's own gets no section.
 With the flag off, or with no pairing, nothing connects and the sidebar and Machines page are unchanged.
@@ -318,14 +320,22 @@ With the flag off, or with no pairing, nothing connects and the sidebar and Mach
 **Hide** and **Unhide** are in the sidebar row's context menu and in the page's "..." menu for a worktree
 row, a multi-app worktree, a Not set up worktree and an archived workspace. A hidden workspace leaves Active,
 Idle, Not set up and Archived and shows only under the Hidden status. When the filter hides at least one,
-a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again". The list is kept in
-this Desktop's own preferences on this Mac, by the workspace path Stim reports (and the archive id for an
-archive). It is not shared with the phone app or another Mac, and Stim itself does not know about it.
+a quiet sidebar footer reads "3 hidden - Show"; once Hidden is on it reads "Hide again".
 
-A hidden workspace is shown again when it becomes active: its dev server runs, a build starts, a device boots
-or connects, it is being set up, or a run starts from Desktop. Recent idle activity does not count. A
-workspace in use cannot be hidden. Entries for a workspace that is no longer active, idle, not set up or
-archived are dropped.
+Provisioned local apps use the shared `workspace.hidden` setting, so the CLI and phone see the same state.
+A multi-app row writes one setting per represented app. Mixed checkouts omit hidden apps from ordinary
+filters; Hidden shows those apps, and selecting both keeps one checkout row. Starting, reloading or warming
+a workspace clears its shared hidden setting in the CLI. Hide is disabled for workspaces in use.
+
+Desktop migrates matching old preference paths through the same local server setting writes. Progress and
+refusals appear in Activity; the old entry stays until every app reports the intended shared state, including
+after a retry. Archived and Not Set Up
+hides stay in this Desktop's preferences, as do the separate in-memory masks for paired rows. Stale local
+entries are dropped when the server no longer reports them.
+
+A missing-folder row keeps local hiding until its folder returns. Unhide is disabled if that row is
+already shared-hidden: restore the folder to change shared visibility. This avoids writing settings
+from a nonexistent folder or masking a shared hide locally.
 
 ## Archived workspaces
 
@@ -607,25 +617,12 @@ item (in the toolbar while the sidebar is hidden) shows a spinner and a count
 while commands run and a red dot when a finished one failed and was not
 opened. Its popover lists the running commands and the last 20 finished ones of
 the session, and each row reopens its sheet.
-Status follows from the status watch. A finished command triggers a one-shot
-`stim status --json` only while the watch is not running, or after a
-`stim worktree` command, which can change git worktrees the watch does not
-observe. The Machine page,
+The Machine page,
 the toolbar and the disk pressure check share one `stim gc --json` report. It is marked
 stale when an action that can change it finishes (a cleanup, a run, start or
 stop, a worktree, port, device lease or setting change), and runs again 2
 seconds after the last such action unless a run started since. A reload or a
 cleanup preview leaves it alone. Each workspace runs one action at a time.
-
-Status stays current through one long-running `stim status --watch --json`,
-which prints a payload each time the state changes, and the toolbar shows
-`live` while it runs. When the loopback server session is open, allows reads and
-serves the same canonical Stim home as Desktop, the app subscribes to the server's
-`status.subscribe` feed instead, which carries the payloads of the server's own
-`status --watch`. The app ends its own watcher with the feed's first payload, so one
-`status --watch` runs per Stim home, and starts it again when the server session
-closes, errors or stops reading. At launch the watcher runs until the server delivers. If the watcher exits, the app restarts it after a delay that
-doubles from 1 to 30 seconds.
 
 A running build's progress bar carries its resolved cache outcome: "Cache hit"
 or "Cold build" / "Cache miss". Historical outcome estimates do not appear as
@@ -834,7 +831,7 @@ The **Automatic Maintenance** section of the App preferences shows the mode
 and the last pass (when, actions and bytes freed, and why it was blocked) from
 `stim status --json`, read only. **Clean up what is unused for** sets
 `maintenance.olderThanDays` (7 days by default; Never is 0) and **Shut down
-idle devices after** sets `devices.idleShutdownMinutes` (30 minutes by
+idle devices after** sets `devices.idleShutdownMinutes` (15 minutes by
 default; Never is 0), and **Also remove clean, pushed worktrees unused that
 long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
 unmerged linked worktrees no Stim command used that long, git-ignored files
@@ -1014,13 +1011,13 @@ available only while **Control** is on.
 **Simulator Options** below the screen reads the selected iOS simulator's
 appearance, text size and accessibility settings from Xcode. Change light/dark,
 text size, Larger accessibility sizes, Increase contrast, Reduce motion,
-Reduce transparency or Show button borders. Each change reads the device back;
+Reduce transparency, Show button borders or Color filters. Each change reads the device back;
 **Refresh** picks up changes made elsewhere. Unsupported fields read
 **Unavailable**. The panel is available only on a running local simulator while
 **Control** is on, outside replay; it closes when control is released. Without Control the popover shows only **Show device frame**. These are
 the simulator's settings, not Desktop preferences. This requires an Xcode whose
 `devicectl device info|settings appearance` supports that simulator. Audio,
-VoiceOver, color filters and Liquid Glass controls are not included.
+VoiceOver, color-filter type/intensity and Liquid Glass controls are not included.
 
 The options popover's **Tools** section runs `stim device location|permission|push|network`
 through the CLI for the workspace's own local simulator or emulator, only while **Control** is on
@@ -1050,8 +1047,8 @@ the angle through the simulator's vendor-defined HID service
 (`com.apple.coredevice.feature.remote.hid.vendordefined`), which iOS needs to
 swap panels; the path is adapted from
 [Siniulator](https://github.com/kmagiera/Siniulator) under its MIT licence.
-While its viewer is open, Desktop observes the Duo hinge through
-`devicectl device motion hinge-angle`, so preset selection follows changes
+While its viewer is open, Desktop observes the Duo hinge through the bundled
+`sim-fold` helper's CoreMotion reader, so preset selection follows changes
 made by another controller. Arbitrary angles leave all presets unselected.
 With the device frame on and the installed V68 model available, the housing
 follows the observed hinge angle and display rotation. Touches and drags hit the
@@ -1066,9 +1063,9 @@ the active inner display's two halves around the hinge. The cover, unknown angle
 and fully open display stay flat. Touches and drags map back to the display
 pixels.
 Tools or devices without hinge observation retain the last requested posture.
-The observer consumes valid samples twice a second at most, uses one bounded
-process, and stops it when the viewer closes. Its parser depends on the human
-output of devicectl 651.13.4; unfamiliar output keeps the existing behavior. On a
+The observer accepts finite angles from 0 to 180 degrees, uses one process while
+the viewer is open, and stops it when the viewer closes. A missing helper or
+unavailable CoreMotion reader keeps the existing behavior. On a
 CoreSimulator without that service the controls show **Fold / Unfold** instead,
 which runs the bundled `sim-fold` helper inside the simulator with `xcrun
 simctl spawn` to toggle SpringBoard's private display tool service; it appears
@@ -2296,7 +2293,7 @@ The fixture test skips without the variable and never starts the CLI or a device
 - `Sources/StimKit`: models for Stim JSON, the toolchain environment, the `stim-server` clients, project grouping, warning remedies, the streaming runner, `stim logs` records and the follow runner, process, disk and gc usage, the status machine section, the Machine report, free plan and worktree lifecycle, the pressure plan and activity log, and the crash report scrubber. Unit-tested.
 - `Sources/StimStores`: the observable stores whose ordering and staleness rules have tests: the status refresh and watch, the gc report and the action runs. They take the `stim` call, and the clock where they decide staleness, as closures, so `Tests/StimStoresTests` can order results by hand. The DEBUG visual fixture target imports `StimDesktop` to capture its production views.
 - `Sources/SimulatorFrames`: live simulator frames through CoreSimulator, and input through the simulator's CoreDevice HID service (`dtuhidd`) or, when a simulator has none, SimulatorKit's legacy HID client. All of them are private Apple interfaces. Expect Xcode releases to break it.
-- `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo from the phone.
+- `Support/SimFold`: the `sim-fold` helper, an iOS Simulator executable that `scripts/bundle.sh` builds into the app's resources. stim-server builds the same sources to fold an iPhone Duo and observe its angle from the phone.
 - `Sources/EmulatorFrames`: live emulator frames through the emulator's localhost gRPC `streamScreenshot` call, found through its discovery file, and input through the same endpoint. An emulator without a hardware keyboard (`hw.keyboard=no`) drops key events, so Desktop types on it with `adb shell input`. Emulators Stim booted before it passed `-grpc` show no frames until their next boot.
 - `Sources/WebFrames`: the Stim-owned Chrome page from `stim web`, over the Chrome DevTools Protocol on the loopback `cdpEndpoint` `stim status` reports. It connects only when `SystemInfo.getProcessInfo` names the Chrome pid status reports, attaches to the page's `targetId`, streams it with `Page.startScreencast` and sends `Input.dispatch*` events. Public protocol only; no WebKit view, which would render a different engine than the one agents test.
 - stim-server's `stim-frames` helper compiles the shared files listed in `packages/server/helper/desktop-sources.txt`, together with its own `main.swift`. This includes the SceneKit Duo model used for composed mobile frames. Desktop CI compiles it; keep SwiftUI and StimKit dependencies behind module availability checks. Desktop and the helper both send simulator keys through `SimulatorHID.hardwareKey`, and page input through `WebPage`.

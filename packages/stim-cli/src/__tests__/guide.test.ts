@@ -286,6 +286,7 @@ test('the errors topic documents every code the build commands, the Node check a
     'start.ts',
     'native-runtime.ts',
     'dev-client.ts',
+    'revive.ts',
     ...['ios', 'android'].flatMap((command) =>
       readdirSync(new URL(`../commands/${command}/`, import.meta.url))
         .filter((file) => file.endsWith('.ts'))

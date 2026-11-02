@@ -41,6 +41,7 @@ export async function ensureDevServer({
   hostedPorts,
   env,
   note,
+  onReclaim,
   resolve = resolveProjectMetro,
   start = startDevServer,
   readState = readWorkspaceState,
@@ -53,6 +54,7 @@ export async function ensureDevServer({
   hostedPorts?: StartDevServerRequest['hostedPorts'];
   env?: NodeJS.ProcessEnv;
   note: (line: string) => void;
+  onReclaim?: StartDevServerRequest['onReclaim'];
   resolve?: (port: number, root: string) => Promise<{ metro?: { pid?: number } | null }>;
   start?: typeof startDevServer;
   readState?: typeof readWorkspaceState;
@@ -63,7 +65,7 @@ export async function ensureDevServer({
   if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
-  const result = await start({ root, settings, settingsContext, remote, hostedPorts, out: note, note });
+  const result = await start({ root, settings, settingsContext, remote, hostedPorts, out: note, note, onReclaim });
   if (!result.ok) {
     return {
       ok: false,

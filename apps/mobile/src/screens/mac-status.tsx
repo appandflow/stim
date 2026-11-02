@@ -24,7 +24,7 @@ import { UsageCharts } from '@/components/usage-charts';
 import { withAlpha } from '@/design/color';
 import type { Theme } from '@/design/theme';
 import { useMachineDetails } from '@/hooks/machine-details';
-import { useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines';
+import { useArchives, useMacById, useMachineStatus, useMachineUsage } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useUsageHistory } from '@/hooks/usage-history';
 import { formatBytes, formatMemoryMb, formatSize } from '@/intl/format';
@@ -66,6 +66,7 @@ export function MacStatus({ id }: { id: string }) {
   const { theme } = useUnistyles();
   const { mac, connection, state, missing, home } = useMacById(id);
   const status = useMachineStatus(id);
+  useArchives(true, id);
   const usage = useMachineUsage(id);
   const [budgets, setBudgets] = useState<BudgetRow[] | null>(null);
   const [minFreeGb, setMinFreeGb] = useState<number | null>(null);

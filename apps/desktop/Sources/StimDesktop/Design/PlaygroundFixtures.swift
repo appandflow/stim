@@ -55,6 +55,7 @@
           "largerAccessibilitySizesEnabled": false, "increaseContrast": false,
           "reduceMotion": ["enabled": false], "reduceTransparency": ["enabled": false],
           "showBorders": ["enabled": false],
+          "colorFilter": ["enabled": false],
         ]
     }
 
@@ -73,6 +74,7 @@
       case .reduceMotion(let value): values["reduceMotion"] = ["enabled": value]
       case .reduceTransparency(let value): values["reduceTransparency"] = ["enabled": value]
       case .showBorders(let value): values["showBorders"] = ["enabled": value]
+      case .colorFilter(let value): values["colorFilter"] = ["enabled": value]
       case nil: break
       }
     }

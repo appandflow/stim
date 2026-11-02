@@ -498,11 +498,11 @@ export function createActivityReaderAsync(
   };
 }
 
-function workspaceDeviceRecency(root: string): ActivityEvidence['recency'] {
+function workspaceDeviceRecency(root: string, logs: readonly string[]): ActivityEvidence['recency'] {
   const recency: ActivityEvidence['recency'] = [];
   const usedAt = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? ''));
   if (Number.isFinite(usedAt)) recency.push({ basis: 'workspace-use', at: usedAt });
-  for (const file of ['client.ndjson', 'device.ndjson']) {
+  for (const file of logs) {
     try {
       recency.push({ basis: 'device-log', at: statSync(join(workspaceLogsDir(root), file)).mtimeMs });
     } catch {}
@@ -510,9 +510,15 @@ function workspaceDeviceRecency(root: string): ActivityEvidence['recency'] {
   return recency;
 }
 
-/** The newest workspace use or change to its in-app or native device logs. */
-export function workspaceDeviceLastUseAt(root: string): number {
-  const times = workspaceDeviceRecency(root)
+/**
+ * The newest workspace use or change to its in-app or native device logs. `countDeviceLogs: false` leaves the native
+ * device log out.
+ */
+export function workspaceDeviceLastUseAt(
+  root: string,
+  { countDeviceLogs = true }: { countDeviceLogs?: boolean } = {},
+): number {
+  const times = workspaceDeviceRecency(root, countDeviceLogs ? ['client.ndjson', 'device.ndjson'] : ['client.ndjson'])
     .map(({ at }) => at)
     .filter(Number.isFinite);
   return times.length ? Math.max(...times) : NaN;
