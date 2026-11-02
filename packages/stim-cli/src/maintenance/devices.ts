@@ -7,6 +7,7 @@ import { formatLongDuration } from '../command-output.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
 import { listAvds, ownedAvdDirectory } from '../devices/android.ts';
 import { dueIdleDevices } from '../devices/idle-shutdown.ts';
+import { daemonLive } from '../daemon/client.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
@@ -248,7 +249,7 @@ export function planIdleShutdown({
   env?: NodeJS.ProcessEnv;
 }): MaintenancePlan {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
-  if (deviceSweepIsScoped(env)) return plan;
+  if (deviceSweepIsScoped(env) || daemonLive()) return plan;
   const minutes = new Map(
     Object.entries(loadConfig()?.projects ?? {}).flatMap(([root, project]) => {
       const owns = projectDeviceSlots(project).some(
