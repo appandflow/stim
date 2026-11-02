@@ -3897,7 +3897,7 @@ describe('offloaded builds', () => {
     );
 
     test.skipIf(!fakeTailscale)(
-      'stops idle daemons under low memory, but not one whose client is building',
+      'defers low-memory daemon stops until no client is building, while still stopping revoked clients',
       async () => {
         const gate = join(root, 'gate');
         const port = await start({
@@ -3906,14 +3906,17 @@ describe('offloaded builds', () => {
         });
         const { client, id } = await buildClient(port);
         const other = await buildClient(port, '100.64.0.3');
+        const revokedClient = await buildClient(port, '100.64.0.4');
         await launch(client);
         const building = daemonOf(id);
         const idle = daemonOf(other.id);
-        await eventually(() => !running(idle));
-        expect(running(building)).toBe(true);
+        const revoked = daemonOf(revokedClient.id);
+        expect(revokeDevice(revokedClient.id)).toBe(true);
+        await eventually(() => !running(revoked));
+        expect(running(building) && running(idle)).toBe(true);
         writeFileSync(gate, '');
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
-        await eventually(() => !running(building));
+        await eventually(() => !running(building) && !running(idle));
       },
     );
 

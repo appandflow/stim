@@ -422,7 +422,8 @@ outside it moves to its own issue and pull request.
   because the NDK's ninja cannot open longer paths. The repository's daemon
   stays warm after an Android build for `server.gradleDaemonIdleMinutes`.
   Cancellation drains only that repository; whole-client revocation and low
-  memory retain their client-scoped cleanup. Gradle stops a daemon
+  memory retain their client-scoped cleanup. Low-memory sweeps wait until no
+  offloaded build is running. Gradle stops a daemon
   whose Gradle home is deleted. `stim-server service` installs,
   reports and removes the worker's per-user service, a LaunchAgent on macOS,
   a systemd user unit on Linux or a scheduled task on Windows, whose action is
