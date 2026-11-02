@@ -424,6 +424,11 @@ test('memory pressure stops an idle Gradle daemon with plenty of free disk', asy
   memoryPressured();
   daemonPlan({ state: 'idle' });
   const stop = stopsDaemon();
+  const executor = getExecutor();
+  setExecutor({
+    ...executor,
+    runFileAsync: async (file, args, opts) => (file === 'ps' ? '' : executor.runFileAsync(file, args, opts)),
+  });
   await pass();
   expect(stop).toHaveBeenCalledWith([101]);
   expect(actionKinds()).toEqual(['stop-gradle-daemons']);
