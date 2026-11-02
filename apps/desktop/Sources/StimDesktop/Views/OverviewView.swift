@@ -50,7 +50,10 @@ struct OverviewView: View {
         showsHero: true, showsPrompts: true)
     } else {
       ScrollView {
-        VStack(alignment: .leading, spacing: Space.xxl) {
+        VStack(alignment: .leading, spacing: Space.huge) {
+          Text("Overview")
+            .font(.stim(.title))
+            .foregroundStyle(Palette.text)
           runningSection(running)
           if !idle.isEmpty { idleSection(idle) }
           if !archived.isEmpty { archivedSection(archived) }
@@ -64,7 +67,9 @@ struct OverviewView: View {
 
   private func section<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
     VStack(alignment: .leading, spacing: Space.lg) {
-      SectionLabel(title: title)
+      Text(title)
+        .font(.stim(.headline))
+        .foregroundStyle(Palette.text)
       content()
     }
   }
@@ -127,9 +132,9 @@ struct OverviewView: View {
       openIdleProject(item.project)
     } label: {
       Card {
-        VStack(alignment: .leading, spacing: Space.xs) {
+        VStack(alignment: .leading, spacing: Space.md) {
           Text(store.title(of: item.project)).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
-          HStack(spacing: Space.sm) {
+          VStack(alignment: .leading, spacing: Space.xs) {
             Text(metadata).foregroundStyle(Palette.tertiary)
             if let pullRequest {
               Text(pullRequest).foregroundStyle(Color(item.pullRequest?.state == "draft" ? Tone.neutral : Tone.brand))
@@ -144,8 +149,7 @@ struct OverviewView: View {
           .font(.stim(.caption)).lineLimit(1)
           .help([metadata, pullRequest, failedBuild, errors].compactMap { $0 }.joined(separator: " \u{00B7} "))
         }
-        .padding(.horizontal, Space.lg)
-        .padding(.vertical, Space.md)
+        .padding(Space.xl)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
       }
@@ -172,13 +176,12 @@ struct OverviewView: View {
             selection = .archived(archive.id)
           } label: {
             Card {
-              VStack(alignment: .leading, spacing: Space.xs) {
+              VStack(alignment: .leading, spacing: Space.md) {
                 Text(archive.title).font(.stim(.callout, weight: .semibold)).foregroundStyle(Palette.text).lineLimit(1)
                 Text(archive.removedLabel(now: Date()).replacingOccurrences(of: "Removed ", with: ""))
                   .font(.stim(.caption)).foregroundStyle(Palette.tertiary).lineLimit(1)
               }
-              .padding(.horizontal, Space.lg)
-              .padding(.vertical, Space.md)
+              .padding(Space.xl)
               .frame(maxWidth: .infinity, alignment: .leading)
               .contentShape(Rectangle())
             }
