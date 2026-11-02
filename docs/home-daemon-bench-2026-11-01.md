@@ -230,7 +230,9 @@ stim daemon` instead of the supervisor's `idle` record, and `stim stop` releases
   read, keeps the workspace (as maintenance's idle stop already does); the exit breaks the loop; and only a bound
   socket is removed. The supervisor also records the idle minutes it was started with, and the daemon decides from
   those, so a setting changed after `stim start` cannot leave the two disagreeing about who owns the stop. A
-  supervisor from an older Stim records none and keeps its own clocks.
+  supervisor from an older Stim records none and keeps its own clocks. The numbers in the table were taken before these fixes, which change only failure
+  paths; a `stim start` smoke run after them (both idle settings at 1) reproduced the together stop on the first tick
+  past the threshold and the exit one tick later.
 - Not the daemon: the trailhead worktrees needed `pod install` (dangling `rncore-facades` links in the carried Pods),
   and a build that fails after booting the simulator leaves it booted with no Metro on today's code.
 
