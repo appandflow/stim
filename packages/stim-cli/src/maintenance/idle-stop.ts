@@ -365,7 +365,8 @@ async function unseenEmulatorError(unseen: readonly string[], operation?: StimCo
   }
 }
 
-function survivingServer(recorded: Record<string, unknown> | undefined): string | null {
+/** Why the dev server a stale supervisor started may still run, or null when it is gone. */
+export function survivingServer(recorded: Record<string, unknown> | undefined): string | null {
   const pid = recorded?.serverPid;
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) return null;
   const token = recorded?.serverProcessToken;

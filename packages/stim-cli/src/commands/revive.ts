@@ -12,7 +12,7 @@ import { nativeRunCommand } from '../engine/slot-launch.ts';
 import type { RecordedBuild } from '../engine/recorded-build.ts';
 import { resolveBuild } from '../cache/build-cache.ts';
 import { describeMetroLastStop, metroLastStop } from '../supervisor/stop-cause.ts';
-import { readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
+import { launchWithoutMetro, readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { resolveProjectSettingsAsync, SETTING_SHAPE_REMEDY, settingShapeErrors } from '../workspace/settings.ts';
@@ -106,10 +106,6 @@ interface RecordedLaunch {
   record: WorkspaceLaunchRecord;
 }
 
-function revivable(record: WorkspaceLaunchRecord): boolean {
-  return !record.release && record.runtime !== 'process';
-}
-
 function ownedDeviceName(platforms: PlatformRecords | undefined, platform: Platform): string | undefined {
   if (platform === 'ios') return platforms?.ios?.owned ? platforms.ios.deviceUdid : undefined;
   return platforms?.android?.owned ? platforms.android.avdName : undefined;
@@ -140,14 +136,10 @@ function unrevivableLaunch(
   const own = launches.find(
     ({ platform, slot, record }) =>
       ownedDeviceName(deviceSlotPlatforms(project, slot), platform) === requestedDevice ||
-      (!revivable(record) && launchDeviceNames(record).includes(requestedDevice)),
+      (launchWithoutMetro(record) !== null && launchDeviceNames(record).includes(requestedDevice)),
   );
   if (!own) return unrecordedOwnedDevice(project, requestedDevice);
-  const why = own.record.release
-    ? 'a Release build'
-    : own.record.runtime === 'process'
-      ? 'a native-process launch'
-      : 'its record does not name this device';
+  const why = launchWithoutMetro(own.record) ?? 'its record does not name this device';
   return failure(
     'STIM_NO_RECORDED_BUILD',
     `${own.platform === 'ios' ? 'Simulator' : 'Emulator'} ${requestedDevice} belongs to this workspace, but revive does not relaunch the last launch on it (${why}).`,
@@ -282,7 +274,7 @@ export async function runRevive({
     if (!parsed || hostedNativeRecords(state, parsed.platform)[parsed.slot]) return [];
     return [{ ...parsed, record }];
   });
-  const launches = recorded.filter(({ record }) => revivable(record));
+  const launches = recorded.filter(({ record }) => launchWithoutMetro(record) === null);
   const selected = requestedDevice
     ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))
     : launches;

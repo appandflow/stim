@@ -38,6 +38,7 @@ import {
   archiveRoot,
   readArchives,
   type ArchivedWorkspace,
+  DEVICE_METRO_IDLE_STOP_REASON,
   DEVICE_RECLAIM_REASON,
   loadPerCore,
   maxLoadPerCore,
@@ -520,11 +521,14 @@ function lastBuildText(report: LastBuildReport): string {
 }
 
 function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): string {
-  return record
-    ? chalk.dim(
-        ` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${record.reason === DEVICE_RECLAIM_REASON ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes' : 'devices.idleShutdownMinutes'})`,
-      )
-    : '';
+  if (!record) return '';
+  const why =
+    record.reason === DEVICE_RECLAIM_REASON
+      ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes'
+      : record.reason === DEVICE_METRO_IDLE_STOP_REASON
+        ? "with Metro's idle stop; metro.idleStopMinutes"
+        : 'devices.idleShutdownMinutes';
+  return chalk.dim(` -- shut down after ${record.idleMinutes}m idle at ${record.at} (${why})`);
 }
 
 function activitySuffix(activity: DeviceActivity | undefined): string {

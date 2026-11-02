@@ -46,7 +46,11 @@ gates; stopping devices, dev servers and other helpers for memory is not automat
 The idle check shuts down (never
 deletes) owned simulators and emulators idle for their workspace's
 devices.idleShutdownMinutes, also with no supervisor running, through the
-supervisor's idle rules and records (guide lifecycle budget). While the level is warning or critical, the
+supervisor's idle rules and records (guide lifecycle budget). When neither a
+supervisor nor the dev server it started runs, device log lines do not count
+as activity of a slot whose last launch loads its JS from Metro; they still
+count for a Release or native-process launch and for a slot with no recorded
+launch, where any change to the workspace's device.ndjson counts. While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 

@@ -438,7 +438,8 @@ not running, including after an idle stop. With eas/proxy `--remote`, it starts 
 `devServer: { "started": true, "reason": "not running" | "stopped (idle)" }`.
 The run refuses only when that start fails, with the start's error code.
 
-A React Native or Expo non-Debug configuration embeds its JavaScript bundle.
+A React Native or Expo configuration whose name contains `Debug`, such as `Debug` or `Dev.Debug`,
+uses the dev server, as React Native's bundling script decides. Any other configuration embeds its JavaScript bundle.
 
 A locally compiled device build is local-tier only. Its cache key ends `-device`, so it cannot
 collide with a simulator build, and no build-cache provider or Expo remote cache

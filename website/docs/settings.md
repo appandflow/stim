@@ -781,7 +781,12 @@ workspace's owned simulators and emulators once they have been idle that long,
 through the workspace's dev server supervisor or, with no supervisor, through
 automatic maintenance every `maintenance.idleCheckMinutes` (5).
 It is on by default at 15 minutes; see
-[idle shutdown](./owned-devices.md#idle-shutdown).
+[idle shutdown](./owned-devices.md#idle-shutdown). A device whose app loads
+its JavaScript from Metro goes down with the dev server's
+[idle stop](./dev-server-and-logs.md#idle-stop) even when
+`devices.idleShutdownMinutes` is longer than `metro.idleStopMinutes`, because
+its device logs stop counting as use once Metro is gone. `0` keeps devices
+booted, at the idle stop too.
 
 Try it with an agent:
 
