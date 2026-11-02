@@ -1,5 +1,5 @@
 import { automaticDevicePlacement, devicePlacementLine } from '../../device-host/auto-placement.ts';
-import { budgetGate } from '../../budget.ts';
+import { diskFloorGate } from '../../daemon/floor.ts';
 import { devicePlacementRecord, type PlacementRecord } from '../../placement-log.ts';
 import type { AndroidRunPlan } from './plan.ts';
 import type { DevicePlacement, HostedDeviceSelectors, HostedAppOffer } from '@stim-cli/core/state';
@@ -96,7 +96,7 @@ export async function connectAndroidHosting({
 export async function selectAndroidPlacement({
   target: selected,
   automatic = automaticDevicePlacement,
-  checkBudget = budgetGate,
+  checkBudget = diskFloorGate,
   note,
   phase,
   log,
@@ -111,7 +111,7 @@ export async function selectAndroidPlacement({
 }: Omit<Parameters<typeof connectAndroidHosting>[0], 'machine' | 'selectors'> & {
   target: AndroidRunPlan['target'];
   automatic?: typeof automaticDevicePlacement;
-  checkBudget?: typeof budgetGate;
+  checkBudget?: typeof diskFloorGate;
   note: (line: string) => void;
   phase: (label: string, line: string) => void;
   log?: (record: PlacementRecord) => void;
@@ -132,7 +132,7 @@ export async function selectAndroidPlacement({
   | {
       target: AndroidRunPlan['target'];
       hostedTarget: HostedAndroidTarget | null;
-      budget: Awaited<ReturnType<typeof budgetGate>>;
+      budget: Awaited<ReturnType<typeof diskFloorGate>>;
       selectors: HostedDeviceSelectors;
       devicePlacement?: DevicePlacement;
     }
@@ -178,7 +178,7 @@ export async function selectAndroidPlacement({
       devicePlacement,
       hostedTarget: connected.target,
       selectors,
-      budget: connected.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
+      budget: connected.target ? { refusal: null } : await checkBudget({ root: args.root, note }),
     };
   }
   const refusal = await localSelectors(selected);
@@ -235,7 +235,7 @@ export async function selectAndroidPlacement({
         : { kind: 'emulator', systemImage: selected.systemImage, deviceProfile: selected.deviceProfile },
       hostedTarget: placed.target as HostedAndroidTarget | null,
       selectors,
-      budget: placed.target ? { reclaimed: [], refusal: null } : await checkBudget({ root: args.root, note }),
+      budget: placed.target ? { refusal: null } : await checkBudget({ root: args.root, note }),
       devicePlacement: placed.placement,
     };
   } catch (error) {

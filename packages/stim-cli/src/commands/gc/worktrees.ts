@@ -2,7 +2,7 @@ import type { StimContext } from '@stim-cli/core';
 import { existsSync, readdirSync, statSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import chalk from 'chalk';
-import { machineNumber } from '../../budget.ts';
+import { machineNumber } from '../../machine-number.ts';
 import { formatLongDuration, plural } from '../../command-output.ts';
 import { ownedAvdSerialResolver, ownedAvdSerialResolverAsync, type ResolvedAvdSerial } from '../../devices/android.ts';
 import { projectDeviceSlots } from '../../devices/device-slots.ts';
@@ -165,8 +165,6 @@ export interface WorktreeSweep {
   graceMs: number;
   now: number;
   noOwnCommitsIdleMs: number | null;
-  /** The sweep removes worktrees with no commits of their own on the disk pressure window. */
-  underPressure?: boolean;
   worktrees: WorktreeCandidate[];
   unlisted?: UnlistedWorktreeDir[];
 }
@@ -319,12 +317,11 @@ function removalBlocker(
 
 /**
  * Why gc removes a worktree it did not skip: `merged into origin/main`, `PR #12 closed`, `idle 9d`,
- * `no commits of its own beyond origin/main, idle 9d`, or, under disk pressure,
- * `no commits of its own beyond origin/main, inactive for 12m under disk pressure`.
+ * `no commits of its own beyond origin/main, idle 9d`.
  */
 export function worktreeRemovalReason(
   candidate: Pick<WorktreeCandidate, 'merge' | 'pullRequest' | 'idleDays' | 'activity' | 'dirty'>,
-  sweep: Pick<WorktreeSweep, 'now' | 'noOwnCommitsIdleMs' | 'underPressure'>,
+  sweep: Pick<WorktreeSweep, 'now' | 'noOwnCommitsIdleMs'>,
 ): string {
   const { merge, activity } = candidate;
   const archived = candidate.dirty ? `, ${plural(candidate.dirty, 'uncommitted file')} archived first` : '';
@@ -334,7 +331,6 @@ export function worktreeRemovalReason(
   if (merge && hasNoOwnCommits(merge)) {
     if (sweep.noOwnCommitsIdleMs !== null && activity) {
       const age = Math.max(0, sweep.now - activity.at);
-      if (sweep.underPressure) return `${merge.detail}, inactive for ${formatLongDuration(age)} under disk pressure`;
       return age >= DAY_MS
         ? `${merge.detail}, idle ${activityIdleDays(activity, sweep.now)}d`
         : `${merge.detail}, inactive for ${formatLongDuration(age)}`;
@@ -719,8 +715,7 @@ interface Inspected {
  * Classifies each linked worktree of a registered project or its repository. A merged one is removable, a dirty one
  * after archiving its uncommitted work when archives are on; with `idle`, so is one unused for `olderThan` days. One
  * with no commits of its own beyond the default branch is removable once its last activity is older than the grace
- * period and `maintenance.protectRecentHours`, or, `underPressure`, than the grace period alone; never younger than 5
- * minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
+ * period and `maintenance.protectRecentHours`; never younger than 5 minutes. Device use is read last, in one pass against one simulator list and one AVD resolver, so
  * the resolver's time budget covers only device reads. Pull requests are asked once per repository, sequentially
  * with an operation and concurrently otherwise. Merge state is checked only where it decides the verdict, after one fetch per repository.
  * Without `refresh`, it runs no fetch and no `gh`: merge state comes from the existing remote-tracking ref and pull
@@ -731,7 +726,6 @@ export async function collectWorktreeSweep({
   olderThan,
   now,
   graceMs,
-  underPressure = false,
   refresh = true,
   operation,
 }: {
@@ -739,18 +733,13 @@ export async function collectWorktreeSweep({
   olderThan: number | null;
   now: number;
   graceMs?: number;
-  underPressure?: boolean;
   refresh?: boolean;
   operation?: StimContext;
 }): Promise<WorktreeSweep> {
   const days = idle ? (olderThan ?? DEFAULT_WORKTREE_IDLE_DAYS) : null;
   const grace: WorktreeGrace = { ms: graceMs ?? graceMsSetting(operation), now };
   const freshMs = refresh ? 0 : reportFreshMs(operation);
-  const noOwnCommitsIdleMs = Math.max(
-    grace.ms,
-    underPressure ? 0 : protectRecentMs(operation),
-    NO_OWN_COMMITS_PRESSURE_FLOOR_MS,
-  );
+  const noOwnCommitsIdleMs = Math.max(grace.ms, protectRecentMs(operation), NO_OWN_COMMITS_PRESSURE_FLOOR_MS);
   const cli = stimCliEntries(operation?.env);
   const groups = new Map<string, string[]>();
   operation?.signal.throwIfAborted();
@@ -794,7 +783,7 @@ export async function collectWorktreeSweep({
     const gitAnswered = linked ? await unlessTimedOut(() => hasUncommittedWorkAsync(path, read), null) : null;
     const porcelain = await porcelainOf(path, gitAnswered, operation);
     const dirty = linked ? dirtyLines(porcelain).length : 0;
-    const archiveDirty = dirty > 0 && !underPressure && !('refusal' in worktreeArchiveLimits(path, operation?.env));
+    const archiveDirty = dirty > 0 && !('refusal' in worktreeArchiveLimits(path, operation?.env));
     let activity = linked ? await worktreeActivityOfAsync(path, keys, operation) : null;
     if (activity && archiveDirty) {
       const edited = await uncommittedActivityOf(path, operation);
@@ -876,7 +865,6 @@ export async function collectWorktreeSweep({
     graceMs: grace.ms,
     now,
     noOwnCommitsIdleMs,
-    underPressure,
     worktrees: listed,
   };
 }

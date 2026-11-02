@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { freemem, totalmem } from 'node:os';
 import chalk from 'chalk';
-import { buildWorkerRoot, loadConfig, readMaintenanceState } from '@stim-cli/core/state';
+import { buildWorkerRoot, loadConfig, readDaemonSnapshot } from '@stim-cli/core/state';
 import { formatLongDuration, plural } from '../../command-output.ts';
 import { readHostProcessTableAsync, type HostProcess } from '../../devices/activity.ts';
 import { listBuildLocks, type BuildLockInfo } from '../../engine/build-lock.ts';
@@ -29,8 +29,7 @@ import type { Finding } from '../../diagnostics/doctor.ts';
 import { phase } from './progress.ts';
 import { GC_OUTPUT, type GcOutput } from './results.ts';
 import { readHostMemoryPressureAsync } from '../../host-memory.ts';
-import { resolveMaintenanceSettings } from '../../maintenance/settings.ts';
-import { memoryPressureFromObservations } from '../../maintenance/pressure.ts';
+import { memoryPressure } from '../../daemon/pressure.ts';
 import { captureProcessIdentity, inspectProcessIdentity } from '../../process-identity.ts';
 
 export const WATCHMAN_KIND = 'watchman';
@@ -834,35 +833,15 @@ async function manualDaemonsKept(
   const birth = entry ? captureProcessIdentity(entry.pid) : null;
   if (entry && !birth?.ok) return 'the process identity could not be verified';
   const level = await readHostMemoryPressureAsync(undefined, undefined, operation?.signal, operation);
-  const settings = resolveMaintenanceSettings(undefined, env);
-  if (settings.invalid) return `memory settings are invalid: ${settings.invalid}`;
-  if (settings.memoryPressureLevel === 'off') return 'maintenance.memoryPressureLevel is off';
-  const state = readMaintenanceState();
-  const now = Date.now();
-  const checkedAt = state?.lastAt.pressure;
-  const completed = state?.lastPass;
-  const previous =
-    checkedAt !== undefined &&
-    completed &&
-    completed.blocked.length === 0 &&
-    checkedAt >= completed.startedAt &&
-    checkedAt <= completed.startedAt + completed.durationMs &&
-    checkedAt <= now &&
-    now - checkedAt <= settings.pressureCheckMinutes * 60_000
-      ? state?.pressure
-      : null;
-  const pressure = memoryPressureFromObservations(
-    settings,
-    level === 'warning' && previous?.memory.level === 'warning' ? previous : null,
-    now,
-    level,
-    process.platform === 'darwin' ? null : freemem(),
-    totalmem(),
+  const pressure = memoryPressure(
+    { level, availableBytes: process.platform === 'darwin' ? null : freemem(), totalBytes: totalmem() },
+    readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
+    Date.now(),
   );
-  if (!pressure.memory.pressured)
+  if (pressure.level === 'normal')
     return process.platform === 'darwin' && level === null
       ? 'macOS memory pressure could not be read'
-      : 'memory is below the configured sustained-pressure threshold';
+      : 'memory is under the sustained-pressure threshold: macOS warning for 10 minutes, critical, or under 10% of RAM available';
   if (entry && birth?.ok && inspectProcessIdentity({ pid: entry.pid, processToken: birth.token }) !== 'same')
     return 'the process changed, exited or could not be verified during the memory check';
   const lock = listBuildLocks().find((record) => record.alive || record.unresolved);

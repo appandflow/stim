@@ -76,7 +76,6 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
 import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
@@ -479,7 +478,6 @@ async function runIos(
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
-  let reclaimed: ReclaimedStep[] = [];
   let buildMachine = 'auto';
   let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
@@ -543,7 +541,6 @@ async function runIos(
           ...(devicePlacement ? { devicePlacement } : {}),
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
-          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -770,11 +767,9 @@ async function runIos(
       note,
       Boolean(hostedTarget),
       remoteSelection.budget,
-      simSnapshot,
       context.env,
       onReclaim,
     );
-    reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env, context);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
@@ -865,7 +860,8 @@ async function runIos(
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
-        sims: () => simSnapshot.read().filter((sim) => sim.available),
+        sims: async () =>
+          (simSnapshot.readAsync ? await simSnapshot.readAsync() : simSnapshot.read()).filter((sim) => sim.available),
       });
       if (capacity) {
         const { max: fullMax, ...refusal } = capacity;
@@ -972,7 +968,6 @@ async function runIos(
           onReclaim,
           readState: d.readWorkspaceState,
         });
-        reclaimed = [...reclaimed, ...gate.reclaimed];
         if (!gate.ok) {
           return {
             ok: false,
@@ -1255,7 +1250,6 @@ async function runIos(
           closeWriter: () => writer?.close(),
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
-          reclaimed,
           devServer,
           fail,
           note,
@@ -1351,7 +1345,6 @@ async function runIos(
           releaseLease,
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
-          reclaimed,
           devServer,
           enterPhase: progress.step,
           enterActivity: progress.activity,

@@ -44,6 +44,21 @@ async function availableMemory(): Promise<number | null> {
   }
 }
 
+/** Free disk on the config dir's volume, every registered project's volume and the build worker root's. */
+export function measureDisk(config: Config | null): Promise<DaemonMeasurement['disk']> {
+  return readVolumeSpaceAsync([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)]);
+}
+
+export function lowestFreeMb(disk: DaemonMeasurement['disk']): number {
+  return disk.length ? Math.min(...disk.map((volume) => volume.freeMb)) : Infinity;
+}
+
+/** macOS memory pressure and available memory, or free memory elsewhere. */
+export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
+  const [level, availableBytes] = await Promise.all([readHostMemoryPressureAsync(), availableMemory()]);
+  return { level, availableBytes, totalBytes: totalmem() };
+}
+
 function ownsDevice(config: Config | null, platform: 'ios' | 'android'): boolean {
   return Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms[platform]?.owned === true),
@@ -77,12 +92,7 @@ async function recordFocusedUse(config: Config | null, use: FocusedDeviceUse, no
  * focused Simulator or emulator window a person is using.
  */
 export async function measureTick(config: Config | null, now: number): Promise<TickMeasurement> {
-  const disk = await readVolumeSpaceAsync([
-    configDir(),
-    ...Object.keys(config?.projects ?? {}),
-    buildWorkerRoot(config),
-  ]);
-  const [level, availableBytes] = await Promise.all([readHostMemoryPressureAsync(), availableMemory()]);
+  const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
   let sims: IosSimRecord[] | null = [];
   let simsError: string | null = null;
   if (process.platform === 'darwin' && ownsDevice(config, 'ios')) {
@@ -102,7 +112,7 @@ export async function measureTick(config: Config | null, now: number): Promise<T
     devices,
     measurement: {
       disk,
-      memory: { level, availableBytes, totalBytes: totalmem() },
+      memory,
       load1: loadavg()[0] ?? 0,
       cores: cpus().length,
       bootedSimulators: sims === null ? null : sims.filter((sim) => sim.state === 'Booted').length,

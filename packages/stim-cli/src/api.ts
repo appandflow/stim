@@ -777,7 +777,6 @@ async function start(context: StimContext, options: StimStartOptions): Promise<S
         ...result.error,
         details: {
           lines: result.lines,
-          reclaimed: result.reclaimed,
           ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
         },
       });

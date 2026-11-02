@@ -36,7 +36,7 @@ import {
   queryLogs,
   sortByTs,
 } from '@stim-cli/core/state';
-import { machineNumber } from './budget.ts';
+import { machineNumber } from './machine-number.ts';
 import { gitAsync } from './workspace/git.ts';
 import { mergeStateAsync } from './workspace/merge-state.ts';
 import { childEnvironment } from './workspace/git-read.ts';

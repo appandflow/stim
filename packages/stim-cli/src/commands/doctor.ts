@@ -1,9 +1,12 @@
-import { daemonNdjsonFile, maintenanceNdjsonFile, type DaemonStatus } from '@stim-cli/core/state';
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
-import { daemonClaimHeld, daemonMode } from '../daemon/client.ts';
-import { runHomePasses } from '../daemon/passes.ts';
+import {
+  daemonNdjsonFile,
+  maintenanceNdjsonFile,
+  readDaemonSnapshot,
+  type DaemonPressure,
+  type DaemonStatus,
+} from '@stim-cli/core/state';
+import { runPassesWithoutDaemon } from '../daemon/passes.ts';
 import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
-import { createNdjsonWriter } from '../ndjson.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
@@ -12,7 +15,7 @@ import { recordDoctorRun } from '../guide-status.ts';
 import { projectRegistry } from '../integrations/projects.ts';
 import type { ProjectRegistry } from '../integrations/project-registry.ts';
 import type { ProjectDoctor } from '../integrations/project-doctor.ts';
-import { getProject } from '../workspace/config.ts';
+import { getProject, loadConfig } from '../workspace/config.ts';
 import {
   projectSettingsContextAsync,
   resolveAndroidLayout,
@@ -46,7 +49,8 @@ import type { DoctorPlatform, Finding } from '../diagnostics/doctor.ts';
 import { phaseLine, refuseNoProject } from '../command-output.ts';
 import { NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { compareStimVersions, inspectStimVersions, type StimVersionReport } from '../diagnostics/stim-installations.ts';
-import { budgetLine, inspectBudget, type BudgetReport } from '../budget.ts';
+import { measureDisk, measureMemory } from '../daemon/measure.ts';
+import { classifyPressure, diskThresholds } from '../daemon/pressure.ts';
 import { inspectBuildMachines, type BuildMachinesInspection } from '../offload/build-machines.ts';
 import { doctorIo, keyConfirmer, type GeneratedTickets } from '../offload/tailnet.ts';
 import { confirmInTerminal } from './device-provision.ts';
@@ -187,14 +191,55 @@ function toolchainLines(report: ToolchainReport): string[] {
   ];
 }
 
-function budgetLines(budget: BudgetReport | null): string[] {
-  return budget ? [phaseLine('budget', budgetLine(budget))] : [];
+function pressureLines(pressure: DaemonPressure | null): string[] {
+  return pressure
+    ? [phaseLine('pressure', `${pressure.level}${pressure.reasons.length ? `: ${pressure.reasons.join('; ')}` : ''}`)]
+    : [];
+}
+
+async function inspectPressure(
+  env: NodeJS.ProcessEnv,
+): Promise<{ pressure: DaemonPressure | null; findings: Finding[] }> {
+  const config = loadConfig();
+  const { thresholds, error } = diskThresholds(config, env);
+  if (error)
+    return {
+      pressure: null,
+      findings: [
+        {
+          level: 'cost',
+          title: 'A disk threshold setting is invalid',
+          detail: error,
+          fix: 'Fix the value with `stim settings set <key> <value>`, or unset the environment variable.',
+        },
+      ],
+    };
+  const [disk, memory] = await Promise.all([measureDisk(config), measureMemory()]);
+  const pressure = classifyPressure({
+    disk,
+    memory,
+    thresholds,
+    previousWarningSince: readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
+    now: Date.now(),
+  });
+  if (pressure.level === 'normal') return { pressure, findings: [] };
+  return {
+    pressure,
+    findings: [
+      {
+        level: pressure.disk === 'normal' ? 'note' : 'cost',
+        title: `The pressure level is ${pressure.level}`,
+        detail: `${pressure.reasons.join('; ')}. The stim-daemon runs its pressure ladder each tick until the level is back to normal: idle workspaces, parked devices, shared caches, dormant devices, then idle Gradle daemons and leftovers${pressure.disk === 'critical' ? ', and node_modules and Pods of idle worktrees' : ''}. start, ios and android refuse with STIM_LOW_DISK only under budget.hardFloorDiskGb.`,
+        fix: 'Run `stim status` to see what it did, `stim gc` to see what else Stim can reclaim, and free space outside Stim.',
+      },
+    ],
+  };
 }
 
 export function doctorSuccessLines(
   platform: DoctorPlatform | undefined,
   stim: StimVersionReport,
-  budget: BudgetReport | null = null,
+  pressure: DaemonPressure | null = null,
   projectLines: string[] = [],
   toolchain: string[] = [],
 ): string[] {
@@ -203,7 +248,7 @@ export function doctorSuccessLines(
     phaseLine('result', 'PASS'),
     phaseLine('findings', '0'),
     ...stimVersionLines(stim),
-    ...budgetLines(budget),
+    ...pressureLines(pressure),
     ...(toolchain.length ? ['', 'Toolchain', ...toolchain] : []),
     '',
     'Shared',
@@ -308,7 +353,7 @@ export interface DoctorReport {
   project: string;
   platform: DoctorPlatform | null;
   stim: StimVersionReport;
-  budget: BudgetReport | null;
+  pressure: DaemonPressure | null;
   maintenance: ReturnType<typeof maintenanceStatus> & { logPath: string };
   daemon: DaemonStatus & { logPath: string };
   remoteMachines: Array<BuildMachinesInspection['machines'][number] & { priority?: number }>;
@@ -530,8 +575,8 @@ async function assembleDoctorReport(
   const shadowed = shadowedStimFinding(stim);
   if (shadowed) findings.push(shadowed);
 
-  const budget = await inspectBudget(root, undefined, env, operation);
-  findings.push(...budget.findings);
+  const pressure = await inspectPressure(env);
+  findings.push(...pressure.findings);
   const watchmanMemory = withoutUnhandledRejection(inspectWatchmanMemory(env, operation));
   const tickets: GeneratedTickets = new Map();
   const interactive =
@@ -583,7 +628,7 @@ async function assembleDoctorReport(
     project: root,
     platform: opts.platform ?? null,
     stim,
-    budget: budget.report,
+    pressure: pressure.pressure,
     maintenance: { ...maintenance, logPath: maintenanceNdjsonFile() },
     daemon: { ...daemon, logPath: daemonNdjsonFile() },
     remoteMachines: withPriority(remoteMachines.machines),
@@ -598,21 +643,6 @@ async function assembleDoctorReport(
  * has no daemon, so this is where they run there. `daemon.mode off` on another platform leaves idle to the
  * supervisors.
  */
-async function runPassesWithoutDaemon(): Promise<void> {
-  try {
-    if (daemonClaimHeld() || (process.platform !== 'win32' && daemonMode() === 'off')) return;
-    const writer = createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES });
-    try {
-      await runHomePasses({
-        act: daemonMode() !== 'report',
-        trigger: 'doctor',
-        log: (level, event, msg, fields = {}) => writer.write({ src: 'doctor', level, event, msg, ...fields }),
-      });
-    } finally {
-      writer.close();
-    }
-  } catch {}
-}
 
 export default function doctorCommand(
   program: Command,
@@ -649,10 +679,9 @@ export default function doctorCommand(
         process.exitCode = 1;
       }
 
-      await runPassesWithoutDaemon();
+      await runPassesWithoutDaemon('doctor');
       const report = await assembleDoctorReport(root, opts, version, prepared, inspectVersions, host);
       const { findings, stim, toolchain, maintenance, daemon } = report;
-      const budget = { report: report.budget };
       const order = (configuredMachines() ?? []).map((machine, at) => `${at + 1} ${machine}`);
       const maintenanceLines = [
         ...(order.length
@@ -675,7 +704,7 @@ export default function doctorCommand(
           ...doctorSuccessLines(
             opts.platform,
             stim,
-            budget.report,
+            report.pressure,
             doctors.flatMap((doctor) => doctor.successLines?.(opts.platform) ?? []),
             toolchain ? toolchainLines(toolchain) : [],
           ),
@@ -692,7 +721,7 @@ export default function doctorCommand(
 
       const ordered = findings.toSorted((a, b) => (a.level === b.level ? 0 : a.level === 'cost' ? -1 : 1));
       console.log(chalk.bold(`Doctor (${doctorTarget(opts.platform)})`));
-      for (const line of [...stimVersionLines(stim), ...budgetLines(budget.report), ...maintenanceLines])
+      for (const line of [...stimVersionLines(stim), ...pressureLines(report.pressure), ...maintenanceLines])
         console.log(chalk.dim(line));
       if (toolchain) {
         console.log(chalk.bold('\nToolchain'));

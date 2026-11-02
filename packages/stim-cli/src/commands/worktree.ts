@@ -46,7 +46,8 @@ import {
   type WorktreeArchive,
 } from '../workspace/worktree-archive.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
-import { currentDiskLevel, measureDiskAsync } from '../maintenance/measure.ts';
+import { measureDisk, measureDiskAsync } from '../maintenance/measure.ts';
+import { diskPressure, diskThresholds } from '../daemon/pressure.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { workspaceLinkLine, workspaceLinks } from '../devices/stim-desktop.ts';
 import type { ParkedDevice } from '../devices/teardown.ts';
@@ -730,7 +731,10 @@ async function reclaimAll(
   const removedWorkspaceDirs: string[] = [];
   const failedWorkspaceDirs: string[] = [];
   operation?.signal.throwIfAborted();
-  const pressure = currentDiskLevel(operation ? await measureDiskAsync(operation) : undefined);
+  const pressure = diskPressure(
+    operation ? await measureDiskAsync(operation) : measureDisk(),
+    diskThresholds(loadConfig(), operation?.env).thresholds,
+  ).level;
   for (const key of keys) {
     operation?.signal.throwIfAborted();
     let r: ReclaimResult;
@@ -738,7 +742,7 @@ async function reclaimAll(
       r = await reclaimProject(key, {
         archive: removedBy ? { removedBy } : undefined,
         deleteOwnedDevices: true,
-        parkOwnedDevices: pressure < 2,
+        parkOwnedDevices: pressure === 'normal',
         preserveProjectRecord: preserveRootProject && key === rootPath,
         stopRequester: { by: 'stim worktree remove' },
         operation,
@@ -772,8 +776,8 @@ async function reclaimAll(
       for (const resource of r.failedDevices) retainedResources.push({ ...resource, project: key });
     }
   }
-  if (pressure >= 2 && deletedDevices.length)
-    poolNotes.push(`disk pressure level ${pressure}: deleted the owned devices instead of parking them`);
+  if (pressure !== 'normal' && deletedDevices.length)
+    poolNotes.push(`disk pressure ${pressure}: deleted the owned devices instead of parking them`);
   for (const key of keys) {
     if (keptEntries.includes(key)) continue;
     const tunnel = readMetroTunnel(key);

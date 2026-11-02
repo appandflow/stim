@@ -40,6 +40,8 @@ import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/work
 const MINUTE_MS = 60_000;
 const SIZE_TIMEOUT_MS = 60_000;
 const SETTING = 'idle.minutes';
+/** Under high or critical pressure, the idle stage takes every workspace idle this long (ladder rung 1). */
+export const PRESSURE_IDLE_MS: number = 2 * MINUTE_MS;
 
 export interface IdlePassInput {
   config: Config | null;
@@ -49,6 +51,8 @@ export interface IdlePassInput {
   devices: OwnedDeviceActivity[];
   /** False in `daemon.mode report`: decide and log, act on nothing. */
   act: boolean;
+  /** Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
+  pressure?: { level: 'high' | 'critical'; reasons: string[] };
   log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 }
 
@@ -56,6 +60,18 @@ type Candidate =
   | { runs: false }
   | { runs: true; kept: string }
   | { runs: true; idleMs: number; minutes: number; serving: boolean; booted: OwnedDeviceActivity[] };
+
+function thresholdName(input: Pick<IdlePassInput, 'pressure'>): string {
+  return input.pressure
+    ? `the ${PRESSURE_IDLE_MS / MINUTE_MS}-minute idle threshold of ${input.pressure.level} pressure`
+    : SETTING;
+}
+
+function thresholdWhy(input: Pick<IdlePassInput, 'pressure'>, minutes: number): string {
+  return input.pressure
+    ? `pressure level ${input.pressure.level}: ${input.pressure.reasons.join('; ')}`
+    : `${SETTING} is ${minutes}`;
+}
 
 function supervisorOf(path: string, project: ProjectRecord) {
   return resolveSupervisorTarget({
@@ -120,7 +136,14 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   );
   const emulators = unseen.length ? await unseenEmulatorError(unseen) : null;
   if (emulators) return { runs: true, kept: emulators };
-  return { runs: true, idleMs: minutes * MINUTE_MS, minutes, serving: supervisor.status === 'ours', booted };
+  const idleMs = input.pressure ? Math.min(minutes * MINUTE_MS, PRESSURE_IDLE_MS) : minutes * MINUTE_MS;
+  return {
+    runs: true,
+    idleMs,
+    minutes: Math.ceil(idleMs / MINUTE_MS),
+    serving: supervisor.status === 'ours',
+    booted,
+  };
 }
 
 async function decide(
@@ -138,11 +161,14 @@ async function decide(
     locked,
     serving: found.serving,
   });
-  return { candidate: found, decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: SETTING }) };
+  return {
+    candidate: found,
+    decision: decideIdleStop(evidence, { idleMs: found.idleMs, now, setting: thresholdName(input) }),
+  };
 }
 
 /** The regenerable outputs the idle stage deletes, and why each other one stays. */
-async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
+export async function idleOutputs(path: string, config: Config): Promise<{ paths: string[]; kept: string[] }> {
   const paths = workspaceOutputPaths(workspaceDir(path));
   const kept: string[] = [];
   for (const dir of existingDirsOf(path, ARTIFACT_DIRS.build)) {
@@ -165,7 +191,7 @@ async function idleOutputs(path: string, config: Config): Promise<{ paths: strin
   return { paths, kept };
 }
 
-async function deleteOutputs(paths: readonly string[]): Promise<number> {
+export async function deleteOutputs(paths: readonly string[]): Promise<number> {
   let freed = 0;
   for (const path of paths) {
     freed += (await measuredDirectorySizeAsync(path, { timeoutMs: SIZE_TIMEOUT_MS })) ?? 0;
@@ -174,7 +200,13 @@ async function deleteOutputs(paths: readonly string[]): Promise<number> {
   return freed;
 }
 
-function writeWorkspaceEvent(root: string, level: 'info' | 'warn', event: string, msg: string, fields = {}): void {
+export function writeWorkspaceEvent(
+  root: string,
+  level: 'info' | 'warn',
+  event: string,
+  msg: string,
+  fields = {},
+): void {
   const writer = createNdjsonWriter(join(workspaceLogsDir(root), 'metro.ndjson'), { maxBytes: LOG_ROTATE_BYTES });
   writer.write({ src: 'metro', level, event, msg, ...fields });
   writer.close();
@@ -205,7 +237,7 @@ async function enterIdleStage(
   project: ProjectRecord,
   config: Config,
   input: IdlePassInput,
-): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string }> {
+): Promise<{ outcome: DaemonWorkspaceDecision['outcome']; detail: string; freedBytes?: number }> {
   const run = await withIdleWorkspace(
     path,
     async () => {
@@ -237,9 +269,9 @@ async function enterIdleStage(
             const freed = await deleteOutputs(outputs.paths);
             await recordStage(path, minutes, shutDown, freed);
             const idle = Math.floor(again.decision.idleMs / MINUTE_MS);
-            const msg = `no activity for ${idle} minutes (${SETTING} is ${minutes}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run stim revive to resume it.`;
+            const msg = `no activity for ${idle} minutes (${thresholdWhy(input, minutes)}; last: ${again.decision.last.basis}): ${stopped.summary}; deleted ${formatBytes(freed)} of regenerable build outputs${outputs.kept.length ? `; ${outputs.kept.join('; ')}` : ''}. Run stim revive to resume it.`;
             writeWorkspaceEvent(path, 'info', 'workspace_idle', msg, { freedBytes: freed, restore: 'stim revive' });
-            return { outcome: 'idle' as const, detail: msg };
+            return { outcome: 'idle' as const, detail: msg, freedBytes: freed };
           },
           { external: true, waitMs: 0, ownerPurpose: 'idle stage' },
         );

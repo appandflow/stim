@@ -16,6 +16,12 @@ import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { readParked } from '../devices/sim-pool.ts';
 import { loadConfig } from '../workspace/config.ts';
+import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
+import { collectMemoryReport, memorySweepIsScoped, runningBuild } from '../commands/gc/memory.ts';
+import { collectTempLeftovers } from '../commands/gc/temp-leftovers.ts';
+import { collectTrash } from '../commands/gc/trash.ts';
+import { listBuildLocks } from '../engine/build-lock.ts';
+import { listBuildSlots } from '../engine/build-slots.ts';
 import { finishedWorkspaces, planDeviceDeletion, planDeviceDeletionAsync } from './devices.ts';
 import type { MaintenancePlan } from './plan.ts';
 import type { MaintenanceSettings } from './settings.ts';
@@ -110,24 +116,6 @@ export async function planSweep({
       `Could not look for orphaned workspace directories: ${error instanceof Error ? error.message : error}`,
     );
   }
-  if (devices && settings.deviceIdleDays > 0) {
-    const options: Parameters<typeof planDeviceDeletion>[0] = {
-      roots: Object.keys(loadConfig()?.projects ?? {}).map((root) => ({ root })),
-      windowMs: settings.deviceIdleDays * 86_400_000,
-      reason: `idle for ${settings.deviceIdleDays} days (age sweep)`,
-      protectedRoot,
-      pinned,
-      sizes,
-      now,
-      extra: { check: 'sweep', olderThanDays: settings.deviceIdleDays },
-      env: operation?.env,
-    };
-    const reaped = operation
-      ? await planDeviceDeletionAsync(options, operation.signal, operation)
-      : planDeviceDeletion(options);
-    actions.push(...reaped.actions);
-    skips.push(...reaped.skips);
-  }
   if (devices && days > 0 && !deviceSweepIsScoped(operation?.env ?? process.env))
     for (const kind of ['ios', 'android'] as const)
       for (const record of readParked(kind)) {
@@ -157,7 +145,118 @@ export async function planSweep({
       check: 'sweep',
     });
   }
+  const sweep = await planRung6(settings, { operation });
+  actions.push(...sweep.actions.map((action) => ({ ...action, check: 'sweep' as const })));
+  skips.push(...sweep.skips);
   return { actions, blocked, skips };
+}
+
+async function planGradleDaemonStop(
+  blockers: readonly number[],
+  operation?: StimContext,
+): Promise<{ pids?: number[]; kept?: string }> {
+  const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
+  const skipped = report.notices.find((notice) => notice.startsWith('memory sweep skipped'));
+  if (skipped) return { kept: `the running Gradle processes could not be checked: ${skipped}` };
+  const plans = new Map(report.processes.map((entry) => [entry.pid, entry]));
+  for (const pid of blockers) {
+    const plan = plans.get(pid);
+    if (!plan || !plan.reclaimable)
+      return {
+        kept: `Gradle pid ${pid} keeps it: ${plan?.detail ?? 'it is not a daemon gc --delete --cache gradle-daemons stops'}`,
+      };
+  }
+  return { pids: [...blockers] };
+}
+
+/**
+ * Pressure ladder rung 6, which the daily sweep also runs: stop the idle Gradle and Kotlin daemons, and with `disk`
+ * delete the unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`, the recognized TMPDIR
+ * leftovers unmodified for 24 hours, and the worktree trash. Gradle and TMPDIR are machine-global, so a scoped
+ * Stim home leaves them alone.
+ */
+export async function planRung6(
+  settings: Pick<MaintenanceSettings, 'gradleVersionIdleDays'>,
+  { disk = true, now = Date.now(), operation }: { disk?: boolean; now?: number; operation?: StimContext } = {},
+): Promise<MaintenancePlan> {
+  const actions: MaintenanceAction[] = [];
+  const skips: MaintenancePlan['skips'] = [];
+  const scoped = memorySweepIsScoped(operation?.env ?? process.env);
+  if (scoped)
+    skips.push({
+      target: 'Gradle daemons and versions',
+      reason: 'STIM_HOME scopes this config, and Gradle daemons, Gradle versions and TMPDIR are machine-global',
+    });
+  const building = scoped ? null : runningBuild(listBuildLocks(), listBuildSlots());
+  if (building) skips.push({ target: 'Gradle daemons', reason: building });
+  else if (!scoped) {
+    const report = await collectMemoryReport({ watchman: false, gradle: true }, false, operation);
+    const pids = report.processes
+      .filter((entry) => entry.reclaimable && (entry.kind === 'gradleDaemon' || entry.kind === 'kotlinDaemon'))
+      .map((entry) => entry.pid);
+    if (pids.length)
+      actions.push({
+        kind: 'would-stop-gradle-daemons',
+        target: `pid ${pids.join(', ')}`,
+        bytes: 0,
+        reason: 'these Gradle and Kotlin daemons are idle',
+      });
+  }
+  if (!disk) return { actions, blocked: [], skips };
+  if (!scoped && settings.gradleVersionIdleDays > 0) {
+    const gradle = await collectGradleVersions({
+      operation,
+      olderThanDays: settings.gradleVersionIdleDays,
+      now,
+      measure: false,
+      pastRunningGradle: true,
+    });
+    const stop =
+      gradle.gradleRunning && gradle.versions.some((entry) => entry.willDelete)
+        ? await planGradleDaemonStop(gradle.gradleRunningPids, operation)
+        : null;
+    if (stop?.pids && !actions.some((action) => action.kind === 'would-stop-gradle-daemons'))
+      actions.push({
+        kind: 'would-stop-gradle-daemons',
+        target: `pid ${stop.pids.join(', ')}`,
+        bytes: 0,
+        reason: 'these idle Gradle and Kotlin daemons keep unpinned Gradle versions',
+      });
+    for (const entry of gradle.versions) {
+      if (entry.willDelete && !stop?.kept)
+        actions.push({
+          kind: 'would-delete-gradle-version',
+          target: entry.version,
+          dir: gradle.home,
+          bytes: 0,
+          reason: `no registered project pins it and it is unmodified for ${settings.gradleVersionIdleDays} days`,
+        });
+      else
+        skips.push({
+          target: `Gradle ${entry.version}`,
+          reason: (entry.willDelete && stop?.kept) || entry.detail || 'kept',
+        });
+    }
+  }
+  const leftovers = await collectTempLeftovers({ now, env: operation?.env, signal: operation?.signal, operation });
+  const deletable = leftovers?.entries.filter((entry) => entry.willDelete) ?? [];
+  if (leftovers && deletable.length)
+    actions.push({
+      kind: 'would-delete-temp-leftovers',
+      target: leftovers.root,
+      bytes: deletable.reduce((sum, entry) => sum + entry.bytes, 0),
+      reason: 'Stim temp directories, xctrace recordings and SwiftPM temp directories unmodified for 24 hours',
+    });
+  const trash = await collectTrash({ signal: operation?.signal, operation });
+  const trashed = trash?.entries.filter((entry) => entry.willDelete) ?? [];
+  if (trash && trashed.length)
+    actions.push({
+      kind: 'would-delete-trash',
+      target: trash.root,
+      bytes: trashed.reduce((sum, entry) => sum + (entry.bytes ?? 0), 0),
+      reason: 'worktree removals finished moving these entries out of their worktrees',
+    });
+  return { actions, blocked: [], skips };
 }
 
 export interface WorktreePlan extends MaintenancePlan {
@@ -168,7 +267,6 @@ export async function planWorktrees({
   protectedRoot,
   pinned,
   now,
-  level,
   graceMs,
   sizes,
   protectRecentMs = 0,
@@ -179,7 +277,6 @@ export async function planWorktrees({
   protectedRoot: string;
   pinned: (workspace: string) => boolean;
   now: number;
-  level?: 3;
   idleDays?: number | null;
   graceMs?: number;
   sizes?: readonly MaintenanceSize[];
@@ -191,7 +288,6 @@ export async function planWorktrees({
     idle: idleDays !== null,
     olderThan: idleDays,
     now,
-    underPressure: level === 3,
     operation,
     ...(graceMs === undefined ? {} : { graceMs }),
     ...(refresh === undefined ? {} : { refresh }),
@@ -219,10 +315,7 @@ export async function planWorktrees({
       bytes: 0,
       reason: worktreeRemovalReason(worktree, sweep),
       check:
-        level === undefined && idleDays !== null && !worktree.merge?.merged && !endedPullRequest(worktree.pullRequest)
-          ? 'sweep'
-          : 'worktree',
-      ...(level ? { level } : {}),
+        idleDays !== null && !worktree.merge?.merged && !endedPullRequest(worktree.pullRequest) ? 'sweep' : 'worktree',
     });
   }
   if (sizes) {

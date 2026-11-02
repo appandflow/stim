@@ -35,8 +35,7 @@ import {
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
-import { measureDisk } from './measure.ts';
-import { lowestFree } from './pressure.ts';
+import { lowestFree, measureDisk } from './measure.ts';
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };

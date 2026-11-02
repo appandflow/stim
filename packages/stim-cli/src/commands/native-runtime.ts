@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 import { readIdleStop } from '@stim-cli/core/state';
-import type { ReclaimedStep } from '../budget.ts';
 import { phaseLine } from '../command-output.ts';
 import type { DevServerStart } from '../engine/build-facts.ts';
 import { resolveProjectMetro } from '../metro.ts';
@@ -21,14 +20,13 @@ export interface RuntimeReadiness {
 }
 
 export type DevServerGate =
-  | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null; reclaimed: ReclaimedStep[] }
+  | { ok: true; port: number; pid: number | null; devServer: DevServerStart | null }
   | {
       ok: false;
       code: string;
       message: string;
       remedy: string | null;
       lines: string[];
-      reclaimed: ReclaimedStep[];
       retainedClaimRoots?: string[];
     };
 
@@ -62,7 +60,7 @@ export async function ensureDevServer({
   const pin = metroPortSetting(settings, env);
   const canReuse = !pin.error && (pin.port === null || pin.port === port);
   const held = port === null || !canReuse ? null : (await resolve(port, root)).metro;
-  if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null, reclaimed: [] };
+  if (port !== null && held) return { ok: true, port, pid: held.pid ?? null, devServer: null };
   const reason = readIdleStop(readState(root)) ? 'stopped (idle)' : 'not running';
   note(chalk.dim(phaseLine('metro', `dev server ${reason}; starting it${remote ? ' for a remote device' : ''}`)));
   const result = await start({ root, settings, settingsContext, remote, hostedPorts, out: note, note, onReclaim });
@@ -73,7 +71,6 @@ export async function ensureDevServer({
       message: `Could not start this workspace's dev server: ${result.error.message}`,
       remedy: result.error.remedy,
       lines: result.lines,
-      reclaimed: result.reclaimed,
       ...(result.retainedClaimRoots ? { retainedClaimRoots: result.retainedClaimRoots } : {}),
     };
   }
@@ -83,7 +80,6 @@ export async function ensureDevServer({
     port: facts.port,
     pid: facts.supervisorPid,
     devServer: facts.alreadyRunning ? null : { started: true, reason },
-    reclaimed: result.reclaimed,
   };
 }
 
