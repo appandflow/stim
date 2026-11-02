@@ -75,8 +75,8 @@ function pathExists(path: string): boolean {
   }
 }
 
-function scopedRoots(roots: string[]): string[] {
-  if (!deviceSweepIsScoped()) return roots;
+function scopedRoots(roots: string[], env?: NodeJS.ProcessEnv): string[] {
+  if (!deviceSweepIsScoped(env)) return roots;
   const registry = new Set(listedRoots());
   return roots.filter((root) => registry.has(root));
 }
@@ -103,7 +103,7 @@ function artifactWorktree(
 
 async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
-  for (const root of scopedRoots(await candidateRootsAsync(operation))) {
+  for (const root of scopedRoots(await candidateRootsAsync(operation), operation?.env)) {
     signal.throwIfAborted();
     const { entries, ...source } = await resolveSourceCheckoutAsync(root, {
       env: operation?.env,
