@@ -103,7 +103,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 ## Idle stop
 
 A dev server holds about 450 MB. The supervisor stops it after
-[`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 60 by
+[`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 15 by
 default, with no bundle request, no client log record and no Stim command
 (`start`, `ios`, `android`, `reload`, `logs` or `worktree warm`) in the workspace. For
 Expo, every line the Expo CLI prints on stdout counts as a client log. The
@@ -120,13 +120,13 @@ server running. A value that is not a whole number of 0 or more is refused, as
 `stim settings set` refuses it.
 
 A Fast Refresh update is not a bundle request, and an app that is only
-connected does not count either. An app you edit with Fast Refresh for an hour
+connected does not count either. An app you edit with Fast Refresh for 15 minutes
 without reloading and without console output therefore counts as idle. Raise
 `metro.idleStopMinutes` for that workflow.
 
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
 `stim status` shows the port as `stopped (idle)` instead of a crash. The devices
-stay booted, except owned ones idle for `devices.idleShutdownMinutes` (30 by
+stay booted, except owned ones idle for `devices.idleShutdownMinutes` (15 by
 default; `0` never), which the stop shuts down first. The next `stim start` starts the server again, or reuses one that
 another process started, and clears that state. A Debug `stim ios` or
 `stim android` run starts it again too, and its JSON result reports

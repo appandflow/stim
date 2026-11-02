@@ -397,7 +397,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   targets do not join this local slot queue. At the cap, only the queue head
   reclaims the longest-idle eligible owned device in another workspace, one
   per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
   drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
   never deletes, and excludes this workspace, physical, hosted, remote,
   parked and other homes' devices. Failed reclaim is logged and skipped.
@@ -685,7 +685,7 @@ can compile on a paired remote machine instead: see `remote.build` in
   targets do not join this local slot queue. At the cap, only the queue head
   reclaims the longest-idle eligible owned device in another workspace, one
   per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 30 minutes) exclude
+  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
   drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
   never deletes, and excludes this workspace, physical, hosted, remote,
   parked and other homes' devices. Failed reclaim is logged and skipped.

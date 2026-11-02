@@ -2293,7 +2293,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
        run (\`doctor\`) still plans the step. The STIM_LOW_DISK message
        measures the largest uses of disk at the same time.
 
-  IDLE SHUTDOWN (30 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
+  IDLE SHUTDOWN (15 MINUTES BY DEFAULT): with devices.idleShutdownMinutes above
   0, a workspace's supervisor shuts down that workspace's owned simulators and
   emulators once they have been idle that long, without waiting for a run
   to go over budget. Idle is step 1 with that many minutes in place of 10:
@@ -2305,7 +2305,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   through the same teardown as \`stop\`: never deleted, and physical
   devices are never touched. It writes a device_idle_shutdown line to
   metro.ndjson and records deviceIdleShutdowns in state.json, so \`stim
-  status\` shows "shut down after 30m idle" on the device until the next
+  status\` shows "shut down after 15m idle" on the device until the next
   \`ios\` or \`android\` run boots it again. When metro.idleStopMinutes is
   shorter, the dev server's idle stop first shuts down the devices idle that
   long, because no supervisor is left to check afterwards. Devices with no
@@ -2324,7 +2324,7 @@ OPT-IN CONCURRENCY LIMITS (UNLIMITED BY DEFAULT)
   Only the FIFO head shuts down the longest-idle eligible device across this
   Stim home's other workspaces, one per attempt, at most once every 15 seconds,
   rechecking capacity before another. 0 disables it. The supervisor's own idle
-  shutdown defaults to 30 minutes.
+  shutdown defaults to 15 minutes.
   Reclaim uses the same idle check: no driver, Stim or agent-device lock,
   build, device lock or viewer, and no Stim command, app or device log,
   Metro bundle or agent action within that interval. It rechecks under the

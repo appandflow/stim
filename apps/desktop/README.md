@@ -831,7 +831,7 @@ The **Automatic Maintenance** section of the App preferences shows the mode
 and the last pass (when, actions and bytes freed, and why it was blocked) from
 `stim status --json`, read only. **Clean up what is unused for** sets
 `maintenance.olderThanDays` (7 days by default; Never is 0) and **Shut down
-idle devices after** sets `devices.idleShutdownMinutes` (30 minutes by
+idle devices after** sets `devices.idleShutdownMinutes` (15 minutes by
 default; Never is 0), and **Also remove clean, pushed worktrees unused that
 long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
 unmerged linked worktrees no Stim command used that long, git-ignored files

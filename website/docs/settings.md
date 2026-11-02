@@ -348,7 +348,7 @@ locks, builds, viewers and recent activity. Reclaim never deletes and excludes
 the waiting workspace, physical, hosted, remote, parked and other homes'
 devices. Failed locks or shutdowns are reported once per device and skipped
 for the rest of the wait. The supervisor's own
-idle shutdown defaults to 30 minutes. Positive `reclaimed` counts
+idle shutdown defaults to 15 minutes. Positive `reclaimed` counts
 are included in wait stats.
 
 Any workspace of this Stim home with a device idle for
@@ -780,7 +780,7 @@ Without waiting for a budget, `devices.idleShutdownMinutes` shuts down a
 workspace's owned simulators and emulators once they have been idle that long,
 through the workspace's dev server supervisor or, with no supervisor, through
 automatic maintenance every `maintenance.idleCheckMinutes` (5).
-It is on by default at 30 minutes; see
+It is on by default at 15 minutes; see
 [idle shutdown](./owned-devices.md#idle-shutdown).
 
 Try it with an agent:

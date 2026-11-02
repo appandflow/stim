@@ -388,14 +388,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: 'metro.idleStopMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: PROJECT,
-    default: 60,
+    default: 15,
     description: 'Minutes without a bundle request, client log or Stim command before the dev server stops; 0 never',
   },
   {
     key: 'devices.idleShutdownMinutes',
     type: { kind: 'number', integer: true, minimum: 0 },
     scopes: EVERY,
-    default: 30,
+    default: 15,
     description:
       'Minutes an owned simulator or emulator stays idle before the workspace supervisor, or automatic maintenance when no supervisor runs, shuts it down; 0 never',
   },

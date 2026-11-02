@@ -1426,7 +1426,7 @@ RULES
 
   An owned device that is not booted after supervisor idle shutdown or queue
   reclaim carries idleShutdown, and plain \`status\`
-  appends "shut down after 30m idle at <at>" to its line; the next \`ios\` or
+  appends "shut down after 15m idle at <at>" to its line; the next \`ios\` or
   \`android\` run for that slot clears it (\`guide lifecycle budget\`):
 
   idleShutdown  { at, idleMinutes, reason?: "idle" | "reclaimed for a waiting run" }
