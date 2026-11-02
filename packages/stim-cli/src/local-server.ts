@@ -1,18 +1,30 @@
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { createServer } from 'node:net';
+import { dirname, join } from 'node:path';
 import { WebSocket } from 'ws';
+import { configDir } from '@stim-cli/core';
+import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import type { Methods } from '@stim-cli/core/protocol';
-import { serverLocalSocket } from '@stim-cli/core/state';
+import { isJsonObject, serverLocalSocket } from '@stim-cli/core/state';
+import { getExecutor } from './exec.ts';
 
 export type ShareMethod = 'share.start' | 'share.stop' | 'share.list';
 
-export type LocalServerAnswer<M extends ShareMethod> =
+export type LocalServerAnswer<M extends ShareMethod> = (
   | { result: Methods[M]['result'] }
-  | { error: { code: string; message: string } };
+  | { error: { code: string; message: string } }
+) & {
+  /** The TCP port the answering server reports in `hello`, which tells servers of one Stim home apart. */
+  serverPort?: number;
+};
 
 /** No stim-server answered on this Stim home's local Unix socket. */
 export class LocalServerUnavailable extends Error {}
 
 const TIMEOUT_MS = 120_000;
+const START_WAIT_MS = 60_000;
+const START_POLL_MS = 250;
 
 /**
  * Sends one request to this Stim home's own stim-server over its local Unix socket, after `hello`, and returns the
@@ -31,6 +43,7 @@ export function requestLocalServer<M extends ShareMethod>(
     const socket = new WebSocket(`ws+unix://${path}:/`);
     let opened = false;
     let settled = false;
+    let serverPort: number | undefined;
     const finish = (outcome: () => void) => {
       if (settled) return;
       settled = true;
@@ -55,10 +68,14 @@ export function requestLocalServer<M extends ShareMethod>(
       }
       const { id, result, error } = message ?? {};
       if (id === 1) {
-        if (error) finish(() => resolve({ error }));
-        else socket.send(JSON.stringify({ id: 2, method, params }));
+        if (error) return finish(() => resolve({ error }));
+        const port = isJsonObject(result) && isJsonObject(result.server) ? result.server.port : undefined;
+        if (typeof port === 'number') serverPort = port;
+        socket.send(JSON.stringify({ id: 2, method, params }));
       } else if (id === 2) {
-        finish(() => resolve(error ? { error } : { result }));
+        finish(() =>
+          resolve({ ...(error ? { error } : { result }), ...(serverPort !== undefined ? { serverPort } : {}) }),
+        );
       }
     });
     socket.on('error', (error) =>
@@ -76,4 +93,113 @@ export async function endWorkspaceShares(workspace: string): Promise<void> {
   try {
     await requestLocalServer('share.stop', { workspace }, { version: 'stim', timeoutMs: 3000 });
   } catch {}
+}
+
+/** Where a stim-server that `stim share` started holds its ownership claim and writes its log. */
+function shareServerPaths(): { claim: string; log: string } {
+  const dir = join(configDir(), 'server');
+  return { claim: join(dir, 'share-server'), log: join(dir, 'share-server.log') };
+}
+
+/** How to run a stim-server of exactly `version`: the package installed with this CLI, else `stim-server` on PATH. */
+export async function resolveShareServer(version: string): Promise<{ file: string; args: string[] } | null> {
+  try {
+    const schema = createRequire(import.meta.url).resolve('@stim-cli/server/protocol.schema.json');
+    const root = dirname(dirname(schema));
+    const pkg: unknown = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    if (isJsonObject(pkg) && pkg.version === version) {
+      return { file: process.execPath, args: [join(root, 'dist', 'stim-server.mjs')] };
+    }
+  } catch {}
+  const onPath = getExecutor().findExecutable('stim-server');
+  if (!onPath) return null;
+  const printed = await getExecutor().runFileQuietAsync(onPath, ['--version'], { timeoutMs: 15_000 });
+  return printed?.trim() === version ? { file: onPath, args: [] } : null;
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      probe.close(() =>
+        typeof address === 'object' && address ? resolve(address.port) : reject(new Error('no free port')),
+      );
+    });
+  });
+}
+
+export type ShareServerStart =
+  | { started: true; pid: number; log: string }
+  | { started: false; reason: 'joined' }
+  | { started: false; reason: 'failed'; message: string; log: string };
+
+/**
+ * Starts a loopback-only stim-server in the background for this Stim home, as `stim-server --share`, and waits until
+ * its local socket answers. When another server won the socket meanwhile, it stops its own and reports `joined`.
+ */
+export async function startShareServer(
+  server: { file: string; args: string[] },
+  version: string,
+): Promise<ShareServerStart> {
+  const { log } = shareServerPaths();
+  mkdirSync(dirname(log), { recursive: true });
+  const port = await freePort();
+  const fd = openSync(log, 'a');
+  let exited: string | null = null;
+  let child;
+  try {
+    child = getExecutor().spawn(server.file, [...server.args, '--share', '--port', String(port)], {
+      detached: true,
+      stdio: ['ignore', fd, fd],
+    });
+  } finally {
+    closeSync(fd);
+  }
+  child.unref?.();
+  child.on?.('error', (error: Error) => {
+    exited = error.message;
+  });
+  child.on?.('exit', (code: number | null, signal: string | null) => {
+    exited = `it exited with ${signal ?? `code ${code}`}`;
+  });
+  const pid = child.pid;
+  const deadline = Date.now() + START_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, START_POLL_MS));
+    try {
+      const answer = await requestLocalServer('share.list', {}, { version, timeoutMs: 5000 });
+      if (answer.serverPort === port && pid !== undefined) return { started: true, pid, log };
+      if (exited === null && pid !== undefined) process.kill(pid, 'SIGTERM');
+      return { started: false, reason: 'joined' };
+    } catch (cause) {
+      if (!(cause instanceof LocalServerUnavailable) && exited !== null) break;
+    }
+    if (exited !== null) break;
+  }
+  if (exited === null && pid !== undefined) process.kill(pid, 'SIGTERM');
+  return {
+    started: false,
+    reason: 'failed',
+    message: exited ? `stim-server did not start: ${exited}.` : 'stim-server did not answer within 60 s.',
+    log,
+  };
+}
+
+/**
+ * Stops the stim-server `stim share` started for this Stim home, when it holds no share. A server started any other
+ * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns the stopped pid.
+ */
+export async function stopIdleShareServer(version: string): Promise<number | null> {
+  const holder = readClaimSet(shareServerPaths().claim).live[0];
+  if (!holder) return null;
+  try {
+    const answer = await requestLocalServer('share.list', {}, { version, timeoutMs: 5000 });
+    if (answer.serverPort !== holder.details.port || !('result' in answer) || answer.result.shares.length) return null;
+  } catch {
+    return null;
+  }
+  process.kill(holder.owner.pid, 'SIGTERM');
+  return holder.owner.pid;
 }

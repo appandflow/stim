@@ -1165,14 +1165,16 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   with a Debug configuration or variant first.`,
     },
     STIM_SERVER_NOT_RUNNING: {
-      summary: 'stim share needs a running stim-server for this Stim home',
+      summary: 'stim share found no stim-server and could not start one, or share list|stop found none',
       body: () => `STIM_SERVER_NOT_RUNNING
-  stim share found no stim-server on this Stim home's local socket
-  ($STIM_HOME/server/local.sock). Web shares live inside stim-server, so
-  there is nothing to share through. Open Stim Desktop, which runs one, or
-  install the background server with stim-server service install, then run
-  stim share again. Agents do not start stim-server without the user's
-  approval.`,
+  Web shares live inside this Stim home's stim-server. stim share ios|android
+  starts one when none answers on the local socket. This code means that
+  failed: no stim-server of this exact stim version is installed (install it
+  with npm install --global @stim-cli/server@<version>, or open Stim
+  Desktop), or the one it started did not answer (the message names its log,
+  $STIM_HOME/server/share-server.log; read it, fix what it names, then run
+  stim share again). From share list or share stop it only means that no
+  server runs, so nothing is shared.`,
     },
     STIM_SHARE_REFUSED: {
       summary: 'stim-server would not start, stop or list a web share; the message names why',

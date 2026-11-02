@@ -22,6 +22,7 @@ interface Fixture {
   inputs: unknown[];
   routeOpens: number[];
   routeCloses: number;
+  idle: number;
   refuseControl: boolean;
   exemptAtBegin: string[][];
   strandedPort: number | null;
@@ -39,6 +40,7 @@ function fixture(): Fixture {
     inputs: [],
     routeOpens: [],
     routeCloses: 0,
+    idle: 0,
     refuseControl: false,
     exemptAtBegin: [],
     strandedPort: null,
@@ -106,6 +108,7 @@ function fixture(): Fixture {
       },
     },
     limits: { maxFailures: 3 },
+    idle: () => f.idle++,
   });
   return f;
 }
@@ -196,7 +199,7 @@ describe('a web share', () => {
     const share = await started(f);
     expect(f.routeOpens).toEqual([f.hub.port]);
     expect(share.url).toMatch(/^https:\/\/mac\.tail\.ts\.net:10000\/s\/[A-Za-z0-9_-]{43}\/$/);
-    expect(share.password).toMatch(/^[a-z2-9]{16}$/);
+    expect(share.password!).toMatch(/^[a-z2-9]{16}$/);
     await started(f, { control: true });
     expect(f.routeOpens).toHaveLength(1);
   });
@@ -235,7 +238,7 @@ describe('a web share', () => {
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
     }
-    const locked = await http(`${url}login`, { method: 'POST', body: `password=${share.password}` });
+    const locked = await http(`${url}login`, { method: 'POST', body: `password=${share.password!}` });
     expect(locked.status).toBe(429);
     expect(locked.headers['set-cookie']).toBeUndefined();
   });
@@ -243,7 +246,7 @@ describe('a web share', () => {
   it('sets an HttpOnly, Secure, SameSite=Strict session cookie scoped to the share and ending with it', async () => {
     const share = await started(f, { expiresMinutes: 30 });
     const url = local(share, f.hub.port!);
-    const answer = await http(`${url}login`, { method: 'POST', body: `password=${share.password}` });
+    const answer = await http(`${url}login`, { method: 'POST', body: `password=${share.password!}` });
     const cookie = String(answer.headers['set-cookie']);
     expect(cookie).toMatch(/HttpOnly/);
     expect(cookie).toMatch(/Secure/);
@@ -254,11 +257,35 @@ describe('a web share', () => {
     expect(viewer.body).toContain('id="screen"');
   });
 
+  it('without a password, serves the page and the stream to anyone with the link, from the same origin', async () => {
+    const share = await started(f, { passwordless: true });
+    expect(share.auth).toBe('none');
+    expect(share.password).toBeUndefined();
+    const url = local(share, f.hub.port!);
+    expect((await http(url)).body).toContain('id="screen"');
+    expect((await http(`${url}login`, { method: 'POST', body: 'password=anything' })).status).toBe(404);
+    expect((await connect(url, { origin: 'https://evil.example' })).status).toBe(403);
+    const { socket } = await connect(url, { origin: origin(url) });
+    expect(f.subscribed).toHaveLength(1);
+    socket.close();
+  });
+
+  it('admits a password the person set and never returns it', async () => {
+    const share = await started(f, { password: 'correct horse' });
+    expect(share).toMatchObject({ auth: 'set' });
+    expect(JSON.stringify(share)).not.toContain('correct horse');
+    expect(JSON.stringify(f.hub.list())).not.toContain('correct horse');
+    const url = local(share, f.hub.port!);
+    expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong%20horse' })).status).toBe(401);
+    const cookie = await login(url, 'correct%20horse');
+    expect((await connect(url, { origin: origin(url), cookie })).status).toBeNull();
+  });
+
   it('starts capture only for a signed-in viewer from the same origin, and stops it when the viewer leaves', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);
     expect((await connect(url, { origin: origin(url) })).status).toBe(401);
-    const cookie = await login(url, share.password);
+    const cookie = await login(url, share.password!);
     expect((await connect(url, { origin: 'https://evil.example', cookie })).status).toBe(403);
     expect(f.subscribed).toEqual([]);
 
@@ -278,7 +305,7 @@ describe('a web share', () => {
   it('drops input without --control and never begins a control session', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     socket.send(JSON.stringify({ type: 'text', text: 'hi' }));
     await new Promise((resolve) => setImmediate(resolve));
@@ -291,7 +318,7 @@ describe('a web share', () => {
   it('with --control, drives only the shared device through the control hub and refuses other buttons', async () => {
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port!);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'button', button: 'back' }));
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.75, workspace: '/other' }));
     await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
@@ -311,7 +338,7 @@ describe('a web share', () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port!);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     const refused = new Promise<string>((resolve) => socket.once('message', (data) => resolve(String(data))));
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     expect(JSON.parse(await refused)).toMatchObject({ type: 'control', message: expect.stringContaining('Desktop') });
@@ -325,7 +352,7 @@ describe('a web share', () => {
     const share = await started(f, { control: true });
     f.status(payload('Booted', { state: 'driven', driver: { tool: 'agent-device' }, basis: ['agent-device-lease'] }));
     const url = local(share, f.hub.port!);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     await vi.waitFor(() => expect(f.begins).toHaveLength(1));
     expect(f.exemptAtBegin).toEqual([[]]);
@@ -335,7 +362,7 @@ describe('a web share', () => {
   it('ends when stopped: closes viewers, stops capture and removes the route with the last share', async () => {
     const share = await started(f);
     const url = local(share, f.hub.port!);
-    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
     const closed = new Promise((resolve) => socket.once('close', resolve));
     expect((await f.hub.stop(WORKSPACE)).map((row) => row.id)).toHaveLength(1);
     await closed;
@@ -361,6 +388,17 @@ describe('a web share', () => {
     f.failRoute.open = false;
     await started(f);
     expect(await bound(first)).toBe(false);
+  });
+
+  it('reports idle once its last share ended and its route is gone, and after a start it refused', async () => {
+    await started(f);
+    await started(f, { control: true });
+    await f.hub.stop(WORKSPACE);
+    await vi.waitFor(() => expect(f.idle).toBe(1));
+    expect(f.routeCloses).toBe(1);
+
+    expect(await f.hub.start(shareRequest({ platform: 'android' }))).toMatchObject({ code: 'action-failed' });
+    await vi.waitFor(() => expect(f.idle).toBe(2));
   });
 
   it('ends at its expiry, and when its device stops', async () => {

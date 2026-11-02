@@ -22,6 +22,8 @@ when the share expires, when you stop it, or when stim-server stops.
 code={`stim share ios                  # watch only, for 60 minutes
 stim share android --control    # viewers can tap, type and press buttons
 stim share ios --expires 15     # 1 to 480 minutes; every share expires
+stim share ios --password '<value>'  # your own password, 8 to 128 characters
+stim share ios --no-password    # no login: the link alone opens it
 stim share list                 # live shares
 stim share stop                 # end this workspace's shares now`}
 />
@@ -37,13 +39,26 @@ Stop it with: stim share stop
 ```
 
 Send the link and the password over different channels. Neither is stored, so
-a lost password means a new share.
+a lost password means a new share. A password you set with `--password` is
+never printed back; note that a value on the command line can land in your
+shell history and in `ps` output while the command runs, so the generated one
+is safer. With `--no-password` there is no login: anyone with the link can
+watch, or control with `--control`. `stim share` warns about it on stderr and
+`stim share list` marks the share "no password".
 
 ## Requirements
 
-- **stim-server running** for this Stim home. Stim Desktop runs one; without
-  Desktop, install the background server with `stim-server service install`.
-  `stim share` refuses with `STIM_SERVER_NOT_RUNNING` otherwise.
+- **stim-server** for this Stim home. When none runs (no Stim Desktop or
+  background service), `stim share` starts one in the background as
+  `stim-server --share`: loopback only, from the `@stim-cli/server` package of
+  the same version installed next to `stim`, else a `stim-server` on `PATH`
+  that reports that version. It prints the server's pid and log
+  (`$STIM_HOME/server/share-server.log`) on stderr. That server stops on its
+  own when its last share ends, or after 2 minutes without one, and removes its
+  Funnel route first; `stim share stop` also stops it. A server Stim Desktop or
+  the background service runs is never stopped. Without a matching
+  `@stim-cli/server`, `stim share` refuses with `STIM_SERVER_NOT_RUNNING` and
+  the install command.
 - **Tailscale with Funnel.** The link is served through
   [Tailscale Funnel](https://tailscale.com/kb/1223/funnel). A tailnet admin
   must allow Funnel for this Mac in the tailnet policy; Stim never changes
@@ -54,14 +69,16 @@ a lost password means a new share.
 
 ## Options
 
-| Option                | Meaning                                                                      |
-| --------------------- | ---------------------------------------------------------------------------- |
-| `ios` / `android`     | Which of the workspace's devices to share.                                   |
-| `--control`           | Let viewers tap, type and press Home, Lock, Back or Apps.                    |
-| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".             |
-| `--device`            | Share the physical device the workspace leases.                              |
-| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots). |
-| `--json`              | Print one payload: `url`, `password`, `expiresAt`, `control`, target.        |
+| Option                | Meaning                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| `ios` / `android`     | Which of the workspace's devices to share.                                                        |
+| `--control`           | Let viewers tap, type and press Home, Lock, Back or Apps.                                         |
+| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                  |
+| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                               |
+| `--no-password`       | No login: anyone with the link can open the share.                                                |
+| `--device`            | Share the physical device the workspace leases.                                                   |
+| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                      |
+| `--json`              | Print one payload: `url`, `auth`, `expiresAt`, `control`, target; `password` only when generated. |
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
@@ -79,14 +96,17 @@ control, viewer count and expiry, never their link or password.
   shared device, and, with `--control`, input to that same device. Anything
   else, including an unknown link, answers 404. No other device, log, file,
   command or stim-server method is reachable through it.
-- **Secrets.** The link carries 256 random bits. The password is 16 random
-  characters (about 79 bits), checked in constant time. Ten wrong passwords in
+- **Secrets.** The link carries 256 random bits. The generated password is 16
+  random characters (about 79 bits); one you set is 8 to 128 characters.
+  Either is kept only as a SHA-256 digest and checked in constant time. A
+  share with `--no-password` has no login, so the link is its only secret. Ten wrong passwords in
   ten minutes lock that share's login for the rest of the window, whatever the
   source address: anyone with the link can lock it, but cannot guess their way
   in. A correct password sets an `HttpOnly`, `Secure`, `SameSite=Strict`
   cookie for that share's path that ends with the share. The frame socket
-  needs that cookie and a same-origin request. At most five viewers watch one
-  share.
+  needs that cookie and a same-origin request; without a password the link
+  alone admits the page and the frame socket, still same-origin only. At most
+  five viewers watch one share.
 - **Nothing runs while nobody watches.** Capture starts when a signed-in viewer
   connects and stops about 10 seconds after the last one leaves. An idle share
   costs only its listener and route. A share never records anything to disk.

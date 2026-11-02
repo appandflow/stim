@@ -2044,12 +2044,24 @@ workspace device with three methods that only the local Unix socket may call
 (any network connection gets `forbidden`), without the Desktop bootstrap proof:
 
 - `share.start` takes `workspace`, `platform` (`ios` or `android`), `slot`,
-  `physical`, `control` and `expiresMinutes` (1 to 480, 60 by default) and
-  returns
-  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, url, password }`. It refuses a device the workspace does not own or
-  lease, a hosted device, and `control` on a physical iPhone.
+  `physical`, `control`, `expiresMinutes` (1 to 480, 60 by default), and
+  either `password` (8 to 128 characters, kept only as its digest) or
+  `passwordless: true` (no login; the URL token alone admits a viewer); with
+  neither, the server generates a password. It returns `auth` (`generated`,
+  `set` or `none`), and `password` only when it generated one, in
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, url, password }`.
+  It refuses a device the workspace does not own or lease, a hosted device,
+  `control` on a physical iPhone, and `password` with `passwordless`.
 - `share.stop` takes `workspace` and ends its shares, returning `stopped`.
 - `share.list` returns `shares`, the same rows without `url` or `password`.
+
+`stim-server --share [--port <n>]` is the server `stim share` starts when none
+answers on the local socket: loopback only, without a Desktop bootstrap. It
+holds an exclusive ownership claim at `$STIM_HOME/server/share-server` with its
+port for as long as it runs, so `stim share stop` stops only a server it
+started, and it exits once its last share has ended and its route is removed,
+after a start it refused leaves no share, or when no share starts within 2
+minutes.
 
 Shares live in memory only and end at their expiry, on `share.stop`, when the
 device stops or changes in status, when its frames fail, and when the server stops. The server serves

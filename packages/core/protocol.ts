@@ -1639,6 +1639,8 @@ export interface WebShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  /** How viewers get in: a generated password, one the person set, or the URL alone. */
+  auth: 'generated' | 'set' | 'none';
 }
 
 export interface WebShareStartParams {
@@ -1648,10 +1650,13 @@ export interface WebShareStartParams {
   physical?: boolean;
   control?: boolean;
   expiresMinutes?: number;
+  /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
+  password?: string;
+  passwordless?: boolean;
 }
 
 export interface Methods {
-  'share.start': { params: WebShareStartParams; result: WebShareRow & { url: string; password: string } };
+  'share.start': { params: WebShareStartParams; result: WebShareRow & { url: string; password?: string } };
   'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };

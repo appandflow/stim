@@ -2208,6 +2208,8 @@ export function protocolJsonSchema(): JsonSchema {
               physical: { type: 'boolean' },
               control: { type: 'boolean' },
               expiresMinutes: { type: 'integer', minimum: 1, maximum: 480 },
+              password: { type: 'string', minLength: 8, maxLength: 128 },
+              passwordless: { type: 'boolean' },
             },
           }),
           request('share.stop', {

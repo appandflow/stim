@@ -1,8 +1,52 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runShare } from '../commands/share.ts';
-import { requestLocalServer } from '../local-server.ts';
+import { runShare, type ShareDeps } from '../commands/share.ts';
+import { LocalServerUnavailable, requestLocalServer, stopIdleShareServer } from '../local-server.ts';
+
+const ROW = {
+  id: 'w1',
+  workspace: '/work/app',
+  platform: 'android' as const,
+  slot: 'default',
+  physical: false,
+  control: false,
+  expiresAt: '2026-11-02T20:00:00.000Z',
+  viewers: 0,
+  url: 'https://mac.tail.ts.net:10000/s/token/',
+};
+
+interface Fake extends ShareDeps {
+  sent: { method: string; params: unknown }[];
+  notes: string[];
+  starts: number;
+}
+
+function fake(answers: (() => unknown)[], start: Awaited<ReturnType<ShareDeps['startServer']>> = null): Fake {
+  const deps: Fake = {
+    sent: [],
+    notes: [],
+    starts: 0,
+    findWorkspace: async () => '/work/app',
+    request: async (method, params) => {
+      deps.sent.push({ method, params });
+      const next = answers.shift();
+      if (!next) throw new Error('unexpected request');
+      return next() as never;
+    },
+    startServer: async () => {
+      deps.starts++;
+      return start;
+    },
+    stopServer: async () => null,
+    note: (line) => deps.notes.push(line),
+  };
+  return deps;
+}
+
+const unavailable = () => {
+  throw new LocalServerUnavailable('no stim-server socket');
+};
 
 describe('stim share', () => {
   let home: string;
@@ -17,48 +61,85 @@ describe('stim share', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('refuses with the start-the-server remedy when no stim-server runs for this Stim home', async () => {
-    const result = await runShare(
-      'ios',
-      { control: true },
-      {
-        findWorkspace: async () => '/work/app',
-        request: (method, params) => requestLocalServer(method, params, { version: 'test' }),
-      },
-    );
-    expect(result).toMatchObject({
+  it('refuses with the install remedy when no stim-server runs and none of this version is installed', async () => {
+    const deps = fake([]);
+    deps.request = (method, params) => requestLocalServer(method, params, { version: '9.9.9' });
+    expect(await runShare('ios', { control: true }, deps, '9.9.9')).toMatchObject({
       ok: false,
-      error: { code: 'STIM_SERVER_NOT_RUNNING', remedy: expect.stringContaining('stim-server service install') },
+      error: { code: 'STIM_SERVER_NOT_RUNNING', remedy: expect.stringContaining('@stim-cli/server@9.9.9') },
     });
   });
 
-  it('requires an expiry within the limit and sends the share request to the server', async () => {
-    const sent: unknown[] = [];
-    const deps = {
-      findWorkspace: async () => '/work/app',
-      request: async (method: string, params: unknown) => {
-        sent.push({ method, params });
-        return { error: { code: 'action-failed', message: 'not now' } };
-      },
-    };
-    expect(await runShare('android', { expires: '0' }, deps)).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
-    expect(await runShare('android', { expires: '481' }, deps)).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
-    expect(sent).toEqual([]);
-    expect(await runShare('android', { expires: '30', slot: 'b', device: true }, deps)).toMatchObject({
-      error: { code: 'STIM_SHARE_REFUSED', message: 'not now' },
+  it('starts a stim-server when none runs, says how to stop it, then shares through it', async () => {
+    const deps = fake([unavailable, () => ({ result: { ...ROW, auth: 'generated', password: 'abcdefghjkmnpqrs' } })], {
+      started: true,
+      pid: 4242,
+      log: '/home/server/share-server.log',
     });
-    expect(sent).toEqual([
-      {
-        method: 'share.start',
-        params: {
-          workspace: '/work/app',
-          platform: 'android',
-          slot: 'b',
-          physical: true,
-          control: false,
-          expiresMinutes: 30,
-        },
-      },
-    ]);
+    const result = await runShare('android', {}, deps, '1.0.0');
+    expect(result).toMatchObject({ ok: true, output: { url: ROW.url } });
+    expect(deps.starts).toBe(1);
+    expect(deps.notes).toEqual([expect.stringMatching(/pid 4242.*share-server\.log.*stim share stop/)]);
+    expect(deps.sent.map((each) => each.method)).toEqual(['share.start', 'share.start']);
+  });
+
+  it('uses the server that won the socket instead of the one it started, and reports a start that failed', async () => {
+    const joined = fake([unavailable, () => ({ result: { ...ROW, auth: 'generated', password: 'x' } })], {
+      started: false,
+      reason: 'joined',
+    });
+    expect(await runShare('android', {}, joined, '1.0.0')).toMatchObject({ ok: true });
+    expect(joined.notes).toEqual([]);
+
+    const failed = fake([unavailable], {
+      started: false,
+      reason: 'failed',
+      message: 'stim-server did not start: it exited with code 1.',
+      log: '/home/server/share-server.log',
+    });
+    expect(await runShare('android', {}, failed, '1.0.0')).toMatchObject({
+      ok: false,
+      error: { code: 'STIM_SERVER_NOT_RUNNING', message: expect.stringContaining('share-server.log') },
+    });
+  });
+
+  it('never starts a server to list or stop shares', async () => {
+    const deps = fake([unavailable, unavailable]);
+    expect(await runShare('list', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });
+    expect(await runShare('stop', {}, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_SERVER_NOT_RUNNING' } });
+    expect(deps.starts).toBe(0);
+  });
+
+  it('validates the expiry and the password before asking the server', async () => {
+    const deps = fake([]);
+    for (const opts of [
+      { expires: '0' },
+      { expires: '481' },
+      { password: 'short' },
+      { password: 'long enough', bothPasswords: true },
+    ]) {
+      expect(await runShare('android', opts, deps, '1.0.0')).toMatchObject({ error: { code: 'STIM_BAD_ARG' } });
+    }
+    expect(deps.sent).toEqual([]);
+  });
+
+  it('sends a password the person set without ever printing it back', async () => {
+    const deps = fake([() => ({ result: { ...ROW, auth: 'set' } })]);
+    const result = await runShare('android', { password: 'correct horse', expires: '30' }, deps, '1.0.0');
+    expect(deps.sent[0]!.params).toMatchObject({ password: 'correct horse', expiresMinutes: 30 });
+    expect(JSON.stringify(result)).not.toContain('correct horse');
+  });
+
+  it('warns on stderr that anyone with the link can control a passwordless share', async () => {
+    const deps = fake([() => ({ result: { ...ROW, control: true, auth: 'none' } })]);
+    await runShare('android', { password: false, control: true }, deps, '1.0.0');
+    expect(deps.sent[0]!.params).toMatchObject({ passwordless: true, control: true });
+    expect(deps.notes).toEqual([expect.stringMatching(/no password.*watch and control/)]);
+  });
+
+  it('never stops a stim-server that stim share did not start', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    expect(await stopIdleShareServer('1.0.0')).toBeNull();
+    expect(kill).not.toHaveBeenCalled();
   });
 });

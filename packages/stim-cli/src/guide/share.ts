@@ -1,5 +1,5 @@
 export default {
-  summary: 'stim share: a public, password-protected web link to a running app, watch only or with control',
+  summary: 'stim share: a public web link to a running app, password-protected by default, watch only or with control',
   body: () => `SHARE: A PUBLIC WEB LINK TO A RUNNING APP
 
 If Stim is not installed globally, replace stim with npx stim.
@@ -15,19 +15,37 @@ asks for it.
   stim share ios --expires 15         # minutes, 1 to 480; every share expires
   stim share android --device         # the leased physical phone
   stim share ios --slot tablet        # the device of another slot
+  stim share ios --password '<value>' # a password you choose, 8 to 128 characters
+  stim share ios --no-password        # no login: the link alone opens it
   stim share list                     # live shares: target, control, viewers, expiry
   stim share stop                     # ends this workspace's shares now
 
-It prints the URL and a generated password once. Neither is stored anywhere;
-run stim share again for a new link. --json prints one payload with url,
-password, expiresAt, control and the target.
+It prints the URL and, by default, a generated password once. Neither is
+stored anywhere; run stim share again for a new link. --json prints one
+payload with url, auth (generated, set or none), expiresAt, control and the
+target; password is in it only when it was generated. A password you set is
+never printed back. A value passed on the command line can land in your shell
+history and in ps output while stim share runs; prefer the generated one.
+
+With --no-password, anyone with the link can watch, or control with
+--control; stim share warns about it on stderr, and share list shows such a
+share as "no password". The 256-bit link is then the only secret. Use it only
+when the user asks for it.
 
 WHAT IT NEEDS
 
-- A running stim-server for this Stim home (Stim Desktop runs one, or
-  stim-server service install). The share lives inside it: stim share refuses
-  with STIM_SERVER_NOT_RUNNING without one, and a server restart ends every
-  share.
+- A stim-server for this Stim home. The share lives inside it, and a server
+  restart ends every share. When none runs, stim share starts one in the
+  background (stim-server --share: loopback only, no Desktop bootstrap) from
+  the stim-server package of this exact stim version installed next to stim,
+  else a stim-server on PATH that reports this version. It says so on stderr
+  with the server's pid and log ($STIM_HOME/server/share-server.log). That
+  server stops on its own when its last share ends (stim share stop, expiry,
+  stim stop, worktree remove) or when no share starts within 2 minutes, and
+  removes its Funnel route on the way out; stim share stop also stops it. A
+  server Stim Desktop, the LaunchAgent or you started is never stopped. When
+  no matching stim-server is installed, or it does not start, stim share
+  refuses with STIM_SERVER_NOT_RUNNING.
 - Tailscale running on this Mac, with Funnel allowed for this node by the
   tailnet policy. Stim never changes tailnet settings.
 - One free Funnel port (443, 8443 or 10000, as the tailnet allows) that nothing
@@ -46,14 +64,18 @@ SECURITY MODEL
   stream of the one shared device, and, with --control, input to that same
   device. Everything else, an unknown link included, is 404: no other device,
   log, file, command or stim-server method is reachable through it.
-- The URL carries 256 random bits. The password is 16 random characters
-  (about 79 bits), compared in constant time. Ten wrong passwords in ten
+- The URL carries 256 random bits. The generated password is 16 random
+  characters (about 79 bits); a password you set is 8 to 128 characters.
+  Either is kept only as a SHA-256 digest and compared in constant time. Ten wrong passwords in ten
   minutes lock the share's login for the rest of that window, whatever the
   source address, so anyone with the link can lock it but not guess into it.
 - A correct password sets an HttpOnly, Secure, SameSite=Strict cookie scoped
   to the share's path that ends with the share. The frame socket needs that
-  cookie and a same-origin request. At most 5 viewers watch one share.
-- Capture starts only when a signed-in viewer connects and stops about 10
+  cookie and a same-origin request. A share without a password needs no
+  cookie: the link admits the page and the frame socket, which still needs a
+  same-origin request. At most 5 viewers watch one share.
+- Capture starts only when a signed-in viewer (any viewer with the link, for a
+  share without a password) connects and stops about 10
   seconds after the last one leaves. A share never records: footage of share
   viewing is not written to disk.
 - Control goes through the same control session and device lease stim-server

@@ -214,6 +214,8 @@ import { DeviceViewers } from './viewers.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
+const SHARE_SERVER_GRACE_MS = 2 * 60_000;
+
 const INPUT_METHODS = [
   'input.touch',
   'input.text',
@@ -253,6 +255,11 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
+  /**
+   * Set for a server `stim share` started: `idle` runs once its last share has ended, or when no share starts within
+   * `graceMs` (two minutes by default) of the server being ready.
+   */
+  shareServer?: { idle: () => void; graceMs?: number };
   /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
@@ -1225,7 +1232,7 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, ...rest } = params;
+  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, ...rest } = params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
   if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
@@ -1233,6 +1240,11 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
   if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
   if (control !== undefined && typeof control !== 'boolean') return 'params.control must be true or false.';
+  if (password !== undefined && (typeof password !== 'string' || password.length < 8 || password.length > 128))
+    return 'params.password must be 8 to 128 characters.';
+  if (passwordless !== undefined && typeof passwordless !== 'boolean')
+    return 'params.passwordless must be true or false.';
+  if (passwordless && password !== undefined) return 'A share takes a password or passwordless, not both.';
   const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
@@ -1243,6 +1255,8 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(physical ? { physical } : {}),
     control: control === true,
     expiresMinutes: minutes,
+    ...(typeof password === 'string' ? { password } : {}),
+    ...(passwordless ? { passwordless } : {}),
   };
 }
 
@@ -1445,6 +1459,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
   let startupRetry: NodeJS.Timeout | null = null;
   let setupPruneTimer: NodeJS.Timeout | null = null;
+  let shareServerGrace: NodeJS.Timeout | null = null;
   const running = new Set<() => Promise<void>>();
   const peerCommands = new Map<string, number>();
   const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };
@@ -1707,6 +1722,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),
     recordingChanged: () => recorder?.refresh(),
+    ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
   });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
@@ -5130,6 +5146,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
+    if (shareServerGrace) clearTimeout(shareServerGrace);
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
@@ -5416,6 +5433,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       startup = { state: 'ready' };
       pruneSetup();
+      if (options.shareServer && !shareServerGrace) {
+        const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
+        shareServerGrace = setTimeout(() => {
+          if (!shares.list().length) idle();
+        }, graceMs);
+        shareServerGrace.unref?.();
+      }
       void shareRoute
         .recover()
         .catch((failure: Error) =>

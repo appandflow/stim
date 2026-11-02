@@ -5,8 +5,12 @@ import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
 import {
   LocalServerUnavailable,
   requestLocalServer,
+  resolveShareServer,
+  startShareServer,
+  stopIdleShareServer,
   type LocalServerAnswer,
   type ShareMethod,
+  type ShareServerStart,
 } from '../local-server.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
@@ -28,16 +32,29 @@ interface ShareOptions {
   device?: boolean;
   control?: boolean;
   expires?: string;
+  /** A string from `--password <value>`, false from `--no-password`. */
+  password?: string | false;
+  /** Both `--password` and `--no-password` were passed. */
+  bothPasswords?: boolean;
   json?: boolean;
 }
 
 export interface ShareDeps {
   findWorkspace: (cwd: string) => Promise<string | null>;
   request: <M extends ShareMethod>(method: M, params: Methods[M]['params']) => Promise<LocalServerAnswer<M>>;
+  /** Starts a stim-server for this Stim home when none runs; null when no version-matched server is installed. */
+  startServer: () => Promise<ShareServerStart | null>;
+  /** Stops the stim-server `stim share` started, once it holds no share; returns its pid when it stopped one. */
+  stopServer: () => Promise<number | null>;
+  /** Writes a line to stderr. */
+  note: (line: string) => void;
 }
 
-const SERVER_REMEDY =
-  'Web shares run inside stim-server. Open Stim Desktop, or install the background server with `stim-server service install`, then run stim share again.';
+const MIN_PASSWORD = 8;
+const MAX_PASSWORD = 128;
+
+const serverRemedy = (version: string) =>
+  `Web shares run inside stim-server, and no stim-server ${version} is installed for stim share to start. Install it with \`npm install --global @stim-cli/server@${version}\`, or open Stim Desktop, then run stim share again.`;
 
 function failure(code: string, message: string, remedy: string | null): ShareFailure {
   return { code, message, remedy };
@@ -56,17 +73,38 @@ async function ask<M extends ShareMethod>(
   deps: ShareDeps,
   method: M,
   params: Methods[M]['params'],
+  version: string,
+  start = false,
 ): Promise<{ result: Methods[M]['result'] } | ShareFailure> {
   let answer: LocalServerAnswer<M>;
   try {
     answer = await deps.request(method, params);
   } catch (cause) {
     if (cause instanceof LocalServerUnavailable) {
-      return failure(
-        'STIM_SERVER_NOT_RUNNING',
-        `No stim-server runs for this Stim home (${cause.message}).`,
-        SERVER_REMEDY,
-      );
+      if (!start) {
+        return failure(
+          'STIM_SERVER_NOT_RUNNING',
+          `No stim-server runs for this Stim home (${cause.message}).`,
+          'Nothing is shared. stim share ios|android starts a stim-server when none runs.',
+        );
+      }
+      const started = await deps.startServer();
+      if (!started) {
+        return failure('STIM_SERVER_NOT_RUNNING', `No stim-server runs for this Stim home.`, serverRemedy(version));
+      }
+      if (!started.started && started.reason === 'failed') {
+        return failure(
+          'STIM_SERVER_NOT_RUNNING',
+          `${started.message} Its log is ${started.log}.`,
+          'Read the log, fix what it names, then run stim share again.',
+        );
+      }
+      if (started.started) {
+        deps.note(
+          `Started stim-server (pid ${started.pid}) for this share; its log is ${started.log}. It stops on its own when the last share ends; to stop it now, run \`stim share stop\`.`,
+        );
+      }
+      return ask(deps, method, params, version);
     }
     return failure(
       'STIM_SHARE_REFUSED',
@@ -104,7 +142,7 @@ function parseMinutes(value: string | undefined): number | ShareFailure {
 
 function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
-  const mode = row.control ? 'view and control' : 'view only';
+  const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}`;
   return `${target} of ${row.workspace}: ${mode}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
@@ -112,9 +150,10 @@ export async function runShare(
   action: string,
   opts: ShareOptions,
   deps: ShareDeps,
+  version: string,
 ): Promise<{ ok: true; output: object; text: string } | { ok: false; error: ShareFailure }> {
   if (action === 'list') {
-    const answer = await ask(deps, 'share.list', {});
+    const answer = await ask(deps, 'share.list', {}, version);
     if ('code' in answer) return { ok: false, error: answer };
     const { shares } = answer.result;
     return {
@@ -126,15 +165,19 @@ export async function runShare(
   const root = await deps.findWorkspace(process.cwd());
   if (!root) return { ok: false, error: failure('STIM_NO_PROJECT', '', null) };
   if (action === 'stop') {
-    const answer = await ask(deps, 'share.stop', { workspace: root });
+    const answer = await ask(deps, 'share.stop', { workspace: root }, version);
     if ('code' in answer) return { ok: false, error: answer };
     const { stopped } = answer.result;
+    const server = await deps.stopServer();
     return {
       ok: true,
-      output: { stopped },
-      text: stopped.length
-        ? `Stopped ${stopped.length} web share${stopped.length === 1 ? '' : 's'}; their links no longer work.`
-        : 'This workspace has no live web share.',
+      output: { stopped, ...(server !== null ? { stoppedServer: server } : {}) },
+      text: [
+        stopped.length
+          ? `Stopped ${stopped.length} web share${stopped.length === 1 ? '' : 's'}; their links no longer work.`
+          : 'This workspace has no live web share.',
+        ...(server !== null ? [`Stopped the stim-server stim share started (pid ${server}).`] : []),
+      ].join('\n'),
     };
   }
   if (action !== 'ios' && action !== 'android') {
@@ -169,24 +212,63 @@ export async function runShare(
   }
   const minutes = parseMinutes(opts.expires);
   if (typeof minutes !== 'number') return { ok: false, error: minutes };
-  const answer = await ask(deps, 'share.start', {
-    workspace: root,
-    platform: action,
-    ...(opts.slot && opts.slot !== 'default' ? { slot: opts.slot } : {}),
-    ...(opts.device ? { physical: true } : {}),
-    control: opts.control === true,
-    expiresMinutes: minutes,
-  });
+  if (opts.bothPasswords) {
+    return {
+      ok: false,
+      error: failure('STIM_BAD_ARG', '--password and --no-password cannot be used together.', 'Pass one of them.'),
+    };
+  }
+  const chosen = typeof opts.password === 'string' ? opts.password : undefined;
+  if (chosen !== undefined && (chosen.length < MIN_PASSWORD || chosen.length > MAX_PASSWORD)) {
+    return {
+      ok: false,
+      error: failure(
+        'STIM_BAD_ARG',
+        `--password must be ${MIN_PASSWORD} to ${MAX_PASSWORD} characters.`,
+        'Pass a longer password, or leave --password out to have one generated.',
+      ),
+    };
+  }
+  const passwordless = opts.password === false;
+  if (passwordless) {
+    deps.note(
+      `Warning: this share has no password. Anyone with the link can ${opts.control ? 'watch and control' : 'watch'} the device until it expires.`,
+    );
+  }
+  const answer = await ask(
+    deps,
+    'share.start',
+    {
+      workspace: root,
+      platform: action,
+      ...(opts.slot && opts.slot !== 'default' ? { slot: opts.slot } : {}),
+      ...(opts.device ? { physical: true } : {}),
+      control: opts.control === true,
+      expiresMinutes: minutes,
+      ...(chosen !== undefined ? { password: chosen } : {}),
+      ...(passwordless ? { passwordless: true } : {}),
+    },
+    version,
+    true,
+  );
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
+  const secret =
+    started.auth === 'none'
+      ? ['Password: none; anyone with the link can open it from the internet until it expires.']
+      : started.auth === 'set'
+        ? ['Password: the one you set; anyone with the link and it can open it from the internet until it expires.']
+        : [
+            `Password: ${started.password}`,
+            'Anyone with both can open it from the internet until it expires. The password is shown only now.',
+          ];
   return {
     ok: true,
     output: started,
     text: [
       `Shared ${describeRow(started)}.`,
       `URL:      ${started.url}`,
-      `Password: ${started.password}`,
-      'Anyone with both can open it from the internet until it expires. The password is shown only now.',
+      ...secret,
       'Stop it with: stim share stop',
     ].join('\n'),
   };
@@ -195,6 +277,12 @@ export async function runShare(
 const DEFAULT_DEPS = (version: string): ShareDeps => ({
   findWorkspace: (cwd) => findCommandWorkspaceAsync(cwd, repoRootAsync, (line) => console.error(line)),
   request: (method, params) => requestLocalServer(method, params, { version }),
+  startServer: async () => {
+    const server = await resolveShareServer(version);
+    return server ? startShareServer(server, version) : null;
+  },
+  stopServer: () => stopIdleShareServer(version),
+  note: (line) => console.error(line),
 });
 
 export function registerShare(program: Command, version: string, deps: Partial<ShareDeps> = {}): void {
@@ -206,10 +294,15 @@ export function registerShare(program: Command, version: string, deps: Partial<S
     .option('--slot <name>', 'Share the device of this slot')
     .option('--device', 'Share the physical device this workspace leases instead of its simulator or emulator')
     .option('--control', 'Let viewers tap, type and press buttons (watch only without it)')
+    .option('--password <value>', 'Use this password (8 to 128 characters) instead of a generated one')
+    .option('--no-password', 'Need no password: anyone with the link can open the share')
     .option('--expires <minutes>', `Minutes until the share ends, 1 to ${MAX_MINUTES}`, String(DEFAULT_MINUTES))
     .option('--json', 'Emit one JSON payload')
     .action(async (action: string, opts: ShareOptions) => {
-      const result = await runShare(action, opts, { ...DEFAULT_DEPS(version), ...deps });
+      const args = process.argv.slice(2);
+      const bothPasswords =
+        args.includes('--no-password') && args.some((arg) => arg === '--password' || arg.startsWith('--password='));
+      const result = await runShare(action, { ...opts, bothPasswords }, { ...DEFAULT_DEPS(version), ...deps }, version);
       if (!result.ok) {
         if (result.error.code === 'STIM_NO_PROJECT') refuseNoProject({ json: Boolean(opts.json) });
         else report(result.error, Boolean(opts.json));

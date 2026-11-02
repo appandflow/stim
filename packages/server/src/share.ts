@@ -22,7 +22,14 @@ export interface ShareRequest {
   physical?: boolean;
   control: boolean;
   expiresMinutes: number;
+  /** A password the person chose, kept only as its digest; without it and without `passwordless`, one is generated. */
+  password?: string;
+  /** No login: the URL token alone admits a viewer. */
+  passwordless?: boolean;
 }
+
+/** How a share admits viewers: a generated password, one the person set, or the URL token alone. */
+type ShareAuth = 'generated' | 'set' | 'none';
 
 export interface ShareRow {
   id: string;
@@ -33,11 +40,13 @@ export interface ShareRow {
   control: boolean;
   expiresAt: string;
   viewers: number;
+  auth: ShareAuth;
 }
 
+/** `password` is present only when it was generated: a password the person set is never sent back. */
 export interface StartedShare extends ShareRow {
   url: string;
-  password: string;
+  password?: string;
 }
 
 export interface ShareLimits {
@@ -78,6 +87,8 @@ export interface ShareDeps {
   limits?: Partial<ShareLimits>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
   recordingChanged?: () => void;
+  /** Called when the last share has ended and its route is gone. */
+  idle?: () => void;
 }
 
 export interface StatusListener {
@@ -166,8 +177,9 @@ interface Viewer {
 interface Share {
   id: string;
   key: string;
-  request: ShareRequest;
-  passwordDigest: Buffer;
+  request: Omit<ShareRequest, 'password'>;
+  auth: ShareAuth;
+  passwordDigest: Buffer | null;
   expiresAt: number;
   device: Device;
   sessions: Set<string>;
@@ -201,6 +213,7 @@ export class ShareHub {
   private closingRoute: Promise<void> = Promise.resolve();
   private closed = false;
   private next = 1;
+  private starting = 0;
 
   constructor(deps: ShareDeps) {
     this.deps = deps;
@@ -214,6 +227,20 @@ export class ShareHub {
   }
 
   async start(request: ShareRequest): Promise<StartedShare | Refusal> {
+    this.starting++;
+    try {
+      return await this.begin(request);
+    } finally {
+      this.starting--;
+      void this.closingRoute.then(() => this.checkIdle());
+    }
+  }
+
+  private checkIdle(): void {
+    if (!this.shares.size && !this.listener && !this.closed && !this.starting && !this.opening) this.deps.idle?.();
+  }
+
+  private async begin(request: ShareRequest): Promise<StartedShare | Refusal> {
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
     if (request.control && request.physical && request.platform === 'ios') {
       return { code: 'bad-request', message: 'A physical iPhone is view only: share it without --control.' };
@@ -236,15 +263,18 @@ export class ShareHub {
         message: this.closed ? 'stim-server is stopping.' : 'The share listener closed while starting. Try again.',
       };
     }
+    const { password: chosen, ...kept } = request;
+    const auth: ShareAuth = request.passwordless ? 'none' : chosen !== undefined ? 'set' : 'generated';
+    const shown = auth === 'generated' ? password() : null;
     const secret = token();
-    const shown = password();
     const id = `w${this.next++}`;
     const expiresAt = Date.now() + request.expiresMinutes * 60_000;
     const share: Share = {
       id,
       key: digest(secret).toString('hex'),
-      request,
-      passwordDigest: digest(shown),
+      request: kept,
+      auth,
+      passwordDigest: auth === 'none' ? null : digest(chosen ?? shown ?? ''),
       expiresAt,
       device,
       sessions: new Set(),
@@ -275,7 +305,7 @@ export class ShareHub {
       },
       failed: () => {},
     });
-    return { ...this.row(share), url: `${base}/s/${secret}/`, password: shown };
+    return { ...this.row(share), url: `${base}/s/${secret}/`, ...(shown ? { password: shown } : {}) };
   }
 
   /**
@@ -318,6 +348,7 @@ export class ShareHub {
       control: share.request.control,
       expiresAt: new Date(share.expiresAt).toISOString(),
       viewers: share.viewers.size,
+      auth: share.auth,
     };
   }
 
@@ -429,7 +460,8 @@ export class ShareHub {
           if (typeof address === 'object' && address) this.stranded.set(address.port, listener);
           this.pruneStranded();
         },
-      );
+      )
+      .then(() => this.checkIdle());
     return this.closingRoute;
   }
 
@@ -487,6 +519,7 @@ export class ShareHub {
   }
 
   private signedIn(share: Share, request: IncomingMessage): boolean {
+    if (share.passwordDigest === null) return true;
     const session = cookieOf(request);
     return session !== null && TOKEN.test(session) && share.sessions.has(digest(session).toString('hex'));
   }
@@ -523,7 +556,7 @@ export class ShareHub {
       }
       return this.respond(response, 200, loginPage(nonce, null), nonce);
     }
-    if (rest !== 'login' || request.method !== 'POST') {
+    if (rest !== 'login' || request.method !== 'POST' || share.passwordDigest === null) {
       request.resume();
       return this.respond(response, 404, endedPage(nonce), nonce);
     }
@@ -541,7 +574,7 @@ export class ShareHub {
   }
 
   private login(share: Share, request: IncomingMessage, response: ServerResponse, body: string, nonce: string): void {
-    if (share.ended) return this.respond(response, 404, endedPage(nonce), nonce);
+    if (share.ended || !share.passwordDigest) return this.respond(response, 404, endedPage(nonce), nonce);
     const now = Date.now();
     share.failures = share.failures.filter((at) => now - at < this.limits.failureWindowMs);
     if (share.failures.length >= this.limits.maxFailures) {
