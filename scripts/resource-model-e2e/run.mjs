@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { derivedDeviceCap } from './analysis.mjs';
 import { UsageError, parseArgs } from './args.mjs';
@@ -107,6 +107,16 @@ function ensureDir(ctx, dir) {
 
 const inside = (path, root) => path === root || path.startsWith(`${root}/`);
 
+function physical(path) {
+  let current = resolve(path);
+  const tail = [];
+  while (!existsSync(current)) {
+    tail.unshift(basename(current));
+    current = dirname(current);
+  }
+  return join(realpathSync(current), ...tail);
+}
+
 function realStimRoots() {
   const realStim = join(homedir(), '.stim');
   return [realStim, ...(existsSync(realStim) ? [realpathSync(realStim)] : [])];
@@ -115,7 +125,7 @@ function realStimRoots() {
 function guardPaths(ctx) {
   const guarded = [ctx.homeDir, ctx.workDir, ctx.out, ctx.home, ctx.ballastDir];
   for (const candidate of guarded) {
-    if (realStimRoots().some((root) => inside(resolve(candidate), root))) {
+    if (realStimRoots().some((root) => inside(resolve(candidate), root) || inside(physical(candidate), root))) {
       throw new UsageError(
         `${candidate} is inside the real stim home ${join(homedir(), '.stim')}; the harness only runs under a private home it creates`,
       );
