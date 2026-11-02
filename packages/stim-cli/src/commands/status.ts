@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
-import { daemonLine, daemonStatus } from '../daemon/status.ts';
+import { daemonLine, daemonStatus, waitingLines } from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -204,6 +204,7 @@ function renderStatus(
   }
 
   out.push(chalk.dim(daemonLine(daemon)));
+  out.push(...waitingLines(daemon));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
@@ -241,6 +242,14 @@ function renderStatus(
       out.push(
         chalk.dim(
           `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; \`stim revive\` resumes it`,
+        ),
+      );
+    }
+    if (state.dormantStage) {
+      const { at, deletedDevices, archived: logsArchived } = state.dormantStage;
+      out.push(
+        chalk.dim(
+          `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${logsArchived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`,
         ),
       );
     }

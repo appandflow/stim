@@ -5,6 +5,7 @@ import type { Finding } from '../diagnostics/doctor.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
 import { loadConfig } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
+import { listWaiting } from '../engine/wait-queue.ts';
 import { daemonMode } from './client.ts';
 
 /** The daemon's mode, whether it runs, and its last tick. */
@@ -20,11 +21,14 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     unresolved = { path: daemonClaimRoot(), reason: error instanceof Error ? error.message : String(error) };
   }
   const snapshot = readDaemonSnapshot();
+  const waiting = listWaiting();
   return {
     mode,
     running: holder ? { pid: holder.owner.pid, since: holder.startedAt } : null,
     lastTickAt: snapshot?.tickAt ?? null,
     intervalMs: snapshot?.intervalMs ?? null,
+    ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
+    ...(waiting.length ? { waiting } : {}),
     ...(unresolved
       ? {
           claim: {
@@ -49,9 +53,20 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`
     : 'no tick yet';
   const label = `Daemon (${status.mode === 'report' ? 'report only' : status.mode})`;
+  const pressure = status.pressure
+    ? `; pressure ${status.pressure.level}${status.pressure.reasons.length ? ` (${status.pressure.reasons.join('; ')})` : ''}`
+    : '';
   return status.running
-    ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${claim}`
-    : `${label}: not running, ${tick}; start, ios, android, web, macos and revive start it${claim}`;
+    ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
+    : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+}
+
+/** One line per run waiting for a build slot or a device boot, in arrival order per resource. */
+export function waitingLines(status: DaemonStatus, now: number = Date.now()): string[] {
+  return (status.waiting ?? []).map(
+    (waiter) =>
+      `Waiting for ${waiter.resource === 'build' ? 'a build slot' : 'a device boot'}: #${waiter.position} ${waiter.label}${waiter.platform ? ` (${waiter.platform})` : ''}, ${formatLongDuration(Math.max(0, now - Date.parse(waiter.since)))}`,
+  );
 }
 
 /** The workspaces whose dev server runs, so a daemon should be deciding their idle stop. */

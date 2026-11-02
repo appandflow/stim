@@ -124,22 +124,30 @@ function send(op: string): void {
   socket.once('connect', () => socket.end(`${JSON.stringify({ op })}\n`));
 }
 
-/** Tells a live daemon that this process released a build slot, so it wakes the oldest run waiting for one. */
-export function notifyBuildSlotReleased(): void {
-  send('slot.released');
+export type DaemonResource = 'build' | 'boot';
+
+const OPS: Record<DaemonResource, { wait: string; released: string; changed: string; what: string }> = {
+  build: { wait: 'slot.wait', released: 'slot.released', changed: 'slot.changed', what: 'build slot' },
+  boot: { wait: 'boot.wait', released: 'boot.released', changed: 'boot.changed', what: 'device boot' },
+};
+
+/** Tells a live daemon that this process released a build slot or finished a boot, so it wakes the oldest waiter. */
+export function notifyReleased(resource: DaemonResource): void {
+  send(OPS[resource].released);
 }
 
-export interface BuildSlotWaiter {
+export interface DaemonWaiter {
   wait(ms: number, signal?: AbortSignal): Promise<void>;
   close(): void;
 }
 
 /**
- * Subscribes once to the daemon's build-slot releases for one acquisition, so the oldest waiting build retries as
- * soon as a slot frees instead of on its next poll; a release that arrives while it is trying counts for its next
- * wait. Without a reachable daemon each wait is a plain sleep.
+ * Subscribes once to the daemon's releases of `resource` for one acquisition, so the oldest waiting run retries as
+ * soon as one frees instead of on its next poll; a release that arrives while it is trying counts for its next wait.
+ * Without a reachable daemon each wait is a plain sleep.
  */
-export function buildSlotWaiter(): BuildSlotWaiter {
+export function daemonWaiter(resource: DaemonResource): DaemonWaiter {
+  const ops = OPS[resource];
   let socket: Socket | null = null;
   let released = false;
   let wake: (() => void) | null = null;
@@ -148,9 +156,9 @@ export function buildSlotWaiter(): BuildSlotWaiter {
     const opened = connect(daemonSocket());
     socket = opened;
     opened.setEncoding('utf8');
-    opened.once('connect', () => opened.write(`${JSON.stringify({ op: 'slot.wait' })}\n`));
+    opened.once('connect', () => opened.write(`${JSON.stringify({ op: ops.wait })}\n`));
     opened.on('data', (chunk: string) => {
-      if (!chunk.includes('"slot.changed"')) return;
+      if (!chunk.includes(`"${ops.changed}"`)) return;
       released = true;
       wake?.();
     });
@@ -171,7 +179,7 @@ export function buildSlotWaiter(): BuildSlotWaiter {
       signal?.addEventListener('abort', abort, { once: true });
       wake = abort;
       try {
-        await cancellableSleep(ms, { signal: controller.signal, what: 'build slot' });
+        await cancellableSleep(ms, { signal: controller.signal, what: ops.what });
       } catch (error) {
         if (signal?.aborted || !released) throw error;
       } finally {
@@ -185,4 +193,41 @@ export function buildSlotWaiter(): BuildSlotWaiter {
       socket = null;
     },
   };
+}
+
+const TICK_REPLY_TIMEOUT_MS = 10 * 60_000;
+const START_WAIT_MS = 3000;
+
+/**
+ * Asks this home's daemon for a tick now and waits for it to finish, waiting briefly for a daemon this command just
+ * started. False when no daemon runs, so the caller runs the passes itself.
+ */
+export async function requestDaemonTick(env: NodeJS.ProcessEnv = process.env, signal?: AbortSignal): Promise<boolean> {
+  if (daemonMode(env) === 'off') return false;
+  for (let waited = 0; !daemonLive(); waited += 100) {
+    if (waited >= START_WAIT_MS) return false;
+    await cancellableSleep(100, { signal, what: 'stim-daemon' });
+  }
+  return new Promise((resolve) => {
+    const socket = connect(daemonSocket());
+    let answered = false;
+    const finish = (ticked: boolean) => {
+      if (answered) return;
+      answered = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', abort);
+      socket.destroy();
+      resolve(ticked);
+    };
+    const abort = () => finish(true);
+    const timer = setTimeout(() => finish(true), TICK_REPLY_TIMEOUT_MS);
+    signal?.addEventListener('abort', abort, { once: true });
+    socket.setEncoding('utf8');
+    socket.once('error', () => finish(false));
+    socket.once('close', () => finish(answered));
+    socket.once('connect', () => socket.write(`${JSON.stringify({ op: 'tick' })}\n`));
+    socket.on('data', (chunk: string) => {
+      if (chunk.includes('"ticked"')) finish(true);
+    });
+  });
 }

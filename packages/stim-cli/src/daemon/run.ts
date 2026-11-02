@@ -31,7 +31,9 @@ import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { daemonMode } from './client.ts';
 import type { TickMeasurement } from './measure.ts';
+import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses } from './passes.ts';
+import { reclaimForBootWaiters } from './reclaim.ts';
 
 const TICK_MS = 60_000;
 const CLAIM_TRIES = 30;
@@ -41,6 +43,13 @@ const WAKE_GRACE_MS = 2000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
+type Resource = 'build' | 'boot';
+
+const RESOURCES: readonly Resource[] = ['build', 'boot'];
+const OPS: Record<Resource, { wait: string; waiting: string; released: string; changed: string }> = {
+  build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
+  boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
+};
 
 async function takeClaim(): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
@@ -152,8 +161,9 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     return;
   }
   const path = daemonSocket();
-  const waiters: Socket[] = [];
+  const waiters: Record<Resource, Socket[]> = { build: [], boot: [] };
   const wokenAt = new WeakMap<Socket, number>();
+  let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
   let lastContact = Date.now();
   let closing = false;
@@ -164,8 +174,18 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     interrupt?.();
   };
   const drop = (socket: Socket) => {
-    const at = waiters.indexOf(socket);
-    if (at >= 0) waiters.splice(at, 1);
+    for (const list of Object.values(waiters)) {
+      const at = list.indexOf(socket);
+      if (at >= 0) list.splice(at, 1);
+    }
+    tickReplies = tickReplies.filter((entry) => entry !== socket);
+  };
+  const wakeOldest = (resource: Resource) => {
+    const now = Date.now();
+    const next = waiters[resource].find((waiter) => now - (wokenAt.get(waiter) ?? 0) >= WAKE_GRACE_MS);
+    if (!next) return;
+    wokenAt.set(next, now);
+    next.write(`${JSON.stringify({ op: OPS[resource].changed })}\n`);
   };
   const server = createServer((socket) => {
     lastContact = Date.now();
@@ -189,20 +209,25 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
         lastContact = Date.now();
         if (op === 'hello') socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
         else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
-        else if (op === 'slot.wait') {
-          if (!waiters.includes(socket)) waiters.push(socket);
-          socket.write(`${JSON.stringify({ op: 'slot.waiting', position: waiters.indexOf(socket) + 1 })}\n`);
+        else if (op === 'tick') {
+          if (!tickReplies.includes(socket)) tickReplies.push(socket);
           requestTick();
-        } else if (op === 'slot.released') {
-          socket.end();
-          const now = Date.now();
-          const next = waiters.find((waiter) => now - (wokenAt.get(waiter) ?? 0) >= WAKE_GRACE_MS);
-          if (next) {
-            wokenAt.set(next, now);
-            next.write(`${JSON.stringify({ op: 'slot.changed' })}\n`);
+        } else {
+          const resource = RESOURCES.find((entry) => op === OPS[entry].wait || op === OPS[entry].released);
+          if (!resource) {
+            socket.destroy();
+            return;
+          }
+          if (op === OPS[resource].wait) {
+            const list = waiters[resource];
+            if (!list.includes(socket)) list.push(socket);
+            socket.write(`${JSON.stringify({ op: OPS[resource].waiting, position: list.indexOf(socket) + 1 })}\n`);
+          } else {
+            socket.end();
+            wakeOldest(resource);
           }
           requestTick();
-        } else socket.destroy();
+        }
       }
     });
   });
@@ -213,7 +238,7 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     closing = true;
     interrupt?.();
     server.close();
-    for (const waiter of waiters) waiter.destroy();
+    for (const waiter of [...waiters.build, ...waiters.boot, ...tickReplies]) waiter.destroy();
     if (bound) rmSync(path, { force: true });
     releaseClaim(claim);
     for (const signal of SIGNALS) process.off(signal, onSignal);
@@ -254,10 +279,26 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     }
     const tickStarted = performance.now();
     const contactSince = lastContact;
+    const replying = tickReplies;
+    tickReplies = [];
     let alive: string | null;
     try {
-      const { config, now, measured, workspaces } = await runHomePasses({ act: mode === 'on', trigger: 'daemon', log });
-      alive = waiters.length ? 'a build waits for a slot' : homeAlive(config, measured);
+      const { config, now, measured, workspaces, pressure, actions } = await runHomePasses({
+        act: mode === 'on',
+        trigger: 'daemon',
+        log,
+        memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
+      });
+      const reclaimed = await reclaimForBootWaiters({ devices: measured.devices, act: mode === 'on', log });
+      if (reclaimed) {
+        actions.push(reclaimed);
+        if (reclaimed.outcome === 'done') wakeOldest('boot');
+      }
+      const waiting = listWaiting();
+      alive =
+        waiters.build.length || waiters.boot.length || waiting.length
+          ? 'a run waits for a build slot or a device boot'
+          : homeAlive(config, measured);
       lastSnapshot = {
         version: 1,
         pid: process.pid,
@@ -268,9 +309,14 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
         intervalMs: tickMs,
         measurement: measured.measurement,
         workspaces,
+        pressure,
+        actions,
+        waiting,
       };
       writeSnapshot(lastSnapshot);
+      for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
     } catch (error) {
+      for (const socket of replying) socket.destroy();
       shutdown(
         `the tick failed, so each supervisor's own idle timer takes over: ${error instanceof Error ? error.message : String(error)}`,
         'error',

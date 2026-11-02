@@ -26,6 +26,7 @@ import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { clearCorruptCompilationCache, COMPILATION_CACHE_CORRUPT } from '../../cache/compilation-cache-corruption.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
+import { BuildSlotCapacityError } from '../../engine/build-slots.ts';
 import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import type { EasBuildResult } from '../../engine/eas-build.ts';
@@ -472,7 +473,7 @@ export async function acquireIosArtifact(
     } catch (e) {
       throwIfCancelled(signal, 'iOS build');
       requireLocalBuild(buildMachine);
-      const refusal = claimFailure(e, 'stim ios');
+      const refusal = e instanceof BuildSlotCapacityError ? e : claimFailure(e, 'stim ios');
       if (refusal) {
         fail({ code: refusal.code, message: refusal.message, remedy: refusal.remedy, build: buildFailure });
       }
