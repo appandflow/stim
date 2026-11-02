@@ -51,6 +51,11 @@ export async function resolveExposure(
   const configuredPort = valid('share.port', settings.port);
   const port = typeof configuredPort === 'number' ? configuredPort : SHARE_DEFAULT_PORT;
   const publicUrl = typeof url === 'string' ? url : null;
+  if (publicUrl !== null && !URL.canParse(publicUrl)) {
+    throw new Error(
+      `share.publicUrl is ${JSON.stringify(publicUrl)}, which is not a valid address. Fix it with stim settings set share.publicUrl <value>.`,
+    );
+  }
   const mode = choice === 'auto' ? ((await loggedIn()) ? 'tailscale' : 'proxy') : choice;
   return { mode, port, publicUrl: publicUrl?.replace(/\/+$/, '') ?? null };
 }

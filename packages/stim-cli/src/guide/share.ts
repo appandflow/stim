@@ -71,7 +71,7 @@ CUSTOM DOMAIN (PROXY MODE)
 Without Tailscale, for example on a cloud VM with Caddy, serve the share
 listener through your own reverse proxy:
 
-  stim settings set share.exposure proxy      # auto picks proxy when tailscale is absent
+  stim settings set share.exposure proxy      # auto picks proxy only when tailscale is absent or logged out
   stim settings set share.publicUrl https://demo.example.com
   stim settings set share.port 7790           # the default; the proxy names this port
 

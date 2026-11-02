@@ -53,6 +53,9 @@ describe('resolving how shares are exposed', () => {
     await expect(resolveExposure(settings({ publicUrl: 'http://demo.example.com' }), async () => true)).rejects.toThrow(
       /share\.publicUrl.*stim settings set share\.publicUrl/,
     );
+    await expect(
+      resolveExposure(settings({ publicUrl: 'https://demo.example.com:abc' }), async () => true),
+    ).rejects.toThrow(/share\.publicUrl.*not a valid address/);
     await expect(resolveExposure(settings({ exposure: 'funnel' }), async () => true)).rejects.toThrow(
       /share\.exposure/,
     );
