@@ -1224,7 +1224,6 @@ export async function finishIosRun({
     launchedAt,
     artifact: appPath
       ? {
-          appPath,
           configuration: configuration ?? 'Debug',
           fingerprint: storeHash,
           cacheKey: storeKey,

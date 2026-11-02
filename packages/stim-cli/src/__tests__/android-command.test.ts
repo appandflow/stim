@@ -40,7 +40,7 @@ import {
   parseActiveBuild,
   startBuildProgress,
 } from '../engine/build-progress.ts';
-import type { ensureOwnedDevice } from '../engine/device.ts';
+import { ensureOwnedDevice } from '../engine/device.ts';
 import { EventEmitter, once } from 'node:events';
 import { type ChildProcess, spawn } from 'node:child_process';
 import {
@@ -4802,6 +4802,26 @@ describe('a recorded build', () => {
     expect(h.calls.install[0]?.apkPath).toBe(recorded);
   });
 
+  test('bound to an emulator the slot no longer records, refuses with STIM_DEVICE_LOST and installs nothing', async () => {
+    setDevice(root, 'android', { avdName: 'stim-app-412', owned: true });
+    const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
+    mkdirSync(dirname(recorded), { recursive: true });
+    writeFileSync(recorded, 'apk');
+    const cache = { fingerprint: 'f1', key: 'f1-debug', hit: 'local' as const };
+    const h = harness({
+      recordedBuild: { appPath: recorded, bundleId: 'dev.fixture', builtAt: '', cache },
+      expectedDevice: 'stim-other',
+      ensureDevice: ensureOwnedDevice,
+      ensureDeviceBooted: never('a boot'),
+      build: never('the build'),
+    });
+    const result = await h.run();
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatchObject({ code: 'STIM_DEVICE_LOST', remedy: expect.stringContaining('stim android') });
+    expect(h.calls.install).toHaveLength(0);
+    expect(getProject(root)?.platforms?.android).toMatchObject({ avdName: 'stim-app-412' });
+  });
+
   test('that names its cache entry is recorded as a hit of that entry, not as a compile', async () => {
     const recorded = join(root, 'artifacts', 'android-abc', 'app.apk');
     mkdirSync(dirname(recorded), { recursive: true });
@@ -4819,7 +4839,6 @@ describe('a recorded build', () => {
       fingerprint: 'f1',
     });
     expect(readWorkspaceLaunches(root).android?.artifact).toEqual({
-      appPath: recorded,
       configuration: 'debug',
       fingerprint: 'f1',
       cacheKey: 'f1-debug',

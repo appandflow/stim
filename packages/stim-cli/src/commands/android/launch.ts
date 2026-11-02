@@ -696,7 +696,6 @@ function launchedIdentity(
     ...(apkPath
       ? {
           artifact: {
-            appPath: apkPath,
             configuration: variant ?? 'debug',
             fingerprint: record.fingerprint ?? null,
             cacheKey: record.cacheKey ?? null,

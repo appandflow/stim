@@ -1649,6 +1649,41 @@ describe('ensureOwnedDevice: android', () => {
     };
   }
 
+  test.each<[string, string, boolean]>([
+    ['the slot now records another emulator', 'stim-parked', true],
+    ['the recorded emulator is gone', 'stim-app', false],
+  ])(
+    'a run bound to one emulator refuses instead of creating or adopting one when %s',
+    async (_name, recorded, stored) => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'android', { avdName: recorded, owned: true });
+        if (stored) {
+          const avdRoot = process.env.ANDROID_AVD_HOME!;
+          mkdirSync(join(avdRoot, 'stim-app.avd'), { recursive: true });
+          writeFileSync(join(avdRoot, 'stim-app.ini'), `path=${join(avdRoot, 'stim-app.avd')}\n`);
+        }
+        const { run, spawn, exec } = androidExecutor({ avds: stored ? ['stim-app', recorded] : [] });
+        setExecutor(exec);
+        await expect(
+          ensureOwnedDevice({
+            platform: 'android',
+            project: getProject(root),
+            projectPath: root,
+            label: 'app',
+            settings: {},
+            flags: { expectedDevice: 'stim-app' },
+          }),
+        ).rejects.toMatchObject({ code: 'STIM_DEVICE_LOST' });
+        expect(run.some((cmd) => cmd.includes('create'))).toBe(false);
+        expect(spawn).toEqual([]);
+        expect(getProject(root)?.platforms?.android).toMatchObject({ avdName: recorded });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   test('a repeated named slot on its running owned AVD keeps systemImage, so one ABI and the same cache key', async () => {
     const root = projectDir();
     try {

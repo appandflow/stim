@@ -9,7 +9,6 @@ import { registerRevive, reviveLines, runRevive, type ReviveDeps } from '../comm
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 
-const PRODUCT = '/derived/Build/Products/Debug-iphonesimulator/App.app';
 const CACHED = '/stim/build-cache/ios/f1-debug-sim-arm64/App.app';
 
 const iosLaunch: WorkspaceLaunchRecord = {
@@ -19,7 +18,6 @@ const iosLaunch: WorkspaceLaunchRecord = {
   release: false,
   launchedAt: '2026-11-01T10:00:00.000Z',
   artifact: {
-    appPath: PRODUCT,
     configuration: 'Debug',
     fingerprint: 'f1',
     cacheKey: 'f1-debug-sim-arm64',
@@ -108,7 +106,7 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
   ]);
 });
 
-test('a later build that overwrote the shared product path does not change what revive installs', async () => {
+test('a later build does not change what revive installs, and an evicted cache entry refuses', async () => {
   const cache = mkdtempSync(join(tmpdir(), 'stim-test-'));
   try {
     mkdirSync(join(cache, 'ios', 'f1-debug-sim-arm64', 'App.app'), { recursive: true });
@@ -207,8 +205,8 @@ test.each<[string, string, Partial<ReviveDeps>, string]>([
   },
 );
 
-test.each<[string, Partial<ReviveDeps>]>([
-  ['the cache entry the launch installed is gone', { resolveCachedApp: () => null }],
+test.each<[string, Partial<ReviveDeps>, string]>([
+  ['the cache entry the launch installed is gone', { resolveCachedApp: () => null }, 'stim ios --slot tablet'],
   [
     'the launch installed an app that was never cached',
     {
@@ -216,12 +214,19 @@ test.each<[string, Partial<ReviveDeps>]>([
         'ios:tablet': { ...iosLaunch, artifact: { ...iosLaunch.artifact!, fingerprint: null, cacheKey: null } },
       }),
     },
+    'stim ios --slot tablet',
   ],
   [
     'the launch records no installed app',
     { readLaunches: () => ({ 'ios:tablet': { ...iosLaunch, artifact: undefined } }) },
+    'stim ios --slot tablet',
   ],
-])('refuses with STIM_NO_RECORDED_BUILD naming the platform command when %s', async (_name, overrides) => {
+  [
+    'an older Stim recorded the emulator launch without its AVD or app',
+    { readLaunches: () => ({ 'android:tablet': { ...iosLaunch, deviceId: 'emulator-5554', artifact: undefined } }) },
+    'stim android --slot tablet',
+  ],
+])('refuses with STIM_NO_RECORDED_BUILD naming the platform command when %s', async (_name, overrides, command) => {
   const { deps, calls } = harness({
     readLaunches: () => ({ 'ios:tablet': iosLaunch }),
     getProject: () => ({ ...project, deviceSlots: { tablet: project.platforms! } }),
@@ -230,7 +235,7 @@ test.each<[string, Partial<ReviveDeps>]>([
   const result = await runRevive({ root: '/project', note: () => {}, deps });
   assert(!result.ok);
   expect(result.error.code).toBe('STIM_NO_RECORDED_BUILD');
-  expect(result.error.remedy).toContain('`stim ios --slot tablet`');
+  expect(result.error.remedy).toContain(`\`${command}\``);
   expect(calls).toEqual([]);
 });
 

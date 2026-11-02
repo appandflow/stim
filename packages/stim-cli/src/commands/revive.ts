@@ -126,6 +126,14 @@ async function inspectTarget(
       `${why}, so revive cannot bring back the ${platform === 'ios' ? 'simulator' : 'emulator'} the app last ran on.`,
       `Run \`${run}\`; it boots or creates this workspace's owned device and launches the app.`,
     );
+  const entry = launchedCacheEntry(record);
+  if (!entry) {
+    return failure(
+      'STIM_NO_RECORDED_BUILD',
+      `The ${platform} launch of ${record.appId} names no build cache entry, so revive cannot restore the exact app it installed.`,
+      `Run \`${run}\` to build or restore it from the cache and launch it.`,
+    );
+  }
   let expectedDevice: string;
   let deviceId: string;
   let deviceName: string;
@@ -154,14 +162,6 @@ async function inspectTarget(
     deviceId = resolved.serial ?? record.avdName;
     deviceName = record.avdName;
     booted = Boolean(resolved.serial);
-  }
-  const entry = launchedCacheEntry(record);
-  if (!entry) {
-    return failure(
-      'STIM_NO_RECORDED_BUILD',
-      `The ${platform} launch of ${record.appId} names no build cache entry, so revive cannot restore the exact app it installed.`,
-      `Run \`${run}\` to build or restore it from the cache and launch it.`,
-    );
   }
   const appPath = d.resolveCachedApp(platform, entry.key);
   if (!appPath) {
