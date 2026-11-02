@@ -2037,6 +2037,68 @@ appends a `build` record to the [action log](#actions) with the repository as
 `workspace`. The worker root keeps growing with each repository; delete a
 client's directory to reclaim it.
 
+## Web shares
+
+`stim share` asks this server for a public, password-protected link to one
+workspace device with three methods that only the local Unix socket may call
+(any network connection gets `forbidden`), without the Desktop bootstrap proof:
+
+- `share.start` takes `workspace`, `platform` (`ios` or `android`), `slot`,
+  `physical`, `control`, `expiresMinutes` (1 to 480, 60 by default), and
+  either `password` (8 to 128 characters, kept only as its digest) or
+  `passwordless: true` (no login; the URL token alone admits a viewer); with
+  neither, the server generates a password. It returns `auth` (`generated`,
+  `set` or `none`), and `password` only when it generated one, in
+  `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, url, password }`.
+  It refuses a device the workspace does not own or lease, a hosted device,
+  `control` on a physical iPhone, and `password` with `passwordless`.
+- `share.stop` takes `workspace` and ends its shares, returning `stopped`.
+- `share.list` returns `shares`, the same rows without `url` or `password`.
+
+`stim-server --share [--port <n>]` is the server `stim share` starts when none
+answers on the local socket: loopback only, without a Desktop bootstrap. It
+holds an exclusive ownership claim at `$STIM_HOME/server/share-server` with its
+port for as long as it runs, so `stim share stop` stops only a server it
+started, and it exits once its last share has ended and its route is removed,
+after a start it refused leaves no share, or when no share starts within 2
+minutes, but never while a route it could not remove is still public. Every
+stim-server retries removing such a route every 30 seconds once no share is
+live or starting. When its Stim home does not answer at
+startup, it does not wait: it logs why and exits, so `stim share` refuses with
+`STIM_SERVER_NOT_RUNNING` and the log path. Viewers see only generic messages
+("This share has ended.", "Control is not available right now."); the reasons
+go to the server log.
+
+Shares live in memory only and end at their expiry, on `share.stop`, when the
+device stops or changes in status, when its frames fail, and when the server stops. The server serves
+them on one listener on a loopback port of its own, not on this protocol, and
+publishes it with `tailscale funnel --bg --yes --https=<port>
+http://127.0.0.1:<listener>` on the first Funnel port the node's
+`funnel-ports` capability allows that nothing in the serve config uses. It
+holds an exclusive ownership claim at `$STIM_HOME/server/share-route` with
+the port and target while the route exists, removes the route with
+`tailscale funnel --https=<port> off` when the last share ends, before it
+closes the listener, and on start
+removes a route a crashed server left, in each case only while that port holds
+exactly the recorded route. `stim-server setup` and `service` never enable
+Funnel.
+
+Per share the listener serves `GET /s/<token>/` (a password form, or the viewer
+once signed in), `POST /s/<token>/login` and the WebSocket `/s/<token>/ws`.
+Everything else is 404. The token is 32 random bytes; the password 16
+characters from a 31-letter alphabet, kept as a SHA-256 digest and compared
+with `timingSafeEqual`. Ten failures in ten minutes lock the share's login for
+the rest of that window. A correct password sets `stim_share`, `HttpOnly;
+Secure; SameSite=Strict`, scoped to the share's path, until it expires. The
+WebSocket needs that cookie and an `Origin` matching the host, else the upgrade
+is refused before any capture starts; at most 5 viewers per share. Each viewer
+subscribes to the device's frames as a JPEG subscriber at 10 frames a second
+and 1280 pixels, as binary messages; the share never asks the recorder to
+record. With `control`, `touch`, `text` and `button` messages from a viewer go
+through `parseInput` and the control hub as the `Web share` controller, which
+begins one control session without takeover on the first input and ends it
+when the last viewer leaves.
+
 ## Protocol
 
 JSON messages over a WebSocket. On a network connection they follow the Noise
@@ -2550,9 +2612,11 @@ waiting records the server ends that subscription with `slow-client`.
 The server records owned simulators, emulators and the Stim-owned Chrome page
 so clients can replay what happened while nobody watched. It records a device
 while `stim status` shows an automation tool driving it (`activity.state` is
-`driven`), or while a client has a `frames.subscribe` subscription to it. It
-records nothing else, holds no device awake and changes no device setting. To
-see drivers, it reads the status watch the server runs for as long as it
+`driven`), or while a client has a `frames.subscribe` subscription to it. A
+device a web share controls, while that share's `stim device lock` lease is
+its only driver, is not recorded, and a web share viewer is not a
+subscription here. It records nothing else, holds no device awake and changes
+no device setting. To see drivers, it reads the status watch the server runs for as long as it
 runs, shared with status subscribers.
 
 Recording goes through the device's `stim-frames` helper, shared with live

@@ -19,6 +19,7 @@ const sidebars: SidebarsConfig = {
         'phone-app',
         'dev-server-and-logs',
         'web',
+        'share',
         'macos',
       ],
     },

@@ -211,6 +211,10 @@ import {
 import type { DesktopPlanRefusal, ServeRoute } from '@stim-cli/core/protocol';
 import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from './video.ts';
 import { DeviceViewers } from './viewers.ts';
+import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { ShareRoute, tailscaleFunnel } from './share-route.ts';
+
+const SHARE_SERVER_GRACE_MS = 2 * 60_000;
 
 const INPUT_METHODS = [
   'input.touch',
@@ -251,6 +255,11 @@ export interface ServerOptions {
   /** Whether this machine can host simulators and apps for other machines; only a Mac can. Defaults to running on macOS. */
   hostsDevices?: boolean;
   port: number;
+  /**
+   * Set for a server `stim share` started: `idle` runs once its last share has ended, or when no share starts within
+   * `graceMs` (two minutes by default) of the server being ready.
+   */
+  shareServer?: { idle: () => void; graceMs?: number };
   /** The Unix socket for this machine's own user; defaults to core's serverLocalSocket(), null for none. */
   localSocket?: string | null;
   stimCli: string;
@@ -1213,6 +1222,44 @@ function registeredWorkspace(workspace: unknown): ResolvedWorkspace {
   return { dir };
 }
 
+/** The share hub's recording grace from the control lease's `stim device lock --for` duration, such as `2m`. */
+function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
+  const [, amount, unit] = /^(\d+)(s|m|h)$/.exec(leaseFor) ?? [];
+  if (amount === undefined || unit === undefined) return {};
+  return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
+}
+
+/** Validates `share.start` params; returns why they are refused. */
+function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
+  if (!isJsonObject(params)) return 'params must be an object.';
+  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, ...rest } = params;
+  if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
+  if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
+  if (platform !== 'ios' && platform !== 'android') return 'params.platform must be ios or android.';
+  if (slot !== undefined && (typeof slot !== 'string' || !SLOT_NAME.test(slot)))
+    return 'params.slot must be 1-64 letters, digits, underscores or hyphens.';
+  if (physical !== undefined && typeof physical !== 'boolean') return 'params.physical must be true or false.';
+  if (control !== undefined && typeof control !== 'boolean') return 'params.control must be true or false.';
+  if (password !== undefined && (typeof password !== 'string' || password.length < 8 || password.length > 128))
+    return 'params.password must be 8 to 128 characters.';
+  if (passwordless !== undefined && typeof passwordless !== 'boolean')
+    return 'params.passwordless must be true or false.';
+  if (passwordless && password !== undefined) return 'A share takes a password or passwordless, not both.';
+  const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
+  if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
+    return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
+  return {
+    workspace,
+    platform,
+    ...(slot && slot !== 'default' ? { slot } : {}),
+    ...(physical ? { physical } : {}),
+    control: control === true,
+    expiresMinutes: minutes,
+    ...(typeof password === 'string' ? { password } : {}),
+    ...(passwordless ? { passwordless } : {}),
+  };
+}
+
 interface Replayable {
   seek: (at: number, rate: FramesSeekParams['rate']) => number | null;
   /** Returns why the subscription cannot go live, or null once it is live. */
@@ -1412,6 +1459,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   let startupProbe: ReturnType<typeof probeDirectories> | null = null;
   let startupRetry: NodeJS.Timeout | null = null;
   let setupPruneTimer: NodeJS.Timeout | null = null;
+  let shareServerGrace: NodeJS.Timeout | null = null;
   const running = new Set<() => Promise<void>>();
   const peerCommands = new Map<string, number>();
   const requestLimits: RequestLimits = { ...REQUEST_LIMITS, ...options.requestLimits };
@@ -1656,6 +1704,26 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     adbEmulators,
   });
   const hostedViews = new HostedViews(hostedDevices, control, helperEnv, frameHelper);
+  const funnel = tailscaleFunnel(
+    () => tailscale.snapshot().binary,
+    options.env,
+    () => tailscale.rawStatus(),
+  );
+  const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
+  const shares = new ShareHub({
+    frames,
+    control,
+    subscribeStatus: (listener) =>
+      statusFeed.subscribe({
+        item: (payload) => listener.item(payload as unknown as StatusPayload),
+        failed: listener.failed,
+      }),
+    route: shareRoute,
+    lookup: { adbEmulators },
+    limits: leaseGrace(controlLimits.leaseFor),
+    recordingChanged: () => recorder?.refresh(),
+    ...(options.shareServer ? { idle: options.shareServer.idle } : {}),
+  });
   const ownStimBuild = stimBuildDigest(dirname(options.stimCli));
   const machineUpdates = new MachineUpdates({
     version: options.serverVersion,
@@ -1784,6 +1852,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         frames,
         subscribeStatus: (listener) => statusFeed.subscribe(listener),
         limits: options.recordLimits,
+        unrecordedTargets: () => shares.unrecordedTargets(),
       });
     }
   };
@@ -4640,6 +4709,37 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       return send(socket, 'error' in answer ? { id, error: answer.error } : { id, result: answer.result });
     }
 
+    async function shareMethod(
+      id: RequestId,
+      method: 'share.start' | 'share.stop' | 'share.list',
+      params: unknown,
+    ): Promise<void> {
+      if (!local) return error(id, 'forbidden', `${method} works only on this machine's local Unix socket.`);
+      if (method === 'share.list') {
+        if (params !== undefined && (!isJsonObject(params) || Object.keys(params).length))
+          return error(id, 'bad-request', 'share.list takes no parameters.');
+        return send(socket, { id, result: { shares: shares.list() } });
+      }
+      if (method === 'share.stop') {
+        if (
+          !isJsonObject(params) ||
+          typeof params.workspace !== 'string' ||
+          Object.keys(params).some((key) => key !== 'workspace')
+        )
+          return error(id, 'bad-request', 'share.stop needs params.workspace.');
+        return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+      }
+      const parsed = parseShareStart(params);
+      if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
+      const resolved = registeredWorkspace(parsed.workspace);
+      if ('code' in resolved) return error(id, resolved.code, resolved.message);
+      if (viewHostedPlacement(resolved.dir, parsed.platform, parsed.slot, parsed.physical)) {
+        return error(id, 'action-failed', 'A device hosted on another machine cannot be shared from here.');
+      }
+      const started = await shares.start({ ...parsed, workspace: resolved.dir });
+      return send(socket, 'code' in started ? { id, error: started } : { id, result: started });
+    }
+
     /**
      * Admits this local-socket connection to the Desktop-only methods when it proves the bundled Desktop's private key
      * against this connection's challenge. The challenge answers one attempt, so a replayed or late proof cannot win.
@@ -4695,6 +4795,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       const approvedMachine = machineMethod(id, message.method, message.params, device);
       if (approvedMachine) return approvedMachine;
+      if (message.method === 'share.start' || message.method === 'share.stop' || message.method === 'share.list') {
+        return shareMethod(id, message.method, message.params);
+      }
       const desktop = desktopMethod(id, message.method, message.params, device);
       if (desktop) return desktop;
       if (!device.capabilities.includes('read')) {
@@ -5043,6 +5146,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     desktopReports.close();
     if (startupRetry) clearTimeout(startupRetry);
     if (setupPruneTimer) clearInterval(setupPruneTimer);
+    if (shareServerGrace) clearTimeout(shareServerGrace);
     startupProbe?.cancel();
     watcher?.close();
     if (revocationPoll) clearInterval(revocationPoll);
@@ -5055,6 +5159,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       push.close();
       helperAbort.abort();
       sampler.stop();
+      await settle(shares.close());
       await settle(control.close());
       await settle(agentDrivers.close());
       await settle(hostedDevices.close());
@@ -5328,6 +5433,18 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
       startup = { state: 'ready' };
       pruneSetup();
+      if (options.shareServer && !shareServerGrace) {
+        const { idle, graceMs = SHARE_SERVER_GRACE_MS } = options.shareServer;
+        shareServerGrace = setTimeout(() => {
+          if (shares.isIdle()) idle();
+        }, graceMs);
+        shareServerGrace.unref?.();
+      }
+      void shareRoute
+        .recover()
+        .catch((failure: Error) =>
+          console.error(`stim-server: could not remove a web share route left behind: ${failure.message}`),
+        );
       setupPruneTimer ??= setInterval(pruneSetup, 60 * 60_000).unref();
       return settle(startup);
     }

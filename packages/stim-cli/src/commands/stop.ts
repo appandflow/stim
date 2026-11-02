@@ -1,3 +1,4 @@
+import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { debugLog } from '../debug-log.ts';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
@@ -313,7 +314,10 @@ function remoteEnded(entry: DeviceOutcomeEntry): boolean {
 type StopArgs = Parameters<typeof stopWorkspace>[0];
 
 export async function runStop(options: StopArgs & { slot?: string }): Promise<StopResult> {
-  if (options.slot === undefined) return stopWorkspace(options);
+  if (options.slot === undefined) {
+    await endWorkspaceShares(options.root);
+    return stopWorkspace(options);
+  }
   if (options.slot === WEB_SLOT) return stopBrowserOnly(options);
   const slot = validateDeviceSlot(options.slot);
   const root = options.root;

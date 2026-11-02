@@ -9,6 +9,7 @@ import lifecycle from './lifecycle.ts';
 import cleanup from './cleanup.ts';
 import settings from './settings.ts';
 import web from './web.ts';
+import share from './share.ts';
 import macos from './macos.ts';
 import tutorial from './tutorial.ts';
 
@@ -26,6 +27,7 @@ const TOPICS: Record<string, GuideTopic> = {
   cleanup,
   settings,
   web,
+  share,
   macos,
   tutorial,
 };
