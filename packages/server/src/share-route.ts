@@ -90,6 +90,10 @@ export async function recoverShareRoute(root: string, tool: FunnelTool): Promise
 export interface OpenedRoute {
   url: string;
   port: number;
+  /** Set when a reverse proxy, not Funnel, fronts the listener: `url` is then the only origin the frame socket accepts. */
+  proxied?: boolean;
+  /** Something the person sharing should read about how the link will work. */
+  warning?: string;
 }
 
 /**

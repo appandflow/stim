@@ -1656,7 +1656,10 @@ export interface WebShareStartParams {
 }
 
 export interface Methods {
-  'share.start': { params: WebShareStartParams; result: WebShareRow & { url: string; password?: string } };
+  'share.start': {
+    params: WebShareStartParams;
+    result: WebShareRow & { url: string; password?: string; warning?: string };
+  };
   'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };

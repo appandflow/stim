@@ -1342,6 +1342,19 @@ which overrides the file. Absent means 120. \`0\` removes a finished worktree at
 once. A value that is not a whole number 0 or more is warned about by \`gc\`,
 which then uses 120. See \`guide cleanup\` for what else keeps a worktree.
 
+WEB SHARE EXPOSURE
+Three machine settings choose how \`stim share\` is reached; \`guide share\` has the
+reverse proxy setup:
+  share.exposure   auto (default), tailscale or proxy. auto uses a Tailscale
+                   Funnel route when the tailscale command is installed and
+                   logged in, else proxy. proxy never runs tailscale serve or
+                   tailscale funnel
+  share.publicUrl  the https address your reverse proxy serves, optionally with
+                   a path prefix the proxy keeps, such as
+                   https://demo.example.com
+  share.port       the loopback port proxy mode binds (default 7790), so the
+                   proxy can name it
+
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the
 Stim-owned Chrome page while an automation tool drives them or a paired client

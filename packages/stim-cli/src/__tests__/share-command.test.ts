@@ -137,6 +137,14 @@ describe('stim share', () => {
     expect(deps.notes).toEqual([expect.stringMatching(/no password.*watch and control/)]);
   });
 
+  it('relays the server warning about a link that only works on this machine, and keeps it in the JSON payload', async () => {
+    const warning = 'Proxy mode has no share.publicUrl.';
+    const deps = fake([() => ({ result: { ...ROW, auth: 'none', url: 'http://127.0.0.1:7790/s/token/', warning } })]);
+    const result = await runShare('android', { password: false }, deps, '1.0.0');
+    expect(deps.notes).toContain(`Warning: ${warning}`);
+    expect(result).toMatchObject({ ok: true, output: { warning } });
+  });
+
   it('never stops a stim-server that stim share did not start', async () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     expect(await stopIdleShareServer('1.0.0')).toBeNull();

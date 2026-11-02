@@ -213,6 +213,7 @@ import { DEFAULT_VIDEO_LIMITS, videoPacket, VideoGate, type AccessUnit } from '.
 import { DeviceViewers } from './viewers.ts';
 import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
+import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -1711,6 +1712,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     () => tailscale.rawStatus(),
   );
   const shareRoute = new ShareRoute(join(serverDir(), 'share-route'), funnel);
+  const exposedRoute = new ExposedRoute(
+    shareRoute,
+    () => {
+      const share = loadConfig()?.share;
+      return { exposure: share?.exposure, publicUrl: share?.publicUrl, port: share?.port };
+    },
+    async () => tailscaleLoggedIn(await tailscale.rawStatus()),
+  );
   const shares = new ShareHub({
     frames,
     control,
@@ -1719,7 +1728,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         item: (payload) => listener.item(payload as unknown as StatusPayload),
         failed: listener.failed,
       }),
-    route: shareRoute,
+    route: exposedRoute,
     hosted: (host, request) => new HostedShareSource(hostConnections, host, request, auditSafely),
     lookup: { adbEmulators },
     limits: leaseGrace(controlLimits.leaseFor),

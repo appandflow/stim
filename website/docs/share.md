@@ -61,10 +61,15 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
   the background service runs is never stopped. Without a matching
   `@stim-cli/server`, `stim share` refuses with `STIM_SERVER_NOT_RUNNING` and
   the install command.
-- **Tailscale with Funnel.** The link is served through
-  [Tailscale Funnel](https://tailscale.com/kb/1223/funnel). A tailnet admin
-  must allow Funnel for this Mac in the tailnet policy; Stim never changes
-  tailnet settings. One of the Funnel ports the policy allows (443, 8443 or 10000) must be unused in `tailscale serve status`.
+- **A way to reach the listener from the internet**, chosen by
+  `share.exposure`:
+  - **Tailscale with Funnel.** The link is served through
+    [Tailscale Funnel](https://tailscale.com/kb/1223/funnel). A tailnet admin
+    must allow Funnel for this Mac in the tailnet policy; Stim never changes
+    tailnet settings. One of the Funnel ports the policy allows (443, 8443 or 10000) must be unused in `tailscale serve status`.
+  - **Your own reverse proxy and domain**, see [Custom domain](#custom-domain).
+  - `auto`, the default, uses Funnel when the `tailscale` command is installed
+    and logged in, and your proxy otherwise.
 - **A running device.** The workspace's owned simulator or emulator must be
   booted (run `stim ios` or `stim android` first), or, with `--device`, the
   physical device it leases. A physical iPhone is view only.
@@ -96,14 +101,61 @@ control, viewer count and expiry, never their link or password.
 
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 
+## Custom domain
+
+Without Tailscale, for example on a cloud VM that already runs Caddy, serve
+shares through your own reverse proxy and domain. Point the proxy at the
+loopback port the share listener binds, and tell Stim the public address:
+
+```bash
+stim settings set share.exposure proxy
+stim settings set share.publicUrl https://demo.example.com
+stim settings set share.port 7790
+```
+
+```text
+demo.example.com {
+	reverse_proxy 127.0.0.1:7790
+}
+```
+
+`share.exposure` is `auto` by default, which already picks proxy mode when the
+`tailscale` command is missing or logged out; set it to `proxy` to never use
+Tailscale, or to `tailscale` to always use Funnel. The three machine settings
+mean:
+
+| Setting           | Meaning                                                                                                                                                                                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `share.exposure`  | `auto` (default), `tailscale` or `proxy`.                                                                                                                                                |
+| `share.publicUrl` | The `https` origin your proxy serves, optionally with a path prefix. Links print under it. Without it, `stim share` prints a loopback link and warns that it works only on this machine. |
+| `share.port`      | The loopback port the listener binds in proxy mode (default 7790), so the proxy config can name it. A port in use refuses the share.                                                     |
+
+In proxy mode Stim never runs `tailscale serve` or `tailscale funnel`. The
+listener binds `127.0.0.1` only, so the proxy must run on the same machine.
+The password, cookie, lockout, viewer limit and capture-only-while-watched
+behavior are the same as with Funnel. The proxy has to:
+
+- end TLS, because the session cookie is `Secure`;
+- forward WebSocket upgrades (Caddy's `reverse_proxy` does; nginx needs the
+  `Upgrade` and `Connection` headers);
+- leave a path prefix in place if `share.publicUrl` has one, such as
+  `https://example.com/stim`. In Caddy use `handle /stim/*`, not
+  `handle_path`.
+
+It does not need to preserve the `Host` header or send `X-Forwarded-Host`: the
+frame socket accepts exactly the origin of `share.publicUrl` and ignores
+`Host` and `X-Forwarded-*`, so a request that does not come from the page at
+that address is refused. A setting changed while a share is live applies to
+the next listener, after the last share ends.
+
 ## Security model
 
 - **A separate listener.** stim-server serves shares on their own listener, on
-  a loopback port apart from its API. Only `stim share` adds a Funnel route,
-  and only to that listener, with
+  a loopback port apart from its API. With Funnel, only `stim share` adds a
+  Funnel route, and only to that listener, with
   `tailscale funnel --bg --yes --https=<port> http://127.0.0.1:<listener>`.
   Funnel never reaches stim-server's API, and `stim-server setup` and
-  `service` never enable Funnel.
+  `service` never enable Funnel. In proxy mode nothing is added to Tailscale.
 - **Three routes per share.** The viewer page, the frame stream of the one
   shared device, and, with `--control`, input to that same device. Anything
   else, including an unknown link, answers 404. No other device, log, file,
@@ -133,7 +185,7 @@ Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md)
   stim-server stops or restarts.
   Ending closes its viewers' connections. The last share removes the Funnel
   route first and only then closes the listener.
-- **Crash cleanup.** The route is recorded under an ownership claim in
+- **Crash cleanup.** With Funnel, the route is recorded under an ownership claim in
   `$STIM_HOME/server/share-route`. When stim-server crashes, the next one
   removes the route on start, and only while the serve config still holds
   exactly that route. Until then, a route left by a crash stays public and

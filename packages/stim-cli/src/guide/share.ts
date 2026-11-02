@@ -48,10 +48,14 @@ WHAT IT NEEDS
   server Stim Desktop, the LaunchAgent or you started is never stopped. When
   no matching stim-server is installed, or it does not start, stim share
   refuses with STIM_SERVER_NOT_RUNNING.
-- Tailscale running on this Mac, with Funnel allowed for this node by the
-  tailnet policy. Stim never changes tailnet settings.
-- One free Funnel port (443, 8443 or 10000, as the tailnet allows) that nothing
-  in tailscale serve status uses.
+- One way to reach the share from the internet (share.exposure):
+  - tailscale: Tailscale running on this Mac, with Funnel allowed for this
+    node by the tailnet policy, and one free Funnel port (443, 8443 or 10000,
+    as the tailnet allows) that nothing in tailscale serve status uses. Stim
+    never changes tailnet settings.
+  - proxy: your own reverse proxy and domain, see CUSTOM DOMAIN below.
+  - auto, the default: tailscale when the tailscale command is installed and
+    logged in, else proxy.
 - The device booted and owned by this workspace (or leased with --device).
   A physical iPhone is view only; --control with ios --device is refused.
 - Or a ready hosted session (ios|android --remote <machine>): this machine's
@@ -62,13 +66,46 @@ WHAT IT NEEDS
   its connection fails; control the host refuses reaches the viewer as
   "Control is not available right now".
 
+CUSTOM DOMAIN (PROXY MODE)
+
+Without Tailscale, for example on a cloud VM with Caddy, serve the share
+listener through your own reverse proxy:
+
+  stim settings set share.exposure proxy      # auto picks proxy when tailscale is absent
+  stim settings set share.publicUrl https://demo.example.com
+  stim settings set share.port 7790           # the default; the proxy names this port
+
+  demo.example.com {
+    reverse_proxy 127.0.0.1:7790
+  }
+
+In proxy mode stim never runs tailscale serve or tailscale funnel (an auto
+choice only reads tailscale status). The share listener binds 127.0.0.1 and
+share.port only, so the proxy must run on the same machine; a port that is
+taken refuses the share and names share.port. Links print under
+share.publicUrl. Without it stim prints the loopback link and a warning, and
+the link then only works on this machine.
+
+The proxy must forward WebSocket upgrades (Caddy does; nginx needs the
+Upgrade and Connection headers). It need not preserve the Host header or set
+X-Forwarded-Host: the frame socket accepts exactly the Origin of
+share.publicUrl and ignores Host and X-Forwarded-*. A path prefix in
+share.publicUrl, such as https://example.com/stim, must be left on the path
+when forwarding (Caddy handle /stim/*, never handle_path); the session cookie
+and redirects are then scoped to the prefixed path. The proxy must end TLS:
+the cookie is Secure. A setting changed while a share is live applies to the
+next listener, after the last share ends. Only one stim-server can bind
+share.port at a time.
+
 SECURITY MODEL
 
 - stim-server serves shares on its own listener, on a loopback port separate
-  from its API. Only the share adds a Funnel route, and only to that listener:
-  tailscale funnel --bg --yes --https=<port> http://127.0.0.1:<listener>. The
-  route is removed when the last share ends. stim-server setup and service
-  never enable Funnel.
+  from its API. In tailscale mode only the share adds a Funnel route, and only
+  to that listener: tailscale funnel --bg --yes --https=<port>
+  http://127.0.0.1:<listener>. The route is removed when the last share ends.
+  stim-server setup and service never enable Funnel. In proxy mode nothing is
+  added to Tailscale, and the listener is reachable only by what runs on this
+  machine, normally your reverse proxy.
 - The listener serves three things for each share: the viewer page, the frame
   stream of the one shared device, and, with --control, input to that same
   device. Everything else, an unknown link included, is 404: no other device,
@@ -97,7 +134,7 @@ SECURITY MODEL
   stim-server stops. Ending
   closes its viewers' sockets. The last one removes the Funnel route first and
   only then closes the listener, so the route never points at a free port.
-- The route is recorded under an ownership claim at
+- In tailscale mode the route is recorded under an ownership claim at
   $STIM_HOME/server/share-route. When stim-server crashed, the route stays
   public, pointing at a free loopback port, until the next stim-server start
   removes it, and only while the serve config still holds exactly that route;
