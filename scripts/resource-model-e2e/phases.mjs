@@ -277,7 +277,7 @@ export function assertIdleDown(ctx, scenario, waited, windowMs) {
       const f = entry.resolved?.facts;
       if (!f) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
       if (f.stageIdle) {
-        const freed = f.idleStage ? `, idleStage.freedBytes=${f.idleStage.freedBytes}` : '';
+        const freed = f.idleStage ? `, idleStage.freedBytes=${f.idleStage.freedBytes}` : ', dormantStage present';
         return outcome(entry.workspace.label, STATUS.pass, `stage.kind=${f.stageKind}${freed}`);
       }
       if (WORKING_STAGES.has(f.stageKind)) {

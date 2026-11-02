@@ -7,6 +7,7 @@ import {
   assertIdleDown,
   launch,
   loadGate,
+  pollStatus,
   reviveWorkspaces,
   setup,
   startPoller,
@@ -23,6 +24,7 @@ async function dormantPhase(ctx, live, reviveEndMs) {
   if (!dormant.available) {
     for (const [id, title] of [
       ['dormant-devices-deleted', 'the dormant stage deletes the owned devices'],
+      ['dormant-stage-reported', 'status reports the dormant stage with the devices it deleted'],
       ['dormant-deps-kept', 'node_modules and Pods survive the dormant stage'],
     ]) {
       A.unavailable(SCENARIO, id, title, [`not available on this build: ${dormant.reason}`]);
@@ -76,6 +78,26 @@ async function dormantPhase(ctx, live, reviveEndMs) {
         idlePollEndMs: hit.endedAt,
       });
       return outcome(workspace.label, timing.ok ? STATUS.pass : STATUS.fail, ...timing.evidence);
+    }),
+  );
+  const polled = await pollStatus(ctx);
+  A.fromItems(
+    SCENARIO,
+    'dormant-stage-reported',
+    'status reports the dormant stage with the devices it deleted',
+    live.map((workspace) => {
+      if (!seen.has(workspace.label)) {
+        return outcome(workspace.label, STATUS.unavailable, 'the workspace never reached the dormant stage');
+      }
+      const stage = polled.envs[workspace.path]?.facts.dormantStage;
+      if (!stage) {
+        return outcome(workspace.label, STATUS.unavailable, 'not available on this build: status has no dormantStage');
+      }
+      return outcome(
+        workspace.label,
+        STATUS.pass,
+        `dormantStage at ${stage.at}, dormantDays ${stage.dormantDays}, deletedDevices ${JSON.stringify(stage.deletedDevices)}, archived ${JSON.stringify(stage.archived)}`,
+      );
     }),
   );
   A.fromItems(

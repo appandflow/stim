@@ -139,10 +139,18 @@ describe('idle facts from status', () => {
     });
     expect(facts).toMatchObject({ idle: true, stageIdle: true });
   });
-  it('takes an idle stage from the build when it reports one', () => {
+  it('takes the dormant stage from the dormantStage record and ignores stage.kind values of idle or dormant', () => {
+    const dormant = {
+      stage: { kind: 'stopped' },
+      dormantStage: { at: 'x', dormantDays: 3, deletedDevices: [], archived: [] },
+    };
+    expect(idleFacts({ ...dormant, metro: { running: false }, ios: null })).toMatchObject({ stageIdle: true });
     expect(
-      idleFacts({ stage: { kind: 'idle' }, metro: { running: true }, ios: { udid: 'U', state: 'Booted' } }).idle,
-    ).toBe(true);
+      idleFacts({ stage: { kind: 'idle' }, metro: { running: true }, ios: { udid: 'U', state: 'Booted' } }),
+    ).toMatchObject({
+      idle: false,
+      stageIdle: false,
+    });
   });
   it('reports boots in flight only where the capacity section lists holders', () => {
     expect(bootsInFlight({ capacity: {} })).toBeNull();

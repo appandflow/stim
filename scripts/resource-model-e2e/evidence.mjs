@@ -1,5 +1,3 @@
-const IDLE_STAGES = new Set(['idle', 'dormant']);
-
 export function findEnvironment(payload, path) {
   return payload?.environments?.find((env) => env.path === path) ?? null;
 }
@@ -38,12 +36,14 @@ export function idleFacts(env) {
   const devicesUp = devices.filter((device) => device.state === 'Booted' || device.state === 'Booting');
   const idleShutdowns = devices.filter((device) => device.idleShutdown).length;
   const idleStage = env.idleStage ?? null;
-  const stageIdle = IDLE_STAGES.has(stageKind) || idleStage !== null;
+  const dormantStage = env.dormantStage ?? null;
+  const stageIdle = idleStage !== null || dormantStage !== null;
   return {
     present: true,
     stageKind,
     stageIdle,
     idleStage,
+    dormantStage,
     metroRunning,
     metroIdleStop,
     deviceCount: devices.length,
