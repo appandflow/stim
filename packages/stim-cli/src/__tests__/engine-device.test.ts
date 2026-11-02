@@ -907,6 +907,44 @@ function iosExecutor(devices: SimEntry[]) {
 }
 
 describe('ensureOwnedDevice: ios', () => {
+  test.each<[string, string, string]>([
+    ['the slot now records another simulator', 'U1', 'U0'],
+    ['the recorded simulator is gone', 'GONE', 'GONE'],
+  ])(
+    'a run bound to one simulator refuses instead of creating or adopting one when %s',
+    async (_name, recorded, expected) => {
+      const root = projectDir();
+      try {
+        setDevice(root, 'ios', { deviceUdid: recorded, owned: true });
+        recordCreatedDevice('ios', 'U1');
+        const { files, exec } = iosExecutor([
+          {
+            udid: 'U1',
+            name: 'stim-app (iPhone 17 Pro 26.2)',
+            state: 'Shutdown',
+            isAvailable: true,
+            deviceTypeIdentifier: TYPE_17_PRO.identifier,
+          },
+        ]);
+        setExecutor(exec);
+        await expect(
+          ensureOwnedDevice({
+            platform: 'ios',
+            project: getProject(root),
+            projectPath: root,
+            label: 'app',
+            settings: {},
+            flags: { expectedDevice: expected },
+          }),
+        ).rejects.toMatchObject({ code: 'STIM_DEVICE_LOST' });
+        expect(files.some((call) => call.includes('create'))).toBe(false);
+        expect(getProject(root)?.platforms?.ios).toMatchObject({ deviceUdid: recorded });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
   test('concurrent allocations disambiguate names after truncation and preserve the suffix on reuse', async () => {
     const roots = [projectDir(), projectDir()];
     const label = 'same-worktree-name-'.repeat(5);

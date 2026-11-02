@@ -141,8 +141,8 @@ An app relaunched while its dev server is stopped shows "could not connect" or
 a blank screen. [`stim revive`](./commands.md#revive) resumes exactly what the
 idle stop paused, and nothing more: it restarts the dev server, boots the owned
 simulators and emulators the app last ran on, and relaunches the app from cold
-from the artifact that launch installed. In-app state is gone. It never
-builds.
+from the build cache entry that launch installed. In-app state is gone. It
+never builds, and never creates or adopts a device.
 
 <StimTabs code={`stim revive`} />
 

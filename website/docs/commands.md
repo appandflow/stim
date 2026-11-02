@@ -948,11 +948,12 @@ and restores exactly what the stop paused, never more:
   again on the workspace's port, as `stim start` would. A dev server that is
   running is left alone.
 - **Devices.** For each recorded Debug launch, it boots the owned simulator or
-  emulator the app ran on, on this machine and through the same device
-  admission as `ios` and `android` (`concurrency.maxDevices` included).
-- **App.** It relaunches the app from cold with the artifact that launch
-  installed, without fingerprinting or building. In-app state is gone. An app
-  still running is left alone unless Metro restarted.
+  emulator the app ran on (the same UDID or AVD), on this machine and through
+  the same device admission as `ios` and `android` (`concurrency.maxDevices`
+  included). It never creates or adopts another device.
+- **App.** It relaunches the app from cold from the build cache entry that
+  launch installed, without fingerprinting or building. In-app state is gone.
+  An app still running is left alone unless Metro restarted.
 
 Release and native-process launches do not use Metro, and hosted launches
 belong to their host, so revive does not relaunch them; run `stim ios` or
@@ -965,9 +966,9 @@ belong to their host, so revive does not relaunch them; run `stim ios` or
 - `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
   this workspace's owned device, or, when agent-device runs it as its boot
   hook, when the device agent-device asked for is not one of them.
-- `STIM_NO_RECORDED_BUILD` when the app a launch installed is gone, for
-  example after `stim gc`, or the launch predates revive and records none; the
-  remedy names `stim ios` or `stim android`.
+- `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
+  gone, for example after `stim gc`, or the launch names none (never cached, or
+  recorded before revive); the remedy names `stim ios` or `stim android`.
 
 It checks all three before starting anything. Each line on stderr says what came
 back:

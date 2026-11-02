@@ -39,6 +39,7 @@ export interface WorkspaceLaunchRecord {
   release: boolean;
   runtime?: 'process';
   launchedAt: string;
+  avdName?: string;
   artifact?: LaunchedArtifact;
 }
 

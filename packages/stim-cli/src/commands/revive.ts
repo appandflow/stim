@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { existsSync } from 'node:fs';
 import type { StimContext } from '@stim-cli/core';
 import { hostedNativeRecords, readIdleStop, type WorkspaceState } from '@stim-cli/core/state';
 import { runProcessOperation } from '../cli-operation.ts';
@@ -11,6 +10,7 @@ import { listAllIosSimsAsync, resolveOwnedIosSim, type ResolvedIosSim } from '..
 import { androidAppProcess, iosAppProcess } from '../engine/app-install.ts';
 import { nativeRunCommand } from '../engine/slot-launch.ts';
 import type { RecordedBuild } from '../engine/recorded-build.ts';
+import { resolveBuild } from '../cache/build-cache.ts';
 import { describeMetroLastStop, metroLastStop } from '../supervisor/stop-cause.ts';
 import { readWorkspaceLaunches, type WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import { getProject, type ProjectRecord } from '../workspace/config.ts';
@@ -60,6 +60,7 @@ interface RunRequest {
   slot: string;
   configuration: string | null;
   recordedBuild: RecordedBuild;
+  expectedDevice: string;
 }
 
 export interface ReviveDeps {
@@ -71,7 +72,7 @@ export interface ReviveDeps {
   resolveIos: (udid: string) => Promise<ResolvedIosSim>;
   resolveAndroid: (avdName: string) => Promise<ResolvedAvdSerial>;
   appRunning: (platform: Platform, deviceId: string, appId: string) => Promise<boolean>;
-  artifactExists: (path: string) => boolean;
+  resolveCachedApp: (platform: Platform, cacheKey: string) => string | null;
   startMetro: (
     root: string,
     note: (line: string) => void,
@@ -85,6 +86,7 @@ interface Target {
   record: WorkspaceLaunchRecord;
   deviceId: string;
   deviceName: string | null;
+  expectedDevice: string;
   booted: boolean;
   build: RecordedBuild;
   configuration: string | null;
@@ -94,25 +96,17 @@ function failure(code: string, message: string, remedy: string | null): { ok: fa
   return { ok: false, error: { code, message, remedy } };
 }
 
-function launchDeviceNames(
-  project: ProjectRecord,
-  { platform, slot, record }: { platform: Platform; slot: string; record: WorkspaceLaunchRecord },
-): string[] {
-  const owned = deviceSlotPlatforms(project, slot);
-  const recorded = platform === 'ios' ? owned?.ios?.deviceUdid : owned?.android?.avdName;
-  return [record.deviceId, ...(recorded ? [recorded] : [])];
+function launchDeviceNames(record: WorkspaceLaunchRecord): string[] {
+  return [record.deviceId, ...(record.avdName ? [record.avdName] : [])];
 }
 
-function launchedBuild(record: WorkspaceLaunchRecord): { build: RecordedBuild; configuration: string | null } | null {
+function launchedCacheEntry(record: WorkspaceLaunchRecord) {
   const artifact = record.artifact;
-  if (!artifact || typeof artifact.appPath !== 'string') return null;
-  const { fingerprint, cacheKey, cacheHit } = artifact;
-  const cache =
-    typeof fingerprint === 'string' && typeof cacheKey === 'string'
-      ? { fingerprint, key: cacheKey, hit: cacheHit === 'remote' ? ('remote' as const) : ('local' as const) }
-      : null;
+  if (!artifact || typeof artifact.fingerprint !== 'string' || typeof artifact.cacheKey !== 'string') return null;
   return {
-    build: { appPath: artifact.appPath, bundleId: record.appId, builtAt: '', ...(cache ? { cache } : {}) },
+    fingerprint: artifact.fingerprint,
+    key: artifact.cacheKey,
+    hit: artifact.cacheHit === 'remote' ? ('remote' as const) : ('local' as const),
     configuration: typeof artifact.configuration === 'string' ? artifact.configuration : null,
   };
 }
@@ -132,8 +126,9 @@ async function inspectTarget(
       `${why}, so revive cannot bring back the ${platform === 'ios' ? 'simulator' : 'emulator'} the app last ran on.`,
       `Run \`${run}\`; it boots or creates this workspace's owned device and launches the app.`,
     );
+  let expectedDevice: string;
   let deviceId: string;
-  let deviceName: string | null;
+  let deviceName: string;
   let booted: boolean;
   if (platform === 'ios') {
     const owned = slotDevices?.ios;
@@ -142,36 +137,56 @@ async function inspectTarget(
     }
     const resolved = await d.resolveIos(record.deviceId);
     if (!resolved.sim) return lost(`Simulator ${record.deviceId} no longer exists as a Stim-owned simulator`);
+    expectedDevice = resolved.sim.udid;
     deviceId = resolved.sim.udid;
     deviceName = resolved.sim.name;
     booted = resolved.sim.state === 'Booted';
   } else {
     const owned = slotDevices?.android;
-    if (!owned?.owned || !owned.avdName) return lost('This workspace no longer records an owned emulator for the slot');
-    const resolved = await d.resolveAndroid(owned.avdName);
-    if (resolved.missing || resolved.notOwned) {
-      return lost(`Emulator ${owned.avdName} no longer exists as a Stim-owned emulator`);
+    if (!record.avdName || !owned?.owned || owned.avdName !== record.avdName) {
+      return lost(`Emulator ${record.avdName ?? record.deviceId} is no longer this workspace's owned emulator`);
     }
-    deviceId = resolved.serial ?? owned.avdName;
-    deviceName = owned.avdName;
+    const resolved = await d.resolveAndroid(record.avdName);
+    if (resolved.missing || resolved.notOwned) {
+      return lost(`Emulator ${record.avdName} no longer exists as a Stim-owned emulator`);
+    }
+    expectedDevice = record.avdName;
+    deviceId = resolved.serial ?? record.avdName;
+    deviceName = record.avdName;
     booted = Boolean(resolved.serial);
   }
-  const launched = launchedBuild(record);
-  if (!launched) {
+  const entry = launchedCacheEntry(record);
+  if (!entry) {
     return failure(
       'STIM_NO_RECORDED_BUILD',
-      `The ${platform} launch of ${record.appId} records no installed app, so there is no app to relaunch.`,
+      `The ${platform} launch of ${record.appId} names no build cache entry, so revive cannot restore the exact app it installed.`,
       `Run \`${run}\` to build or restore it from the cache and launch it.`,
     );
   }
-  if (!d.artifactExists(launched.build.appPath)) {
+  const appPath = d.resolveCachedApp(platform, entry.key);
+  if (!appPath) {
     return failure(
       'STIM_NO_RECORDED_BUILD',
-      `The app the last ${platform} launch installed, ${launched.build.appPath}, no longer exists.`,
+      `The build cache entry ${entry.key} that held the app the last ${platform} launch installed is gone.`,
       `Run \`${run}\` to build or restore it from the cache and launch it.`,
     );
   }
-  return { platform, slot, record, deviceId, deviceName, booted, ...launched };
+  return {
+    platform,
+    slot,
+    record,
+    deviceId,
+    deviceName,
+    expectedDevice,
+    booted,
+    configuration: entry.configuration,
+    build: {
+      appPath,
+      bundleId: record.appId,
+      builtAt: '',
+      cache: { fingerprint: entry.fingerprint, key: entry.key, hit: entry.hit },
+    },
+  };
 }
 
 export async function runRevive({
@@ -214,7 +229,7 @@ export async function runRevive({
     return [{ ...parsed, record }];
   });
   const selected = requestedDevice
-    ? launches.filter((launch) => launchDeviceNames(project, launch).includes(requestedDevice))
+    ? launches.filter((launch) => launchDeviceNames(launch.record).includes(requestedDevice))
     : launches;
   if (requestedDevice && selected.length === 0) {
     return failure(
@@ -256,6 +271,7 @@ export async function runRevive({
       slot: target.slot,
       configuration: target.configuration,
       recordedBuild: target.build,
+      expectedDevice: target.expectedDevice,
     });
     if (!outcome.ok) {
       return failure(
@@ -344,7 +360,7 @@ function defaultDeps(context: StimContext): ReviveDeps {
     appRunning: async (platform, deviceId, appId) =>
       (platform === 'ios' ? await iosAppProcess(deviceId, appId) : await androidAppProcess(deviceId, appId)).state ===
       'running',
-    artifactExists: existsSync,
+    resolveCachedApp: (platform, cacheKey) => resolveBuild(platform, cacheKey),
     startMetro: async (root, note) => {
       const { context: settingsContext, settings } = await resolveProjectSettingsAsync(root);
       const [shapeError] = settingShapeErrors(settings);
@@ -352,14 +368,14 @@ function defaultDeps(context: StimContext): ReviveDeps {
       const started = await startDevServer({ root, settings, settingsContext, out: note, note });
       return started.ok ? { ok: true, port: started.facts.port } : { ok: false, error: started.error };
     },
-    run: async (platform, root, { slot, configuration, recordedBuild }) => {
+    run: async (platform, root, { slot, configuration, recordedBuild, expectedDevice }) => {
       const nested = nestedContext(context);
       if (platform === 'ios') {
         let error: RunOutcome['error'];
         const result = await runIosOperation(
           nested,
           root,
-          { slot, recordedBuild, remote: 'local', ...(configuration ? { configuration } : {}) },
+          { slot, recordedBuild, expectedDevice, remote: 'local', ...(configuration ? { configuration } : {}) },
           {},
           (failed) => {
             error = failed;
@@ -377,6 +393,7 @@ function defaultDeps(context: StimContext): ReviveDeps {
       const result = await runAndroidOperation(nested, root, {
         slot,
         recordedBuild,
+        expectedDevice,
         remote: 'local',
         ...(configuration ? { variant: configuration } : {}),
       });

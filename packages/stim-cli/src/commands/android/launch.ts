@@ -685,17 +685,25 @@ async function cleanEmulatorAppState(
   return null;
 }
 
-function launchedArtifact(
-  apkPath: string,
+function launchedIdentity(
+  device: { owned?: boolean; avdName?: string | null },
+  apkPath: string | null | undefined,
   variant: string | null | undefined,
   record: AndroidRecord,
-): LaunchedArtifact {
+): { avdName?: string; artifact?: LaunchedArtifact } {
   return {
-    appPath: apkPath,
-    configuration: variant ?? 'debug',
-    fingerprint: record.fingerprint ?? null,
-    cacheKey: record.cacheKey ?? null,
-    cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+    ...(device.owned && device.avdName ? { avdName: device.avdName } : {}),
+    ...(apkPath
+      ? {
+          artifact: {
+            appPath: apkPath,
+            configuration: variant ?? 'debug',
+            fingerprint: record.fingerprint ?? null,
+            cacheKey: record.cacheKey ?? null,
+            cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+          },
+        }
+      : {}),
   };
 }
 
@@ -989,7 +997,7 @@ export async function finishAndroidRun({
         release,
         ...(runtime.kind === 'process' ? { runtime: 'process' as const } : {}),
         launchedAt: new Date(launchedAt).toISOString(),
-        ...(apkPath ? { artifact: launchedArtifact(apkPath, variant, record) } : {}),
+        ...launchedIdentity(device, apkPath, variant, record),
       });
     } catch (error) {
       out(phaseLine('state', chalk.yellow(`could not record Android launch: ${(error as Error)?.message || error}`)));

@@ -1345,10 +1345,12 @@ captured"  (in metro.ndjson, bare RN)
     STIM_NO_RECORDED_BUILD: {
       summary: 'a recordedBuild run or revive found no app to install',
       body: () => `STIM_NO_RECORDED_BUILD
-  From \`revive\`: the app a recorded launch installed is gone, usually
-  because \`gc\` or a newer build removed it, or the launch records no
-  installed app (it was recorded by a Stim version before revive). Revive
-  never fingerprints or builds, so nothing was started. Run the printed \`stim ios\` or
+  From \`revive\`: revive reinstalls only the build cache entry a recorded
+  launch installed, never the build output path, which a later build can
+  overwrite. That entry is gone (\`gc\` or automatic maintenance evicted it),
+  or the launch names none: its app was never cached, or the launch was
+  recorded by a Stim version before revive. Revive never fingerprints or
+  builds, so nothing was started. Run the printed \`stim ios\` or
   \`stim android\` command; it restores the app from the cache or builds it.
 
   The API run option \`recordedBuild: true\` (used by \`stim-ci run\`) installs the

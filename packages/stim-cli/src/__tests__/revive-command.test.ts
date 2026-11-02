@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import type { WorkspaceState } from '@stim-cli/core/state';
+import { resolveBuild } from '../cache/build-cache.ts';
 import { registerRevive, reviveLines, runRevive, type ReviveDeps } from '../commands/revive.ts';
 import type { WorkspaceLaunchRecord } from '../supervisor/state.ts';
 import type { ProjectRecord } from '../workspace/config.ts';
 
-const APP = '/stim/build-cache/ios/f1-debug-sim-arm64/App.app';
+const PRODUCT = '/derived/Build/Products/Debug-iphonesimulator/App.app';
+const CACHED = '/stim/build-cache/ios/f1-debug-sim-arm64/App.app';
 
 const iosLaunch: WorkspaceLaunchRecord = {
   appId: 'com.example.app',
@@ -17,7 +19,7 @@ const iosLaunch: WorkspaceLaunchRecord = {
   release: false,
   launchedAt: '2026-11-01T10:00:00.000Z',
   artifact: {
-    appPath: APP,
+    appPath: PRODUCT,
     configuration: 'Debug',
     fingerprint: 'f1',
     cacheKey: 'f1-debug-sim-arm64',
@@ -48,7 +50,7 @@ function harness(overrides: Partial<ReviveDeps> = {}) {
     resolveIos: async () => sim('Shutdown'),
     resolveAndroid: async () => ({ notRunning: true }),
     appRunning: async () => true,
-    artifactExists: () => true,
+    resolveCachedApp: (_platform, key) => (key === 'f1-debug-sim-arm64' ? CACHED : null),
     startMetro: async () => {
       calls.push('metro');
       return { ok: true, port: 8082 };
@@ -78,11 +80,12 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
       slot: 'default',
       configuration: 'Debug',
       recordedBuild: {
-        appPath: APP,
+        appPath: CACHED,
         bundleId: 'com.example.app',
         builtAt: '',
         cache: { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' },
       },
+      expectedDevice: 'U1',
     },
   ]);
   expect(result.facts.revived).toEqual({
@@ -103,6 +106,30 @@ test('an idle-stopped workspace gets Metro, its simulator and the app it launche
     'Simulator stim-app rebooted.',
     'com.example.app relaunched from cold on Simulator stim-app; in-app state is gone.',
   ]);
+});
+
+test('a later build that overwrote the shared product path does not change what revive installs', async () => {
+  const cache = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  try {
+    mkdirSync(join(cache, 'ios', 'f1-debug-sim-arm64', 'App.app'), { recursive: true });
+    mkdirSync(join(cache, 'ios', 'f2-debug-sim-arm64', 'App.app'), { recursive: true });
+    const fromCache = (_platform: string, key: string) => resolveBuild('ios', key, cache);
+    const recorded = harness({ resolveCachedApp: fromCache });
+    const revived = await runRevive({ root: '/project', note: () => {}, deps: recorded.deps });
+    assert(revived.ok);
+    expect(recorded.runs).toMatchObject([
+      { recordedBuild: { appPath: join(cache, 'ios', 'f1-debug-sim-arm64', 'App.app') } },
+    ]);
+
+    rmSync(join(cache, 'ios', 'f1-debug-sim-arm64'), { recursive: true });
+    const evicted = harness({ resolveCachedApp: fromCache });
+    const refused = await runRevive({ root: '/project', note: () => {}, deps: evicted.deps });
+    assert(!refused.ok);
+    expect(refused.error.code).toBe('STIM_NO_RECORDED_BUILD');
+    expect(evicted.calls).toEqual([]);
+  } finally {
+    rmSync(cache, { recursive: true, force: true });
+  }
 });
 
 test.each<[string, Partial<ReviveDeps>]>([
@@ -135,8 +162,16 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
     'the emulator is no longer Stim-owned',
     {
       getProject: () => ({ ...project, platforms: { android: { avdName: 'stim-app', owned: true } } }),
-      readLaunches: () => ({ android: { ...iosLaunch, deviceId: 'emulator-5554' } }),
+      readLaunches: () => ({ android: { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-app' } }),
       resolveAndroid: async () => ({ notOwned: true }),
+    },
+    null,
+  ],
+  [
+    'the slot adopted another emulator since the launch',
+    {
+      getProject: () => ({ ...project, platforms: { android: { avdName: 'stim-parked', owned: true } } }),
+      readLaunches: () => ({ android: { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-app' } }),
     },
     null,
   ],
@@ -160,7 +195,10 @@ test.each<[string, string, Partial<ReviveDeps>, string]>([
         ...project,
         platforms: { ...project.platforms, android: { avdName: 'stim-avd', owned: true } },
       }),
-      readLaunches: () => ({ ios: iosLaunch, android: { ...iosLaunch, deviceId: 'emulator-5554' } }),
+      readLaunches: () => ({
+        ios: iosLaunch,
+        android: { ...iosLaunch, deviceId: 'emulator-5554', avdName: 'stim-avd' },
+      }),
       ...overrides,
     });
     const result = await runRevive({ root: '/project', note: () => {}, requestedDevice, deps });
@@ -170,7 +208,15 @@ test.each<[string, string, Partial<ReviveDeps>, string]>([
 );
 
 test.each<[string, Partial<ReviveDeps>]>([
-  ['the installed artifact is gone', { artifactExists: () => false }],
+  ['the cache entry the launch installed is gone', { resolveCachedApp: () => null }],
+  [
+    'the launch installed an app that was never cached',
+    {
+      readLaunches: () => ({
+        'ios:tablet': { ...iosLaunch, artifact: { ...iosLaunch.artifact!, fingerprint: null, cacheKey: null } },
+      }),
+    },
+  ],
   [
     'the launch records no installed app',
     { readLaunches: () => ({ 'ios:tablet': { ...iosLaunch, artifact: undefined } }) },

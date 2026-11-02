@@ -67,6 +67,7 @@ export interface IosCommandOptions {
   scheme?: string;
   easProfile?: string;
   recordedBuild?: RecordedBuildRequest;
+  expectedDevice?: string;
   cleanAppState?: boolean;
   deviceType?: string;
   runtime?: string;
