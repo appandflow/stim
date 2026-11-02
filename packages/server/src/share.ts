@@ -120,7 +120,7 @@ const VIEWER_TEXT = {
   controlRefused: 'Control is not available right now. Try again in a moment.',
   inputRefused: 'That input was not accepted.',
   controlEnded: 'Control ended.',
-} as const;
+};
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
