@@ -95,7 +95,7 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
     }),
   );
 
-  const critical = longestStreak(window, (row) => row.pressure === CRITICAL_LEVEL, interval);
+  const critical = longestStreak(numeric('pressure'), (row) => row.pressure === CRITICAL_LEVEL, interval);
   sampled(
     numeric('pressure'),
     critical.ms <= CRITICAL_ALLOWED_MS,

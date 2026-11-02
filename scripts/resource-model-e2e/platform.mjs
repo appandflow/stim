@@ -113,10 +113,19 @@ function looksOurs(cmd, { home, worktreePrefix }) {
 
 // The supervisor retitles itself to a bare `stim-supervisor` (packages/stim-cli/src/supervisor/run.ts), so no command
 // line names the home: a recorded pid is the run's only while its start time is the one seen when it was first recorded.
-export function recordIdentities(identities, rows, recorded, scope, sinceMs) {
+export function noteRecorded(recordedAt, pids, now) {
+  for (const pid of pids) if (!recordedAt.has(pid)) recordedAt.set(pid, now);
+}
+
+// `recordedAt` maps a pid to when its record first appeared. A process that started after that moment is a later holder
+// of the pid, not the process the record describes, so it is never accepted.
+export function recordIdentities(identities, rows, recordedAt, scope, sinceMs) {
   for (const row of rows) {
-    if (!recorded.has(row.pid) || identities.has(row.pid) || !row.lstart) continue;
-    if (Date.parse(row.lstart) >= sinceMs - 2000 && looksOurs(row.cmd, scope)) identities.set(row.pid, row.lstart);
+    if (!recordedAt.has(row.pid) || identities.has(row.pid) || !row.lstart) continue;
+    const started = Date.parse(row.lstart);
+    if (started >= sinceMs - 2000 && started <= recordedAt.get(row.pid) + 1000 && looksOurs(row.cmd, scope)) {
+      identities.set(row.pid, row.lstart);
+    }
   }
 }
 
@@ -218,7 +227,7 @@ export async function readMachine() {
   };
 }
 
-export async function sampleHost({ home, worktreePrefix, stage, volumes, identities, sinceMs }) {
+export async function sampleHost({ home, worktreePrefix, stage, volumes, identities, recordedAt, sinceMs }) {
   const [load, pressure, vm, swap, ps, sims] = await Promise.all([
     run('sysctl', ['-n', 'vm.loadavg'], { timeoutMs: 10_000 }),
     run('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeoutMs: 10_000 }),
@@ -233,7 +242,8 @@ export async function sampleHost({ home, worktreePrefix, stage, volumes, identit
   const mine = sims?.filter((sim) => ours.has(sim.udid)) ?? [];
   const rows = parsePs(ps.stdout);
   const scope = { home, worktreePrefix };
-  recordIdentities(identities, rows, recordedPids(home), scope, sinceMs);
+  noteRecorded(recordedAt, recordedPids(home), Date.now());
+  recordIdentities(identities, rows, recordedAt, scope, sinceMs);
   const procs = classifyStimProcesses(rows, { identities, ...scope });
   const row = {
     ts: now.toISOString(),

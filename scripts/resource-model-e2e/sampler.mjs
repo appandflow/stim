@@ -11,6 +11,7 @@ mkdirSync(statusDir, { recursive: true });
 if (!existsSync(csv)) writeFileSync(csv, `${SAMPLE_COLUMNS.join(',')}\n`);
 
 const identities = new Map();
+const recordedAt = new Map();
 const env = stimEnvironment(config.home, config.extraEnv ?? {});
 let statusBusy = false;
 let lastStatusAt = 0;
@@ -59,7 +60,7 @@ while (!state.stopping && !existsSync(join(config.out, 'STOP')) && parentAlive()
     const stage = existsSync(join(config.out, 'stage')) ? readFileSync(join(config.out, 'stage'), 'utf8').trim() : '';
     appendFileSync(
       csv,
-      `${csvLine(await sampleHost({ home: config.home, worktreePrefix: config.worktreePrefix, stage, volumes: config.volumes, identities, sinceMs: config.startedAt }))}\n`,
+      `${csvLine(await sampleHost({ home: config.home, worktreePrefix: config.worktreePrefix, stage, volumes: config.volumes, identities, recordedAt, sinceMs: config.startedAt }))}\n`,
     );
   } catch (error) {
     appendFileSync(join(config.out, 'sampler.err'), `${new Date().toISOString()} ${error?.stack ?? error}\n`);

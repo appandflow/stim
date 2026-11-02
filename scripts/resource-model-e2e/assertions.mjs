@@ -30,6 +30,7 @@ export function createAssertions() {
 export const outcome = (label, status, ...evidence) => ({ label, status, evidence });
 
 const MINUTE_MS = 60_000;
+const PRESSURE_IDLE_MS = 2 * MINUTE_MS;
 
 // stim status rounds lastActivityAt down to the minute, so real activity may be up to a minute later than it reports.
 export function judgeIdleTiming({
@@ -41,6 +42,7 @@ export function judgeIdleTiming({
   previousPollStartMs,
   idlePollStartMs,
   idlePollEndMs,
+  pressureLevel = null,
 }) {
   const reported = lastActivityMs === null ? commandEndMs : Math.min(readAtMs, lastActivityMs + MINUTE_MS);
   const t0 = Math.max(commandEndMs, reported);
@@ -48,9 +50,13 @@ export function judgeIdleTiming({
   const late = previousPollStartMs !== null && previousPollStartMs > deadline;
   const earliest = commandEndMs + windowMs - tickMs;
   const early = idlePollEndMs < earliest;
+  const idleFor = idlePollEndMs - t0;
+  const earlyAllowed =
+    early && (pressureLevel === 'high' || pressureLevel === 'critical') && idleFor >= PRESSURE_IDLE_MS;
   return {
-    ok: !late && !early,
+    ok: !late && (!early || earlyAllowed),
     early,
+    earlyAllowed,
     t0,
     deadline,
     earliest,
@@ -60,7 +66,15 @@ export function judgeIdleTiming({
       })`,
       `window ${Math.round(windowMs / MINUTE_MS)} min + tick ${Math.round(tickMs / 1000)} s gives deadline ${clock(deadline)}`,
       `previous poll still working at ${previousPollStartMs === null ? 'none' : clock(previousPollStartMs)}, first idle poll ${clock(idlePollStartMs)} to ${clock(idlePollEndMs)}`,
-      ...(early ? [`idle before ${clock(earliest)}, the end of the last command plus the window minus one tick`] : []),
+      ...(early
+        ? [
+            `idle before ${clock(earliest)}, the end of the last command plus the window minus one tick; ${
+              earlyAllowed
+                ? `allowed: the build's status reported ${pressureLevel} pressure and the workspace had been idle ${Math.round(idleFor / 1000)} s`
+                : `not allowed: the build's status reported ${pressureLevel ?? 'no'} pressure level and the workspace had been idle ${Math.round(idleFor / 1000)} s (a pressure idle needs high or critical and 2 minutes)`
+            }`,
+          ]
+        : []),
     ],
   };
 }

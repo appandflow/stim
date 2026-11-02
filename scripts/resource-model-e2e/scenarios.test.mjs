@@ -149,6 +149,16 @@ describe('stress batch assertions on missing sampler data', () => {
     });
   });
 
+  it('keeps a critical period whole across a row that has no pressure', () => {
+    const critical = (epoch) => sample(epoch, { pressure: 4 });
+    const rows = [
+      ...Array.from({ length: 7 }, (_, i) => critical(i * 5)),
+      blank(35),
+      ...Array.from({ length: 7 }, (_, i) => critical(40 + i * 5)),
+    ];
+    expect(run(stressContext({ rows }), [ok('w1')])['pressure-critical']).toBe(STATUS.fail);
+  });
+
   it('ignores empty rows when computing a peak and says how many there were', () => {
     const ctx = stressContext({ rows: [blank(1), sample(6, { booted_ours: 9, booting_ours: 0 })] });
     const result = run(ctx, [ok('w1')]);

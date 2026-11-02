@@ -104,7 +104,8 @@ const TEARDOWN_WAIT_MS = 20 * 60_000;
 const hostShell = (command) => `exec "$SHELL" -l -c ${shq(command)}`;
 const onHost = (host, command, timeoutMs) => run('ssh', [...SSH_OPTIONS, host, hostShell(command)], { timeoutMs });
 
-// Streams the remote log until the remote harness exits, reattaching if the connection drops while it still runs.
+const RECONNECT_WAIT_MS = 10 * 60_000;
+
 async function followRun(host, base, state, emit) {
   const dir = shq(base);
   for (let attach = 0; !state.giveUp; attach++) {
@@ -114,7 +115,18 @@ async function followRun(host, base, state, emit) {
       state.child.on('close', resolveClosed);
       state.child.on('error', resolveClosed);
     });
-    const alive = await onHost(host, `kill -0 $(cat ${dir}/run.pid) 2>/dev/null`, 60_000);
+    let unreachableSince = null;
+    let alive = await onHost(host, `kill -0 $(cat ${dir}/run.pid) 2>/dev/null`, 60_000);
+    while (alive.code === 255 && !state.giveUp) {
+      unreachableSince ??= Date.now();
+      if (Date.now() - unreachableSince > RECONNECT_WAIT_MS) {
+        emit('ssh', `${host} has been unreachable for ${RECONNECT_WAIT_MS / 60_000} minutes; the run continues there`);
+        return;
+      }
+      emit('ssh', 'the host is unreachable; retrying');
+      await sleep(10_000);
+      alive = await onHost(host, `kill -0 $(cat ${dir}/run.pid) 2>/dev/null`, 60_000);
+    }
     if (alive.code !== 0 || state.giveUp) return;
     emit('ssh', 'the connection dropped while the run is still going; reattaching');
     await sleep(5000);
@@ -137,8 +149,9 @@ export async function runRemote(opts, { runId, localOut, emit }) {
     if (tarred.code !== 0) throw new HarnessError(`tar failed: ${tarred.stderr}`);
 
     emit('ssh', `copying ${base} to ${host}`);
-    const prepared = await run('ssh', [...SSH_OPTIONS, host, `mkdir -p ${shq(base)}`], { timeoutMs: 60_000 });
+    const prepared = await onHost(host, `if [ -d rm-e2e ]; then echo existed; fi; mkdir -p ${shq(base)}`, 60_000);
     if (prepared.code !== 0) throw new HarnessError(`cannot reach ${host} over ssh: ${prepared.stderr.trim()}`);
+    const rootExisted = prepared.stdout.includes('existed');
     const copied = await run('scp', [...SSH_OPTIONS, archive, `${host}:${base}/payload.tgz`], { timeoutMs: 600_000 });
     if (copied.code !== 0) throw new HarnessError(`scp failed: ${copied.stderr.trim()}`);
     const unpacked = await run(
@@ -171,7 +184,9 @@ export async function runRemote(opts, { runId, localOut, emit }) {
         'ssh',
         'interrupted: asking the remote harness to tear down, and waiting for it (interrupt again to stop waiting)',
       );
-      await onHost(host, `kill -INT $(cat ${shq(base)}/run.pid)`, 60_000);
+      const dir = shq(base);
+      const ask = `cd ${dir} && { test -f run.code || { pid=$(cat run.pid); case "$(ps -ww -o command= -p $pid)" in *harness/run.mjs*) kill -INT $pid ;; esac; }; }`;
+      await onHost(host, ask, 60_000);
       setTimeout(() => {
         state.giveUp = true;
         state.child?.kill('SIGHUP');
@@ -197,7 +212,7 @@ export async function runRemote(opts, { runId, localOut, emit }) {
       );
       return state.interrupted ? 130 : 2;
     }
-    await onHost(host, `rm -rf ${shq(base)}`, 120_000);
+    await onHost(host, `rm -rf ${shq(base)}${rootExisted ? '' : '; rmdir rm-e2e 2>/dev/null; true'}`, 120_000);
     emit('ssh', `results are in ${localOut}`);
     return code;
   } finally {

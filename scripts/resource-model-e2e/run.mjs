@@ -68,6 +68,7 @@ function createContext(opts, runId) {
     snapshots: [],
     createdUdids: new Set(),
     identities: new Map(),
+    recordedAt: new Map(),
     createdDirs: [],
     cleanups: [],
     signal: abort.signal,
@@ -203,9 +204,13 @@ function startSampler(ctx) {
   return {
     async stop() {
       writeFileSync(join(ctx.out, 'STOP'), '');
-      await Promise.race([exited, sleep(30_000)]);
+      const waitFor = async (ms) => {
+        const timer = new AbortController();
+        await Promise.race([exited.then(() => timer.abort()), sleep(ms, timer.signal)]);
+      };
+      await waitFor(30_000);
       if (child.exitCode === null) child.kill('SIGTERM');
-      await Promise.race([exited, sleep(15_000)]);
+      await waitFor(15_000);
       if (child.exitCode === null) child.kill('SIGKILL');
     },
   };
@@ -247,8 +252,6 @@ async function prepare(ctx) {
   const { opts } = ctx;
   if (!existsSync(resolve(opts.stim)))
     throw new UsageError(`--stim ${opts.stim} does not exist; build it with pnpm run build`);
-  guardEnv(opts.extraEnv);
-  guardPaths(ctx);
   ensureDir(ctx, ctx.homeDir);
   ensureDir(ctx, ctx.workDir);
   settlePaths(ctx);
@@ -284,6 +287,8 @@ async function runLocal(opts) {
     ctx = createContext(opts, `rme${Math.random().toString(16).slice(2, 6)}`);
     if (!existsSync(ctx.home) && !existsSync(ctx.ballastDir)) break;
   }
+  guardEnv(opts.extraEnv);
+  guardPaths(ctx);
   mkdirSync(ctx.out, { recursive: true });
   let build;
   try {

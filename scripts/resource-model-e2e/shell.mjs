@@ -16,20 +16,10 @@ export const C_LOCALE = () => ({ ...process.env, LC_ALL: 'C' });
 
 export const shq = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
 
-function killGroupOnly(pid, signal) {
-  try {
-    process.kill(-pid, signal);
-  } catch {}
-}
-
 function killGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
-  } catch {
-    try {
-      process.kill(pid, signal);
-    } catch {}
-  }
+  } catch {}
 }
 
 export function run(cmd, args = [], { cwd, env, timeoutMs = 0, input, signal } = {}) {
@@ -59,7 +49,7 @@ export function run(cmd, args = [], { cwd, env, timeoutMs = 0, input, signal } =
     const stop = () => {
       if (!child?.pid) return;
       killGroup(child.pid, 'SIGTERM');
-      setTimeout(() => killGroupOnly(child.pid, 'SIGKILL'), 5000).unref();
+      setTimeout(() => killGroup(child.pid, 'SIGKILL'), 5000).unref();
     };
     const onAbort = () => stop();
     const timer = timeoutMs

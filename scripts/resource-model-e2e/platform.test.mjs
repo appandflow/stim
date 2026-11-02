@@ -64,6 +64,8 @@ describe('host measurements', () => {
   });
 });
 
+const RECORDED = Date.parse('Mon Nov  2 15:00:30 2026');
+const recordedAt = (pids) => new Map(pids.map((pid) => [pid, RECORDED]));
 const row = (pid, ppid, rss, lstart, cmd) => `${pid} ${ppid} ${rss} ${lstart} ${cmd}`;
 
 describe('stim process attribution', () => {
@@ -86,7 +88,7 @@ describe('stim process attribution', () => {
 
   it("counts only the run's own supervisors, Metro, xcodebuild and collectors", () => {
     const identities = new Map();
-    recordIdentities(identities, ps, new Set([100, 400]), scope, sinceMs);
+    recordIdentities(identities, ps, recordedAt([100, 400]), scope, sinceMs);
     const totals = classifyStimProcesses(ps, { identities, ...scope });
     expect(totals.supervisor.n).toBe(1);
     expect(totals.metro.n).toBe(1);
@@ -115,8 +117,16 @@ describe('stim process attribution', () => {
       ),
     );
     const identities = new Map();
-    recordIdentities(identities, rows, new Set([500, 600]), scope, sinceMs);
+    recordIdentities(identities, rows, recordedAt([500, 600]), scope, sinceMs);
     expect(identities.size).toBe(0);
+  });
+
+  it('does not adopt a process that started after the pid was recorded', () => {
+    const adopted = parsePs(row(700, 1, 20480, LATER, 'stim-supervisor'));
+    const identities = new Map();
+    recordIdentities(identities, adopted, recordedAt([700]), scope, sinceMs);
+    expect(identities.size).toBe(0);
+    expect(provenOurs(adopted, identities, scope)).toEqual([]);
   });
 
   it('reads process start times independent of the machine locale only when ps prints them in the C format', () => {

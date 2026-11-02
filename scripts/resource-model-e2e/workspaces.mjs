@@ -1,7 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { ledgerUdids, parsePs, provenOurs, readSimulators, recordIdentities, recordedPids } from './platform.mjs';
+import {
+  ledgerUdids,
+  parsePs,
+  provenOurs,
+  readSimulators,
+  noteRecorded,
+  recordIdentities,
+  recordedPids,
+} from './platform.mjs';
 import { C_LOCALE, pool, run, sleep } from './shell.mjs';
 
 export class HarnessError extends Error {}
@@ -240,6 +248,7 @@ export async function teardown(ctx) {
 
 export async function trackLedger(ctx) {
   for (const udid of ledgerUdids(ctx.home)) ctx.createdUdids.add(udid);
-  const fresh = [...recordedPids(ctx.home)].filter((pid) => !ctx.identities.has(pid));
-  if (fresh.length) recordIdentities(ctx.identities, await psRows(fresh), new Set(fresh), scopeOf(ctx), ctx.startedAt);
+  noteRecorded(ctx.recordedAt, recordedPids(ctx.home), Date.now());
+  const fresh = [...ctx.recordedAt.keys()].filter((pid) => !ctx.identities.has(pid));
+  if (fresh.length) recordIdentities(ctx.identities, await psRows(fresh), ctx.recordedAt, scopeOf(ctx), ctx.startedAt);
 }

@@ -66,9 +66,9 @@ async function dormantPhase(ctx, live, reviveEndMs) {
           `devices ${owned.get(workspace.label).join(', ') || 'none recorded'} still exist`,
         );
       const timing = judgeIdleTiming({
-        commandEndMs: reviveEndMs,
+        commandEndMs: ctx.record(workspace).revivedAt ?? reviveEndMs,
         lastActivityMs: null,
-        readAtMs: reviveEndMs,
+        readAtMs: ctx.record(workspace).revivedAt ?? reviveEndMs,
         windowMs,
         tickMs: TICK_MS,
         previousPollStartMs: previousPollStartMs.get(workspace.label),

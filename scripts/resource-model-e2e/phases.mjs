@@ -60,6 +60,7 @@ export async function pollStatus(ctx) {
       ? { max: payload.capacity.devices.max, inUse: payload.capacity.devices.inUse }
       : null,
     daemon: daemonLine(payload),
+    pressureLevel: payload?.daemon?.pressure?.level ?? null,
     envs: {},
   };
   for (const workspace of ctx.workspaces) {
@@ -131,7 +132,14 @@ export async function launch(ctx, workspace, { timeoutMs = 60 * 60_000 } = {}) {
 }
 
 function analyzeIdle(ctx, item) {
-  const entry = { ...item, resolved: null, previousPollStartMs: null, activityMs: null, activityReadMs: null };
+  const entry = {
+    ...item,
+    resolved: null,
+    previousPollStartMs: null,
+    previousPressure: null,
+    activityMs: null,
+    activityReadMs: null,
+  };
   for (const poll of ctx.snapshots) {
     if (!poll.ok || poll.startedAt < item.commandEndMs) continue;
     const env = poll.envs[item.workspace.path];
@@ -141,6 +149,7 @@ function analyzeIdle(ctx, item) {
       break;
     }
     entry.previousPollStartMs = poll.startedAt;
+    entry.previousPressure = poll.pressureLevel;
     const at = env.facts.lastActivityMs;
     if (at !== null && at >= (entry.activityMs ?? 0)) {
       entry.activityMs = at;
@@ -183,6 +192,8 @@ function machineAt(ctx, ms) {
   }
 }
 
+const isPressured = (level) => level === 'high' || level === 'critical';
+
 function idleOutcome(ctx, entry, windowMs) {
   const label = entry.workspace.label;
   if (!entry.resolved) {
@@ -201,6 +212,9 @@ function idleOutcome(ctx, entry, windowMs) {
     previousPollStartMs: entry.previousPollStartMs,
     idlePollStartMs: entry.resolved.poll.startedAt,
     idlePollEndMs: entry.resolved.poll.endedAt,
+    pressureLevel:
+      [entry.resolved.poll.pressureLevel, entry.previousPressure].find(isPressured) ??
+      entry.resolved.poll.pressureLevel,
   });
   const dir = ctx.record(entry.workspace).workspaceDir;
   const newest = dir

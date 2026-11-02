@@ -74,6 +74,26 @@ describe('idle timing judgment', () => {
     });
     expect(verdict).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 14 * MIN });
   });
+  describe('an idle stop before the window ends', () => {
+    const idleAt = base.commandEndMs + 3 * MIN;
+    const judge = (pressureLevel, at = idleAt) =>
+      judgeIdleTiming({
+        ...base,
+        previousPollStartMs: null,
+        idlePollStartMs: at - 2000,
+        idlePollEndMs: at,
+        pressureLevel,
+      });
+    it('passes only when the build reported high or critical pressure and the workspace had been idle two minutes', () => {
+      expect(judge('high')).toMatchObject({ ok: true, early: true, earlyAllowed: true });
+      expect(judge('critical').ok).toBe(true);
+    });
+    it('fails with a normal level, no level, or too short an idle', () => {
+      expect(judge('normal').ok).toBe(false);
+      expect(judge(null).ok).toBe(false);
+      expect(judge('high', base.commandEndMs + 1 * MIN).ok).toBe(false);
+    });
+  });
   it('treats status activity, which is rounded down to the minute, as up to a minute later', () => {
     const verdict = judgeIdleTiming({
       ...base,
