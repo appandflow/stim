@@ -159,6 +159,19 @@ test('status says nothing extra for a project that has only a Metro port', async
   expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
+test('the idle stage line names stim revive only when the dev server recorded an idle stop', async () => {
+  const project = join(tmpHome, 'proj-idle');
+  mkdirSync(project);
+  saveConfig(makeConfig({ version: 2, projects: { [project]: { label: 'idle', metroPort: 8083, platforms: {} } } }));
+  const idleStage = { at: '2026-11-02T10:00:00.000Z', idleMinutes: 15, freedBytes: 1024 };
+  writeWorkspaceState(project, { idleStage });
+
+  expect((await runStatus()).join('\n')).toContain('`stim ios` or `stim android` resumes it');
+
+  writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
+  expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');
+});
+
 test('status detects the framework of an app registered only through a named port', async () => {
   const app = join(tmpHome, 'expo-app');
   mkdirSync(app);

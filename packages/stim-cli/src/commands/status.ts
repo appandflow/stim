@@ -238,9 +238,10 @@ function renderStatus(
 
     if (state.idleStage) {
       const { at, idleMinutes, freedBytes } = state.idleStage;
+      const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
       out.push(
         chalk.dim(
-          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; \`stim revive\` resumes it`,
+          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`,
         ),
       );
     }
