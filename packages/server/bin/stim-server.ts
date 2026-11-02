@@ -191,7 +191,9 @@ async function serve(
         details: { port },
       });
     } catch (error) {
-      fail(`cannot record this server as the one stim share started: ${(error as Error).message}`);
+      fail(
+        `cannot record this server as the one stim share started: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
     if (attempt.pending) releaseClaim(attempt.pending);
     if (!attempt.acquired)
