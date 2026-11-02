@@ -220,12 +220,38 @@ both series. It starts listening in about 120 ms on a quiet machine. Idle, it us
 - **Stopping through `runStop` is `stim stop`, not an idle stop.** The dev server's stop record reads `requested by
 stim daemon` instead of the supervisor's `idle` record, and `stim stop` releases the Metro port reservation, which
   the supervisor's own idle stop keeps. A real version needs an idle variant of the stop.
+- **Review findings, fixed on the branch.** Two independent reviews (one Claude, one Codex) of the first version found
+  that a tick that threw (a malformed `config.json`) left a daemon holding its claim with no loop running, so the
+  supervisors stood down for good; that a `simctl list` failure read as "no devices", so a busy simulator could fall
+  out of the evidence and `runStop` take it down; that the idle exit lingered a tick after releasing the claim; and
+  that a refused bind unlinked another listener's socket. Now a failed tick releases the claim and exits, so the
+  supervisors take their timers back; a device list that cannot be read, or an owned emulator that runs but was not
+  read, keeps the workspace (as maintenance's idle stop already does); the exit breaks the loop; and only a bound
+  socket is removed. The supervisor also records the idle minutes it was started with, and the daemon decides from
+  those, so a setting changed after `stim start` cannot leave the two disagreeing about who owns the stop. A
+  supervisor from an older Stim records none and keeps its own clocks.
 - Not the daemon: the trailhead worktrees needed `pod install` (dangling `rncore-facades` links in the carried Pods),
   and a build that fails after booting the simulator leaves it booted with no Metro on today's code.
 
 Gaps left on purpose: workspaces running `metro.command`, a supervisor that does not report HMR requests, and a 0 in
 either idle setting keep today's separate supervisor clocks; the daemon log has no rotation; Windows has no daemon;
 an older CLI releasing a slot sends no notification, so its waiters fall back to the poll.
+
+Open for a decision, not fixed here:
+
+- **Scoped homes.** Maintenance and `gc` skip device sweeps whenever `STIM_HOME` is set. The daemon does not: its
+  device path is the supervisor's, which revalidates ownership through the created-devices ledger and already runs in
+  scoped homes, and the task wanted one daemon per scoped home. A copied config that marks a device `owned: true`
+  without the ledger still counts as ownership there, so this is a human-review question under AGENTS.md ("a new way
+  to decide that Stim owns it"), not a settled point.
+- **One `simctl list` per idle workspace per tick.** `dueIdleDevices` lists simulators for each workspace it checks,
+  synchronously. With many registered worktrees this blocks the daemon's event loop for seconds each minute, which
+  delays slot wake-ups and can time out a `hello`, after which the CLI spawns a second daemon that loses the claim and
+  exits. One listing per tick, shared by every workspace, is the fix.
+- A workspace whose supervisor is `unverified` gets no idle device shutdown while the daemon runs, since
+  `planIdleShutdown` stands down and the daemon skips it.
+- `STIM_DAEMON=1` in the daemon's own environment outlives `daemon.enabled false`, by the usual environment-wins rule.
+- The idle-stop reasons reuse maintenance's text, which names `maintenance.idleStopHours`.
 
 ## Recommendation
 
