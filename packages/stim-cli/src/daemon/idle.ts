@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { collectOwnedDeviceActivity, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
 import { runStop } from '../commands/stop.ts';
 import { workspaceDeviceLastUseAt } from '../devices/activity.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { dueIdleDevices, shutDownIdleDevices, writeIdleShutdownEvent } from '../devices/idle-shutdown.ts';
 import { listAllIosSims, type IosSimRecord } from '../devices/ios.ts';
 import { withWorkspaceProcessLock, workspaceProcessLockError } from '../engine/workspace-process-lock.ts';
@@ -137,7 +138,10 @@ export async function runIdlePass(log: (line: string) => void, now: number = Dat
           })
         )
           await stopTogether(path, project, Math.min(metroMinutes, deviceMinutes), log);
-      } else if (deviceMinutes > 0) {
+      } else if (
+        deviceMinutes > 0 &&
+        projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned)
+      ) {
         await shutDownUnsupervised(path, deviceMinutes, now, log);
       }
     } catch (error) {

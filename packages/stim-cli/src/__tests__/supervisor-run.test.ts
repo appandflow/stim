@@ -18,7 +18,7 @@ import { parseNdjsonText } from '../ndjson.ts';
 import { supervisorPidFile, workspaceDir, workspaceLogsDir, workspaceStateFile } from '../workspace/paths.ts';
 import { supervisorError } from '../supervisor/errors.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
-import { readIdleStop } from '@stim-cli/core/state';
+import { daemonClaimRoot, readIdleStop } from '@stim-cli/core/state';
 import { workspaceIdleProbe, type IdleProbe } from '../supervisor/idle-stop.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { startBuildProgress } from '../engine/build-progress.ts';
@@ -640,7 +640,8 @@ describe('device idle shutdown', () => {
     deviceMinutes = 2,
     metroMinutes = 0,
     due = () => true,
-  }: { deviceMinutes?: number; metroMinutes?: number; due?: () => boolean } = {}) {
+    observesRequests = false,
+  }: { deviceMinutes?: number; metroMinutes?: number; due?: () => boolean; observesRequests?: boolean } = {}) {
     const seen = { closed: 0, checks: 0, shutDowns: [] as number[] };
     const deviceIdle: DeviceIdleOps = {
       due: () => {
@@ -665,6 +666,7 @@ describe('device idle shutdown', () => {
       deviceIdleMinutes: deviceMinutes,
       deviceIdle,
       startBare: async () => ({
+        observesRequests,
         close() {
           seen.closed += 1;
         },
@@ -687,6 +689,20 @@ describe('device idle shutdown', () => {
     recordWorkspaceUse(root);
     await vi.advanceTimersByTimeAsync(MINUTE);
     expect(seen.shutDowns).toHaveLength(1);
+  });
+
+  test('stops neither the dev server nor devices on its own while a home daemon holds its claim', async () => {
+    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1, metroMinutes: 2, observesRequests: true });
+    const daemon = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive' }).acquired;
+    assert(daemon);
+    await vi.advanceTimersByTimeAsync(10 * MINUTE);
+    expect(seen.shutDowns).toEqual([]);
+    expect(seen.closed).toBe(0);
+
+    releaseClaim(daemon);
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    expect(seen.shutDowns.length).toBeGreaterThan(0);
+    expect(seen.closed).toBe(1);
   });
 
   test("Metro's idle stop first shuts down devices idle for metro.idleStopMinutes when that is shorter", async () => {

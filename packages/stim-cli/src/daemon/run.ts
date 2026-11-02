@@ -11,6 +11,7 @@ import {
   type ClaimHandle,
 } from '@stim-cli/core/ownership-claim';
 import { collectOwnedDeviceActivity, workspaceBuildInProgress } from '../commands/gc/idle.ts';
+import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listBuildSlots } from '../engine/build-slots.ts';
 import { triggerMaintenance } from '../maintenance/trigger.ts';
 import { resolveSupervisorTarget } from '../supervisor/ownership.ts';
@@ -92,6 +93,10 @@ function homeAlive(): string | null {
     if (workspaceBuildInProgress(path)) return `${path} is building`;
   }
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
+  const ownsDevices = Object.values(config?.projects ?? {}).some((project) =>
+    projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned || platforms.android?.owned),
+  );
+  if (!ownsDevices) return null;
   const booted = collectOwnedDeviceActivity(config, listSims(), Date.now());
   if (booted.length) return `${booted.length} owned device(s) booted`;
   return null;
@@ -128,17 +133,21 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
           return;
         }
         if (op === 'hello') socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
-        else if (op === 'slot.wait') waiters.add(socket);
-        else if (op === 'slot.released') {
+        else if (op === 'slot.wait') {
+          waiters.add(socket);
+          socket.write(`${JSON.stringify({ op: 'slot.waiting' })}\n`);
+        } else if (op === 'slot.released') {
           socket.end();
           for (const waiter of waiters) waiter.write(`${JSON.stringify({ op: 'slot.changed' })}\n`);
         } else socket.destroy();
       }
     });
   });
+  let interrupt: (() => void) | null = null;
   const shutdown = (why: string) => {
     if (closing) return;
     closing = true;
+    interrupt?.();
     server.close();
     for (const waiter of waiters) waiter.destroy();
     rmSync(path, { force: true });
@@ -156,7 +165,13 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
   log(`pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`);
   let emptyTicks = 0;
   for (;;) {
-    await new Promise((done) => setTimeout(done, tickMs));
+    await new Promise<void>((done) => {
+      const timer = setTimeout(done, tickMs);
+      interrupt = () => {
+        clearTimeout(timer);
+        done();
+      };
+    });
     if (closing) break;
     if (!daemonEnabled()) {
       shutdown('daemon.enabled is off');
