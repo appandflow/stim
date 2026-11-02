@@ -7,9 +7,11 @@ import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } f
 const WORKSPACE = '/work/app';
 const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
 
-function payload(state: 'Booted' | 'Shutdown' = 'Booted') {
+function payload(state: 'Booted' | 'Shutdown' = 'Booted', activity?: Record<string, unknown>) {
   return {
-    environments: [{ path: WORKSPACE, ios: { udid: 'SIM-1', owned: true, state, name: 'stim-app (iPhone 17)' } }],
+    environments: [
+      { path: WORKSPACE, ios: { udid: 'SIM-1', owned: true, state, name: 'stim-app (iPhone 17)', activity } },
+    ],
   };
 }
 
@@ -21,6 +23,7 @@ interface Fixture {
   routeOpens: number[];
   routeCloses: number;
   refuseControl: boolean;
+  exemptAtBegin: string[][];
   strandedPort: number | null;
   failRoute: { open: boolean; close: boolean };
   listenerBoundAtRouteClose: boolean[];
@@ -37,6 +40,7 @@ function fixture(): Fixture {
     routeOpens: [],
     routeCloses: 0,
     refuseControl: false,
+    exemptAtBegin: [],
     strandedPort: null,
     failRoute: { open: false, close: false },
     listenerBoundAtRouteClose: [],
@@ -59,6 +63,7 @@ function fixture(): Fixture {
     control: {
       begin: async (_owner, target) => {
         f.begins.push(target);
+        f.exemptAtBegin.push([...f.hub.unrecordedTargets()]);
         if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
         return { session: 'c1', platform: 'ios', lease: { grantedAt: 'lease-1', expiresAt: '' }, postures: [] };
       },
@@ -293,6 +298,7 @@ describe('a web share', () => {
     expect(f.begins).toEqual([{ workspace: WORKSPACE, platform: 'ios' }]);
     expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'touch', phase: 'down', x: 0.25, y: 0.75 } }]);
     const key = JSON.stringify([WORKSPACE, 'ios', 'default']);
+    expect(f.exemptAtBegin).toEqual([[key]]);
     expect(f.hub.unrecordedTargets()).toEqual(new Set([key]));
     socket.close();
     await f.hub.stop(WORKSPACE);
@@ -310,8 +316,19 @@ describe('a web share', () => {
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     expect(JSON.parse(await refused)).toMatchObject({ type: 'control', message: expect.stringContaining('Desktop') });
     expect(f.inputs).toEqual([]);
-    vi.advanceTimersByTime(2 * 60_000);
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
+    socket.close();
+  });
+
+  it('never exempts from recording a device something else already drives', async () => {
+    f.refuseControl = true;
+    const share = await started(f, { control: true });
+    f.status(payload('Booted', { state: 'driven', driver: { tool: 'agent-device' }, basis: ['agent-device-lease'] }));
+    const url = local(share, f.hub.port!);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password) });
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await vi.waitFor(() => expect(f.begins).toHaveLength(1));
+    expect(f.exemptAtBegin).toEqual([[]]);
     socket.close();
   });
 

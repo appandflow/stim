@@ -390,6 +390,7 @@ type ReclaimOptions = {
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
   const dir = workspaceDir(path);
   const existed = existsSync(dir);
+  await endWorkspaceShares(path);
   const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
     operation: options.operation,
     purpose: 'workspace removal',
@@ -397,10 +398,7 @@ export async function reclaimProject(path: string, options: ReclaimOptions = {})
     supervisor: false,
     managedLocks: false,
   });
-  if (run.ran) {
-    await endWorkspaceShares(path);
-    return run.value;
-  }
+  if (run.ran) return run.value;
   const kept: SkippedDevice = { name: `workspace ${dir}`, reason: `kept because ${run.reasons.join('; ')}` };
   return {
     path,

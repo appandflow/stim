@@ -95,12 +95,24 @@ const MAX_LOGIN_BYTES = 1024;
 const MAX_MESSAGE_BYTES = 4096;
 const MAX_SESSIONS = 32;
 const PING_MS = 30_000;
+const HEADERS_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 30_000;
+const IDLE_SOCKET_MS = 2 * PING_MS + 10_000;
+const MAX_CONNECTIONS = 64;
 const CLOSE_GRACE_MS = 2000;
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
   android: ['back', 'home', 'app-switch'],
 };
+
+/** Whether the latest status shows the share's device driven, by an agent, a lock or another control session. */
+function drivenNow(payload: StatusPayload | null, request: ShareRequest): boolean {
+  const environment = payload?.environments?.find((candidate) => candidate.path === request.workspace);
+  const slot = request.slot ?? 'default';
+  const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
+  return devices?.[request.platform]?.activity?.state === 'driven';
+}
 
 function closeServer(server: Server): void {
   server.closeAllConnections();
@@ -166,6 +178,7 @@ interface Share {
   controlStarting: Promise<string | null> | null;
   controlRetryAt: number;
   recordKey: string | null;
+  latest: StatusPayload | null;
   timer: NodeJS.Timeout;
   unwatch: () => void;
   ended: boolean;
@@ -245,6 +258,7 @@ export class ShareHub {
       controlStarting: null,
       controlRetryAt: 0,
       recordKey: null,
+      latest: status,
       timer: setTimeout(() => void this.end(share, 'This share expired.'), request.expiresMinutes * 60_000),
       unwatch: () => {},
       ended: false,
@@ -254,6 +268,7 @@ export class ShareHub {
     const attached = deviceKey(device);
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => {
+        share.latest = payload;
         const resolved = ownedDevice(payload, request, attached, this.deps.lookup);
         if (typeof resolved === 'string') queueMicrotask(() => void this.end(share, resolved));
         else if (deviceKey(resolved) !== attached) queueMicrotask(() => void this.end(share, 'The device changed.'));
@@ -333,11 +348,20 @@ export class ShareHub {
     if (this.base && this.listener) return Promise.resolve(this.base);
     this.opening ??= this.closingRoute
       .then(async () => {
-        const server = createServer((request, response) => this.serve(request, response));
+        const server = createServer(
+          { headersTimeout: HEADERS_TIMEOUT_MS, requestTimeout: REQUEST_TIMEOUT_MS },
+          (request, response) => this.serve(request, response),
+        );
+        server.maxConnections = MAX_CONNECTIONS;
+        server.on('connection', (socket) => socket.setTimeout(IDLE_SOCKET_MS, () => socket.destroy()));
         server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head));
         await new Promise<void>((resolve, reject) => {
           server.once('error', reject);
-          server.listen(0, '127.0.0.1', () => resolve());
+          server.listen(0, '127.0.0.1', () => {
+            server.off('error', reject);
+            server.on('error', (error) => console.error(`stim-server: web share listener: ${error.message}`));
+            resolve();
+          });
         });
         const address = server.address();
         const port = typeof address === 'object' && address ? address.port : null;
@@ -422,25 +446,36 @@ export class ShareHub {
     }
   }
 
+  /**
+   * Exempts the share's device from recording its control lease, before that lease exists. A device something else
+   * already drives is left alone: the share's control is refused there, and that driver stays recorded.
+   */
   private holdRecording(share: Share): void {
     if (share.request.physical || share.recordKey) return;
     const { workspace, platform, slot } = share.request;
-    share.recordKey = targetKey({ workspace, platform, slot });
+    const key = targetKey({ workspace, platform, slot });
+    if (!this.controlled.has(key) && drivenNow(share.latest, share.request)) return;
+    share.recordKey = key;
     this.controlled.set(share.recordKey, (this.controlled.get(share.recordKey) ?? 0) + 1);
     this.deps.recordingChanged?.();
   }
 
-  /** Releases the share's recording exemption once its lease, which status can still show, has surely expired. */
-  private releaseRecording(share: Share): void {
+  /**
+   * Releases the share's recording exemption once a lease it took, which status can still show, has surely expired,
+   * or at once when it took none.
+   */
+  private releaseRecording(share: Share, leased = true): void {
     const key = share.recordKey;
     if (!key) return;
     share.recordKey = null;
-    setTimeout(() => {
+    const release = () => {
       const count = (this.controlled.get(key) ?? 1) - 1;
       if (count > 0) this.controlled.set(key, count);
       else this.controlled.delete(key);
       this.deps.recordingChanged?.();
-    }, this.limits.leaseGraceMs).unref?.();
+    };
+    if (leased) setTimeout(release, this.limits.leaseGraceMs).unref?.();
+    else release();
   }
 
   private find(request: IncomingMessage): { share: Share; rest: string } | null {
@@ -669,7 +704,7 @@ export class ShareHub {
       .then((outcome) => {
         if ('code' in outcome) {
           share.controlRetryAt = Date.now() + 5000;
-          this.releaseRecording(share);
+          this.releaseRecording(share, outcome.code !== 'device-busy');
           if (viewer.socket.readyState === viewer.socket.OPEN) {
             viewer.socket.send(JSON.stringify({ type: 'control', message: outcome.message }));
           }
