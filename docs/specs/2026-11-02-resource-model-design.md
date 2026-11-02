@@ -99,6 +99,10 @@ focused device from `defaults read com.apple.iphonesimulator CurrentDeviceUDID`;
 is under 120 s, that device's workspace records activity at now minus the idle time. No permissions are needed. Not
 available on Windows or Linux.
 
+Amended 2026-11-02 (approved): Xcode 27 replaces Simulator.app with Device Hub (`com.apple.dt.Devices`), which keeps
+its focused device where the probe cannot read it without a permission. When Device Hub is the frontmost app, or
+Simulator.app is and `CurrentDeviceUDID` cannot be read, every booted simulator this home owns records the activity.
+
 ## 3. Pressure: one ladder
 
 Each tick classifies the machine:
