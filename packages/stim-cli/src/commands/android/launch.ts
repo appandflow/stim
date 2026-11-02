@@ -41,7 +41,7 @@ import {
 } from '../../engine/app-install.ts';
 import { appReadinessMessage, formatDuration, launchErrorReport, phaseLine, stepTimer } from '../../command-output.ts';
 import { launchErrorPreview } from '../../diagnostics/launch-error-preview.ts';
-import { workspaceDevServerMode, writeWorkspaceLaunchAsync } from '../../supervisor/state.ts';
+import { workspaceDevServerMode, writeWorkspaceLaunchAsync, type LaunchedArtifact } from '../../supervisor/state.ts';
 import { recordPhoneReverse } from '../../devices/phone-reverses.ts';
 import type {
   VerifyLaunchResultLike,
@@ -685,6 +685,27 @@ async function cleanEmulatorAppState(
   return null;
 }
 
+function launchedIdentity(
+  device: { owned?: boolean; avdName?: string | null },
+  apkPath: string | null | undefined,
+  variant: string | null | undefined,
+  record: AndroidRecord,
+): { avdName?: string; artifact?: LaunchedArtifact } {
+  return {
+    ...(device.owned && device.avdName ? { avdName: device.avdName } : {}),
+    ...(apkPath
+      ? {
+          artifact: {
+            configuration: variant ?? 'debug',
+            fingerprint: record.fingerprint ?? null,
+            cacheKey: record.cacheKey ?? null,
+            cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function finishAndroidRun({
   operation,
   runtime,
@@ -975,6 +996,7 @@ export async function finishAndroidRun({
         release,
         ...(runtime.kind === 'process' ? { runtime: 'process' as const } : {}),
         launchedAt: new Date(launchedAt).toISOString(),
+        ...launchedIdentity(device, apkPath, variant, record),
       });
     } catch (error) {
       out(phaseLine('state', chalk.yellow(`could not record Android launch: ${(error as Error)?.message || error}`)));

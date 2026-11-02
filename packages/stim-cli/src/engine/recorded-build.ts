@@ -11,6 +11,7 @@ export interface RecordedBuild {
   appPath: string;
   bundleId: string | null;
   builtAt: string;
+  cache?: { fingerprint: string; key: string; hit: 'local' | 'remote' };
 }
 
 export function recordedBuildKey(selectors: {
@@ -69,6 +70,8 @@ function readRecordedBuild(root: string, key: string): RecordedBuild | null {
 
 const NO_RECORDED_BUILD = 'STIM_NO_RECORDED_BUILD';
 
+export type RecordedBuildRequest = boolean | RecordedBuild;
+
 export interface RecordedBuildRefusal {
   code: string;
   message: string;
@@ -76,11 +79,12 @@ export interface RecordedBuildRefusal {
 }
 
 export function lookupRecordedBuild(
-  requested: boolean | undefined,
+  requested: RecordedBuildRequest | undefined,
   root: string,
   selectors: { platform: 'ios' | 'android'; scheme?: string | null; configuration?: string | null },
 ): { build: RecordedBuild | null; refusal: RecordedBuildRefusal | null } {
   if (!requested) return { build: null, refusal: null };
+  if (typeof requested === 'object') return { build: requested, refusal: null };
   const build = readRecordedBuild(root, recordedBuildKey(selectors));
   if (build) return { build, refusal: null };
   const described = [selectors.scheme && `scheme ${selectors.scheme}`, selectors.configuration]

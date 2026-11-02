@@ -57,7 +57,7 @@ activity for maintenance.idleStopHours (default 6; 0 never; machine or project
 layers; STIM_MAINTENANCE_IDLE_STOP_HOURS overrides; fractions work). Six hours
 outlasts a lunch break, a meeting or an agent's pause between tasks, and still
 frees the memory overnight. Real activity is the newest of: a Stim command in
-the workspace (start, ios, android, macos, web, reload, logs, worktree warm),
+the workspace (start, ios, android, macos, web, reload, revive, logs, worktree warm),
 the end of its last native build, the start, progress or end of a Metro
 bundle or manifest request, or an HMR update, in metro.ndjson, an agent-device command in the workspace's
 agent-device sessions, and an open stim-server live view of its device.

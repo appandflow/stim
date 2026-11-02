@@ -60,6 +60,10 @@ from agentDevice.stateDir in stim ios|android|macos --json or status --json.
 Its sessions and logs are then cleaned with the workspace. Do not set
 AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR; the runner
 build cache and device claims stay shared. Read stim guide logs for examples.
+stim start writes a boot hook into that directory: an agent-device that reads
+it runs stim revive instead of booting a shut-down simulator or emulator
+itself. When revive refuses, agent-device's error quotes its output; follow
+that remedy.
 
 NORMAL WORKFLOW
 
@@ -182,6 +186,11 @@ RULES DURING THE LOOP
   not running, including when it stopped itself after 15 minutes with no use
   (guide metro). Running start first is optional; it lets Metro warm up while
   you do other work.
+- When the app shows "could not connect", a red or blank screen after a
+  pause, run stim revive. After an idle stop it restarts Metro, boots the owned
+  simulator or emulator the app last ran on, and relaunches the app from cold,
+  so in-app state is gone. It never builds and never starts what the
+  workspace did not have; when it refuses, follow its remedy (guide metro).
 - Run ios or android again after a native input changes. A JavaScript-only
   change does not need one.
 - The build cache counts an installed package by its name and version, so it
@@ -375,6 +384,7 @@ Read the matching guide before acting in these situations:
 | Web or API server ports                               | stim guide ports                 |
 | Remote device, custom Metro, or tunnel                | stim guide metro                 |
 | Metro stopped and no one ran stim stop                | stim guide metro                 |
+| App shows could not connect or blank after a pause    | stim guide metro                 |
 | Cache miss, bypass, or fingerprint exclusions         | stim guide lifecycle builds      |
 | Capacity limits                                       | stim guide lifecycle concurrency |
 | budget lines, reclaimed field, or low disk            | stim guide lifecycle budget      |

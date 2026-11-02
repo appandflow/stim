@@ -24,6 +24,13 @@ export function workspaceDevServerMode(root: string, isExpo: boolean): string {
 
 export type WorkspaceLaunchPlatform = 'ios' | 'android';
 
+export interface LaunchedArtifact {
+  configuration: string | null;
+  fingerprint: string | null;
+  cacheKey: string | null;
+  cacheHit: 'local' | 'remote' | false;
+}
+
 export interface WorkspaceLaunchRecord {
   appId: string;
   deviceId: string;
@@ -31,6 +38,8 @@ export interface WorkspaceLaunchRecord {
   release: boolean;
   runtime?: 'process';
   launchedAt: string;
+  avdName?: string;
+  artifact?: LaunchedArtifact;
 }
 
 interface ExpoTunnelRecord {

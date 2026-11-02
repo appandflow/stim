@@ -105,7 +105,7 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 A dev server holds about 450 MB. The supervisor stops it after
 [`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 15 by
 default, with no bundle request, no client log record and no Stim command
-(`start`, `ios`, `android`, `reload`, `logs` or `worktree warm`) in the workspace. For
+(`start`, `ios`, `android`, `reload`, `revive`, `logs` or `worktree warm`) in the workspace. For
 Expo, every line the Expo CLI prints on stdout counts as a client log. The
 supervisor never stops the server while a bundle is still being served, while
 a build or another `stim ios`, `stim android` or `stim stop` runs in the
@@ -135,6 +135,26 @@ read when the supervisor is launched.
 
 <StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
 
+### Resume after an idle stop
+
+An app relaunched while its dev server is stopped shows "could not connect" or
+a blank screen. [`stim revive`](./commands.md#revive) resumes exactly what the
+idle stop paused, and nothing more: it restarts the dev server, boots the owned
+simulators and emulators the app last ran on, and relaunches the app from cold
+from the build cache entry that launch installed. In-app state is gone. It
+never builds, and never creates or adopts a device.
+
+<StimTabs code={`stim revive`} />
+
+:::tip[Ask your agent]
+
+```text
+The app shows "could not connect" after a pause. Run stim revive, then verify
+the app's UI again and check stim logs --errors.
+```
+
+:::
+
 ## Idle workspace stop
 
 Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
@@ -148,7 +168,7 @@ fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
 Real activity is the newest of:
 
 - a Stim command in the workspace: `start`, `ios`, `android`, `macos`, `web`,
-  `reload`, `logs` or `worktree warm`;
+  `reload`, `revive`, `logs` or `worktree warm`;
 - the end of the workspace's last native build;
 - the start, progress or end of a Metro bundle or Expo manifest request, or an
   HMR update;
@@ -543,7 +563,8 @@ with their coordinates, typing (agent-device redacts the text), app opens, and
 screenshots. A failed
 agent-device command is an `error` record. Stim reads agent-device's own session
 records under `~/.agent-device` (or `AGENT_DEVICE_STATE_DIR`) plus existing
-workspace agent-device directories, and never writes there. An iOS session is matched to a simulator through its runner log, including
+workspace agent-device directories. The only file it writes there is the
+workspace directory's boot hook, described below. An iOS session is matched to a simulator through its runner log, including
 a session that moved between simulators. An Android session is matched only
 while agent-device holds its claim on the emulator, so its actions drop out of
 later queries once agent-device releases the claim. Records from a newer
@@ -573,6 +594,14 @@ device claims stay shared: leave `AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH` and
 `AGENT_DEVICE_CLAIMS_DIR` unset. Each active workspace adds one daemon, which
 exits after five idle minutes with no open session. This is opt-in per command; forgetting the
 variable uses `~/.agent-device`.
+
+`stim start` also writes `boot-hook.json` into that directory. An agent-device
+that reads it runs [`stim revive`](./commands.md#revive) when the simulator or
+emulator it was asked to use is shut down, instead of booting the device
+itself, then checks that the device is booted. The device comes back through
+Stim's device admission with this workspace's Metro running, instead of an app
+that relaunches without Metro and shows "could not connect". When revive
+refuses, agent-device fails with an error that quotes revive's output.
 `stim stop` closes owned-device sessions there; `stim worktree remove` stops its
 daemon and removes the directory. Hosted/stim-server sessions already use their
 own state directory and need no export.

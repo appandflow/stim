@@ -116,6 +116,9 @@ const DEFAULT_DEPS: ReloadDeps = {
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
+const REVIVE_REMEDY =
+  'Run `stim revive` to restart Metro if it stopped idle, boot the owned device and relaunch the app from cold; in-app state is gone.';
+
 // React Native's Android packager connection retries every 2 seconds, so a restored reverse is picked up within a few.
 const RECONNECT_POLL_MS = 500;
 const RECONNECT_POLLS = 16;
@@ -216,6 +219,7 @@ async function inspectTarget(
   slot = 'default',
 ): Promise<LiveTarget | TargetFailure> {
   const runCommand = nativeRunCommand(platform, slot);
+  const revivable = !record.release && record.runtime !== 'process';
   if (platform === 'ios') {
     const configured = project.platforms?.ios;
     if (!configured?.owned || configured.deviceUdid !== record.deviceId) {
@@ -247,7 +251,7 @@ async function inspectTarget(
         error: failure(
           'STIM_RELOAD_STOPPED',
           `The recorded iOS app is not running on a booted owned simulator.`,
-          `Run \`${runCommand}\` to boot, install, and launch it.`,
+          resolved.sim && revivable ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
         ),
       };
     }
@@ -287,7 +291,7 @@ async function inspectTarget(
       error: failure(
         'STIM_RELOAD_STOPPED',
         `The recorded Android app is not running on this workspace's owned emulator.`,
-        `Run \`${runCommand}\` to boot, install, and launch it.`,
+        resolved.notRunning && revivable ? REVIVE_REMEDY : `Run \`${runCommand}\` to boot, install, and launch it.`,
       ),
     };
   }

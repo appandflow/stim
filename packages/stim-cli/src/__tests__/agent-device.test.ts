@@ -1,4 +1,15 @@
-import { daemonEnv, metroHintFrom, readRemoteSimulatorArch, remoteProfile } from '../engine/agent-device.ts';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { workspaceAgentDeviceDir } from '@stim-cli/core/state';
+import {
+  daemonEnv,
+  metroHintFrom,
+  readRemoteSimulatorArch,
+  remoteProfile,
+  writeAgentDeviceBootHook,
+} from '../engine/agent-device.ts';
 
 const DAEMON = { baseUrl: 'https://sim-42.eas.dev/daemon', token: 'tok_secret' };
 
@@ -46,4 +57,21 @@ describe('the remote simulator arch', () => {
   ] as [string, { baseUrl: string } | null, typeof fetch][])('%s means arm64', async (_name, baseUrl, fetchImpl) => {
     expect(await readRemoteSimulatorArch(baseUrl, { fetch: fetchImpl })).toBe('arm64');
   });
+});
+
+test("the boot hook agent-device reads runs this Stim's revive from the workspace", () => {
+  const home = mkdtempSync(join(tmpdir(), 'stim-test-'));
+  process.env.STIM_HOME = home;
+  try {
+    writeAgentDeviceBootHook('/work/app');
+    const hook = JSON.parse(readFileSync(join(workspaceAgentDeviceDir('/work/app'), 'boot-hook.json'), 'utf8'));
+    expect(hook.cwd).toBe('/work/app');
+    expect(hook.command.slice(2)).toEqual(['revive', '--json']);
+    const help = spawnSync(hook.command[0], [hook.command[1], 'revive', '--help'], { encoding: 'utf8' });
+    expect(help.status).toBe(0);
+    expect(help.stdout).toContain('Usage: stim revive');
+  } finally {
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  }
 });

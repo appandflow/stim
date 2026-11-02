@@ -108,7 +108,13 @@ import {
 import type { teardownOwnedAvd } from '../devices/teardown.ts';
 import { DeviceAdmissionRefusal, checkDeviceCapacity } from '../engine/device-capacity.ts';
 import { budgetGate, type ReclaimedStep } from '../budget.ts';
-import { didSetUpDevice, ensureBooted, ensureOwnedDevice, type OwnedDeviceRecord } from '../engine/device.ts';
+import {
+  didSetUpDevice,
+  ensureBooted,
+  ensureOwnedDevice,
+  RecordedDeviceLostError,
+  type OwnedDeviceRecord,
+} from '../engine/device.ts';
 import { AvdRecoveryError, AvdBootError } from '../engine/device-android.ts';
 import {
   ensureRemoteBootOwned,
@@ -139,7 +145,7 @@ import { emulatorLogFile, workspaceLogsDir } from '../workspace/paths.ts';
 import { ownedSessionName } from '../engine/eas-simulator.ts';
 import type { FailExtra, AndroidRecord, RunAndroidResult, AndroidBootLike } from './android/types.ts';
 import { acquireAndroidArtifactOrRecorded, type PreparedAndroidArtifact } from './android/artifact.ts';
-import { lookupRecordedBuild } from '../engine/recorded-build.ts';
+import { lookupRecordedBuild, type RecordedBuildRequest } from '../engine/recorded-build.ts';
 import { logPostBuildFailure, persistLastBuild, persistThrownBuild } from './android/result.ts';
 import { finishAndroidRun, type AndroidRuntimePlan } from './android/launch.ts';
 import { androidDeviceSelectorRefusal, resolveAndroidRunPlan } from './android/plan.ts';
@@ -173,7 +179,8 @@ export { formatDuration, phaseLine, shortHash } from '../command-output.ts';
 interface AndroidCommandOptions {
   remoteBuild?: string;
   easProfile?: string;
-  recordedBuild?: boolean;
+  recordedBuild?: RecordedBuildRequest;
+  expectedDevice?: string;
   cleanAppState?: boolean;
   slot?: string;
   json?: boolean;
@@ -309,6 +316,7 @@ export function runAndroidOperation(
           slot: opts.slot,
           easProfile: opts.easProfile,
           recordedBuild: opts.recordedBuild,
+          expectedDevice: opts.expectedDevice,
           cleanAppState: opts.cleanAppState,
           json: Boolean(opts.json),
           metroCheck: opts.metroCheck !== false,
@@ -344,7 +352,8 @@ interface RunAndroidOptions {
   buildMachine?: string;
   progress?: BuildProgress;
   easProfile?: string;
-  recordedBuild?: boolean;
+  recordedBuild?: RecordedBuildRequest;
+  expectedDevice?: string;
   cleanAppState?: boolean;
   resolveEasDevelopmentBuild?: typeof resolveEasDevelopmentBuild;
   slot?: string;
@@ -443,6 +452,7 @@ function resolveRunAndroidOptions(
     useBuildCache = true,
     easProfile,
     recordedBuild,
+    expectedDevice,
     cleanAppState = false,
     resolveEasDevelopmentBuild: resolveEasBuild = resolveEasDevelopmentBuild,
     variant: variantFlag = null,
@@ -525,6 +535,7 @@ function resolveRunAndroidOptions(
     useBuildCache,
     easProfile,
     recordedBuild,
+    expectedDevice,
     cleanAppState,
     resolveEasBuild,
     variantFlag,
@@ -617,7 +628,7 @@ function avdSetupFailure(
 ): { code: string; message: string; remedy: string; extra?: FailExtra } {
   const refusal = claimFailure(error, 'stim android');
   if (refusal) return refusal;
-  if (error instanceof DeviceAdmissionRefusal) {
+  if (error instanceof DeviceAdmissionRefusal || error instanceof RecordedDeviceLostError) {
     return { code: error.code, message: error.message, remedy: error.remedy };
   }
   const diag = noDeviceDiagnostic({
@@ -680,6 +691,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     useBuildCache: requestedBuildCache,
     easProfile,
     recordedBuild: recordedBuildRequested,
+    expectedDevice,
     cleanAppState,
     resolveEasBuild,
     variantFlag,
@@ -1271,6 +1283,7 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
           systemImage: target.systemImage,
           systemImageFlag: systemImageFlag?.trim() || null,
           deviceProfile: target.deviceProfile,
+          expectedDevice,
         },
         note: out,
         out,
@@ -1420,6 +1433,12 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
       return fail(failure.code, failure.message, failure.remedy, failure.extra);
     }
     const { artifact } = acquiredArtifact;
+    const recordedCache = recordedLookup.build?.cache;
+    if (recordedCache) {
+      record.fingerprint = recordedCache.fingerprint;
+      record.cacheKey = recordedCache.key;
+      record.cacheHit = recordedCache.hit;
+    }
     preparedArtifact = artifact;
     const { apkPath } = artifact;
     ccacheActivity = artifact.ccache;

@@ -91,7 +91,7 @@ import {
   writeLastBuild,
 } from '../commands/ios.ts';
 import { asProcessExit, makeChildProcess, makeError, makeExecutor, makeIosSim } from './_factories.ts';
-import { ensureBooted } from '../engine/device.ts';
+import { ensureBooted, ensureOwnedDevice } from '../engine/device.ts';
 import { ensureRemoteBootOwned } from '../engine/device-remote.ts';
 import { IosDeviceMismatchError } from '../engine/device-ios.ts';
 import { deviceModelRefusal, resolveIosWait, resolveSchemeSelection } from '../commands/ios/support.ts';
@@ -4934,6 +4934,50 @@ describe('a recorded build', () => {
     for (const step of ['resolveBuild', 'buildIos', 'swapJsBundle']) expect(calls.order).not.toContain(step);
   });
 
+  test('that names its cache entry is recorded as a hit of that entry, not as a compile', async () => {
+    reserve();
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    const cache = { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' as const };
+    const { exitCode, calls } = await run({
+      recordedBuild: { appPath: recorded, bundleId: 'dev.fixture.app', builtAt: '', cache },
+    });
+    expect(exitCode).toBe(null);
+    expect(calls.order).not.toContain('resolveBuild');
+    expect(readLastBuilds(readWorkspaceState(root)).ios).toMatchObject({
+      status: 'ok',
+      cacheHit: 'local',
+      cacheSkipped: false,
+      fingerprint: 'f1',
+    });
+    expect(readWorkspaceLaunches(root).ios?.artifact).toEqual({
+      configuration: 'Debug',
+      fingerprint: 'f1',
+      cacheKey: 'f1-debug-sim-arm64',
+      cacheHit: 'local',
+    });
+  });
+
+  test('bound to a simulator the slot no longer records, refuses with STIM_DEVICE_LOST and installs nothing', async () => {
+    reserve();
+    setDevice(root, 'ios', { deviceUdid: UDID, deviceName: 'stim-fixture', owned: true });
+    const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
+    mkdirSync(recorded, { recursive: true });
+    const cache = { fingerprint: 'f1', key: 'f1-debug-sim-arm64', hit: 'local' as const };
+    const { exitCode, logs, calls } = await run(
+      {
+        json: true,
+        recordedBuild: { appPath: recorded, bundleId: 'dev.fixture.app', builtAt: '', cache },
+        expectedDevice: 'OTHER-UDID',
+      },
+      { ensureOwnedDevice },
+    );
+    expect(exitCode).toBe(1);
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_DEVICE_LOST', remedy: expect.stringContaining('stim ios') });
+    for (const step of ['ensureBooted', 'installIosApp', 'launchIosApp']) expect(calls.order).not.toContain(step);
+    expect(getProject(root)?.platforms?.ios).toMatchObject({ deviceUdid: UDID });
+  });
+
   test('is refused when the selectors differ from the recorded build', async () => {
     reserve();
     const recorded = join(root, 'artifacts', 'ios-abc', 'Fixture.app');
@@ -5165,6 +5209,7 @@ describe('re-fingerprint after the steps that rewrite fingerprinted files', () =
       metroPort: 8082,
       release: false,
       launchedAt: expect.any(String),
+      artifact: expect.objectContaining({ fingerprint: null, cacheKey: null, cacheHit: false }),
     });
     expect(stderr).toContain(`unavailable after ${mutation}; the build will be installed but not cached`);
   });

@@ -30,6 +30,7 @@ import {
 import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-simulator-viewer.ts';
 import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
+import { RecordedDeviceLostError } from '../../engine/device.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 import type { SimulatorArch } from '../../engine/agent-device.ts';
@@ -253,6 +254,9 @@ export async function deviceModelRefusal({
 }
 
 export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {
+  if (error instanceof RecordedDeviceLostError) {
+    return { code: error.code, message: error.message, remedy: error.remedy };
+  }
   return {
     code: 'STIM_NO_DEVICE',
     message: `Could not ensure an owned iOS simulator: ${(error as Error)?.message || error}`,

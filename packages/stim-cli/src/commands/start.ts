@@ -29,6 +29,7 @@ import { PORT_INSPECTION_REMEDY, PortInspectionError } from '../listening-ports.
 import { projectProblem, detectIsExpo, findProjectRoot, NO_PROJECT_REFUSAL } from '../workspace/project.ts';
 import { detectAppIds } from '../workspace/app-id.ts';
 import { remoteCliInvocation } from '../engine/node-cli.ts';
+import { writeAgentDeviceBootHook } from '../engine/agent-device.ts';
 import { MODE_BARE, MODE_COMMAND, MODE_EXPO, clearManagedMetroTunnel, readMetroTunnel } from '../supervisor/state.ts';
 import {
   clearWorkspaceStateKeys,
@@ -1556,6 +1557,11 @@ export async function startDevServer(
   };
   try {
     const facts = await run();
+    try {
+      writeAgentDeviceBootHook(root);
+    } catch (error) {
+      note(chalk.yellow(`Could not write agent-device's boot hook: ${error instanceof Error ? error.message : error}`));
+    }
     return { ok: true, facts, waited: waitTimer(), reclaimed };
   } catch (error) {
     if (error instanceof WorkspaceProcessCleanupError) {

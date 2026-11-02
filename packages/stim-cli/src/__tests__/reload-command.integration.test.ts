@@ -525,6 +525,57 @@ test('reload reaches the owned Chrome page when it is the only live target, and 
   ).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_PROBE_FAILED' } });
 });
 
+test.each<[string, string, Partial<ReloadDeps>, string]>([
+  [
+    'a shut-down owned simulator',
+    'ios',
+    { resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never },
+    '`stim revive`',
+  ],
+  ['a deleted simulator', 'ios', { resolveIos: () => ({ missing: true }) }, '`stim ios`'],
+  [
+    'an owned emulator that is not running',
+    'android',
+    { resolveAndroid: async () => ({ notRunning: true }) },
+    '`stim revive`',
+  ],
+  [
+    'an emulator now on another serial',
+    'android',
+    { resolveAndroid: async () => ({ serial: 'emulator-5556' }) },
+    '`stim android`',
+  ],
+  [
+    'a shut-down owned simulator, from a Release launch revive skips',
+    'ios',
+    {
+      readLaunches: () => ({ ios: { ...iosLaunch, release: true, metroPort: null } }),
+      resolveIos: () => ({ sim: { udid: 'U1', name: 'stim-ios', state: 'Shutdown' } }) as never,
+    },
+    '`stim ios`',
+  ],
+  [
+    'an owned emulator that is not running, from a native-process launch revive skips',
+    'android',
+    {
+      readLaunches: () => ({ android: { ...androidLaunch, runtime: 'process', metroPort: null } }),
+      resolveAndroid: async () => ({ notRunning: true }),
+    },
+    '`stim android`',
+  ],
+])('a recorded app on %s gets the remedy that brings it back', async (_name, platform, overrides, remedy) => {
+  const result = await runReload({
+    root: '/project',
+    deps: reloadDeps({
+      readLaunches: (): Record<string, WorkspaceLaunchRecord> =>
+        platform === 'ios' ? { ios: iosLaunch } : { android: androidLaunch },
+      ...overrides,
+    }),
+  });
+  expect(result).toMatchObject({ ok: false, error: { code: 'STIM_RELOAD_STOPPED' } });
+  expect(result.ok ? '' : result.error.remedy).toContain(remedy);
+});
+
 test('a bare reload keeps reporting a stopped native app instead of switching to the owned page', async () => {
   const reloaded: string[] = [];
   const result = await runReload({

@@ -56,6 +56,9 @@ restarts it. Use it when an error screen remains after a fix, not after every
 JavaScript edit. It also recovers an Android app whose first bundle failed; an
 iOS app in that state never connects to Metro, so reload cannot reach it.
 
+`revive` resumes a workspace after an [idle stop](./dev-server-and-logs.md#idle-stop).
+Use it when the app shows "could not connect" or a blank screen after a pause.
+
 ## Named device slots
 
 `ios`, `android`, `device lock`, `device unlock`, `logs`, and `stop` accept
@@ -277,7 +280,7 @@ or hyphens. `metro` is reserved for `stim start` and `stim stop`.
 The workspace is the nearest `package.json` directory. In a monorepo, a package
 that is not a React Native or Expo app, such as a Vite web app in `apps/web`,
 uses the one Stim app registered in the same Git worktree instead, and stderr
-names it. `web`, `settings`, `logs`, `reload`, `stop` and `status` follow the
+names it. `web`, `settings`, `logs`, `reload`, `revive`, `stop` and `status` follow the
 same rule; `status` stars the app instead of printing the note. Every `ports` command there then acts on that app's ports, including
 `stop` and `release` without a label. `status`, `worktree remove` and `gc`
 treat the ports as the app's. A package that already holds ports keeps them
@@ -928,7 +931,69 @@ foreign Metro server, and ambiguous selection. `--json` prints one object with
 `platform`, `deviceId`, `deviceName`, `appId`, `metroPort`, and `strategy`.
 Success, including exit 0 with `--json`, confirms that the request was sent.
 The command does not observe completion. Verify the expected UI on the reported
-device and inspect `stim logs --errors` before claiming recovery.
+device and inspect `stim logs --errors` before claiming recovery. When the
+recorded device is shut down, as after an idle stop, the remedy is
+[`stim revive`](#revive).
+
+## `revive`
+
+```text
+stim revive [--json]
+```
+
+Resumes this workspace after an [idle stop](./dev-server-and-logs.md#idle-stop),
+and restores exactly what the stop paused, never more:
+
+- **Metro.** When the dev server's last stop was an idle stop, it starts it
+  again on the workspace's port, as `stim start` would. A dev server that is
+  running is left alone.
+- **Devices.** For each recorded launch except Release and native-process
+  launches (see below), it boots the owned simulator or
+  emulator the app ran on (the same UDID or AVD), on this machine and through
+  the same device admission as `ios` and `android` (`concurrency.maxDevices`
+  included). It never creates or adopts another device.
+- **App.** It relaunches the app from cold from the build cache entry that
+  launch installed, without fingerprinting or building. In-app state is gone.
+  An app still running is left alone unless Metro restarted.
+
+Release and native-process launches do not use Metro, and hosted launches
+belong to their host, so revive does not relaunch them; run `stim ios` or
+`stim android` for them. Revive refuses instead of widening:
+
+- `STIM_NO_METRO` when Metro is not running and its last stop was not an idle
+  stop (it was never started, or a signal or crash stopped it), or when
+  `stim stop` or automatic maintenance stopped the workspace after the idle
+  stop.
+- `STIM_DEVICE_LOST` when a recorded launch's simulator or emulator is no longer
+  this workspace's owned device, or, when agent-device runs it as its boot
+  hook, when the device agent-device asked for is neither one of them nor one
+  this workspace owns.
+- `STIM_NO_RECORDED_BUILD` when the build cache entry a launch installed is
+  gone, for example after `stim gc`, or the launch names none (never cached, or
+  recorded before revive). Run as agent-device's boot hook for a device this
+  workspace owns, it also refuses with this code when the last launch on that
+  device is one revive does not relaunch, or no launch is recorded on it. The
+  remedy names `stim ios` or `stim android`.
+
+It checks all three before starting anything. Only a device that changes after
+that check is refused later, by the run that boots it, with Metro already
+restarted. Each line on stderr says what came
+back:
+
+```text
+Metro stopped idle 14h02m ago, restarted on port 8081.
+Simulator stim-my-app (iPhone 17 Pro 26.0) rebooted.
+com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.0); in-app state is gone.
+```
+
+`--json` prints one object, `{ "revived": { "metro": { "port", "stoppedAt",
+"reason", "restarted" }, "devices": [{ "platform", "slot", "deviceId",
+"deviceName", "rebooted", "app": { "bundleId", "relaunched", "launched" } }] } }`.
+`relaunched: true` means in-app state is gone. agent-device runs
+`stim revive --json` itself when it finds the workspace's device shut down and
+reads the workspace's boot hook; revive then restores only the launch on that
+device, plus Metro. See
+[agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
 ## `logs`
 
@@ -1435,7 +1500,7 @@ its git worktree root. The watcher finds running Claude Code sessions in
 `~/.claude/sessions` and Codex threads updated in the last 30 minutes in
 `~/.codex`, at most every 15 seconds, and one-shot `stim status` reads what it
 found for 2 minutes. These are the tools' own internal files, so Stim reads them
-best-effort. `start`, `ios`, `android`, `web`, `reload`, `logs` and `worktree warm` also
+best-effort. `start`, `ios`, `android`, `web`, `reload`, `revive`, `logs` and `worktree warm` also
 record the `CLAUDE_CODE_SESSION_ID` or `CODEX_THREAD_ID` of the shell that ran
 them, which names the session exactly. `title` is the short name the tool keeps
 for the session; Stim reads no prompts or conversation. `openUrl` opens the
