@@ -20,6 +20,7 @@ type PhoneMethod = Exclude<
   | 'desktop.settings.write'
   | 'desktop.logs.subscribe'
   | 'desktop.doctor.run'
+  | 'desktop.remedy.subscribe'
   | 'desktop.stop.subscribe'
   | 'desktop.reload.subscribe'
   | 'desktop.start.subscribe'
@@ -60,7 +61,9 @@ describe('the shared phone protocol', () => {
 
   it('reads every result and event the server sends', () => {
     expectTypeOf<ResultsTheAppMisreads>().toBeNever();
-    expectTypeOf<Server.StatusEvent extends Mobile.StatusEvent ? never : 'status'>().toBeNever();
+    expectTypeOf<Server.WorkspacesEvent>().toExtend<Mobile.WorkspacesEvent>();
+    expectTypeOf<Server.WorkspaceEvent>().toExtend<Mobile.WorkspaceEvent>();
+    expectTypeOf<Server.MachineEvent>().toExtend<Mobile.MachineEvent>();
     expectTypeOf<Server.ErrorEvent>().toExtend<Mobile.ErrorEvent>();
     expectTypeOf<Server.FrameEvent>().toExtend<Mobile.FrameEvent>();
     expectTypeOf<Server.MacosWindowsEvent>().toExtend<Mobile.MacosWindowsEvent>();
@@ -75,6 +78,8 @@ describe('the shared phone protocol', () => {
         | Server.DesktopReportEvent['event']
         | Server.DesktopStopProgressEvent['event']
         | Server.DesktopStopEndedEvent['event']
+        | Server.DesktopRemedyProgressEvent['event']
+        | Server.DesktopRemedyEndedEvent['event']
         | Server.DesktopReloadProgressEvent['event']
         | Server.DesktopReloadEndedEvent['event']
         | Server.DesktopStartProgressEvent['event']

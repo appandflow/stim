@@ -32,7 +32,9 @@ Duo fold detection requires a build made with the iOS 27.1 SDK and an iOS
   free space of the volumes that hold Stim's workspaces, Stim home and the
   simulators. **+**
   pairs another machine. Below, one list of every workspace on every machine,
-  grouped by repo. Each repo is a heading with how many of its workspaces are
+  grouped by repo. Workspaces marked with `workspace.hidden` stay out of the default
+  list; select Hidden in the Home filters to see them. Starting or warming the
+  workspace clears that shared flag. Each repo is a heading with how many of its workspaces are
   active and idle; repos with an active workspace come first, then by name. In a
   repo, active workspaces come before idle ones, each by name and machine, so a
   workspace moves only when it turns active or idle, not while builds run and
@@ -327,7 +329,10 @@ gc --json` dry run and `stim stats --json`, which the server refreshes at
   time against the estimate with the miss reason, a checklist of phases with
   the current phase's time and the estimates of those left (from the last
   comparable run), and the live output tail of this build from the build log.
-  Otherwise it shows the last build with when it ran, a failed build's compiler
+  Otherwise it shows the last build's selected destination and recorded compilation machine,
+  omitting the compilation line for cache hits or absent compilation data.
+  `STIM_OFFLOAD_REFUSED` is labeled **Build destination refused**.
+  It shows when the last build ran, a failed build's compiler
   errors, why it missed the cache with the changed fingerprint sources, its
   phase times, and a **Build Logs** row (marked Failed for a failed build) that
   opens Logs on the build source for that build's slot, limited to the lines

@@ -726,22 +726,28 @@ test('removing a hosted slot closes its pending log request and re-adding it res
     return original(method, params, timeout);
   });
   logRecords = [{ ts: 1, src: 'device', level: 'error', msg: 'removed slot log' }];
+  vi.useFakeTimers();
+  watcher.dropEvents = true;
   const stop = followHostedLogs(root, false);
   try {
     await vi.waitFor(() => expect(pending).toBe(true), { timeout: 3000 });
     writeHostedIos(root, 'tablet', null);
+    await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(() => expect(target.host.connection.close).toHaveBeenCalled(), { timeout: 3000 });
     release();
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await vi.advanceTimersByTimeAsync(0);
     const file = join(workspaceLogsDir(root), 'ios.tablet-host.ndjson');
     expect(existsSync(file)).toBe(false);
 
     logRecords = [{ ts: 2, src: 'device', level: 'error', msg: 're-added slot log' }];
     writeHostedIos(root, 'tablet', placement());
+    await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(() => expect(readFileSync(file, 'utf8')).toContain('re-added slot log'), { timeout: 3000 });
   } finally {
     release();
     stop();
+    watcher.dropEvents = false;
+    vi.useRealTimers();
     request.mockRestore();
   }
 });

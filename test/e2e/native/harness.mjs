@@ -553,7 +553,18 @@ export async function verifyCleanup({ h, cleanup, appDir, created }) {
     const text = JSON.stringify({ ...sections, trash: null, staleStatusCaches: null });
     assert(
       !created.some((p) => text.includes(JSON.stringify(p).slice(1, -1))),
-      'gc reports one of our workspaces as orphaned',
+      `gc reports one of our workspaces as orphaned:\n${JSON.stringify(
+        Object.fromEntries(
+          Object.entries(sections).filter(
+            ([name, value]) =>
+              name !== 'trash' &&
+              name !== 'staleStatusCaches' &&
+              created.some((p) => JSON.stringify(value).includes(JSON.stringify(p).slice(1, -1))),
+          ),
+        ),
+        null,
+        2,
+      )}`,
     );
   }
   h.log('(5) gc reports nothing of ours orphaned');

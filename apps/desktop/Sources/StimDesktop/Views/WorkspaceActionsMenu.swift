@@ -1,5 +1,6 @@
 import AppKit
 import StimKit
+import StimStores
 import SwiftUI
 
 /// The action set shared by the sidebar's row context menu and the workspace detail's "..." menu, built from
@@ -24,6 +25,8 @@ struct WorkspaceActionsMenu: View {
   var onStopAllLiveWorkspaces: (() -> Void)?
   var hidden = false
   var canHide = true
+  var hidePending = false
+  var unhideUnavailable: String?
   var onToggleHidden: (() -> Void)?
   @AppStorage(AppPreferences.Key.editorBundleID) private var editorID = ""
   @AppStorage(AppPreferences.Key.terminalBundleID) private var terminalID = ""
@@ -102,8 +105,8 @@ struct WorkspaceActionsMenu: View {
     case .toggleHidden:
       if let onToggleHidden {
         Button(hidden ? "Unhide" : "Hide", systemImage: hidden ? "eye" : "eye.slash", action: onToggleHidden)
-          .disabled(!hidden && !canHide)
-          .help(!hidden && !canHide ? "A workspace in use cannot be hidden." : "")
+          .disabled(hidePending || (hidden && unhideUnavailable != nil) || (!hidden && !canHide))
+          .help(hidden ? unhideUnavailable ?? "" : !canHide ? "A workspace in use cannot be hidden." : "")
       }
     case .removeWorktree:
       if let onRemoveWorktree {
@@ -115,6 +118,72 @@ struct WorkspaceActionsMenu: View {
       if let onStopAllLiveWorkspaces {
         Button("Stop All Active Workspaces", systemImage: "stop.circle", action: onStopAllLiveWorkspaces).disabled(busy)
       }
+    }
+  }
+}
+
+struct WorkspaceActions<Content: View>: View {
+  var env: Workspace
+  var openLogs: (String) -> Void
+  var showsHide = true
+  var content: (WorkspaceActionsMenu) -> Content
+  @EnvironmentObject private var actions: ActionCenter
+  @State private var confirmingStop = false
+  @State private var removal: WorktreeRemoval?
+  let prefs = SidebarPreferences()
+
+  var body: some View {
+    let isHidden = prefs.hiddenWorkspaces.contains(.workspace(env))
+    content(
+      WorkspaceActionsMenu(
+        kind: .workspace(
+          metroRunning: env.metro?.running == true, platforms: env.runPlatforms,
+          linkedWorktree: env.worktree != nil),
+        path: env.path,
+        busy: actions.active(for: env.path) != nil,
+        removalAllowed: worktreeRemovalAllowed(git: env.worktree?.git),
+        building: env.build?.isRunning == true,
+        reloadAllowed: env.canReload,
+        onShowLastOutput: actions.latest(for: env.path).map { last in { actions.presented = last } },
+        onRun: { platform in actions.runApp(env, platform: platform) },
+        onReload: { actions.run("Reload \(env.names.title)", steps: [StimCommand(["reload"], cwd: env.path)], present: false) },
+        onStartDevServer: {
+          actions.run("Start \(env.names.title)", steps: [StimCommand(["start"], cwd: env.path)], present: false)
+        },
+        onStopDevServer: {
+          if env.remoteDevices?.isEmpty == false {
+            confirmingStop = true
+          } else {
+            actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+          }
+        },
+        onShowLogs: { openLogs(env.path) },
+        onRemoveWorktree: { resolveRemovalBranch(at: env.path) { removal = WorktreeRemoval(branch: $0) } },
+        hidden: isHidden,
+        canHide: !env.isActive && actions.active(for: env.path) == nil && actions.active(for: env.worktreeActionKey) == nil,
+        hidePending: actions.active(for: env.path) != nil || actions.active(for: env.worktreeActionKey) != nil,
+        unhideUnavailable: env.pathMissing == true && env.hidden == true
+          ? "Restore the workspace folder to change shared visibility." : nil,
+        onToggleHidden: showsHide ? { prefs.setHidden(!isHidden, apps: [env], actions: actions) } : nil)
+    )
+    .confirmationDialog("Stop This Workspace?", isPresented: $confirmingStop, titleVisibility: .visible) {
+      Button("Run stim stop", role: .destructive) {
+        actions.run("Stop \(env.names.title)", steps: [StimCommand(["stop"], cwd: env.path)], present: false)
+      }
+    } message: {
+      Text("This also ends the workspace's billable EAS Simulator session.")
+    }
+    .confirmationDialog(
+      "Remove This Worktree?",
+      isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }),
+      titleVisibility: .visible,
+      presenting: removal
+    ) { _ in
+      Button("Run stim worktree remove", role: .destructive) {
+        actions.run("Remove \(env.names.title)", StimCommand(["worktree", "remove"], cwd: env.path))
+      }
+    } message: { removal in
+      Text(worktreeRemovalMessage(path: env.path, branch: removal.branch))
     }
   }
 }

@@ -2,7 +2,7 @@ import { plural, t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
 import * as Linking from 'expo-linking';
 import { useRouter } from 'expo-router';
-import { View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentSessionRow } from '@/components/agent-sessions';
@@ -12,7 +12,7 @@ import { StatusDot } from '@/components/pill';
 import { SheetScreen } from '@/components/sheet-screen';
 import { Text } from '@/components/text';
 import { toneColor } from '@/design/tone';
-import { useMacConnection, useStatus } from '@/hooks/machines';
+import { useArchivesPending, useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { archivedPage } from '@/lib/archived-page';
 import { formatDuration } from '@/intl/format';
@@ -31,6 +31,7 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const status = useStatus();
   const router = useRouter();
   const { mac, state } = useMacConnection();
+  const pending = useArchivesPending(mac?.id ?? '');
   const canDiff = !archiveId && state.kind === 'open' && state.features.includes('workspace-diff');
   const openDiff = (group: 'changed' | 'untracked') =>
     router.push({ pathname: '/mac/[id]/diff', params: { id: mac?.id ?? '', path, group } });
@@ -51,6 +52,12 @@ export function WorkspaceWork({ path, archive: archiveId }: { path: string; arch
   const checks = livePr ? checksTone(livePr.checks) : null;
   const checkedAt = livePr?.checkedAt ? Date.parse(livePr.checkedAt) : NaN;
   const sinceChecked = formatDuration(Math.max(0, now - checkedAt));
+  if (archiveId && !archive && pending)
+    return (
+      <SheetScreen title={t`Work`}>
+        <ActivityIndicator />
+      </SheetScreen>
+    );
   return (
     <SheetScreen
       title={page?.title ?? worktree?.branch ?? workspaceTitleAt(path, status)}

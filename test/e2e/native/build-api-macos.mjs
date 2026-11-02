@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createStim } from '../../../packages/stim-cli/dist/api.mjs';
@@ -68,6 +68,7 @@ try {
     home,
     build: { platform: 'macos', remoteBuild: 'local' },
     artifactsDir: join(artifacts, 'build'),
+    exportPath: join(artifacts, 'app.tar.gz'),
     timeoutMs: 180_000,
   });
   evidence.exported = built;
@@ -78,7 +79,7 @@ try {
   const executable = join(extracted, 'Probe.app', 'Contents', 'MacOS', 'Probe');
   assert.notEqual(hash(executable), retained);
   execFileSync('codesign', ['--verify', '--strict', join(extracted, 'Probe.app')], { timeout: 30_000 });
-  assert.equal(hash(first.facts.executable), retained);
+  assert.equal(existsSync(first.facts.executable), false);
   assert.equal(hash(running.facts.executable), original);
   assert.equal(identity(running.facts.pid), before);
   evidence.preservedRuntime = true;

@@ -25,6 +25,8 @@ import {
 import { errorRemedy } from '../engine/build-ledger.ts';
 import { runCancellationSignal, withNativeBuildRun } from '../engine/native-run.ts';
 import { spawnDeclared } from '../engine/spawn-claims.ts';
+import { clearClaimChild } from '../ownership-claim.ts';
+import { sameProcessRecord } from '../process-identity.ts';
 import { withWorkspaceProcessLock, WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { operationState } from '../engine/operation-state.ts';
 import { getExecutor } from '../exec.ts';
@@ -359,6 +361,7 @@ async function launchHere(
 ): Promise<MacosAppRecord> {
   await stopBundleInstances(root);
   const fd = openSync(join(workspaceLogsDir(root), 'macos-supervisor.log'), 'a');
+  const claims = [...operationState(context).declaring];
   let child;
   let supervisor: MacosProcess | undefined;
   try {
@@ -377,7 +380,11 @@ async function launchHere(
       closeSync(fd);
     }
     const deadline = Date.now() + 20_000;
-    const current = await waitForMacosRegistration(root, record.launchId, child, deadline);
+    const current = await waitForMacosRegistration(root, record.launchId, child, deadline, (registered) => {
+      if (!supervisor || !sameProcessRecord(registered.supervisor, supervisor))
+        throw new Error('The macOS launch supervisor changed before handoff.');
+      for (const claim of claims) clearClaimChild(claim);
+    });
     if (current) {
       if ((await waitForLaunchServices(current, deadline)) === 'timeout')
         note(

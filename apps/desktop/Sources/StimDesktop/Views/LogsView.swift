@@ -3,7 +3,7 @@ import StimKit
 import SwiftUI
 
 struct LogsView: View {
-  var cli: Task<StimCLI, Never>? = nil
+  var environment: Task<[String: String], Never>? = nil
   var env: Workspace?
   @Binding var query: LogQuery
   /// A moment to scroll to and select, taken and cleared once the logs follow `query`.
@@ -84,10 +84,11 @@ struct LogsView: View {
           archive, query: effectiveQuery, server: server.isOpen ? server.client : nil, unavailable: unavailable)
         return
       }
-      guard let cliTask = cli else { return }
-      let cli = await cliTask.value
+      guard let cliTask = environment else { return }
+      let environment = await cliTask.value
       guard !Task.isCancelled, let env else { return }
-      let session = model.start(effectiveQuery, cli: cli, connection: server.statsConnection, cwd: env.path)
+      let session = model.start(
+        effectiveQuery, stimHome: StimHome.path(environment: environment), connection: server.statsConnection, cwd: env.path)
       while !Task.isCancelled { try? await Task.sleep(for: .seconds(3600)) }
       model.stop(session: session)
     }

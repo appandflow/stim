@@ -285,7 +285,7 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
         parts.append("load \(formatLoad(loadPerCore))/core" + (maxLoadPerCore.map { " of \(formatLoad($0))" } ?? ""))
       }
       if let cpus { parts.append("\(cpus) cores") }
-      if let running, let max { parts.append("\(running) of \(max) offloaded builds") }
+      if let running, let max { parts.append(max > 0 ? "\(running) of \(max) offloaded builds" : "\(running) offloaded builds") }
       if let diskFreeBytes { parts.append("\(Format.freeSpace(diskFreeBytes)) free") }
       return parts.joined(separator: " \u{00B7} ")
     }
@@ -433,7 +433,9 @@ public struct BuildMachineStatus: Decodable, Hashable, Identifiable, Sendable {
   public var identityLine: String? {
     var parts = [dnsName].compactMap { $0 }
     if let cpus = capacity?.cpus { parts.append("\(cpus) cores") }
-    if let running = capacity?.running, let max = capacity?.max { parts.append("\(running) of \(max) offloaded builds") }
+    if let running = capacity?.running, let max = capacity?.max {
+      parts.append(max > 0 ? "\(running) of \(max) offloaded builds" : "\(running) offloaded builds")
+    }
     return parts.isEmpty ? nil : parts.joined(separator: " \u{00B7} ")
   }
 

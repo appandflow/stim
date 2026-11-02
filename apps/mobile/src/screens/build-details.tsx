@@ -21,7 +21,7 @@ import { useArchiveDetail } from '@/hooks/archive-detail';
 import { archiveError } from '@/lib/archived';
 import { archivedPage } from '@/lib/archived-page';
 import { useBuildPlan } from '@/hooks/build-plans';
-import { useMacConnection, useStatus } from '@/hooks/machines';
+import { useArchivesPending, useMacConnection, useStatus } from '@/hooks/machines';
 import { useNow } from '@/hooks/use-now';
 import { useBuildOutput } from '@/hooks/workspace-logs';
 import { formatDateTime, formatDuration } from '@/intl/format';
@@ -31,6 +31,7 @@ import {
   historyDetail,
   historyTitle,
   lastBuildSummary,
+  machineName,
   nextBuild,
   planDetail,
   buildTiming,
@@ -99,6 +100,8 @@ export function BuildDetails(
 }
 
 function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: string; platform: Platform | 'macos' }) {
+  const { mac } = useMacConnection();
+  const pending = useArchivesPending(mac?.id ?? '');
   const archive = useStatus()?.archived?.find((entry) => entry.id === id);
   const detail = useArchiveDetail(id);
   const now = useNow(30_000);
@@ -127,6 +130,8 @@ function ArchivedBuildDetails({ archive: id, platform: initial }: { archive: str
           platform={selected}
           archive={id}
         />
+      ) : pending ? (
+        <ActivityIndicator />
       ) : (
         <Note>{t`This archive is no longer available.`}</Note>
       )}
@@ -236,6 +241,7 @@ function WorktreeBuildDetails({ path, platform }: { path: string; platform: Plat
             </Text>
             <Text tone={app.build.state === 'failed' ? 'error' : 'secondary'}>{state}</Text>
             {app.build.durationMs === undefined ? null : <Note>{formatDuration(app.build.durationMs)}</Note>}
+            <BuildDestination build={app.build} />
             {app.build.error ? (
               <Text tone="error" selectable>
                 {app.build.error}
@@ -687,10 +693,45 @@ function LastBuildDetails({
         {lastBuildSummary(last, now, false)}
       </Text>
       <Note>{when}</Note>
+      <BuildDestination build={last} />
       <Fallback build={last} />
       {last.diagnostics?.length ? <Diagnostics diagnostics={last.diagnostics} root={root} /> : null}
       {last.missReason ? <MissReason reason={last.missReason} /> : null}
       <BuildLogsLink build={last} failed={failed} root={root} archive={archive} slot={slot} />
+    </>
+  );
+}
+
+function BuildDestination({
+  build,
+}: {
+  build: Pick<LastBuild, 'buildMachine' | 'builtOn' | 'errorCode'> & { cacheHit?: LastBuild['cacheHit'] | boolean };
+}) {
+  const selected = build.buildMachine;
+  const selectedName =
+    selected === 'auto'
+      ? t`Automatic`
+      : selected === 'local'
+        ? t`This Mac`
+        : selected === 'remote'
+          ? t`Prefer remote`
+          : selected === 'remote-only'
+            ? t`Remote only`
+            : selected
+              ? machineName(selected)
+              : null;
+  const actualName = build.cacheHit
+    ? null
+    : build.builtOn === 'here'
+      ? t`This Mac`
+      : build.builtOn
+        ? machineName(build.builtOn)
+        : null;
+  return (
+    <>
+      {selectedName ? <Note>{t`Selected: ${selectedName}`}</Note> : null}
+      {actualName ? <Note>{t`Compiled on ${actualName}`}</Note> : null}
+      {build.errorCode === 'STIM_OFFLOAD_REFUSED' ? <Text tone="error">{t`Build destination refused`}</Text> : null}
     </>
   );
 }

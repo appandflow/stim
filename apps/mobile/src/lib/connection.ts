@@ -54,7 +54,6 @@ export function pairingScope(state: ConnectionState): 'control' | 'read' | null 
 }
 
 type SubscribeMethod =
-  | 'status.subscribe'
   | 'workspaces.subscribe'
   | 'workspace.subscribe'
   | 'machine.subscribe'
@@ -397,6 +396,20 @@ export class StimConnection {
       },
       (error: Error) => {
         if (session && !session.accepted) return;
+        if (
+          socket === this.socket &&
+          (sub.method === 'workspaces.subscribe' || sub.method === 'machine.subscribe') &&
+          error instanceof RequestError &&
+          error.error.code === 'unknown-method'
+        ) {
+          this.close();
+          this.options.onState?.({
+            kind: 'refused',
+            code: 'server-outdated',
+            reason: t`Update stim-server on this Mac to load its live status.`,
+          });
+          return;
+        }
         sub.onEvent({ event: 'error', error: { code: 'subscribe-failed', message: error.message } });
       },
     );

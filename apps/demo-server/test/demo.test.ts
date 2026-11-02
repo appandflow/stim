@@ -190,7 +190,7 @@ describe('pairing', () => {
 
   it('answers nothing but hello first', async () => {
     const client = phone(demo());
-    expect((await client.request('status.subscribe')).error?.code).toBe('unauthorized');
+    expect((await client.request('workspaces.subscribe')).error?.code).toBe('unauthorized');
     expect((await client.request('hello')).result).toBeDefined();
     expect((await client.request('machine.get')).result).toBeDefined();
   });
@@ -321,9 +321,9 @@ describe('the phone protocol', () => {
     for (const [method, params] of calls) expect((await client.request(method, params)).result).toBeDefined();
   });
 
-  it('streams status, logs and frames as events the phone accepts', async () => {
+  it('streams status views, logs and frames as events the phone accepts', async () => {
     const client = await pair(demo());
-    await client.request('status.subscribe');
+    expect((await client.request('status.subscribe')).error?.code).toBe('unknown-method');
     await client.request('workspaces.subscribe');
     await client.request('machine.subscribe');
     await client.request('workspace.subscribe', { workspace: SEARCH });
@@ -338,11 +338,10 @@ describe('the phone protocol', () => {
       await client.request('frames.subscribe', { workspace, platform, slot: 'default' });
     }
     await vi.waitFor(() => {
-      expect(client.events('status')).toHaveLength(1);
       for (const name of ['workspaces', 'machine', 'workspace', 'logs']) expect(client.events(name)).toHaveLength(1);
       expect(client.events('frame')).toHaveLength(4);
     });
-    const views = ['status', 'workspaces', 'machine', 'workspace'].flatMap((name) => client.events(name));
+    const views = ['workspaces', 'machine', 'workspace'].flatMap((name) => client.events(name));
     expect(client.events('workspace')[0]?.environment).toMatchObject({ path: SEARCH });
     for (const event of [...views, ...client.events('logs'), ...client.events('frame')]) {
       expect(isRpcEvent(event), `${String(event.event)} event the phone accepts`).toBe(true);
@@ -359,9 +358,9 @@ describe('the phone protocol', () => {
     await client.request('unsubscribe', { subscription: subscriptions[0]?.subscription });
     expect((await client.request('frames.subscribe', frames)).result?.subscription).toEqual(expect.any(String));
 
-    await client.request('status.subscribe');
-    await client.request('status.subscribe');
-    expect((await client.request('status.subscribe')).error?.code).toBe('limit-exceeded');
+    await client.request('workspaces.subscribe');
+    await client.request('workspaces.subscribe');
+    expect((await client.request('workspaces.subscribe')).error?.code).toBe('limit-exceeded');
 
     for (let open = 0; open < 8; open++) await client.request('logs.subscribe', { workspace: SEARCH });
     expect((await client.request('logs.subscribe', { workspace: SEARCH })).error?.code).toBe('limit-exceeded');

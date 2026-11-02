@@ -40,8 +40,10 @@ check also records the disk of each owned and parked simulator and emulator
 Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
-back to it. Memory pressure is recorded only; stopping devices, dev servers
-and helpers for memory is not automatic. The idle check shuts down (never
+back to it. Under memory pressure a pass stops the idle Gradle and Kotlin
+daemons gc --delete --cache gradle-daemons would stop, with the same
+build-running gates; stopping devices, dev servers and other helpers for
+memory is not automatic. The idle check shuts down (never
 deletes) owned simulators and emulators idle for their workspace's
 devices.idleShutdownMinutes, also with no supervisor running, through the
 supervisor's idle rules and records (guide lifecycle budget). While the level is warning or critical, the
@@ -1087,7 +1089,10 @@ THE ONE CASE GC WILL NOT REAP
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
   watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
-  The Gradle and Kotlin daemons are stopped only by \`--cache gradle-daemons\`:
+  The Gradle and Kotlin daemons are stopped by \`--cache gradle-daemons\`, and
+  by automatic maintenance under memory pressure (critical at once, warning
+  after maintenance.memoryWarningMinutes, or off macOS below
+  maintenance.minAvailableMemoryGb) or disk pressure level 3:
     stim gc --delete              (or: stim gc --delete --cache watchman)
                                   runs \`watchman watch-del\` on each stale root
                                   with no subscription or trigger, then

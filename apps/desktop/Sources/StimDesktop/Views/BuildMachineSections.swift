@@ -146,14 +146,15 @@ struct MachineBuildMachines: View {
   }
 
   private func tile(_ title: String, _ value: String, _ caption: String) -> some View {
-    VStack(alignment: .leading, spacing: Space.xs) {
-      Text(title).foregroundStyle(Palette.secondary)
-      Text(value).font(.stim(.title))
-      Text(caption).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+    Card(radius: Radius.control, border: nil, clipsContent: false) {
+      VStack(alignment: .leading, spacing: Space.xs) {
+        Text(title).foregroundStyle(Palette.secondary)
+        Text(value).font(.stim(.title))
+        Text(caption).font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      }
+      .padding(Space.lg)
+      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
-    .padding(Space.lg)
-    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(Palette.surface))
   }
 }
 

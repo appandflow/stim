@@ -286,6 +286,32 @@ from another build on the same machine. A `metro.config.js` that sets its own
 If that swap fails, it builds fresh. iOS physical-device Release
 runs always build fresh.
 
+When a native Release build executes its bundling task on Expo SDK 54–57,
+Stim replaces all Metro transform stores with a fresh build-private store,
+then removes it when the build ends. Project Metro configuration still loads,
+including an existing `EXPO_OVERRIDE_METRO_CONFIG`; native tools keep their
+ambient `TMPDIR`. This prevents stale `EXPO_PUBLIC_` transforms in CI. SDK 53
+and earlier lack Expo's config override and are not isolated; SDK 58 and later
+include Expo's transform cache fix. This does not fix Gradle skipping its bundle
+task when environment values change ([upstream PR](https://github.com/expo/expo/pull/49839)).
+
+SDK 53 projects can opt in to a different Metro transform key when public
+environment values change. Add this after creating and merging your existing
+`config` in `metro.config.js`, before exporting it:
+
+```js
+const { createHash } = require('node:crypto');
+const publicEnv = Object.entries(process.env)
+  .filter(([name]) => name.startsWith('EXPO_PUBLIC_'))
+  .sort(([a], [b]) => a.localeCompare(b));
+const publicEnvKey = createHash('sha256').update(JSON.stringify(publicEnv)).digest('hex');
+config.cacheVersion = `${config.cacheVersion ?? ''}:${publicEnvKey}`;
+```
+
+This preserves the existing `cacheVersion` and `cacheStores`. It varies the key
+for effective `EXPO_PUBLIC_` values; it does not make Gradle execute a skipped
+bundle task.
+
 ### Generated dependency output and cache misses
 
 A build that misses the cache says why before it compiles:
@@ -575,9 +601,11 @@ Disk and memory pressure are checked every minute, idle devices every
 `maintenance.idleCheckMinutes` (5), Stim-owned directory sizes every hour,
 finished worktrees every 15 minutes and the age sweep once a day.
 On macOS the memory signal is the sysctl pressure level, with no signal when
-sysctl fails. Only other platforms use `os.freemem()`. Memory pressure is
-recorded; below disk pressure level 3 a pass stops a dev server only after
-`maintenance.idleStopHours` without real activity and never stops helpers. The idle check shuts down owned simulators and emulators idle for
+sysctl fails. Only other platforms use `os.freemem()`. Under memory pressure
+a pass stops the idle Gradle and Kotlin daemons that
+`stim gc --delete --cache gradle-daemons` would stop, and none while a build
+can use them. Below disk pressure level 3 a pass stops a dev server only after
+`maintenance.idleStopHours` without real activity and stops no other helper. The idle check shuts down owned simulators and emulators idle for
 their workspace's `devices.idleShutdownMinutes`, also when no dev server runs;
 see [idle shutdown](./owned-devices.md#idle-shutdown).
 The same check stops a whole workspace, dev server and owned devices, after

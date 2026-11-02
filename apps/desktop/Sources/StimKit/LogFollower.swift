@@ -124,11 +124,11 @@ public struct LogQuery: Hashable, Sendable {
   }
 
   public func start(
-    _ query: LogQuery, cli: StimCLI, connection: (client: ServerClient, home: String)?, cwd: String
+    _ query: LogQuery, stimHome: String, connection: (client: ServerClient, home: String)?, cwd: String
   ) {
     stop()
     let current = generation
-    guard let client = readCapableServer(connection, stimHome: cli.stimHome) else {
+    guard let client = readCapableServer(connection, stimHome: stimHome) else {
       onEvent(.failed("The local stim-server is not ready to read logs for this Stim home."))
       return
     }

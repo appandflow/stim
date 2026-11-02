@@ -135,7 +135,8 @@ export function plan({
   if (pressure?.memory.pressured)
     skips.push({
       target: 'memory',
-      reason: 'memory pressure observed; automatic maintenance does not stop helpers or idle workspaces yet',
+      reason:
+        'memory pressure observed; only idle Gradle and Kotlin daemons are stopped for memory, never devices or dev servers',
     });
   return { actions, blocked, skips };
 }

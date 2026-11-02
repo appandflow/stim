@@ -961,6 +961,10 @@ msgstr "Archived Workspaces"
 msgid "Auto"
 msgstr "Auto"
 
+#: src/screens/build-details.tsx
+msgid "Automatic"
+msgstr "Automatic"
+
 #: src/lib/archived.ts
 msgid "automatic maintenance"
 msgstr "automatic maintenance"
@@ -1033,6 +1037,10 @@ msgstr "Budgets"
 #: src/screens/build-details.tsx
 msgid "Build"
 msgstr "Build"
+
+#: src/screens/build-details.tsx
+msgid "Build destination refused"
+msgstr "Build destination refused"
 
 #: src/lib/device-tile.ts
 #: src/lib/format.ts
@@ -1455,6 +1463,10 @@ msgstr "Compared with {fingerprint}, the last build of this project in another w
 #: src/lib/workspace-view.ts
 msgid "Compile"
 msgstr "Compile"
+
+#: src/screens/build-details.tsx
+msgid "Compiled on {actualName}"
+msgstr "Compiled on {actualName}"
 
 #: src/lib/workspace-view.ts
 msgid "Compiling"
@@ -1980,6 +1992,10 @@ msgstr "healthy"
 #: src/screens/mac-status.tsx
 msgid "Held outside a listed workspace"
 msgstr "Held outside a listed workspace"
+
+#: src/screens/filters.tsx
+msgid "Hidden"
+msgstr "Hidden"
 
 #: src/screens/device-view.tsx
 msgid "Hide Keyboard"
@@ -3142,6 +3158,10 @@ msgstr "PR #{number} open"
 msgid "Prebuild"
 msgstr "Prebuild"
 
+#: src/screens/build-details.tsx
+msgid "Prefer remote"
+msgstr "Prefer remote"
+
 #: src/lib/workspace-view.ts
 msgid "Prepare"
 msgstr "Prepare"
@@ -3338,6 +3358,10 @@ msgstr "Reloading the web page"
 #: src/screens/mac-status.tsx
 msgid "Remote Machines"
 msgstr "Remote Machines"
+
+#: src/screens/build-details.tsx
+msgid "Remote only"
+msgstr "Remote only"
 
 #: src/screens/workspace-resources.tsx
 msgid "Removal"
@@ -3549,6 +3573,10 @@ msgstr "Select any combination. Not set up shows worktrees Stim has not warmed; 
 #: src/lib/build-machines.ts
 msgid "select the same Xcode on both"
 msgstr "select the same Xcode on both"
+
+#: src/screens/build-details.tsx
+msgid "Selected: {selectedName}"
+msgstr "Selected: {selectedName}"
 
 #: src/screens/settings.tsx
 msgid "Set by STIM_RECORDING on the Mac"
@@ -4041,6 +4069,8 @@ msgid "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 msgstr "This is not a Tailscale (.ts.net) address. Pair only if you trust it."
 
 #: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
+#: src/screens/build-details.tsx
 msgid "This Mac"
 msgstr "This Mac"
 
@@ -4304,6 +4334,10 @@ msgid "Update stim-server on the Mac to view this app window."
 msgstr "Update stim-server on the Mac to view this app window."
 
 #: src/lib/connection.ts
+msgid "Update stim-server on this Mac to load its live status."
+msgstr "Update stim-server on this Mac to load its live status."
+
+#: src/lib/connection.ts
 msgid "Update stim-server on this Mac. It speaks an older protocol than this app."
 msgstr "Update stim-server on this Mac. It speaks an older protocol than this app."
 
@@ -4465,6 +4499,7 @@ msgstr "Window"
 
 #: src/components/workspace-cards.tsx
 #: src/components/workspace-cards.tsx
+#: src/screens/workspace-work.tsx
 #: src/screens/workspace-work.tsx
 msgid "Work"
 msgstr "Work"

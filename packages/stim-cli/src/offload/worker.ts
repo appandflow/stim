@@ -279,6 +279,8 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
   try {
     getExecutor().runFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', PRIVATE_DIRS], {
       input: dirs.map((entry) => entry.join('\t')).join('\n'),
+      // Windows PowerShell must rebuild pwsh's module path: https://github.com/PowerShell/PowerShell/issues/18530.
+      omitEnv: Object.keys(process.env).filter((key) => key.toLowerCase() === 'psmodulepath'),
       timeoutMs: 60_000,
     });
   } catch (error) {
@@ -289,7 +291,7 @@ function makePrivateWindowsDirs(dirs: Array<[dir: string, key?: string]>): void 
 
 /**
  * Creates the checkout directory `src` of `area`. On Windows it is a junction to a private `windowsShortDir`, and the
- * client's Gradle home is made private too; an area whose `src` is a directory keeps it.
+ * repository's Gradle home is made private too; an area whose `src` is a directory keeps it.
  */
 function ensureCheckout(area: string, src: string): void {
   const stat = lstatSync(src, { throwIfNoEntry: false });
@@ -300,7 +302,7 @@ function ensureCheckout(area: string, src: string): void {
     const gradleHome = process.env.GRADLE_USER_HOME;
     const dirs: Array<[dir: string, key?: string]> = [[dirname(target)]];
     if (linked) dirs.push([target, windowsShortDirKey('checkout', realArea)]);
-    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', dirname(dirname(area)))]);
+    if (gradleHome) dirs.push([gradleHome, windowsShortDirKey('gradle', area)]);
     makePrivateWindowsDirs(dirs);
     if (!linked) return;
     let current: string | null = null;
@@ -534,13 +536,30 @@ function fingerprintRefusal(
  * Puts the Node that `root`, or the nearest directory above it in `src`, pins first on this worker's `PATH`, and
  * reports which Node the build runs on.
  */
-function useProjectNode(root: string, src: string): void {
+function useProjectNode(root: string, src: string, platform: WorkerJob['platform']): void {
   const node = withProjectNode(root, process.env, { top: src });
   if (node.pinned) process.env.PATH = node.env.PATH;
   note(
     'deps',
     node.pinned ? projectNodeLine(node.pinned) : `Node ${pathNodeVersion(process.env) ?? 'unknown'} on PATH`,
   );
+  if (platform === 'android') {
+    const home = process.env.GRADLE_USER_HOME;
+    if (!home) throw new Error('Android worker requires its owned GRADLE_USER_HOME');
+    const identity = getExecutor().runFile(
+      'node',
+      ['-p', 'JSON.stringify([process.execPath, process.versions.node])'],
+      {
+        timeoutMs: 5000,
+      },
+    );
+    // Gradle retains the JDK's original executable PATH: https://github.com/gradle/gradle/issues/28110.
+    process.env.PATH = [dirname(JSON.parse(identity)[0]), process.env.PATH].join(delimiter);
+    process.env.GRADLE_USER_HOME = join(
+      home,
+      `n${createHash('sha256').update('canonical-node-path\0').update(identity).digest('hex').slice(0, 12)}`,
+    );
+  }
 }
 
 /**
@@ -746,7 +765,7 @@ async function build(job: WorkerJob): Promise<WorkerResult> {
     compiled = await workerOperation(root, (context) => compileMacos(context, job, root, log, time));
     if (!compiled.ok) return failed(compiled.code, compiled.message);
   } else {
-    useProjectNode(realRoot, realSrc);
+    useProjectNode(realRoot, realSrc, job.platform);
     const nodeFailed = (code: string, message: string) =>
       failed(code, [message, unmetNodePin(realRoot, process.env, { top: realSrc })].filter(Boolean).join(' '));
     try {
@@ -1287,7 +1306,7 @@ async function compileIos(job: WorkerJob, root: string, log: NdjsonWriter, time:
 }
 
 /**
- * Stops the Gradle daemons of this client's Gradle home. A daemon calls setsid, so it leaves the build's
+ * Stops the Gradle daemons of this repository's Gradle home. A daemon calls setsid, so it leaves the build's
  * process group and would outlive the job and its claim.
  */
 function stopGradleDaemons(gradlew: string, timeoutMs: number): void {

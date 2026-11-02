@@ -757,7 +757,7 @@ describe('parseFilters', () => {
     const statuses = (activity: string) => parseFilters(JSON.stringify({ activity })).statuses;
     expect(statuses('live')).toEqual(['live']);
     expect(statuses('idle')).toEqual(['idle', 'notSetUp']);
-    expect(statuses('all')).toEqual(['live', 'idle', 'notSetUp', 'archived']);
+    expect(statuses('all')).toEqual(['live', 'idle', 'notSetUp', 'archived', 'hidden']);
     expect(statuses('archived')).toEqual(['archived']);
   });
 
@@ -801,15 +801,21 @@ describe('status selection', () => {
     expect(setIdleShown(['idle', 'notSetUp'], false)).toEqual(['live']);
   });
 
-  it('shows exactly the selected statuses, in any combination, with All including Archived', () => {
+  it('shows exactly the selected statuses, including Hidden until the shared flag clears', () => {
     const archives = mergeArchives([{ id: 'a', name: 'Mac', status: payload }]);
-    const entries = [...mergeWorkspaces(macs), ...mergeWorktrees(macs), ...archives];
+    const hidden = mergeWorkspaces([{ id: 'a', name: 'Mac', status: status([env('/hidden', { hidden: true })]) }]);
+    const entries = [...mergeWorkspaces(macs), ...mergeWorktrees(macs), ...archives, ...hidden];
     const kinds = (statuses: HomeStatus[]) => [
       ...new Set(filterWorkspaces(entries, { ...DEFAULT_FILTERS, statuses }, ['a', 'b', 'c']).shown.map(entryStatus)),
     ];
     expect(kinds(['live', 'archived']).sort()).toEqual(['archived', 'live']);
     expect(kinds(['notSetUp', 'idle']).sort()).toEqual(['idle', 'notSetUp']);
-    expect(kinds([...STATUSES]).sort()).toEqual(['archived', 'idle', 'live', 'notSetUp']);
+    expect(kinds(['hidden'])).toEqual(['hidden']);
+    expect(kinds([...STATUSES]).sort()).toEqual(['archived', 'hidden', 'idle', 'live', 'notSetUp']);
+    expect(filterWorkspaces(hidden, DEFAULT_FILTERS, ['a'])).toEqual({ shown: [], hiddenByActivity: 0 });
+    expect(parseFilters(JSON.stringify({ statuses: ['hidden'] })).statuses).toEqual(['hidden']);
+    delete hidden[0].env.hidden;
+    expect(filterWorkspaces(hidden, DEFAULT_FILTERS, ['a']).shown).toEqual(hidden);
   });
 
   it('marks a selection other than the default as an active filter', () => {

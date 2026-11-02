@@ -10,11 +10,11 @@ public struct ServerRunResult: Sendable {
 /// Runs a Desktop platform command through its same-home bundled server. Cancellation awaits unsubscribe;
 /// a dropped connection never replays a run whose dispatch may already have happened.
 @MainActor public func runServerPlatform(
-  _ command: StimCommand, cli: StimCLI, connection: (client: ServerClient, home: String)?,
+  _ command: StimCommand, stimHome: String, connection: (client: ServerClient, home: String)?,
   onLine: @escaping @MainActor (OutputLine) -> Void = { _ in }
 ) async throws -> ServerRunResult {
   try Task.checkCancellation()
-  guard let client = readCapableServer(connection, stimHome: cli.stimHome), client.hasDesktopAuthority else {
+  guard let client = readCapableServer(connection, stimHome: stimHome), client.hasDesktopAuthority else {
     throw ServerError(
       code: "not-connected", message: "The bundled local stim-server is not ready to run this app for this Stim home.")
   }

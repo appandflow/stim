@@ -31,6 +31,7 @@ struct EmulatorOptionsView: View {
   var clipboard: ClipboardOptionsView?
   var frame: DeviceFrameOption?
   var audio: DeviceAudioTarget?
+  var tools: DeviceToolsView?
 
   var body: some View {
     VStack(alignment: .leading, spacing: Space.md) {
@@ -42,6 +43,10 @@ struct EmulatorOptionsView: View {
       if let frame { DeviceFrameToggle(frame: frame) }
       if frame != nil, clipboard != nil { Divider() }
       if let clipboard { clipboard }
+      if let tools {
+        Divider()
+        tools
+      }
     }
     .font(.stim(.callout))
     .controlSize(.small)

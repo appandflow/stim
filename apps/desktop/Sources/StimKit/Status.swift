@@ -141,6 +141,7 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var agentDevice: AgentDevice?
   public var platforms: [String]?
   public var live: Bool
+  public var hidden: Bool?
   /// `warming`, `ready`, `live` or `idle`; absent from a `stim` that does not report lifecycle phases.
   public var phase: String?
   /// True when the workspace folder no longer exists on a mounted volume; `stim worktree remove <path>` removes the entry.
@@ -188,7 +189,8 @@ public struct Workspace: Decodable, Identifiable, Hashable, Sendable {
   public var titleOverride: String?
 
   enum CodingKeys: String, CodingKey {
-    case path, workspaceId, platforms, live, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios, android,
+    case path, workspaceId, platforms, live, hidden, phase, phaseSince, warmStep, memoryMb, memorySource, warnings, issues, ios,
+      android,
       web, metro
     case pathMissing, macos, supervisor, logs, slots, remoteDevices, physicalDevices, build
     case lastBuilds, builds, checkout, worktree, recording

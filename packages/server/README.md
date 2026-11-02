@@ -1794,14 +1794,14 @@ connected since stim-server started keeps its directory when revoked.
   marker, including the package-manager arguments. Without that query it is
   false. Clients ignore older workers' unverified warmth and do not rank
   checkout or build-directory presence as cache state. `capacity` holds
-  `running` and `max` offloaded builds, `diskFreeBytes` of the worker root's
+  `running` and `max` offloaded builds (`max` is its `server.maxOffloadedBuilds`, 0 when unlimited), `diskFreeBytes` of the worker root's
   volume and `minDiskFreeBytes`, `cpus`, `loadPerCore` (the 5-minute load
   average per CPU), `builds` (this machine's own Stim runs in prebuild, pods or
   compile that it did not offload, plus the offloaded builds it runs), `maxBuilds` (its
   `concurrency.maxBuilds`, 0 when unlimited), `maxLoadPerCore` (its
   `server.maxLoadPerCore`, default 2), `memoryUsedBytes` (Activity Monitor's
   Memory Used) and `memoryTotalBytes`, and `declined`: why it would refuse a
-  build now, or null. It declines while it runs its limit of offloaded builds,
+  build now, or null. It declines while it runs a non-zero `max` of offloaded builds,
   while the worker root's volume has less than 10 GiB free, while `builds`
   reaches a non-zero `maxBuilds`, or while `loadPerCore` is at or above
   `maxLoadPerCore`. The toolchain is read at most once a minute per Ruby context; capacity on
@@ -1902,7 +1902,9 @@ connected since stim-server started keeps its directory when revoked.
   reads allow it; a job whose fingerprint after `pod install` differs from
   `fingerprint` then returns the development archive this machine retained
   under that fingerprint instead of compiling. It returns `{ "job" }`. It fails with
-  `build-busy` while the offer would be declined, naming the reason, or while
+  `build-busy` while the offer would be declined, naming the reason (a load,
+  offloaded-build cap or build-slot decline also names the load per core,
+  offloaded builds running and free disk it was decided on), or while
   another build of the same client and repository runs, or while every one
   of this machine's `concurrency.maxBuilds` slots is held, and with
   `build-refused` when `compat` differs from this machine's, or, when either
@@ -1915,22 +1917,26 @@ connected since stim-server started keeps its directory when revoked.
   equals `fingerprint`, and runs `xcodebuild` for one of this Mac's iPhone
   simulators on `runtime`, which it never boots, or Gradle's
   `assemble<variant>` for `abi` with ccache under the area's Stim home. A
-  Gradle daemon leaves the build's process group, so no claim or slot tracks
-  it. An Android build keeps the client's daemon warm, with Gradle's idle
-  timeout set to `server.gradleDaemonIdleMinutes` (default 30; 0 stops it
-  when the build ends), and stops it when the build gets SIGTERM (on Windows,
-  where a cancel ends the build's process tree with `taskkill /T /F`, the
-  daemon sweep below stops it). Gradle
-  fixes a daemon's idle timeout when the daemon starts, so a new value
-  applies to the next daemon. Once no build of that client runs, stim-server
-  sends SIGTERM to each daemon whose command line runs from the client's
-  Gradle home (on Windows, every process running from it, the Kotlin daemon
-  included, since Windows cannot delete a jar a running process opened) when a build of the client was cancelled, when the client
-  loses `build`, and, for every client, while this machine has less than 2 GB of
-  available memory (total memory minus Activity Monitor's Memory Used). It
-  checks every minute and on each change under its server directory. A daemon
-  whose Gradle home is deleted stops itself within seconds, because Gradle
-  expires a daemon whose registry file is gone.
+  Gradle daemon leaves the build's process group. Each repository has its own
+  Gradle home, so cancellation can stop its verified daemons without waiting
+  for or stopping another repository's build. RN/Expo Android workers choose
+  an `n<12 hex>` child home by the selected Node executable and version;
+  switching Node keeps separate dependency caches and warm daemons. Cleanup
+  covers the parent and these children. Native Gradle keeps the parent home.
+  Android claims remain pending
+  until cancellation cleanup proves those identities exited; unknown cleanup
+  retains the repository and build-slot claims. A daemon exiting between process
+  inventory and identity capture also requires inspection and manual claim
+  recovery before retrying. The daemon stays warm with
+  `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
+  Gradle fixes that timeout at daemon startup. Once no build of a client runs,
+  stim-server also stops its daemons when the client loses `build`. The
+  low-memory sweep waits until no offloaded build is running and the machine
+  has less than 2 GB of available memory. The periodic sweep still
+  recognizes legacy client-home daemons; changing home namespaces does not
+  migrate or delete the old cache. A live process named in a legacy daemon log
+  refuses new Android admissions until it has been inspected and retired.
+  An unrelated process reusing a logged PID can also require manual inspection.
   A macOS request supplies `macos: { product, infoPlist, bundleId }` and
   optionally `resources` (up to 256 destination-to-source entries) and
   `assetCatalog` (a string or null), omitting runtime, configuration, scheme, packageName, isExpo, optimizations and android.
@@ -1998,26 +2004,34 @@ connected since stim-server started keeps its directory when revoked.
 
 The worker root is `server.workerRoot` in this machine's Stim settings, or
 `$STIM_HOME/build-worker`. Each client gets `<root>/<device id>/`, with its
-blobs, caches (`CP_HOME_DIR`, `CP_CACHE_DIR`, the pnpm store and
-`GRADLE_USER_HOME` and SwiftPM) and one area
-per repository under `repos/<repo>/`: the checkout, its own Stim home with
-DerivedData, the compilation cache and ccache, and the output. A build never reads or
-writes this machine's own Stim home. Each source mirror has an initial empty Git
-commit so local development podspecs can resolve `HEAD`; it is internal mirror
-metadata, not the client's commit or history. An ownership claim at
-`repos/<repo>.claims`, whose child is the build's process group, guards each
-area; it is released only once that group is gone, and a claim whose server
-and build are both gone is recovered by the next build. Windows has no
-process groups, so there the claim follows the build's worker process, and a
-cancel ends its whole tree with `taskkill /T /F` before the claim is
-released. The NDK's ninja on Windows cannot open paths longer than 260
-characters, so a Windows worker keeps each area's checkout and each client's
-Gradle home in private short directories, `<SystemDrive>\sw\<6 hex>`, with
-an owner key beside each; the area's `src` is a junction to its checkout.
-Removing a client deletes them too. With a non-zero
-`concurrency.maxBuilds`, the build also holds one of this machine's build slots
-(`$STIM_HOME/build-slots/`), the same claims local Stim builds take, with the
-same child, so a local build waits for it and `builds` counts it. Each finished build
+blobs and shared CocoaPods, pnpm and SwiftPM caches. Each area under
+`repos/<repo>/` contains its checkout, Stim home, compilation cache, output and
+`cache/gradle` (`GRADLE_USER_HOME`). Each canonical Git checkout has its own
+area, including linked worktrees of one repository. Separate checkouts repeat
+Gradle wrapper/dependency/transform caches and their first build starts cold.
+Different checkouts can build concurrently within the configured admission
+limits; projects in the same checkout share one mirror and serialize. Moving
+a checkout changes its area identity. Existing areas stay on the worker until
+the client is removed.
+
+A build never reads or writes this machine's own Stim home. Each source mirror
+has an initial empty Git commit so development podspecs can resolve `HEAD`;
+it is internal metadata, not client history. An ownership claim at
+`repos/<repo>.claims` guards each area. Non-Android claims follow the worker
+process group (the worker process on Windows). Android claims stay child-pending
+because Gradle escapes that group. Cancellation verifies repository daemon
+identities have exited before releasing its repository and build-slot claims.
+A server crash leaves those Android claims unresolved, including an ordinary
+in-flight Android build; inspect the worker and daemon processes and recover
+both claim sets manually before retrying. A successful worker result releases
+its claims normally while retaining the warm daemon.
+
+Windows keeps each checkout and repository Gradle home in private short
+`<SystemDrive>\\sw\\<6 hex>` directories for the NDK path limit, with an exact
+owner key beside each; `src` is a junction. Client removal deletes only matched
+owned short homes, including a marked legacy client home. With non-zero
+`concurrency.maxBuilds`, a build holds one of the machine's build slots
+(`$STIM_HOME/build-slots/`), so local builds count it too. Each finished build
 appends a `build` record to the [action log](#actions) with the repository as
 `workspace`. The worker root keeps growing with each repository; delete a
 client's directory to reclaim it.
@@ -2045,41 +2059,10 @@ Events are `{ "event", "subscription", ... }`.
   `server.home` is the home folder
   of the user the server runs as, so clients can show paths under it as
   `~/...`.
-- `status.subscribe` returns a subscription id. Each `status` event carries a
-  full payload as `stim status --watch --json` prints it, including each
-  environment's `physicalDevices`, the phones it leases, and its `agents`, the
-  Claude Code and Codex sessions working in it. Those carry the session id,
-  working directory, the short session name the tool keeps, and times, never
-  prompts or conversation. `openUrl` there is a `claude://` or `codex://` link
-  that only the machine can open; the server has no action that opens it. `webUrl`
-  is a Claude Code session's `https://claude.ai/code/` link while Remote Control
-  is connected, which a phone opens in the Claude app or a browser.
-  `endedAgents` lists the sessions that stopped running there in the last 3
-  days, with the same fields as last found, no `pid`, and `endedAt`. The server
-  drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the environment of
-  the `stim` commands it runs, so a phone's reload is not recorded as the work
-  of the agent session that started the server. The server runs the status
-  watch itself, in a worker thread, from the moment it is ready, so a
-  subscriber gets the latest payload at once; all subscribers share it.
-  While any status subscription is open, the server keeps a CPU
-  and memory history from each payload's `machine.owners`, and every `status`
-  event carries it beside the payload as `usage`, once it holds a reading:
-  `{ "intervalMs", "endAt", "environments", "devices" }`. It covers the last 10
-  minutes in 15-second slots, the cadence at which `status --watch` rereads
-  machine usage, oldest first, at most 40 points: point `i` of `n`
-  is at `endAt - (n - 1 - i) * intervalMs`, and a slot no payload fell in is
-  `null`. Each `environments` entry is `{ "workspace", "cpuPercent",
-"memoryMb" }` and sums every machine owner of that environment path; each
-  `devices` entry is `{ "kind", "id", "workspace", "slot"?, "cpuPercent",
-"memoryMb" }` for a simulator (`id` its UDID) or emulator (`id` its AVD name).
-  `cpuPercent` is ps %CPU, where 100 is one core. The history lives in the
-  server's memory only. While the server holds `stim device lock` leases for
-  phones that control a device, every `status` event also carries their
-  `grantedAt` times as `ownLeases`, so a client can tell a person controlling a
-  device from an agent driving it: an `activity.driver` of `stim device lock`
-  whose `since` is in `ownLeases` is a phone.
-- A server that offers the following status views lists `status-views` in its
-  `hello` features.
+  App clients require the live view subscriptions below. They do not negotiate
+  these views through `hello` features or fall back to a full-status subscription.
+  Update the server and app clients together.
+
 - `workspaces.subscribe` returns a subscription id and sends `workspaces`
   events, each with a `seq` that starts at 0 and grows by one. The first
   carries `snapshot`: `{ "workspaces", "worktrees", "archived" }`. Each
@@ -2097,10 +2080,29 @@ Events are `{ "event", "subscription", ... }`.
   subscribes again for a new snapshot.
 - `workspace.subscribe` with `{ "workspace" }` sends `workspace` events with
   that workspace's full `environment`, on subscribing and on every change to
-  it, or `null` while no workspace has that path.
+  it, or `null` while no workspace has that path. The full environment includes
+  leased `physicalDevices`, active `agents` and the sessions ended in the last
+  three days as `endedAgents`. Agent records contain attribution and times,
+  never prompts or conversation. `openUrl` is a machine-only Claude/Codex link;
+  `webUrl` is a Claude Remote Control link the phone can open. Server-run Stim
+  commands omit `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` so their work is
+  not attributed to the agent that started the server.
 - `machine.subscribe` sends `machine` events with `capacity`, `machine`,
   `deviceLeases`, `simctlAvailable` and `maintenance` without `recent` and
-  `sizes`, plus `usage` and `ownLeases` as on `status` events.
+  `sizes`, plus `usage` and `ownLeases` when present. While a machine subscription
+  is open, the server records CPU and memory history from status machine owners.
+  `usage` is `{ "intervalMs", "endAt", "environments", "devices" }`: the last
+  ten minutes in 15-second slots, oldest first, at most 40 points. Point `i` of
+  `n` is at `endAt - (n - 1 - i) * intervalMs`; a missing reading is `null`.
+  Each environment series is `{ "workspace", "cpuPercent", "memoryMb" }`,
+  summed across that workspace's machine owners. Each device series is
+  `{ "kind", "id", "workspace", "slot"?, "cpuPercent", "memoryMb" }`, with
+  simulator UDID or emulator AVD name as `id`. CPU percent is ps %CPU, where 100
+  is one core; the history lives only in server memory. `ownLeases` holds the
+  `grantedAt` times of device leases the server holds for controlling phones.
+  A `stim device lock` activity whose `since` occurs there is a phone rather
+  than an agent. All views share the server's status watch; clients do not
+  start an external CLI status watcher.
 - `builds.history` with `{ "workspace" }` returns that workspace's full
   `{ "builds" }`. `archived.list` with optional `before` and `limit` (at most 50) returns `{ "archived", "usage", "next" }`: archives newest removal first,
   and the `before` of the next page, or null. `worktrees.list` returns the full

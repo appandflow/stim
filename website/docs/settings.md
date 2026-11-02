@@ -646,9 +646,12 @@ DerivedData, compilation cache, ccache and Gradle home, with a separate Stim
 home per client and repository and one Gradle home per client. On a Windows
 machine, the checkouts and Gradle homes themselves live in short directories
 under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)). Put it on a
-large volume. It runs one offloaded build at a time and boots or installs
-nothing. It declines a build while that volume has less than 10 GB free,
-while its own Stim builds and the offloaded one fill its
+large volume. It boots or installs nothing. It declines a build while that
+volume has less than 10 GB free, while `server.maxOffloadedBuilds` offloaded
+builds already run (default 0, no limit; with it and `concurrency.maxBuilds`
+both unset, only the load average limits a burst of builds, and it lags by
+minutes),
+while its own Stim builds and the offloaded ones fill its
 `concurrency.maxBuilds`, or while its load per core is at or above its
 `server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
 remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
@@ -667,8 +670,9 @@ stays warm for `server.gradleDaemonIdleMinutes` (default 30; `0` stops it
 when each build ends), so the client's next build skips a JVM start of about
 15 seconds. A new value applies from the next daemon. The daemon never holds
 a build slot. While none of the client's builds runs, stim-server stops it
-sooner when a build of the client is cancelled, when the client is revoked, and when
-the remote machine has less than 2 GB of memory available. Deleting the
+sooner when a build of the client is cancelled or when the client is revoked.
+The low-memory sweep waits until no offloaded build is running and the remote
+machine has less than 2 GB of memory available. Deleting the
 client's directory under the worker root stops it too.
 
 To keep stim-server running on a remote machine across logins, run
@@ -938,7 +942,7 @@ worktrees (only with `maintenance.removeIdleWorktrees`, off by default); `mainte
 before that sweep deletes its owned simulators and emulators (0 turns it off);
 `maintenance.gradleVersionIdleDays` (7) sets how long a Gradle version no project pins stays unmodified before level 3 stops the idle Gradle and Kotlin daemons that keep it and deletes it (0 turns that off);
 `maintenance.removeFinishedWorktrees` controls the worktree
-check. Memory pressure is recorded; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
+check. Under memory pressure a pass stops idle Gradle and Kotlin daemons, as `stim gc --delete --cache gradle-daemons` would; below disk pressure level 3 a pass stops a dev server only after `maintenance.idleStopHours` without real activity (removing a finished worktree tears down that workspace's own, as `gc --delete` does). Debug check logs are off by default.
 See [automatic maintenance](./build-caches.md#automatic-maintenance) for reports.
 
 ## Debug logs

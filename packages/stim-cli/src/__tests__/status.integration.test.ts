@@ -1455,8 +1455,8 @@ test.each(['default', 'tablet'].flatMap((slot) => ['Shutdown', 'Booted', 'unknow
       },
     });
     const payload = await runStatusJson();
-    expect(isRpcEvent({ event: 'status', subscription: 'fixture', payload })).toBe(true);
     const environment = payload.environments[0];
+    expect(isRpcEvent({ event: 'workspace', subscription: 'fixture', seq: 0, environment })).toBe(true);
     expect(environment.slots ?? []).not.toEqual(expect.arrayContaining([expect.objectContaining({ slot: 'default' })]));
     const ios =
       slot === 'default'

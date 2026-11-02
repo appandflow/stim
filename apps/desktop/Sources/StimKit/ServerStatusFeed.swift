@@ -13,13 +13,14 @@ import Foundation
 }
 
 /// Follows stim-server's status views: `workspaces.subscribe` for the workspace list, `machine.subscribe` for the
-/// machine, `archived.list` for the archives whenever their summary changes, and `workspace.subscribe` for each
+/// machine, `archived.list` when `readsArchives` is true and their summary changes, and `workspace.subscribe` for each
 /// followed workspace, whose full environment replaces its summary. Each change yields one payload shaped like
 /// `stim status --json`. `onDelivering(true)` runs with the first payload and `onDelivering(false)` when a view ends,
 /// errors or is dropped, so the caller can mark its retained status as unavailable. `onPayload` includes its authenticated
 /// client and transport generation so consumers can reject retained snapshots after reconnect. For a paired server's
 /// client, the debug log gets no server-supplied text: only fixed messages and a decode failure's sanitized path.
 @MainActor public final class ServerStatusFeed {
+  private let readsArchives: Bool
   private let onPayload: @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void
   private let onDelivering: @MainActor (Bool) -> Void
   private var client: ServerClient?
@@ -48,9 +49,11 @@ import Foundation
   }
 
   public init(
+    readsArchives: Bool = true,
     onPayload: @escaping @MainActor (Result<StatusPayload, Error>, ServerClient, Int) -> Void,
     onDelivering: @escaping @MainActor (Bool) -> Void
   ) {
+    self.readsArchives = readsArchives
     self.onPayload = onPayload
     self.onDelivering = onDelivering
   }
@@ -208,9 +211,11 @@ import Foundation
   private func receiveMachine(_ event: ServerEvent) {
     prepareViews()
     if ended(event, view: "machine") { return }
-    guard event.name == "machine", views.applyMachine(event.fields) == .changed else { return }
+    guard event.name == "machine", case .object? = event.fields["machine"] else { return }
+    let changed = views.applyMachine(event.fields) == .changed
+    let recovering = failures["machine"] != nil
     recovered("machine")
-    if views.hasWorkspaces { decode() }
+    if views.hasWorkspaces, changed || recovering { decode() }
   }
 
   private func receiveDetail(_ event: ServerEvent, path: String) {
@@ -220,7 +225,7 @@ import Foundation
   }
 
   private func readArchivesIfChanged() {
-    guard let summary = views.archivedSummary, summary != archivedSeen, let client else { return }
+    guard readsArchives, let summary = views.archivedSummary, summary != archivedSeen, let client else { return }
     archivedSeen = summary
     archivesRead?.cancel()
     let generation = generation

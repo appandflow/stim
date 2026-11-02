@@ -312,6 +312,10 @@ export const statusEnumPaths: string[] = [
   ].map((path) => `environments.0.${path}`),
 ];
 
+export const workspaceEnumPaths: string[] = statusEnumPaths
+  .filter((path) => path.startsWith('environments.0.'))
+  .map((path) => path.slice('environments.0.'.length));
+
 export function replaceReceivedField<T>(fixture: T, path: string, value: unknown): T {
   const copy = JSON.parse(JSON.stringify(fixture));
   const keys = path.split('.');

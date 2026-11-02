@@ -30,6 +30,8 @@ import { fileURLToPath } from 'node:url';
 import { WebSocket, WebSocketServer } from 'ws';
 import {
   archiveDir,
+  buildLedgerFile,
+  gcLogFile,
   closedSegmentName,
   recordingDeviceName,
   type ArchivedWorkspace,
@@ -48,6 +50,7 @@ import {
   loadConfig,
   settingsJsonSchema,
   serverLocalSocket,
+  workspaceStateFile,
 } from '@stim-cli/core/state';
 import { createStim } from 'stim';
 import * as stim from 'stim';
@@ -63,7 +66,7 @@ import {
   type HelloResult,
   type MachineUsage,
   type ServerMessage,
-  type StatusEvent,
+  type MachineEvent,
   type WorkspacesEvent,
   type ArchivedListResult,
 } from '../src/protocol.ts';
@@ -99,9 +102,9 @@ import { localTransport } from '@stim-cli/transport-local';
 import type { Transport } from '@stim-cli/transport';
 import { createRequestLog } from '../src/request-log.ts';
 import { startServer, upgradeFromWebPage, type RunningServer, type ServerOptions } from '../src/server.ts';
-import { workspaceName, workspaceStateDir } from '@stim-cli/core';
+import { workspaceName, workspaceStateDir, withDirLockTransaction } from '@stim-cli/core';
 import { captureProcessToken, inspectProcessIdentity, processStartMicros } from '@stim-cli/core/process-identity';
-import { readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
+import { ClaimUnavailableError, readClaimSet, releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
 import { serviceRoot } from '../src/service-manager.ts';
 import { readPid } from './pid-file.ts';
 
@@ -200,9 +203,6 @@ if (command === 'status') {
   }
   const grantedAt = env.FAKE_STIM_LOCK_GRANTED ?? new Date().toISOString();
   print({ platform: args[2], id: args[3], grantedAt, expiresAt: new Date(Date.now() + 120000).toISOString() });
-  exit(0);
-} else if (command === 'device' && args[1] === 'unlock') {
-  print([]);
   exit(0);
 } else if (command === 'doctor') {
   print({ project: process.cwd(), remoteMachines: [{ machine: 'mini', state: 'approved', args: args.join(' ') }] });
@@ -315,6 +315,10 @@ if (process.argv[2].startsWith('offer')) {
       const { existsSync } = await import('node:fs');
       while (!existsSync(process.env.FAKE_WORKER_GATE)) await new Promise((resolve) => setTimeout(resolve, 20));
     }
+    if (process.env.FAKE_WORKER_CRASH) {
+      print({ type: 'result', ok: false, code: 'worker-crashed', message: 'The worker crashed.' });
+      process.exit(1);
+    }
     mkdirSync(join(job.area, 'out', job.job), { recursive: true });
     const archive = Buffer.from('app archive bytes');
     writeFileSync(join(job.area, 'out', job.job, 'app.tgz'), archive);
@@ -336,7 +340,13 @@ if (process.argv[2].startsWith('offer')) {
 
 const PAYLOADS = [
   { environments: [], capacity: { live: 0 }, deviceLeases: [], unprovisionedWorktrees: [], simctlAvailable: true },
-  { environments: [{ path: '/work/app', live: true }], capacity: { live: 1 }, deviceLeases: [], simctlAvailable: true },
+  {
+    environments: [{ path: '/work/app', live: true }],
+    capacity: { live: 1 },
+    deviceLeases: [],
+    unprovisionedWorktrees: [],
+    simctlAvailable: true,
+  },
 ];
 
 // The fake tailscale is a script with a shebang, which Windows cannot execute.
@@ -1114,6 +1124,14 @@ describe.skipIf(process.platform === 'win32')('private Desktop bootstrap on the 
     const hello = await client.request('hello', { client: CLIENT, desktopBootstrap: true });
     expect(hello).toMatchObject({ result: { capabilities: ['read', 'control'] } });
     expect(hello).not.toHaveProperty('result.desktopBootstrap');
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
+    expect(
+      await client.request('desktop.remedy.subscribe', {
+        cwd: workspace,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+      }),
+    ).toHaveProperty('error.code', 'forbidden');
     expect(await client.request('desktop.authenticate', { proof: DESKTOP_KEY })).toHaveProperty(
       'error.code',
       'forbidden',
@@ -1290,7 +1308,6 @@ describe('pairing', () => {
           'build-compat',
           'build-jdk',
           'build-reuse-artifact',
-          'status-views',
         ],
         actions: [],
         device: { name: 'Test phone' },
@@ -1385,6 +1402,49 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it('shares cached reports and pushes refreshes only to the proved Desktop connection', async () => {
+    const build = {
+      src: 'builds',
+      event: 'build',
+      ts: 1000,
+      id: 'owned-build',
+      startedAt: 500,
+      project: root,
+      workspace: root,
+      branch: null,
+      platform: 'ios',
+      configuration: 'Debug',
+      placement: { where: 'local' },
+      cache: { result: 'miss', key: null, fingerprint: null },
+      durationMs: 500,
+      phases: {},
+      outcome: 'succeeded',
+      stimVersion: '1',
+      level: 'info',
+      msg: 'built',
+    };
+    const cleanup = {
+      src: 'gc',
+      event: 'gc_item',
+      ts: 2000,
+      runId: 'owned-cleanup',
+      trigger: 'desktop',
+      status: 'done',
+      kind: 'cache',
+      label: 'owned cache',
+      id: null,
+      path: null,
+      bytes: 64,
+      detail: null,
+      level: 'info',
+      msg: 'cleared',
+    };
+    for (const [path, record] of [
+      [buildLedgerFile(), build],
+      [gcLogFile(), cleanup],
+    ] as const) {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, `${JSON.stringify(record)}\n`);
+    }
     const port = await start({
       env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
     });
@@ -1392,13 +1452,19 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
     const hello = await remote.request('hello', { client: CLIENT });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-reports']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-machine-history']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-report-platform']) } });
     expect(hello).toMatchObject({
       result: { features: expect.not.arrayContaining(['desktop-report-invalidate-target']) },
     });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-settings']) } });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-full-logs']) } });
-    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-doctor-run']) } });
+    expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-device-tools']) } });
+    expect(hello).toMatchObject({
+      result: {
+        features: expect.not.arrayContaining(['desktop-doctor-run', 'desktop-remedy']),
+      },
+    });
     expect(hello).toMatchObject({ result: { features: expect.not.arrayContaining(['desktop-stop']) } });
     assert(server?.localSocket);
     const plain = await localConnect(server.localSocket);
@@ -1406,17 +1472,21 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       result: {
         features: expect.arrayContaining([
           'desktop-reports',
+          'desktop-machine-history',
           'desktop-report-platform',
           'desktop-report-invalidate-target',
         ]),
       },
     });
     for (const client of [remote, plain]) {
+      for (const report of ['gc-history', 'builds'])
+        expect(await client.request('desktop.reports.get', { report })).toHaveProperty('error.code', 'forbidden');
       for (const method of [
         'desktop.reports.get',
         'desktop.reports.subscribe',
         'desktop.reports.invalidate',
         'desktop.doctor.run',
+        'desktop.remedy.subscribe',
       ]) {
         expect(
           await client.request(method, method.endsWith('invalidate') ? undefined : { report: 'gc' }),
@@ -1437,6 +1507,13 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       },
     });
     expect(joined.result).toEqual(first.result);
+    for (const [report, record] of [
+      ['builds', build],
+      ['gc-history', cleanup],
+    ] as const)
+      expect(await client.request('desktop.reports.get', { report })).toMatchObject({
+        result: { pending: false, value: { records: [record] } },
+      });
     const subscribed = await client.request('desktop.reports.subscribe', { report: 'gc' });
     expect(subscribed).toHaveProperty('result.subscription');
     expect(await client.next()).toMatchObject({ event: 'desktop-report', snapshot: first.result });
@@ -1453,7 +1530,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       event: 'desktop-report',
       snapshot: { pending: false, value: { mode: 'dry-run' } },
     });
-    expect(stimCalls().filter((call) => /^(doctor|gc)\b/.test(call.args))).toEqual([]);
+    expect(stimCalls().filter((call) => /^(doctor|gc|logs)\b/.test(call.args))).toEqual([]);
   });
 
   it('reads an unregistered selected folder without recording a doctor run and rejects ambiguous targets', async () => {
@@ -1546,6 +1623,349 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
     );
     expect(Date.parse(recorded.ios.at)).toBeGreaterThanOrEqual(started);
     expect(stimCalls()).toEqual([]);
+  });
+
+  it.each(['acquisition', 'cleanup', 'claims-and-cleanup'] as const)(
+    'admits a remedy retry only after its %s refusal is resolved',
+    async (mode) => {
+      writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      const claim =
+        mode === 'claims-and-cleanup' ? tryAcquireClaim({ root: join(root, 'remedy-claim'), mode: 'exclusive' }) : null;
+      if (claim && !claim.acquired) throw new Error('The fixture claim was not acquired');
+      const held = claim?.acquired;
+      let recovered = false;
+      let first = true;
+      const original = stim.createStim;
+      const api = vi.spyOn(stim, 'createStim').mockImplementation((options) => {
+        const client = original(options);
+        return {
+          ...client,
+          unlockDevice: async (request) => {
+            if (!first) return client.unlockDevice(request);
+            first = false;
+            const cause =
+              mode === 'acquisition'
+                ? new ClaimUnavailableError('fixture claim store is not writable')
+                : Object.assign(new Error('Fixture report cleanup is unresolved.'), {
+                    reportCleanup: true,
+                    cleanupSettled: () => recovered,
+                  });
+            throw new stim.StimError(
+              {
+                code: 'STIM_CLAIM_UNAVAILABLE',
+                message: cause.message,
+                ...(held ? { details: { cause: { retainedClaimRoots: [held.root] } } } : {}),
+              },
+              { cause },
+            );
+          },
+        };
+      });
+      try {
+        await start();
+        const client = await desktop();
+        const request = () =>
+          client.request('desktop.remedy.subscribe', { cwd: workspace, action: 'device-unlock', platform: 'ios' });
+        const ended = async () => {
+          for (;;) {
+            const event = await client.next();
+            if ('event' in event && event.event === 'desktop-remedy-ended') return event;
+          }
+        };
+        expect(await request()).toHaveProperty('result.subscription');
+        expect(await ended()).toMatchObject({ exitCode: 1 });
+        const refusals: unknown[] = [];
+        if (mode !== 'acquisition') {
+          refusals.push(await request());
+          if (held) {
+            releaseClaim(held);
+            refusals.push(await request());
+          }
+          recovered = true;
+        }
+        expect(refusals).toEqual(
+          Array.from({ length: mode === 'acquisition' ? 0 : held ? 2 : 1 }, () =>
+            expect.objectContaining({ error: expect.objectContaining({ code: 'action-busy' }) }),
+          ),
+        );
+        expect(await request()).toHaveProperty('result.subscription');
+        expect(await ended()).toMatchObject({ exitCode: 0 });
+      } finally {
+        api.mockRestore();
+        releaseClaim(held);
+      }
+    },
+  );
+
+  it('runs private typed remedies without a CLI and rejects unsupported scopes', async () => {
+    const selected = join(root, 'selected');
+    mkdirSync(selected);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [root, dirname(process.execPath)].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    for (const params of [
+      undefined,
+      {},
+      { cwd: selected, action: 'other' },
+      { cwd: 'relative', action: 'doctor-fix' },
+      { cwd: selected, action: 'doctor-fix', slot: 'default' },
+      { cwd: selected, action: 'device-unlock', slot: '__proto__' },
+      { cwd: selected, action: 'device-unlock', platform: 'web' },
+      { cwd: selected, action: 'device-tool', request: { tool: 'exec', platform: 'ios', args: ['rm'] } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'push', platform: 'android', payload: '{"aps":{}}' } },
+      { cwd: selected, action: 'device-tool', request: { tool: 'location', platform: 'ios', clear: true, set: '1,2' } },
+      {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'network', platform: 'android', state: 'off', args: [] },
+      },
+      {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+        slot: '__proto__',
+      },
+    ])
+      expect(await client.request('desktop.remedy.subscribe', params)).toHaveProperty('error.code', 'bad-request');
+    const expected = {
+      'doctor-fix': expect.objectContaining({ project: selected, platform: 'ios', findings: expect.any(Array) }),
+      'device-unlock': [],
+    };
+    for (const action of ['doctor-fix', 'device-unlock'] as const) {
+      const subscribed = await client.request('desktop.remedy.subscribe', { cwd: selected, action, platform: 'ios' });
+      expect(subscribed).toHaveProperty('result.subscription');
+      let ended;
+      for (;;) {
+        const event = await client.next();
+        if ('event' in event && event.event === 'desktop-remedy-ended') {
+          ended = event;
+          break;
+        }
+      }
+      expect(ended).toMatchObject({ event: 'desktop-remedy-ended', exitCode: 0 });
+      assert('stdout' in ended && typeof ended.stdout === 'string');
+      const output = JSON.parse(ended.stdout);
+      expect(output).toEqual(expected[action]);
+    }
+    expect(
+      await client.request('desktop.remedy.subscribe', {
+        cwd: selected,
+        action: 'device-tool',
+        request: { tool: 'location', platform: 'ios', clear: true },
+      }),
+    ).toHaveProperty('result.subscription');
+    let toolEnded;
+    for (;;) {
+      const event = await client.next();
+      if ('event' in event && event.event === 'desktop-remedy-ended') {
+        toolEnded = event;
+        break;
+      }
+    }
+    expect(toolEnded).toMatchObject({ exitCode: 1 });
+    assert('stdout' in toolEnded && typeof toolEnded.stdout === 'string');
+    expect(JSON.parse(toolEnded.stdout)).toMatchObject({ code: 'STIM_DEVICE_TOOL_TARGET', remedy: expect.any(String) });
+    expect(stimCalls()).toEqual([]);
+    const config = JSON.parse(readFileSync(join(root, 'home', 'config.json'), 'utf8'));
+    expect(config.projects[selected].doctorRuns.ios.at).toEqual(expect.any(String));
+  });
+
+  it.each(['CMake safety', 'repository lookup'])(
+    'keeps other Desktop requests responsive during real delayed repair %s',
+    async (stage) => {
+      const selected = join(root, 'repair-selected');
+      const tools = join(root, 'repair-tools');
+      const ready = join(root, 'repair-git-pid');
+      const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
+      mkdirSync(target, { recursive: true });
+      mkdirSync(tools);
+      writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
+      writeFileSync(
+        join(target, 'CMakeCache.txt'),
+        'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+      );
+      execFileSync('/usr/bin/git', ['init', '-q', selected]);
+      writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      writeFileSync(
+        join(tools, 'git'),
+        `#!/usr/bin/env node
+const fs = require('node:fs');
+const cp = require('node:child_process');
+const args = process.argv.slice(2);
+const repositoryLookup = args.includes('rev-parse') && args.includes('--show-toplevel') && process.cwd() === ${JSON.stringify(selected)};
+const counter = ${JSON.stringify(join(root, 'repair-root-lookups'))};
+const lookups = repositoryLookup ? (fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0) + 1 : 0;
+if (repositoryLookup) fs.writeFileSync(counter, String(lookups));
+const delayed = ${JSON.stringify(stage)} === 'repository lookup'
+  ? repositoryLookup && lookups > 1
+  : args.includes('ls-files') && args.some(arg => arg.startsWith(':(literal)'));
+if (delayed) {
+  fs.writeFileSync(${JSON.stringify(ready)}, String(process.pid));
+  setTimeout(() => process.exit(2), 15000);
+} else {
+  const child = cp.spawn('/usr/bin/git', args, { stdio: 'inherit' });
+  child.on('exit', code => process.exit(code ?? 1));
+}
+`,
+        { mode: 0o755 },
+      );
+      await start({
+        env: {
+          HOME: root,
+          USERPROFILE: root,
+          PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+          STIM_MAINTENANCE: 'off',
+        },
+      });
+      const client = await desktop();
+      const subscribed = await client.request('desktop.remedy.subscribe', {
+        cwd: selected,
+        action: 'doctor-fix',
+        platform: stage === 'CMake safety' ? 'android' : 'ios',
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 4000 });
+      const pid = Number(readFileSync(ready, 'utf8'));
+      const processToken = captureProcessToken(pid);
+      assert(processToken);
+      const record = { pid, processToken };
+      expect(await client.request('desktop.settings.schema')).toMatchObject({
+        result: { properties: expect.any(Object) },
+      });
+      expect(inspectProcessIdentity(record)).toBe('same');
+      expect(await client.request('unsubscribe', { subscription: subscribed.result.subscription })).toHaveProperty(
+        'result',
+      );
+      expect(inspectProcessIdentity(record)).toMatch(/^(gone|different)$/);
+      expect(existsSync(join(target, 'CMakeCache.txt'))).toBe(true);
+      expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
+    },
+  );
+
+  it.each([
+    { timing: 'within budget', directory: 'project root' },
+    { timing: 'past cleanup budget', directory: 'project root' },
+    { timing: 'within budget', directory: 'project subdirectory' },
+    { timing: 'past cleanup budget', directory: 'project subdirectory' },
+  ])('holds admission for an in-flight repair deletion ($timing, $directory)', async ({ timing, directory }) => {
+    const selected = join(root, 'deletion-selected');
+    const tools = join(root, 'deletion-tools');
+    const requested = directory === 'project subdirectory' ? join(selected, 'src') : selected;
+    mkdirSync(requested, { recursive: true });
+    const target = join(selected, 'android/app/.cxx/Debug/fixture/arm64-v8a');
+    mkdirSync(target, { recursive: true });
+    mkdirSync(tools);
+    writeFileSync(join(selected, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+    writeFileSync(join(selected, '.gitignore'), '.cxx/\n');
+    writeFileSync(
+      join(target, 'CMakeCache.txt'),
+      'CMAKE_BUILD_TYPE:STRING=Debug\nCMAKE_CXX_COMPILER_LAUNCHER:STRING=\n',
+    );
+    execFileSync('/usr/bin/git', ['init', '-q', selected]);
+    writeFileSync(join(tools, 'ccache'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+    await start({
+      env: {
+        HOME: root,
+        USERPROFILE: root,
+        PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
+        STIM_MAINTENANCE: 'off',
+      },
+    });
+    const client = await desktop();
+    const other = await desktop();
+    let deleting = false;
+    let release: () => void = () => {};
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const remove = fsPromises.rm;
+    const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+      if (path === target) {
+        deleting = true;
+        await blocked;
+      }
+      return remove(path, options);
+    });
+    syncBuiltinESMExports();
+    let cancelled: Promise<ServerMessage> | undefined;
+    let acknowledged = false;
+    try {
+      const subscribed = await client.request('desktop.remedy.subscribe', {
+        cwd: requested,
+        action: 'doctor-fix',
+        platform: 'android',
+      });
+      assert('result' in subscribed && subscribed.result !== null && 'subscription' in subscribed.result);
+      await vi.waitFor(() => expect(deleting).toBe(true));
+      if (timing === 'past cleanup budget') vi.useFakeTimers();
+      cancelled = client.request('unsubscribe', { subscription: subscribed.result.subscription }).then((result) => {
+        acknowledged = true;
+        return result;
+      });
+      expect(await other.request('desktop.settings.schema')).toHaveProperty('result');
+      expect(acknowledged).toBe(false);
+      expect(
+        await other.request('desktop.build.subscribe', {
+          cwd: selected,
+          options: { platform: 'macos', remoteBuild: 'local' },
+        }),
+      ).toHaveProperty('error.code', 'action-busy');
+      if (timing === 'past cleanup budget') {
+        await vi.waitFor(() => assert(vi.getTimerCount() > 0));
+        await vi.advanceTimersByTimeAsync(35_000);
+        const failure = await cancelled;
+        assert('error' in failure && failure.error.code === 'action-failed');
+        const blockedBuild = await other.request('desktop.build.subscribe', {
+          cwd: selected,
+          options: { platform: 'macos', remoteBuild: 'local' },
+        });
+        assert('error' in blockedBuild && blockedBuild.error.code === 'action-busy');
+        const refused = await other.request('desktop.remedy.subscribe', {
+          cwd: selected,
+          action: 'device-unlock',
+          platform: 'ios',
+        });
+        assert('error' in refused && refused.error.code === 'action-busy');
+        release();
+        vi.useRealTimers();
+        let retried: ServerMessage | undefined;
+        await vi.waitFor(async () => {
+          retried = await other.request('desktop.remedy.subscribe', {
+            cwd: selected,
+            action: 'device-unlock',
+            platform: 'ios',
+          });
+          assert('result' in retried && retried.result !== null && 'subscription' in retried.result);
+        });
+        assert(retried && 'result' in retried && retried.result !== null && 'subscription' in retried.result);
+        for (;;) {
+          const event = await other.next();
+          if ('event' in event && event.event === 'desktop-remedy-ended') {
+            assert.equal(event.exitCode, 0);
+            break;
+          }
+        }
+      } else {
+        release();
+        assert('result' in (await cancelled));
+      }
+      expect(existsSync(target)).toBe(false);
+      expect(await client.request('desktop.settings.schema')).toHaveProperty('result');
+    } finally {
+      release();
+      vi.useRealTimers();
+      await cancelled;
+      deletion.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it('applies the report byte quota to both get and pushed errors', async () => {
@@ -1814,7 +2234,7 @@ describe('setup approval', () => {
               ['control.begin', { workspace: '/unrelated', slot: 'ios' }],
             ];
       const refused: [string, unknown][] = [
-        ['status.subscribe', undefined],
+        ['machine.subscribe', undefined],
         ['machine.get', undefined],
         ['notifications.list', undefined],
         ['stats.get', undefined],
@@ -2586,7 +3006,7 @@ describe('offloaded builds', () => {
       });
       const { client } = await buildClient(port, '100.64.0.3', machine);
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { max: 1 } },
+        result: { capacity: { max: 0 } },
       });
     },
   );
@@ -2599,7 +3019,7 @@ describe('offloaded builds', () => {
       expect(await client.request('build.offer', { repo: 'app-1' })).toMatchObject({
         result: {
           toolchain: { stimBuild: 'b1', runtimes: ['iOS-27-0'], macosSdk: '27.0' },
-          capacity: { running: 0, max: 1 },
+          capacity: { running: 0, max: 0 },
           warm: { checkout: false, dependencies: false, build: false },
         },
       });
@@ -2846,7 +3266,7 @@ describe('offloaded builds', () => {
   });
 
   test.skipIf(!fakeTailscale)(
-    "builds an Android job with its Gradle options in the client's own Gradle home",
+    "builds an Android job with its Gradle options in the repository's own Gradle home",
     async () => {
       const port = await start();
       const { client, id } = await buildClient(port);
@@ -2868,7 +3288,7 @@ describe('offloaded builds', () => {
       await progress(client);
       const ran = JSON.parse(readFileSync(join(root, 'job.json'), 'utf8'));
       expect(ran.job).toMatchObject({ platform: 'android', runtime: null, android: { ...android, ...layout } });
-      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'cache', 'gradle'));
+      expect(ran.gradle).toBe(join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'cache', 'gradle'));
     },
   );
 
@@ -2922,12 +3342,13 @@ describe('offloaded builds', () => {
     peer: string,
     platform: 'android' | 'macos' = 'macos',
     machine = setupClient(['build'], 'Laptop'),
+    repo = 'app-1',
   ) {
     const { client, id } = await buildClient(port, peer, machine);
-    await client.request('build.sync', { repo: 'app-1', files: [file('Package.swift', 'x')], done: true });
-    client.socket.send(blob('x'));
+    const synced = await client.request('build.sync', { repo, files: [file('Package.swift', 'x')], done: true });
+    if (JSON.stringify(synced).includes(sha('x'))) client.socket.send(blob('x'));
     const started = await client.request('build.start', {
-      repo: 'app-1',
+      repo,
       project: '',
       platform,
       fingerprint: 'f00d',
@@ -2948,9 +3369,24 @@ describe('offloaded builds', () => {
     await progress(client);
     const fetched = await client.request('build.artifact', { job });
     const { handoff, sha256 } = (fetched as { result: { handoff?: string; sha256: string } }).result;
-    const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1', 'out', job);
+    const out = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', repo, 'out', job);
     return { id, out, build: { handoff: handoff!, sha256 } };
   }
+
+  test.skipIf(!fakeTailscale)(
+    "keeps a client's retained build per repository until that repository fetches another",
+    async () => {
+      const port = await start();
+      const machine = setupClient(['build'], 'Laptop');
+      const first = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-1');
+      const other = await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-2');
+      expect(existsSync(join(first.out, 'App.app'))).toBe(true);
+      expect(existsSync(join(other.out, 'App.app'))).toBe(true);
+      await nativeBuild(port, '100.64.0.2', 'macos', machine, 'app-1');
+      expect(existsSync(first.out)).toBe(false);
+      expect(existsSync(join(other.out, 'App.app'))).toBe(true);
+    },
+  );
 
   test.skipIf(!fakeTailscale)(
     'hands a fetched macOS build once, and only to a hosted session of the same machine key',
@@ -3159,7 +3595,12 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
+        error: {
+          code: 'build-busy',
+          message: expect.stringMatching(
+            /^This machine declines the build: all 1 build slots busy \(load [\d.]+\/core, \d offloaded build\(s\) running, [\d.]+ GB free\)\.$/,
+          ),
+        },
       });
 
       releaseClaim(claim);
@@ -3179,7 +3620,12 @@ describe('offloaded builds', () => {
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
       client.socket.send(blob('x'));
       expect(await client.request('build.start', START)).toMatchObject({
-        error: { code: 'build-busy', message: 'This machine declines the build: all 1 build slots busy.' },
+        error: {
+          code: 'build-busy',
+          message: expect.stringMatching(
+            /^This machine declines the build: all 1 build slots busy \(load [\d.]+\/core, \d offloaded build\(s\) running, [\d.]+ GB free\)\.$/,
+          ),
+        },
       });
 
       releaseClaim(local.claim);
@@ -3329,6 +3775,26 @@ describe('offloaded builds', () => {
     },
   );
 
+  test.skipIf(!fakeTailscale)('declines an offloaded build past server.maxOffloadedBuilds', async () => {
+    configure({ server: { maxLoadPerCore: 100_000, maxOffloadedBuilds: 1 } });
+    const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
+    const { client } = await buildClient(port);
+    await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+    client.socket.send(blob('x'));
+    expect(await client.request('build.start', START)).toMatchObject({ result: { job: expect.any(String) } });
+
+    const other = await buildClient(port, '100.64.0.3');
+    expect(await other.client.request('build.offer', { repo: 'app-2' })).toMatchObject({
+      result: {
+        capacity: {
+          running: 1,
+          max: 1,
+          declined: 'already running 1 offloaded build(s), its server.maxOffloadedBuilds limit',
+        },
+      },
+    });
+  });
+
   test.each([false, true])(
     'stops a revoked build, frees its claim and deletes its area with watch events dropped: %s',
     { skip: !fakeTailscale },
@@ -3346,7 +3812,7 @@ describe('offloaded builds', () => {
 
       const other = await buildClient(port, '100.64.0.3');
       expect(await other.client.request('build.offer', { repo: 'app-1' })).toMatchObject({
-        result: { capacity: { running: 1, max: 1 } },
+        result: { capacity: { running: 1, max: 0, declined: null } },
       });
 
       expect(revokeDevice(id)).toBe(true);
@@ -3359,14 +3825,35 @@ describe('offloaded builds', () => {
 
   describe('warm Gradle daemons', () => {
     const daemons: ChildProcess[] = [];
-    const gradleHome = (client: string) => join(process.env.STIM_HOME!, 'build-worker', client, 'cache', 'gradle');
-    const daemonOf = (client: string) => {
-      const jar = join(gradleHome(client), 'wrapper', 'dists', 'gradle-9.4.1', 'lib', 'gradle-daemon-main-9.4.1.jar');
-      mkdirSync(gradleHome(client), { recursive: true });
+    const gradleHome = (client: string, repo?: string, node = 'n0123456789ab') =>
+      join(
+        process.env.STIM_HOME!,
+        'build-worker',
+        client,
+        ...(repo ? ['repos', repo] : []),
+        'cache',
+        'gradle',
+        ...(repo ? [node] : []),
+      );
+    const daemonOf = (client: string, repo?: string, node?: string, ignoresTerm = false) => {
+      const jar = join(
+        gradleHome(client, repo, node),
+        'wrapper',
+        'dists',
+        'gradle-9.4.1',
+        'lib',
+        'gradle-daemon-main-9.4.1.jar',
+      );
+      mkdirSync(gradleHome(client, repo, node), { recursive: true });
       const daemon = spawn(
         process.execPath,
-        ['-e', 'setInterval(() => {}, 1000)', jar, 'org.gradle.launcher.daemon.bootstrap.GradleDaemon'],
-        { stdio: 'ignore' },
+        [
+          '-e',
+          `${ignoresTerm ? "process.on('SIGTERM', () => {}); process.stdout.write('ready');" : ''} setInterval(() => {}, 1000)`,
+          jar,
+          'org.gradle.launcher.daemon.bootstrap.GradleDaemon',
+        ],
+        { stdio: ignoresTerm ? ['ignore', 'pipe', 'ignore'] : 'ignore' },
       );
       daemons.push(daemon);
       return daemon;
@@ -3408,7 +3895,7 @@ describe('offloaded builds', () => {
     );
 
     test.skipIf(!fakeTailscale)(
-      'stops idle daemons under low memory, but not one whose client is building',
+      'defers low-memory daemon stops until no client is building, while still stopping revoked clients',
       async () => {
         const gate = join(root, 'gate');
         const port = await start({
@@ -3417,29 +3904,79 @@ describe('offloaded builds', () => {
         });
         const { client, id } = await buildClient(port);
         const other = await buildClient(port, '100.64.0.3');
+        const revokedClient = await buildClient(port, '100.64.0.4');
         await launch(client);
         const building = daemonOf(id);
         const idle = daemonOf(other.id);
-        await eventually(() => !running(idle));
-        expect(running(building)).toBe(true);
+        const revoked = daemonOf(revokedClient.id);
+        expect(revokeDevice(revokedClient.id)).toBe(true);
+        await eventually(() => !running(revoked));
+        expect(running(building) && running(idle)).toBe(true);
         writeFileSync(gate, '');
         expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: true } });
-        await eventually(() => !running(building));
+        await eventually(() => !running(building) && !running(idle));
       },
     );
 
-    test.skipIf(!fakeTailscale)("stops the client's daemon when its build is cancelled", async () => {
-      const port = await start({
-        env: { FAKE_WORKER_HANG: '1' },
-        buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
-      });
-      const { client, id } = await buildClient(port);
-      const job = await launch(client);
-      const daemon = daemonOf(id);
-      expect(await client.request('build.cancel', { job })).toMatchObject({ result: {} });
-      expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: 'cancelled' } });
-      await eventually(() => !running(daemon));
-    });
+    test.each(['cancelled', 'worker-crashed'] as const)(
+      'stops only the failed repository daemon after %s',
+      { skip: !fakeTailscale },
+      async (reason) => {
+        configure({ concurrency: { maxBuilds: 1 }, server: { maxLoadPerCore: 100_000 } });
+        const gate = join(root, 'crash-gate');
+        const port = await start({
+          env: reason === 'cancelled' ? { FAKE_WORKER_HANG: '1' } : { FAKE_WORKER_GATE: gate, FAKE_WORKER_CRASH: '1' },
+          buildLimits: { killGraceMs: 100, minFreeMemoryBytes: 0 },
+        });
+        const { client, id } = await buildClient(port);
+        const job = await launch(client);
+        const daemon = daemonOf(id, 'app-1', undefined, reason === 'cancelled');
+        const priorNode = daemonOf(id, 'app-1', 'nfedcba987654');
+        const sibling = daemonOf(id, 'another-repo');
+        let settling: ChildProcess | undefined;
+        if (reason === 'cancelled') {
+          assert(daemon.stdout);
+          await once(daemon.stdout, 'data');
+          settling = spawn(process.execPath, ['-e', "process.stdin.resume(); process.stdout.write('ready')"], {
+            stdio: ['pipe', 'pipe', 'ignore'],
+          });
+          daemons.push(settling);
+          assert(settling.stdout);
+          await once(settling.stdout, 'data');
+          assert(settling.pid);
+          const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
+          mkdirSync(logs, { recursive: true });
+          writeFileSync(join(logs, `daemon-${settling.pid}.out.log`), '');
+          daemon.once('exit', () => settling?.stdin?.end());
+          const response = await client.request('build.cancel', { job });
+          assert('result' in response);
+          assert.deepStrictEqual(response.result, {});
+        } else writeFileSync(gate, '');
+        expect((await progress(client)).at(-1)).toMatchObject({ outcome: { ok: false, code: reason } });
+        await eventually(() => !running(daemon));
+        expect(running(priorNode)).toBe(false);
+        assert(!settling || (settling.exitCode === 0 && settling.signalCode === null));
+        expect(running(sibling)).toBe(true);
+        if (reason === 'worker-crashed') {
+          const unclassified = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+          daemons.push(unclassified);
+          await once(unclassified, 'spawn');
+          assert(unclassified.pid);
+          const logs = join(gradleHome(id, 'app-1'), 'daemon', '9.4.1');
+          mkdirSync(logs, { recursive: true });
+          writeFileSync(join(logs, `daemon-${unclassified.pid}.out.log`), '');
+          await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
+          assert('result' in (await client.request('build.start', ANDROID_START)));
+          const outcome = (await progress(client)).at(-1)?.outcome;
+          assert(isJsonObject(outcome));
+          assert.equal(outcome.code, 'cleanup-unresolved');
+          const area = join(process.env.STIM_HOME!, 'build-worker', id, 'repos', 'app-1');
+          assert.equal(readClaimSet(`${area}.claims`).live.length, 1);
+          assert.equal(readClaimSet(buildSlotPath(0)).live.length, 1);
+          assert(running(unclassified) && running(sibling));
+        }
+      },
+    );
   });
 });
 
@@ -3676,7 +4213,7 @@ describe('unauthenticated connections', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await connect(port, undefined, { keyPair });
-    expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
+    expect(await client.request('machine.subscribe')).toMatchObject({ error: { code: 'unauthorized' } });
     expect(await client.closed).toBe(4401);
     expect(readdirSync(root)).not.toContain('pids');
   });
@@ -3921,7 +4458,7 @@ describe('a client that leaves during the handshake', () => {
     const { token } = createPairingToken();
     const leaving = await connect(port, '100.64.0.2', { secret: token });
     leaving.socket.send(JSON.stringify({ id: 1, method: 'hello', params: { client: CLIENT } }));
-    leaving.socket.send(JSON.stringify({ id: 2, method: 'status.subscribe' }));
+    leaving.socket.send(JSON.stringify({ id: 2, method: 'machine.subscribe' }));
     leaving.socket.terminate();
     await new Promise((resolve) => setTimeout(resolve, 600));
 
@@ -3932,22 +4469,42 @@ describe('a client that leaves during the handshake', () => {
   });
 });
 
-describe('status.subscribe', () => {
+describe('status feed lifecycle', () => {
   it('shares one status watch across subscribers and stops it with the last one', async () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const first = await returning(port, keyPair);
-    expect(await first.request('status.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
-    expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[0] });
-    expect(await first.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    expect(await first.request('machine.subscribe')).toEqual({ id: 2, result: { subscription: 's1' } });
+    expect(await first.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 0 } },
+    });
+    expect(await first.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 1,
+      machine: { capacity: { live: 1 } },
+    });
 
     await until(() => statusWorkers().length === 1);
 
     const second = await returning(port, keyPair);
-    await second.request('status.subscribe');
-    expect(await second.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
-    expect(await second.request('status.subscribe')).toMatchObject({ result: { subscription: 's2' } });
-    expect(await second.next()).toEqual({ event: 'status', subscription: 's2', payload: PAYLOADS[1] });
+    await second.request('machine.subscribe');
+    expect(await second.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
+    expect(await second.request('machine.subscribe')).toMatchObject({ result: { subscription: 's2' } });
+    expect(await second.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's2',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
     expect(statusWorkers()).toHaveLength(1);
 
     expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
@@ -3966,8 +4523,13 @@ describe('status.subscribe', () => {
     await until(() => statusWorkers().length === 1);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const client = await authed(port);
-    await client.request('status.subscribe');
-    expect(await client.next()).toEqual({ event: 'status', subscription: 's1', payload: PAYLOADS[1] });
+    await client.request('machine.subscribe');
+    expect(await client.next()).toMatchObject({
+      event: 'machine',
+      subscription: 's1',
+      seq: 0,
+      machine: { capacity: { live: 1 } },
+    });
     client.socket.close();
     await client.closed;
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -3978,7 +4540,7 @@ describe('status.subscribe', () => {
     const port = await start();
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
+    await client.request('machine.subscribe');
     await client.next();
     await until(() => statusWorkers().length === 1);
 
@@ -3988,7 +4550,7 @@ describe('status.subscribe', () => {
     expect(statusWorkers()).toEqual([]);
   });
 
-  it('sends the CPU and memory history beside the payload once a payload reports machine owners', async () => {
+  it('sends CPU and memory history with the machine view once a payload reports owners', async () => {
     const machine = {
       memorySource: 'footprint',
       owners: [
@@ -4008,9 +4570,9 @@ describe('status.subscribe', () => {
     const port = await start({ env: { FAKE_STIM_PAYLOADS: JSON.stringify([{ ...PAYLOADS[1], machine }]) } });
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
-    const event = (await client.next()) as StatusEvent;
-    expect(event.payload).toEqual({ ...PAYLOADS[1], machine });
+    await client.request('machine.subscribe');
+    const event = (await client.next()) as MachineEvent;
+    expect(event.machine.machine).toEqual(machine);
     expect(event.usage).toMatchObject({
       intervalMs: 15_000,
       devices: [{ kind: 'simulator', id: 'UDID-1', workspace: '/work/app' }],
@@ -4026,7 +4588,7 @@ describe('status.subscribe', () => {
     const port = await start({ exit: true });
     const { keyPair } = await pair(port);
     const client = await returning(port, keyPair);
-    await client.request('status.subscribe');
+    await client.request('machine.subscribe');
     await client.next();
     await client.next();
     expect(await client.next()).toEqual({
@@ -4089,6 +4651,7 @@ describe('status views', () => {
 
   it('sends the workspace list once, then only the workspaces that changed or went away', async () => {
     const client = await authed(await startViews());
+    expect(await client.request('status.subscribe')).toMatchObject({ error: { code: 'unknown-method' } });
     expect(await client.request('workspaces.subscribe')).toMatchObject({ result: { subscription: 's1' } });
     const first = (await client.next()) as WorkspacesEvent;
     expect(first).toMatchObject({ event: 'workspaces', subscription: 's1', seq: 0 });
@@ -4937,25 +5500,37 @@ describe('logs.subscribe', () => {
     const path = liveLogFixture();
     const port = await start();
     const first = await authed(port);
-    expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
-      id: 2,
-      result: { subscription: 's1' },
-    });
-    expect(await records(first, 2)).toEqual(RECORDS.slice(1));
     const second = await authed(port);
-    await second.request('logs.subscribe', { workspace, tail: 1 });
-    expect(await records(second, 1)).toEqual(RECORDS.slice(2));
-    const appended = { ts: 4, src: 'client', level: 'info', msg: 'new line' };
-    appendFileSync(path, JSON.stringify(appended) + '\n');
-    expect(await records(first, 1)).toEqual([appended]);
-    expect(await records(second, 1)).toEqual([appended]);
-    expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
-    const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
-    appendFileSync(path, JSON.stringify(later) + '\n');
-    expect(await records(second, 1)).toEqual([later]);
-    second.socket.close();
-    expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
-    expect(childPids()).toEqual([]);
+    vi.useFakeTimers();
+    try {
+      expect(await first.request('logs.subscribe', { workspace, tail: 2 })).toEqual({
+        id: 2,
+        result: { subscription: 's1' },
+      });
+      const firstTail = records(first, 2);
+      await vi.waitFor(() => expect(firstTail).resolves.toEqual(RECORDS.slice(1)));
+      await second.request('logs.subscribe', { workspace, tail: 1 });
+      const secondTail = records(second, 1);
+      await vi.waitFor(() => expect(secondTail).resolves.toEqual(RECORDS.slice(2)));
+      const appended = { ts: 4, src: 'client', level: 'info', msg: 'new line' };
+      const firstAppend = records(first, 1);
+      const secondAppend = records(second, 1);
+      appendFileSync(path, JSON.stringify(appended) + '\n');
+      await vi.advanceTimersByTimeAsync(10100);
+      await vi.waitFor(() => expect(firstAppend).resolves.toEqual([appended]));
+      await vi.waitFor(() => expect(secondAppend).resolves.toEqual([appended]));
+      expect(await first.request('unsubscribe', { subscription: 's1' })).toEqual({ id: 3, result: {} });
+      const later = { ts: 5, src: 'client', level: 'info', msg: 'after unsubscribe' };
+      const secondLater = records(second, 1);
+      appendFileSync(path, JSON.stringify(later) + '\n');
+      await vi.advanceTimersByTimeAsync(10100);
+      await vi.waitFor(() => expect(secondLater).resolves.toEqual([later]));
+      second.socket.close();
+      expect(stimCalls().filter((call) => call.args.startsWith('logs'))).toEqual([]);
+      expect(childPids()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('times out an unfinished backfill and keeps another socket responsive', async () => {
@@ -7830,7 +8405,7 @@ describe('frames.subscribe', () => {
     env: Record<string, string>,
     frameLimits?: ServerOptions['frameLimits'],
     frameHelper?: string,
-    recording?: Pick<ServerOptions, 'record' | 'recordLimits'>,
+    recording?: Pick<ServerOptions, 'record' | 'recordLimits' | 'actionLimits' | 'foldHelper'>,
   ): Promise<number> {
     const bin = join(root, 'bin');
     mkdirSync(bin);
@@ -8161,6 +8736,7 @@ describe('frames.subscribe', () => {
         },
         undefined,
         fakeHelper(),
+        { foldHelper: join(root, 'sim-fold') },
       );
       const plain = await authed(port);
       await plain.request('frames.subscribe', { workspace, platform: 'ios' });
@@ -9206,6 +9782,7 @@ describe('frames.subscribe', () => {
     pushEndpoint?: string,
     hostedRelay?: ServerOptions['hostedRelay'],
   ) {
+    writeFileSync(join(workspace, 'package.json'), '{}');
     const bin = join(root, 'bin');
     mkdirSync(bin);
     for (const tool of ['xcrun', 'sips', 'adb']) {
@@ -9239,6 +9816,39 @@ describe('frames.subscribe', () => {
     return stimCalls()
       .map((call) => call.args)
       .filter((args) => args.startsWith('device '));
+  }
+
+  function controlLease(holder: string, id: string, platform = 'ios', slot = 'default') {
+    const directory = join(process.env.STIM_HOME!, 'device-locks');
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, `${platform}-${id}.json`);
+    const token = randomUUID();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        platform,
+        id,
+        holder,
+        slot,
+        token,
+        grantedAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 120_000).toISOString(),
+      }),
+    );
+    mkdirSync(workspaceStateDir(holder), { recursive: true });
+    const state = readWorkspaceState(holder) ?? {};
+    writeFileSync(
+      workspaceStateFile(holder),
+      JSON.stringify({
+        ...state,
+        deviceLeases: {
+          ...(isJsonObject(state.deviceLeases) ? state.deviceLeases : {}),
+          [slot === 'default' ? platform : `${platform}:${slot}`]: { id, token, kind: 'declared' },
+        },
+      }),
+    );
+    return { path, lock: join(directory, `${platform}-${id}.lock`) };
   }
 
   test.skipIf(!fakeTailscale)(
@@ -9386,6 +9996,10 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'sends input to the helper under a device lease and releases the lease when the session ends',
     async () => {
+      const leaseFile = controlLease(workspace, 'SIM-1');
+      const samePlatform = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
+      const otherPlatform = controlLease(workspace, 'EMULATOR', 'android');
+      const foreign = controlLease(join(root, 'other'), 'FOREIGN');
       const port = await startControl({}, { shapeChangesPerSecond: 1 });
       const client = await authed(port, true);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
@@ -9428,8 +10042,12 @@ describe('frames.subscribe', () => {
         { input: 'button', button: 'home' },
         { input: 'rotate', direction: 'left' },
       ]);
-      await until(() => lockCalls().length === 2);
-      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json', 'device unlock ios --json']);
+      await until(() => !existsSync(leaseFile.path));
+      expect(existsSync(samePlatform.path)).toBe(false);
+      expect(existsSync(otherPlatform.path)).toBe(true);
+      expect(existsSync(foreign.path)).toBe(true);
+      expect(readWorkspaceState(workspace)?.deviceLeases).toMatchObject({ android: { id: 'EMULATOR' } });
+      expect(lockCalls()).toEqual(['device lock ios SIM-1 --for 2m --wait 0 --json']);
       expect(readAudit().map((record) => record.action)).toEqual(['control.begin', 'control.end']);
     },
     10_000,
@@ -9588,13 +10206,13 @@ describe('frames.subscribe', () => {
     const port = await startControl();
     const client = await authed(port, true);
     const watcher = await authed(port, true);
-    await watcher.request('status.subscribe');
-    expect(((await watcher.next()) as StatusEvent).ownLeases).toBeUndefined();
+    await watcher.request('machine.subscribe');
+    expect(((await watcher.next()) as MachineEvent).ownLeases).toBeUndefined();
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
     if (!('result' in begun)) throw new Error(JSON.stringify(begun));
     await until(() => lockCalls().length === 1);
-    await watcher.request('status.subscribe');
-    const event = (await watcher.next()) as StatusEvent;
+    await watcher.request('machine.subscribe');
+    const event = (await watcher.next()) as MachineEvent;
     expect(event.ownLeases).toEqual([expect.stringMatching(/^\d{4}-\d\d-\d\dT/)]);
     await client.request('control.end', { session: (begun.result as { session: string }).session });
   });
@@ -9854,24 +10472,33 @@ describe('frames.subscribe', () => {
   test.skipIf(!fakeTailscale)(
     'lets one client control a device at a time, and ends the session another takes over',
     async () => {
-      const port = await startControl();
+      const lease = controlLease(workspace, 'SIM-2', 'ios', 'tablet');
+      const kept = controlLease(workspace, 'SIM-1');
+      const port = await startControl({
+        FAKE_STIM_PAYLOADS: statusWith({
+          slots: [{ slot: 'tablet', ios: { ...OWNED_SIM, udid: 'SIM-2' }, android: null }],
+        }),
+      });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      const begun = await first.request('control.begin', { workspace, platform: 'ios' });
+      const target = { workspace, platform: 'ios', slot: 'tablet' };
+      const begun = await first.request('control.begin', target);
       const { session } = (begun as { result: { session: string } }).result;
-      expect(await second.request('control.begin', { workspace, platform: 'ios' })).toMatchObject({
+      expect(await second.request('control.begin', target)).toMatchObject({
         error: { code: 'device-busy', message: expect.stringContaining('Test phone') },
       });
-      expect(await second.request('control.begin', { workspace, platform: 'ios', takeOver: true })).toMatchObject({
+      expect(await second.request('control.begin', { ...target, takeOver: true })).toMatchObject({
         result: { session: expect.any(String) },
       });
       expect(await first.next()).toMatchObject({ event: 'control-ended', session, reason: 'taken-over' });
       expect(await first.request('input.touch', { session, phase: 'down', x: 0, y: 0 })).toMatchObject({
         error: { code: 'unknown-session' },
       });
+      expect(existsSync(lease.path)).toBe(true);
       second.socket.close();
-      await until(() => lockCalls().includes('device unlock ios --json'));
-      expect(lockCalls().filter((args) => args.startsWith('device unlock'))).toHaveLength(1);
+      await until(() => !existsSync(lease.path));
+      expect(existsSync(kept.path)).toBe(true);
+      expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
     },
     10_000,
   );
@@ -9945,6 +10572,7 @@ describe('frames.subscribe', () => {
   );
 
   test.skipIf(!fakeTailscale)('ends an idle session, and caps the input and typing rates', async () => {
+    const lease = controlLease(workspace, 'SIM-1');
     const port = await startControl({}, { idleMs: 700, inputPerSecond: 3, textCharsPerSecond: 1 });
     const client = await authed(port, true);
     const begun = await client.request('control.begin', { workspace, platform: 'ios' });
@@ -9962,24 +10590,56 @@ describe('frames.subscribe', () => {
       error: { code: 'limit-exceeded' },
     });
     expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'idle' });
-    await until(() => lockCalls().includes('device unlock ios --json'));
+    await until(() => !existsSync(lease.path));
   });
 
   test.each([false, true])(
     'ends a control session with watch events dropped: %s',
     { skip: !fakeTailscale },
     async (dropEvents) => {
+      const lease = controlLease(workspace, 'SIM-1');
       registryWatch.dropEvents = dropEvents;
       const port = await startControl();
       const { id, keyPair } = await pair(port, undefined, true);
       const client = await returning(port, keyPair);
+      const reader = await authed(port);
       const begun = await client.request('control.begin', { workspace, platform: 'ios' });
       const { session } = (begun as { result: { session: string } }).result;
-      grantDevice(id, capabilitiesFor(false));
-      expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
-      await server!.close();
-      server = null;
-      expect(lockCalls()).toContain('device unlock ios --json');
+      let entered = () => {};
+      const locked = new Promise<void>((resolve) => (entered = resolve));
+      let release = () => {};
+      const held = new Promise<void>((resolve) => (release = resolve));
+      const barrier = withDirLockTransaction(lease.lock, () => {
+        entered();
+        return held;
+      });
+      let closing: Promise<void> | undefined;
+      try {
+        await locked;
+        grantDevice(id, capabilitiesFor(false));
+        expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
+        expect(await reader.request('machine.get')).toMatchObject({ result: expect.any(Object) });
+        expect(existsSync(lease.path)).toBe(true);
+        let closed = false;
+        closing = server!.close().then(() => {
+          closed = true;
+          return undefined;
+        });
+        await Promise.all([client.closed, reader.closed]);
+        await until(() => helperRuns().length === 1);
+        expect(closed).toBe(false);
+        release();
+        await barrier;
+        await closing;
+        server = null;
+        expect(existsSync(lease.path)).toBe(false);
+        expect(readClaimSet(`${lease.lock}.claims`)).toMatchObject({ live: [], unresolved: [], orphans: [] });
+        expect(lockCalls().every((args) => args.startsWith('device lock'))).toBe(true);
+      } finally {
+        release();
+        await barrier;
+        await closing;
+      }
     },
   );
 
@@ -10706,7 +11366,39 @@ describe('frames.subscribe', () => {
       });
     });
 
+    function holdRecordingDeletion(recordings: string) {
+      let entered = () => {};
+      let release = () => {};
+      const started = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const remove = fsPromises.rm;
+      const deletion = vi.spyOn(fsPromises, 'rm').mockImplementation(async (path, options) => {
+        if (path === recordings) {
+          entered();
+          await held;
+        }
+        return remove(path, options);
+      });
+      syncBuiltinESMExports();
+      return {
+        started,
+        release,
+        restore: () => {
+          deletion.mockRestore();
+          syncBuiltinESMExports();
+        },
+      };
+    }
+
     test.skipIf(!fakeTailscale)('turns recording off at machine scope for a device with control only', async () => {
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
       const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), { record: true });
       const reader = await authed(port);
       expect(await reader.request('recording.set', { enabled: false })).toMatchObject({ error: { code: 'forbidden' } });
@@ -10715,15 +11407,11 @@ describe('frames.subscribe', () => {
         error: { code: 'bad-request' },
       });
       expect(await controller.request('recording.set', { enabled: false })).toMatchObject({
-        result: { enabled: false, recordingsDeleted: [] },
+        result: { enabled: false, recordingsDeleted: [workspace] },
       });
-      const settings = readFileSync(calls, 'utf8')
-        .split('\n')
-        .filter((line) => line.includes('"settings'))
-        .map((line) => JSON.parse(line));
-      expect(settings).toEqual([
-        { args: 'settings set recording.enabled false --scope machine --json', cwd: homedir() },
-      ]);
+      expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+      expect(existsSync(recordings)).toBe(false);
+      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
       expect(readAudit().map((entry) => [entry.action, entry.ok])).toEqual([
         ['recording.set', false],
         ['recording.set', false],
@@ -10732,51 +11420,91 @@ describe('frames.subscribe', () => {
     });
 
     test.skipIf(!fakeTailscale)('runs recording.set requests one at a time, so the last one wins', async () => {
-      const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '200' },
-        undefined,
-        fakeHelper(),
-        { record: true },
-      );
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), { record: true });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      const settingsLines = () =>
-        existsSync(calls)
-          ? readFileSync(calls, 'utf8')
-              .split('\n')
-              .filter((line) => line.includes('settings set'))
-              .map((line) => JSON.parse(line) as { args?: string; ended?: string })
-          : [];
+      const deletion = holdRecordingDeletion(recordings);
       const off = first.request('recording.set', { enabled: false });
-      await until(() => settingsLines().length === 1);
-      const on = second.request('recording.set', { enabled: true });
-      expect(await off).toMatchObject({ result: { enabled: false } });
-      expect(await on).toMatchObject({ result: { enabled: true } });
-      const set = (value: boolean) => `settings set recording.enabled ${value} --scope machine --json`;
-      expect(settingsLines().map((line) => line.args ?? `ended ${line.ended}`)).toEqual([
-        set(false),
-        `ended ${set(false)}`,
-        set(true),
-        `ended ${set(true)}`,
-      ]);
+      let on: ReturnType<typeof second.request> | undefined;
+      try {
+        await deletion.started;
+        on = second.request('recording.set', { enabled: true });
+        await second.request('machine.get');
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        expect(existsSync(recordings)).toBe(true);
+        deletion.release();
+        expect(await off).toMatchObject({ result: { enabled: false, recordingsDeleted: [workspace] } });
+        expect(await on).toMatchObject({ result: { enabled: true, recordingsDeleted: [] } });
+        expect(loadConfig()).toMatchObject({ recording: { enabled: true } });
+        expect(existsSync(recordings)).toBe(false);
+        expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
+        expect(
+          readAudit()
+            .filter((entry) => entry.action === 'recording.set')
+            .map((entry) => entry.ok),
+        ).toEqual([true, true]);
+      } finally {
+        deletion.release();
+        await Promise.allSettled([off, on]);
+        deletion.restore();
+      }
     });
 
     test.skipIf(!fakeTailscale)('closes while a recording.set runs and starts none queued behind it', async () => {
-      const port = await startWithTools(
-        { FAKE_STIM_PAYLOADS: '[]', FAKE_STIM_SETTINGS_MS: '30000' },
-        undefined,
-        fakeHelper(),
-        { record: true },
-      );
+      writeFileSync(join(workspace, 'package.json'), '{}');
+      const recordings = join(workspaceStateDir(workspace), 'recordings');
+      mkdirSync(recordings, { recursive: true });
+      writeFileSync(join(recordings, 'segment'), 'owned recording');
+      const port = await startWithTools({ FAKE_STIM_PAYLOADS: '[]' }, undefined, fakeHelper(), {
+        record: true,
+        actionLimits: { timeoutMs: 1000 },
+      });
       const first = await authed(port, true);
       const second = await authed(port, true);
-      first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
-      await until(() => stimCalls().some((call) => call.args?.startsWith('settings set')));
-      second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      await server!.close();
-      server = null;
-      expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toHaveLength(1);
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const deletion = holdRecordingDeletion(recordings);
+      let closing: Promise<void> | undefined;
+      try {
+        first.socket.send(JSON.stringify({ id: 90, method: 'recording.set', params: { enabled: false } }));
+        await deletion.started;
+        second.socket.send(JSON.stringify({ id: 91, method: 'recording.set', params: { enabled: true } }));
+        await second.request('settings.get');
+        const timedOut = first.next();
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(await timedOut).toMatchObject({
+          id: 90,
+          error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
+        });
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        let serverClosed = false;
+        closing = server!.close().then(() => {
+          serverClosed = true;
+          return undefined;
+        });
+        await new Promise((resolve) => setImmediate(resolve));
+        expect(serverClosed).toBe(false);
+        deletion.release();
+        await closing;
+        server = null;
+        expect(existsSync(recordings)).toBe(false);
+        expect(loadConfig()).toMatchObject({ recording: { enabled: false } });
+        expect(stimCalls().filter((call) => call.args?.startsWith('settings set'))).toEqual([]);
+        expect(readAudit().filter((entry) => entry.action === 'recording.set')).toEqual([
+          expect.objectContaining({
+            ok: false,
+            error: { code: 'action-failed', message: 'stim settings did not finish within 1 s.' },
+          }),
+        ]);
+      } finally {
+        deletion.release();
+        await closing;
+        deletion.restore();
+        vi.useRealTimers();
+      }
     });
 
     test.skipIf(!fakeTailscale)('never fills a workspace directory that has no workspace.json', async () => {
@@ -10809,7 +11537,7 @@ describe('request log', () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toMatch(
       new RegExp(
-        `^stim-server: request failed method=no.such.method client=${id} run=desktop-run.7 ms=\\d+ error=unknown-method$`,
+        `^\\d{4}-\\d\\d-\\d\\dT[\\d:.]+Z stim-server: request failed method=no.such.method client=${id} run=desktop-run.7 ms=\\d+ error=unknown-method$`,
       ),
     );
     expect(lines.join('\n')).not.toContain(token);

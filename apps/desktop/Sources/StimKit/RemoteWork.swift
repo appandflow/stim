@@ -67,6 +67,9 @@ public func pairedSidebarTrees(environments: [Workspace], options: SidebarOption
   let projects = Dictionary(
     environments.map { ($0.path, $0.project ?? Project(fallbackFor: $0.path)) }, uniquingKeysWith: { first, _ in first })
   return sidebarTrees(
-    environments: environments, unprovisioned: [], project: { projects[$0] ?? Project(fallbackFor: $0) },
-    options: paired)
+    environments: environments.map { app in
+      var localMask = app
+      localMask.hidden = nil
+      return localMask
+    }, unprovisioned: [], project: { projects[$0] ?? Project(fallbackFor: $0) }, options: paired)
 }
