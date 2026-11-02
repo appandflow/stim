@@ -250,15 +250,17 @@ the workflow, stop the workspace and the specific unit you created:
   connected app alone does not keep the server. It records a
   supervisor_idle_stopped line in metro.ndjson and devServerStop in
   state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  Devices stay booted only when devices.idleShutdownMinutes is 0. Otherwise
+  With devices.idleShutdownMinutes at 0 the devices stay booted. Otherwise
   (the default is 15) the idle stop first shuts down the workspace's owned
   devices idle for the shorter of the two settings, and device log lines no
   longer count as use of a device whose last launch loads its JS from Metro:
   that app cannot run without Metro, and its reconnect attempts fill the
   device log. A Debug app's device therefore goes down with the dev server
   even when devices.idleShutdownMinutes is longer. An open stim-server live
-  view keeps it booted, and device logs still count for a Release or
-  native-process launch and for a slot with no recorded launch. The
+  view keeps it booted. Device logs still count for a Release or
+  native-process launch and for a slot with no recorded launch, and for those
+  any change to the workspace's device.ndjson counts, so another slot's
+  reconnect logs keep them booted until that slot's device is shut down. The
   supervisor_idle_stopped message names each device it shut down and why it
   kept any other (\`guide lifecycle budget\`). The next \`stim start\`
   starts it again and clears the

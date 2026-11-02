@@ -127,7 +127,8 @@ without reloading and without console output therefore counts as idle. Raise
 The stop is recorded in the timeline as `supervisor_idle_stopped`, and
 `stim status` shows the port as `stopped (idle)` instead of a crash. Unless
 `devices.idleShutdownMinutes` is `0`, the stop first shuts down the
-workspace's owned simulators and emulators. From then on, device log lines no
+workspace's owned simulators and emulators idle for the shorter of
+`metro.idleStopMinutes` and `devices.idleShutdownMinutes`. From then on, device log lines no
 longer count as use of a device whose app loads its JavaScript from Metro: a
 Debug app cannot run without its dev server, and its reconnect attempts fill
 the device log. A Debug app's device therefore goes down with the dev server,

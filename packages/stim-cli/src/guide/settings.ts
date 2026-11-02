@@ -490,9 +490,11 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         server (default 15). 0 never stops it. Never during a
                         build or bundle response, while the workspace holds
                         a device lock, or while a workspace device is
-                        driven. The stop also shuts down the owned devices
-                        of the workspace's Debug launches unless
-                        devices.idleShutdownMinutes is 0. Read
+                        driven. Unless devices.idleShutdownMinutes is 0,
+                        the stop first shuts down the workspace's owned
+                        devices idle for the shorter window, and from then
+                        on a Debug launch's device logs do not count as
+                        activity. Read
                         when \`start\` spawns the supervisor; see
                         \`guide metro\`.
   devices.idleShutdownMinutes

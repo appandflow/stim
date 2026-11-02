@@ -467,7 +467,9 @@ activity for as long as the device stays booted. A Debug app's device therefore 
 [idle stop](./dev-server-and-logs.md#idle-stop) even when
 `devices.idleShutdownMinutes` is longer, and `stim status` shows it as shut
 down `with Metro's idle stop`. Device logs still count for a Release or
-native-process launch and for a slot with no recorded launch.
+native-process launch and for a slot with no recorded launch. For those, any
+change to the workspace's device log counts, so another slot's reconnect logs
+keep them booted until that slot's device is shut down.
 
 With `maintenance.mode on`, the default,
 [automatic maintenance](./build-caches.md#automatic-maintenance) applies the
