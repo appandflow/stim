@@ -4932,7 +4932,7 @@ describe('a recorded build', () => {
     });
     expect(readWorkspaceLaunches(root).ios?.artifact).toEqual({
       appPath: recorded,
-      configuration: null,
+      configuration: 'Debug',
       fingerprint: 'f1',
       cacheKey: 'f1-debug-sim-arm64',
       cacheHit: 'local',

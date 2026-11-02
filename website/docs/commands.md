@@ -983,7 +983,8 @@ com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.
 "deviceName", "rebooted", "app": { "bundleId", "relaunched", "launched" } }] } }`.
 `relaunched: true` means in-app state is gone. agent-device runs
 `stim revive --json` itself when it finds the workspace's device shut down and
-reads the workspace's boot hook; see
+reads the workspace's boot hook; revive then restores only the launch on that
+device, plus Metro. See
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
 
 ## `logs`

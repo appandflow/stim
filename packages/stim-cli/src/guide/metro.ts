@@ -263,7 +263,8 @@ the workflow, stop the workspace and the specific unit you created:
   cold from the artifact the launch recorded, without fingerprinting or
   building. In-app state is gone. An app that is still running is left alone
   unless Metro restarted. Release, native-process and hosted launches are not
-  relaunched. It refuses with STIM_NO_METRO when the last stop was not an idle
+  relaunched. Run as agent-device's boot hook (guide logs), it restores only
+  the launch on the device agent-device asked for, plus Metro. It refuses with STIM_NO_METRO when the last stop was not an idle
   stop or the workspace was stopped since, STIM_DEVICE_LOST when the owned
   device is gone, and STIM_NO_RECORDED_BUILD when the app is. The
   setting

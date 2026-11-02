@@ -4818,6 +4818,13 @@ describe('a recorded build', () => {
       cacheHit: 'local',
       fingerprint: 'f1',
     });
+    expect(readWorkspaceLaunches(root).android?.artifact).toEqual({
+      appPath: recorded,
+      configuration: 'debug',
+      fingerprint: 'f1',
+      cacheKey: 'f1-debug',
+      cacheHit: 'local',
+    });
   });
 });
 

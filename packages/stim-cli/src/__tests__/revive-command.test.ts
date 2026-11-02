@@ -149,6 +149,20 @@ test.each<[string, Partial<ReviveDeps>, string | null]>([
   expect(calls).toEqual([]);
 });
 
+test("run as agent-device's boot hook, revive restores only the launch on the requested device", async () => {
+  const { deps, calls } = harness({
+    getProject: () => ({
+      ...project,
+      platforms: { ...project.platforms, android: { avdName: 'stim-app', owned: true } },
+    }),
+    readLaunches: () => ({ ios: iosLaunch, android: { ...iosLaunch, deviceId: 'emulator-5554' } }),
+    resolveAndroid: async () => ({ missing: true }),
+  });
+  const result = await runRevive({ root: '/project', note: () => {}, requestedDevice: 'U1', deps });
+  assert(result.ok);
+  expect(calls).toEqual(['metro', 'ios']);
+});
+
 test.each<[string, Partial<ReviveDeps>]>([
   ['the installed artifact is gone', { artifactExists: () => false }],
   [

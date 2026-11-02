@@ -85,7 +85,6 @@ interface Target {
   record: WorkspaceLaunchRecord;
   deviceId: string;
   deviceName: string | null;
-  names: string[];
   booted: boolean;
   build: RecordedBuild;
   configuration: string | null;
@@ -93,6 +92,15 @@ interface Target {
 
 function failure(code: string, message: string, remedy: string | null): { ok: false; error: ReviveFailure } {
   return { ok: false, error: { code, message, remedy } };
+}
+
+function launchDeviceNames(
+  project: ProjectRecord,
+  { platform, slot, record }: { platform: Platform; slot: string; record: WorkspaceLaunchRecord },
+): string[] {
+  const owned = deviceSlotPlatforms(project, slot);
+  const recorded = platform === 'ios' ? owned?.ios?.deviceUdid : owned?.android?.avdName;
+  return [record.deviceId, ...(recorded ? [recorded] : [])];
 }
 
 function launchedBuild(record: WorkspaceLaunchRecord): { build: RecordedBuild; configuration: string | null } | null {
@@ -126,7 +134,6 @@ async function inspectTarget(
     );
   let deviceId: string;
   let deviceName: string | null;
-  let names: string[];
   let booted: boolean;
   if (platform === 'ios') {
     const owned = slotDevices?.ios;
@@ -137,7 +144,6 @@ async function inspectTarget(
     if (!resolved.sim) return lost(`Simulator ${record.deviceId} no longer exists as a Stim-owned simulator`);
     deviceId = resolved.sim.udid;
     deviceName = resolved.sim.name;
-    names = [resolved.sim.udid];
     booted = resolved.sim.state === 'Booted';
   } else {
     const owned = slotDevices?.android;
@@ -148,7 +154,6 @@ async function inspectTarget(
     }
     deviceId = resolved.serial ?? owned.avdName;
     deviceName = owned.avdName;
-    names = resolved.serial ? [owned.avdName, resolved.serial] : [owned.avdName];
     booted = Boolean(resolved.serial);
   }
   const launched = launchedBuild(record);
@@ -166,7 +171,7 @@ async function inspectTarget(
       `Run \`${run}\` to build or restore it from the cache and launch it.`,
     );
   }
-  return { platform, slot, record, deviceId, deviceName, names, booted, ...launched };
+  return { platform, slot, record, deviceId, deviceName, booted, ...launched };
 }
 
 export async function runRevive({
@@ -202,21 +207,27 @@ export async function runRevive({
     );
   }
 
-  const targets: Target[] = [];
-  for (const [key, record] of Object.entries(d.readLaunches(root))) {
+  const launches = Object.entries(d.readLaunches(root)).flatMap(([key, record]) => {
     const parsed = parseDeviceSlotKey(key);
-    if (!parsed || record.release || record.runtime === 'process') continue;
-    if (hostedNativeRecords(state, parsed.platform)[parsed.slot]) continue;
-    const target = await inspectTarget(project, parsed.platform, parsed.slot, record, d);
-    if ('ok' in target) return target;
-    targets.push(target);
-  }
-  if (requestedDevice && !targets.some((target) => target.names.includes(requestedDevice))) {
+    if (!parsed || record.release || record.runtime === 'process') return [];
+    if (hostedNativeRecords(state, parsed.platform)[parsed.slot]) return [];
+    return [{ ...parsed, record }];
+  });
+  const selected = requestedDevice
+    ? launches.filter((launch) => launchDeviceNames(project, launch).includes(requestedDevice))
+    : launches;
+  if (requestedDevice && selected.length === 0) {
     return failure(
       'STIM_DEVICE_LOST',
       `Device ${requestedDevice} is not a simulator or emulator this workspace last launched its app on, so revive started nothing for it.`,
       "Stim boots only this workspace's owned devices. Run `stim status` to see them, and drive one of those.",
     );
+  }
+  const targets: Target[] = [];
+  for (const { platform, slot, record } of selected) {
+    const target = await inspectTarget(project, platform, slot, record, d);
+    if ('ok' in target) return target;
+    targets.push(target);
   }
 
   let metroPort = port;

@@ -692,7 +692,7 @@ function launchedArtifact(
 ): LaunchedArtifact {
   return {
     appPath: apkPath,
-    configuration: variant ?? null,
+    configuration: variant ?? 'debug',
     fingerprint: record.fingerprint ?? null,
     cacheKey: record.cacheKey ?? null,
     cacheHit: record.cacheHit === 'local' || record.cacheHit === 'remote' ? record.cacheHit : false,

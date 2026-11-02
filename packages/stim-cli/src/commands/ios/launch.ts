@@ -1223,7 +1223,13 @@ export async function finishIosRun({
     runtimeKind: runtime.kind,
     launchedAt,
     artifact: appPath
-      ? { appPath, configuration, fingerprint: storeHash, cacheKey: storeKey, cacheHit: cacheHit || false }
+      ? {
+          appPath,
+          configuration: configuration ?? 'Debug',
+          fingerprint: storeHash,
+          cacheKey: storeKey,
+          cacheHit: cacheHit || false,
+        }
       : null,
     note,
   });
