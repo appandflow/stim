@@ -68,6 +68,14 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
 - **A running device.** The workspace's owned simulator or emulator must be
   booted (run `stim ios` or `stim android` first), or, with `--device`, the
   physical device it leases. A physical iPhone is view only.
+- **Or a hosted session.** A workspace whose device runs on another Mac
+  (`stim ios --remote <machine>`, `stim android --remote <machine>`) is shared
+  the same way, from a machine with no simulators of its own. This machine's
+  stim-server serves the share and relays frames and input through its
+  existing connection to that Mac's device-host; the Mac sees only the view
+  and control traffic this machine's own viewers would send, and needs no new
+  approval. The session must be ready. The share ends when the session stops
+  or is replaced, and `stim share list` does not show the Mac.
 
 ## Options
 

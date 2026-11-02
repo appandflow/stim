@@ -10,6 +10,7 @@ import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
 import type { ServerMessage } from './protocol.ts';
 import { targetKey } from './recorder.ts';
+import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
 import { endedPage, loginPage, viewerPage } from './share-page.ts';
 import type { OpenedRoute } from './share-route.ts';
 
@@ -85,6 +86,8 @@ export interface ShareDeps {
     /** Retries removing the route `stranded` reports. */
     removeStranded: () => Promise<void>;
   };
+  /** Frames and input for a device a host Mac runs for this machine; without it such a share is refused. */
+  hosted?: (host: HostedTarget, request: ShareRequest) => ShareSource;
   lookup?: LeaseLookup;
   limits?: Partial<ShareLimits>;
   /** Called when {@link ShareHub.unrecordedTargets} changed. */
@@ -191,7 +194,9 @@ interface Share {
   auth: ShareAuth;
   passwordDigest: Buffer | null;
   expiresAt: number;
-  device: Device;
+  device: Device | null;
+  host: HostedTarget | null;
+  source: ShareSource;
   sessions: Set<string>;
   failures: number[];
   viewers: Set<Viewer>;
@@ -290,8 +295,23 @@ export class ShareHub {
     const status = await this.status();
     if ('code' in status) return status;
     if (this.closed) return { code: 'action-failed', message: 'stim-server is stopping.' };
-    const device = ownedDevice(status, request, null, this.deps.lookup);
-    if (typeof device === 'string') return { code: 'action-failed', message: device };
+    const host = this.deps.hosted ? hostedOf(status, request) : null;
+    let device: Device | null = null;
+    let source: ShareSource;
+    if (host && this.deps.hosted) {
+      if (!host.ready) {
+        return {
+          code: 'action-failed',
+          message: `The hosted session on ${host.machine} is not ready yet. Wait for stim ${request.platform} --remote to finish, then share again.`,
+        };
+      }
+      source = this.deps.hosted(host, request);
+    } else {
+      const owned = ownedDevice(status, request, null, this.deps.lookup);
+      if (typeof owned === 'string') return { code: 'action-failed', message: owned };
+      device = owned;
+      source = this.localSource(owned);
+    }
     let base: string;
     try {
       base = await this.open();
@@ -319,6 +339,8 @@ export class ShareHub {
       passwordDigest: auth === 'none' ? null : digest(chosen ?? shown ?? ''),
       expiresAt,
       device,
+      host,
+      source,
       sessions: new Set(),
       failures: [],
       viewers: new Set(),
@@ -337,10 +359,17 @@ export class ShareHub {
     };
     share.timer.unref?.();
     this.shares.set(share.key, share);
-    const attached = deviceKey(device);
+    const attached = device ? deviceKey(device) : null;
     share.unwatch = this.deps.subscribeStatus({
       item: (payload) => {
         share.latest = payload;
+        if (host) {
+          const now = hostedOf(payload, request);
+          if (now?.machine !== host.machine || now.session !== host.session) {
+            queueMicrotask(() => void this.end(share, 'The hosted session ended.'));
+          }
+          return;
+        }
         const resolved = ownedDevice(payload, request, attached, this.deps.lookup);
         if (typeof resolved === 'string') queueMicrotask(() => void this.end(share, resolved));
         else if (deviceKey(resolved) !== attached) queueMicrotask(() => void this.end(share, 'The device changed.'));
@@ -348,6 +377,18 @@ export class ShareHub {
       failed: () => {},
     });
     return { ...this.row(share), url: `${base}/s/${secret}/`, ...(shown ? { password: shown } : {}) };
+  }
+
+  private localSource(device: Device): ShareSource {
+    const { frames, control } = this.deps;
+    return {
+      subscribe: (listener, hint) => frames.subscribe(device, listener, hint),
+      begin: (owner, target, workspace, allowed) => control.begin(owner, target, workspace, allowed),
+      targetOf: (owner, session) => control.targetOf(owner, session),
+      input: (owner, session, _method, _params, command) => control.input(owner, session, command),
+      endFor: (owner, message) => control.endFor(owner, null, message),
+      close: () => {},
+    };
   }
 
   /**
@@ -480,7 +521,8 @@ export class ShareHub {
       setTimeout(() => socket.terminate(), CLOSE_GRACE_MS).unref?.();
     }
     share.viewers.clear();
-    this.deps.control.endFor(share.owner, null, message);
+    share.source.endFor(share.owner, message);
+    share.source.close();
     this.releaseRecording(share);
     await this.teardown();
   }
@@ -528,7 +570,7 @@ export class ShareHub {
    * already drives is left alone: the share's control is refused there, and that driver stays recorded.
    */
   private holdRecording(share: Share): void {
-    if (share.request.physical || share.recordKey) return;
+    if (share.request.physical || share.host || share.recordKey) return;
     const { workspace, platform, slot } = share.request;
     const key = targetKey({ workspace, platform, slot });
     if (!this.controlled.has(key) && drivenNow(share.latest, share.request)) return;
@@ -680,8 +722,7 @@ export class ShareHub {
     const json = (message: Record<string, unknown>) => {
       if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
     };
-    const unsubscribe = this.deps.frames.subscribe(
-      share.device,
+    const unsubscribe = share.source.subscribe(
       {
         frame: (frame) => delivery.push(frame),
         delayed: (delayed) => json({ type: 'delayed', delayed }),
@@ -721,7 +762,7 @@ export class ShareHub {
       viewer.stop();
       share.viewers.delete(viewer);
       if (share.viewers.size === 0 && share.controlSession) {
-        this.deps.control.endFor(share.owner, null, 'The last viewer left.');
+        share.source.endFor(share.owner, 'The last viewer left.');
         share.controlSession = null;
         this.releaseRecording(share);
       }
@@ -751,7 +792,7 @@ export class ShareHub {
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
     const session = await this.controlSession(share, viewer);
     if (!session || share.ended) return;
-    const parsed = parseInput(method, { ...params, session }, (name) => this.deps.control.targetOf(share.owner, name));
+    const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
     if ('code' in parsed) return;
     const command: InputCommand = parsed.value.command;
     if (
@@ -760,7 +801,7 @@ export class ShareHub {
     ) {
       return;
     }
-    const refused = await this.deps.control.input(share.owner, session, command);
+    const refused = await share.source.input(share.owner, session, method, { ...params }, command);
     if (refused && 'code' in refused) {
       console.error(`stim-server: web share ${share.id} input refused: ${refused.message}`);
       if (viewer.socket.readyState === viewer.socket.OPEN) {
@@ -775,7 +816,7 @@ export class ShareHub {
     if (Date.now() < share.controlRetryAt) return Promise.resolve(null);
     const { workspace, platform, slot, physical } = share.request;
     this.holdRecording(share);
-    share.controlStarting = this.deps.control
+    share.controlStarting = share.source
       .begin(
         share.owner,
         { workspace, platform, ...(slot ? { slot } : {}), ...(physical ? { physical } : {}) },
@@ -793,7 +834,7 @@ export class ShareHub {
           return null;
         }
         if (share.ended || share.viewers.size === 0) {
-          this.deps.control.endFor(share.owner, null, 'The share ended.');
+          share.source.endFor(share.owner, 'The share ended.');
           this.releaseRecording(share);
           return null;
         }
