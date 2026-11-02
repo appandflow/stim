@@ -41,9 +41,9 @@ Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
 back to it. Under memory pressure a pass stops the idle Gradle and Kotlin
-daemons gc --delete --cache gradle-daemons would stop, with the same
-build-running gates; stopping devices, dev servers and other helpers for
-memory is not automatic. The idle check shuts down (never
+daemons verified idle by the common daemon inventory, with its build-running
+gates; stopping devices, dev servers and other helpers for memory is not automatic.
+The idle check shuts down (never
 deletes) owned simulators and emulators idle for their workspace's
 devices.idleShutdownMinutes, also with no supervisor running, through the
 supervisor's idle rules and records (guide lifecycle budget). While the level is warning or critical, the
@@ -201,9 +201,9 @@ DISK PRESSURE LEVELS
        worktrees, never the source checkout, with the running-process checks
        of WORKTREE DEPENDENCIES; when worktree warm can restore them they are
        recorded for the next start, ios or android to restore
-    5. idle Gradle and Kotlin daemons, stopped as gc --delete --cache
-       gradle-daemons stops them (never during a Stim build, never a busy or
-       unverified one, never with STIM_HOME set), only when every Gradle
+    5. idle Gradle and Kotlin daemons, using the common identity and idle checks
+       (never during a build that could use them, never a busy or unverified
+       one, never with STIM_HOME set), only when every Gradle
        process that keeps step 6 from running is such a daemon; the pass
        waits up to 3 seconds for them to exit
     6. Gradle version caches and wrapper distributions no registered project
@@ -319,7 +319,8 @@ WHAT RECLAIMS AN OWNED DEVICE
                             driver, claim or activity for that long
 
 \`gc --delete\` also shuts down an unused watchman daemon, and \`gc --delete
---cache gradle-daemons\` stops idle Gradle and Kotlin daemons. They are shared
+--cache gradle-daemons\` stops idle Gradle and Kotlin daemons only under configured
+memory pressure with no local build running. They are shared
 helper processes, not devices (\`guide cleanup memory\`).
 
 \`worktree remove\` and \`gc --delete\` are the only two commands that delete;
@@ -485,7 +486,7 @@ automatic maintenance never touch them. modules-2, build-cache-1, jdks and
 other shared Gradle caches are never deleted, and --cache all never includes these versions.
 With STIM_HOME set, gc deletes nothing in a Gradle home outside it. At disk
 pressure level 3 automatic maintenance first stops the idle Gradle and Kotlin
-daemons gc --delete --cache gradle-daemons would stop, only when every Gradle
+daemons using the common identity, idle and build checks, only when every Gradle
 process that keeps a version is such a daemon, then does the same for
 versions unmodified for maintenance.gradleVersionIdleDays days (7; 0 turns
 both off). A manual gc --delete --cache gradle-versions never stops daemons.
@@ -1089,10 +1090,20 @@ THE ONE CASE GC WILL NOT REAP
 
   Watchman is stopped by a plain \`gc --delete\` and by \`gc --delete --cache
   watchman\`; \`--cache all\` and every other \`--cache\` value leave it alone.
-  The Gradle and Kotlin daemons are stopped by \`--cache gradle-daemons\`, and
-  by automatic maintenance under memory pressure (critical at once, warning
-  after maintenance.memoryWarningMinutes, or off macOS below
-  maintenance.minAvailableMemoryGb) or disk pressure level 3:
+  Manual \`--cache gradle-daemons\` requires fresh configured memory pressure
+  and no local build, including iOS. It works independently of maintenance.mode;
+  memoryPressureLevel off, invalid settings or an unreadable macOS signal keep
+  daemons. Critical acts at once; warning needs maintenance.memoryWarningMinutes
+  of recorded warning, and other platforms also use maintenance.minAvailableMemoryGb.
+  Warning history counts only with a fresh warning signal and a recorded check
+  within maintenance.pressureCheckMinutes, inside the last completed, unblocked
+  maintenance pass. An interrupted, blocked or later unrelated pass conservatively
+  keeps warning daemons until another eligible observation. This does not prove
+  continuous sampling. Manual reports never record history; without it, a positive
+  warning interval keeps daemons.
+  Automatic maintenance shares the pressure decision; disk-level-3 version cleanup
+  remains independent of memory pressure. Their common build checks allow known
+  iOS builds that cannot use these daemons:
     stim gc --delete              (or: stim gc --delete --cache watchman)
                                   runs \`watchman watch-del\` on each stale root
                                   with no subscription or trigger, then
@@ -1127,8 +1138,11 @@ THE ONE CASE GC WILL NOT REAP
   otherwise it sends SIGTERM to each idle daemon, after checking the pid still
   has the same start time. A build that picks a daemon between gc's last
   check and the stop fails and must be run again, so gc re-checks the build
-  locks and the daemon's status right before each stop. Nothing is stopped while an Android build lock, or a build slot no
-  iOS build holds, is live or unresolved. stim-server stops the daemons of
+  locks and the daemon's status right before each stop. Manual daemon GC also
+  rechecks pressure, current settings and all build locks and slots, including
+  iOS, before each stop. A build can still begin after the final check.
+  The common disk and maintenance path keeps its Android or unknown-build gate.
+  stim-server stops the daemons of
   offloaded builds (\`guide settings\`), so
   while it runs gc keeps those. A daemon whose home, distribution or status cannot be read is
   kept. Gradle stops an idle daemon itself after 3 hours and Kotlin after 2
