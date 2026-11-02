@@ -40,7 +40,13 @@ import { loadConfig } from '../workspace/config.ts';
 import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
-import { cachedDeviceActivityAsync, workspaceActiveReason, workspaceActiveReasonAsync } from './activity.ts';
+import {
+  cachedDeviceActivity,
+  cachedDeviceActivityAsync,
+  workspaceActiveReason,
+  workspaceActiveReasonAsync,
+} from './activity.ts';
+import { stopIdleWorkspace } from './idle-stop.ts';
 import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
@@ -442,9 +448,15 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return kept('automatic maintenance does not stop devices or dev servers for disk');
     case 'would-stop-workspace':
       if (action.level === 3) return stopWorkspace(action, context);
-      return kept(
-        'automatic maintenance stops dev servers only at disk pressure level 3; the stim-daemon stops idle ones',
-      );
+      return action.check === 'idle'
+        ? stopIdleWorkspace(action, {
+            protectedRoot: context.background ? '' : context.protectedRoot,
+            devices: () => cachedDeviceActivity(Date.now()),
+            hostedOnly: true,
+          })
+        : kept(
+            'automatic maintenance stops dev servers only at disk pressure level 3 or, with a hosted device, after maintenance.idleStopHours',
+          );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
       return clearArtifacts(action, context);

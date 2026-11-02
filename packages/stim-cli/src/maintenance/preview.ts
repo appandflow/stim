@@ -18,6 +18,8 @@ import { listWorktreesAsync } from '../workspace/worktree.ts';
 import { plan, type MaintenancePlan } from './plan.ts';
 import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { planSweep, planWorktrees } from './sweep.ts';
+import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
+import { planIdleStop } from './idle-stop.ts';
 import { planMemoryDaemonStop, planPressureLevels } from './levels.ts';
 import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
@@ -42,13 +44,19 @@ export async function plannedMaintenance(
     devices = true,
     sweep = false,
     worktrees = false,
+    idle = false,
+    idleHostedOnly = true,
     refresh = true,
+    background = false,
     operation,
   }: {
     devices?: boolean;
     sweep?: boolean;
     worktrees?: boolean;
+    idle?: boolean;
+    idleHostedOnly?: boolean;
     refresh?: boolean;
+    background?: boolean;
     operation?: StimContext;
   } = {},
 ): Promise<PlannedMaintenance> {
@@ -158,6 +166,28 @@ export async function plannedMaintenance(
     merge(planned);
     result.worktreeSweep = planned.sweep;
   }
+  if (idle && devices) {
+    const now = Date.now();
+    try {
+      merge(
+        await planIdleStop({
+          protectedRoot: background ? '' : root,
+          now,
+          env,
+          operation,
+          hostedOnly: idleHostedOnly,
+          devices: operation
+            ? cachedDeviceActivityAsync(now, env, operation.signal, operation)
+            : cachedDeviceActivity(now),
+        }),
+      );
+    } catch (error) {
+      if (error instanceof WorkspaceProcessCleanupError || (error instanceof Error && 'reportCleanup' in error))
+        throw error;
+      operation?.signal.throwIfAborted();
+      result.blocked.push(`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (pressure) {
     const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
     const pressured = await planPressureLevels(level, {
@@ -233,6 +263,8 @@ export async function previewMaintenance({
     const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
       devices,
       sweep: true,
+      idle: true,
+      idleHostedOnly: false,
       refresh,
       operation,
     });

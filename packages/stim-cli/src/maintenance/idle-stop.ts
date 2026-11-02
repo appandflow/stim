@@ -404,6 +404,7 @@ async function candidate(
   env: NodeJS.ProcessEnv,
   devices: DeviceReader,
   operation?: StimContext,
+  hostedOnly = false,
 ): Promise<IdleStopCandidate | { skip: string } | null> {
   const signal = operation?.signal;
   const project = loadConfig()?.projects?.[path];
@@ -418,6 +419,7 @@ async function candidate(
   const owns = ownsIos || slots.some(({ platforms }) => platforms.android?.owned === true);
   const hosted = hostedFacts(path);
   const isHosted = hosted.placements.length > 0 || hosted.unreadable.length > 0;
+  if (hostedOnly && !isHosted) return null;
   if (!owns && !isHosted && (supervisor.status === 'none' || supervisor.status === 'stale')) return null;
   const setting = await idleStopHours(path, env, operation);
   if ('invalid' in setting) return { skip: setting.invalid };
@@ -465,6 +467,7 @@ export async function planIdleStop({
   env = process.env,
   platform = process.platform,
   operation,
+  hostedOnly = false,
 }: {
   protectedRoot: string;
   now: number;
@@ -472,6 +475,8 @@ export async function planIdleStop({
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
   operation?: StimContext;
+  /** Plan only workspaces with a hosted device, which the stim-daemon's idle stage leaves running. */
+  hostedOnly?: boolean;
 }): Promise<MaintenancePlan> {
   const plan: MaintenancePlan = { actions: [], blocked: [], skips: [] };
   if (deviceSweepIsScoped(env)) return plan;
@@ -479,7 +484,7 @@ export async function planIdleStop({
     const root = canonicalPath(path);
     if (root === protectedRoot) continue;
     operation?.signal.throwIfAborted();
-    const found = await candidate(path, env, devices, operation);
+    const found = await candidate(path, env, devices, operation, hostedOnly);
     if (!found) continue;
     if ('skip' in found) {
       plan.skips.push({ target: root, reason: found.skip, workspace: root });
@@ -530,12 +535,14 @@ export async function stopIdleWorkspace(
     operation,
     env = operation?.env ?? process.env,
     by = 'automatic maintenance',
+    hostedOnly = false,
   }: {
     protectedRoot: string;
     devices: () => DeviceReader;
     operation?: StimContext;
     env?: NodeJS.ProcessEnv;
     by?: string;
+    hostedOnly?: boolean;
   },
 ): Promise<IdleStopOutcome> {
   const root = action.workspace ?? action.target;
@@ -544,8 +551,8 @@ export async function stopIdleWorkspace(
   const path = Object.keys(loadConfig()?.projects ?? {}).find((entry) => canonicalPath(entry) === root) ?? root;
   const stillIdle = async (): Promise<string | null> => {
     const now = Date.now();
-    const found = await candidate(path, env, devices(), operation);
-    if (!found) return 'nothing of it runs any more';
+    const found = await candidate(path, env, devices(), operation, hostedOnly);
+    if (!found) return hostedOnly ? 'it has no hosted device any more' : 'nothing of it runs any more';
     if ('skip' in found) return found.skip;
     const idleMs = found.hours * HOUR_MS;
     const evidence = await idleStopEvidence(path, found.devices, {

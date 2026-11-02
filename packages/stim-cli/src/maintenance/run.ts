@@ -183,9 +183,9 @@ const sameSet = (before: Set<string>, after: Set<string>) =>
 const BACKGROUND_TRIGGERS = new Set(['daemon']);
 
 /**
- * One automatic maintenance pass in this process, when a check is due. The daemon's activity pass decides idle, so
- * the pass never runs maintenance's own idle check. `report` plans and logs without acting, whatever
- * `maintenance.mode` says.
+ * One automatic maintenance pass in this process, when a check is due. Its idle check stops only workspaces with a
+ * hosted device, after `maintenance.idleStopHours`; the activity pass decides idle for every other one. `report`
+ * plans and logs without acting, whatever `maintenance.mode` says.
  */
 export async function runMaintenance(trigger: string, { report = false }: { report?: boolean } = {}): Promise<void> {
   const startedAt = Date.now();
@@ -212,7 +212,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
       recent: [],
       plan: [],
     };
-    const checks = due(state, settings, startedAt).filter((check) => check !== 'idle');
+    const checks = due(state, settings, startedAt);
     if (checks.length === 0) return;
     const background = BACKGROUND_TRIGGERS.has(trigger);
     let writeError: string | null = null;
@@ -271,7 +271,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
       delete state.deferredAt?.[check];
       keepState();
       try {
-        if (check === 'worktree' || check === 'sweep') continue;
+        if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(settings, state.pressure, state.lastAt[check]!);
           state.pressure.diskLevel = diskPressureLevel(lowestFree(state.pressure.disk), budget, settings);
@@ -341,6 +341,8 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
       result = await plannedMaintenance(state.pressure, state.sizes, settings, {
         sweep: ran.has('sweep'),
         worktrees: plannedWorktrees,
+        idle: ran.has('idle'),
+        background,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -416,7 +418,10 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
       return results;
     }
     const retained = state.plan.filter(
-      (action) => (action.check === 'sweep' && !ran.has('sweep')) || (action.check === 'worktree' && !plannedWorktrees),
+      (action) =>
+        (action.check === 'sweep' && !ran.has('sweep')) ||
+        (action.check === 'worktree' && !plannedWorktrees) ||
+        (action.check === 'idle' && !ran.has('idle')),
     );
     const previousActions = new Set(state.plan.map(actionKey));
     const previousSkips = new Set(state.skipKeys ?? []);
