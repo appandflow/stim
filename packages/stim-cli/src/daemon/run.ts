@@ -30,6 +30,7 @@ import { readWebRecord, webFacts } from '../web/state.ts';
 import type { Config } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { daemonMode } from './client.ts';
+import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
 import { runHomePasses } from './passes.ts';
 
@@ -124,7 +125,8 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
     if (macos && macos.state !== 'stopped') return `${path} has a macOS app`;
   }
   if (listBuildSlots().some((slot) => slot.alive || slot.unresolved)) return 'a build slot is held';
-  if (measured.devices.length) return `${measured.devices.length} owned device(s) running`;
+  const owned = measured.devices.filter(ownedHere);
+  if (owned.length) return `${owned.length} owned device(s) running`;
   const ownsIos = Object.values(config?.projects ?? {}).some((project) =>
     projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned === true),
   );
@@ -234,6 +236,7 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
   );
   let emptyTicks = 0;
+  const kept = new Map<string, string>();
   for (;;) {
     if (!tickRequested) {
       await new Promise<void>((done) => {
@@ -258,6 +261,13 @@ export async function runDaemon({ tickMs = TICK_MS }: { tickMs?: number } = {}):
     try {
       const { config, now, measured, workspaces } = await runHomePasses({ act: mode === 'on', trigger: 'daemon', log });
       alive = waiters.length ? 'a build waits for a slot' : homeAlive(config, measured);
+      for (const { path: workspace, outcome, detail } of workspaces) {
+        if (outcome !== 'kept') kept.delete(workspace);
+        else if (kept.get(workspace) !== detail) {
+          kept.set(workspace, detail);
+          log('info', 'workspace_kept', `${workspace}: ${detail}`, { workspace });
+        }
+      }
       lastSnapshot = {
         version: 1,
         pid: process.pid,

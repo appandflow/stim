@@ -7,8 +7,9 @@ import {
   readDeviceIdleShutdowns,
   readIdleStage,
 } from '@stim-cli/core/state';
-import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
-import { recordCreatedDevice } from '../devices/created-devices.ts';
+import { collectOwnedDeviceActivityAsync, type OwnedDeviceActivity } from '../commands/gc/idle.ts';
+import * as stopCommand from '../commands/stop.ts';
+import { forgetCreatedDevice, recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
@@ -16,6 +17,7 @@ import { runIdlePass } from '../daemon/idle.ts';
 import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { liveClaimOwner } from './_factories.ts';
 
 const MINUTE_MS = 60_000;
 
@@ -85,9 +87,9 @@ function writeLog(root: string, file: string, record: Record<string, unknown>) {
   writeFileSync(join(workspaceLogsDir(root), file), `${JSON.stringify({ ts: Date.now(), ...record })}\n`);
 }
 
-async function pass(act = true) {
+async function pass(act = true, drive: (device: OwnedDeviceActivity) => OwnedDeviceActivity = (device) => device) {
   const config = loadConfig();
-  const devices = await collectOwnedDeviceActivityAsync(config, sims, Date.now());
+  const devices = (await collectOwnedDeviceActivityAsync(config, sims, Date.now())).map(drive);
   return runIdlePass({ config, now: Date.now(), sims, simsError: null, devices, act, log: () => {} });
 }
 
@@ -105,7 +107,82 @@ test('a workspace idle past idle.minutes, whatever its device and app logs, ente
   expect(readDeviceIdleShutdowns(state).ios).toMatchObject({ idleMinutes: 15, reason: DEVICE_METRO_IDLE_STOP_REASON });
   expect(state?.launches).toEqual({ ios: launch });
   expect(getProject(root)?.metroPort).toBe(59123);
-  expect(readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8')).toContain('"event":"workspace_idle"');
+  const timeline = readFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), 'utf8');
+  expect(timeline).toContain('"event":"workspace_idle"');
+  expect(timeline).toContain('Run stim ios or stim android to resume it.');
+});
+
+test('a live agent-device session keeps the workspace however old its last command, naming the driver', async () => {
+  const { root, derivedData } = bootedWorkspace('agent', 20 * MINUTE_MS);
+  const old = new Date(Date.now() - 20 * MINUTE_MS).toISOString();
+
+  const decisions = await pass(true, (device) => ({
+    ...device,
+    activity: {
+      state: 'driven',
+      basis: ['agent-device-claim'],
+      driver: { tool: 'agent-device', pid: 1, since: null },
+      lastActivityAt: old,
+      recent: { 'agent-action': old },
+    },
+  }));
+
+  expect(decisions).toEqual([
+    expect.objectContaining({
+      path: root,
+      outcome: 'kept',
+      detail: 'its simulator stim-agent (iPhone 17 26.0) is driven by agent-device',
+    }),
+  ]);
+  expect(tornDown).toEqual([]);
+  expect(existsSync(derivedData)).toBe(true);
+});
+
+test('a serving workspace whose simulators cannot be listed is kept, not stopped', async () => {
+  const { root, derivedData } = bootedWorkspace('unlisted', 20 * MINUTE_MS);
+  writeWorkspaceState(root, { supervisor: { ...liveClaimOwner(), port: 59123, mode: 'expo-child', hmrUpdates: true } });
+  const stopped = vi.spyOn(stopCommand, 'runIdleStop').mockRejectedValue(new Error('unexpected idle stop'));
+  const config = loadConfig();
+
+  const decisions = await runIdlePass({
+    config,
+    now: Date.now(),
+    sims: null,
+    simsError: 'simctl list timed out',
+    devices: [],
+    act: true,
+    log: () => {},
+  });
+
+  expect(decisions).toEqual([
+    expect.objectContaining({
+      path: root,
+      outcome: 'kept',
+      detail: 'its simulators cannot be listed (simctl list timed out)',
+    }),
+  ]);
+  expect(stopped).not.toHaveBeenCalled();
+  expect(existsSync(derivedData)).toBe(true);
+});
+
+test('a booted device this home did not create is reported once as kept and never enters the idle stage', async () => {
+  const { root, udid, derivedData } = bootedWorkspace('foreign', 20 * MINUTE_MS);
+  forgetCreatedDevice('ios', udid);
+  const stopped = vi.spyOn(stopCommand, 'runIdleStop').mockRejectedValue(new Error('unexpected idle stop'));
+
+  for (let tick = 0; tick < 2; tick++)
+    expect(await pass()).toEqual([
+      expect.objectContaining({
+        path: root,
+        outcome: 'kept',
+        detail:
+          "stim-foreign (iPhone 17 26.0) not in this Stim home's created-devices ledger, so the idle stage leaves it",
+      }),
+    ]);
+  expect(stopped).not.toHaveBeenCalled();
+  expect(tornDown).not.toContain(udid);
+  expect(existsSync(derivedData)).toBe(true);
+  expect(readIdleStage(readWorkspaceState(root))).toBe(null);
 });
 
 test('use of its focused Simulator window within idle.minutes keeps the workspace running', async () => {
