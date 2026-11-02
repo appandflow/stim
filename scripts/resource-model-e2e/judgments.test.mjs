@@ -64,6 +64,16 @@ describe('idle timing judgment', () => {
     });
     expect(verdict.ok).toBe(false);
   });
+  it('fails a workspace that went idle before its last command plus the window minus one tick', () => {
+    const idleAt = base.commandEndMs + 2 * MIN;
+    const verdict = judgeIdleTiming({
+      ...base,
+      previousPollStartMs: null,
+      idlePollStartMs: idleAt - 2000,
+      idlePollEndMs: idleAt,
+    });
+    expect(verdict).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 14 * MIN });
+  });
   it('treats status activity, which is rounded down to the minute, as up to a minute later', () => {
     const verdict = judgeIdleTiming({
       ...base,

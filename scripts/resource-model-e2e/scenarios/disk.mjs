@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { clock, outcome, STATUS } from '../assertions.mjs';
 import { createBallast, gib } from '../ballast.mjs';
@@ -212,6 +212,7 @@ export async function runDisk(ctx) {
   const tracked = [active, ...victims];
   ctx.ballast = createBallast({ dir: ctx.ballastDir });
   writeFileSync(join(ctx.out, 'ballast.path'), `${ctx.ballast.file}\n`);
+  process.on('exit', () => rmSync(ctx.ballastDir, { recursive: true, force: true }));
   ctx.cleanups.push(async () => {
     await ctx.ballast.release();
     ctx.ballast.remove();

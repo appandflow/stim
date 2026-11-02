@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { UsageError, parseArgs } from './args.mjs';
 import { createAssertions, STATUS } from './assertions.mjs';
-import { renderReport } from './report.mjs';
+import { renderReport, resultLine } from './report.mjs';
 import { batchAssertions } from './scenarios/stress.mjs';
 import { remoteArguments, workspaceClosure } from './ssh.mjs';
 import { stimEnvironment, parseJsonOutput } from './stim.mjs';
@@ -133,6 +133,45 @@ describe('stress batch assertions', () => {
       snapshots: [{ bootsInFlight: 3, waitingRuns: 0, deviceSlots: { max: 8 } }],
     });
     expect(run(exposed, [ok('w1')])['boots-in-flight']).toBe(STATUS.fail);
+  });
+});
+
+const blank = (epoch) => ({ epoch, booted_ours: null, booting_ours: null, pressure: null });
+
+describe('stress batch assertions on missing sampler data', () => {
+  it('reports N/A for each sampler check and fails the scenario when every row is empty', () => {
+    const result = run(stressContext({ rows: [blank(1), blank(6), blank(11)] }), [ok('w1')]);
+    expect(result).toMatchObject({
+      'booted-cap': STATUS.unavailable,
+      'booting-sampled': STATUS.unavailable,
+      'pressure-critical': STATUS.unavailable,
+      'sampler-data': STATUS.fail,
+    });
+  });
+
+  it('ignores empty rows when computing a peak and says how many there were', () => {
+    const ctx = stressContext({ rows: [blank(1), sample(6, { booted_ours: 9, booting_ours: 0 })] });
+    const result = run(ctx, [ok('w1')]);
+    expect(result).toMatchObject({ 'booted-cap': STATUS.fail, 'sampler-data': STATUS.pass });
+    expect(ctx.assertions.list.find((a) => a.id === 'booted-cap').evidence[0]).toContain(
+      '1 of 2 rows had no simulator reading',
+    );
+  });
+});
+
+describe('report result line', () => {
+  const A = createAssertions();
+  A.pass('s', 'a', 't', []);
+  const none = createAssertions();
+  none.unavailable('s', 'a', 't', []);
+
+  it('does not say PASS for an interrupted run, a run that checked nothing, or one whose teardown failed', () => {
+    expect(resultLine(A.list, { harnessError: 'interrupted' })).toMatch(/^INTERRUPTED/);
+    expect(resultLine(none.list)).toMatch(/^NO RESULT/);
+    expect(resultLine([], { harnessError: 'boom' })).toMatch(/^NO RESULT/);
+    expect(resultLine(A.list, { harnessError: 'boom' })).toMatch(/^INCOMPLETE/);
+    expect(resultLine(A.list, { teardownClean: false })).toMatch(/^INCOMPLETE/);
+    expect(resultLine(A.list)).toMatch(/^PASS/);
   });
 });
 

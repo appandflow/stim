@@ -9,6 +9,8 @@ import {
   parseSimctlDevices,
   parseSwapUsedMb,
   parseVmStat,
+  provenOurs,
+  recordIdentities,
 } from './platform.mjs';
 import { parseDf, mismatchedVolumes } from './volumes.mjs';
 
@@ -22,7 +24,7 @@ Pages occupied by compressor:                1298566.
 
 describe('host measurements', () => {
   it('reads the page size from vm_stat instead of assuming one', () => {
-    expect(parseVmStat(VM_STAT)).toEqual({
+    expect(parseVmStat(VM_STAT)).toMatchObject({
       pageBytes: 16384,
       free: 5121,
       active: 640143,
@@ -62,28 +64,67 @@ describe('host measurements', () => {
   });
 });
 
+const row = (pid, ppid, rss, lstart, cmd) => `${pid} ${ppid} ${rss} ${lstart} ${cmd}`;
+
 describe('stim process attribution', () => {
   const home = '/h/rme1-home';
-  const worktreePrefix = '/w/rme1';
+  const scope = { home, worktreePrefix: '/w/rme1' };
+  const START = 'Mon Nov  2 15:00:00 2026';
+  const LATER = 'Mon Nov  2 16:30:00 2026';
+  const sinceMs = Date.parse('Mon Nov  2 14:59:00 2026');
   const ps = parsePs(
     [
-      '100 1 20480 stim-supervisor',
-      '101 100 262144 node /w/rme1-01/node_modules/expo/bin/cli start',
-      '200 1 20480 stim-supervisor',
-      '201 200 262144 node /w/other-01/node_modules/expo/bin/cli start',
-      '300 1 4096 xcodebuild -derivedDataPath /h/rme1-home/workspaces/x/derived-data build',
-      '301 1 4096 xcodebuild -derivedDataPath /elsewhere/derived-data build',
-      '400 1 2048 stim-collector',
+      row(100, 1, 20480, START, 'stim-supervisor'),
+      row(101, 100, 262144, START, 'node /w/rme1-01/node_modules/expo/bin/cli start'),
+      row(200, 1, 20480, START, 'stim-supervisor'),
+      row(201, 200, 262144, START, 'node /w/other-01/node_modules/expo/bin/cli start'),
+      row(300, 1, 4096, START, 'xcodebuild -derivedDataPath /h/rme1-home/workspaces/x/derived-data build'),
+      row(301, 1, 4096, START, 'xcodebuild -derivedDataPath /elsewhere/derived-data build'),
+      row(400, 1, 2048, START, 'stim-collector'),
     ].join('\n'),
   );
 
   it("counts only the run's own supervisors, Metro, xcodebuild and collectors", () => {
-    const totals = classifyStimProcesses(ps, { ownPids: new Set([100, 400]), home, worktreePrefix });
+    const identities = new Map();
+    recordIdentities(identities, ps, new Set([100, 400]), scope, sinceMs);
+    const totals = classifyStimProcesses(ps, { identities, ...scope });
     expect(totals.supervisor.n).toBe(1);
     expect(totals.metro.n).toBe(1);
     expect(totals.xcodebuild.n).toBe(1);
     expect(totals.collector.n).toBe(1);
     expect(totals.metro.rssMb).toBe(256);
+  });
+
+  it("does not treat a recorded pid as the run's once another process holds it", () => {
+    const identities = new Map([[100, START]]);
+    const reused = parsePs(
+      [
+        row(100, 1, 20480, LATER, 'stim-supervisor'),
+        row(101, 100, 9000, LATER, 'xcodebuild -project Other.xcodeproj build'),
+      ].join('\n'),
+    );
+    expect(provenOurs(reused, identities, scope)).toEqual([]);
+    const totals = classifyStimProcesses(reused, { identities, ...scope });
+    expect(totals.supervisor.n + totals.xcodebuild.n).toBe(0);
+  });
+
+  it('does not record a pid that is not a stim process of the run, or that started before the run', () => {
+    const rows = parsePs(
+      [row(500, 1, 2048, START, '/bin/zsh -l'), row(600, 1, 2048, 'Mon Nov  2 09:00:00 2026', 'stim-supervisor')].join(
+        '\n',
+      ),
+    );
+    const identities = new Map();
+    recordIdentities(identities, rows, new Set([500, 600]), scope, sinceMs);
+    expect(identities.size).toBe(0);
+  });
+
+  it('reads process start times independent of the machine locale only when ps prints them in the C format', () => {
+    expect(parsePs(row(7, 1, 1024, START, 'stim-collector --root /w/rme1-01'))[0]).toMatchObject({
+      pid: 7,
+      lstart: START,
+    });
+    expect(parsePs('8 1 1024 lun.  2 nov. 16:52:03 2026 stim-collector')[0].lstart).toBeNull();
   });
 });
 

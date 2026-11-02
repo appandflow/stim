@@ -26,19 +26,35 @@ function summarize(assertions) {
   return { pass: count(STATUS.pass), fail: count(STATUS.fail), unavailable: count(STATUS.unavailable) };
 }
 
+const AVAILABLE = ['vm_free_pages', 'vm_inactive_pages', 'vm_speculative_pages', 'vm_purgeable_pages'];
+
+function minAvailablePages(samples) {
+  const totals = samples
+    .filter((row) => AVAILABLE.every((column) => typeof row[column] === 'number'))
+    .map((row) => AVAILABLE.reduce((sum, column) => sum + row[column], 0));
+  return totals.length ? Math.min(...totals) : null;
+}
+
 const rssAt = (row) => PROCESS_KINDS.reduce((sum, kind) => sum + (row[`rss_${kind}_mb`] ?? 0), 0);
 
+export function resultLine(assertions, { harnessError = null, teardownClean = true } = {}) {
+  const c = summarize(assertions);
+  const tally = `${c.pass} passed, ${c.fail} failed, ${c.unavailable} not available on this build`;
+  if (harnessError === 'interrupted') return `INTERRUPTED: ${tally}`;
+  if (c.fail) return `FAIL: ${tally}`;
+  if (harnessError) return `${c.pass ? 'INCOMPLETE' : 'NO RESULT'}: the harness stopped early; ${tally}`;
+  if (!c.pass) return `NO RESULT: nothing passed; ${tally}`;
+  if (!teardownClean) return `INCOMPLETE: teardown did not finish cleanly; ${tally}`;
+  return `PASS: ${tally}`;
+}
+
 function headline(meta, samples, assertions) {
-  const counts = summarize(assertions);
   const pressureSamples = (level) => samples.filter((row) => (row.pressure ?? 0) >= level).length;
   const interval = samples.length > 1 ? (samples.at(-1).epoch - samples[0].epoch) / (samples.length - 1) : 5;
   const peakRss = samples.reduce((best, row) => Math.max(best, rssAt(row)), 0);
   return [
     ['Scenario', `${meta.scenario} on ${meta.targetLabel}`],
-    [
-      'Result',
-      `${counts.fail ? 'FAIL' : 'PASS'}: ${counts.pass} passed, ${counts.fail} failed, ${counts.unavailable} not available on this build`,
-    ],
+    ['Result', resultLine(assertions, meta)],
     ['Machine', meta.machineLabel],
     ['Build under test', meta.stimLabel],
     [
@@ -54,8 +70,8 @@ function headline(meta, samples, assertions) {
     ],
     ['Peak swap used', gb(maxOf(samples, 'swap_used_mb'))],
     [
-      'Lowest free memory pages',
-      gb(pagesToMb(minOf(samples, 'vm_free_pages'), samples.find((row) => row.page_bytes)?.page_bytes ?? null)),
+      'Lowest available memory (free, inactive, speculative and purgeable pages)',
+      gb(pagesToMb(minAvailablePages(samples), samples.find((row) => row.page_bytes)?.page_bytes ?? null)),
     ],
     [
       'Lowest free disk',
@@ -136,7 +152,8 @@ function samplerTable(samples, durationSec) {
   );
 }
 
-export function renderReport({ meta, assertions, workspaces, events, samples, teardown, harnessError }) {
+export function renderReport({ meta: baseMeta, assertions, workspaces, events, samples, teardown, harnessError }) {
+  const meta = { ...baseMeta, harnessError };
   const lines = [`# Resource model end-to-end run ${meta.runId}`, ''];
   if (harnessError) lines.push(`> The harness stopped early: ${harnessError}`, '');
   lines.push('## Headline', '', table(['Measure', 'Value'], headline(meta, samples, assertions)), '');

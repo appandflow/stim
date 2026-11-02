@@ -1,8 +1,8 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { ledgerUdids, readSimulators, recordedPids } from './platform.mjs';
-import { pool, run, sleep } from './shell.mjs';
+import { ledgerUdids, parsePs, provenOurs, readSimulators, recordIdentities, recordedPids } from './platform.mjs';
+import { C_LOCALE, pool, run, sleep } from './shell.mjs';
 
 export class HarnessError extends Error {}
 
@@ -111,17 +111,19 @@ export async function createWorkspaces(ctx, count) {
   return ctx.workspaces;
 }
 
-// A recorded pid is the run's only if it is alive, started after the run did, and still carries a stim title or path of this run.
-async function liveOurs(pids, { home, worktreePrefix, sinceMs }) {
-  if (!pids.size) return [];
-  const listed = await run('ps', ['-ww', '-o', 'pid=,lstart=,command=', '-p', [...pids].join(',')]);
-  const ours = (cmd) =>
-    /^stim-(supervisor|collector|daemon)/.test(cmd) || cmd.includes(home) || cmd.includes(worktreePrefix);
-  return listed.stdout
-    .split('\n')
-    .map((line) => /^\s*(\d+)\s+(\w{3} \w{3}\s+\d+ [\d:]{8} \d{4})\s+(.*)$/.exec(line))
-    .filter((match) => match && Date.parse(match[2]) >= sinceMs - 2000 && ours(match[3]))
-    .map((match) => Number(match[1]));
+const scopeOf = (ctx) => ({ home: ctx.home, worktreePrefix: ctx.worktreePrefix });
+
+async function psRows(pids) {
+  if (!pids.length) return [];
+  const listed = await run('ps', ['-ww', '-o', 'pid=,ppid=,rss=,lstart=,command=', '-p', pids.join(',')], {
+    env: C_LOCALE(),
+  });
+  return parsePs(listed.stdout);
+}
+
+async function liveOurs(ctx) {
+  const rows = await psRows([...ctx.identities.keys()]);
+  return provenOurs(rows, ctx.identities, scopeOf(ctx)).map((row) => row.pid);
 }
 
 function signal(pid, name) {
@@ -141,12 +143,19 @@ async function waitFor(check, timeoutMs, stepMs = 2000) {
 
 export async function teardown(ctx) {
   const { stim, project, home, emit } = ctx;
-  const report = { worktrees: [], simulators: [], processes: [], trashEmpty: null, homeDeleted: false, errors: [] };
+  const report = {
+    worktrees: [],
+    simulators: [],
+    processes: [],
+    trashEmpty: null,
+    homeDeleted: false,
+    ballastGone: null,
+    errors: [],
+  };
   const note = (error) => report.errors.push(String(error?.message ?? error));
   const noAbort = { signal: undefined };
 
-  ctx.trackLedger();
-  const pids = new Set([...ctx.knownPids, ...recordedPids(home)]);
+  await ctx.trackLedger();
   emit('teardown', 'stim stop in every worktree');
   await pool(ctx.workspaces, 4, async (workspace) => {
     if (existsSync(workspace.path))
@@ -187,13 +196,24 @@ export async function teardown(ctx) {
   report.trashEmpty = await waitFor(() => !existsSync(trash) || readdirSync(trash).length === 0, 180_000);
 
   emit('teardown', "waiting for the run's stim processes to exit");
-  const scope = { home, worktreePrefix: ctx.worktreePrefix, sinceMs: ctx.startedAt };
-  await waitFor(async () => (await liveOurs(pids, scope)).length === 0, 200_000);
-  report.processes = await liveOurs(pids, scope);
+  await waitFor(async () => (await liveOurs(ctx)).length === 0, 200_000);
+  report.processes = await liveOurs(ctx);
   for (const pid of report.processes) signal(pid, 'SIGTERM');
   if (report.processes.length) {
     await sleep(3000);
-    for (const pid of await liveOurs(new Set(report.processes), scope)) signal(pid, 'SIGKILL');
+    const still = new Set(await liveOurs(ctx));
+    for (const pid of report.processes) if (still.has(pid)) signal(pid, 'SIGKILL');
+  }
+
+  if (ctx.ballast) {
+    try {
+      await ctx.ballast.release();
+      ctx.ballast.remove();
+    } catch (error) {
+      note(error);
+    }
+    report.ballastGone = !existsSync(ctx.ballast.file);
+    if (!report.ballastGone) note(`the ballast file ${ctx.ballast.file} is still there`);
   }
 
   try {
@@ -218,7 +238,8 @@ export async function teardown(ctx) {
   return report;
 }
 
-export function trackLedger(ctx) {
+export async function trackLedger(ctx) {
   for (const udid of ledgerUdids(ctx.home)) ctx.createdUdids.add(udid);
-  for (const pid of recordedPids(ctx.home)) ctx.knownPids.add(pid);
+  const fresh = [...recordedPids(ctx.home)].filter((pid) => !ctx.identities.has(pid));
+  if (fresh.length) recordIdentities(ctx.identities, await psRows(fresh), new Set(fresh), scopeOf(ctx), ctx.startedAt);
 }

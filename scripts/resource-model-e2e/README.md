@@ -66,12 +66,18 @@ node scripts/resource-model-e2e/run.mjs --scenario stress --target ssh:<user@hos
 
 The harness packs the built stim package and its workspace dependencies with `pnpm pack`, installs them into one
 self-contained tree (`npm install` from the local tarballs; the third-party dependencies come from the npm registry on
-the machine running the harness), copies that tree and the harness to `~/rm-e2e/<run id>-remote` on the host, runs
-`run.mjs --target local` there through `ssh`, streams its output back, copies the results into `--out`, and deletes the
-remote copy. Requirements on the host: key-based ssh, Node 22.18 or later on the PATH of a login shell, Xcode, and the
-project at `--project`. `--home-dir` and `--work-dir` are paths on the host. `pnpm` is needed only where the harness
-starts. The session has a pty (`ssh -tt`), so a dropped connection sends SIGHUP to the remote harness, which tears down;
-a local interrupt hangs up the session the same way and then fetches the results.
+the machine running the harness), and copies that tree and the harness to `~/rm-e2e/<run id>-remote` on the host. It
+starts `run.mjs --target local` there detached (`nohup`, with a pid file and a log in that directory), so a lost
+connection does not stop the run, and follows the log over `ssh`, reattaching if the connection drops. When the remote
+harness has exited, it copies the results into `--out` and deletes the remote directory.
+
+A local interrupt (SIGINT or SIGTERM) is forwarded to the remote harness as SIGINT. The transport then waits, for at
+most 20 minutes, for the remote teardown to finish, copies `out/` and deletes the remote directory. If the wait runs out
+or the results cannot be copied, it leaves the remote directory in place and prints its path and the command that
+removes it; it never deletes the directory while the remote harness may still be using it.
+
+Requirements on the host: key-based ssh, Node 22.18 or later on the PATH of a login shell, Xcode, and the project at
+`--project`. `--home-dir` and `--work-dir` are paths on the host. `pnpm` is needed only where the harness starts.
 
 ## Where the work happens
 
@@ -97,18 +103,29 @@ Created, all named with the run id (`rme<4 hex>`):
 | results                                       | `--out`                                                     |
 
 Every stim command runs with `STIM_HOME` set to the private home, with all other `STIM_*` variables and `CI` removed
-from the environment, so no command reads or writes a real `~/.stim`. The harness refuses a `--home-dir` inside
-`~/.stim`. It never runs `stim gc --delete`.
+from the environment, so no command reads or writes a real `~/.stim`. The harness refuses a `--home-dir`, `--work-dir` or
+`--out` inside `~/.stim` (checked on the real paths, so a symlink into it is refused too), and any `--env` value that is
+a path inside it. It never runs `stim gc --delete`. A run id that collides with an existing home is replaced by a new
+one, and the private home is created without adopting an existing directory.
 
-Teardown runs on success, failure and SIGINT, SIGTERM or SIGHUP, and removes only what the run created:
+Teardown runs on success, failure and SIGINT, SIGTERM or SIGHUP, and removes only what the run created. It does not
+depend on stdout: write errors on stdout and stderr (EIO after a closed terminal or a dropped ssh session) are ignored,
+and `events.ndjson` records every step. A second signal quits at once, but the `disk` ballast is removed by an `exit`
+handler even then. The `disk` ballast path is also written to `ballast.path` in `--out`, so a run killed with SIGKILL
+leaves a file named by `ballast.path` and nothing else to find it by.
 
 1. `stim stop` in each worktree;
 2. `stim worktree remove --force` in each worktree (`git worktree remove --force` if that leaves one behind);
-3. `xcrun simctl shutdown` and `delete` for simulators that were in the private ledger at any point and still exist;
-4. a bounded wait for the home's `trash` to empty and for the run's supervisors, collectors, daemon and Metro to exit,
-   then SIGTERM and SIGKILL for pids recorded in the private home that are alive, started after the run did, and
-   still carry a stim title or a path of the run;
-5. the ballast file, the private home (after copying `evidence/`, below), and then the work and home directories if
+3. `xcrun simctl shutdown` and `delete` for simulators that were in the private ledger at any point and still exist.
+   This is raw `simctl`, not stim's centralized teardown, and it only ever names UDIDs from the private ledger;
+4. a bounded wait for the home's `trash` to empty and for the run's supervisors, collectors and daemon to exit, then
+   SIGTERM and SIGKILL for a process only when it is proven the run's. The supervisor and collector retitle themselves,
+   so no command line names the home; the proof is identity. A pid recorded in the private home (a workspace's
+   `supervisor` and `collectors`, or the `daemon/` directory) is accepted the first time it is seen alive, only if it
+   started after the run began and looks like a stim process of the run (a stim title, or a command line naming the
+   home or a worktree), and its start time (`ps -o lstart=` under `LC_ALL=C`) is remembered. It is signalled only
+   while the process at that pid still has that start time and still looks the same, so a reused pid is never hit;
+5. the ballast file (checked gone), the private home (after copying `evidence/`, below), and then the work and home directories if
    the run created them and they are empty. The home is kept, with a note in the report, when `simctl list` failed
    or a simulator of the run could not be deleted, because its ledger is the proof that the simulator is the run's.
 
@@ -147,7 +164,8 @@ driver also polls status every 15 seconds for the assertions.
 sampler as one table of per-bucket extremes (a bar column for load; no images), and the teardown result. Beside it:
 `samples.csv`, `status/`, `runs/` (stdout, stderr and an index of every stim command), `events.ndjson`,
 `assertions.json`, and `evidence/` (the daemon log and snapshot, the maintenance log, the device ledger, and each
-workspace's state and the tail of its Metro log, copied before the home is deleted). Exit status: 0 when no assertion
+workspace's state and the tail of its Metro log, copied before the home is deleted). The headline reads `PASS` only when something passed, nothing failed, the harness did not stop early and teardown
+finished cleanly; otherwise `FAIL`, `INTERRUPTED`, `INCOMPLETE` or `NO RESULT`. Exit status: 0 when no assertion
 failed, 1 when one did, 2 when the harness stopped early or its teardown did not finish cleanly.
 
 ## Assertions
@@ -162,20 +180,22 @@ N workspaces start (`stim start`) and launch (`stim ios`) one after another, the
 | Id                        | Passes when                                                                                                                                                                                       |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `launch`                  | each `stim start` and `stim ios` exits 0 with `launched` true or `bundling`                                                                                                                       |
-| `idle-stage`              | each workspace is seen idle within its idle window plus one 60 s tick of its last activity (see below)                                                                                            |
+| `idle-stage`              | each workspace is seen idle within its idle window plus one 60 s tick of its last activity, and not before the end of its last command plus the window minus one tick (see below)                 |
 | `idle-metro-down`         | at that poll `metro.running` is false (the idle-stop record is shown as evidence)                                                                                                                 |
-| `idle-devices-down`       | at that poll none of the workspace's iOS devices is `Booted` or `Booting`                                                                                                                         |
+| `idle-devices-down`       | at that poll none of the workspace's iOS devices is `Booted` or `Booting`; `N/A` when status lists no iOS device                                                                                  |
 | `idle-stage-reported`     | the environment has an `idleStage` record, or `stage.kind` is `idle` or `dormant`; fails on `running` or `building`; `N/A` for any other kind, as on builds whose stage kinds have no idle stage  |
 | `idle-derived-data-gone`  | the workspace's `derived-data/` held files after launch and is empty or gone after the idle stop; `N/A` for a cache-hit run that built nothing                                                    |
 | `revive`                  | `stim revive --json` exits 0 with `revived.metro.restarted` true and every device's app `launched` true or `bundling`, and status then shows Metro running, a device up                           |
 | `dormant-devices-deleted` | with `--dormant-minutes`: after the revives, each workspace's recorded simulators are gone from `simctl` within the dormant window plus one tick; `N/A` where the build has no `idle.dormantDays` |
-| `dormant-deps-kept`       | `node_modules` and `ios/Pods` still exist in each worktree after dormancy                                                                                                                         |
+| `dormant-deps-kept`       | for each workspace that reached the dormant stage, `node_modules` and `ios/Pods` still exist in its worktree; `N/A` for one that did not                                                          |
 
 Idle timing: the last activity is bounded above by the end of the last stim command in the workspace and by the newest
 `lastActivityAt` in status plus one minute (status rounds it down to the minute), and never later than the poll that
 read it. The deadline is that time plus the window plus 60 s. The assertion fails when a poll that started after the
 deadline still saw the workspace working, or when the workspace is not idle by the end of the deadline plus five
-minutes. Polls are 15 s apart, or twice the length of a status call when that is longer, so an idle stop is placed
+minutes. A workspace that went idle before its last command plus the window minus one tick fails, with the memory
+pressure level and the home volume's free space at that moment in the evidence (high pressure legitimately idles a
+workspace after 2 minutes). Polls are 15 s apart, or twice the length of a status call when that is longer, so an idle stop is placed
 to within one poll gap.
 
 ### `disk`
@@ -202,17 +222,18 @@ One `stim ios` in the first worktree builds the app and fills the build cache, a
 `stim ios` start at once, every worktree needs only a boot. After they finish, everything is left idle, and three
 workspaces (first, middle, last of those that went idle) revive at once.
 
-| Id                  | Passes when                                                                                                                                                    |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `seed`              | the seed `stim ios` launches                                                                                                                                   |
-| `exit-zero`         | every concurrent `stim ios` exits 0                                                                                                                            |
-| `booted-cap`        | the sampled count of the run's booted plus booting simulators never exceeds `max(2, floor((RAM - 4 GB) / 1.5 GB))` (8 on a 16 GB Mac)                          |
-| `boots-in-flight`   | `capacity.devices` holders marked `booting` never exceed 2 in any status poll; `N/A` where status lists no holders (they exist only while a device cap is set) |
-| `booting-sampled`   | the sampled count of the run's simulators in the `Booting` state never exceeds 2 (supplementary, 5 s resolution)                                               |
-| `no-refusals`       | no run's output carries `STIM_AT_CAPACITY` or `STIM_LOW_DISK`                                                                                                  |
-| `pressure-critical` | memory pressure level 4 never lasts more than 60 s (a run of k samples lasts `(k - 1)` intervals plus one)                                                     |
-| `idle-*`            | as in `normal`, for every run that exited 0                                                                                                                    |
-| `revive`            | as in `normal`, for the three chosen workspaces                                                                                                                |
+| Id                  | Passes when                                                                                                                                                                                                      |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `seed`              | the seed `stim ios` launches                                                                                                                                                                                     |
+| `exit-zero`         | every concurrent `stim ios` exits 0                                                                                                                                                                              |
+| `booted-cap`        | the sampled count of the run's booted plus booting simulators never exceeds `max(2, floor((RAM - 4 GB) / 1.5 GB))` (8 on a 16 GB Mac); rows without a simulator reading are left out and counted in the evidence |
+| `boots-in-flight`   | `capacity.devices` holders marked `booting` never exceed 2 in any status poll; `N/A` where status lists no holders (they exist only while a device cap is set)                                                   |
+| `booting-sampled`   | the sampled count of the run's simulators in the `Booting` state never exceeds 2 (supplementary, 5 s resolution)                                                                                                 |
+| `no-refusals`       | no run's output carries `STIM_AT_CAPACITY` or `STIM_LOW_DISK`                                                                                                                                                    |
+| `pressure-critical` | memory pressure level 4 never lasts more than 60 s (a run of k samples lasts `(k - 1)` intervals plus one); rows without a level are left out and counted                                                        |
+| `sampler-data`      | fails when `booted_ours`, `booting_ours` or `pressure` has no value at all for the batch; each sampler-based check above is `N/A` then                                                                           |
+| `idle-*`            | as in `normal`, for every run that exited 0                                                                                                                                                                      |
+| `revive`            | as in `normal`, for the three chosen workspaces                                                                                                                                                                  |
 
 ### `check`
 

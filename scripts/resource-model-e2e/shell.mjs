@@ -12,6 +12,8 @@ export const sleep = (ms, signal) =>
     signal?.addEventListener('abort', done, { once: true });
   });
 
+export const C_LOCALE = () => ({ ...process.env, LC_ALL: 'C' });
+
 export const shq = (value) => `'${String(value).replaceAll("'", `'\\''`)}'`;
 
 function killGroupOnly(pid, signal) {

@@ -31,6 +31,9 @@ import { createStim } from './stim.mjs';
 import { describeVolume, mismatchedVolumes, volumeLine } from './volumes.mjs';
 import { HarnessError, podEnvironment, teardown, trackLedger } from './workspaces.mjs';
 
+// A closed terminal or ssh session makes writes fail with EIO; teardown must not depend on them.
+for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
+
 const SCENARIOS = { normal: runNormal, disk: runDisk, stress: runStress, check: runCheck };
 const SAMPLE_INTERVAL_SEC = 5;
 const STATUS_EVERY_MS = 30_000;
@@ -64,7 +67,7 @@ function createContext(opts, runId) {
     workspaces: [],
     snapshots: [],
     createdUdids: new Set(),
-    knownPids: new Set(),
+    identities: new Map(),
     createdDirs: [],
     cleanups: [],
     signal: abort.signal,
@@ -78,15 +81,19 @@ function createContext(opts, runId) {
     emit(kind, msg) {
       const event = { t: Date.now(), kind, msg };
       events.push(event);
-      appendFileSync(join(out, 'events.ndjson'), `${JSON.stringify(event)}\n`);
-      console.log(`[${mmss(event.t - startedAt)}] ${kind}: ${msg}`);
+      try {
+        appendFileSync(join(ctx.out, 'events.ndjson'), `${JSON.stringify(event)}\n`);
+        console.log(`[${mmss(event.t - startedAt)}] ${kind}: ${msg}`);
+      } catch {}
     },
     setStage(name) {
-      writeFileSync(join(out, 'stage'), name);
+      try {
+        writeFileSync(join(ctx.out, 'stage'), name);
+      } catch {}
       ctx.emit('stage', name);
     },
     logFile(name, text) {
-      writeFileSync(join(out, name), text);
+      writeFileSync(join(ctx.out, name), text);
     },
     trackLedger: () => trackLedger(ctx),
   };
@@ -100,17 +107,40 @@ function ensureDir(ctx, dir) {
 
 const inside = (path, root) => path === root || path.startsWith(`${root}/`);
 
-function guardHome(ctx) {
+function realStimRoots() {
   const realStim = join(homedir(), '.stim');
-  const candidates = [ctx.homeDir, ctx.home];
-  for (const candidate of candidates) {
-    for (const root of [realStim, existsSync(realStim) ? realpathSync(realStim) : realStim]) {
-      if (inside(resolve(candidate), root))
-        throw new UsageError(
-          `${candidate} is inside the real stim home ${realStim}; the harness only runs under a private home it creates`,
-        );
+  return [realStim, ...(existsSync(realStim) ? [realpathSync(realStim)] : [])];
+}
+
+function guardPaths(ctx) {
+  const guarded = [ctx.homeDir, ctx.workDir, ctx.out, ctx.home, ctx.ballastDir];
+  for (const candidate of guarded) {
+    if (realStimRoots().some((root) => inside(resolve(candidate), root))) {
+      throw new UsageError(
+        `${candidate} is inside the real stim home ${join(homedir(), '.stim')}; the harness only runs under a private home it creates`,
+      );
     }
   }
+}
+
+function guardEnv(extraEnv) {
+  for (const [key, value] of Object.entries(extraEnv)) {
+    if (key === 'STIM_HOME')
+      throw new UsageError('--env cannot set STIM_HOME: every command runs under the private home');
+    if (value.includes('/') && realStimRoots().some((root) => inside(resolve(value), root))) {
+      throw new UsageError(`--env ${key} points into the real stim home, which the harness never touches`);
+    }
+  }
+}
+
+function settlePaths(ctx) {
+  ctx.homeDir = realpathSync(ctx.homeDir);
+  ctx.workDir = realpathSync(ctx.workDir);
+  ctx.out = realpathSync(ctx.out);
+  ctx.home = join(ctx.homeDir, `${ctx.runId}-home`);
+  ctx.ballastDir = join(ctx.homeDir, `${ctx.runId}-ballast`);
+  ctx.worktreePrefix = join(ctx.workDir, ctx.runId);
+  guardPaths(ctx);
 }
 
 async function reportVolumes(ctx) {
@@ -149,6 +179,7 @@ function startSampler(ctx) {
     intervalMs: SAMPLE_INTERVAL_SEC * 1000,
     statusEveryMs: STATUS_EVERY_MS,
     parentPid: process.pid,
+    startedAt: ctx.startedAt,
     extraEnv: ctx.opts.extraEnv,
     volumes: { simulators: ctx.simulatorsPath, home: ctx.homeDir, work: ctx.workDir },
   };
@@ -206,13 +237,20 @@ async function prepare(ctx) {
   const { opts } = ctx;
   if (!existsSync(resolve(opts.stim)))
     throw new UsageError(`--stim ${opts.stim} does not exist; build it with pnpm run build`);
-  guardHome(ctx);
+  guardEnv(opts.extraEnv);
+  guardPaths(ctx);
   ensureDir(ctx, ctx.homeDir);
   ensureDir(ctx, ctx.workDir);
+  settlePaths(ctx);
   console.log(`run ${ctx.runId}, results in ${ctx.out}`);
   console.log(`private STIM_HOME ${ctx.home}`);
   await reportVolumes(ctx);
-  mkdirSync(ctx.home, { recursive: true, mode: 0o700 });
+  try {
+    mkdirSync(ctx.home, { mode: 0o700 });
+  } catch (error) {
+    throw new UsageError(`cannot create the private home ${ctx.home}: ${error.message}`);
+  }
+  ctx.homeCreated = true;
   ctx.stim = createStim({
     cli: resolve(opts.stim),
     home: ctx.home,
@@ -231,14 +269,17 @@ async function prepare(ctx) {
 async function runLocal(opts) {
   if (process.platform !== 'darwin') throw new UsageError('the harness drives iOS simulators and runs only on macOS');
   if (!existsSync(resolve(opts.project))) throw new UsageError(`--project ${opts.project} does not exist`);
-  const runId = `rme${Math.random().toString(16).slice(2, 6)}`;
-  const ctx = createContext(opts, runId);
+  let ctx;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    ctx = createContext(opts, `rme${Math.random().toString(16).slice(2, 6)}`);
+    if (!existsSync(ctx.home) && !existsSync(ctx.ballastDir)) break;
+  }
   mkdirSync(ctx.out, { recursive: true });
   let build;
   try {
     build = await prepare(ctx);
   } catch (error) {
-    rmSync(ctx.home, { recursive: true, force: true });
+    if (ctx.homeCreated) rmSync(ctx.home, { recursive: true, force: true });
     removeCreatedDirs(ctx);
     throw error;
   }
@@ -286,11 +327,13 @@ async function runLocal(opts) {
   if (interrupted) harnessError ??= 'interrupted';
 
   const endedAt = Date.now();
+  const tearDownFailed =
+    torn.errors.length > 0 || torn.worktrees.some((w) => !w.removed) || !torn.homeDeleted || torn.ballastGone === false;
   const samples = existsSync(join(ctx.out, 'samples.csv'))
     ? parseCsv(readFileSync(join(ctx.out, 'samples.csv'), 'utf8'))
     : [];
   const meta = {
-    runId,
+    runId: ctx.runId,
     scenario: opts.scenario,
     targetLabel: `${ctx.machine.model ?? 'a Mac'}, ${Math.round((ctx.machine.ramBytes ?? 0) / 1024 ** 3)} GB, ${ctx.machine.cores} cores`,
     machineLabel: `${ctx.machine.model ?? 'unknown model'}, ${Math.round((ctx.machine.ramBytes ?? 0) / 1024 ** 3)} GB RAM, ${ctx.machine.cores} cores, macOS ${ctx.machine.macos}`,
@@ -307,6 +350,7 @@ async function runLocal(opts) {
     deviceCap: ctx.deviceCap,
     sampleIntervalSec: SAMPLE_INTERVAL_SEC,
     daemonLabel: daemonLabel(ctx),
+    teardownClean: !tearDownFailed,
   };
   const workspaces = ctx.workspaces.map((workspace) => ({
     label: workspace.label,
@@ -328,7 +372,6 @@ async function runLocal(opts) {
   console.log(
     `report: ${join(ctx.out, 'report.md')} (${failed} failed assertions${harnessError ? ', harness stopped early' : ''})`,
   );
-  const tearDownFailed = torn.errors.length > 0 || torn.worktrees.some((w) => !w.removed) || !torn.homeDeleted;
   if (tearDownFailed) console.log('teardown did not finish cleanly: see the Teardown section of the report');
   return harnessError || tearDownFailed ? 2 : failed ? 1 : 0;
 }

@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statfsSync } from 'node:fs';
 import { join } from 'node:path';
-import { run } from './shell.mjs';
+import { C_LOCALE, run } from './shell.mjs';
 
 export const SAMPLE_COLUMNS = [
   'ts',
@@ -13,6 +13,9 @@ export const SAMPLE_COLUMNS = [
   'vm_active_pages',
   'vm_wired_pages',
   'vm_compressed_pages',
+  'vm_inactive_pages',
+  'vm_speculative_pages',
+  'vm_purgeable_pages',
   'swap_used_mb',
   'disk_free_mb',
   'home_free_mb',
@@ -46,6 +49,9 @@ export function parseVmStat(text) {
     active: pages('Pages active'),
     wired: pages('Pages wired down'),
     compressed: pages('Pages occupied by compressor'),
+    inactive: pages('Pages inactive'),
+    speculative: pages('Pages speculative'),
+    purgeable: pages('Pages purgeable'),
   };
 }
 
@@ -72,12 +78,22 @@ export function parseSimctlDevices(json) {
     .map((device) => ({ udid: device.udid, name: device.name, state: device.state }));
 }
 
+const LSTART = String.raw`\w{3} \w{3}\s+\d+ [\d:]{8} \d{4}`;
+const PS_LINE = new RegExp(String.raw`^\s*(\d+)\s+(\d+)\s+(\d+)\s+(?:(${LSTART})\s+)?(.*)$`);
+
 export function parsePs(text) {
   const out = [];
   for (const line of text.split('\n')) {
-    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-    if (match)
-      out.push({ pid: Number(match[1]), ppid: Number(match[2]), rssMb: Number(match[3]) / 1024, cmd: match[4] });
+    const match = PS_LINE.exec(line);
+    if (match) {
+      out.push({
+        pid: Number(match[1]),
+        ppid: Number(match[2]),
+        rssMb: Number(match[3]) / 1024,
+        lstart: match[4] ?? null,
+        cmd: match[5],
+      });
+    }
   }
   return out;
 }
@@ -91,9 +107,24 @@ function kindOf(cmd) {
   return null;
 }
 
-// The supervisor and collector retitle themselves, so ps shows no path for them; only a pid recorded in the home attributes them.
-export function classifyStimProcesses(procs, { ownPids, home, worktreePrefix }) {
-  const byPid = new Map(procs.map((p) => [p.pid, p]));
+function looksOurs(cmd, { home, worktreePrefix }) {
+  return /^stim-(supervisor|collector|daemon)/.test(cmd) || cmd.includes(home) || cmd.includes(worktreePrefix);
+}
+
+// The supervisor retitles itself to a bare `stim-supervisor` (packages/stim-cli/src/supervisor/run.ts), so no command
+// line names the home: a recorded pid is the run's only while its start time is the one seen when it was first recorded.
+export function recordIdentities(identities, rows, recorded, scope, sinceMs) {
+  for (const row of rows) {
+    if (!recorded.has(row.pid) || identities.has(row.pid) || !row.lstart) continue;
+    if (Date.parse(row.lstart) >= sinceMs - 2000 && looksOurs(row.cmd, scope)) identities.set(row.pid, row.lstart);
+  }
+}
+
+export function provenOurs(rows, identities, scope) {
+  return rows.filter((row) => identities.get(row.pid) === row.lstart && looksOurs(row.cmd, scope));
+}
+
+export function classifyStimProcesses(procs, { identities, home, worktreePrefix }) {
   const children = new Map();
   for (const p of procs) {
     if (!children.has(p.ppid)) children.set(p.ppid, []);
@@ -101,11 +132,11 @@ export function classifyStimProcesses(procs, { ownPids, home, worktreePrefix }) 
   }
   const owned = new Set();
   const visit = (pid) => {
-    if (owned.has(pid) || !byPid.has(pid)) return;
+    if (owned.has(pid)) return;
     owned.add(pid);
     for (const child of children.get(pid) ?? []) visit(child);
   };
-  for (const pid of ownPids) visit(pid);
+  for (const row of provenOurs(procs, identities, { home, worktreePrefix })) visit(row.pid);
   const totals = Object.fromEntries(PROCESS_KINDS.map((kind) => [kind, { n: 0, rssMb: 0 }]));
   for (const p of procs) {
     const kind = kindOf(p.cmd);
@@ -117,6 +148,8 @@ export function classifyStimProcesses(procs, { ownPids, home, worktreePrefix }) 
   }
   return totals;
 }
+
+const liveProcesses = (state) => ({ supervisor: state?.supervisor, collectors: state?.collectors });
 
 function pidsIn(value, found) {
   if (Array.isArray(value)) for (const item of value) pidsIn(item, found);
@@ -130,13 +163,15 @@ function pidsIn(value, found) {
 
 export function recordedPids(home) {
   const found = new Set();
-  const read = (file) => {
+  const read = (file, pick = (record) => record) => {
     try {
-      pidsIn(JSON.parse(readFileSync(file, 'utf8')), found);
+      pidsIn(pick(JSON.parse(readFileSync(file, 'utf8'))), found);
     } catch {}
   };
   try {
-    for (const entry of readdirSync(join(home, 'workspaces'))) read(join(home, 'workspaces', entry, 'state.json'));
+    for (const entry of readdirSync(join(home, 'workspaces'))) {
+      read(join(home, 'workspaces', entry, 'state.json'), liveProcesses);
+    }
   } catch {}
   try {
     const dir = join(home, 'daemon');
@@ -183,20 +218,23 @@ export async function readMachine() {
   };
 }
 
-export async function sampleHost({ home, worktreePrefix, stage, volumes }) {
+export async function sampleHost({ home, worktreePrefix, stage, volumes, identities, sinceMs }) {
   const [load, pressure, vm, swap, ps, sims] = await Promise.all([
     run('sysctl', ['-n', 'vm.loadavg'], { timeoutMs: 10_000 }),
     run('sysctl', ['-n', 'kern.memorystatus_vm_pressure_level'], { timeoutMs: 10_000 }),
     run('vm_stat', [], { timeoutMs: 10_000 }),
     run('sysctl', ['-n', 'vm.swapusage'], { timeoutMs: 10_000 }),
-    run('ps', ['-axww', '-o', 'pid=,ppid=,rss=,command='], { timeoutMs: 15_000 }),
+    run('ps', ['-axww', '-o', 'pid=,ppid=,rss=,lstart=,command='], { timeoutMs: 15_000, env: C_LOCALE() }),
     readSimulators(),
   ]);
   const now = new Date();
   const memory = parseVmStat(vm.stdout);
   const ours = ledgerUdids(home);
   const mine = sims?.filter((sim) => ours.has(sim.udid)) ?? [];
-  const procs = classifyStimProcesses(parsePs(ps.stdout), { ownPids: recordedPids(home), home, worktreePrefix });
+  const rows = parsePs(ps.stdout);
+  const scope = { home, worktreePrefix };
+  recordIdentities(identities, rows, recordedPids(home), scope, sinceMs);
+  const procs = classifyStimProcesses(rows, { identities, ...scope });
   const row = {
     ts: now.toISOString(),
     epoch: Math.round(now.getTime() / 1000),
@@ -208,6 +246,9 @@ export async function sampleHost({ home, worktreePrefix, stage, volumes }) {
     vm_active_pages: memory.active,
     vm_wired_pages: memory.wired,
     vm_compressed_pages: memory.compressed,
+    vm_inactive_pages: memory.inactive,
+    vm_speculative_pages: memory.speculative,
+    vm_purgeable_pages: memory.purgeable,
     swap_used_mb: parseSwapUsedMb(swap.stdout),
     disk_free_mb: freeDiskMb(volumes.simulators),
     home_free_mb: freeDiskMb(volumes.home),

@@ -83,6 +83,9 @@ async function dormantPhase(ctx, live, reviveEndMs) {
     'dormant-deps-kept',
     'node_modules and Pods survive the dormant stage',
     live.map((workspace) => {
+      if (!seen.has(workspace.label)) {
+        return outcome(workspace.label, STATUS.unavailable, 'the workspace never reached the dormant stage');
+      }
       const modules = existsSync(join(workspace.path, 'node_modules'));
       const pods = existsSync(join(workspace.path, 'ios', 'Pods'));
       return outcome(

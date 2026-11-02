@@ -9,7 +9,7 @@ const USAGE = `Usage: node run.mjs --scenario normal|disk|stress|check --project
 
   --target local|ssh:<user@host>   where to run (default local); with ssh, --project is a path on that host
   --workspaces <n>                 worktrees to create (default: normal 3, disk 5, stress 16, check 2)
-  --out <dir>                      results directory (default ./rm-e2e-out/<run id>); with ssh, a local directory
+  --out <dir>                      results directory (default ./rm-e2e-out/<timestamp>-<run id>); with ssh, a local directory
   --home-dir <dir>                 where the private STIM_HOME is created (default ~/rm-e2e on the target)
   --work-dir <dir>                 where the worktrees are created (default ~/rm-e2e on the target)
   --idle-minutes <n>               shorten the idle clock

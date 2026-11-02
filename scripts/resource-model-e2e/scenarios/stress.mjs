@@ -31,10 +31,12 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   const A = ctx.assertions;
   const window = rows.filter((row) => row.epoch * 1000 >= startedAt - 5000);
   const interval = ctx.sampleIntervalSec;
-  const sampled = (ok, id, title, evidence) =>
-    window.length
+  const numeric = (column) => window.filter((row) => typeof row[column] === 'number');
+  const missing = (column) => `${window.length - numeric(column).length} of ${window.length} rows had no ${column}`;
+  const sampled = (usable, ok, id, title, evidence) =>
+    usable.length
       ? verdict(A, ok, SCENARIO, id, title, evidence)
-      : A.unavailable(SCENARIO, id, title, ['the sampler recorded no rows for the batch']);
+      : A.unavailable(SCENARIO, id, title, ['the sampler recorded no usable values for this check', ...evidence]);
 
   A.fromItems(
     SCENARIO,
@@ -50,10 +52,11 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   );
 
   const cap = ctx.deviceCap;
-  const peak = Math.max(0, ...window.map((row) => (row.booted_ours ?? 0) + (row.booting_ours ?? 0)));
+  const both = window.filter((row) => typeof row.booted_ours === 'number' && typeof row.booting_ours === 'number');
+  const peak = Math.max(0, ...both.map((row) => row.booted_ours + row.booting_ours));
   const reported = ctx.snapshots.map((poll) => poll.deviceSlots?.max).find((max) => max !== undefined);
-  sampled(peak <= cap, 'booted-cap', `owned booted or booting devices never exceed the derived cap of ${cap}`, [
-    `peak ${peak} over ${window.length} samples of ${interval} s`,
+  sampled(both, peak <= cap, 'booted-cap', `owned booted or booting devices never exceed the derived cap of ${cap}`, [
+    `peak ${peak} over ${both.length} samples of ${interval} s (${window.length - both.length} of ${window.length} rows had no simulator reading)`,
     `status capacity.devices.max: ${reported ?? 'not available on this build'}`,
   ]);
 
@@ -71,10 +74,13 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
   }
   const booting = maxOf(window, 'booting_ours');
   sampled(
-    booting === null || booting <= MAX_BOOTS_IN_FLIGHT,
+    numeric('booting_ours'),
+    booting <= MAX_BOOTS_IN_FLIGHT,
     'booting-sampled',
     `at most ${MAX_BOOTS_IN_FLIGHT} owned simulators are in the Booting state at once (sampler, supplementary)`,
-    [`peak ${booting ?? 'n/a'} simulators in simctl state Booting, sampled every ${interval} s`],
+    [
+      `peak ${booting ?? 'n/a'} simulators in simctl state Booting, sampled every ${interval} s (${missing('booting_ours')})`,
+    ],
   );
 
   A.fromItems(
@@ -91,13 +97,23 @@ export function batchAssertions(ctx, { startedAt, runs }, rows) {
 
   const critical = longestStreak(window, (row) => row.pressure === CRITICAL_LEVEL, interval);
   sampled(
+    numeric('pressure'),
     critical.ms <= CRITICAL_ALLOWED_MS,
     'pressure-critical',
     'memory pressure is never critical for more than one 60 s tick',
     [
-      `longest critical run ${Math.round(critical.ms / 1000)} s (${critical.samples} samples${critical.startEpoch ? ` from ${clock(critical.startEpoch * 1000)}` : ''}), peak level ${maxOf(window, 'pressure') ?? 'n/a'}`,
+      `longest critical run ${Math.round(critical.ms / 1000)} s (${critical.samples} samples${critical.startEpoch ? ` from ${clock(critical.startEpoch * 1000)}` : ''}), peak level ${maxOf(window, 'pressure') ?? 'n/a'} (${missing('pressure')})`,
     ],
   );
+
+  const empty = ['booted_ours', 'booting_ours', 'pressure'].filter((column) => numeric(column).length === 0);
+  const dataTitle = 'the sampler recorded the columns the stress assertions read';
+  if (empty.length)
+    A.fail(SCENARIO, 'sampler-data', dataTitle, [`no usable value in ${empty.join(', ')} for the batch`]);
+  else
+    A.pass(SCENARIO, 'sampler-data', dataTitle, [
+      `${window.length} rows in the batch window, every required column has data`,
+    ]);
 
   ctx.emit(
     'stress',

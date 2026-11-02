@@ -14,7 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { HarnessError } from './workspaces.mjs';
-import { run, shq } from './shell.mjs';
+import { run, shq, sleep } from './shell.mjs';
 
 const HARNESS_DIR = dirname(fileURLToPath(import.meta.url));
 const SSH_OPTIONS = ['-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=6', '-o', 'BatchMode=yes'];
@@ -100,6 +100,27 @@ export function remoteArguments(opts, remote) {
   return args;
 }
 
+const TEARDOWN_WAIT_MS = 20 * 60_000;
+const hostShell = (command) => `exec "$SHELL" -l -c ${shq(command)}`;
+const onHost = (host, command, timeoutMs) => run('ssh', [...SSH_OPTIONS, host, hostShell(command)], { timeoutMs });
+
+// Streams the remote log until the remote harness exits, reattaching if the connection drops while it still runs.
+async function followRun(host, base, state, emit) {
+  const dir = shq(base);
+  for (let attach = 0; !state.giveUp; attach++) {
+    const watch = `cd ${dir} && { tail -n ${attach === 0 ? '+1' : '20'} -f run.log & T=$!; while kill -0 $(cat run.pid) 2>/dev/null; do sleep 2; done; sleep 2; kill $T; }`;
+    await new Promise((resolveClosed) => {
+      state.child = spawn('ssh', [...SSH_OPTIONS, host, hostShell(watch)], { stdio: 'inherit' });
+      state.child.on('close', resolveClosed);
+      state.child.on('error', resolveClosed);
+    });
+    const alive = await onHost(host, `kill -0 $(cat ${dir}/run.pid) 2>/dev/null`, 60_000);
+    if (alive.code !== 0 || state.giveUp) return;
+    emit('ssh', 'the connection dropped while the run is still going; reattaching');
+    await sleep(5000);
+  }
+}
+
 export async function runRemote(opts, { runId, localOut, emit }) {
   const host = opts.target.slice('ssh:'.length);
   const scratch = mkdtempSync(join(tmpdir(), 'rm-e2e-ssh-'));
@@ -128,28 +149,55 @@ export async function runRemote(opts, { runId, localOut, emit }) {
     if (unpacked.code !== 0) throw new HarnessError(`unpacking on ${host} failed: ${unpacked.stderr.trim()}`);
 
     const args = remoteArguments(opts, { cli: 'stim-tree/node_modules/stim/dist/cli.mjs', out: 'out' });
-    const command = `cd ${shq(base)} && command -v node >/dev/null || { echo 'node is not on the PATH of a login shell on this host' >&2; exit 127; }; exec node harness/run.mjs ${args.map(shq).join(' ')}`;
-    emit('ssh', `running ${opts.scenario} on ${host}`);
-    const code = await new Promise((resolveCode) => {
-      const child = spawn('ssh', ['-tt', ...SSH_OPTIONS, host, `exec "$SHELL" -l -c ${shq(command)}`], {
-        stdio: 'inherit',
-      });
-      const hangUp = () => child.kill('SIGHUP');
-      for (const name of ['SIGINT', 'SIGTERM']) process.on(name, hangUp);
-      child.on('close', (exit) => {
-        for (const name of ['SIGINT', 'SIGTERM']) process.off(name, hangUp);
-        resolveCode(exit ?? 1);
-      });
-      child.on('error', () => resolveCode(255));
-    });
+    const state = { interrupted: false, giveUp: false, child: null };
+    const inner = `node harness/run.mjs ${args.map(shq).join(' ')} & echo $! > run.pid; wait $!; echo $? > run.code`;
+    const start = `cd ${shq(base)} && { command -v node >/dev/null || { echo 'node is not on the PATH of a login shell on this host' >&2; exit 127; }; } && : > run.log && { nohup sh -c ${shq(inner)} > run.log 2>&1 < /dev/null 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- & }`;
+    emit('ssh', `starting ${opts.scenario} on ${host}, detached so a lost connection does not stop it`);
+    const started = await onHost(host, start, 60_000);
+    if (started.code !== 0 || started.timedOut) {
+      throw new HarnessError(
+        `could not start the run on ${host} (${started.timedOut ? 'the ssh command did not return' : started.stderr.trim()}); check ${base} on the host and remove it with: ssh ${host} rm -rf ${shq(base)}`,
+      );
+    }
+
+    const interrupt = async () => {
+      if (state.interrupted) {
+        state.giveUp = true;
+        state.child?.kill('SIGHUP');
+        return;
+      }
+      state.interrupted = true;
+      emit(
+        'ssh',
+        'interrupted: asking the remote harness to tear down, and waiting for it (interrupt again to stop waiting)',
+      );
+      await onHost(host, `kill -INT $(cat ${shq(base)}/run.pid)`, 60_000);
+      setTimeout(() => {
+        state.giveUp = true;
+        state.child?.kill('SIGHUP');
+      }, TEARDOWN_WAIT_MS).unref();
+    };
+    const handlers = ['SIGINT', 'SIGTERM'];
+    for (const name of handlers) process.on(name, interrupt);
+    try {
+      await followRun(host, base, state, emit);
+    } finally {
+      for (const name of handlers) process.off(name, interrupt);
+    }
 
     mkdirSync(localOut, { recursive: true });
     const fetched = await run('scp', [...SSH_OPTIONS, '-r', `${host}:${base}/out/.`, localOut], { timeoutMs: 600_000 });
-    if (fetched.code !== 0)
-      throw new HarnessError(
-        `could not copy the results back: ${fetched.stderr.trim()}; they remain in ${host}:${base}/out`,
+    if (fetched.code !== 0) emit('ssh', `could not copy the results back: ${fetched.stderr.trim()}`);
+    const finished = await onHost(host, `cat ${shq(base)}/run.code`, 60_000);
+    const code = finished.code === 0 ? Number(finished.stdout.trim()) : null;
+    if (code === null || fetched.code !== 0) {
+      emit(
+        'ssh',
+        `the run directory ${host}:${base} is left in place (${code === null ? 'the remote harness has not finished' : 'the results were not copied'}); remove it with: ssh ${host} rm -rf ${shq(base)}`,
       );
-    await run('ssh', [...SSH_OPTIONS, host, `rm -rf ${shq(base)}`], { timeoutMs: 120_000 });
+      return state.interrupted ? 130 : 2;
+    }
+    await onHost(host, `rm -rf ${shq(base)}`, 120_000);
     emit('ssh', `results are in ${localOut}`);
     return code;
   } finally {

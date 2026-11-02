@@ -1,11 +1,11 @@
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createWorkspaces, HarnessError } from './workspaces.mjs';
 import { configureClocks } from './clocks.mjs';
 import { newestRecordMs } from './collect.mjs';
 import { clock, judgeIdleTiming, outcome, STATUS } from './assertions.mjs';
 import { bootsInFlight, daemonLine, findEnvironment, idleFacts, waitingRuns } from './evidence.mjs';
-import { parseLoad1 } from './platform.mjs';
+import { parseCsv, parseLoad1 } from './platform.mjs';
 import { run, sleep } from './shell.mjs';
 
 export const TICK_MS = 60_000;
@@ -48,7 +48,7 @@ export async function loadGate(ctx, what) {
 
 export async function pollStatus(ctx) {
   const snapshot = await ctx.stim.status();
-  ctx.trackLedger();
+  await ctx.trackLedger();
   const { payload } = snapshot;
   const digest = {
     startedAt: snapshot.startedAt,
@@ -170,6 +170,19 @@ const COUNTED_METRO_EVENTS = new Set([
   'command_stdout',
 ]);
 
+function machineAt(ctx, ms) {
+  try {
+    const rows = parseCsv(readFileSync(join(ctx.out, 'samples.csv'), 'utf8'));
+    const row = rows.reduce(
+      (best, r) => (Math.abs(r.epoch * 1000 - ms) < Math.abs((best?.epoch ?? 0) * 1000 - ms) ? r : best),
+      null,
+    );
+    return `machine at that moment: memory pressure level ${row?.pressure ?? 'n/a'}, ${row?.home_free_mb == null ? 'n/a' : (row.home_free_mb / 1024).toFixed(1)} GB free on the home volume (high pressure legitimately idles a workspace at 2 minutes)`;
+  } catch {
+    return 'machine at that moment: no samples';
+  }
+}
+
 function idleOutcome(ctx, entry, windowMs) {
   const label = entry.workspace.label;
   if (!entry.resolved) {
@@ -198,7 +211,8 @@ function idleOutcome(ctx, entry, windowMs) {
         `newest Metro bundle or stdout record ${clock(newest.at)} (${newest.event}), which builds that predate the new activity definition count as activity`,
       ]
     : [];
-  return outcome(label, timing.ok ? STATUS.pass : STATUS.fail, ...timing.evidence, ...extra);
+  const machine = timing.early ? [machineAt(ctx, entry.resolved.poll.endedAt)] : [];
+  return outcome(label, timing.ok ? STATUS.pass : STATUS.fail, ...timing.evidence, ...machine, ...extra);
 }
 
 export function assertIdleDown(ctx, scenario, waited, windowMs) {
@@ -231,9 +245,12 @@ export function assertIdleDown(ctx, scenario, waited, windowMs) {
     entries.map((entry) => {
       const f = entry.resolved?.facts;
       if (!f) return outcome(entry.workspace.label, STATUS.fail, 'workspace never went idle');
+      if (f.deviceCount === 0) {
+        return outcome(entry.workspace.label, STATUS.unavailable, 'status lists no iOS device for this workspace');
+      }
       return outcome(
         entry.workspace.label,
-        f.devicesUp === 0 && f.deviceCount > 0 ? STATUS.pass : STATUS.fail,
+        f.devicesUp === 0 ? STATUS.pass : STATUS.fail,
         `${f.devicesUp} of ${f.deviceCount} devices up, idle shutdown records=${f.idleShutdowns}`,
       );
     }),

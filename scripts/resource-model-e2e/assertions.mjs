@@ -46,16 +46,21 @@ export function judgeIdleTiming({
   const t0 = Math.max(commandEndMs, reported);
   const deadline = t0 + windowMs + tickMs;
   const late = previousPollStartMs !== null && previousPollStartMs > deadline;
+  const earliest = commandEndMs + windowMs - tickMs;
+  const early = idlePollEndMs < earliest;
   return {
-    ok: !late,
+    ok: !late && !early,
+    early,
     t0,
     deadline,
+    earliest,
     evidence: [
       `last activity at or before ${clock(t0)} (command ended ${clock(commandEndMs)}${
         lastActivityMs === null ? '' : `, status activity ${clock(lastActivityMs)} to the minute`
       })`,
       `window ${Math.round(windowMs / MINUTE_MS)} min + tick ${Math.round(tickMs / 1000)} s gives deadline ${clock(deadline)}`,
       `previous poll still working at ${previousPollStartMs === null ? 'none' : clock(previousPollStartMs)}, first idle poll ${clock(idlePollStartMs)} to ${clock(idlePollEndMs)}`,
+      ...(early ? [`idle before ${clock(earliest)}, the end of the last command plus the window minus one tick`] : []),
     ],
   };
 }
