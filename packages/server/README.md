@@ -1930,8 +1930,9 @@ connected since stim-server started keeps its directory when revoked.
   recovery before retrying. The daemon stays warm with
   `server.gradleDaemonIdleMinutes` (default 30; 0 stops it when the build ends).
   Gradle fixes that timeout at daemon startup. Once no build of a client runs,
-  stim-server also stops its daemons when the client loses `build` or the
-  machine has less than 2 GB of available memory. The periodic sweep still
+  stim-server also stops its daemons when the client loses `build`. The
+  low-memory sweep waits until no offloaded build is running and the machine
+  has less than 2 GB of available memory. The periodic sweep still
   recognizes legacy client-home daemons; changing home namespaces does not
   migrate or delete the old cache. A live process named in a legacy daemon log
   refuses new Android admissions until it has been inspected and retired.

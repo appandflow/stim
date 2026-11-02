@@ -510,7 +510,7 @@ export class BuildHost {
 
   /**
    * Stops the Gradle daemons that offloaded Android builds left warm, except those of a client with a running job:
-   * every one while available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
+   * every one while no job runs and available memory is under `minFreeMemoryBytes`, and those of a client that lost `build` or that
    * is `client`. Calls made while a sweep is queued join it. A daemon leaves its build's process group, so no claim or slot tracks it. A daemon whose Gradle home
    * is deleted stops itself: Gradle expires a daemon once its registry file is gone.
    */
@@ -549,7 +549,8 @@ export class BuildHost {
     const busy = new Set([...this.jobs].map((job) => job.client));
     for (const daemon of daemons) {
       if (busy.has(daemon.client)) continue;
-      if (!low && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true)) continue;
+      if ((!low || busy.size > 0) && !forced.has(daemon.client) && (this.options.allowed?.(daemon.client) ?? true))
+        continue;
       try {
         process.kill(daemon.pid, 'SIGTERM');
       } catch {}

@@ -1281,9 +1281,9 @@ JAVA_HOME (else the macOS default JDK) with the SDK in its ANDROID_HOME (else
 \`server.gradleDaemonIdleMinutes\` (default 30; 0 stops it when each build
 ends; a new value applies from the next daemon) and never holds a build
 slot. While none of the client's builds runs, stim-server stops it sooner
-when a build is cancelled, the client is revoked, or the machine has less
-than 2 GB of memory available, and deleting the client's directory under the
-worker root stops it too.
+when a build is cancelled or the client is revoked. The low-memory sweep waits
+until no offloaded build is running and the machine has less than 2 GB of
+memory available. Deleting the client's directory under the worker root stops it too.
 \`stim-server service install [--serve]\` on a remote machine keeps stim-server
 running as a login LaunchAgent on macOS, a systemd user service on Linux
 (\`sudo loginctl enable-linger <user>\` keeps it running after logout; install
