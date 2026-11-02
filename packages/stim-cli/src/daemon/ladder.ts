@@ -62,11 +62,7 @@ interface RungContext extends LadderInput {
 }
 
 /** Logs one ladder action to `daemon.ndjson` and the workspace's `metro.ndjson`, and keeps it for the snapshot. */
-export function recordAction(
-  context: Pick<RungContext, 'log' | 'actions'>,
-  action: DaemonLadderAction,
-  reason: string,
-): void {
+function recordAction(context: Pick<RungContext, 'log' | 'actions'>, action: DaemonLadderAction, reason: string): void {
   context.actions.push(action);
   const verb =
     action.outcome === 'would'

@@ -18,7 +18,7 @@ const QUEUE: Record<WaitResource, { dir: string; label: string }> = {
 
 const MINUTE_MS = 60_000;
 
-export function waitQueueRoot(resource: WaitResource): string {
+function waitQueueRoot(resource: WaitResource): string {
   return join(getConfigDir(), QUEUE[resource].dir);
 }
 

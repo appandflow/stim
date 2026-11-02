@@ -3,7 +3,7 @@ import { machineNumber } from '../machine-number.ts';
 import type { Config } from '../workspace/config.ts';
 
 const GIB = 1024 ** 3;
-export const MEMORY_WARNING_MS: number = 10 * 60_000;
+const MEMORY_WARNING_MS = 10 * 60_000;
 const LOW_MEMORY_SHARE = 0.1;
 const RANK: Record<PressureLevel, number> = { normal: 0, high: 1, critical: 2 };
 
@@ -35,7 +35,7 @@ export function diskThresholds(
   };
 }
 
-export function higherLevel(a: PressureLevel, b: PressureLevel): PressureLevel {
+function higherLevel(a: PressureLevel, b: PressureLevel): PressureLevel {
   return RANK[a] >= RANK[b] ? a : b;
 }
 

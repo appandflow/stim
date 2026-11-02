@@ -9,7 +9,7 @@ import { withIdleWorkspace } from '../workspace/in-use.ts';
 import type { IdlePassInput } from './idle.ts';
 
 /** A booted device of another workspace idle this long may be shut down for a run waiting to boot. */
-export const RECLAIM_IDLE_MS: number = 2 * 60_000;
+const RECLAIM_IDLE_MS = 2 * 60_000;
 
 function safeCanonical(path: string): string | null {
   try {
