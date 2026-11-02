@@ -161,6 +161,16 @@ struct RootView: View {
             }
           }
           .frame(width: WorkspaceDetail.inspectorWidth + 1)
+          .background {
+            Palette.sidebar
+              .ignoresSafeArea(edges: .top)
+          }
+          .overlay(alignment: .leading) {
+            Rectangle()
+              .fill(Palette.border)
+              .frame(width: 1)
+              .ignoresSafeArea(edges: .top)
+          }
         }
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
