@@ -61,4 +61,8 @@ test('a device the config records as owned is owned without a ledger entry only 
   recordOwned();
   expect(isStimOwnedSim(foreignSim)).toBe(true);
   expect(isStimOwnedAvd('stim-1362-mobile')).toBe(true);
+
+  process.env.STIM_HOME = join(user, '.stim');
+  expect(isStimOwnedSim(foreignSim)).toBe(false);
+  expect(isStimOwnedAvd('stim-1362-mobile')).toBe(false);
 });

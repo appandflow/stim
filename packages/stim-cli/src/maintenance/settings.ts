@@ -1,3 +1,4 @@
+import { isScopedHome } from '@stim-cli/core';
 import {
   SETTINGS,
   coerceSettingText,
@@ -58,7 +59,7 @@ export function resolveMaintenanceSettings(
     const value =
       rawEnv !== undefined
         ? coerceSettingText(setting, rawEnv)
-        : env.STIM_HOME && setting.scopedHomeValue !== undefined
+        : isScopedHome(env) && setting.scopedHomeValue !== undefined
           ? setting.scopedHomeValue
           : env.CI && setting.ciValue !== undefined
             ? setting.ciValue

@@ -1,4 +1,4 @@
-import type { StimContext } from '@stim-cli/core';
+import { isScopedHome, type StimContext } from '@stim-cli/core';
 import { WorkspaceProcessCleanupError } from '../../engine/workspace-process-lock.ts';
 import { isStimOwnedAvd, isStimOwnedSim } from '../../devices/device-ownership.ts';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../../devices/device-slots.ts';
@@ -662,7 +662,7 @@ export async function deleteParkedSims(
 }
 
 export function deviceSweepIsScoped(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.STIM_HOME);
+  return isScopedHome(env);
 }
 
 export function collectDeviceLeases(now: number): DeviceLeaseGarbage {

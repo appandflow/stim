@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { configDir, type StimContext } from '@stim-cli/core';
+import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readMaintenanceState,
@@ -122,7 +122,7 @@ export async function plannedMaintenance(
     diskSteps:
       outcome?.status === 'ok' ? outcome.reclaimed.filter((step) => devices || step.step !== 'idle-devices') : [],
     protectedRoot: root,
-    scoped: Boolean(env.STIM_HOME),
+    scoped: isScopedHome(env),
     projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
     pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
