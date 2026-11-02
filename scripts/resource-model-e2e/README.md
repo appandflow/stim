@@ -165,7 +165,7 @@ N workspaces start (`stim start`) and launch (`stim ios`) one after another, the
 | `idle-stage`              | each workspace is seen idle within its idle window plus one 60 s tick of its last activity (see below)                                                                                            |
 | `idle-metro-down`         | at that poll `metro.running` is false (the idle-stop record is shown as evidence)                                                                                                                 |
 | `idle-devices-down`       | at that poll none of the workspace's iOS devices is `Booted` or `Booting`                                                                                                                         |
-| `idle-stage-reported`     | `stage.kind` is `idle` or `dormant`; fails on `running` or `building`; `N/A` for any other kind, as on builds whose stage kinds have no idle stage                                                |
+| `idle-stage-reported`     | the environment has an `idleStage` record, or `stage.kind` is `idle` or `dormant`; fails on `running` or `building`; `N/A` for any other kind, as on builds whose stage kinds have no idle stage  |
 | `idle-derived-data-gone`  | the workspace's `derived-data/` held files after launch and is empty or gone after the idle stop; `N/A` for a cache-hit run that built nothing                                                    |
 | `revive`                  | `stim revive --json` exits 0 with `revived.metro.restarted` true and every device's app `launched` true or `bundling`, and status then shows Metro running, a device up                           |
 | `dormant-devices-deleted` | with `--dormant-minutes`: after the revives, each workspace's recorded simulators are gone from `simctl` within the dormant window plus one tick; `N/A` where the build has no `idle.dormantDays` |
@@ -222,10 +222,10 @@ workspaces (first, middle, last of those that went idle) revive at once.
 
 A field the build lacks makes its assertion `N/A`; nothing else depends on it. The harness reads:
 
-- `stim status --json`: per environment `path`, `workspaceId`, `stage.kind` (`idle` or `dormant` counts as the idle
-  stage), `metro.running`, `metro.idleStop`, `metro.lastStop.reason`, `ios.state`, `ios.idleShutdown`,
+- `stim status --json`: per environment `path`, `workspaceId`, `idleStage` (its presence, or a `stage.kind` of `idle` or
+  `dormant`, is the idle stage), `metro.running`, `metro.idleStop`, `metro.lastStop.reason`, `ios.state`, `ios.idleShutdown`,
   `ios.app.state`, the newest `lastActivityAt` anywhere under the environment, `build.state`, `build.phase` and
-  `build.waitingFor`; `capacity.devices.max` and `capacity.devices.holders[].booting`; a top-level `daemon`.
+  `build.waitingFor`; `capacity.devices.max` and `capacity.devices.holders[].booting`; a top-level `daemon` (`mode`, `running.since`, `lastTickAt`).
 - `stim ios --json`: `launched`, `cacheHit`, `udid`, `logs.dir` and, on failure, `code` and `message`.
 - `stim revive --json`: `revived.metro.restarted` and `revived.devices[].rebooted` and `.app.launched`.
 - The private home: `created-devices.json`, `workspaces/<id>/state.json` (recorded pids),
