@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { createStim } from 'stim';
 import {
   markClaimChildPending,
   processGroupAlive,
@@ -1007,15 +1008,22 @@ export class ControlHub {
   }
 
   private async unlock(target: ControlBeginParams, cwd: string): Promise<void> {
-    const slot = target.slot && target.slot !== 'default' ? ['--slot', target.slot] : [];
-    const outcome = await runStim(
-      this.options.stimCli,
-      this.options.env,
-      ['device', 'unlock', target.platform, '--json', ...slot],
-      cwd,
-      this.options.lockLimits,
-    ).outcome;
-    if (!outcome.ok) console.error(`stim-server: could not release the device lease: ${outcome.message}`);
+    if (target.platform !== 'ios' && target.platform !== 'android') return;
+    const abort = new AbortController();
+    const deadline = setTimeout(() => abort.abort(), this.options.lockLimits.timeoutMs);
+    try {
+      await createStim({ projectRoot: cwd, env: this.options.env }).unlockDevice({
+        platform: target.platform,
+        ...(target.slot && target.slot !== 'default' ? { slot: target.slot } : {}),
+        signal: abort.signal,
+      });
+    } catch (cause) {
+      console.error(
+        `stim-server: could not release the device lease: ${cause instanceof Error ? cause.message : cause}`,
+      );
+    } finally {
+      clearTimeout(deadline);
+    }
   }
 
   private audit(
