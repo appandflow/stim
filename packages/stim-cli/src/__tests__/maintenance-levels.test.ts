@@ -420,12 +420,19 @@ function memoryPressured(freeGb = 100) {
 }
 
 test('memory pressure stops an idle Gradle daemon with plenty of free disk', async () => {
+  process.env.STIM_MAINTENANCE_PRESSURE_CHECK_MINUTES = '60';
   memoryPressured();
   daemonPlan({ state: 'idle' });
   const stop = stopsDaemon();
   await pass();
   expect(stop).toHaveBeenCalledWith([101]);
   expect(actionKinds()).toEqual(['stop-gradle-daemons']);
+  process.env.STIM_MAINTENANCE_MEMORY_PRESSURE_LEVEL = 'off';
+  vi.setSystemTime(Date.now() + 5 * MINUTE_MS);
+  await runMaintenance('test');
+  expect(measurements.measurePressure).toHaveBeenCalledTimes(1);
+  expect(readMaintenanceState()?.pressure?.memory.pressured).toBe(true);
+  expect(stop).toHaveBeenCalledTimes(1);
 });
 
 test('memory pressure at disk level 3 stops the daemons once, then deletes the version', async () => {
