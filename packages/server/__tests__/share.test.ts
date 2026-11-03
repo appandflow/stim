@@ -1,5 +1,5 @@
 import { request } from 'node:http';
-import { connect as tcpConnect } from 'node:net';
+import { connect as tcpConnect, type Socket } from 'node:net';
 import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
@@ -22,6 +22,7 @@ interface Fixture {
   hub: ShareHub;
   subscribed: { device: Device; listener: FrameListener; hint: FrameHint | undefined; unsubscribed: boolean }[];
   keyframes: number;
+  congestions: number;
   begins: unknown[];
   inputs: unknown[];
   routeOpens: number[];
@@ -48,6 +49,7 @@ function fixture(): Fixture {
   const f: Fixture = {
     subscribed: [],
     keyframes: 0,
+    congestions: 0,
     begins: [],
     inputs: [],
     routeOpens: [],
@@ -68,7 +70,7 @@ function fixture(): Fixture {
   f.hub = new ShareHub({
     frames: {
       keyframe: () => f.keyframes++,
-      congested: () => {},
+      congested: () => f.congestions++,
       subscribe: (device, listener, hint) => {
         const entry = { device, listener, hint, unsubscribed: false };
         f.subscribed.push(entry);
@@ -421,6 +423,37 @@ describe('a web share', () => {
     await vi.waitFor(() => expect(received).toHaveLength(3));
     expect(received.slice(1).map((packet) => accessUnitOf(packet))).toEqual([unit(true, 3), unit(false, 4)]);
     expect(f.inputs).toEqual([]);
+  });
+
+  it('drops a backed-up video viewer to the next keyframe, lowering the bitrate until its socket drains', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port!);
+    const cookie = await login(url, share.password!);
+    const { socket } = await connect(url, { origin: origin(url), cookie }, '?codec=h264');
+    const received = binaryMessages(socket);
+    const video = videoOf(f.subscribed[0]!.listener);
+    video(unit(true, 1));
+    await vi.waitFor(() => expect(received).toHaveLength(1));
+
+    const tcp = Reflect.get(socket, '_socket') as Socket;
+    tcp.pause();
+    const big = (capturedAt: number): AccessUnit => ({ ...unit(false, capturedAt), data: Buffer.alloc(1024 * 1024, 1) });
+    let pushed = 1;
+    await vi.waitFor(() => {
+      video(big(++pushed));
+      expect(f.congestions).toBeGreaterThan(0);
+    });
+    const keyframesWhileCongested = f.keyframes;
+    video(big(10_000));
+    video(unit(true, 10_001));
+    tcp.resume();
+    await vi.waitFor(() => expect(f.keyframes).toBe(keyframesWhileCongested + 1));
+    video(unit(false, 10_002));
+    video(unit(true, 10_003));
+    video(unit(false, 10_004));
+    await vi.waitFor(() => expect(received.at(-1) && accessUnitOf(received.at(-1)!)?.capturedAt).toBe(10_004));
+    const late = received.map((packet) => accessUnitOf(packet)!.capturedAt).filter((at) => at >= 10_000);
+    expect(late).toEqual([10_003, 10_004]);
   });
 
   it('drops input without --control and never begins a control session', async () => {
