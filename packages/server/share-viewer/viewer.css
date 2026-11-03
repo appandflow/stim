@@ -36,6 +36,16 @@ html,
 body {
   height: 100%;
 }
+html:has(body.viewer) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body.viewer {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
 body {
   margin: 0;
   display: flex;
@@ -78,18 +88,22 @@ footer {
   color: var(--muted);
   font-size: 12px;
 }
+.viewer footer {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 2px 14px;
+  padding: 2px 16px max(8px, env(safe-area-inset-bottom));
+}
 
 .status {
   margin: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  background: var(--card);
+  gap: 6px;
   color: var(--muted);
-  font-size: 13px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -111,7 +125,7 @@ footer {
 }
 .status .left:not(:empty)::before {
   content: '\00b7';
-  margin-right: 8px;
+  margin-right: 6px;
 }
 
 .stage {
@@ -120,7 +134,7 @@ footer {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 16px;
+  padding: max(8px, env(safe-area-inset-top)) 16px 4px;
   container-type: size;
 }
 .device {
@@ -331,7 +345,7 @@ button.primary:hover {
 
 @media (max-width: 480px) {
   .stage {
-    padding: 0 8px;
+    padding: max(6px, env(safe-area-inset-top)) 8px 0;
   }
   .toolbar {
     gap: 6px;
