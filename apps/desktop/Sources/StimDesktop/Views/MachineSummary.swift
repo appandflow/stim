@@ -270,7 +270,7 @@ struct MachineSummary: View {
   @ViewBuilder private func loadDetails(_ load: CapacityLoad) -> some View {
     Text(load.text).font(.stim(.title)).foregroundStyle(Color(load.tone)).monospacedDigit()
     Text(
-      "Load is how many tasks are running or waiting per core, averaged over 5 minutes. Above 1 per core, work queues up, and waiting on disk counts too."
+      "Load is how many tasks are running or waiting per core, averaged over 5 minutes. Above 1 per core, work queues up."
     )
     .foregroundStyle(Palette.secondary)
     Text(load.busySentence).foregroundStyle(Palette.secondary)
