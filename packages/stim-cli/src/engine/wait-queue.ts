@@ -71,7 +71,7 @@ export function queuePosition(waiters: readonly ClaimHolder[], ticket: ClaimHand
 }
 
 /** The longest a run waits in a queue, whatever holds it up: the old build-slot ceiling. */
-export const ABSOLUTE_WAIT_CEILING_MS: number = 90 * MINUTE_MS;
+const ABSOLUTE_WAIT_CEILING_MS = 90 * MINUTE_MS;
 
 /**
  * How long a run at `position` waits while what holds it up cannot be shown to be alive, before it refuses with
