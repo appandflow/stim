@@ -1114,9 +1114,13 @@ devices and macOS apps have no Share item.
 **Stim > Settings > Web Shares** lists the server's live shares, read with
 `share.list` every 5 seconds: one section per workspace, one row per share with
 its platform, **View only** or **View and control**, **No password** when it has none,
-viewers and time left. `share.stop` takes a workspace, so the section's **Stop** ends
-every share of that workspace (**Stop All** when it has several). An older server
-that does not answer `share.*` shows a message instead. The methods work only on
+viewers and time left. Each row has **Stop**, which sends `share.stop` with the
+workspace and the share's `id`; a workspace with several shares also has **Stop All**
+in its header, which sends the workspace alone. When the local server's hello lacks
+the `share-stop-id` feature, it would ignore `id` and end every share of the workspace,
+so Desktop sends no `id`, shows no row **Stop** and the header's **Stop** (**Stop All** when there are
+several) says it ends them all. An older server that does not answer `share.*` shows a
+message instead. The methods work only on
 the local Unix socket and need no Desktop authority.
 
 Quitting Desktop asks first when Desktop started the stim-server it runs and

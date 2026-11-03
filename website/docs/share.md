@@ -115,7 +115,8 @@ With `--control`, click the screen to tap and type with the keyboard.
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
-`stim share stop` ends every share of the current workspace.
+`stim share stop` ends every share of the current workspace. To end one share,
+use **Stop** on its row in Stim Desktop's Settings > Web Shares.
 
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 

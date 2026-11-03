@@ -98,6 +98,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -164,6 +165,7 @@ export const FEATURES = [
   'desktop-worktree-remove',
   'desktop-worktree-warm',
   'desktop-plan',
+  'share-stop-id',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -1660,7 +1662,7 @@ export interface Methods {
     params: WebShareStartParams;
     result: WebShareRow & { url: string; password?: string; warning?: string };
   };
-  'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
+  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
