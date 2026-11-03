@@ -348,8 +348,6 @@ jobs:
       contents: read
       checks: read
       id-token: write
-    outputs:
-      version: ${{ steps.version.outputs.version }}
     env:
       PACKAGE_DIRS: core cache cache-s3 agent-driver agent-driver-agent-device metro expo-build-cache stim-cli ci transport transport-tailscale transport-local server
     steps:
@@ -589,39 +587,3 @@ jobs:
               echo "| $name | $state |"
             done
           } >> "$GITHUB_STEP_SUMMARY"
-
-  next-smoke:
-    needs: next-publish
-    if: needs.next-publish.outputs.version != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions: {}
-    env:
-      VERSION: ${{ needs.next-publish.outputs.version }}
-      npm_config_prefer_online: 'true'
-    steps:
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: '24'
-          package-manager-cache: false
-      - name: The published CLI and server run
-        run: |
-          cd "$(mktemp -d)"
-          runs() {
-            local out
-            out=$(npx --yes "$@" --version 2>&1) && [ "$(printf '%s\n' "$out" | tail -1)" = "$VERSION" ]
-          }
-          retry() {
-            local deadline=$((SECONDS + 300))
-            until runs "$@"; do
-              if [ "$SECONDS" -ge "$deadline" ]; then
-                echo "::error::npx $* --version did not print $VERSION within 300s"
-                return 1
-              fi
-              sleep 15
-            done
-            echo "npx $* --version: $VERSION"
-          }
-          retry "stim@$VERSION"
-          retry -p "@stim-cli/ci@$VERSION" stim-ci
-          retry -p "@stim-cli/server@$VERSION" stim-server

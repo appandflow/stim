@@ -91,15 +91,23 @@ interface WorktreeSettings {
   worktree?: { exclude?: string[] };
 }
 
+function packageManagerInstall(installRoot: string): string {
+  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) return 'pnpm install';
+  if (existsSync(resolve(installRoot, 'yarn.lock'))) return 'yarn install';
+  if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
+    return 'bun install';
+  return existsSync(resolve(installRoot, 'package-lock.json')) ? 'npm ci' : 'npm install';
+}
+
 export function dependencyInstallCommand(target: string, dir = '.'): string {
   const installRoot = resolve(target, dir);
-  let command = 'npm install';
-  if (existsSync(resolve(installRoot, 'pnpm-lock.yaml'))) command = 'pnpm install';
-  else if (existsSync(resolve(installRoot, 'yarn.lock'))) command = 'yarn install';
-  else if (existsSync(resolve(installRoot, 'bun.lock')) || existsSync(resolve(installRoot, 'bun.lockb')))
-    command = 'bun install';
-  else if (existsSync(resolve(installRoot, 'package-lock.json'))) command = 'npm ci';
-  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${command}`;
+  return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot)}`;
+}
+
+function cloneReplacementNote(target: string, dirs: string[]): string {
+  return dirs.some((dir) => packageManagerInstall(resolve(target, dir)) === 'npm ci')
+    ? ' `npm ci` deletes node_modules first, so it replaces the clone, which shares its disk with the source checkout, with a private copy of every package.'
+    : '';
 }
 
 function relocateCarriedPods(root: string, target: string, copied: string[], out: (line: string) => void): void {
@@ -180,7 +188,7 @@ function reportCarriedStateHealth(
       chalk.yellow(
         phaseLine(
           'carry',
-          `carried ${modules} was installed from a different ${d.lockfile} than the ${where} on disk here. node_modules is gitignored and cloned from the source checkout; ${d.lockfile} is tracked, so the two can disagree. Run \`${dependencyInstallCommand(target, d.dir)}\` before building, or pod install and native builds see the wrong package versions.`,
+          `carried ${modules} was installed from a different ${d.lockfile} than the ${where} on disk here. node_modules is gitignored and cloned from the source checkout; ${d.lockfile} is tracked, so the two can disagree. Run \`${dependencyInstallCommand(target, d.dir)}\` before building, or pod install and native builds see the wrong package versions.${cloneReplacementNote(target, [d.dir])}`,
         ),
       ),
     );
@@ -193,7 +201,10 @@ function reportCarriedStateHealth(
       chalk.yellow(
         phaseLine(
           'carry',
-          `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.`,
+          `carried dependencies may be stale: they do not match ${manifests}. Run ${remedies.map((command) => `\`${command}\``).join(' and ')} before building.${cloneReplacementNote(
+            target,
+            staleDeps.map((dependency) => dependency.dir),
+          )}`,
         ),
       ),
     );
