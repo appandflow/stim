@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import {
   DEVICE_METRO_IDLE_STOP_REASON,
   INTERACTIONS_KEY,
@@ -140,7 +140,7 @@ test('the idle stage keeps a .dd that git does not ignore', async () => {
   expect(result).toMatchObject({
     path: root,
     outcome: 'idle',
-    detail: expect.stringContaining('/.dd: it holds files git does not ignore'),
+    detail: expect.stringContaining(`${sep}.dd: it holds files git does not ignore`),
   });
   expect(existsSync(join(root, '.dd', 'Build'))).toBe(true);
 });
