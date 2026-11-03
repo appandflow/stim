@@ -400,6 +400,23 @@ svg.symbol {
   margin: 0;
   color: var(--muted);
 }
+.labeled {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.labeled label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.labeled .optional {
+  color: var(--muted);
+  font-weight: 400;
+}
+input.field::placeholder {
+  color: var(--tertiary);
+  opacity: 1;
+}
 input.secret {
   -webkit-text-security: disc;
 }
