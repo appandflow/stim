@@ -443,44 +443,64 @@ describe('rung 5', () => {
       pressure(level),
     );
 
-  test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+  test('at critical it keeps node_modules and Pods of an idle linked worktree while the running processes cannot be listed, as on win32', async () => {
+    const listed = getExecutor();
+    setExecutor({
+      ...listed,
+      runFileQuietAsync: async (file, args, opts) =>
+        file === 'ps' ? null : listed.runFileQuietAsync(file, args, opts),
+    });
     const { idle } = linkedWorktrees(['idle']);
     register(idle);
-    await ladder('high');
+    const { actions } = await ladder('critical');
     expect(existsSync(join(idle, 'node_modules'))).toBe(true);
-    const { actions } = await ladder('critical');
-    expect(existsSync(join(idle, 'node_modules'))).toBe(false);
-    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
-    expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
-  });
-
-  test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
-    const { recent, late } = linkedWorktrees(['recent', 'late']);
-    register(recent);
-    recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
-    register(late);
-    const restoreProblem = lightened.restoreProblem;
-    vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
-      if (candidate.worktree === late) recordWorkspaceUse(late);
-      return restoreProblem(candidate, ...rest);
-    });
-    const { actions } = await ladder('critical');
-    for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
-    const rung5 = actions.filter((action) => action.rung === 5);
-    expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
-    expect(rung5.find((action) => action.workspace === late)).toMatchObject({
-      outcome: 'kept',
-      detail: 'it is no longer idle',
-    });
-  });
-
-  test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
-    const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
-    register(realpathSync.native(join(projects, 'repo')));
-    register(own);
-    register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
-    const { actions } = await ladder('critical', own);
-    for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+    expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(true);
     expect(actions.filter((action) => action.rung === 5)).toEqual([]);
   });
+
+  describe.skipIf(process.platform === 'win32')(
+    'with the running processes listed (skipped on win32, where Stim cannot list them)',
+    () => {
+      test('at critical it deletes node_modules and Pods of an idle linked worktree in one tick, and nothing at high', async () => {
+        const { idle } = linkedWorktrees(['idle']);
+        register(idle);
+        await ladder('high');
+        expect(existsSync(join(idle, 'node_modules'))).toBe(true);
+        const { actions } = await ladder('critical');
+        expect(existsSync(join(idle, 'node_modules'))).toBe(false);
+        expect(existsSync(join(idle, 'ios', 'Pods'))).toBe(false);
+        expect(actions.filter((action) => action.rung === 5).map((action) => action.outcome)).toEqual(['done', 'done']);
+      });
+
+      test('it keeps a worktree used a minute ago, and one used between selection and deletion', async () => {
+        const { recent, late } = linkedWorktrees(['recent', 'late']);
+        register(recent);
+        recordWorkspaceUse(recent, new Date(Date.now() - MINUTE_MS));
+        register(late);
+        const restoreProblem = lightened.restoreProblem;
+        vi.spyOn(lightened, 'restoreProblem').mockImplementation(async (candidate, ...rest) => {
+          if (candidate.worktree === late) recordWorkspaceUse(late);
+          return restoreProblem(candidate, ...rest);
+        });
+        const { actions } = await ladder('critical');
+        for (const root of [recent, late]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+        const rung5 = actions.filter((action) => action.rung === 5);
+        expect(rung5.filter((action) => action.workspace === recent)).toEqual([]);
+        expect(rung5.find((action) => action.workspace === late)).toMatchObject({
+          outcome: 'kept',
+          detail: 'it is no longer idle',
+        });
+      });
+
+      test("it skips a worktree with no workspace in this home, the command's own workspace and one whose dev server runs", async () => {
+        const { stranger, own, serving } = linkedWorktrees(['stranger', 'own', 'serving']);
+        register(realpathSync.native(join(projects, 'repo')));
+        register(own);
+        register(serving, { metroPort: 59125, supervisor: { pid: process.pid, port: 59999 } });
+        const { actions } = await ladder('critical', own);
+        for (const root of [stranger, own, serving]) expect(existsSync(join(root, 'node_modules'))).toBe(true);
+        expect(actions.filter((action) => action.rung === 5)).toEqual([]);
+      });
+    },
+  );
 });
