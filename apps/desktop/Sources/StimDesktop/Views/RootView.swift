@@ -308,6 +308,13 @@ struct RootView: View {
       ActivitySheet(run: run).environmentObject(actions)
     }
     .onQuitRequested { actions.presented = nil }
+    .sheet(item: $openRequests.shareRequest) { request in
+      ShareDeviceSheet(request: request) {
+        settingsTab = "web-shares"
+        openSettings()
+      }
+    }
+    .onQuitRequested { openRequests.shareRequest = nil }
     .modifier(SetupGuidePresenter(onboarding: onboarding, actions: actions))
     .sheet(isPresented: $nativePermissions.showsSetup) {
       NativeViewerPermissionsView(

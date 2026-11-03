@@ -593,6 +593,9 @@ SWEEPING FINISHED WORKTREES
   clean state, except a finished one whose changes are archived;
   a worktree is kept when it is the source checkout, bare, locked, holds
   another worktree (worktree remove refuses it too), in use,
+  not registered in this Stim home while STIM_HOME is set (not-registered:
+  the registry and workspace.json roots of a scoped home do not list it, and
+  the repository's other worktrees may belong to another home),
   dirty and not finished, or dirty and finished when its changes cannot be
   archived (ARCHIVED CHANGES below; untracked files count; pod install churn and
   watchman's untracked \`.watchman-cookie-*\` files alone do not), unpushed

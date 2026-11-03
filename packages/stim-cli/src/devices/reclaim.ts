@@ -1,3 +1,4 @@
+import { endWorkspaceShares } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import { stopHostedAndroid } from '../device-host/hosted-android.ts';
 import { stopHostedIos } from '../device-host/hosted-ios.ts';
@@ -389,6 +390,7 @@ type ReclaimOptions = {
 export async function reclaimProject(path: string, options: ReclaimOptions = {}): Promise<ReclaimResult> {
   const dir = workspaceDir(path);
   const existed = existsSync(dir);
+  await endWorkspaceShares(path);
   const run = await withIdleWorkspace(path, () => reclaimIdleProject(path, existed, options), {
     operation: options.operation,
     purpose: 'workspace removal',

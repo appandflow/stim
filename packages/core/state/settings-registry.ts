@@ -100,6 +100,10 @@ export function replacementAdvice(key: string, old: unknown): { key: string; com
   return { key: replaced.key, command: value ? `stim settings set ${replaced.key} ${value}` : null };
 }
 
+export const SHARE_DEFAULT_PORT = 7790;
+
+export const SHARE_EXPOSURES = ['auto', 'tailscale', 'proxy'] as const;
+
 export const WEB_VIEWPORTS = ['desktop', 'phone'] as const;
 
 export type WebViewport = (typeof WEB_VIEWPORTS)[number];
@@ -1017,6 +1021,33 @@ export const SETTINGS: readonly SettingDefinition[] = [
     default: false,
     description:
       "Whether a machine approved for builds or device hosting here may update this machine's stim-server service to that machine's own stim-server build; releases from npm need no setting",
+  },
+  {
+    key: 'share.exposure',
+    type: { kind: 'choice', choices: SHARE_EXPOSURES },
+    scopes: MACHINE,
+    default: 'auto',
+    description:
+      'How stim share is reached from the internet: tailscale through a Tailscale Funnel route, proxy through your own reverse proxy that forwards to a loopback port, auto tailscale when the tailscale command is installed and logged in, else proxy. proxy never runs tailscale serve or tailscale funnel',
+  },
+  {
+    key: 'share.publicUrl',
+    type: {
+      kind: 'string',
+      pattern: '^https://[^\\s/?#@]+(/[^\\s?#]*)?$',
+      patternHelp: 'an https origin, optionally with a path prefix, such as https://demo.example.com',
+    },
+    scopes: MACHINE,
+    description:
+      'The https address your reverse proxy serves shares under in proxy mode, optionally with a path prefix that the proxy leaves on the path, such as https://demo.example.com. Share links print under it and its origin is the only one the frame socket accepts. Without it proxy mode prints a loopback link and a warning',
+  },
+  {
+    key: 'share.port',
+    type: { kind: 'number', integer: true, minimum: 1024, maximum: 65535 },
+    scopes: MACHINE,
+    default: SHARE_DEFAULT_PORT,
+    description:
+      'The loopback port the share listener binds in proxy mode, so your reverse proxy can name it. It is not used in tailscale mode, which picks a free port',
   },
   {
     key: 'server.lanAddresses',

@@ -1,4 +1,4 @@
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { defineConfig } from 'tsdown';
 import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from './src/protocol.ts';
@@ -27,6 +27,8 @@ export default defineConfig({
       rmSync('dist/stim-host', { recursive: true, force: true });
       mkdirSync('dist/stim-host');
       for (const name of ['stim-host.c', 'Info.plist']) copyFileSync(`host/${name}`, `dist/stim-host/${name}`);
+      rmSync('dist/share-viewer', { recursive: true, force: true });
+      cpSync('share-viewer', 'dist/share-viewer', { recursive: true });
       rmSync('dist/stim-frames', { recursive: true, force: true });
       mkdirSync('dist/stim-frames');
       const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);

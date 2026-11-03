@@ -278,6 +278,9 @@ export const METHODS = [
   'machines.update.status',
   'device-host.sessions',
   'device-host.sessions.stop',
+  'share.start',
+  'share.stop',
+  'share.list',
 ] as const;
 
 /**
@@ -1626,7 +1629,39 @@ export interface HostedSessionRow {
   workspace: string;
 }
 
+/** A live web share, as `share.list` lists it; never its URL token or password. */
+export interface WebShareRow {
+  id: string;
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot: string;
+  physical: boolean;
+  control: boolean;
+  expiresAt: string;
+  viewers: number;
+  /** How viewers get in: a generated password, one the person set, or the URL alone. */
+  auth: 'generated' | 'set' | 'none';
+}
+
+export interface WebShareStartParams {
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot?: string;
+  physical?: boolean;
+  control?: boolean;
+  expiresMinutes?: number;
+  /** 8 to 128 characters; never sent back. Without it, and without `passwordless`, the server generates one. */
+  password?: string;
+  passwordless?: boolean;
+}
+
 export interface Methods {
+  'share.start': {
+    params: WebShareStartParams;
+    result: WebShareRow & { url: string; password?: string; warning?: string };
+  };
+  'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
+  'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
   'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };

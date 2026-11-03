@@ -287,6 +287,7 @@ test('the errors topic documents every code the build commands, the Node check a
     'native-runtime.ts',
     'dev-client.ts',
     'revive.ts',
+    'share.ts',
     ...['ios', 'android'].flatMap((command) =>
       readdirSync(new URL(`../commands/${command}/`, import.meta.url))
         .filter((file) => file.endsWith('.ts'))
@@ -499,6 +500,14 @@ test('the settings topic documents every registered setting and its environment 
   assert(body);
   const names = SETTINGS.flatMap((setting) => (setting.env ? [setting.key, setting.env] : [setting.key]));
   expect(names.filter((name) => !body.includes(name))).toEqual([]);
+});
+
+test('the share topic documents every share setting and the default proxy port', () => {
+  const body = renderTopic('share');
+  assert(body);
+  const keys = SETTINGS.filter((setting) => setting.key.startsWith('share.'));
+  expect(keys.map((setting) => setting.key).filter((key) => !body.includes(key))).toEqual([]);
+  expect(body).toContain(`127.0.0.1:${keys.find((setting) => setting.key === 'share.port')?.default}`);
 });
 
 test('the placement words are documented for every workload, and a removed setting only in the settings topic', () => {

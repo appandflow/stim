@@ -37,6 +37,7 @@ export default ({ production }: { production?: boolean }): KnipConfig => ({
       ignoreDependencies: production ? ['@stim-cli/metro'] : [],
     },
     'packages/server': {
+      ignore: ['share-viewer/**'],
       ignoreBinaries: ['plutil', 'ditto', 'mkfifo'],
     },
     'apps/mobile': {

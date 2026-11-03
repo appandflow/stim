@@ -806,6 +806,19 @@ cross-volume copy costs and invalid values.
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
 
+### Web share exposure
+
+`stim share` is reached through Tailscale Funnel or through your own reverse
+proxy. All three settings are machine settings:
+
+```bash
+stim settings set share.exposure proxy                      # auto (default), tailscale or proxy
+stim settings set share.publicUrl https://demo.example.com  # links print under this address
+stim settings set share.port 7790                           # loopback port the proxy forwards to
+```
+
+See [Share a running app](./share.md#custom-domain) for the Caddyfile.
+
 ## Device recordings
 
 `stim-server` records the screens of owned simulators, emulators and the
