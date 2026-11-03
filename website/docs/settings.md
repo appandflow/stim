@@ -1003,9 +1003,12 @@ reclaim for a run waiting to boot, and
 scoped homes included. It ticks each minute while anything runs there or the
 pressure level is above normal, and every 5 minutes otherwise. It exits two
 ticks after nothing runs and no workspace waits for its dormant stage, so the
-stage fires in a quiet home; a workspace waits until its `idle.dormantDays`
-have passed, unless `maintenance.keep`, `idle.minutes` 0, a hosted placement or
-an unreadable state keeps it out. Each tick it measures the machine once,
+stage fires in a quiet home. A workspace waits until its `idle.dormantDays`
+have passed plus one slow tick, and never while `maintenance.keep`,
+`idle.minutes` 0, `idle.dormantDays` 0, a hosted placement, an unreadable state
+or a failing device listing keeps it out; a finished-worktree removal keeps the
+daemon only in `on` mode, while its last run was not kept. Each tick it
+measures the machine once,
 classifies the pressure level, moves workspaces with no activity for
 `idle.minutes` into the [idle stage](./dev-server-and-logs.md#idle-stop) and
 those idle for `idle.dormantDays` into the dormant stage, runs the pressure

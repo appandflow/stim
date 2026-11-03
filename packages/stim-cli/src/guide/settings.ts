@@ -672,9 +672,12 @@ run waiting to boot, and automatic maintenance.
           anything runs there or the pressure level is above normal, and
           every 5 minutes otherwise. It exits two ticks after nothing runs and
           no workspace waits for its dormant stage, so the stage fires in a
-          quiet home; a workspace waits until its idle.dormantDays have
-          passed, unless maintenance.keep, idle.minutes 0, a hosted placement
-          or an unreadable state keeps it out. Each tick it measures the
+          quiet home. A workspace waits until its idle.dormantDays have passed
+          plus one slow tick, and never while maintenance.keep, idle.minutes
+          0, idle.dormantDays 0, a hosted placement, an unreadable state or a
+          failing device listing keeps it out; a finished-worktree removal
+          keeps the daemon only in on mode, while its last run was not kept.
+          Each tick it measures the
           machine once, classifies the pressure level, moves idle workspaces
           into the idle stage (idle.minutes) and dormant ones into the dormant
           stage (idle.dormantDays), runs the pressure ladder above normal,
