@@ -160,6 +160,15 @@ is `auto`, doctor reports it as a note, and `--fix` installs the image
 `stim android` would install on its first emulator run (about 2 GB). See
 [installing a missing Android system image](./settings.md#installing-a-missing-android-system-image).
 
+In a linked worktree of a React Native app, doctor notes when the source
+checkout's `ios/Pods` holds React Native's prebuilt frameworks
+(`React-Core-prebuilt`, `ReactNativeDependencies`, `hermes-engine`) built as
+Debug or Release and the worktree builds the other, which is Debug unless
+`ios.configuration` says otherwise. React Native re-extracts those frameworks
+on the first build, so each such worktree costs about 1 GB of unshared disk plus
+extraction time. Build the source checkout once in that configuration with
+`stim ios` before warming more worktrees. Doctor changes nothing.
+
 Doctor reports a checkout that holds linked worktrees inside it, such as
 `.worktrees/<name>`, when the checkout's `.watchmanconfig` does not list them in
 `ignore_dirs`. A Watchman root at that checkout, which Jest or a Metro started

@@ -656,6 +656,40 @@ test('Android doctor skips iOS architecture metadata and findings', async () => 
   }
 });
 
+test('a linked worktree is told when the source checkout built another React Native flavor', async () => {
+  const { base, main, git } = seedRepo('stim-doctor-pods-flavor-');
+  try {
+    const linked = join(base, 'linked');
+    git(`git worktree add -q -b feature ${linked}`);
+    const cores = (project: string, configuration: string) => {
+      const pod = join(project, 'ios', 'Pods', 'React-Core-prebuilt');
+      mkdirSync(pod, { recursive: true });
+      writeFileSync(join(pod, '.last_build_configuration'), configuration);
+    };
+    for (const project of [main, linked]) {
+      writeFileSync(join(project, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
+      cores(project, 'Release');
+    }
+    const inspect = async (project: string, options: DoctorInspectionOptions = {}) => {
+      const { context } = await inspectDoctor(project, {
+        concurrency: { maxBuilds: 0, maxDevices: 0 },
+        host: 'darwin',
+        ...options,
+      });
+      return ((await reactNativeProjectDoctor(project).inspectAsync?.(context)) ?? []).filter(
+        (finding) => finding.code === 'ios-pods-flavor',
+      );
+    };
+    expect(await inspect(linked)).toHaveLength(1);
+    expect(await inspect(main)).toEqual([]);
+    expect(await inspect(linked, { platform: 'android' })).toEqual([]);
+    cores(main, 'Debug');
+    expect(await inspect(linked)).toEqual([]);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+}, 30_000);
+
 test('parseCmakeCacheLauncher reads the launcher a configure wrote into CMakeCache.txt', () => {
   const cache = [
     '//Compiler launcher for CXX.',

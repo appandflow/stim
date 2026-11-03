@@ -1752,6 +1752,15 @@ not on any remote"  (worktree remove)
   source path and warm cannot move it, it prints "removed <dir>/Pods/Manifest.lock
   so pod install runs" and \`stim ios\` runs \`pod install\`.
 
+"carry       carried <dir>/Pods: The source checkout's Pods were last built as ..."
+  Warm copied Pods whose React-Core-prebuilt, ReactNativeDependencies or
+  hermes-engine were last built in Debug or Release, and this workspace builds
+  the other. React Native re-extracts those frameworks on the first build here,
+  costing about 1 GB of unshared disk and extraction time. Nothing is wrong
+  with the copy. Build the source checkout once in the configuration the
+  worktrees build (\`stim ios\` there) before warming more worktrees. \`stim
+  doctor\` reports the same condition as the \`ios-pods-flavor\` note.
+
 "carry       left out <app>/<platform>: <reason>"
   The app is an Expo project whose ios/ or android/ Git ignores, and Stim
   cannot show the source checkout's copy was generated from the app's current
