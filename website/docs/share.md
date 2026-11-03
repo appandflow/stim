@@ -222,7 +222,9 @@ The saved links live in `share-links.json` in the workspace's directory under
 starts and removed with the workspace (`stim worktree remove`), by `--forget`, and
 when `stim share` starts a share, reuses one or stops and finds them expired. They hold the link's 256-bit token
 and the passwords in clear, so anyone who can read your Stim home can start the
-share again until it expires. A share started from Stim Desktop is not saved.
+share again until it expires. Each saved link also records whether its share is
+running or was stopped on purpose; a stim-server restart does not change that.
+A share started from Stim Desktop is not saved.
 
 ## When the device goes away
 

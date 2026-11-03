@@ -43,3 +43,19 @@ export function forgetShareLinks(root: string): number {
     return count;
   });
 }
+
+/** Marks the workspace's saved shares, or those of one `slot`, as stopped on purpose so nothing restarts them on its own. */
+export function pauseShareLinks(root: string, slot?: string): void {
+  if (!existsSync(workspaceShareLinksFile(root))) return;
+  withWorkspaceStateLock(root, () => {
+    const links = readShareLinks(root);
+    let changed = false;
+    for (const link of Object.values(links)) {
+      if (link.state === 'live' && (slot === undefined || link.slot === slot)) {
+        link.state = 'stopped';
+        changed = true;
+      }
+    }
+    if (changed) writeLinks(root, links);
+  });
+}

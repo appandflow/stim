@@ -13,7 +13,7 @@ import {
   type ShareMethod,
   type ShareServerStart,
 } from '../local-server.ts';
-import { forgetShareLinks, reusableShareLinks, saveShareLink } from '../workspace/share-links.ts';
+import { forgetShareLinks, pauseShareLinks, reusableShareLinks, saveShareLink } from '../workspace/share-links.ts';
 import { findCommandWorkspaceAsync } from '../workspace/project.ts';
 import { repoRootAsync } from '../workspace/worktree.ts';
 
@@ -268,16 +268,15 @@ async function reuseShare(
   if (link && saved.origin && link.origin !== saved.origin) {
     deps.note(`The link is served under a different address than before; its token is the same: ${link.origin}`);
   }
-  if (minutes !== null || (link && link.origin !== saved.origin)) {
-    try {
-      saveShareLink(root, key, {
-        ...saved,
-        ...(link ? { origin: link.origin } : {}),
-        expiresAt: started.expiresAt,
-      });
-    } catch (cause) {
-      deps.note(`Warning: could not update the saved link: ${cause instanceof Error ? cause.message : String(cause)}`);
-    }
+  try {
+    saveShareLink(root, key, {
+      ...saved,
+      ...(link ? { origin: link.origin } : {}),
+      state: 'live',
+      expiresAt: started.expiresAt,
+    });
+  } catch (cause) {
+    deps.note(`Warning: could not update the saved link: ${cause instanceof Error ? cause.message : String(cause)}`);
   }
   const shared = { ...started, auth: saved.auth, viewAuth: saved.viewAuth };
   const passwords = {
@@ -300,6 +299,7 @@ async function reuseShare(
 
 /** Ends this workspace's shares, keeps its saved links reusable, or with `--forget` deletes them. */
 async function stopShares(root: string, opts: ShareOptions, deps: ShareDeps, version: string): Promise<ShareResult> {
+  if (!opts.forget) pauseShareLinks(root);
   let answer = await ask(deps, 'share.stop', { workspace: root }, version);
   if ('code' in answer && opts.forget && answer.code === 'STIM_SERVER_NOT_RUNNING') {
     answer = { result: { stopped: [] } };
@@ -525,6 +525,7 @@ export async function runShare(
         ...(started.viewAuth && viewPassword !== undefined ? { viewPassword } : {}),
         auth: started.auth,
         viewAuth: started.viewAuth ?? null,
+        state: 'live',
         createdAt: new Date().toISOString(),
         expiresAt: started.expiresAt,
       });

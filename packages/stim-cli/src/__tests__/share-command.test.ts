@@ -469,6 +469,16 @@ describe('stim share', () => {
       expect(existsSync(workspaceShareLinksFile('/work/app'))).toBe(false);
     });
 
+    it('keeps a saved share live while it runs, stopped after a stop, and live again when reused', async () => {
+      const deps = fake([started(), () => ({ result: { stopped: [ROW] } }), started()]);
+      await runShare('android', {}, deps, '1.0.0');
+      expect(links().android.state).toBe('live');
+      await runShare('stop', {}, deps, '1.0.0');
+      expect(links().android.state).toBe('stopped');
+      await runShare('android', { reuse: true }, deps, '1.0.0');
+      expect(links().android.state).toBe('live');
+    });
+
     it('stop --forget still forgets when no stim-server runs, and stop alone then reports the missing server', async () => {
       const deps = fake([started(), unavailable, unavailable]);
       await runShare('android', {}, deps, '1.0.0');

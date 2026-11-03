@@ -1,5 +1,15 @@
-import { workspaceShareLinksFile } from './paths.ts';
+import { readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { configDir } from '../index.ts';
+import { workspaceMetadataFile, workspaceShareLinksFile } from './paths.ts';
 import { isJsonObject, readJsonFile } from './json-file.ts';
+
+/**
+ * Whether a saved share should run again on its own: `live` from when `stim share` starts it until a deliberate stop
+ * (`stim share stop`, `stim stop`, a reclaimed workspace), `stopped` after. A stim-server restart or crash leaves it
+ * `live`, because only the CLI writes it.
+ */
+export type SavedShareState = 'live' | 'stopped';
 
 /** A web share's link and passwords, as `stim share` saved them when it started so `--reuse` can start it again. */
 export interface SavedShare {
@@ -18,6 +28,7 @@ export interface SavedShare {
   /** How the passwords were made when the share first started. */
   auth: 'generated' | 'set' | 'none';
   viewAuth: 'generated' | 'set' | null;
+  state: SavedShareState;
   createdAt: string;
   expiresAt: string;
 }
@@ -42,7 +53,7 @@ const isPassword = (value: unknown): value is string =>
 
 function savedShare(value: unknown, now: number): SavedShare | null {
   if (!isJsonObject(value)) return null;
-  const { platform, slot, physical, token, origin, control, password, viewPassword, auth, viewAuth } = value;
+  const { platform, slot, physical, token, origin, control, password, viewPassword, auth, viewAuth, state } = value;
   const { createdAt, expiresAt } = value;
   if (platform !== 'ios' && platform !== 'android') return null;
   if (typeof slot !== 'string' || typeof physical !== 'boolean') return null;
@@ -63,6 +74,7 @@ function savedShare(value: unknown, now: number): SavedShare | null {
     ...(viewPassword === undefined ? {} : { viewPassword: String(viewPassword) }),
     auth,
     viewAuth,
+    state: state === 'live' ? 'live' : 'stopped',
     createdAt,
     expiresAt,
   };
@@ -83,4 +95,46 @@ export function readShareLinks(root: string, now: number = Date.now()): Record<s
     if (share) kept[key] = share;
   }
   return kept;
+}
+
+/** A saved share that should run again, with the workspace it belongs to. */
+export interface LiveShareLink {
+  /** The project root the share was started for. */
+  workspace: string;
+  /** Its {@link shareLinkKey} in that workspace. */
+  key: string;
+  share: SavedShare;
+}
+
+/**
+ * Every unexpired saved share in this Stim home whose state is `live`, across its workspaces. A workspace whose
+ * metadata or file cannot be read has none.
+ */
+export function readLiveShareLinks(now: number = Date.now()): LiveShareLink[] {
+  const found: LiveShareLink[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(join(configDir(), 'workspaces'));
+  } catch {
+    return found;
+  }
+  for (const name of names) {
+    let metadata: unknown;
+    try {
+      metadata = readJsonFile(join(configDir(), 'workspaces', name, 'workspace.json'));
+    } catch {
+      continue;
+    }
+    const root = isJsonObject(metadata) ? metadata.projectRoot : undefined;
+    if (
+      typeof root !== 'string' ||
+      workspaceMetadataFile(root) !== join(configDir(), 'workspaces', name, 'workspace.json')
+    ) {
+      continue;
+    }
+    for (const [key, share] of Object.entries(readShareLinks(root, now))) {
+      if (share.state === 'live') found.push({ workspace: root, key, share });
+    }
+  }
+  return found;
 }

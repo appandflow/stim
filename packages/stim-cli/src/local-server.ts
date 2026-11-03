@@ -8,6 +8,7 @@ import { readClaimSet } from '@stim-cli/core/ownership-claim';
 import type { Methods, WebShareRow } from '@stim-cli/core/protocol';
 import { isJsonObject, serverLocalSocket } from '@stim-cli/core/state';
 import { canonicalPath } from './commands/gc/paths.ts';
+import { pauseShareLinks } from './workspace/share-links.ts';
 import { getExecutor } from './exec.ts';
 import { pidExists } from './metro.ts';
 
@@ -97,6 +98,9 @@ export function requestLocalServer<M extends LocalMethod>(
  * a missing or silent server has no share to end.
  */
 export async function endWorkspaceShares(workspace: string, slot?: string): Promise<void> {
+  try {
+    pauseShareLinks(workspace, slot);
+  } catch {}
   try {
     await requestLocalServer(
       'share.stop',

@@ -66,7 +66,10 @@ listener has now; stim says so when it differs from the saved one.
 stim share stop keeps the saved links and lists them (platform, slot, expiry;
 reusable in --json, never a secret): stop is a pause, not a revocation, until
 the expiry. stim share stop --forget also deletes them, with or without a
-running stim-server. A share started from Stim Desktop is not saved. Tell the
+running stim-server. Each saved link records whether its share should be
+running (live) or was stopped on purpose (stopped); only stim share and stim
+stop change it, so a stim-server restart leaves it live. A share started from
+Stim Desktop is not saved. Tell the
 user that the saved file holds the token and passwords; when they want a link
 revoked for good, run stim share stop --forget.
 

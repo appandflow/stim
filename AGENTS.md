@@ -526,7 +526,12 @@ outside it moves to its own issue and pull request.
   with the workspace, by `share stop --forget` and once expired) so that
   `share ios|android --reuse` can start the same link again through
   `share.start`'s `token` and `expiresAt`; stim-server writes nothing to disk and
-  an expired link is never extended or reused. A share outlives its
+  an expired link is never extended or reused. Each saved entry has a `state`:
+  `live` from when `share` starts or reuses it, `stopped` after a deliberate
+  `share stop`, `stim stop` or reclaim of its workspace. Only the CLI writes it,
+  so a stim-server restart or crash leaves `live`, and `@stim-cli/core/state`'s
+  `readLiveShareLinks` lists a home's live, unexpired entries for anything that
+  starts them again. A share outlives its
   device: when the device goes away on its own (frames fail, the device or hosted
   session changes or is not ready) the share waits, keeping its token, passwords,
   viewer sessions and expiry, and resumes on the slot's device when it is back.
