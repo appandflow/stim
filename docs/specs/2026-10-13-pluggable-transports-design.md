@@ -144,7 +144,8 @@ it.
 - A refusal during or right after the handshake closes the WebSocket with code
   4401 and the error code as the close reason: `unknown-secret` (no valid
   secret matches `lookup`, or it was spent), `unauthorized` (no record has the
-  key, or it was revoked), `handshake-failed`. A client that pinned another key
+  key, or it was revoked), `home-unavailable` (the server cannot read its Stim
+  home), `handshake-failed`. A client that pinned another key
   closes with `server-key-mismatch`.
 - After the handshake, the first request is still `hello`, now without `auth`
   or `protocol`: `{ client, access? }`. `access` (`build` or `device-host`)
