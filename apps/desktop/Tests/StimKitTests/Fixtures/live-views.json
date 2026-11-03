@@ -333,7 +333,8 @@
       "machine": null,
       "deviceLeases": [],
       "simctlAvailable": true,
-      "maintenance": null
+      "maintenance": null,
+      "daemon": null
     }
   }
 }
