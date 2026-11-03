@@ -1494,9 +1494,14 @@ stim-server service rollback [--label <name>]
 stim-server service uninstall [--label <name>]
 ```
 
-Updates wait for offloaded builds and hosted sessions to finish by default.
-Use `--no-wait` to restart with work still active: shutdown interrupts those
-builds and sessions. Service shutdown, health checks and rollback still apply.
+Updates wait for offloaded builds and for hosted sessions with a native step in
+flight (a reservation being prepared, an app install, log collection or a stop),
+by default; a server that resumes its hosted sessions reports `busy.hostedWork` and
+`busy.resumes` in `/health`, and its other ready iOS and Android sessions keep running
+through the restart and are resumed by the new server. An older server, which stops
+every session at shutdown, is still waited for entirely. Use `--no-wait` to restart
+with that work still active: shutdown interrupts those builds and native steps
+(a client retries an interrupted build on the machine; see offloaded builds). Service shutdown, health checks and rollback still apply.
 `stim-server setup --no-wait` uses the same policy when it updates a managed
 service; if setup requires a separate service update, its remedy includes the flag.
 
@@ -1637,8 +1642,9 @@ never run. Each install goes to
 named by its version, Stim build and server code, plus the package files for
 `--from`, and must start with the job's
 `node` before the switch. `update` then waits up to 30 minutes for `/health` to
-report no offloaded build and no hosted session (a server older than `busy` in
-`/health` restarts without waiting), rewrites only the server script in the
+report no offloaded build and no hosted session with a native step in flight
+(`busy.hostedWork`; a server older than `busy.resumes` waits for every hosted
+session, and one older than `busy` in `/health` restarts without waiting), rewrites only the server script in the
 plist (recording the previous one), restarts the job and waits up to 90 seconds
 for `/health` to answer with the new version and Stim build. When it does not,
 `update` puts the previous plist back and restarts it. Interrupt signals wait

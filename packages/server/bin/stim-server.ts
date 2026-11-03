@@ -81,7 +81,7 @@ const USAGE = `Usage:
                                     install that stim-server release from npm, or the .tgz
                                     packages in <dir>, beside the current one, switch the
                                     service to it, and switch back if it does not answer
-                                    --no-wait interrupts active builds and hosted sessions at restart
+                                    --no-wait also restarts with builds and hosted installs still running, which interrupts them
   stim-server service rollback [--label <name>]
                                     switch the service back to the server it ran before
   stim-server service uninstall [--label <name>]

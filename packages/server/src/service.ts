@@ -180,7 +180,7 @@ interface Health {
   protocol?: number;
   stim: string;
   stimBuild?: string | null;
-  busy?: { builds: number; hostedSessions: number };
+  busy?: { builds: number; hostedSessions: number; hostedWork?: number; resumes?: boolean };
   stimHome: string;
   tailscale?: { state: string; dnsName?: string | null; backendState?: string; reason?: string };
   route?: { state: string; port?: number; ports?: number[]; reason?: string };
@@ -951,6 +951,10 @@ export async function installServer(
   }
 }
 
+/**
+ * Waits for the work a restart would cut off. A server that resumes its hosted sessions leaves them running, so only
+ * the sessions with a native step in flight count; an older one stops every session at shutdown.
+ */
 async function waitForIdle(port: number, log: (line: string) => void): Promise<void> {
   const deadline = Date.now() + IDLE_WAIT_MS;
   let said = '';
@@ -960,8 +964,9 @@ async function waitForIdle(port: number, log: (line: string) => void): Promise<v
     if (health && !busy) {
       log('This stim-server does not report its running builds, so the restart does not wait for them.');
     }
-    if (!busy || busy.builds + busy.hostedSessions === 0) return;
-    const work = `${busy.builds} offloaded build(s) and ${busy.hostedSessions} hosted session(s)`;
+    const hosted = busy?.resumes ? (busy.hostedWork ?? 0) : (busy?.hostedSessions ?? 0);
+    if (!busy || busy.builds + hosted === 0) return;
+    const work = `${busy.builds} offloaded build(s) and ${hosted} hosted session(s)`;
     if (Date.now() >= deadline) {
       throw new ServiceError(
         `stim-server still runs ${work} after ${IDLE_WAIT_MS / 60_000} minutes; not restarting it. Run this again later.`,
@@ -1120,7 +1125,7 @@ function withUpdateClaim<T>(
 }
 
 /**
- * Installs `source` beside the server the job runs, waits for offloaded builds and hosted sessions to finish,
+ * Installs `source` beside the server the job runs, waits for offloaded builds and hosted native steps to finish,
  * switches the job to it and restarts it, and switches back when it does not answer as the installed build. Never
  * touches pairings, approvals, the host app, `$STIM_HOME` or the serve route. With `waitForWork` false,
  * restart interrupts active work instead of waiting for idle; shutdown and health checks still apply.
