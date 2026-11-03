@@ -1499,7 +1499,12 @@ stim remote remove janics-mac-mini
 
 The states are the ones `stim doctor --json` reports under `remoteMachines`
 (`build` here) and `deviceHosts` (`deviceHost` here). `list --json` prints
-`{ machines: [{ machine, priority, build, deviceHost }], findings }`; `add
+`{ machines: [{ machine, priority, build, deviceHost, serverKeyFingerprint, reachability, revoke }], findings }`,
+where `serverKeyFingerprint` is the fingerprint of the stim-server key this
+machine pinned for it (`null` before it answered), `reachability` is
+`reachable`, `unreachable`, `key-changed` or `unknown` from this run's contact,
+and `revoke` lists the `stim-server devices revoke <id>` commands a person on
+that machine runs to withdraw its approvals; `add
 --json` prints `{ machine, added, machines, build, deviceHost, findings }`,
 where `machines` is the list after the change; `remove --json` prints
 `{ machine, removed, forgot, machines, revoke, pending }`, where `pending` means a request
