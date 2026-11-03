@@ -2109,7 +2109,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
   expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
 }, 60_000);
 
-test('one gc report lists simulators and AVDs once for its report and once for its ladder preview, however many worktrees own devices', async () => {
+test('one gc report lists simulators and AVDs once for its report and once more for its ladder preview, which lists simulators only on macOS, however many worktrees own devices', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const real = getExecutor();
@@ -2162,7 +2162,10 @@ test('one gc report lists simulators and AVDs once for its report and once for i
 
   const payload = await baseline();
 
-  expect(lists).toEqual({ sims: without.sims + 2, avds: without.avds + 2 });
+  expect(lists).toEqual({
+    sims: without.sims + (process.platform === 'darwin' ? 2 : 1),
+    avds: without.avds + 2,
+  });
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
