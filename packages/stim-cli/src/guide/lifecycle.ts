@@ -2370,7 +2370,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
   simulators and emulators are deleted through centralized teardown (the
   parked pool is untouched) and its logs are archived when archive.enabled is
-  on. node_modules and Pods that hold 256 MB or more of their own (private)
+  on. The bytes it reports as freed are the data directories of the devices it
+  deleted, measured before deletion; a device whose size cannot be measured is
+  named in the action's detail and left out of the total. node_modules and Pods that hold 256 MB or more of their own (private)
   bytes in a linked worktree are deleted, recorded for \`stim worktree warm\`,
   and logged as dormant_dependencies; copy-on-write clones under that, and
   trees whose private size is unknown, stay. \`stim status\` shows a dormant

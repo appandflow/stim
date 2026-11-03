@@ -12,6 +12,7 @@ import { runLadder } from '../daemon/ladder.ts';
 import { runDormantPass } from '../daemon/stages.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim } from '../devices/sim-pool.ts';
+import * as android from '../devices/android.ts';
 import * as ios from '../devices/ios.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
@@ -64,7 +65,7 @@ afterEach(() => {
   delete process.env.STIM_HOME;
 });
 
-function workspace(name: string, usedAgoMs: number, state: 'Booted' | 'Shutdown') {
+function workspace(name: string, usedAgoMs: number, state: 'Booted' | 'Shutdown', dataPathSize?: number) {
   const root = join(projects, name);
   const udid = `UDID-${name}`;
   mkdirSync(join(root, 'node_modules'), { recursive: true });
@@ -81,6 +82,7 @@ function workspace(name: string, usedAgoMs: number, state: 'Booted' | 'Shutdown'
     runtime: 'iOS 26.0',
     deviceTypeIdentifier: 'iPhone',
     available: true,
+    ...(dataPathSize === undefined ? {} : { dataPathSize }),
   });
   return { root, udid };
 }
@@ -142,6 +144,55 @@ describe('the dormant stage', () => {
       expect(await dormant()).toEqual([]);
     },
   );
+
+  test.skipIf(process.platform !== 'darwin')(
+    'it reports the data size of each device it deletes as freed, and says which size it could not count',
+    async () => {
+      const sized = workspace('sized', 4 * DAY_MS, 'Shutdown', 3_000_000_000);
+      const unsized = workspace('unsized', 4 * DAY_MS, 'Shutdown');
+
+      const actions = await dormant();
+
+      const byTarget = (root: string) => actions.find((action) => action.target === root);
+      expect(byTarget(sized.root)).toMatchObject({ outcome: 'done', bytes: 3_000_000_000 });
+      expect(byTarget(sized.root)?.detail).not.toContain('not counted');
+      expect(byTarget(unsized.root)).toMatchObject({ outcome: 'done', bytes: 0 });
+      expect(byTarget(unsized.root)?.detail).toContain('freed size not counted for stim-unsized');
+      expect(log).toHaveBeenCalledWith(
+        'info',
+        'workspace_dormant',
+        expect.stringContaining(sized.root),
+        expect.objectContaining({ bytes: 3_000_000_000 }),
+      );
+    },
+  );
+
+  test('it reports the size of an owned emulator directory measured before teardown deletes it', async () => {
+    const root = join(projects, 'android');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    const avdRoot = join(home, 'avds');
+    const avdDir = join(avdRoot, 'stim-droid.avd');
+    mkdirSync(avdDir, { recursive: true });
+    writeFileSync(join(avdRoot, 'stim-droid.ini'), `path=${avdDir}\n`);
+    writeFileSync(join(avdDir, 'userdata-qemu.img'), Buffer.alloc(256 * 1024, 1));
+    vi.stubEnv('ANDROID_AVD_HOME', avdRoot);
+    upsertProject(root, { metroPort: 59127, platforms: { android: { avdName: 'stim-droid', owned: true } } });
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    vi.spyOn(android, 'listAvdsAsync').mockResolvedValue(['stim-droid']);
+    vi.spyOn(android, 'listAdbDevices').mockReturnValue({ emulators: [], physical: [], unhealthy: [] });
+    recordCreatedDevice('android', 'stim-droid');
+    vi.spyOn(teardown, 'teardownOwnedAvd').mockImplementation(async (name, options) => {
+      rmSync(avdDir, { recursive: true, force: true });
+      await options?.onRemoved?.();
+      return { status: 'torn-down', label: name };
+    });
+
+    const actions = await dormant();
+
+    expect(actions).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
+    expect(actions[0]?.bytes).toBeGreaterThanOrEqual(256 * 1024);
+  });
 
   test('the restore hint names stim revive while the idle stop survives and no device was deleted', async () => {
     const root = join(projects, 'revivable');
