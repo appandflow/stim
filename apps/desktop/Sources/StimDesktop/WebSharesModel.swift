@@ -10,16 +10,26 @@ final class WebSharesModel {
 
   private(set) var shares: [WebShare]?
   private(set) var stopping: Set<String> = []
+  /// Whether the server's `share.stop` takes a share `id`. A server that predates it ignores `id` and ends every share of the workspace.
+  private(set) var stopsOneShare = false
   @ObservationIgnored private var latestRefresh = 0
   private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
+  private let serverStopsOneShare: @MainActor () -> Bool
   private let toasts: ToastCenter
 
   init(
     toasts: ToastCenter? = nil,
-    request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest
+    request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest,
+    serverStopsOneShare: @escaping @MainActor () -> Bool = WebSharesModel.localServerStopsOneShare
   ) {
     self.toasts = toasts ?? .shared
     self.request = request
+    self.serverStopsOneShare = serverStopsOneShare
+  }
+
+  static func localServerStopsOneShare() -> Bool {
+    guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return false }
+    return hello.features?.contains("share-stop-id") == true
   }
 
   /// A server that does not serve shares leaves `shares` nil.
@@ -36,6 +46,7 @@ final class WebSharesModel {
     }
     guard run == latestRefresh, !Task.isCancelled else { return }
     shares = rows
+    stopsOneShare = serverStopsOneShare()
   }
 
   func start(workspace: String, platform: String, slot: String, options: WebShareOptions) async throws -> StartedWebShare {
@@ -45,12 +56,22 @@ final class WebSharesModel {
     return started
   }
 
-  /// `share.stop` ends every share of a workspace, so the row it stops names the workspace.
+  /// Ends one share, or every share of its workspace on a server whose `share.stop` ignores `id`.
+  func stop(share: WebShare) async {
+    guard serverStopsOneShare() else { return await stop(workspace: share.workspace) }
+    await stop(key: share.id, params: ["workspace": .string(share.workspace), "id": .string(share.id)])
+  }
+
+  /// `share.stop` without an `id` ends every share of a workspace.
   func stop(workspace: String) async {
-    guard stopping.insert(workspace).inserted else { return }
-    defer { stopping.remove(workspace) }
+    await stop(key: workspace, params: ["workspace": .string(workspace)])
+  }
+
+  private func stop(key: String, params: [String: JSONValue]) async {
+    guard stopping.insert(key).inserted else { return }
+    defer { stopping.remove(key) }
     do {
-      _ = try await request("share.stop", ["workspace": .string(workspace)])
+      _ = try await request("share.stop", params)
       await refresh()
     } catch {
       toasts.show(

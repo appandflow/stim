@@ -1030,6 +1030,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     });
     expect(await local.request('route.setup')).toMatchObject({ result: { state: 'routed' } });
     expect(await local.request('share.list')).toEqual(expect.objectContaining({ result: { shares: [] } }));
+    expect(await local.request('share.stop', { workspace: root })).toEqual(
+      expect.objectContaining({ result: { stopped: [] } }),
+    );
+    expect(await local.request('share.stop', { workspace: root, id: 'w1' })).toMatchObject({
+      error: { code: 'bad-request', message: expect.stringContaining('No share w1') },
+    });
+    expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
+      error: { code: 'bad-request' },
+    });
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

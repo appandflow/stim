@@ -468,6 +468,19 @@ describe('a web share', () => {
     expect(f.hub.list()).toEqual([]);
   });
 
+  it('stops only the share with the given id, in its own workspace, and leaves the others live', async () => {
+    const first = await started(f);
+    const second = await started(f, { control: true });
+    expect(await f.hub.stopOne('/work/other', first.id)).toBeNull();
+    expect(await f.hub.stopOne(WORKSPACE, 'w99')).toBeNull();
+    expect(f.hub.list()).toHaveLength(2);
+    expect((await f.hub.stopOne(WORKSPACE, first.id))?.id).toBe(first.id);
+    expect(f.hub.list().map((row) => row.id)).toEqual([second.id]);
+    expect(f.routeCloses).toBe(0);
+    expect((await f.hub.stop(WORKSPACE)).map((row) => row.id)).toEqual([second.id]);
+    expect(f.routeCloses).toBe(1);
+  });
+
   it('keeps the port a route that failed to be removed still points at bound until a later route replaces it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await started(f);

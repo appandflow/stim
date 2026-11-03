@@ -4735,10 +4735,15 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         if (
           !isJsonObject(params) ||
           typeof params.workspace !== 'string' ||
-          Object.keys(params).some((key) => key !== 'workspace')
+          (params.id !== undefined && (typeof params.id !== 'string' || params.id === '')) ||
+          Object.keys(params).some((key) => key !== 'workspace' && key !== 'id')
         )
-          return error(id, 'bad-request', 'share.stop needs params.workspace.');
-        return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+          return error(id, 'bad-request', 'share.stop needs params.workspace and takes an optional params.id.');
+        if (params.id === undefined)
+          return send(socket, { id, result: { stopped: await shares.stop(params.workspace) } });
+        const stopped = await shares.stopOne(params.workspace, params.id);
+        if (!stopped) return error(id, 'bad-request', `No share ${params.id} in this workspace.`);
+        return send(socket, { id, result: { stopped: [stopped] } });
       }
       const parsed = parseShareStart(params);
       if (typeof parsed === 'string') return error(id, 'bad-request', parsed);
