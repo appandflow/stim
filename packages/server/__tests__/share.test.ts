@@ -263,7 +263,8 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const page = await http(url);
     expect(page.status).toBe(200);
-    expect(page.body).toContain('type="password"');
+    expect(page.body).toContain('name="password"');
+    expect(page.body).not.toContain('type="password"');
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
