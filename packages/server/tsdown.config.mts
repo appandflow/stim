@@ -5,6 +5,7 @@ import { PROTOCOL_SCHEMA_FILE, protocolJsonSchema } from './src/protocol.ts';
 
 const { engines } = JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8'));
 const nodeFloor = /^>=(\d+\.\d+\.\d+)$/.exec(engines.node)?.[1];
+const viewer = (name: string) => readFileSync(`share-viewer/${name}`, 'utf8');
 if (!nodeFloor) throw new Error(`engines.node must have the form >=X.Y.Z, got ${engines.node}`);
 
 export default defineConfig({
@@ -29,6 +30,12 @@ export default defineConfig({
       for (const name of ['stim-host.c', 'Info.plist']) copyFileSync(`host/${name}`, `dist/stim-host/${name}`);
       rmSync('dist/share-viewer', { recursive: true, force: true });
       cpSync('share-viewer', 'dist/share-viewer', { recursive: true });
+      writeFileSync(
+        'dist/share-viewer/not-running.html',
+        viewer('not-running.html')
+          .replace('{{css}}', () => viewer('viewer.css'))
+          .replace('{{logo}}', () => viewer('logo.svg').trim()),
+      );
       rmSync('dist/stim-frames', { recursive: true, force: true });
       mkdirSync('dist/stim-frames');
       const desktop = readFileSync('helper/desktop-sources.txt', 'utf8').split(/\s+/).filter(Boolean);

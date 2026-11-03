@@ -15,7 +15,7 @@ import {
 } from '@stim-cli/core/state';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '@stim-cli/core/ownership-claim';
 import { formatBytes } from '../fs-util.ts';
-import { memoryCulpritsUnder } from '../host-memory.ts';
+import { memoryCulpritsUnderAsync } from '../host-memory.ts';
 import { memoryCulpritAdvice } from '../memory-culprits.ts';
 import { deviceSweepIsScoped } from '../commands/gc/devices.ts';
 import { measureOwnedDevices } from './devices.ts';
@@ -274,7 +274,7 @@ export async function runMaintenance(trigger: string, { report = false }: { repo
         if (check === 'worktree' || check === 'sweep' || check === 'idle') continue;
         if (check === 'pressure') {
           state.pressure = measurePressure(state.pressure, state.lastAt[check]!);
-          const culprits = memoryCulpritsUnder(state.pressure.memory.level);
+          const culprits = await memoryCulpritsUnderAsync(state.pressure.memory.level);
           if (culprits) state.pressure.memory.culprits = culprits;
           for (const disk of state.pressure.disk)
             record('maintenance_check', 'debug', `Disk free on ${disk.volume}: ${(disk.freeMb / 1024).toFixed(1)}G`, {

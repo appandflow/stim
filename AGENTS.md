@@ -540,7 +540,12 @@ outside it moves to its own issue and pull request.
   serve config still holds exactly that route. A share never starts the
   recorder or capture before a signed-in viewer connects. The viewer's
   stylesheet and its scripts are fixed bundled files served without a token
-  under `/s/assets/`; they carry no share data. A workspace whose
+  under `/s/assets/`; they carry no share data. In proxy mode with
+  `share.publicUrl` set, a stim-server installed with `stim-server service`
+  keeps the listener bound with no share and answers every request that is not
+  a live share's with the fixed not-found page (404, no share data, nothing
+  kept about an ended share); the on-demand `--share` server and tailscale
+  exposure never keep a listener. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription per codec for all viewers, control through
   `device-host.control.begin` and `device-host.input.*`); the worker sees only

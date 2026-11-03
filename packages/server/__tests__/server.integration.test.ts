@@ -486,6 +486,7 @@ async function start(
     settle?: boolean;
     statusAtBoot?: boolean;
     service?: ServerOptions['service'];
+    shareServer?: ServerOptions['shareServer'];
     requestLog?: ServerOptions['requestLog'];
     /** The bundled Desktop's private key; the test key by default, null for a server Desktop did not start. */
     desktopBootstrap?: ServerOptions['desktopBootstrap'] | null;
@@ -524,6 +525,7 @@ async function start(
     transports: overrides.transports,
     statusAtBoot: overrides.statusAtBoot ?? false,
     service: overrides.service,
+    shareServer: overrides.shareServer,
     listenRetryMs: overrides.listenRetryMs,
     authTimeoutMs: overrides.authTimeoutMs,
     maxAuthFailures: overrides.maxAuthFailures,
@@ -12893,5 +12895,61 @@ describe.skipIf(process.platform === 'win32')('Desktop machine access requests',
       release();
       api.mockRestore();
     }
+  });
+});
+
+describe('the web share listener of a server', () => {
+  const service = (installed: boolean): ServerOptions['service'] => ({
+    label: 'dev.stim.test',
+    node: process.execPath,
+    script: '/nowhere',
+    runsAsService: async () => installed,
+  });
+
+  async function configure(): Promise<number> {
+    const probe = createNetServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const address = probe.address();
+    const port = typeof address === 'object' && address ? address.port : 0;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    writeFileSync(
+      join(String(process.env.STIM_HOME), 'config.json'),
+      JSON.stringify({
+        projects: { [workspace]: {} },
+        share: { exposure: 'proxy', publicUrl: 'https://demo.example.com', port },
+      }),
+    );
+    return port;
+  }
+
+  const answers = (port: number) =>
+    new Promise<boolean>((resolve) => {
+      const probe = connectNet(port, '127.0.0.1', () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once('error', () => resolve(false));
+    });
+
+  test('stays bound with no share when stim-server runs as the installed service with proxy exposure', async () => {
+    const port = await configure();
+    await start({ service: service(true) });
+    await vi.waitFor(async () => expect(await answers(port)).toBe(true));
+    const answer = await fetch(`http://127.0.0.1:${port}/s/${'A'.repeat(43)}/`);
+    expect(answer.status).toBe(404);
+    expect(await answer.text()).toContain('This share has ended or the link is wrong');
+    await server?.close();
+    expect(await answers(port)).toBe(false);
+  });
+
+  test.each([
+    ['a server that is not the installed service', { service: service(false) }],
+    ['the on-demand server of stim share', { service: service(true), shareServer: { idle: () => {} } }],
+    ['a server with no service label', {}],
+  ] as const)('does not bind it for %s', async (_name, overrides) => {
+    const port = await configure();
+    await start(overrides);
+    await new Promise((done) => setTimeout(done, 200));
+    expect(await answers(port)).toBe(false);
   });
 });

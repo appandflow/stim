@@ -113,34 +113,6 @@ export function memoryCulpritAdvice(culprits: readonly MemoryCulprit[] | null): 
  * root-owned daemons such as fseventsd, and unlike `ps` RSS it counts compressed and swapped memory. Null off macOS
  * or when `top` fails.
  */
-export function readMemoryCulprits(
-  exec: Executor = getExecutor(),
-  platform: NodeJS.Platform = process.platform,
-  totalBytes: number = totalmem(),
-): MemoryCulprit[] | null {
-  if (platform !== 'darwin') return null;
-  const output = exec.runFileQuiet(
-    '/usr/bin/top',
-    ['-l', '1', '-o', 'mem', '-n', String(TOP_ROWS), '-stats', 'pid,mem,command'],
-    { timeoutMs: 10_000 },
-  );
-  if (output === null) return null;
-  const processes = parseTopMemory(output);
-  const java = processes.filter((entry) => entry.name === 'java').map((entry) => entry.pid);
-  const commandLines = new Map<number, string>();
-  if (java.length) {
-    const listed = exec.runFileQuiet('/bin/ps', ['-ww', '-o', 'pid=,command=', '-p', java.join(',')], {
-      timeoutMs: 5000,
-    });
-    for (const line of listed?.split('\n') ?? []) {
-      const match = /^\s*(\d+)\s+(.*)$/.exec(line);
-      const command = match?.[2];
-      if (command !== undefined) commandLines.set(Number(match?.[1]), command);
-    }
-  }
-  return findMemoryCulprits(processes, totalBytes, commandLines);
-}
-
 export async function readMemoryCulpritsAsync(
   exec: Executor = getExecutor(),
   platform: NodeJS.Platform = process.platform,

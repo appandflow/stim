@@ -643,6 +643,13 @@ describe.skipIf(process.platform === 'win32')('agent-device confinement', () => 
       expect((await through(driver, SESSION, 'GET', '/rpc')).status).toBe(404);
       expect((await through(driver, SESSION, 'POST', '/upload', 'x')).status).toBe(404);
       expect((await through(driver, SESSION, 'GET', `/sessions/${SESSION}/requests/r1/diagnostics`)).status).toBe(404);
+      const owned = `/sessions/${encodeURIComponent(`stim.${SESSION}:default`)}/requests/r1/diagnostics`;
+      const diagnostics = await through(driver, SESSION, 'GET', owned);
+      expect(diagnostics.status).toBe(200);
+      expect(JSON.parse(diagnostics.text)).toMatchObject({ url: owned, tenant: `stim.${SESSION}` });
+      expect((await through(driver, SESSION, 'POST', owned, 'x')).status).toBe(404);
+      const another = `/sessions/${encodeURIComponent('stim.other:default')}/requests/r1/diagnostics`;
+      expect((await through(driver, SESSION, 'GET', another)).status).toBe(404);
     } finally {
       await driver.stop();
     }

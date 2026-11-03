@@ -66,6 +66,10 @@ when the user asks for it.
 
 WHAT IT NEEDS
 
+- macOS or Linux. stim talks to the stim-server through its local socket,
+  which Windows does not have, so on Windows every stim share action refuses
+  at once with STIM_SHARE_REFUSED and starts no server. Run stim share on the
+  macOS or Linux host that runs the device.
 - A stim-server for this Stim home. The share lives inside it, and a server
   restart ends every share. When none runs, stim share starts one in the
   background (stim-server --share: loopback only, no Desktop bootstrap) from
@@ -142,8 +146,66 @@ share.publicUrl, such as https://example.com/stim, must be left on the path
 when forwarding (Caddy handle /stim/*, never handle_path); the session cookie
 and redirects are then scoped to the prefixed path. The proxy must end TLS:
 the cookie is Secure. A setting changed while a share is live applies to the
-next listener, after the last share ends. Only one stim-server can bind
-share.port at a time.
+next listener, after the last share ends; with the background service and
+share.publicUrl set it applies when the next share starts or the service
+restarts. Only one stim-server can bind share.port at a time.
+
+Links that ended or never existed: when stim-server runs as the background
+service (stim-server service install) and share.publicUrl is set in proxy mode,
+the listener binds share.port when the service starts and stays bound with no
+share live. It answers every request that is not a live share's, any path and
+method, with a "This share has ended or the link is wrong" page in the viewer's
+design and status 404, the same for a link that ended and one that never
+existed (nothing about an ended share is kept). The page holds no share data
+and lists no shares; it sends Cache-Control: no-store and a strict CSP. The
+listener binds 127.0.0.1 only, adds no Tailscale route and no
+server/share-route claim, and closes when the service stops. The on-demand
+stim-server --share still exits after its last share, and tailscale exposure
+keeps no listener. A taken port is logged once; the next stim share refuses and
+names share.port.
+
+When stim-server is not running at all, the proxy needs its own page. The
+@stim-cli/server package ships dist/share-viewer/not-running.html (the same
+design, stylesheet inlined, no script). Copy it next to the proxy config, for
+example:
+
+  cd "$(mktemp -d)" && npm pack @stim-cli/server
+  tar -xzf stim-cli-server-*.tgz package/dist/share-viewer/not-running.html
+  sudo install -D -m 644 package/dist/share-viewer/not-running.html /var/www/stim-share/not-running.html
+
+and answer 503 (temporary: the same link works once Stim runs) for the proxy's
+own 502, 503 and 504, never for the listener's 404, which passes through.
+Caddy:
+
+  demo.example.com {
+    reverse_proxy 127.0.0.1:7790
+    handle_errors {
+      @down expression {http.error.status_code} in [502, 503, 504]
+      handle @down {
+        rewrite * /not-running.html
+        file_server {
+          root /var/www/stim-share
+          status 503
+        }
+      }
+    }
+  }
+
+nginx (proxy_intercept_errors replaces only the codes named in error_page;
+$connection_upgrade comes from the usual map block):
+
+  location / {
+    proxy_pass http://127.0.0.1:7790;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_intercept_errors on;
+    error_page 502 503 504 =503 /not-running.html;
+  }
+  location = /not-running.html {
+    internal;
+    root /var/www/stim-share;
+  }
 
 SECURITY MODEL
 
@@ -212,7 +274,9 @@ SECURITY MODEL
   ends a share of that slot this way), when the device's frames fail, and when
   stim-server stops. Ending
   closes its viewers' sockets. The last one removes the Funnel route first and
-  only then closes the listener, so the route never points at a free port.
+  only then closes the listener, so the route never points at a free port (the
+  listener the background service keeps in proxy mode stays bound until the
+  service stops).
 - In tailscale mode the route is recorded under an ownership claim at
   $STIM_HOME/server/share-route. When stim-server crashed, the route stays
   public, pointing at a free loopback port, until the next stim-server start

@@ -20,6 +20,8 @@ struct PhysicalDeviceScreen: View {
   /// Receives the windows of a hosted macOS app, for the tile's menu.
   var windowChoice: MacosWindowChoice?
   var quality: StreamQuality
+  /// Receives the stream and what the clipboard section may offer, for the tile's options.
+  var clipboard: ServerClipboard?
   @ObservedObject private var localSession = ServerSession.shared
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @StateObject private var stream: PhysicalStream
@@ -27,9 +29,10 @@ struct PhysicalDeviceScreen: View {
   init(
     device: DeviceRef, owner: ServerOwner = .local, workspace: String, interactive: Bool, covered: Bool = false,
     onPixelSizeChange: @escaping (CGSize) -> Void, onControlLost: @escaping () -> Void,
-    windowChoice: MacosWindowChoice? = nil, quality: StreamQuality = .standard
+    windowChoice: MacosWindowChoice? = nil, quality: StreamQuality = .standard, clipboard: ServerClipboard? = nil
   ) {
     self.quality = quality
+    self.clipboard = clipboard
     self.windowChoice = windowChoice
     self.device = device
     self.owner = owner
@@ -49,6 +52,7 @@ struct PhysicalDeviceScreen: View {
       let screen = ServerSession.screen(for: owned, now: context.date)
       content(screen)
         .onChange(of: screen, initial: true) { _, screen in follow(screen) }
+        .onChange(of: clipboardAccess, initial: true) { _, access in clipboard?.access = access }
     }
     .onChange(of: interactive, initial: true) { _, interactive in
       if interactive, ServerSession.screen(for: owned, now: Date()).canControl {
@@ -71,7 +75,12 @@ struct PhysicalDeviceScreen: View {
     .onChange(of: quality) { _, quality in stream.setQuality(quality) }
     .onChange(of: stream.windows, initial: true) { _, windows in publishWindows(windows) }
     .onChange(of: isControlling, initial: true) { _, _ in publishWindows(stream.windows) }
+    .onAppear { clipboard?.stream = stream }
     .onDisappear {
+      if clipboard?.stream === stream {
+        clipboard?.stream = nil
+        clipboard?.access = .none
+      }
       stream.stop()
       windowChoice?.windows = []
       windowChoice?.currentPointSize = nil
@@ -115,6 +124,13 @@ struct PhysicalDeviceScreen: View {
   }
 
   private var owned: OwnedDevice { OwnedDevice(owner: owner, ref: device) }
+
+  private var clipboardAccess: ServerClipboard.Access {
+    let session = ServerSession.session(for: owner)
+    return ServerClipboard.Access(
+      platform: device.platform, physical: device.isPhysical, link: session?.link ?? .connecting, control: stream.control,
+      server: owner.isLocal ? nil : session?.name ?? "the paired machine")
+  }
 
   private var isControlling: Bool {
     if case .on = stream.control { return true }
