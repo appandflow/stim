@@ -86,6 +86,12 @@ struct PairMachineSheet: View {
       fact("Fingerprint", payload.fingerprint, mono: true)
       Text("Desktop pairs only with the machine whose key has this fingerprint.")
         .font(.stim(.footnote)).foregroundStyle(Palette.tertiary)
+      if payload.network == .localNetwork {
+        Text(
+          "This is a local network address, not a Tailscale one. Pair only if this fingerprint is the one stim-server prints on the machine."
+        )
+        .font(.stim(.footnote)).foregroundStyle(Palette.warning).fixedSize(horizontal: false, vertical: true)
+      }
     }
     .padding(Space.lg)
     .frame(maxWidth: .infinity, alignment: .leading)
