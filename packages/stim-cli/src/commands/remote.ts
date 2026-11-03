@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import type { Command } from 'commander';
-import { readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
+import { keyFingerprint } from '@stim-cli/core/noise-session';
+import { readBuildMachines, readDeviceHostMachines, type MachineCredential } from '@stim-cli/core/state';
 import type { Finding } from '../diagnostics/doctor.ts';
 import { phaseLine } from '../command-output.ts';
 import { configuredMachines, forgetDeviceHostMachine, inspectDeviceHostMachines } from '../device-host/machines.ts';
@@ -81,6 +82,22 @@ function confirmer(json: boolean) {
   return keyConfirmer(interactive ? confirmInTerminal : null);
 }
 
+const ANSWERED = new Set(['approved', 'pending', 'revoked', 'outdated']);
+const UNREACHABLE = new Set(['unreachable', 'tailscale-off', 'not-on-tailnet']);
+
+function reachability(states: string[]): 'key-changed' | 'reachable' | 'unreachable' | 'unknown' {
+  if (states.includes('key-changed')) return 'key-changed';
+  if (states.some((state) => ANSWERED.has(state))) return 'reachable';
+  if (states.some((state) => UNREACHABLE.has(state))) return 'unreachable';
+  return 'unknown';
+}
+
+function revokeCommands(credentials: MachineCredential[]): string[] {
+  return [...new Set(credentials.flatMap((each) => (each.deviceId ? [each.deviceId] : [])))].map(
+    (id) => `stim-server devices revoke ${id}`,
+  );
+}
+
 function stateLine(build: BuildReport | null, host: HostReport | null): string {
   return `build ${build?.state ?? 'unknown'}, device-host ${host?.state ?? 'unknown'}`;
 }
@@ -143,12 +160,23 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         const options = { fix: false, version, confirmKey: confirmer(Boolean(opts.json)) };
         const build = await inspectBuildMachines(options, io, entries);
         const host = await inspectDeviceHostMachines(options, io, entries);
-        const machines = entries.map((machine, at) => ({
-          machine,
-          priority: at + 1,
-          build: build.machines.find((each) => each.machine === machine) ?? null,
-          deviceHost: host.machines.find((each) => each.machine === machine) ?? null,
-        }));
+        const credentials = [...readBuildMachines(), ...readDeviceHostMachines()];
+        const machines = entries.map((machine, at) => {
+          const buildReport = build.machines.find((each) => each.machine === machine) ?? null;
+          const hostReport = host.machines.find((each) => each.machine === machine) ?? null;
+          const held = credentials.filter((each) => each.machine === machine);
+          const pinned =
+            held.find((each) => each.state === 'approved' && each.serverKey) ?? held.find((each) => each.serverKey);
+          return {
+            machine,
+            priority: at + 1,
+            build: buildReport,
+            deviceHost: hostReport,
+            serverKeyFingerprint: pinned?.serverKey ? keyFingerprint(Buffer.from(pinned.serverKey, 'base64url')) : null,
+            reachability: reachability([buildReport?.state, hostReport?.state].flatMap((state) => state ?? [])),
+            revoke: revokeCommands(held),
+          };
+        });
         const findings = [...build.findings, ...host.findings];
         if (opts.json) {
           console.log(JSON.stringify({ machines, findings }));
@@ -176,9 +204,7 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         const credentials = [...readBuildMachines(), ...readDeviceHostMachines()].filter(
           (each) => each.machine === machine,
         );
-        const revoke = [...new Set(credentials.flatMap((each) => (each.deviceId ? [each.deviceId] : [])))].map(
-          (id) => `stim-server devices revoke ${id}`,
-        );
+        const revoke = revokeCommands(credentials);
         const pending = credentials.some((each) => !each.deviceId);
         const { before, after } = await updateRemoteMachinesAsync(
           (machines) => machines.filter((each) => each !== machine),

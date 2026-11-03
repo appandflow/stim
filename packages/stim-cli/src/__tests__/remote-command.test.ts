@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
+import { keyFingerprint } from '@stim-cli/core/noise-session';
 import { readBuildMachines, readDeviceHostMachines } from '@stim-cli/core/state';
 import remoteCommand from '../commands/remote.ts';
 import { inspectDeviceHostMachines } from '../device-host/machines.ts';
@@ -92,6 +93,37 @@ test('add refuses a name that is not a machine entry and writes nothing', async 
   expect(process.exitCode).toBe(1);
   expect(loadConfig()?.remote?.machines).toEqual(['mini']);
   expect(readBuildMachines()).toEqual([]);
+});
+
+test('list --json gives each machine its server key fingerprint, reachability and the revoke command for there', async () => {
+  await approveMini();
+  await remote(fakeIo([notYet, notYet]), 'add', 'studio');
+  writeConfigSetting({ scope: 'machine' }, 'remote.machines', ['mini', 'studio', 'local:127.0.0.1:1']);
+  vi.restoreAllMocks();
+  const unreachable: HelloReply = { failed: 'connection refused' };
+  const out = await remote(
+    fakeIo([granted('build'), unreachable, granted('device-host'), unreachable]),
+    'list',
+    '--json',
+  );
+  const { machines }: { machines: Record<string, unknown>[] } = JSON.parse(out);
+  expect(
+    machines.map(({ machine, serverKeyFingerprint, reachability, revoke }) => ({
+      machine,
+      serverKeyFingerprint,
+      reachability,
+      revoke,
+    })),
+  ).toEqual([
+    {
+      machine: 'mini',
+      serverKeyFingerprint: keyFingerprint(Buffer.from(SERVER_KEY, 'base64url')),
+      reachability: 'reachable',
+      revoke: ['stim-server devices revoke dev-mini'],
+    },
+    { machine: 'studio', serverKeyFingerprint: null, reachability: 'unreachable', revoke: [] },
+    { machine: 'local:127.0.0.1:1', serverKeyFingerprint: null, reachability: 'unknown', revoke: [] },
+  ]);
 });
 
 test('remove drops the entry and its credentials, keeps the others, and prints the revoke command for there', async () => {
