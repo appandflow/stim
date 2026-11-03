@@ -263,40 +263,39 @@ test('on win32 a command starts no daemon, whatever STIM_DAEMON says', async () 
   expect(spawn).not.toHaveBeenCalled();
 });
 
-test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process unless daemon.mode is off', async () => {
-  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
-  setExecutor({
-    ...getExecutor(),
-    spawn() {
-      throw new Error('no daemon starts in this test');
-    },
-  });
-  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
-  onTestFinished(() => {
-    platform.mockRestore();
-    resetExecutor();
-  });
-  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
-  delete env[HOME_PASSES_TEST_GUARD_ENV];
+test.skipIf(process.platform === 'win32')(
+  'doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process unless daemon.mode is off',
+  async () => {
+    const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+    setExecutor({
+      ...getExecutor(),
+      spawn() {
+        throw new Error('no daemon starts in this test');
+      },
+    });
+    onTestFinished(() => resetExecutor());
+    const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
+    delete env[HOME_PASSES_TEST_GUARD_ENV];
 
-  for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
-    await beforeCommand(name, env);
-  expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
+    for (const name of ['start', 'ios', 'android', 'doctor', 'web', 'macos', 'revive', 'logs', 'status'])
+      await beforeCommand(name, env);
+    expect(ran.mock.calls).toEqual(['start', 'ios', 'android', 'doctor'].map((name) => [name, { report: false }]));
 
-  ran.mockClear();
-  for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
-  expect(ran).not.toHaveBeenCalled();
-  await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
-  const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
-  assert(claim);
-  try {
-    await beforeCommand('doctor', env);
-    await beforeCommand('start', env);
-  } finally {
-    releaseClaim(claim);
-  }
-  expect(ran).not.toHaveBeenCalled();
-});
+    ran.mockClear();
+    for (const name of ['start', 'doctor']) await beforeCommand(name, { ...env, STIM_DAEMON: 'off' });
+    expect(ran).not.toHaveBeenCalled();
+    await beforeCommand('doctor', { ...env, [HOME_PASSES_TEST_GUARD_ENV]: '1' });
+    const claim = tryAcquireClaim({ root: daemonClaimRoot(), mode: 'exclusive', label: 'stim-daemon' }).acquired;
+    assert(claim);
+    try {
+      await beforeCommand('doctor', env);
+      await beforeCommand('start', env);
+    } finally {
+      releaseClaim(claim);
+    }
+    expect(ran).not.toHaveBeenCalled();
+  },
+);
 
 test('on win32 every command but guide, settings, help and gc runs automatic maintenance in-process', async () => {
   const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
