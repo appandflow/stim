@@ -1028,9 +1028,11 @@ dev server supervisor stops its own dev server and devices after
 CI unless `STIM_DAEMON` is set.
 
 While no daemon runs (on Windows, which has none, or when one could not start),
-`stim doctor`, `stim start`, `stim ios` and `stim android` run automatic
-maintenance and the pressure ladder in their own process, acting in `on` and
-only logging in `report`. `stim gc --delete` runs the ladder in its own process
+`stim doctor`, `stim start`, `stim ios` and `stim android`, and on Windows every
+command except `stim guide`, `stim settings` and `stim gc`, run automatic
+maintenance, the idle stage for owned devices whose workspace has no running dev
+server, and the pressure ladder in their own process, never for the command's own
+workspace, acting in `on` and only logging in `report`. `stim gc --delete` runs the ladder in its own process
 whether or not a daemon runs. A command starts the daemon in the mode it resolves, `STIM_DAEMON` included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's `CI` and the environment
@@ -1048,8 +1050,8 @@ idle or dormant with the time in it, or stopped. `stim status --json` carries
 the last 20 actions as `daemon.recent`. `stim doctor` prints the daemon line, its
 last action or snapshot file and its log, and reports a daemon that stopped
 ticking or a claim it cannot resolve. On Windows, which has no daemon yet, the
-line says that `start`, `ios`, `android`, `doctor` and `gc` run the passes in
-their own process.
+line says that every command but `guide` and `settings` runs the passes in its
+own process.
 
 `idle.minutes` takes machine and project layers; `0` turns the idle and dormant
 stages off. `idle.dormantDays` is a machine setting.

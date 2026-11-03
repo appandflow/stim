@@ -546,7 +546,7 @@ from the cache that `stim status --watch` and the maintenance worktree check
 write, when that cache describes the worktree's current branch and HEAD. The
 worktree check runs every `maintenance.worktreeCheckMinutes` (15 by default)
 in a maintenance pass: on a `stim-daemon` tick, or, while no daemon holds the
-home, when `stim doctor`, `stim start`, `stim ios` or `stim android` runs one;
+home, when `stim doctor`, `stim start`, `stim ios` or `stim android` (on Windows, any command but `guide`, `settings` and `gc`) runs one;
 `gc` never starts one. The ref and the cache count as fresh while they are younger
 than twice that interval, and never less than 10 minutes. A merge found this
 way stays true as the default branch moves on, so the report calls a worktree

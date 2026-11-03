@@ -155,7 +155,13 @@ starts it again too, and its JSON result reports
 
 With [`daemon.mode`](./settings.md#stim-daemon) `off`, or while no daemon
 runs, the dev server's own supervisor applies the same clock to itself and its
-devices, without deleting build outputs.
+devices, without deleting build outputs. A device whose workspace has no running
+dev server, such as an emulator left booted after a Release `stim android`,
+goes into the idle stage in the next command that runs the in-process passes
+(`stim doctor`, `stim start`, `stim ios` and `stim android`, and on Windows any
+command but `stim guide`, `stim settings` and `stim gc`), never in the
+workspace that command runs in. Nothing times it between commands without a
+daemon.
 
 <StimTabs code={`stim settings set idle.minutes 60 --scope workspace`} />
 

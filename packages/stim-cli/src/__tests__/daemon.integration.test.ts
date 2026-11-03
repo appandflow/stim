@@ -293,3 +293,16 @@ test('doctor, and start, ios and android with no daemon holding the home, run au
   }
   expect(ran).not.toHaveBeenCalled();
 });
+
+test('on win32 every command but guide, settings, help and gc runs automatic maintenance in-process', async () => {
+  const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  onTestFinished(() => platform.mockRestore());
+  const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
+  delete env[HOME_PASSES_TEST_GUARD_ENV];
+
+  const names = ['start', 'ios', 'android', 'web', 'revive', 'doctor', 'logs', 'status', 'reload', 'stop'];
+  for (const name of [...names, 'guide', 'settings', 'help', 'gc']) await beforeCommand(name, env);
+
+  expect(ran.mock.calls).toEqual(names.map((name) => [name, { report: false }]));
+});

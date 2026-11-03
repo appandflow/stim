@@ -63,7 +63,7 @@ test('the status line says whether the daemon runs and when it last ticked', () 
 
 test('on Windows, which has no daemon, status and doctor say the commands run the passes themselves', () => {
   expect(daemonLine(status({}), NOW, 'win32')).toBe(
-    'Daemon: none on Windows; start, ios, android, doctor and gc run the passes in their own process (daemon.mode on)',
+    'Daemon: none on Windows; every command but guide and settings runs the passes in its own process (daemon.mode on)',
   );
   expect(titles(status({}), ['/app'], 'win32')).toEqual([]);
 });

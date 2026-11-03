@@ -6,7 +6,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { daemonMode, spawnsDaemon } from './mode.ts';
+import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
@@ -151,20 +151,23 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
-const PASS_COMMANDS = ['start', 'ios', 'android'];
+const PASS_COMMANDS = ['doctor', 'start', 'ios', 'android'];
+const PASSLESS_COMMANDS = ['guide', 'settings', 'help', 'gc'];
 
 /**
  * Before a top-level command runs: commands that create running state record the use of their workspace and make sure
- * the home's daemon runs; `doctor`, and `start`, `ios` and `android` when no daemon holds the home, run automatic
- * maintenance and the pressure ladder in this process, never taking the command's own workspace.
+ * the home's daemon runs; `doctor`, and `start`, `ios` and `android` when no daemon holds the home, run the in-process
+ * passes (maintenance, the activity pass over workspaces with no dev server, the pressure ladder), never taking the
+ * command's own workspace. On a platform with no daemon every command but `guide`, `settings`, `help` and `gc` does.
  */
 export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const creates = DAEMON_COMMANDS.includes(name);
-  if (!creates && name !== 'doctor') return;
+  const runsPasses = PASS_COMMANDS.includes(name) || (!platformHasDaemon() && !PASSLESS_COMMANDS.includes(name));
+  if (!creates && !runsPasses) return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates, env);
   const held = creates && (await ensureDaemon(env));
-  if (name !== 'doctor' && (held || !PASS_COMMANDS.includes(name))) return;
+  if (held || !runsPasses) return;
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);
 }
