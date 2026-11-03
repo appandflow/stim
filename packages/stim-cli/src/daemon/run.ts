@@ -55,7 +55,6 @@ const EMPTY_TICKS_BEFORE_EXIT = 2;
 const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
 const HANDOVER_REPLY_MS = 5000;
-const LEGACY_TICK_WAIT_MS = 10_000;
 const HANDOVER_WAIT_MS = 10 * 60_000;
 const HANDOVER_POLL_MS = 250;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
@@ -98,9 +97,10 @@ function daemonHolder(pid: number): ProcessRecord | null {
 
 /**
  * Asks the running daemon `pid` to exit after its current tick and waits, up to ten minutes, for it to release its
- * claim. A daemon whose `hello` carries no `build` predates handovers: on SIGTERM it releases its claim at once, even
- * in the middle of a pass, so it gets the signal right after it answers a tick, or after ten seconds without an
- * answer, and its process is returned for the caller to outwait before its first tick.
+ * claim. A daemon whose `hello` carries no `build` predates handovers and gets SIGTERM instead. It then releases its
+ * claim at once, even in the middle of a pass that runs on until the process exits, so its process is returned for
+ * the caller to outwait before its first tick. Signalled between a pass and its wait, it would sleep through that
+ * wait, up to five minutes; the tick request sent just before the signal wakes it.
  */
 async function takeOverFrom(
   pid: number,
@@ -115,7 +115,11 @@ async function takeOverFrom(
     if (reply?.accepted === false) return null;
     log('info', 'daemon_handover', `asked stim-daemon pid ${pid} to exit after its tick`);
   } else {
-    await askDaemon('tick', LEGACY_TICK_WAIT_MS);
+    await new Promise<void>((done) => {
+      const socket = connect(daemonSocket());
+      socket.once('error', () => done());
+      socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'tick' })}\n`, () => done()));
+    });
     if (!daemonHolder(pid)) return null;
     try {
       process.kill(pid, 'SIGTERM');
@@ -123,7 +127,7 @@ async function takeOverFrom(
       return null;
     }
     stopped = holder;
-    log('info', 'daemon_handover', `stopped stim-daemon pid ${pid}, which predates handovers, after its tick`);
+    log('info', 'daemon_handover', `stopped stim-daemon pid ${pid}, which predates handovers`);
   }
   const deadline = Date.now() + HANDOVER_WAIT_MS;
   while (daemonHolder(pid) && Date.now() < deadline) await new Promise((done) => setTimeout(done, HANDOVER_POLL_MS));
