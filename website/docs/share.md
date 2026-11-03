@@ -57,8 +57,8 @@ holds:
   with `--control`.
 - **Rotate left and right**, with `--control`, for an owned simulator or
   emulator. A physical device rotates only in hand. The picture turns only when
-  the app in front supports the new orientation; a portrait-only app stays
-  upright.
+  the app in front supports the new orientation (and, on an emulator, auto-rotate
+  is on); a portrait-only app stays upright.
 - **Fullscreen.**
 
 The page fits the window without scrolling. The line under the toolbar shows

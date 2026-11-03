@@ -107,6 +107,9 @@ footer {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.viewer .status {
+  white-space: normal;
+}
 .status .dot {
   width: 8px;
   height: 8px;
