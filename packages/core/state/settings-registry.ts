@@ -239,15 +239,18 @@ export interface LeftoverOffRule {
   scopes: readonly SettingScope[];
   /** The new setting's value for an old value that turned it off; null for any other old value. */
   off: (old: unknown) => string | null;
-  /** Set when the old setting is still read for something else, which this says; setting `key` anywhere settles it. */
+  /**
+   * Set when the old setting is still read for something else, which this says. Its value then never refuses; doctor
+   * reports it until `key` is set anywhere.
+   */
   kept?: string;
 }
 
 const offAtZero = (old: unknown): string | null => (sameNumber(old) === '0' ? '0' : null);
 
 /**
- * The old values that turned a mechanism off. While a loaded config layer still holds one, start, ios, android, web,
- * macos, revive and gc refuse, so the old off never silently becomes a default that acts.
+ * The old values that turned a mechanism off. While a loaded config layer still holds one of a removed setting, start,
+ * ios, android, web, macos, revive and gc refuse, so the old off never silently becomes a default that acts.
  */
 export const LEFTOVER_OFF: Readonly<Record<string, LeftoverOffRule>> = {
   'maintenance.mode': {

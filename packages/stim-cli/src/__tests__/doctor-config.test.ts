@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert';
 import { checkMachineSettings, readMachineSettings } from '../diagnostics/doctor-config.ts';
+import { leftoverOffRefusal } from '../workspace/leftover-off.ts';
 import {
   reactNativeDoctorFindings,
   type DoctorInspectionOptions,
@@ -103,11 +104,16 @@ test('an old value that turned nothing off, or sits in a layer it was never read
   expect(check({ metro: { idleStopMinutes: 0 } })).toEqual([expect.objectContaining({ level: 'note' })]);
 });
 
-test('maintenance.idleStopHours 0 costs until idle.dormantDays is set, since it still stops hosted sessions', () => {
+test('maintenance.idleStopHours 0 costs until idle.dormantDays is set, naming the three ways out, and never refuses', () => {
   const settings = { maintenance: { idleStopHours: 0 } };
-  expect(check(settings)).toEqual([
-    expect.objectContaining({ level: 'cost', fix: expect.stringContaining('`stim settings set idle.dormantDays 0`') }),
-  ]);
+  const [finding] = check(settings);
+  expect(finding).toMatchObject({ level: 'cost', detail: expect.not.stringContaining('refuse') });
+  for (const command of [
+    'stim settings set idle.dormantDays 0',
+    'stim settings set idle.dormantDays 3',
+    'stim settings unset maintenance.idleStopHours --scope machine',
+  ])
+    expect(finding?.fix).toContain(`\`${command}\``);
   expect(
     checkMachineSettings({
       settings,
@@ -118,6 +124,28 @@ test('maintenance.idleStopHours 0 costs until idle.dormantDays is set, since it 
       machineConfig: { ...settings, idle: { dormantDays: 0 } },
     }),
   ).toEqual([]);
+});
+
+test('a leftover whose replacement a layer already sets names that value and asks only for the unset', () => {
+  const committed = { metro: { idleStopMinutes: 0 } };
+  const machine = { idle: { minutes: 0 } };
+  const findings = checkMachineSettings({
+    settings: { ...committed, ...machine },
+    layers: [
+      { scope: 'committed', file: '/app/.stim.json', settings: committed },
+      { scope: 'machine', file: MACHINE, settings: machine },
+    ],
+    projectRoot: '/app',
+    exists: () => false,
+    env: {},
+  });
+  expect(findings).toEqual([
+    expect.objectContaining({
+      level: 'cost',
+      detail: expect.stringContaining(`idle.minutes is 0 in ${MACHINE}.`),
+      fix: 'Run `stim settings unset metro.idleStopMinutes`.',
+    }),
+  ]);
 });
 
 describe('against a config file on disk', () => {
@@ -146,6 +174,13 @@ describe('against a config file on disk', () => {
   function writeConfig(config: Record<string, unknown>) {
     writeFileSync(join(home, 'config.json'), JSON.stringify(config));
   }
+
+  test('maintenance.idleStopHours 0, a current setting, never makes a governed command refuse', () => {
+    writeConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0 } });
+    expect(leftoverOffRefusal('gc', project, {})).toBeNull();
+    writeConfig({ version: 2, projects: {}, repos: {}, maintenance: { idleStopHours: 0, mode: 'off' } });
+    expect(leftoverOffRefusal('gc', project, {})?.message).toMatch(/^maintenance\.mode "off" in /);
+  });
 
   test('a remote.build hand-edited into the machine config to an invalid value reaches doctor', async () => {
     writeConfig({ version: 2, repos: {}, projects: {}, remote: { build: 'bad word' } });

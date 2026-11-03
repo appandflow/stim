@@ -128,12 +128,14 @@ export function checkMachineSettings({
     findings.push(compilerCacheFinding({ fallback: reported, optimizations, file: fallbackEntry?.file ?? null }));
   }
 
-  const leftovers = leftoverOffSettings(layers, machineConfig);
+  const leftovers = leftoverOffSettings(layers, machineConfig, env);
   for (const leftover of leftovers)
     findings.push({
       level: 'cost',
-      title: `${leftover.key} in the config turned off what Stim now does by default`,
-      detail: `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`,
+      title: leftover.title,
+      detail: leftover.refuses
+        ? `${leftover.message} start, ios, android, web, macos, revive and gc refuse to run while it is there.`
+        : leftover.message,
       fix: leftover.remedy,
     });
 
