@@ -2052,7 +2052,10 @@ workspace device with three methods that only the local Unix socket may call
   `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, url, password }`.
   It refuses a device the workspace does not own or lease, a hosted device,
   `control` on a physical iPhone, and `password` with `passwordless`.
-- `share.stop` takes `workspace` and ends its shares, returning `stopped`.
+- `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
+  `id` (the `share-stop-id` feature) it ends only that share of the workspace,
+  and refuses an `id` the workspace does not have with `bad-request`. A server
+  without the feature refuses `id`, so a client checks the feature first.
 - `share.list` returns `shares`, the same rows without `url` or `password`.
 
 `stim-server --share [--port <n>]` is the server `stim share` starts when none

@@ -2349,7 +2349,7 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
         'every flag per command, Android variants and flavors, the per-run simulator model, runtime and system image',
       body: () => `THE OPTION SURFACE, IN FULL
   start           --json --wait <seconds> --remote --reset-cache
-  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
+  ios             --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --scheme <name> --configuration <name> --device-type <name> --runtime <version> --install-runtime --simulator-app <xcode|siniulator|stim-desktop|none> --device [udid] --wait <seconds> --no-wait --remote <eas|proxy|local|auto|remote|remote-only|machine>
   android         --remote-build <local|auto|remote|remote-only|name> --slot <name> --json --plan --no-metro-check --no-build-cache --variant <name> --system-image <id> --device-profile <id> --device [serial] --wait <seconds> --no-wait --remote <proxy|eas|local|auto|remote|remote-only|machine>
   ios/android --wait bounds owned-device slot waits (without it, up to 90
   minutes while the devices ahead are listed), or physical leases with
@@ -3256,11 +3256,13 @@ HOST MEMORY PRESSURE AND STALLED SIMULATORS
   Booted and a working screenshot do not prove that simulator processes can
   start. Stim checks a bounded process spawn before install and bounds local
   simulator launch operations. Simulator discovery waits up to 30 seconds,
-  boot (including the initial boot request) up to 10 minutes, and app installation
-  up to 5 minutes. Process termination confirmation can take another 10 seconds;
-  a final boot-state query can take 30 seconds. After boot, Stim opens the owned
-  simulator in Stim Desktop while it is installed, otherwise in the selected
-  Xcode's Device Hub on Xcode 27, or Simulator on older Xcode. Top-level
+  boot (including the initial boot request) up to 10 minutes, an adoption's
+  privacy and keychain resets and a clean app state's keychain reset up to 3
+  minutes each, and app installation up to 5 minutes. Process termination
+  confirmation can take another 10 seconds; a final boot-state query can take 30
+  seconds. After boot, Stim opens the owned simulator in Stim Desktop while it
+  is installed, otherwise in the selected Xcode's Device Hub on Xcode 27, or
+  Simulator on older Xcode. Top-level
   iosSimulatorApp in the machine config can select another viewer; see guide
   settings. Override it for one
   local run with \`stim ios --simulator-app siniulator\`,
