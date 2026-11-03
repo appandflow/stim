@@ -4,8 +4,6 @@
   import StimStores
   import SwiftUI
 
-  /// This Mac's projects above a paired machine's, in the native sidebar list, at the narrowest, default and
-  /// widest sidebar widths.
   struct SidebarPlayground: View {
     var now: Date
     @StateObject private var state = PairedViewState()

@@ -16,8 +16,6 @@ struct SessionLine: View {
   }
 }
 
-/// A workspace row's name and status: both on one line when the whole name fits beside the status, otherwise the name
-/// alone on the first line, truncated in the middle only if it still does not fit, and the status below it.
 struct RowTitleLine: View {
   var title: String
   var titleColor: Color
