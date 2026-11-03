@@ -55,7 +55,8 @@ const none = (notice?: string): AgentAccess => ({ grant: { driver: 'none' }, ...
  * Reference-counts a driver on live hosted macOS apps and owns a separate driver lifetime per native device session. It starts the driver with the first app that gets a
  * grant and stops it after the last one, on revocation and on close. Grants live only here, in memory:
  * a driver restart drops the leases they name, so a restart issues new grants that the client reads
- * again through `app.attach`.
+ * again through `app.attach`. A native device session's grant names no lease and keeps its token across a restart:
+ * its client's remote config is written once, at launch, and agent-device's daemon exits after five idle minutes.
  */
 export class HostedAgentHost {
   private readonly options: HostedAgentHostOptions;
@@ -215,6 +216,9 @@ export class HostedAgentHost {
     return this.serialize(async () => {
       if (this.active !== driver || this.closed) return;
       const apps = this.live().map((entry) => entry.app);
+      const tokens = new Map(
+        this.live().flatMap((entry) => ('token' in entry.grant ? [[entry.app.session, entry.grant.token]] : [])),
+      );
       if (this.options.strictStop)
         for (const app of apps)
           this.remember(app, none('Agent control is restarting. Reattach to obtain a new grant.'));
@@ -240,7 +244,9 @@ export class HostedAgentHost {
       if (this.closed) return;
       for (const app of apps) {
         try {
-          this.remember(app, { grant: await driver.issue(app) });
+          const grant = await driver.issue(app);
+          const token = this.options.strictStop ? tokens.get(app.session) : undefined;
+          this.remember(app, { grant: token && 'token' in grant ? { ...grant, token } : grant });
         } catch (error) {
           this.remember(app, none(this.reason(error)));
         }
