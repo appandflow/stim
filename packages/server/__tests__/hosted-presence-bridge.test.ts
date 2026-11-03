@@ -76,7 +76,7 @@ test('opens a new host subscription for a later follower once the host connectio
   const f = fixture();
   f.bridge.follow('key', host);
   await vi.waitFor(() => expect(f.routes.has('s:up')).toBe(true));
-  f.routes.get('s:up')!.closed(new Error('the host connection closed'));
+  f.routes.get('s:up')?.closed(new Error('the host connection closed'));
   f.bridge.follow('key', host);
   await vi.waitFor(() =>
     expect(f.requests.filter((r) => r.method === 'device-host.presence.subscribe')).toHaveLength(2),
