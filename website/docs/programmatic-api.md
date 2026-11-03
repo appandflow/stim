@@ -330,7 +330,9 @@ approval checks can refresh their own pending credential records.
 `repairDoctor({ platform?, signal?, beforeRepair? })` applies the same project repairs as
 `stim doctor --fix`, then returns `{ report, exitCode }`. Stop native builds in
 that checkout first. A refused repair returns `exitCode: 1`; it never changes
-the caller's process exit code. Progress uses `onProgress`, and the execution
+the caller's process exit code. The source checkout repairs (dependencies, Pods,
+prebuild record) need a terminal to confirm each step, so `repairDoctor` announces
+them in its progress and runs none. Progress uses `onProgress`, and the execution
 budget is 120 seconds with the report cleanup rules below.
 
 `unlockDevice({ platform?, slot?, signal?, beforeUnlock? })` releases only that project's

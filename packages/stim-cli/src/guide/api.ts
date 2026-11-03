@@ -77,7 +77,9 @@ repairDoctor({ platform?, signal?, beforeRepair? }) applies the repairs offered 
 then returns { report, exitCode }. A refused project repair sets exitCode to 1
 without changing the caller's process exit code. Progress uses onProgress. Its
 execution budget is 120 seconds; cancellation drains owned report resources.
-Stop native builds in this checkout before requesting repairs.
+Stop native builds in this checkout before requesting repairs. The source
+checkout repairs (dependencies, Pods, prebuild record) need a terminal to confirm
+each step, so repairDoctor announces them in its progress and runs none.
 beforeRepair and beforeUnlock receive the resolved canonical project root before
 mutation; throwing refuses the operation. Use them to reserve the actual project
 when the client's directory is a subdirectory.

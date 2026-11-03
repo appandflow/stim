@@ -163,26 +163,25 @@ export function recordPrebuildAsync(root: string, platform: string, fingerprint:
 
 type NativeDirCarry = { generatedFrom: string } | { reason: string };
 
-/**
- * Whether a worktree may carry `appRoot`'s gitignored native directory: only when Stim's prebuild record there equals
- * the app's current native fingerprint. A directory Stim did not generate, or generated from other inputs, may come
- * from an older Expo or React Native template that a prebuild without --clean keeps.
- */
-export async function nativeDirCarry(appRoot: string, platform: string): Promise<NativeDirCarry> {
-  const dir = nativeDirName(platform);
-  const regenerates =
-    platform === 'ios'
-      ? `stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone`
-      : `stim ${platform} generates ${dir}/ fresh here`;
+export type PrebuildRecordStatus =
+  | { kind: 'current'; generatedFrom: string }
+  | { kind: 'unfinished' }
+  | { kind: 'unrecorded' }
+  | { kind: 'moved'; recorded: string; current: string }
+  | { kind: 'unfingerprintable'; recorded: string };
+
+export function prebuildRecordStatus(recorded: unknown, current: string | null): PrebuildRecordStatus {
+  if (typeof recorded !== 'string') return recorded === null ? { kind: 'unfinished' } : { kind: 'unrecorded' };
+  if (current === recorded) return { kind: 'current', generatedFrom: recorded };
+  return current ? { kind: 'moved', recorded, current } : { kind: 'unfingerprintable', recorded };
+}
+
+export async function readPrebuildRecord(
+  appRoot: string,
+  platform: string,
+): Promise<{ recorded: unknown; current: string | null }> {
   const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
-  if (typeof recorded !== 'string') {
-    return {
-      reason:
-        recorded === null
-          ? `the source's last Stim prebuild of ${dir}/ did not finish; ${regenerates}`
-          : `Stim has no record of generating the source's ${dir}/, so it cannot show the directory is current; ${regenerates}`,
-    };
-  }
+  if (typeof recorded !== 'string') return { recorded, current: null };
   let settings: SettingsObject | null = null;
   let repoRoot = appRoot;
   try {
@@ -200,12 +199,38 @@ export async function nativeDirCarry(appRoot: string, platform: string): Promise
     );
     current = computed?.hash ?? null;
   } catch {}
-  if (current === recorded) return { generatedFrom: recorded };
-  return {
-    reason: current
-      ? `the source's ${dir}/ was generated from fingerprint ${shortHash(recorded)}, and the source is now ${shortHash(current)}; ${regenerates}`
-      : `could not fingerprint the source to check its ${dir}/; ${regenerates}`,
-  };
+  return { recorded, current };
+}
+
+/**
+ * Whether a worktree may carry `appRoot`'s gitignored native directory: only when Stim's prebuild record there equals
+ * the app's current native fingerprint. A directory Stim did not generate, or generated from other inputs, may come
+ * from an older Expo or React Native template that a prebuild without --clean keeps.
+ */
+export async function nativeDirCarry(appRoot: string, platform: string): Promise<NativeDirCarry> {
+  const dir = nativeDirName(platform);
+  const regenerates =
+    platform === 'ios'
+      ? `stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone`
+      : `stim ${platform} generates ${dir}/ fresh here`;
+  const { recorded, current } = await readPrebuildRecord(appRoot, platform);
+  const status = prebuildRecordStatus(recorded, current);
+  switch (status.kind) {
+    case 'current':
+      return { generatedFrom: status.generatedFrom };
+    case 'unfinished':
+      return { reason: `the source's last Stim prebuild of ${dir}/ did not finish; ${regenerates}` };
+    case 'unrecorded':
+      return {
+        reason: `Stim has no record of generating the source's ${dir}/, so it cannot show the directory is current; ${regenerates}`,
+      };
+    case 'moved':
+      return {
+        reason: `the source's ${dir}/ was generated from fingerprint ${shortHash(status.recorded)}, and the source is now ${shortHash(status.current)}; ${regenerates}`,
+      };
+    case 'unfingerprintable':
+      return { reason: `could not fingerprint the source to check its ${dir}/; ${regenerates}` };
+  }
 }
 
 /**

@@ -135,7 +135,9 @@ Branch on the code, never on the message.`,
   not run \`expo prebuild\` over tracked files. Stop excluding the
   directory from the fingerprint (.fingerprintignore), or gitignore and
   untrack it so Stim regenerates it. When git itself is failing, fix the
-  checkout first.`,
+  checkout first. In the source checkout, \`stim doctor --fix\` in a terminal runs
+  the same prebuild, and the pod install after it on iOS, without compiling, and
+  records the fingerprint \`worktree warm\` needs to carry the directory.`,
     },
     STIM_DEPS_FAILED: {
       summary: 'pod install or gradle sync failed; the bundler ladder and BUNDLE_FROZEN',
@@ -169,6 +171,12 @@ Branch on the code, never on the message.`,
   it runs when npm's config there sets ignore-scripts, or that same pod ladder. The
   message names the command, quotes its last lines, and nothing is copied: fix
   the source checkout, then warm again.
+  A "could not find compatible versions for pod" failure means a gitignored
+  Podfile.lock pins a version of the named pods that the Podfile no longer allows.
+  In the source checkout, \`stim doctor --fix\` in a terminal runs \`pod install
+  --clean-install\` and, on that conflict, \`pod update <names>\` of only the named
+  pods, then retries once; it refuses when git tracks ios/, so a tracked
+  Podfile.lock is never edited. Elsewhere run \`pod update <names>\` in ios/ yourself.
   start, ios and android also refuse with this code when \`gc --delete\`
   lightened the worktree and the \`stim worktree warm\` they ran to restore
   its node_modules and ios/Pods failed. The warm's own lines say why; fix
