@@ -15,16 +15,27 @@ final class WebSharesModel {
   @ObservationIgnored private var latestRefresh = 0
   private let request: @MainActor (String, [String: JSONValue]) async throws -> JSONValue
   private let serverStopsOneShare: @MainActor () -> Bool
+  private let serverOffersViewPassword: @MainActor () -> Bool
   private let toasts: ToastCenter
 
   init(
     toasts: ToastCenter? = nil,
     request: @escaping @MainActor (String, [String: JSONValue]) async throws -> JSONValue = BuildMachinesModel.localRequest,
-    serverStopsOneShare: @escaping @MainActor () -> Bool = WebSharesModel.localServerStopsOneShare
+    serverStopsOneShare: @escaping @MainActor () -> Bool = WebSharesModel.localServerStopsOneShare,
+    serverOffersViewPassword: @escaping @MainActor () -> Bool = WebSharesModel.localServerOffersViewPassword
   ) {
     self.toasts = toasts ?? .shared
     self.request = request
     self.serverStopsOneShare = serverStopsOneShare
+    self.serverOffersViewPassword = serverOffersViewPassword
+  }
+
+  /// Whether the local server's `share.start` takes `view`; an older one refuses the parameter, so the sheet does not offer it.
+  var offersViewPassword: Bool { serverOffersViewPassword() }
+
+  static func localServerOffersViewPassword() -> Bool {
+    guard let client = ServerSession.shared.client, case .open(let hello) = client.state else { return false }
+    return hello.features?.contains("share-view-password") == true
   }
 
   static func localServerStopsOneShare() -> Bool {

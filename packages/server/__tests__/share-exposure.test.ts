@@ -110,6 +110,7 @@ describe('web shares in proxy mode', () => {
         begin: async () => ({ code: 'device-busy', message: 'busy' }),
         targetOf: () => null,
         input: async () => null,
+        release: () => {},
         endFor: () => {},
       },
       subscribeStatus: (listener) => {

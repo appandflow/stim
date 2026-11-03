@@ -18,6 +18,7 @@ export function shareRow(workspace: string, expiresAt: string, overrides: Partia
     expiresAt,
     viewers: 0,
     auth: 'generated',
+    viewAuth: null,
     ...overrides,
   };
 }

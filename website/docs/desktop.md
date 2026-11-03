@@ -420,9 +420,12 @@ opt-in (**Serve to phones**, with the Phone app flag on).
 - **Web shares.** A running simulator or emulator's menu has **Share...**, which
   makes the same public link as [`stim share`](./share.md): view only or with
   control, an expiry from 15 minutes to 8 hours, and a generated, chosen or no
-  password. The link and a generated password appear once, each with a Copy button;
+  password. A share with control and a password can also have a separate
+  view-only password (generated or chosen), shown as **View password** next to
+  the control one. The link and generated passwords appear once, each with a Copy button;
   Desktop does not keep them. **Settings > Web Shares** lists the live shares with
-  their viewers and time left. **Stop** on a row ends that one share; a workspace with
+  their viewers and time left ("View and control, view password" for a share with
+  two passwords). **Stop** on a row ends that one share; a workspace with
   several shares also has **Stop All**. A stim-server older than this (without the
   `share-stop-id` feature) has only the workspace-wide **Stop**, which ends every share of
   the workspace. Quitting
