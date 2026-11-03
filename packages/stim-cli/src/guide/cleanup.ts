@@ -406,6 +406,26 @@ filters by parked time; --cache scopes omit hosted sessions. The CLI never write
 the server journal: stim-server reconciliation clears the parked marker after
 successful deletion leaves the session ledger empty.
 
+OTHER STIM HOMES (REPORT ONLY)
+Every Stim home other than ~/.stim that creates a workspace or a device lists
+itself once in ~/.stim/machine/homes/homes.json, which ignores STIM_HOME: its
+path, creation time, last-seen time (refreshed at most every ten minutes) and
+the simulator UDIDs and AVD names its created-devices ledger lists. Homes
+inside ~/.stim, such as the private homes of hosted sessions, are not listed.
+A list that cannot be read or written never fails the command that tried.
+Unscoped gc lists the other homes that still exist: their private size, workspace
+count, last-seen time, the devices their ledgers name (owned by that home,
+never this one) and the exact commands that tear each down, from each
+workspace root: \`STIM_HOME=<home> stim worktree remove\`, then
+\`STIM_HOME=<home> stim gc --delete\`, then removing the directory. A scoped
+STIM_HOME lists nothing: it owns only its own ledger.
+A home whose directory is gone from a mounted volume is listed as gone, and
+its last-known devices that are still on this machine appear as "orphaned from
+<home>" with the command that deletes each by hand. On a volume that is not
+mounted nothing is claimed and the entry stays. gc never deletes or tears down
+another home. \`gc --delete\` removes only the list entry of a gone home with no
+device left on this machine, after re-checking it under the list lock.
+
 AGENT-DEVICE (REPORT ONLY)
 Unscoped gc reports agent-device runner builds by platform and entry, last use,
 agent-device and Xcode versions, sessions, logs, other state, workspace state

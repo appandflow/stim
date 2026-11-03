@@ -2386,6 +2386,24 @@ keeps the entry. `stim gc --delete` re-checks each entry and removes it under
 the ledger lock without contacting EAS. JSON adds `sections.staleEasLedgerEntries`
 entries with `id` and `workspaceRoot`.
 
+Unscoped `stim gc` also lists the other Stim homes on the machine, such as the
+scratch `STIM_HOME`s agents and tests create. Every home other than `~/.stim` that
+creates a workspace or a device lists itself once in
+`~/.stim/machine/homes/homes.json`, which ignores `STIM_HOME`, with its path, its
+creation and last-seen times, and the simulators and emulators its created-devices
+ledger names. Homes inside `~/.stim`, such as hosted session homes, are not listed.
+For each listed home that still exists, gc reports its private size, workspace count,
+last-seen time, devices and the exact teardown commands:
+`STIM_HOME=<home> stim worktree remove` from each workspace root, then
+`STIM_HOME=<home> stim gc --delete`, then removing the directory. A home whose
+directory is gone from a mounted volume is listed as gone, and any of its devices
+still on the machine appear as orphaned from that home with the command that deletes
+them. The section is report-only: those devices belong to the other home, and gc
+never tears down another home. `stim gc --delete` removes only the list entry of a
+gone home that has no device left. A scoped `STIM_HOME` lists nothing. JSON adds
+`sections.otherHomes` entries with `path`, `state`, `createdAt`, `lastSeenAt`,
+`bytes`, `privateBytes`, `workspaces`, `devices`, `teardown` and `forgettable`.
+
 `--json` prints one line. Each key under `sections` is one section of the text
 report, in the same order, and is always present. `stim gc --worktrees --json`
 prints, for example:

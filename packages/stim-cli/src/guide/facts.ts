@@ -1010,6 +1010,21 @@ RULES
                               device; false means already removed and is not
                               actionable; null means unreadable. --older-than
                               filters by parkedAt; --cache scopes leave this empty
+    otherHomes              { path, state: "present" | "gone" | "unverified",
+                              createdAt, lastSeenAt, bytes, privateBytes,
+                              workspaces, devices: [{ kind, id, name,
+                              present, command }], teardown, forgettable }
+                              Stim homes of the machine list
+                              (~/.stim/machine/homes/homes.json) other than
+                              this one, from an unscoped gc only; empty
+                              under STIM_HOME. Report-only: devices are
+                              the other home's, never this home's. teardown
+                              is the ordered commands that tear a present
+                              home down; present is whether the device is on
+                              this machine (null when the listing failed);
+                              command deletes a present device of a gone
+                              home by hand. forgettable (gone, nothing left)
+                              makes --delete drop the list entry only
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this
                               Stim home has no record of creating; never
