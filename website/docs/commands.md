@@ -1589,10 +1589,13 @@ flight; `percent` is present when Metro reports progress for it. `last` is the
 newest finished request: `{ platform, status, durationMs, finishedAt }`.
 
 Once `stim status --watch` has measured them, each environment carries
-`disk: { worktreeBytes, nodeModulesBytes, buildBytes, measuredAt }`, and each
-owned simulator and emulator carries `disk: { bytes, measuredAt }` for its data
-folder. `buildBytes` is Stim's own folder for the workspace, with Xcode derived
-data, Gradle outputs and logs. The watcher runs `du` off its refresh path, at
+`disk: { worktreeBytes, nodeModulesBytes, nodeModulesPrivateBytes, buildBytes, measuredAt }`,
+and each owned simulator and emulator carries `disk: { bytes, measuredAt }` for
+its data folder. `buildBytes` is Stim's own folder for the workspace, with Xcode
+derived data, Gradle outputs and logs. `nodeModulesBytes` counts APFS clones in
+full; `nodeModulesPrivateBytes` is what deleting `node_modules` would free, the
+blocks no copy-on-write clone or outside hard link shares, and is `null` off
+APFS or without the Command Line Tools. The watcher runs `du` off its refresh path, at
 most every 5 minutes per folder while the environment is active and every hour
 otherwise, and one-shot `stim status` reads its cached sizes.
 
@@ -1704,7 +1707,8 @@ In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
-owned simulator or emulator before the cache lookup counts as `prepare`.
+owned simulator or emulator before the cache lookup counts as `prepare`,
+including a new device's wait for a boot slot.
 `device` starts once the app is ready and covers waiting for the device (its
 boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
@@ -2444,8 +2448,8 @@ prints, for example:
         "buildState": {
           "bytes": 2147483648,
           "dirs": [
-            { "path": "node_modules", "bytes": 1610612736 },
-            { "path": "ios/Pods", "bytes": 536870912 }
+            { "path": "node_modules", "bytes": 1610612736, "privateBytes": 10485760 },
+            { "path": "ios/Pods", "bytes": 536870912, "privateBytes": 536870912 }
           ]
         }
       }
@@ -2538,9 +2542,13 @@ the worktree's branch whose head is or contains HEAD, found with `gh`, with
 could not answer, such as `"gh is not installed"`. `buildState` sizes the
 worktree's in-tree build and dependency directories, the ones automatic
 maintenance and the pressure ladder clear plus a root `.pnpm-store`, largest first; `du` counts APFS
-clones in full, so the sum can exceed what deleting them frees. gc reuses a
+clones in full, so the sum can exceed what deleting them frees. Each entry's
+`privateBytes` is what deleting `node_modules` or `ios/Pods` would free, the
+blocks no copy-on-write clone or outside hard link shares, and is `null` for
+other directories, off APFS and without the Command Line Tools. gc reuses a
 size for up to an hour while no entry was added to or removed from the
-directory, measures the rest with one `du` per directory, 4 at a time with a
+directory (for `node_modules` and Pods, while their install is unchanged),
+measures the rest with one `du` or private-size walk per directory, 4 at a time with a
 10-second limit each, and reports a directory it could not measure in time as
 `null`.
 `unlistedWorktreeDirectories` lists directories directly under a repository's

@@ -85,166 +85,183 @@ function release(resource: 'slot' | 'boot' = 'slot'): void {
   socket.once('connect', () => socket.end(`${JSON.stringify({ op: `${resource}.released` })}\n`));
 }
 
-test('one daemon per home: a second one exits and leaves the first one holding the claim and socket', async () => {
-  const first = startDaemonProcess();
-  await listening();
-  const second = startDaemonProcess();
-  expect(await second.exited).toBe(0);
-  expect(daemonLog()).toContain('"event":"daemon_claim_held"');
-  expect(readClaimSet(daemonClaimRoot()).live.map((holder) => holder.owner.pid)).toEqual([first.child.pid]);
-  expect(existsSync(daemonSocket())).toBe(true);
-}, 20_000);
+describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32, where Stim runs no daemon)', () => {
+  test('one daemon per home: a second one exits and leaves the first one holding the claim and socket', async () => {
+    const first = startDaemonProcess();
+    await listening();
+    const second = startDaemonProcess();
+    expect(await second.exited).toBe(0);
+    expect(daemonLog()).toContain('"event":"daemon_claim_held"');
+    expect(readClaimSet(daemonClaimRoot()).live.map((holder) => holder.owner.pid)).toEqual([first.child.pid]);
+    expect(existsSync(daemonSocket())).toBe(true);
+  }, 20_000);
 
-test('a released build slot wakes the oldest waiter at once, and the next release the one after it', async () => {
-  startDaemonProcess();
-  await listening();
-  const holder = tryAcquireBuildSlot({ max: 1 });
-  assert(holder);
-  const first = await waiter();
-  const second = await waiter();
-  expect(releaseBuildSlot(holder)).toBe(true);
-  await vi.waitFor(() => expect(first.received.join()).toContain('"op":"slot.changed"'), {
-    timeout: 10_000,
-    interval: 20,
-  });
-  expect(second.received.join()).not.toContain('"op":"slot.changed"');
-  first.socket.destroy();
-  release();
-  await vi.waitFor(() => expect(second.received.join()).toContain('"op":"slot.changed"'), {
-    timeout: 10_000,
-    interval: 20,
-  });
-}, 20_000);
+  test('a released build slot wakes the oldest waiter at once, and the next release the one after it', async () => {
+    startDaemonProcess();
+    await listening();
+    const holder = tryAcquireBuildSlot({ max: 1 });
+    assert(holder);
+    const first = await waiter();
+    const second = await waiter();
+    expect(releaseBuildSlot(holder)).toBe(true);
+    await vi.waitFor(() => expect(first.received.join()).toContain('"op":"slot.changed"'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(second.received.join()).not.toContain('"op":"slot.changed"');
+    first.socket.destroy();
+    release();
+    await vi.waitFor(() => expect(second.received.join()).toContain('"op":"slot.changed"'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+  }, 20_000);
 
-test('a finished boot wakes the oldest boot waiter only, never a build waiter', async () => {
-  startDaemonProcess();
-  await listening();
-  const build = await waiter('slot');
-  const first = await waiter('boot');
-  const second = await waiter('boot');
-  release('boot');
-  await vi.waitFor(() => expect(first.received.join()).toContain('"op":"boot.changed"'), {
-    timeout: 10_000,
-    interval: 20,
-  });
-  expect(second.received.join()).not.toContain('"op":"boot.changed"');
-  expect(build.received.join()).not.toContain('changed');
-  first.socket.destroy();
-  release('boot');
-  await vi.waitFor(() => expect(second.received.join()).toContain('"op":"boot.changed"'), {
-    timeout: 10_000,
-    interval: 20,
-  });
-}, 20_000);
+  test('a finished boot wakes the oldest boot waiter only, never a build waiter', async () => {
+    startDaemonProcess();
+    await listening();
+    const build = await waiter('slot');
+    const first = await waiter('boot');
+    const second = await waiter('boot');
+    release('boot');
+    await vi.waitFor(() => expect(first.received.join()).toContain('"op":"boot.changed"'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+    expect(second.received.join()).not.toContain('"op":"boot.changed"');
+    expect(build.received.join()).not.toContain('changed');
+    first.socket.destroy();
+    release('boot');
+    await vi.waitFor(() => expect(second.received.join()).toContain('"op":"boot.changed"'), {
+      timeout: 10_000,
+      interval: 20,
+    });
+  }, 20_000);
 
-test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {
-  startDaemonProcess();
-  await listening();
-  await expect(requestDaemonTick({ STIM_DAEMON: 'on' })).resolves.toBe(true);
-  expect(readDaemonSnapshot()).toMatchObject({
-    pressure: { level: expect.stringMatching(/^(normal|high|critical)$/) },
-    actions: expect.any(Array),
-    waiting: [],
-  });
-}, 20_000);
+  test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {
+    startDaemonProcess();
+    await listening();
+    await expect(requestDaemonTick({ STIM_DAEMON: 'on' })).resolves.toBe(true);
+    expect(readDaemonSnapshot()).toMatchObject({
+      pressure: { level: expect.stringMatching(/^(normal|high|critical)$/) },
+      actions: expect.any(Array),
+      waiting: [],
+    });
+  }, 20_000);
 
-test('exits after two ticks with nothing running in its home, releasing its claim and removing its socket', async () => {
-  const measureTick = measure.measureTick;
-  const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
-    const measured = await measureTick(...args);
-    return {
-      ...measured,
-      measurement: {
-        ...measured.measurement,
-        disk: [{ volume: '/', freeMb: 500_000 }],
-        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+  test('exits after two ticks with nothing running in its home, releasing its claim and removing its socket', async () => {
+    const measureTick = measure.measureTick;
+    const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+      const measured = await measureTick(...args);
+      return {
+        ...measured,
+        measurement: {
+          ...measured.measurement,
+          disk: [{ volume: '/', freeMb: 500_000 }],
+          memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+        },
+      };
+    });
+    onTestFinished(() => normal.mockRestore());
+    await runDaemon({ tickMs: 50 });
+    expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
+    expect(existsSync(daemonSocket())).toBe(false);
+    expect(daemonLog().match(/"event":"daemon_tick"/g)).toHaveLength(2);
+    expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
+  }, 20_000);
+
+  test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
+    writeFileSync(join(home, 'config.json'), '{ not json');
+    await runDaemon({ tickMs: 50 });
+    expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
+    expect(existsSync(daemonSocket())).toBe(false);
+  }, 20_000);
+
+  test('a command starts the daemon in the mode it resolved, with its locations, CI and non-sensitive setting overrides only', async () => {
+    const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
+    setExecutor({
+      ...getExecutor(),
+      spawn(_file, args = [], options) {
+        spawned.push({ args, options });
+        throw new Error('not started in this test');
       },
+    });
+    onTestFinished(() => resetExecutor());
+    const kept = {
+      PATH: '/usr/bin:/bin',
+      CI: '1',
+      STIM_HOME: home,
+      STIM_DAEMON: 'report',
+      STIM_DISK_MIN_FREE_GB: '12',
+      STIM_MAINTENANCE_IDLE_STOP_HOURS: '2',
+      AGENT_DEVICE_CLAIMS_DIR: '/claims',
+      ANDROID_SDK_HOME: '/android',
+      ANDROID_ADB_SERVER_PORT: '5038',
+      GRADLE_USER_HOME: '/gradle',
+      XDG_CONFIG_HOME: '/config',
+      XDG_CACHE_HOME: '/cache',
     };
+    const dropped = {
+      API_TOKEN: 'secret',
+      NODE_OPTIONS: '--inspect',
+      GRADLE_ENTERPRISE_ACCESS_KEY: 'secret',
+      GRADLE_OPTS: '-Dorg.gradle.project.signingPassword=secret',
+      XDG_RUNTIME_DIR: '/run',
+      STIM_ASC_KEY_PATH: '/keys/AuthKey.p8',
+    };
+
+    expect(await ensureDaemon({ ...kept, ...dropped })).toBe(false);
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
+    expect(spawned[0]?.options?.env).toEqual(kept);
   });
-  onTestFinished(() => normal.mockRestore());
-  await runDaemon({ tickMs: 50 });
-  expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
-  expect(existsSync(daemonSocket())).toBe(false);
-  expect(daemonLog().match(/"event":"daemon_tick"/g)).toHaveLength(2);
-  expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
-}, 20_000);
 
-test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
-  writeFileSync(join(home, 'config.json'), '{ not json');
-  await runDaemon({ tickMs: 50 });
-  expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
-  expect(existsSync(daemonSocket())).toBe(false);
-}, 20_000);
+  test('a command counts the home as held only once the daemon it started takes the claim', async () => {
+    const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
+    setExecutor({ ...getExecutor(), spawn: () => spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' }) });
+    try {
+      expect(await ensureDaemon(env)).toBe(false);
+    } finally {
+      resetExecutor();
+    }
 
-test('a command starts the daemon in the mode it resolved, with its locations, CI and non-sensitive setting overrides only', async () => {
-  const spawned: { args: readonly string[]; options: SpawnOptions | undefined }[] = [];
-  setExecutor({
-    ...getExecutor(),
-    spawn(_file, args = [], options) {
-      spawned.push({ args, options });
-      throw new Error('not started in this test');
-    },
-  });
-  onTestFinished(() => resetExecutor());
-  const kept = {
-    PATH: '/usr/bin:/bin',
-    CI: '1',
-    STIM_HOME: home,
-    STIM_DAEMON: 'report',
-    STIM_DISK_MIN_FREE_GB: '12',
-    STIM_MAINTENANCE_IDLE_STOP_HOURS: '2',
-    AGENT_DEVICE_CLAIMS_DIR: '/claims',
-    ANDROID_SDK_HOME: '/android',
-    ANDROID_ADB_SERVER_PORT: '5038',
-    GRADLE_USER_HOME: '/gradle',
-    XDG_CONFIG_HOME: '/config',
-    XDG_CACHE_HOME: '/cache',
-  };
-  const dropped = {
-    API_TOKEN: 'secret',
-    NODE_OPTIONS: '--inspect',
-    GRADLE_ENTERPRISE_ACCESS_KEY: 'secret',
-    GRADLE_OPTS: '-Dorg.gradle.project.signingPassword=secret',
-    XDG_RUNTIME_DIR: '/run',
-    STIM_ASC_KEY_PATH: '/keys/AuthKey.p8',
-  };
+    expect(await ensureDaemon(env)).toBe(true);
+    const [holder] = readClaimSet(daemonClaimRoot()).live;
+    assert(holder);
+    process.kill(holder.owner.pid, 'SIGTERM');
+    await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
+  }, 20_000);
 
-  expect(await ensureDaemon({ ...kept, ...dropped })).toBe(false);
+  test('a daemon started in report mode stays in report mode', async () => {
+    await runDaemon({ tickMs: 50, mode: 'report' });
+    expect(readDaemonSnapshot()).toMatchObject({ mode: 'report' });
+  }, 20_000);
 
-  expect(spawned).toHaveLength(1);
-  expect(spawned[0]?.args.slice(1)).toEqual(['--mode', 'report']);
-  expect(spawned[0]?.options?.env).toEqual(kept);
+  test('daemon.mode turned off in config after the daemon started stops it on its next tick', async () => {
+    const run = runDaemon({ tickMs: 1500, mode: 'on' });
+    await listening();
+    saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
+    await run;
+    expect(daemonLog()).toContain('exiting: daemon.mode is off');
+    expect(daemonLog()).not.toContain('"event":"daemon_tick"');
+  }, 20_000);
 });
 
-test('a command counts the home as held only once the daemon it started takes the claim', async () => {
-  const env = { ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' };
-  setExecutor({ ...getExecutor(), spawn: () => spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' }) });
-  try {
-    expect(await ensureDaemon(env)).toBe(false);
-  } finally {
+test('on win32 a command starts no daemon, whatever STIM_DAEMON says', async () => {
+  const spawn = vi.fn<ReturnType<typeof getExecutor>['spawn']>(() => {
+    throw new Error('not started in this test');
+  });
+  setExecutor({ ...getExecutor(), spawn });
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+  onTestFinished(() => {
+    platform.mockRestore();
     resetExecutor();
-  }
+  });
 
-  expect(await ensureDaemon(env)).toBe(true);
-  const [holder] = readClaimSet(daemonClaimRoot()).live;
-  assert(holder);
-  process.kill(holder.owner.pid, 'SIGTERM');
-  await vi.waitFor(() => expect(readClaimSet(daemonClaimRoot()).live).toEqual([]), { timeout: 10_000, interval: 50 });
-}, 20_000);
-
-test('a daemon started in report mode stays in report mode', async () => {
-  await runDaemon({ tickMs: 50, mode: 'report' });
-  expect(readDaemonSnapshot()).toMatchObject({ mode: 'report' });
-}, 20_000);
-
-test('daemon.mode turned off in config after the daemon started stops it on its next tick', async () => {
-  const run = runDaemon({ tickMs: 1500, mode: 'on' });
-  await listening();
-  saveConfig({ version: 2, projects: {}, repos: {}, daemon: { mode: 'off' } });
-  await run;
-  expect(daemonLog()).toContain('exiting: daemon.mode is off');
-  expect(daemonLog()).not.toContain('"event":"daemon_tick"');
-}, 20_000);
+  expect(await ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' })).toBe(false);
+  expect(spawn).not.toHaveBeenCalled();
+});
 
 test('doctor, and start, ios and android with no daemon holding the home, run automatic maintenance in-process unless daemon.mode is off', async () => {
   const ran = vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue();

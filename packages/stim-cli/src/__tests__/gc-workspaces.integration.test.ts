@@ -1782,7 +1782,9 @@ test('gc reports the in-tree build state of each worktree with its size', async 
   for (const dir of dirs) expect(dir.bytes).toBeGreaterThan(0);
   expect(entry.buildState.bytes).toBe(dirs.reduce((sum, dir) => sum + dir.bytes, 0));
   const report = await captureLog(() => runGc({ worktrees: true }));
-  expect(report).toMatch(/in-tree build state \S+: node_modules \S+, \.pnpm-store \S+, android\/app\/build \S+/);
+  expect(report).toMatch(
+    /in-tree build state \S+: node_modules \S+(?: \(\S+ its own\))?, \.pnpm-store \S+, android\/app\/build \S+/,
+  );
 }, 30_000);
 
 function builtWorktree(dirs: readonly string[]) {
@@ -1820,7 +1822,7 @@ async function buildStateOf(built: string) {
 }
 
 test('gc reuses cached build-state sizes and measures again only a directory that changed', async () => {
-  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const built = builtWorktree(['android/app/build', '.build']);
   const calls: string[][] = [];
   countDu(calls);
 
@@ -1831,31 +1833,31 @@ test('gc reuses cached build-state sizes and measures again only a directory tha
   expect(second).toEqual(first);
 
   const later = new Date(Date.now() + 5000);
-  writeFileSync(join(built, 'node_modules', 'added'), Buffer.alloc(200_000));
-  utimesSync(join(built, 'node_modules'), later, later);
+  writeFileSync(join(built, 'android', 'app', 'build', 'added'), Buffer.alloc(200_000));
+  utimesSync(join(built, 'android', 'app', 'build'), later, later);
   const third = await buildStateOf(built);
   expect(calls).toHaveLength(3);
-  expect(calls[2]).toEqual(['-sk', join(built, 'node_modules')]);
+  expect(calls[2]).toEqual(['-sk', join(built, 'android', 'app', 'build')]);
   expect(third.bytes).toBeGreaterThan(first.bytes);
 }, 30_000);
 
 test('a du that times out leaves only its own directory unmeasured, and gc measures it again next time', async () => {
-  const built = builtWorktree(['node_modules', 'ios/Pods']);
+  const built = builtWorktree(['android/app/build', '.build']);
   const calls: string[][] = [];
-  countDu(calls, (args) => (args.includes(join(built, 'ios', 'Pods')) ? '' : null));
+  countDu(calls, (args) => (args.includes(join(built, '.build')) ? '' : null));
 
   const state = await buildStateOf(built);
 
   expect(state.bytes).toBe(null);
   expect(state.dirs).toEqual([
-    { path: 'node_modules', bytes: expect.any(Number) },
-    { path: 'ios/Pods', bytes: null },
+    { path: 'android/app/build', bytes: expect.any(Number), privateBytes: null },
+    { path: '.build', bytes: null, privateBytes: null },
   ]);
   expect(state.dirs[0].bytes).toBeGreaterThan(0);
   const report = await captureLog(() => runGc({}));
-  expect(report).toMatch(/in-tree build state size unknown: node_modules \S+, ios\/Pods size unknown/);
-  expect(calls.filter((args) => args.includes(join(built, 'ios', 'Pods')))).toHaveLength(2);
-  expect(calls.filter((args) => args.includes(join(built, 'node_modules')))).toHaveLength(1);
+  expect(report).toMatch(/in-tree build state size unknown: android\/app\/build \S+, \.build size unknown/);
+  expect(calls.filter((args) => args.includes(join(built, '.build')))).toHaveLength(2);
+  expect(calls.filter((args) => args.includes(join(built, 'android', 'app', 'build')))).toHaveLength(1);
 }, 30_000);
 
 test('gc reports a directory under .worktrees that git does not list, and never removes it', async () => {

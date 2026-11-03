@@ -307,7 +307,9 @@ slot. The caps are derived from the machine, and `concurrency.maxBuilds` and
 `max(1, floor(CPU cores / 6))` builds and `max(2, floor((RAM - 4 GB) / 1.5 GB))`
 booted or booting owned devices (8 on a 16 GB Mac). At most 2 boots run at
 once, and no boot starts while macOS memory pressure is critical, or warning
-with under 2 GB available.
+with under 2 GB available. A boot that needs a new simulator or emulator
+creates it inside its slot, so a burst of new workspaces creates at most 2
+devices at a time.
 
 A run past a cap waits in arrival order per resource and prints its queue
 position and what it waits for every 10 seconds, and keeps waiting while every
@@ -784,8 +786,10 @@ together with its dev server, once the workspace has had no activity for
 [idle shutdown](./owned-devices.md#idle-shutdown). `0` keeps them running.
 After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant: its owned devices are deleted (the
-parked pool is untouched) and its logs archived, while `node_modules` and Pods
-stay. When it deleted a device, the next `stim ios` or `stim android` creates
+parked pool is untouched) and its logs archived. In a linked worktree, its
+`node_modules` and Pods are deleted when they hold 256 MB or more of their own
+bytes, recorded so `stim worktree warm` restores them; copy-on-write clones
+under that, and trees Stim could not size, stay. When it deleted a device, the next `stim ios` or `stim android` creates
 one; with none deleted, `stim revive` resumes the workspace while its dev
 server's idle stop survives.
 

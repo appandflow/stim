@@ -600,7 +600,12 @@ const BUILD_STATE_DIRS_SHOWN = 4;
 
 function buildStateLine(state: WorktreeBuildState | undefined): string | null {
   if (!state?.dirs.length) return null;
-  const shown = state.dirs.slice(0, BUILD_STATE_DIRS_SHOWN).map((dir) => `${dir.path} ${sizeText(dir.bytes)}`);
+  const shown = state.dirs
+    .slice(0, BUILD_STATE_DIRS_SHOWN)
+    .map(
+      (dir) =>
+        `${dir.path} ${sizeText(dir.bytes)}${dir.privateBytes === null ? '' : ` (${sizeText(dir.privateBytes)} its own)`}`,
+    );
   const more = state.dirs.length > BUILD_STATE_DIRS_SHOWN ? ', ...' : '';
   return `              in-tree build state ${sizeText(state.bytes)}: ${shown.join(', ')}${more}`;
 }

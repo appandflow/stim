@@ -584,22 +584,32 @@ export const WORKSPACE_PHASES = ['warming', 'ready', 'live', 'idle'] as const;
 
 export type WorkspacePhase = (typeof WORKSPACE_PHASES)[number];
 
-/** A folder's size on disk as `status --watch` last measured it. */
+/**
+ * A folder's size on disk as `status --watch` last measured it. `bytes` counts every allocated block, copy-on-write
+ * clones in full. `privateBytes`, measured for dependency trees on APFS, is what deleting the folder would free: blocks
+ * no clone or hard link outside it shares. It is absent when the volume or the machine cannot tell. `signature` is the
+ * dependency tree's install signature at measurement time.
+ */
 export interface DiskMeasure {
   bytes: number;
   measuredAt: string;
+  privateBytes?: number;
+  signature?: string;
 }
 
 /**
  * An environment's disk use as `status --watch` last measured it. `worktreeBytes` is the git worktree folder, or the
  * workspace folder outside one, node_modules included. `nodeModulesBytes` is node_modules at the worktree root and,
- * when different, at the workspace path, and is part of `worktreeBytes`. `buildBytes` is Stim's own folder for the
+ * when different, at the workspace path, and is part of `worktreeBytes`; `nodeModulesPrivateBytes` is the part of it
+ * no copy-on-write clone or outside hard link shares, null when it is unknown and absent from Stim versions that do
+ * not measure it. `buildBytes` is Stim's own folder for the
  * workspace: Xcode derived data, Gradle outputs and logs. A figure is null until it was measured; `measuredAt` is the
  * oldest measurement.
  */
 export interface EnvironmentDisk {
   worktreeBytes: number | null;
   nodeModulesBytes: number | null;
+  nodeModulesPrivateBytes?: number | null;
   buildBytes: number | null;
   measuredAt: string;
 }

@@ -963,7 +963,7 @@ RULES
                               kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
                               else null. buildState is { bytes, dirs:
-                              { path, bytes } } for the in-tree build and
+                              { path, bytes, privateBytes } } for the in-tree build and
                               dependency directories automatic maintenance
                               clears (android/app/build, android/build,
                               android/.gradle, .build, node_modules,
@@ -971,11 +971,17 @@ RULES
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
-                              first; du counts APFS clones in full. A bytes
-                              is null when du could not measure it within
-                              10 seconds; sizes are cached for up to an
-                              hour while no entry of the directory was
-                              added or removed. null
+                              first; du counts APFS clones in full.
+                              privateBytes is what deleting node_modules
+                              or ios/Pods would free on APFS: blocks no
+                              copy-on-write clone or hard link outside it
+                              shares; null for other directories and off
+                              APFS. A bytes is null when it could not be
+                              measured within 10 seconds; sizes are cached
+                              for up to an hour while no entry of the
+                              directory was added or removed (for
+                              node_modules and Pods, while their install
+                              signature is unchanged). null
                               for a root outside git. Without --worktrees,
                               the source checkout and roots outside git
                               are left out
@@ -1566,7 +1572,8 @@ RULES
                    pause during cleanup. wait is waiting on another
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
-                   before the cache lookup is prepare time. device starts
+                   before the cache lookup is prepare time, including a
+                   new device's wait for a boot slot. device starts
                    once the app is ready and covers waiting for the
                    device: its boot, adoption cleanup, or a physical
                    device's lease and connection check. A boot that
@@ -1784,13 +1791,18 @@ RULES
   emulator in ios, android and slots carries disk, once \`status --watch\` has
   measured them:
 
-  disk (environment)  { worktreeBytes, nodeModulesBytes, buildBytes,
-                      measuredAt }
+  disk (environment)  { worktreeBytes, nodeModulesBytes,
+                      nodeModulesPrivateBytes, buildBytes, measuredAt }
     worktreeBytes     the linked worktree, or else the checkout holding the
                       workspace, node_modules included; the linked
                       worktrees nested inside a checkout are not counted
     nodeModulesBytes  node_modules at that root and at the workspace path;
-                      part of worktreeBytes
+                      part of worktreeBytes; du counts APFS clones in full
+    nodeModulesPrivateBytes
+                      what deleting that node_modules would free on APFS:
+                      blocks no copy-on-write clone (worktree warm clones
+                      it) or hard link outside it shares; null off APFS,
+                      without the Command Line Tools, or until measured
     buildBytes        Stim's folder for the workspace: Xcode derived data,
                       Gradle outputs and logs
     measuredAt        the oldest of the three measurements; a figure not
@@ -1798,7 +1810,7 @@ RULES
   disk (device)       { bytes, measuredAt }: the simulator's data folder
                       under CoreSimulator/Devices, or the AVD's .avd folder
 
-  \`status --watch\` runs one du at a time on the whole machine, at low
+  \`status --watch\` runs one disk walk at a time on the whole machine, at low
   priority, off its refresh path, and measures a folder at most every 5
   minutes while its environment is active and every hour otherwise. A walk
   that fails or times out is not repeated by any watcher for that period. It

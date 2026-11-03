@@ -158,7 +158,13 @@ export function readDiskUsage(path: string): DiskMeasure | null {
   const { bytes, measuredAt } = entry;
   if (typeof bytes !== 'number' || !Number.isFinite(bytes) || typeof measuredAt !== 'string') return null;
   if (!Number.isFinite(Date.parse(measuredAt))) return null;
-  return { bytes, measuredAt };
+  const { privateBytes, signature } = entry;
+  return {
+    bytes,
+    measuredAt,
+    ...(typeof privateBytes === 'number' && Number.isFinite(privateBytes) && privateBytes >= 0 ? { privateBytes } : {}),
+    ...(typeof signature === 'string' ? { signature } : {}),
+  };
 }
 
 /** When the last walk of `path` failed (an ISO time), or null when none is recorded. */
