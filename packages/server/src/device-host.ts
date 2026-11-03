@@ -2037,7 +2037,7 @@ export class DeviceHost {
   async close(): Promise<void> {
     this.closed = true;
     for (const probe of this.probes.keys()) probe.cancel();
-    await Promise.allSettled([...this.resuming.values()]);
+    await Promise.allSettled(this.resuming.values());
     await Promise.all([...this.owned.values()].map((owned) => this.closeMetro(owned)));
     await Promise.all([...this.owned.values()].map((owned) => this.closeView(owned)));
     try {
