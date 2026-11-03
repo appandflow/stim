@@ -42,6 +42,13 @@ describe('planAgentDevice', () => {
     });
   });
 
+  test('device status gets the device but no session, which agent-device refuses for it', () => {
+    expect(args([sim], ['device', 'status', '--stale'])).toEqual({
+      args: ['device', 'status', '--stale', '--platform', 'ios', '--udid', 'SIM-1'],
+      session: null,
+    });
+  });
+
   test("accepts the workspace's own UDID or serial and refuses another device", () => {
     expect(args([sim], ['press', '@e1', '--udid', 'SIM-1'])).toMatchObject({ session: 'stim-default-ios' });
     for (const argv of [

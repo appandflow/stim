@@ -94,7 +94,13 @@ const AGENT_DEVICE_VALUE_FLAGS = new Set([
   '--hold-ms',
   '--jitter-px',
   '--settle-quiet',
+  '--state-dir',
+  '--pick',
+  '--daemon-base-url',
 ]);
+
+/** Commands that select a device but take no `--session`. */
+const SESSIONLESS_COMMANDS = new Set(['device']);
 
 /** agent-device 0.21.35's command names (`agent-device help commands`). */
 const AGENT_DEVICE_COMMANDS = new Set(
@@ -320,6 +326,7 @@ export function agentDeviceArgs(
       `Run \`stim ${device.platform}${device.slot === 'default' ? '' : ` --slot ${device.slot}`}\` to boot it and launch the app.`,
     );
   }
+  const sessionless = plan.command !== null && SESSIONLESS_COMMANDS.has(plan.command);
   const name = plan.session ?? `stim-${device.slot}-${device.platform}`;
   return {
     args: [
@@ -328,10 +335,9 @@ export function agentDeviceArgs(
       device.platform,
       device.platform === 'ios' ? '--udid' : '--serial',
       device.id,
-      '--session',
-      name,
+      ...(sessionless ? [] : ['--session', name]),
     ],
-    session: name,
+    session: sessionless ? null : name,
   };
 }
 
@@ -622,7 +628,7 @@ async function execute(
   root: string | null,
   version: string,
 ): Promise<void> {
-  const local = root !== null && run !== null && run.plan.device.kind !== 'hosted';
+  const local = root !== null && run?.plan.device.kind !== 'hosted';
   const env = { ...process.env, ...(local ? { AGENT_DEVICE_STATE_DIR: workspaceAgentDeviceDir(root) } : {}) };
   const sessionsDir = root ? join(workspaceAgentDeviceDir(root), 'sessions') : null;
   const command = run?.plan.command ?? null;
