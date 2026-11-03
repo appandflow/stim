@@ -17,7 +17,7 @@ import { ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
-import { workspaceKeys } from '../workspace/lightened.ts';
+import { restoreProblem, workspaceKeys } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
 import { artifactWorktrees, clearArtifact, collectArtifactsAsync } from '../maintenance/artifacts.ts';
@@ -450,6 +450,7 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       return workspace ? [{ candidate, workspace, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }] : [];
     })
     .toSorted((a, b) => a.order - b.order);
+  const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
   for (const { candidate, workspace } of ranked) {
     if (!(await context.stillShort())) return;
     const plan: MaintenanceAction = {
@@ -460,7 +461,22 @@ async function dependenciesRung(context: RungContext): Promise<void> {
       workspace,
     };
     if (!context.act) {
-      await run(context, plan, { restore: 'stim worktree warm', bytes: () => pathsBytes([candidate.path]) });
+      const unrestorable = await restoreProblem(candidate, restoreCache, context.operation);
+      if (unrestorable)
+        recordAction(
+          context,
+          {
+            rung: 5,
+            kind: 'delete-dependencies',
+            target: candidate.path,
+            workspace,
+            outcome: 'kept',
+            bytes: 0,
+            detail: unrestorable,
+          },
+          context.why,
+        );
+      else await run(context, plan, { restore: 'stim worktree warm', bytes: () => pathsBytes([candidate.path]) });
       continue;
     }
     let result;
