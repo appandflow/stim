@@ -290,6 +290,7 @@ const peoplePanel = document.getElementById('people-panel');
 const peopleTitle = document.getElementById('people-title');
 const peopleList = document.getElementById('people-list');
 const people = globalThis.stimPeople;
+const shareControl = control || viewOnly;
 const RENAME_MS = 5000;
 const TOUCH_MS = 10000;
 const NAME_MAX = 24;
@@ -380,7 +381,7 @@ function describe(row) {
 }
 
 function renderPeople() {
-  const rows = people.peopleRows([...roster.values()], control);
+  const rows = people.peopleRows([...roster.values()], shareControl);
   peopleBox.hidden = rows.length === 0;
   peopleTitle.textContent = people.peopleCount(rows.length);
   peopleButton.setAttribute('aria-label', `People: ${peopleTitle.textContent}`);
@@ -403,13 +404,15 @@ function renderPeople() {
     selfAvatar.textContent = own.initial;
     selfName.replaceChildren(...describe(own).childNodes);
     selfRole.textContent = own.role;
-    items.unshift(selfRow);
   }
-  peopleList.replaceChildren(...items);
+  for (const child of [...peopleList.children]) if (child !== selfRow) child.remove();
+  if (!own) selfRow.remove();
+  else if (peopleList.firstChild !== selfRow) peopleList.prepend(selfRow);
+  peopleList.append(...items);
 }
 
 function renderRoster() {
-  const items = people.peopleRows([...roster.values()], control).map((row) => {
+  const items = people.peopleRows([...roster.values()], shareControl).map((row) => {
     const item = avatar(row);
     if (row.self) item.classList.add('you');
     if (row.viewOnly) item.append(eye.content.cloneNode(true));
@@ -501,6 +504,8 @@ function sendName(name) {
 
 function connect(codec) {
   roster.clear();
+  for (const timer of touchTimers.values()) clearTimeout(timer);
+  touchTimers.clear();
   me = null;
   overlay.clear();
   renderRoster();
