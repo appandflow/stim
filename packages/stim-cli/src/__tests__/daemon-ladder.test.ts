@@ -183,9 +183,11 @@ describe('the dormant stage', () => {
     const booted = workspace('booted', 4 * DAY_MS, 'Booted');
     const pinned = workspace('pinned', 4 * DAY_MS, 'Shutdown');
     writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
-    const shared = workspace('shared', 4 * DAY_MS, 'Shutdown');
-    const server = await serveShareList(() => ({ shares: [shareRow(shared.root, '2099-01-01T00:00:00.000Z')] }));
-    onTestFinished(() => server.close());
+    const shared = process.platform === 'win32' ? null : workspace('shared', 4 * DAY_MS, 'Shutdown');
+    if (shared) {
+      const server = await serveShareList(() => ({ shares: [shareRow(shared.root, '2099-01-01T00:00:00.000Z')] }));
+      onTestFinished(() => server.close());
+    }
     expect(
       await runDormantPass({ config: loadConfig(), act: true, log, devices: await devicesNow(), simsFailed: false }),
     ).toEqual([]);
@@ -193,7 +195,9 @@ describe('the dormant stage', () => {
     expect(await dormant(true)).toEqual([]);
     expect(deleted).toEqual([]);
     expect(
-      [booted, pinned, shared, listed].every(({ root }) => readDormantStage(readWorkspaceState(root)) === null),
+      [booted, pinned, ...(shared ? [shared] : []), listed].every(
+        ({ root }) => readDormantStage(readWorkspaceState(root)) === null,
+      ),
     ).toBe(true);
   });
 

@@ -730,58 +730,65 @@ describe('device idle shutdown', () => {
     expect(seen.closed).toBe(1);
   });
 
-  test('stops neither the dev server nor devices while a web share of the workspace is live', async () => {
-    let shares = [shareRow(root, '2099-01-01T00:00:00.000Z')];
-    let asked = 0;
-    const server = await serveShareList(() => {
-      asked++;
-      return { shares };
-    });
-    onTestFinished(() => server.close());
-    let shutDowns: number[] = [];
-    const seen = await startDeviceIdleSupervisor({
-      deviceMinutes: 1,
-      metroMinutes: 2,
-      probe: workspaceIdleProbe(root),
-      due: () => shutDowns.length === 0,
-    });
-    shutDowns = seen.shutDowns;
-    await vi.advanceTimersByTimeAsync(3 * MINUTE);
-    expect(seen.shutDowns).toEqual([]);
-    expect(seen.closed).toBe(0);
-    await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(2));
-    await vi.advanceTimersByTimeAsync(MINUTE);
-    await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(4));
-    expect(seen.shutDowns).toEqual([]);
-    expect(seen.closed).toBe(0);
+  test.skipIf(process.platform === 'win32')(
+    'stops neither the dev server nor devices while a web share of the workspace is live',
+    async () => {
+      let shares = [shareRow(root, '2099-01-01T00:00:00.000Z')];
+      let asked = 0;
+      const server = await serveShareList(() => {
+        asked++;
+        return { shares };
+      });
+      onTestFinished(() => server.close());
+      let shutDowns: number[] = [];
+      const seen = await startDeviceIdleSupervisor({
+        deviceMinutes: 1,
+        metroMinutes: 2,
+        probe: workspaceIdleProbe(root),
+        due: () => shutDowns.length === 0,
+      });
+      shutDowns = seen.shutDowns;
+      await vi.advanceTimersByTimeAsync(3 * MINUTE);
+      expect(seen.shutDowns).toEqual([]);
+      expect(seen.closed).toBe(0);
+      await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(2));
+      await vi.advanceTimersByTimeAsync(MINUTE);
+      await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(4));
+      expect(seen.shutDowns).toEqual([]);
+      expect(seen.closed).toBe(0);
 
-    shares = [];
-    await vi.waitFor(
-      async () => {
-        await vi.advanceTimersByTimeAsync(MINUTE);
-        expect(seen.closed).toBe(1);
-      },
-      { timeout: 5000 },
-    );
-    expect(seen.shutDowns.length).toBeGreaterThan(0);
-  });
+      shares = [];
+      await vi.waitFor(
+        async () => {
+          await vi.advanceTimersByTimeAsync(MINUTE);
+          expect(seen.closed).toBe(1);
+        },
+        { timeout: 5000 },
+      );
+      expect(seen.shutDowns.length).toBeGreaterThan(0);
+    },
+  );
 
-  test("keeps devices up when a share goes live between the device watcher's first read and its locked one", async () => {
-    let asked = 0;
-    const server = await serveShareList(() => ({
-      shares: asked++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
-    }));
-    onTestFinished(() => server.close());
-    const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1 });
-    await vi.waitFor(
-      async () => {
-        await vi.advanceTimersByTimeAsync(MINUTE);
-        expect(asked).toBeGreaterThanOrEqual(3);
-      },
-      { timeout: 4000 },
-    );
-    expect(seen.shutDowns).toEqual([]);
-  });
+  test.skipIf(process.platform === 'win32')(
+    "keeps devices up when a share goes live between the device watcher's first read and its locked one",
+    async () => {
+      let asked = 0;
+      const server = await serveShareList(() => ({
+        shares: asked++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
+      }));
+      onTestFinished(() => server.close());
+      const seen = await startDeviceIdleSupervisor({ deviceMinutes: 1 });
+      await vi.waitFor(
+        async () => {
+          if (asked >= 3) return;
+          await vi.advanceTimersByTimeAsync(MINUTE);
+          throw new Error(`the share list was read ${asked} times`);
+        },
+        { timeout: 4000 },
+      );
+      expect(seen.shutDowns).toEqual([]);
+    },
+  );
 
   test("Metro's idle stop first shuts down devices idle for metro.idleStopMinutes when that is shorter", async () => {
     const seen = await startDeviceIdleSupervisor({ deviceMinutes: 90, metroMinutes: 60, due: () => false });

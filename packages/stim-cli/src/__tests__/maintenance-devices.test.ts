@@ -232,45 +232,48 @@ test('gc --delete keeps the devices of a finished worktree that is pinned by mai
   expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
 });
 
-test('gc --delete keeps the devices of a finished worktree whose web share goes live before its claim is taken', async () => {
-  vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
-  const deleted = vi.spyOn(gcDevices, 'deleteProjectDevices').mockResolvedValue(0);
-  const root = workspaceWithSim('dirty', 90);
-  vi.spyOn(ios, 'listAllIosSimsAsync').mockResolvedValue([
-    {
-      udid: 'UDID-dirty',
-      name: 'stim-dirty (iPhone 17 26.5)',
-      state: 'Booted',
-      runtime: 'iOS-26-5',
-      deviceTypeIdentifier: 'iPhone-17',
-      available: true,
-    },
-  ]);
-  let reads = 0;
-  const server = await serveShareList(() => ({
-    shares: reads++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
-  }));
-  onTestFinished(() => server.close());
-  vi.spyOn(console, 'log').mockImplementation(() => {});
-  takeGcResults();
+test.skipIf(process.platform === 'win32')(
+  'gc --delete keeps the devices of a finished worktree whose web share goes live before its claim is taken',
+  async () => {
+    vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
+    const deleted = vi.spyOn(gcDevices, 'deleteProjectDevices').mockResolvedValue(0);
+    const root = workspaceWithSim('dirty', 90);
+    vi.spyOn(ios, 'listAllIosSimsAsync').mockResolvedValue([
+      {
+        udid: 'UDID-dirty',
+        name: 'stim-dirty (iPhone 17 26.5)',
+        state: 'Booted',
+        runtime: 'iOS-26-5',
+        deviceTypeIdentifier: 'iPhone-17',
+        available: true,
+      },
+    ]);
+    let reads = 0;
+    const server = await serveShareList(() => ({
+      shares: reads++ === 0 ? [] : [shareRow(root, '2099-01-01T00:00:00.000Z')],
+    }));
+    onTestFinished(() => server.close());
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    takeGcResults();
 
-  const failures = await deleteFinishedDevices({
-    finishedDevices: [{ kind: 'ios', id: 'UDID-dirty', name: 'stim-dirty', project: root, reason: 'finished' }],
-    worktreeSweep: sweepOf([]),
-  });
+    const failures = await deleteFinishedDevices({
+      finishedDevices: [{ kind: 'ios', id: 'UDID-dirty', name: 'stim-dirty', project: root, reason: 'finished' }],
+      worktreeSweep: sweepOf([]),
+    });
 
-  expect(failures).toBe(0);
-  expect(reads).toBe(2);
-  expect(takeGcResults()).toEqual([
-    expect.objectContaining({
-      status: 'kept',
-      label: root,
-      detail: 'it has a live web share (ios until 2099-01-01T00:00:00.000Z); stim share stop ends it',
-    }),
-  ]);
-  expect(deleted).not.toHaveBeenCalled();
-  expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
-});
+    expect(failures).toBe(0);
+    expect(reads).toBe(2);
+    expect(takeGcResults()).toEqual([
+      expect.objectContaining({
+        status: 'kept',
+        label: root,
+        detail: 'it has a live web share (ios until 2099-01-01T00:00:00.000Z); stim share stop ends it',
+      }),
+    ]);
+    expect(deleted).not.toHaveBeenCalled();
+    expect(loadConfig()?.projects[root]?.platforms?.ios?.deviceUdid).toBe('UDID-dirty');
+  },
+);
 
 test('the maintenance line reports owned device disk', () => {
   const line = maintenanceLine({

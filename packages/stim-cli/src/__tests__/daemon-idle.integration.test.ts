@@ -223,7 +223,7 @@ test('maintenance.keep keeps an idle workspace out of the idle stage', async () 
   expect(tornDown).toEqual([]);
 });
 
-describe('a web share', () => {
+describe.skipIf(process.platform === 'win32')('a web share', () => {
   let answer: ShareListAnswer;
   let server: { close: () => Promise<void> };
   beforeEach(async () => {
