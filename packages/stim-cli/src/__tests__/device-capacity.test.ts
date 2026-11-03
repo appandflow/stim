@@ -24,6 +24,7 @@ beforeEach(() => {
   process.env.STIM_HOME = root;
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -148,6 +149,35 @@ describe('per-platform device caps', () => {
       releaseClaim(head);
     }
   });
+});
+
+test('a wait under the derived device cap says the cap is derived and names the setting that overrides it', async () => {
+  vi.stubEnv('STIM_MAX_DEVICES', '0');
+  const { maxDevices, derived } = admissionLimits();
+  expect(derived.devices).toBe(true);
+  const sims = Array.from({ length: maxDevices }, (_, index) =>
+    makeIosSim({ udid: `held-${index}`, name: `stim-held-${index}`, state: 'Booted' }),
+  );
+  let now = Date.now();
+  const lines: string[] = [];
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      waitMs: 12_000,
+      sources: { ...empty, sims },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+    }),
+  ).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    remedy: expect.stringContaining('or set concurrency.maxDevices'),
+  });
+  expect(lines[0]).toContain(
+    `(${maxDevices}/${maxDevices} devices booted, the derived device cap of ${maxDevices}; set concurrency.maxDevices to override)`,
+  );
 });
 
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
