@@ -2,7 +2,7 @@ import type { MemoryCulprit } from '@stim-cli/core/state';
 import type { StimContext } from '@stim-cli/core';
 import { getExecutor, type Executor } from './exec.ts';
 import { runOperationFileQuiet } from './engine/operation-exec.ts';
-import { memoryCulpritAdvice, readMemoryCulprits, readMemoryCulpritsAsync } from './memory-culprits.ts';
+import { memoryCulpritAdvice, readMemoryCulpritsAsync } from './memory-culprits.ts';
 
 export type HostMemoryPressure = 'normal' | 'warning' | 'critical';
 
@@ -54,13 +54,6 @@ export async function readHostMemoryPressureAsync(
     },
   );
   return value === null ? null : pressureValue(value);
-}
-
-export function memoryCulpritsUnder(
-  pressure: HostMemoryPressure | null,
-  exec: Executor = getExecutor(),
-): MemoryCulprit[] | null {
-  return pressure === 'warning' || pressure === 'critical' ? readMemoryCulprits(exec) : null;
 }
 
 const CULPRIT_REUSE_MS = 30_000;

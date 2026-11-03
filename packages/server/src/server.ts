@@ -226,6 +226,7 @@ import { HostedShareSource } from './share-hosted.ts';
 import { SHARE_EXPIRY, ShareHub, type ShareRequest } from './share.ts';
 import { parsePresencePublish, PresenceHub, presenceKey } from './presence.ts';
 import { ExposedRoute, tailscaleLoggedIn } from './share-exposure.ts';
+import { runsAsService } from './service.ts';
 import { ShareRoute, tailscaleFunnel } from './share-route.ts';
 
 const SHARE_SERVER_GRACE_MS = 2 * 60_000;
@@ -5594,6 +5595,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           if (shares.isIdle()) idle();
         }, graceMs);
         shareServerGrace.unref?.();
+      }
+      if (!options.shareServer && options.service?.label) {
+        void (options.service.runsAsService ?? runsAsService)(options.service.label, options.port).then((installed) =>
+          installed && !closing ? shares.keep() : undefined,
+        );
       }
       void shareRoute
         .recover()

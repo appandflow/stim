@@ -96,6 +96,11 @@ export class ExposedRoute {
     return this.current.mode === 'proxy' ? this.current.port : 0;
   }
 
+  /** Whether the choice `prepare` made is a reverse proxy at a public address: the only exposure whose listener is kept. */
+  standing(): boolean {
+    return this.current?.mode === 'proxy' && this.current.publicUrl !== null;
+  }
+
   async open(target: number): Promise<OpenedRoute> {
     const exposure = this.current;
     if (!exposure) throw new Error('The share route was not prepared.');

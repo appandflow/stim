@@ -1,15 +1,15 @@
 import { getExecutor, resetExecutor } from '../exec.ts';
-import { parseTopMemory, readMemoryCulprits } from '../memory-culprits.ts';
+import { parseTopMemory, readMemoryCulpritsAsync } from '../memory-culprits.ts';
 
-test('the real top accepts the argv and every row it prints parses', () => {
+test('the real top accepts the argv and every row it prints parses', async () => {
   if (process.platform !== 'darwin') throw new Error('Compatibility requires macOS top.');
   resetExecutor();
   const executor = getExecutor();
   let output: string | null = null;
-  const culprits = readMemoryCulprits({
+  const culprits = await readMemoryCulpritsAsync({
     ...executor,
-    runFileQuiet(file, args, options) {
-      const result = executor.runFileQuiet(file, args, options);
+    async runFileQuietAsync(file, args, options) {
+      const result = await executor.runFileQuietAsync(file, args, options);
       if (file === '/usr/bin/top') output = result;
       return result;
     },

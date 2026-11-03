@@ -104,6 +104,8 @@ export interface ShareDeps {
   route: {
     /** Chooses how the listener about to open is exposed; returns the loopback port to bind, 0 for any free one. */
     prepare?: () => Promise<number>;
+    /** After `prepare`: whether the choice is a reverse proxy at a public address, whose listener a long-running server keeps bound. */
+    standing?: () => boolean;
     open: (target: number) => Promise<OpenedRoute>;
     close: () => Promise<void>;
     /** The loopback port a route that could not be removed still points at, or null. */
@@ -332,7 +334,10 @@ export class ShareHub {
   private exposed: URL | null = null;
   private warning: string | null = null;
   private readonly stranded = new Map<number, Server>();
-  private opening: Promise<string> | null = null;
+  private opening: Promise<string | null> | null = null;
+  private persistent = false;
+  /** The listener stays bound with no share, answering the not-found page. */
+  private kept = false;
   private closingRoute: Promise<void> = Promise.resolve();
   private closed = false;
   private next = 1;
@@ -345,10 +350,25 @@ export class ShareHub {
     this.limits = { ...SHARE_LIMITS, ...deps.limits };
   }
 
-  /** The loopback port the listener serves, or null while no share is live. */
+  /** The loopback port the listener serves, or null while it is closed: no share is live and none is kept. */
   get port(): number | null {
     const address = this.listener?.address();
     return typeof address === 'object' && address ? address.port : null;
+  }
+
+  /**
+   * For a long-running server: binds the listener now and keeps it bound after its last share ends, while the
+   * exposure is a reverse proxy at a public address, so the proxy gets the not-found page instead of a refused
+   * connection. Changes nothing under Tailscale exposure. A failure is logged; the next share reports it.
+   */
+  async keep(): Promise<void> {
+    if (this.closed) return;
+    this.persistent = true;
+    try {
+      await this.open(true);
+    } catch (cause) {
+      if (!this.closed) console.error(`stim-server: could not keep the web share listener: ${String(cause)}`);
+    }
   }
 
   async start(request: ShareRequest): Promise<StartedShare | Refusal> {
@@ -617,57 +637,88 @@ export class ShareHub {
     });
   }
 
-  private open(): Promise<string> {
-    if (this.base && this.listener) return Promise.resolve(this.base);
-    this.opening ??= this.closingRoute
-      .then(async () => {
-        const bindPort = (await this.deps.route.prepare?.()) ?? 0;
-        const server = createServer(
-          { headersTimeout: HEADERS_TIMEOUT_MS, requestTimeout: REQUEST_TIMEOUT_MS },
-          (request, response) => this.serve(request, response),
-        );
-        server.maxConnections = MAX_CONNECTIONS;
-        server.on('connection', (socket) => socket.setTimeout(IDLE_SOCKET_MS, () => socket.destroy()));
-        server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head));
-        await new Promise<void>((resolve, reject) => {
-          const refused = (error: NodeJS.ErrnoException) =>
-            reject(
-              error.code === 'EADDRINUSE' && bindPort !== 0
-                ? new Error(
-                    `Port ${bindPort} on 127.0.0.1 is already in use, so the share listener cannot bind it. Stop what holds it, or choose another port with: stim settings set share.port <port>`,
-                  )
-                : error,
-            );
-          server.once('error', refused);
-          server.listen(bindPort, '127.0.0.1', () => {
-            server.off('error', refused);
-            server.on('error', (error) => console.error(`stim-server: web share listener: ${error.message}`));
-            resolve();
-          });
+  private open(standby: true): Promise<string | null>;
+  private open(standby?: false): Promise<string>;
+  private async open(standby = false): Promise<string | null> {
+    for (;;) {
+      if (this.base && this.listener && (standby || !this.kept || this.shares.size)) return this.base;
+      this.opening ??= this.closingRoute
+        .then(() => this.bind(standby))
+        .finally(() => {
+          this.opening = null;
         });
-        const address = server.address();
-        const port = typeof address === 'object' && address ? address.port : null;
-        try {
-          if (port === null) throw new Error('The share listener has no port.');
-          if (this.closed) throw new Error('stim-server is stopping.');
-          const opened = await this.deps.route.open(port);
-          this.listener = server;
-          this.base = opened.url;
-          this.exposed = opened.proxied ? new URL(opened.url) : null;
-          this.warning = opened.warning ?? null;
-          this.pruneStranded();
-          return opened.url;
-        } catch (cause) {
-          if (port !== null && this.deps.route.stranded() === port) this.stranded.set(port, server);
-          else closeServer(server);
-          this.pruneStranded();
-          throw cause;
-        }
-      })
-      .finally(() => {
-        this.opening = null;
+      const base = await this.opening;
+      if (base !== null || standby) return base;
+    }
+  }
+
+  /**
+   * Opens the listener the exposure settings choose, or reuses a kept one that sits on the same port. `standby`
+   * opens only a listener to keep and returns null when the settings choose anything else.
+   */
+  private async bind(standby: boolean): Promise<string | null> {
+    const bindPort = (await this.deps.route.prepare?.()) ?? 0;
+    const keep = this.persistent && (this.deps.route.standing?.() ?? false);
+    if (standby && !keep) return null;
+    if (this.listener && this.kept) {
+      if (bindPort !== 0 && bindPort === this.port) {
+        const opened = await this.deps.route.open(bindPort);
+        this.kept = keep;
+        this.base = opened.url;
+        this.exposed = opened.proxied ? new URL(opened.url) : null;
+        this.warning = opened.warning ?? null;
+        return opened.url;
+      }
+      const old = this.listener;
+      this.listener = null;
+      this.base = null;
+      this.exposed = null;
+      this.warning = null;
+      this.kept = false;
+      closeServer(old);
+    }
+    const server = createServer(
+      { headersTimeout: HEADERS_TIMEOUT_MS, requestTimeout: REQUEST_TIMEOUT_MS },
+      (request, response) => this.serve(request, response),
+    );
+    server.maxConnections = MAX_CONNECTIONS;
+    server.on('connection', (socket) => socket.setTimeout(IDLE_SOCKET_MS, () => socket.destroy()));
+    server.on('upgrade', (request, socket, head) => this.upgrade(request, socket, head));
+    await new Promise<void>((resolve, reject) => {
+      const refused = (error: NodeJS.ErrnoException) =>
+        reject(
+          error.code === 'EADDRINUSE' && bindPort !== 0
+            ? new Error(
+                `Port ${bindPort} on 127.0.0.1 is already in use, so the share listener cannot bind it. Stop what holds it, or choose another port with: stim settings set share.port <port>`,
+              )
+            : error,
+        );
+      server.once('error', refused);
+      server.listen(bindPort, '127.0.0.1', () => {
+        server.off('error', refused);
+        server.on('error', (error) => console.error(`stim-server: web share listener: ${error.message}`));
+        resolve();
       });
-    return this.opening;
+    });
+    const address = server.address();
+    const port = typeof address === 'object' && address ? address.port : null;
+    try {
+      if (port === null) throw new Error('The share listener has no port.');
+      if (this.closed) throw new Error('stim-server is stopping.');
+      const opened = await this.deps.route.open(port);
+      this.listener = server;
+      this.kept = keep;
+      this.base = opened.url;
+      this.exposed = opened.proxied ? new URL(opened.url) : null;
+      this.warning = opened.warning ?? null;
+      this.pruneStranded();
+      return opened.url;
+    } catch (cause) {
+      if (port !== null && this.deps.route.stranded() === port) this.stranded.set(port, server);
+      else closeServer(server);
+      this.pruneStranded();
+      throw cause;
+    }
   }
 
   private async end(share: Share, message: string): Promise<void> {
@@ -776,12 +827,14 @@ export class ShareHub {
   /**
    * Once no share is live, removes the Funnel route and only then closes the listener, so the public route never
    * points at a free loopback port. A listener whose route could not be removed stays bound, answering 404, until a
-   * later route replaces it or the server stops.
+   * later route replaces it or the server stops; so does a kept one.
    */
   private teardown(): Promise<void> {
     if (this.shares.size || !this.listener) return this.closingRoute;
+    if (this.kept && !this.closed) return this.closingRoute;
     const listener = this.listener;
     this.listener = null;
+    this.kept = false;
     this.base = null;
     this.exposed = null;
     this.warning = null;
