@@ -133,9 +133,9 @@ describe('workspaceDevices', () => {
     };
     lease('PHONE-1', 't1', '2026-11-03T12:00:00.000Z');
     lease('PHONE-2', 't2', '2026-11-03T09:00:00.000Z');
-    const state = {
+    const state: WorkspaceState = {
       deviceLeases: { 'ios:phone': { id: 'PHONE-1', token: 't1' }, 'ios:old': { id: 'PHONE-2', token: 't2' } },
-    } as unknown as WorkspaceState;
+    };
     expect(workspaceDevices(project, state, Date.parse('2026-11-03T10:00:00.000Z'))).toEqual([
       { platform: 'ios', slot: 'default', kind: 'owned', id: 'SIM-1', name: 'stim-app' },
       { platform: 'android', slot: 'tablet', kind: 'owned', id: null, name: 'stim-tab', avdName: 'stim-tab' },
@@ -146,14 +146,12 @@ describe('workspaceDevices', () => {
 
 describe('needsRevive', () => {
   const project: ProjectRecord = { metroPort: 8082 };
-  const idle = { devServerStop: { reason: 'idle', at: '2026-11-01T10:30:00.000Z', idleMinutes: 15 } };
+  const idle: WorkspaceState = { devServerStop: { reason: 'idle', at: '2026-11-01T10:30:00.000Z', idleMinutes: 15 } };
 
   test('revives before the command after an idle stop of Metro or of the device, and not once it is revived', () => {
-    expect(needsRevive(project, idle as WorkspaceState, sim)).toBe(true);
-    expect(
-      needsRevive(project, { deviceIdleShutdowns: { ios: { at: 'x', idleMinutes: 15 } } } as WorkspaceState, sim),
-    ).toBe(true);
-    expect(needsRevive(project, {} as WorkspaceState, sim)).toBe(false);
-    expect(needsRevive(project, idle as WorkspaceState, { ...sim, kind: 'physical' })).toBe(false);
+    expect(needsRevive(project, idle, sim)).toBe(true);
+    expect(needsRevive(project, { deviceIdleShutdowns: { ios: { at: 'x', idleMinutes: 15 } } }, sim)).toBe(true);
+    expect(needsRevive(project, {}, sim)).toBe(false);
+    expect(needsRevive(project, idle, { ...sim, kind: 'physical' })).toBe(false);
   });
 });

@@ -59,6 +59,10 @@ iOS app in that state never connects to Metro, so reload cannot reach it.
 `revive` resumes a workspace after an [idle stop](./dev-server-and-logs.md#idle-stop).
 Use it when the app shows "could not connect" or a blank screen after a pause.
 
+`agent-device` runs [agent-device](https://github.com/callstack/agent-device) on
+this workspace's device, so an agent never passes device ids. See
+[`agent-device`](#agent-device).
+
 ## Named device slots
 
 `ios`, `android`, `device lock`, `device unlock`, `logs`, and `stop` accept
@@ -418,8 +422,8 @@ can compile on a paired remote machine instead: see `remote.build` in
   to the local device queue when no host admits. `remote` tries the approved Macs first, in
   `remote.machines` order, and runs here only when none admits; `remote-only` never runs here and waits for a host with room. See [hosted iOS](./owned-devices.md#run-ios-on-another-mac).
   With `hosting.agentDriver=agent-device` on the host and agent-device 0.21.30 or later on both machines,
-  `ios.host.agent` returns a per-slot 0600 remote config. Use `agent-device <command> --remote-config <file>`
-  from status, starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
+  `ios.host.agent` returns a per-slot 0600 remote config. `stim agent-device <command>` passes it for you,
+  starting with `open <bundleId>`. It reaches only that hosted simulator; inventory, installs,
   uploads, device selectors, shutdown and host paths are refused. `stim stop` closes its connection and removes the config.
 - `--remote proxy` uses a configured Agent Device daemon.
 - `--remote eas` uses an EAS remote simulator. It needs eas-cli 21.6.0 or later.
@@ -1000,6 +1004,62 @@ com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.
 reads the workspace's boot hook; revive then restores only the launch on that
 device, plus Metro. See
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
+
+## `agent-device`
+
+```text
+stim agent-device <agent-device arguments...> [--slot <name>]
+```
+
+Runs agent-device on this workspace's iOS or Android device. Pass agent-device's
+own arguments, without a device id:
+
+```sh
+stim agent-device open com.example.app
+stim agent-device snapshot -i --json
+stim agent-device press @e3
+stim agent-device scroll down --slot tablet
+```
+
+Stim adds what agent-device needs to reach the device:
+
+- `--platform` and `--udid` or `--serial` of the workspace's owned simulator or
+  emulator, or of a phone it leases with `stim device lock` or `--device`. A
+  leased phone wins over the slot's simulator or emulator.
+- `--remote-config` for a [hosted iOS](./owned-devices.md#run-ios-on-another-mac)
+  or [hosted Android](./remote-machines.md) session.
+- `--session stim-<slot>-<platform>` unless you pass `--session`.
+- `AGENT_DEVICE_STATE_DIR`, the workspace's
+  [agent-device state directory](./dev-server-and-logs.md#agent-device-actions).
+
+`--slot` picks a [device slot](#named-device-slots), and `--platform ios|android`
+picks the platform when the slot has both. Before the command, an
+[idle-stopped](./dev-server-and-logs.md#idle-stop) workspace is revived as
+[`stim revive`](#revive) would, through device admission, with progress on
+stderr. It refuses with `STIM_BAD_ARG` a `--udid`, `--serial`, `--device` or
+`--remote-config` that is not this workspace's, and `boot`: Stim boots its
+devices itself. It refuses with `STIM_NO_DEVICE` when the workspace has no
+device there, its emulator is not running, or agent-device is missing or older
+than 0.21.30. It uses the shared `~/.local/bin/agent-device` (or
+`STIM_AGENT_DEVICE_BIN`) and does not pin a version.
+
+stdin, stdout, stderr and the exit code are agent-device's, so `--json` output
+stays parseable and interactive commands such as `record` and `logs` work.
+After each command, Stim shows the action to stim-server viewers that ask for
+presence: `Agent · press` and where it landed. A `snapshot --json` taken through
+the wrapper lets Stim outline the element a later `press @ref` acts on; text
+snapshots give the point only. macOS apps are not covered; see
+[native Mac agent actions](./macos.md#agent-actions).
+
+:::tip[Ask your agent]
+
+```text
+Read stim guide agent, then drive this workspace's app only through
+stim agent-device: open the app, take snapshot -i --json, press by ref, and
+check stim logs --source agent.
+```
+
+:::
 
 ## `share`
 

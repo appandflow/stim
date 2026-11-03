@@ -895,16 +895,17 @@ teardown. Clear a named claim only after proving its owner and child are gone.
 
 `ios.host.agent` reports `driver`, `remoteConfig` and `command`. Plain status prints
 `agent: <command>`. Each slot has its own 0600 config under the workspace's Stim
-state directory; tokens never appear in placement or status. Use that file:
+state directory; tokens never appear in placement or status.
+[`stim agent-device`](./commands.md#agent-device) passes that file for you:
 
 ```bash
-agent-device open <bundleId> --remote-config <file>
-agent-device snapshot --remote-config <file>
-agent-device click <ref> --remote-config <file>
-agent-device screenshot --remote-config <file>
+stim agent-device open <bundleId>
+stim agent-device snapshot
+stim agent-device click <ref>
+stim agent-device screenshot
 ```
 
-The command shape is `agent-device <command> --remote-config <file>`. `open`
+Underneath, the command shape is `agent-device <command> --remote-config <file>`. `open`
 automatically allocates an `ios-instance` lease through the `proxy` provider in
 this session's tenant. The config contains `daemonBaseUrl`, `daemonAuthToken`,
 `tenant`, `sessionIsolation`, `runId`, `clientId`, `deviceKey`, `leaseBackend`,
@@ -979,9 +980,8 @@ Copy this prompt into your coding agent:
 ```text
 Run this workspace's iOS app on janics-mac-mini with stim ios --remote janics-mac-mini.
 Use the host's offered simulator architecture, keep Metro here, report launch evidence
-and status. Read ios.host.agent from stim status --json, open the app with
-agent-device open <bundleId> --remote-config <file>, then snapshot and click through
-that config. Run stim stop when finished. If the host refuses, report its reason.
+and status. Open the app with stim agent-device open <bundleId>, then snapshot
+and click through stim agent-device. Run stim stop when finished. If the host refuses, report its reason.
 ```
 
 ## Paired Mac hosting approval

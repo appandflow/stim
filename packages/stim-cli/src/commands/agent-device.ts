@@ -108,14 +108,14 @@ export function needsNoWorkspace(argv: readonly string[]): boolean {
 function readFlags(argv: readonly string[]): { flags: Partial<Record<ValueFlag, string>>; rest: string[] } | string {
   const flags: Partial<Record<ValueFlag, string>> = {};
   const rest: string[] = [];
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]!;
+  const queue = [...argv];
+  for (let arg = queue.shift(); arg !== undefined; arg = queue.shift()) {
     const flag = VALUE_FLAGS.find((name) => arg === name || arg.startsWith(`${name}=`));
     if (!flag) {
       rest.push(arg);
       continue;
     }
-    const value = arg === flag ? argv[++i] : arg.slice(flag.length + 1);
+    const value = arg === flag ? queue.shift() : arg.slice(flag.length + 1);
     if (value === undefined || value === '') return `${flag} needs a value.`;
     flags[flag] = value;
   }
@@ -151,7 +151,7 @@ export function planAgentDevice(
   if (typeof read === 'string') return refusal('STIM_BAD_ARG', read, 'Pass the flag with its value.');
   const { flags, rest } = read;
   const at = rest.findIndex((arg) => !arg.startsWith('-'));
-  const command = at === -1 ? null : rest[at]!;
+  const command = rest[at] ?? null;
   const refused = command === null ? undefined : REFUSED_COMMANDS[command];
   if (refused) {
     return refusal(
@@ -209,7 +209,9 @@ export function planAgentDevice(
       'Pass --platform ios or --platform android.',
     );
   }
-  const device = candidates.toSorted((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind))[0]!;
+  const [device] = candidates.toSorted((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind));
+  if (!device)
+    return refusal('STIM_NO_DEVICE', 'This workspace has no device to drive.', 'Run `stim ios|android` first.');
   const config = flags['--remote-config'];
   if (config !== undefined && (device.kind !== 'hosted' || config !== device.remoteConfig)) {
     return refusal(
@@ -310,8 +312,8 @@ export function workspaceDevices(
       const placement = parseHostedNativePlacement(raw, platform);
       if (!placement) continue;
       const remoteConfig = 'remoteConfig' in placement.agent ? placement.agent.remoteConfig : null;
-      for (let i = devices.length - 1; i >= 0; i--)
-        if (devices[i]!.platform === platform && devices[i]!.slot === slot) devices.splice(i, 1);
+      const local = devices.filter((device) => device.platform === platform && device.slot === slot);
+      for (const device of local) devices.splice(devices.indexOf(device), 1);
       devices.push({ platform, slot, kind: 'hosted', id: null, name: null, remoteConfig });
     }
   }
@@ -444,9 +446,11 @@ function agentDeviceVersion(script: string | undefined, command: string): string
 function versionAtLeast(version: string | null): boolean {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(version?.trim() ?? '');
   if (!match) return false;
-  const parts = match.slice(1).map(Number);
-  for (let i = 0; i < 3; i++) if (parts[i] !== MIN_VERSION[i]) return parts[i]! > MIN_VERSION[i]!;
-  return true;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  const [wantMajor, wantMinor, wantPatch] = MIN_VERSION;
+  if (major !== wantMajor) return Number(major) > wantMajor;
+  if (minor !== wantMinor) return Number(minor) > wantMinor;
+  return Number(patch) >= wantPatch;
 }
 
 function refuse(found: AgentDeviceRefusal, json: boolean): void {
@@ -477,7 +481,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
     return refuse(
       {
         code: 'STIM_NO_DEVICE',
-        message: (error as Error).message,
+        message: error instanceof Error ? error.message : String(error),
         remedy: 'npm install --global --prefix "$HOME/.local" agent-device',
       },
       json,

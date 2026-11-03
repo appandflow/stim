@@ -115,8 +115,7 @@ export function agentActionGesture(
   const d = details(recorded);
   const durationMs = Math.max(0, d.durationMs ?? 0);
   if (points.to) return { kind: 'swipe', from: points.from, to: points.to, durationMs };
-  const x = d.x!;
-  const y = d.y!;
+  const { x = 0, y = 0 } = d;
   let rect: Rect | undefined;
   if (target?.startsWith('@')) {
     const ref = target.slice(1).split('~')[0];

@@ -3919,8 +3919,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
           slotName,
           spans[0]!.start,
           (session) => {
-            if (!viewports.has(session)) viewports.set(session, readAgentSnapshot(cwd, session)?.viewport ?? null);
-            return viewports.get(session)!;
+            const known = viewports.get(session);
+            if (known !== undefined) return known;
+            const read = readAgentSnapshot(cwd, session)?.viewport ?? null;
+            viewports.set(session, read);
+            return read;
           },
         );
         return send(socket, { id, result: { ...state, markers } });

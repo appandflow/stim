@@ -1087,7 +1087,7 @@ test('hosted iOS safety routes and hosting refusal remedy render through the gui
   expect(android).toContain('android.host.agent');
   expect(android).toContain('agent-device <command> --remote-config <file>');
   expect(android).toContain('close --shutdown');
-  expect(renderTopic('agent')).toContain('--remote-config');
+  expect(renderTopic('agent')).toContain('stim agent-device');
 });
 
 test('the hosted device sections name every command the agent-device driver allows or refuses', () => {

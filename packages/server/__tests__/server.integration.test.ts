@@ -8579,8 +8579,8 @@ describe('frames.subscribe', () => {
       await viewer.request('frames.subscribe', { workspace, platform: 'ios', presence: true });
       const presence = async () => {
         for (;;) {
-          const message = (await viewer.next()) as { event?: string };
-          if (message.event === 'presence') return message;
+          const message = await viewer.next();
+          if ('event' in message && message.event === 'presence') return message;
         }
       };
       expect(await presence()).toEqual({ event: 'presence', subscription: 's1', participants: [] });
