@@ -250,7 +250,7 @@ export function liveProbes({
     simulators: () => {
       if (process.platform !== 'darwin') return Promise.resolve([]);
       if (simctlListing !== null) return Promise.resolve().then(() => parseSimctlList(simctlListing));
-      const shared = sharedListing ? readFreshDeviceListing() : null;
+      const shared = sharedListing ? readFreshDeviceListing(loadConfig()) : null;
       if (!shared) return listAllIosSimsAsync();
       listedAdb = shared.adb;
       return Promise.resolve(shared.sims);

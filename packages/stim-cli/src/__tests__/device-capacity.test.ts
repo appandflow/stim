@@ -774,7 +774,7 @@ describe('the shared device listing status reads', () => {
       root,
       sources: { ...empty, sims },
     });
-    expect(readFreshDeviceListing()?.sims).toEqual(sims);
+    expect(readFreshDeviceListing(null)?.sims).toEqual(sims);
   });
 
   test.each([
@@ -785,17 +785,17 @@ describe('the shared device listing status reads', () => {
     ['not an array of records', { schema: 1, listedAt: Date.now(), sims: 'booted' }],
   ])('a listing that is %s is not used', (_name, record) => {
     writeFileSync(listingFile(), JSON.stringify(record));
-    expect(readFreshDeviceListing()).toBeNull();
+    expect(readFreshDeviceListing(null)).toBeNull();
   });
 
   test('a corrupt or missing file is not used', () => {
-    expect(readFreshDeviceListing()).toBeNull();
+    expect(readFreshDeviceListing(null)).toBeNull();
     writeFileSync(listingFile(), '{"schema":1,"listedAt":');
-    expect(readFreshDeviceListing()).toBeNull();
+    expect(readFreshDeviceListing(null)).toBeNull();
   });
 
   test('a listing 9 s old is still used', () => {
     writeFileSync(listingFile(), JSON.stringify({ schema: 1, listedAt: Date.now() - 9_000, sims }));
-    expect(readFreshDeviceListing()).toEqual({ sims, adb: null });
+    expect(readFreshDeviceListing(null)).toEqual({ sims, adb: null });
   });
 });

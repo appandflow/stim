@@ -772,11 +772,27 @@ function readSharedListing(at: number, { complete = false }: { complete?: boolea
 /**
  * The simulator records (and the emulator listing, when the writer took one) of the last device listing a boot
  * admission took, while it is at most `INVENTORY_REFRESH_MS` old. Null when the file is missing, stale, corrupt or
- * written without simulator records.
+ * written without simulator records, and when it lacks a simulator `config` records, which a boot admission creates
+ * after listing. The emulator listing is dropped when it lacks a recorded owned emulator.
  */
-export function readFreshDeviceListing(at: number = Date.now()): Pick<SharedListing, 'sims' | 'adb'> | null {
+export function readFreshDeviceListing(
+  config: Config | null,
+  at: number = Date.now(),
+): Pick<SharedListing, 'sims' | 'adb'> | null {
   const listing = readSharedListing(at, { complete: true });
-  return listing && { sims: listing.sims, adb: listing.adb };
+  if (!listing) return null;
+  const listedUdids = new Set(listing.sims.map((sim) => sim.udid));
+  const slots = Object.values(config?.projects || {}).flatMap((project) => projectDeviceSlots(project));
+  if (slots.some(({ platforms }) => platforms.ios?.deviceUdid && !listedUdids.has(platforms.ios.deviceUdid)))
+    return null;
+  const ports = new Set(listing.adb ? liveEmulatorPorts(listing.adb).map((entry) => entry.consolePort) : []);
+  const emulatorsListed = slots.every(
+    ({ platforms }) =>
+      !platforms.android?.owned ||
+      typeof platforms.android.consolePort !== 'number' ||
+      ports.has(platforms.android.consolePort),
+  );
+  return { sims: listing.sims, adb: emulatorsListed ? listing.adb : null };
 }
 
 function takeBootMarker(device: BootingDevice): ClaimHandle {
