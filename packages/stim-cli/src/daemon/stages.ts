@@ -31,7 +31,7 @@ import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { ARTIFACT_DIRS, existingDirsOf } from '../workspace/regenerable-dirs.ts';
 import { idleMinutesSetting, maintenanceKeepSetting, resolveProjectSettings } from '../workspace/settings.ts';
 import { readWorkspaceState, updateWorkspaceStateAsync } from '../workspace/workspace-state.ts';
-import { deleteOutputs, idleOutputs, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
+import { deleteOutputs, idleOutputs, revivable, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import { lowestFreeMb, measureDisk } from './measure.ts';
 
 const DAY_MS = 86_400_000;
@@ -263,6 +263,14 @@ export function dormantCandidates(
 }
 
 /**
+ * What brings a dormant workspace back: `stim revive` while its dev server's idle stop survives and the stage deleted
+ * none of its devices, else the next `stim ios` or `stim android`.
+ */
+function dormantRestore(path: string, deleted: readonly string[]): string {
+  return revivable(path) && !deleted.length ? 'stim revive' : 'stim ios or stim android';
+}
+
+/**
  * The dormant stage, under the workspace's native-run lock after deciding again: its owned simulators and emulators
  * deleted through ledger teardown (the parked pool is untouched), then its logs archived. node_modules and Pods stay.
  */
@@ -271,13 +279,13 @@ export async function enterDormantStage(
   config: Config,
   thresholdMs: number,
   why: string,
-): Promise<StageResult & { deleted: string[] }> {
+): Promise<StageResult & { deleted: string[]; restore: string }> {
   const { path, project } = candidate;
   const run = await withIdleWorkspace(
     path,
-    async (): Promise<StageResult & { deleted: string[] }> => {
+    async (): Promise<StageResult & { deleted: string[]; restore: string }> => {
       if ((await idleFor(path, thresholdMs, 'idle.dormantDays', true)) === null)
-        return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle', deleted: [] };
+        return { outcome: 'kept', bytes: 0, detail: 'it is no longer idle', deleted: [], restore: '' };
       const owns = (kind: 'ios' | 'android') =>
         projectDeviceSlots(project).some(({ platforms }) => platforms[kind]?.owned === true);
       let sims: IosSimRecord[] = [];
@@ -292,6 +300,7 @@ export async function enterDormantStage(
           bytes: 0,
           detail: `its owned devices cannot be listed: ${error instanceof Error ? error.message : String(error)}`,
           deleted: [],
+          restore: '',
         };
       }
       const before = lowestFreeMb(await measureDisk(config));
@@ -323,18 +332,21 @@ export async function enterDormantStage(
         archived,
       };
       await updateWorkspaceStateAsync(path, (state) => ({ ...state, [DORMANT_STAGE_KEY]: record }));
-      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods stay. The next stim ios or stim android creates a device.`;
+      const restore = dormantRestore(path, deleted);
+      const detail = `no activity for ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes (${why}): ${deleted.length ? `deleted ${deleted.join(', ')}` : 'no owned device to delete'}${failures ? `; ${failures} could not be deleted and stay recorded` : ''}; ${archived ? 'archived its logs' : 'kept its logs (archive.enabled is off or nothing to archive)'}; node_modules and Pods stay. ${deleted.length ? 'The next stim ios or stim android creates a device.' : `${restore} resumes it.`}`;
       writeWorkspaceEvent(path, failures ? 'warn' : 'info', 'workspace_dormant', detail, {
         bytes,
         deletedDevices: deleted,
         archived,
-        restore: 'stim ios or stim android',
+        restore,
       });
-      return { outcome: failures ? 'failed' : 'done', bytes, detail, deleted };
+      return { outcome: failures ? 'failed' : 'done', bytes, detail, deleted, restore };
     },
     { purpose: 'dormant stage', devServer: false, hosted: false, hostedMacos: false },
   );
-  return run.ran ? run.value : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}`, deleted: [] };
+  return run.ran
+    ? run.value
+    : { outcome: 'kept', bytes: 0, detail: `in use: ${run.reasons.join('; ')}`, deleted: [], restore: '' };
 }
 
 /**
@@ -352,7 +364,12 @@ export async function runDormantPass(
     const why = `idle.dormantDays is ${afterMs / DAY_MS}`;
     const result = input.act
       ? await enterDormantStage(candidate, config, afterMs, why)
-      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing' };
+      : {
+          outcome: 'would' as const,
+          bytes: 0,
+          detail: 'daemon.mode report acts on nothing',
+          restore: dormantRestore(candidate.path, []),
+        };
     const action: DaemonLadderAction = {
       rung: 4,
       kind: 'dormant-stage',
@@ -361,14 +378,14 @@ export async function runDormantPass(
       outcome: result.outcome,
       bytes: result.bytes,
       detail: result.detail,
-      ...(result.outcome === 'done' ? { restore: 'stim ios or stim android' } : {}),
+      ...(result.outcome === 'done' ? { restore: result.restore } : {}),
     };
     actions.push(action);
     input.log(
       result.outcome === 'failed' ? 'warn' : 'info',
       `workspace_${result.outcome === 'would' ? 'would_dormant' : result.outcome === 'done' ? 'dormant' : `dormant_${result.outcome}`}`,
       `${candidate.path}: ${result.detail}`,
-      { workspace: candidate.path, bytes: result.bytes, restore: 'stim ios or stim android' },
+      { workspace: candidate.path, bytes: result.bytes, ...(result.restore ? { restore: result.restore } : {}) },
     );
   }
   return actions;

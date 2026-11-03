@@ -12,16 +12,18 @@ import { readWorkspaceState, recordWorkspaceUse } from '../workspace/workspace-s
 
 const MINUTE_MS = 60_000;
 let home: string;
+let freeMb: number;
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'stim-cadence-')));
   process.env.STIM_HOME = home;
+  freeMb = 500_000;
   const real = getExecutor();
   setExecutor({ ...real, runFileQuiet: (file) => (file === 'ps' ? '' : null) });
   vi.spyOn(maintenanceRun, 'runMaintenance').mockResolvedValue(undefined as never);
   vi.spyOn(measure, 'measureTick').mockImplementation(async () => ({
     measurement: {
-      disk: [{ volume: '/', freeMb: 500_000 }],
+      disk: [{ volume: '/', freeMb }],
       memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
       load1: 0,
       cores: 8,
@@ -33,6 +35,12 @@ beforeEach(() => {
     simsError: null,
     devices: [],
   }));
+  vi.spyOn(measure, 'measureDisk').mockImplementation(async () => [{ volume: '/', freeMb }]);
+  vi.spyOn(measure, 'measureMemory').mockResolvedValue({
+    level: 'normal',
+    availableBytes: 8 * 1024 ** 3,
+    totalBytes: 16 * 1024 ** 3,
+  });
 });
 
 afterEach(() => {
@@ -88,4 +96,37 @@ test('a quiet home with a workspace not yet dormant keeps the daemon at the 5-mi
   await vi.waitFor(() => expect(exited).toBe(true));
   await daemon;
   expect(ticks().map(({ at }) => Math.round((at - started) / MINUTE_MS))).toEqual([1, 6, 11, 16, 21, 26]);
+});
+
+test('a quiet home ticks every minute while the pressure level is high, and every 5 minutes once it clears', async () => {
+  saveConfig({ version: 2, projects: {}, repos: {} });
+  const root = join(home, 'app');
+  mkdirSync(root);
+  ensureWorkspaceStorage(root);
+  upsertProject(root, {});
+  mkdirSync(workspaceLogsDir(root), { recursive: true });
+  writeFileSync(join(workspaceLogsDir(root), 'device.ndjson'), '{}\n');
+  recordWorkspaceUse(root, new Date(Date.now() - MINUTE_MS));
+  freeMb = 10 * 1024;
+
+  let exited = false;
+  const daemon = (async () => {
+    await runDaemon({ mode: 'on' });
+    exited = true;
+  })();
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+  expect(readDaemonSnapshot()).toMatchObject({ pressure: { level: 'high' }, intervalMs: MINUTE_MS });
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(2));
+
+  freeMb = 500_000;
+  await vi.advanceTimersByTimeAsync(MINUTE_MS);
+  await vi.waitFor(() => expect(ticks()).toHaveLength(3));
+  expect(readDaemonSnapshot()).toMatchObject({ pressure: { level: 'normal' }, intervalMs: 5 * MINUTE_MS });
+
+  rmSync(workspaceLogsDir(root), { recursive: true, force: true });
+  await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
+  await vi.waitFor(() => expect(exited).toBe(true));
+  await daemon;
 });

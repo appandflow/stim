@@ -205,7 +205,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
+      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
     )
     .option(
       '--no-wait',

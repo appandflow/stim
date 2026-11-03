@@ -151,8 +151,11 @@ export default function statusCommand(program: Command): void {
     });
 }
 
-function dormantStageLine({ at, deletedDevices, archived }: DormantStageRecord): string {
-  return `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+function dormantStageLine({ at, deletedDevices, archived }: DormantStageRecord, idleStopped: boolean): string {
+  const back = deletedDevices.length
+    ? 'the next `stim ios` or `stim android` creates a device'
+    : `${idleStopped ? '`stim revive`' : '`stim ios` or `stim android`'} resumes it`;
+  return `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
 }
 
 function renderStatus(
@@ -251,7 +254,7 @@ function renderStatus(
         ),
       );
     }
-    if (state.dormantStage) out.push(chalk.dim(dormantStageLine(state.dormantStage)));
+    if (state.dormantStage) out.push(chalk.dim(dormantStageLine(state.dormantStage, Boolean(state.metro?.idleStop))));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)

@@ -678,7 +678,8 @@ See \`guide logs\` for reading the files.
 THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
 daemon.mode STIM_DAEMON  default on. start, ios, android, web, macos and
 revive start one stim-daemon per Stim home, scoped homes included. It ticks
-each minute while anything runs there and every 5 minutes otherwise, and exits
+each minute while anything runs there or the pressure level is above normal,
+and every 5 minutes otherwise, and exits
 two ticks after nothing runs and every workspace is dormant or removed, so the
 dormant stage fires in a quiet home. Each tick it measures the machine once,
 classifies the pressure level, moves idle workspaces into the idle stage

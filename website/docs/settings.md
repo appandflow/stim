@@ -780,7 +780,9 @@ together with its dev server, once the workspace has had no activity for
 After `idle.dormantDays` (3 by default; fractions of a day allowed; `0` never)
 without activity a workspace goes dormant: its owned devices are deleted (the
 parked pool is untouched) and its logs archived, while `node_modules` and Pods
-stay. The next `stim ios` or `stim android` creates a device.
+stay. When it deleted a device, the next `stim ios` or `stim android` creates
+one; with none deleted, `stim revive` resumes the workspace while its dev
+server's idle stop survives.
 
 Try it with an agent:
 
@@ -993,7 +995,8 @@ took the time.
 `daemon.mode` is a machine setting, `on` by default, with the environment
 override `STIM_DAEMON`. `start`, `ios`, `android`, `web`, `macos` and `revive`
 start one `stim-daemon` process per Stim home, scoped homes included. It ticks
-each minute while anything runs there and every 5 minutes otherwise, and exits
+each minute while anything runs there or the pressure level is above normal, and
+every 5 minutes otherwise, and exits
 two ticks after nothing runs and every workspace is dormant or removed, so the
 dormant stage fires in a quiet home. Each tick it measures the machine once,
 moves workspaces with no activity for `idle.minutes` into the

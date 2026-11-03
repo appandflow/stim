@@ -160,7 +160,7 @@ function pendingWork(config: Config | null): string | null {
 
 /**
  * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
- * runs in the home, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity, dormant
+ * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring once, running the activity, dormant
  * and pressure passes and automatic maintenance, and writing `snapshot.json`. A command's contact brings it back to
  * the minute. It exits after two ticks in a row with nothing running, no work pending (a workspace not yet dormant, a
  * planned finished-worktree removal) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its
@@ -172,7 +172,7 @@ export async function runDaemon({
   mode: startMode = daemonMode({}),
 }: {
   tickMs?: number;
-  /** The tick interval while nothing runs in the home: 5 minutes. */
+  /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
   slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
@@ -351,7 +351,7 @@ export async function runDaemon({
           : homeAlive(config, measured);
       pending = alive ? null : pendingWork(config);
       wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
-      interval = alive ? tickMs : slowTickMs;
+      interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
         if (outcome !== 'kept') kept.delete(workspace);
         else if (kept.get(workspace) !== detail) {

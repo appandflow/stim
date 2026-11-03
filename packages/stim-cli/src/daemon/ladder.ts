@@ -301,7 +301,7 @@ async function dormantRung(context: RungContext): Promise<void> {
     if (!(await context.stillShort())) return;
     const result = context.act
       ? await enterDormantStage(candidate, context.config, idleMs, context.why)
-      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing', deleted: [] };
+      : { outcome: 'would' as const, bytes: 0, detail: 'daemon.mode report acts on nothing', deleted: [], restore: '' };
     recordAction(
       context,
       {
@@ -312,7 +312,7 @@ async function dormantRung(context: RungContext): Promise<void> {
         outcome: result.outcome,
         bytes: result.bytes,
         detail: result.detail,
-        ...(result.outcome === 'done' ? { restore: 'stim ios or stim android' } : {}),
+        ...(result.outcome === 'done' ? { restore: result.restore } : {}),
       },
       `${context.why}; idle ${Math.floor(candidate.idleMs / MINUTE_MS)} minutes`,
     );

@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonPressure } from '@stim-cli/core/state';
-import { readDormantStage, readIdleStage } from '@stim-cli/core/state';
+import { IDLE_STOP_KEY, readDormantStage, readIdleStage } from '@stim-cli/core/state';
 import * as gcDevices from '../commands/gc/devices.ts';
 import { collectOwnedDeviceActivityAsync } from '../commands/gc/idle.ts';
 import { runIdlePass } from '../daemon/idle.ts';
@@ -136,6 +136,36 @@ describe('the dormant stage', () => {
       expect(await dormant()).toEqual([]);
     },
   );
+
+  test('the restore hint names stim revive while the idle stop survives and no device was deleted', async () => {
+    const root = join(projects, 'revivable');
+    mkdirSync(root);
+    ensureWorkspaceStorage(root);
+    upsertProject(root, { metroPort: 59126 });
+    recordWorkspaceUse(root, new Date(Date.now() - 4 * DAY_MS));
+    writeWorkspaceState(root, {
+      [IDLE_STOP_KEY]: { reason: 'idle', at: new Date(Date.now() - 4 * DAY_MS).toISOString(), idleMinutes: 15 },
+    });
+    mkdirSync(workspaceLogsDir(root), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(root), 'metro.ndjson'), '{}\n');
+    const other = join(projects, 'never-served');
+    mkdirSync(other);
+    ensureWorkspaceStorage(other);
+    upsertProject(other, {});
+    recordWorkspaceUse(other, new Date(Date.now() - 4 * DAY_MS));
+    mkdirSync(workspaceLogsDir(other), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(other), 'metro.ndjson'), '{}\n');
+
+    const actions = await dormant();
+
+    expect(actions.map(({ target, restore }) => [target, restore])).toEqual(
+      expect.arrayContaining([
+        [root, 'stim revive'],
+        [other, 'stim ios or stim android'],
+      ]),
+    );
+    expect(actions.find(({ target }) => target === root)?.detail).toMatch(/stim revive resumes it\.$/);
+  });
 
   test('a fraction of a day shortens the clock, and a Stim command since restarts it', async () => {
     saveConfig({ ...loadConfig()!, idle: { dormantDays: 0.01 } });
