@@ -624,41 +624,54 @@ interface Run {
   session: string | null;
 }
 
-/** What agent-device answers for a hosted session the host's restarted daemon no longer knows. */
-const TAIL_BYTES = 4096;
 const SESSION_LOST = /SESSION_NOT_FOUND|requires an active app session/;
 
-/** The `open` that brings a hosted workspace's app session back: its recorded app on the same session and config. */
-function hostedReopen(root: string, plan: AgentDevicePlan): { appId: string; args: string[] } | null {
+function lostSession(exit: AgentDeviceExit): boolean {
+  const text = `${exit.stdout}${exit.stderr}`;
+  return exit.signal === null && exit.code !== 0 && SESSION_LOST.test(text) && !NO_AGENT_CONTROL.test(text);
+}
+
+const NO_AGENT_CONTROL = /has no agent control for this hosted session/;
+
+/** Single-action commands that did nothing when they answered that the session was gone, so running them again is safe. */
+const REOPENABLE_COMMANDS = new Set(
+  'snapshot screenshot press tap click scroll swipe longpress long-press type fill back home get is find wait hover focus'.split(
+    ' ',
+  ),
+);
+
+function hostedReopen(root: string, plan: AgentDevicePlan, args: readonly string[]): string[] | null {
   const { device } = plan;
-  if (device.kind !== 'hosted' || !device.remoteConfig) return null;
+  if (device.kind !== 'hosted' || !device.remoteConfig || !plan.command || !REOPENABLE_COMMANDS.has(plan.command))
+    return null;
+  if (args.includes('--text-stdin')) return null;
   const appId = readWorkspaceLaunches(root)[deviceSlotKey(device.platform, device.slot)]?.appId;
   if (!appId) return null;
   const session = plan.session ?? `stim-${device.slot}-${device.platform}`;
-  return { appId, args: ['open', appId, '--session', session, '--remote-config', device.remoteConfig] };
+  return ['open', appId, '--session', session, '--remote-config', device.remoteConfig];
 }
 
 interface AgentDeviceExit {
   code: number | null;
   signal: NodeJS.Signals | null;
-  /** The end of what agent-device printed, when `watch` was set. */
-  tail: string;
+  /** What agent-device printed, when the run was captured instead of passed through. */
+  stdout: Buffer;
+  stderr: Buffer;
 }
 
 /**
- * Runs agent-device on this terminal. `tee` hands the child's stdout to `onStdout` as well as to ours; `watch` also
- * keeps the end of both streams for the caller.
+ * Runs agent-device with this terminal's stdin. `tee` also hands its stdout to `onStdout`; `capture` keeps both
+ * streams instead of passing them through.
  */
 async function spawnAgentDevice(
   invocation: { command: string; args: string[] },
   args: string[],
   env: NodeJS.ProcessEnv,
-  { tee, watch }: { tee: boolean; watch: boolean },
+  mode: { tee?: boolean; capture?: boolean } = {},
   onStdout: (chunk: Buffer) => void = () => {},
 ): Promise<AgentDeviceExit> {
-  const piped = tee || watch;
   const child = getExecutor().spawn(invocation.command, [...invocation.args, ...args], {
-    stdio: ['inherit', piped ? 'pipe' : 'inherit', watch ? 'pipe' : 'inherit'],
+    stdio: ['inherit', mode.tee || mode.capture ? 'pipe' : 'inherit', mode.capture ? 'pipe' : 'inherit'],
     env,
   });
   const handlers = [
@@ -666,21 +679,16 @@ async function spawnAgentDevice(
     ['SIGINT', () => {}] as const,
   ];
   for (const [signal, handler] of handlers) process.on(signal, handler);
-  let tail = '';
-  const keep = (chunk: Buffer) => {
-    if (watch) tail = (tail + chunk.toString()).slice(-TAIL_BYTES);
-  };
-  if (piped && child.stdout) {
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  if (mode.tee && child.stdout) {
     process.stdout.on('error', () => {});
     child.stdout.pipe(process.stdout, { end: false });
-    child.stdout.on('data', (chunk: Buffer) => {
-      keep(chunk);
-      onStdout(chunk);
-    });
+    child.stdout.on('data', onStdout);
   }
-  if (watch && child.stderr) {
-    child.stderr.pipe(process.stderr, { end: false });
-    child.stderr.on('data', keep);
+  if (mode.capture) {
+    child.stdout?.on('data', (chunk: Buffer) => out.push(chunk));
+    child.stderr?.on('data', (chunk: Buffer) => err.push(chunk));
   }
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     child.once('error', (error) => {
@@ -690,7 +698,7 @@ async function spawnAgentDevice(
     child.once('close', (code, signal) => resolve({ code, signal }));
   });
   for (const [signal, handler] of handlers) process.off(signal, handler);
-  return { ...exit, tail };
+  return { ...exit, stdout: Buffer.concat(out), stderr: Buffer.concat(err) };
 }
 
 async function execute(
@@ -724,20 +732,26 @@ async function execute(
     : null;
   const started = target && command ? publish(version, { ...target, command, phase: 'start' }) : null;
   const tee = Boolean(tracked) && command === 'snapshot' && argv.includes('--json') && !process.stdout.isTTY;
-  const reopen = run && hosted && command !== 'open' ? hostedReopen(hosted.root, run.plan) : null;
   const args = run?.args ?? argv;
+  const reopen = run && hosted ? hostedReopen(hosted.root, run.plan, args) : null;
   const chunks: Buffer[] = [];
   let bytes = 0;
-  let exit = await spawnAgentDevice(invocation, args, env, { tee, watch: reopen !== null }, (chunk) => {
+  const onStdout = (chunk: Buffer) => {
     bytes += chunk.length;
     if (bytes <= MAX_SNAPSHOT_BYTES) chunks.push(chunk);
-  });
-  if (reopen && exit.code !== 0 && SESSION_LOST.test(exit.tail)) {
+  };
+  let exit = await spawnAgentDevice(invocation, args, env, { tee, capture: reopen !== null }, onStdout);
+  if (reopen && lostSession(exit)) {
     console.error(
-      phaseLine('agent-device', `the host no longer holds this agent-device session; opening ${reopen.appId} again`),
+      phaseLine('agent-device', `the host no longer holds this agent-device session; opening ${reopen[1]} again`),
     );
-    const opened = await spawnAgentDevice(invocation, reopen.args, env, { tee: false, watch: false });
-    if (opened.code === 0) exit = await spawnAgentDevice(invocation, args, env, { tee: false, watch: false });
+    const opened = await spawnAgentDevice(invocation, reopen, env, { capture: true });
+    if (opened.code === 0) exit = await spawnAgentDevice(invocation, args, env, { capture: true });
+    else process.stderr.write(opened.stderr);
+  }
+  if (reopen) {
+    process.stdout.write(exit.stdout);
+    process.stderr.write(exit.stderr);
   }
   process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
   if (hosted && target) {

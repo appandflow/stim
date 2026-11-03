@@ -18,15 +18,17 @@ const log = (name, value) => appendFileSync(join(process.env.STIM_HOME, name), v
 if (args[0] === 'open') {
   log('opens', JSON.stringify(args));
   writeFileSync(join(process.env.STIM_HOME, 'opened'), '');
+  process.stdout.write('opened: a snapshot of the app\\n');
   process.exit(0);
 }
-if (args[0] === 'tap') {
+if (args[0] === 'tap' || args[0] === 'batch') {
   log('taps', JSON.stringify(args));
   if (!existsSync(join(process.env.STIM_HOME, 'opened'))) {
+    process.stdout.write(JSON.stringify({ success: false, error: { code: 'SESSION_NOT_FOUND' } }) + '\\n');
     process.stderr.write('Error (SESSION_NOT_FOUND): iOS snapshot requires an active app session on the target device. Run open first\\n');
     process.exit(1);
   }
-  process.stdout.write('tapped\\n');
+  process.stdout.write(JSON.stringify({ success: true }) + '\\n');
   process.exit(0);
 }
 if (args[0] === 'snapshot') {
@@ -216,9 +218,9 @@ test.skipIf(process.platform === 'win32')(
         },
       }),
     );
-    const result = run(['tap', '@e1']);
+    const result = run(['tap', '@e1', '--json']);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe('tapped\n');
+    expect(result.stdout).toBe(`${JSON.stringify({ success: true })}\n`);
     expect(result.stderr).toContain('opening com.example.app again');
     expect(
       readFileSync(join(home, 'opens'), 'utf8')
@@ -227,6 +229,40 @@ test.skipIf(process.platform === 'win32')(
         .map((line) => JSON.parse(line)),
     ).toEqual([['open', 'com.example.app', '--session', 'stim-default-ios', '--remote-config', config]]);
     expect(readFileSync(join(home, 'taps'), 'utf8').trim().split('\n')).toHaveLength(2);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a multi-step hosted command is never run again after the host lost the session',
+  () => {
+    const config = join(home, 'hosted', 'agent.json');
+    mkdirSync(workspaceStateDir(app), { recursive: true });
+    writeFileSync(
+      join(workspaceStateDir(app), 'state.json'),
+      JSON.stringify({
+        ios: {
+          host: {
+            machine: 'local:mini',
+            session: '4f88400a-48eb-4a07-ba6a-734c42768b2a',
+            agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
+          },
+        },
+        launches: {
+          ios: {
+            appId: 'com.example.app',
+            deviceId: 'hosted',
+            metroPort: 8082,
+            release: false,
+            launchedAt: '2026-11-03T00:00:00.000Z',
+          },
+        },
+      }),
+    );
+    const result = run(['batch', '--json']);
+    expect(result.status).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({ success: false });
+    expect(existsSync(join(home, 'opens'))).toBe(false);
   },
   60_000,
 );
