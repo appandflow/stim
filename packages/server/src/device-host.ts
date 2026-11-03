@@ -84,6 +84,7 @@ import type { Methods, ProtocolError } from './protocol.ts';
 import { appDelivery, offerHostedApp, chunkHostedApp, changeHostedApp, handOverHostedApp } from './hosted-app.ts';
 import { pruneHostedApps } from './prune-hosted-apps.ts';
 import type { HostedAgentHost } from './agent-driver.ts';
+import { signalChild } from './stim-command.ts';
 
 interface WorkerRun {
   done: Promise<{ value: unknown; settled: boolean; notice?: string }>;
@@ -2192,7 +2193,7 @@ export class DeviceHost {
     const captured = child.pid === undefined ? null : captureProcessIdentity(child.pid);
     if (!captured?.ok || child.pid === undefined) {
       notice = 'The worker process identity could not be captured; no native request was sent.';
-      child.kill('SIGKILL');
+      signalChild(child, 'SIGKILL');
       cancel('identity-unavailable');
     } else {
       identity = { pid: child.pid, processToken: captured.token };
