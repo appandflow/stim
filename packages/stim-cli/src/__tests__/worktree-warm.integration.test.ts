@@ -747,5 +747,7 @@ describe('an Expo app whose native directories git ignores', () => {
     expect(existsSync(join(target, 'app/ios'))).toBe(false);
     expect(existsSync(join(target, 'app/android'))).toBe(false);
     expect(result.stderr).toMatch(/left out app\/ios: Stim has no record of generating the source's ios\//);
+    expect(result.stderr).toMatch(/left out app\/ios: .*installs its Pods there, a private copy instead of a clone/);
+    expect(result.stderr).not.toMatch(/left out app\/android: .*Pods/);
   }, 30_000);
 });

@@ -86,7 +86,7 @@ Otherwise warm leaves the directory out, with its Pods and build output, and
 prints why on stderr:
 
 ```text
-carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here
+carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone
 ```
 
 A directory generated outside Stim, for example by `npx expo prebuild` or
