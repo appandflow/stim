@@ -422,6 +422,7 @@ describe('podConflictNames', () => {
       conflict('"GoogleUtilities", "FirebaseCore", "GoogleUtilities"'),
       ['GoogleUtilities', 'FirebaseCore'],
     ],
+    ['a name that could be read as an option is dropped', conflict('"-Dx", "Real"'), ['Real']],
     ['other resolver failures name none', '[!] Unable to find a specifier for the `Foo` pod', []],
   ])('%s', (_name, transcript, names) => {
     expect(podConflictNames(transcript)).toEqual(names);

@@ -506,10 +506,6 @@ function fastForward(root: string, upstream: string): { ok: boolean; lines: stri
   }
 }
 
-/**
- * Starts an installer so the claim can follow it: it leads its own process group, and the claim records that
- * group before anything else runs.
- */
 export function installerSpawn(installer: InstallerClaim, spawnFn: SpawnFn | null): SpawnFn {
   const spawnChild: SpawnFn = spawnFn || ((cmd, args, opts) => getExecutor().spawn(cmd, args, opts));
   return (cmd, args, opts) => {
@@ -548,7 +544,6 @@ export async function awaitInstallerSettled(
   };
 }
 
-/** Installs one dependency tree with its lockfile's command, recording the install so a copy can tell it finished. */
 export async function runDependencyInstall({
   dependencies,
   subject,

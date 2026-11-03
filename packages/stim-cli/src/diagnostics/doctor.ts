@@ -412,7 +412,7 @@ export async function checkMainCheckout(
           'cost',
           'The source checkout has no installed dependencies',
           `A worktree cannot carry dependencies from ${dependencies.root}, so its first build must install them from scratch.`,
-          `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
+          `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run stim doctor --fix in a terminal.`,
         ),
       );
     } else if (dependencies.lock === 'package-lock.json') {
@@ -423,7 +423,7 @@ export async function checkMainCheckout(
             'cost',
             'The source checkout dependency tree is stale',
             `npm reports that ${dependencies.root}/node_modules does not match the project dependency graph. Copying it makes each worktree start from the same invalid state.`,
-            `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
+            `Run \`${installCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run stim doctor --fix in a terminal.`,
           ),
         );
       }
@@ -443,7 +443,7 @@ export async function checkMainCheckout(
           'cost',
           `The source checkout CocoaPods state is ${podsState}`,
           `ios/Pods cannot be reused safely because its Manifest.lock ${podsState === 'missing' ? 'is absent' : 'does not match ios/Podfile.lock'}.`,
-          `Run \`${podCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run \`stim doctor --fix\` in a terminal.`,
+          `Run \`${podCommand}\` before creating native worktrees, let \`stim worktree warm --refresh\` run it from a linked worktree, or run stim doctor --fix in a terminal.`,
         ),
       );
     }
@@ -456,7 +456,7 @@ export async function checkMainCheckout(
           'cost',
           'The source checkout CocoaPods state has broken links',
           `${broken.length} symlink${broken.length === 1 ? '' : 's'} under ios/Pods point to missing files. Worktrees copy these broken links and can fail during compilation. First: ${broken[0]}.`,
-          `Run \`${podCommand}\` before creating native worktrees, or run \`stim doctor --fix\` in a terminal.`,
+          `Run \`${podCommand}\` before creating native worktrees, or run stim doctor --fix in a terminal.`,
         ),
       );
     }

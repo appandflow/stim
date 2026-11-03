@@ -30,11 +30,9 @@ import {
 
 export interface SourceRepairOptions {
   facts: SourceCheckoutFacts;
-  /** The source checkout's repository root, whose warm claim guards what a worktree copies. */
   repoRoot: string;
   settings: SettingsObject | null;
   operation: StimContext;
-  /** Asks one yes or no question in a terminal; null without one, where no step runs. */
   confirm: ((question: string) => Promise<boolean>) | null;
   note: (line: string) => void;
 }
@@ -61,11 +59,6 @@ interface RunContext extends SourceRepairOptions {
   hold: WarmClaimHold;
 }
 
-/**
- * `pod install`, with `--clean-install` when Pods hold broken links. When CocoaPods reports that Podfile.lock pins a
- * version a pod in the Podfile no longer allows, only the pods it names are updated, again for each further pod it
- * names, and the clean install is retried once when the update left broken links.
- */
 async function installPods(
   context: RunContext,
   { cleanPods = false, mayUpdatePods = false }: Pick<SourceRepairStep, 'cleanPods' | 'mayUpdatePods'>,
@@ -227,11 +220,6 @@ const LABELS: Record<SourceRepairStep['id'], string> = {
   'prebuild:android': 'prebuild',
 };
 
-/**
- * Brings the source checkout `facts` describes to a state worktrees can clone: each step is announced with its cost and
- * confirmed on its own, then run under the checkout workspace's native-run lock and the repository's exclusive warm claim.
- * Returns 1 when a step was refused or failed; a step that cannot be confirmed without a terminal is announced and left to the person.
- */
 export async function repairSourceCheckout(options: SourceRepairOptions): Promise<0 | 1> {
   const { facts, confirm, note, operation } = options;
   const steps = planSourceRepairs(facts);

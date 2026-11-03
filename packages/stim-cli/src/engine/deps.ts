@@ -56,8 +56,7 @@ export function podConflictNames(transcript: string): string[] {
   for (const match of transcript.matchAll(POD_CONFLICT)) {
     for (const quoted of (match[1] ?? '').matchAll(/"([^"]+)"/g)) names.add((quoted[1] ?? '').split('/')[0] ?? '');
   }
-  names.delete('');
-  return [...names];
+  return [...names].filter((name) => /^[A-Za-z0-9_]/.test(name));
 }
 
 function extractPodBangBlocks(lines: string[]): PodDiagnostics | null {
@@ -386,7 +385,6 @@ export type PodInstallResult = {
   reason?: string;
   remedy?: string;
   command?: string;
-  /** Pods CocoaPods named in a "could not find compatible versions" conflict with `Podfile.lock`. */
   conflictPods?: string[];
   notes?: string[];
   diagnosticSource?: string;
@@ -665,7 +663,6 @@ export async function runPodInstall(
     estimateMs?: number | null;
     onHeartbeat?: (line: string) => void;
     directory?: string;
-    /** The `pod` arguments, such as `['install', '--clean-install']` or `['update', 'FirebaseCoreExtension']`. */
     podArgs?: readonly string[];
   } = {},
 ): Promise<PodInstallResult> {

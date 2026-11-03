@@ -10,7 +10,6 @@ interface SourceRepairRequest {
   settings: SettingsObject | null;
   host: NodeJS.Platform;
   operation: StimContext;
-  /** Asks one yes or no question in a terminal; null without one. */
   confirm: ((question: string) => Promise<boolean>) | null;
   note: (line: string) => void;
 }
@@ -30,7 +29,6 @@ export interface ProjectDoctor {
     repoRoot: string | null,
     operation?: StimContext,
   ): RepairResult | Promise<RepairResult>;
-  /** Repairs the source checkout's dependencies, Pods and prebuild record; returns 1 when a step was refused or failed. */
   repairSource?(request: SourceRepairRequest): Promise<0 | 1>;
   successLines?(platform: DoctorPlatform | undefined): string[];
 }

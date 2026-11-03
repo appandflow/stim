@@ -170,14 +170,12 @@ export type PrebuildRecordStatus =
   | { kind: 'moved'; recorded: string; current: string }
   | { kind: 'unfingerprintable'; recorded: string };
 
-/** How Stim's prebuild record of a native directory compares with the app's current native fingerprint. */
 export function prebuildRecordStatus(recorded: unknown, current: string | null): PrebuildRecordStatus {
   if (typeof recorded !== 'string') return recorded === null ? { kind: 'unfinished' } : { kind: 'unrecorded' };
   if (current === recorded) return { kind: 'current', generatedFrom: recorded };
   return current ? { kind: 'moved', recorded, current } : { kind: 'unfingerprintable', recorded };
 }
 
-/** The prebuild record of `appRoot`'s native directory, with the fingerprint to compare it with when one is recorded. */
 export async function readPrebuildRecord(
   appRoot: string,
   platform: string,

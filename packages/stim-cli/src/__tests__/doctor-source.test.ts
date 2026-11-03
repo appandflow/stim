@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -10,6 +11,9 @@ import {
   type SourceCheckoutFacts,
 } from '../diagnostics/doctor-source.ts';
 import { recordPrebuild } from '../engine/prebuild.ts';
+import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
+import { installedTreeIsStaleAsync } from '../workspace/worktree-refresh.ts';
+import { workspaceName } from '@stim-cli/core';
 
 const IOS_UNFINISHED = { platform: 'ios', status: { kind: 'unfinished' } } as const;
 const ANDROID_MOVED = { platform: 'android', status: { kind: 'moved', recorded: 'a', current: 'b' } } as const;
@@ -44,6 +48,11 @@ describe('planSourceRepairs', () => {
     expect(step?.manual).toBe("cd '/src/app/ios' && pod install");
   });
 
+  test('an iOS prebuild with consistent Pods may still update a conflicting pod', () => {
+    const [step] = planSourceRepairs(facts({ prebuild: [IOS_UNFINISHED] }));
+    expect(step).toMatchObject({ id: 'prebuild:ios', cleanPods: false, mayUpdatePods: true });
+  });
+
   test('a git-tracked ios/ never gets pod update', () => {
     const [step] = planSourceRepairs(facts({ pods: { ...PODS, iosTracked: true } }));
     expect(step?.mayUpdatePods).toBe(false);
@@ -71,6 +80,54 @@ describe('prebuildRecordFinding', () => {
     const finding = prebuildRecordFinding(ANDROID_MOVED);
     expect(finding.detail).toContain('older fingerprint');
     expect(finding.detail).not.toContain('Pods');
+  });
+});
+
+describe('installedTreeIsStaleAsync', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'stim-tree-stale-'));
+    process.env.STIM_HOME = home;
+  });
+  afterEach(() => {
+    resetExecutor();
+    delete process.env.STIM_HOME;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  function npmReports(problems: string[]): void {
+    setExecutor({
+      ...getExecutor(),
+      async runFileAsync() {
+        throw Object.assign(new Error('npm ls failed'), { stdout: JSON.stringify({ problems }) });
+      },
+    });
+  }
+
+  function recordInstall(root: string, problems: string[]): void {
+    const hash = createHash('sha256').update(problems.toSorted().join('\n')).digest('hex');
+    mkdirSync(join(home, 'warm-installs'), { recursive: true });
+    writeFileSync(
+      join(home, 'warm-installs', `${workspaceName(root)}.json`),
+      JSON.stringify({ lock: 'package-lock.json', hash: 'x', patches: '', completed: true, treeProblems: hash }),
+    );
+  }
+
+  const dependencies = { lock: 'package-lock.json', installed: ['node_modules'], command: 'npm ci', root: '/work/app' };
+
+  test('a tree npm rejects is stale until an install finished with those same problems', async () => {
+    npmReports(['missing: react-dom@*, required by vaul@1.1.2']);
+    expect(await installedTreeIsStaleAsync(dependencies)).toBe(true);
+    recordInstall(dependencies.root, ['missing: react-dom@*, required by vaul@1.1.2']);
+    expect(await installedTreeIsStaleAsync(dependencies)).toBe(false);
+    npmReports(['missing: react-dom@*, required by vaul@1.1.2', 'invalid: ws@7.5.13']);
+    expect(await installedTreeIsStaleAsync(dependencies)).toBe(true);
+  });
+
+  test('a tree npm accepts and a lockfile other than npm are never stale', async () => {
+    setExecutor({ ...getExecutor(), runFileAsync: async () => '' });
+    expect(await installedTreeIsStaleAsync(dependencies)).toBe(false);
+    expect(await installedTreeIsStaleAsync({ ...dependencies, lock: 'pnpm-lock.yaml' })).toBe(false);
   });
 });
 

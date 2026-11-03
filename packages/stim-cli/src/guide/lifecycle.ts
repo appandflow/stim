@@ -1815,7 +1815,7 @@ step at a time (no new flag):
   4. The prebuilt React Native flavor note above, which only a build changes.
 Later steps skip when the dependency step is declined or fails. Without a terminal
 (--json, a pipe, Desktop, the API) every step is announced with its manual command
-and none runs. Steps refuse while a \`stim ios\`, \`android\`, \`start\` or other
+and none runs (exit 0). A refused or failed step exits 1. Steps refuse while a \`stim ios\`, \`android\`, \`start\` or other
 run holds the source checkout's workspace (its native-run.lock and in-use checks),
 and while a \`worktree warm\` holds the repository's warm claim. Doctor never
 switches a branch or edits a tracked file; the install commands write only what
