@@ -53,10 +53,13 @@ describe('planAgentDevice', () => {
     }
   });
 
-  test('refuses boot, because Stim boots devices only through admission', () => {
+  test('refuses boot and shutdown, because Stim owns the device lifecycle, wherever the command sits', () => {
     expect(planAgentDevice([sim], ['boot', '--platform', 'ios'])).toMatchObject({
       refusal: { code: 'STIM_BAD_ARG', remedy: expect.stringContaining('stim revive') },
     });
+    for (const argv of [['--level', 'digest', 'boot'], ['shutdown'], ['close', '--shutdown']]) {
+      expect(planAgentDevice([sim], argv)).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
+    }
   });
 
   test('asks for --platform when the slot has both, and picks the one asked for', () => {
@@ -98,6 +101,10 @@ describe('planAgentDevice', () => {
 
   test('names the element a targeted command acts on', () => {
     expect(planAgentDevice([sim], ['press', '@e7~s2', '--settle'])).toMatchObject({ target: '@e7~s2' });
+    expect(planAgentDevice([sim], ['--config', 'c.json', 'press', '--settle', '@e7'])).toMatchObject({
+      command: 'press',
+      target: '@e7',
+    });
     expect(planAgentDevice([sim], ['fill', 'label="Email"', 'me@example.com'])).toMatchObject({
       target: 'label="Email"',
     });

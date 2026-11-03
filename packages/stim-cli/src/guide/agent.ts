@@ -77,8 +77,8 @@ unless you pass --session) and AGENT_DEVICE_STATE_DIR, or the remote config of
 a hosted iOS or Android session (guide lifecycle hosted-ios or hosted-android).
 --slot picks a slot; --platform is needed only when the slot has both. It
 revives an idle-stopped workspace before the command (progress on stderr) and
-refuses with STIM_BAD_ARG a UDID, serial or device that is not this
-workspace's, and boot: Stim boots devices itself. stdout, stderr and the exit
+refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
+this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
 code are agent-device's, so --json output stays parseable. Take snapshots with
 --json so viewers can outline the element each press acts on. It needs
 agent-device 0.21.30 or later; it does not drive macOS apps (guide macos).

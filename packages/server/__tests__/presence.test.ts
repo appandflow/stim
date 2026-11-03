@@ -14,11 +14,11 @@ test('a late subscriber gets the agent at once, and the agent leaves the roster 
   vi.advanceTimersByTime(AGENT_LINGER_MS);
   const agent = { id: 'a1', kind: 'agent', color: 1 };
   expect(seen).toEqual([
-    [{ ...agent, name: 'Agent · press' }],
-    [{ ...agent, name: 'Agent · press' }],
-    [{ ...agent, name: 'Agent · scroll' }],
-    [{ ...agent, name: 'Agent · scroll' }],
-    [{ ...agent, name: 'Agent · scroll', touch: null }],
+    [{ ...agent, name: 'Agent \u00b7 press' }],
+    [{ ...agent, name: 'Agent \u00b7 press' }],
+    [{ ...agent, name: 'Agent \u00b7 scroll' }],
+    [{ ...agent, name: 'Agent \u00b7 scroll' }],
+    [{ ...agent, name: 'Agent \u00b7 scroll', touch: null }],
   ]);
   unsubscribe();
   hub.close();

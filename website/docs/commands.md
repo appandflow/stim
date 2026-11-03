@@ -1038,10 +1038,11 @@ picks the platform when the slot has both. Before the command, an
 [idle-stopped](./dev-server-and-logs.md#idle-stop) workspace is revived as
 [`stim revive`](#revive) would, through device admission, with progress on
 stderr. It refuses with `STIM_BAD_ARG` a `--udid`, `--serial`, `--device` or
-`--remote-config` that is not this workspace's, and `boot`: Stim boots its
-devices itself. It refuses with `STIM_NO_DEVICE` when the workspace has no
-device there, its emulator is not running, or agent-device is missing or older
-than 0.21.30. It uses the shared `~/.local/bin/agent-device` (or
+`--remote-config` that is not this workspace's, and `boot`, `shutdown` and
+`close --shutdown`: Stim owns its devices' lifecycle. It refuses with
+`STIM_NO_DEVICE` when the workspace has no device there, its emulator is not
+running, the host of a hosted session offers no agent control, or agent-device
+is missing or older than 0.21.30. It uses the shared `~/.local/bin/agent-device` (or
 `STIM_AGENT_DEVICE_BIN`) and does not pin a version.
 
 stdin, stdout, stderr and the exit code are agent-device's, so `--json` output

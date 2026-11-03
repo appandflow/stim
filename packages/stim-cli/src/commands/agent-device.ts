@@ -75,7 +75,22 @@ export interface AgentDevicePlan {
 /** agent-device's device lifecycle commands; Stim boots devices only through admission. */
 const REFUSED_COMMANDS: Record<string, string> = {
   boot: "Stim boots this workspace's devices itself, through admission. Run `stim revive` to boot it after an idle stop, or `stim ios|android` to boot it and launch the app.",
+  shutdown:
+    "Stim shuts this workspace's devices down itself. Run `stim stop` to stop the workspace and shut its device down, or `stim agent-device close` to end the session.",
 };
+
+/** agent-device's global flags that take a value, so their value is not the command. */
+const AGENT_DEVICE_VALUE_FLAGS = new Set(['--config', '--level']);
+
+function positionals(rest: readonly string[]): number[] {
+  const found: number[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i] ?? '';
+    if (AGENT_DEVICE_VALUE_FLAGS.has(arg)) i++;
+    else if (!arg.startsWith('-')) found.push(i);
+  }
+  return found;
+}
 
 /** Commands that take no device selection flags; agent-device refuses them with one. */
 const UNSELECTED_COMMANDS = new Set([
@@ -150,9 +165,14 @@ export function planAgentDevice(
   const read = readFlags(argv);
   if (typeof read === 'string') return refusal('STIM_BAD_ARG', read, 'Pass the flag with its value.');
   const { flags, rest } = read;
-  const at = rest.findIndex((arg) => !arg.startsWith('-'));
+  const [at = -1, next = -1] = positionals(rest);
   const command = rest[at] ?? null;
-  const refused = command === null ? undefined : REFUSED_COMMANDS[command];
+  const refused =
+    command === null
+      ? undefined
+      : command === 'close' && rest.includes('--shutdown')
+        ? REFUSED_COMMANDS.shutdown
+        : REFUSED_COMMANDS[command];
   if (refused) {
     return refusal(
       'STIM_BAD_ARG',
@@ -220,7 +240,7 @@ export function planAgentDevice(
       "Leave out --remote-config: stim agent-device passes the hosted session's config itself.",
     );
   }
-  const second = at === -1 ? undefined : rest[at + 1];
+  const second = rest[next];
   return {
     device,
     command,
@@ -467,7 +487,8 @@ function publish(version: string, params: PresencePublishParams): Promise<void> 
   );
 }
 
-const SIGNALS = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+/** The terminal already sends SIGINT to agent-device, in the same foreground process group; Stim only outlives it. */
+const FORWARDED_SIGNALS = ['SIGTERM', 'SIGHUP'] as const;
 const COMMAND_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 const SIGNAL_CODES: Record<string, number> = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1, SIGKILL: 9 };
 
@@ -481,7 +502,7 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
     return refuse(
       {
         code: 'STIM_NO_DEVICE',
-        message: error instanceof Error ? error.message : String(error),
+        message: (error instanceof Error ? error.message : String(error)).replace(/ on the hosting Mac/g, ''),
         remedy: 'npm install --global --prefix "$HOME/.local" agent-device',
       },
       json,
@@ -527,7 +548,7 @@ async function revive(root: string, device: WorkspaceDevice): Promise<AgentDevic
     await beforeCommand('revive');
   } catch {}
   const { runRevive, reviveDeps, reviveLines } = await import('./revive.ts');
-  const { value: result } = await runProcessOperation(root, (context) =>
+  const { value: result, interrupted } = await runProcessOperation(root, (context) =>
     runRevive({
       root,
       note: (line) => console.error(line),
@@ -535,6 +556,7 @@ async function revive(root: string, device: WorkspaceDevice): Promise<AgentDevic
       deps: reviveDeps(context),
     }),
   );
+  if (interrupted !== null) process.exit(interrupted);
   if (!result.ok)
     return {
       code: result.error.code,
@@ -581,11 +603,15 @@ async function execute(
     stdio: ['inherit', tee ? 'pipe' : 'inherit', 'inherit'],
     env,
   });
-  const handlers = SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const);
+  const handlers = [
+    ...FORWARDED_SIGNALS.map((signal) => [signal, () => child.kill(signal)] as const),
+    ['SIGINT', () => {}] as const,
+  ];
   for (const [signal, handler] of handlers) process.on(signal, handler);
   const chunks: Buffer[] = [];
   let bytes = 0;
   if (tee && child.stdout) {
+    process.stdout.on('error', () => {});
     child.stdout.pipe(process.stdout, { end: false });
     child.stdout.on('data', (chunk: Buffer) => {
       bytes += chunk.length;

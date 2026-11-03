@@ -827,8 +827,8 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   and platform, its owned emulator is not running, its hosted session's host
   offers no agent control, or agent-device is missing or older than 0.21.30.
   The remedy names the run command or the install command. A UDID, serial,
-  device or remote config that is not the workspace's, and \`boot\`, refuse
-  with STIM_BAD_ARG instead.
+  device or remote config that is not the workspace's, \`boot\` and
+  \`shutdown\` refuse with STIM_BAD_ARG instead.
   If Android creation says an AVD already exists on disk but is not listed,
   run \`npx stim gc\` to inspect orphaned owned AVDs, then \`npx stim gc --delete\`
   to reclaim those safe to delete before retrying. Keep anything GC cannot

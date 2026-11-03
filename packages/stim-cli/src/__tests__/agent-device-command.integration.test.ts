@@ -15,6 +15,7 @@ if (args[0] === 'snapshot') {
   process.stdout.write(JSON.stringify({ nodes: [{ ref: 'e2', rect: { x: 100, y: 200, width: 200, height: 100 } }], viewport: { width: 400, height: 800 } }) + '\\n');
   process.exit(0);
 }
+if (args[0] === 'die') process.kill(process.pid, 'SIGTERM');
 if (args[0] === 'press') {
   const session = args[args.indexOf('--session') + 1];
   const dir = join(process.env.AGENT_DEVICE_STATE_DIR, 'sessions', session);
@@ -102,4 +103,8 @@ test('agent-device --help needs no workspace', () => {
   const result = run(['--help'], home);
   expect(result.status).toBe(3);
   expect(JSON.parse(result.stdout)).toEqual({ argv: ['--help'], stateDir: null });
+});
+
+test('an agent-device killed by a signal exits with 128 plus the signal, as a shell reports it', () => {
+  expect(run(['die']).status).toBe(143);
 });
