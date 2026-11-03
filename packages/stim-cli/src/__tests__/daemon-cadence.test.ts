@@ -12,8 +12,13 @@ import {
   readMaintenanceState,
   type DaemonMode,
 } from '@stim-cli/core/state';
+import * as dependencies from '../daemon/dependencies.ts';
+import * as idlePass from '../daemon/idle.ts';
+import * as ladder from '../daemon/ladder.ts';
 import * as measure from '../daemon/measure.ts';
+import * as reclaim from '../daemon/reclaim.ts';
 import { runDaemon } from '../daemon/run.ts';
+import * as stages from '../daemon/stages.ts';
 import { pendingDormant } from '../daemon/stages.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import * as idleStop from '../maintenance/idle-stop.ts';
@@ -295,15 +300,18 @@ describe.skipIf(process.platform === 'win32')(
 
     test('the daemon_tick record carries how long each phase of the tick took', async () => {
       saveConfig({ version: 2, projects: {}, repos: {} });
+      freeMb = 10 * 1024;
       const measured = await measure.measureTick(null, Date.now());
-      vi.spyOn(measure, 'measureTick').mockImplementation(
-        () => new Promise((resolve) => setTimeout(() => resolve(measured), 7000)),
-      );
-      vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(
-        () => new Promise<void>((resolve) => setTimeout(resolve, 3000)),
-      );
+      const after = <T>(ms: number, value: T) => new Promise<T>((resolve) => setTimeout(() => resolve(value), ms));
+      vi.spyOn(measure, 'measureTick').mockImplementation(() => after(7000, measured));
+      vi.spyOn(idlePass, 'runIdlePass').mockImplementation(() => after(1000, []));
+      vi.spyOn(stages, 'runDormantPass').mockImplementation(() => after(2000, []));
+      vi.spyOn(dependencies, 'runDormantDependencies').mockImplementation(() => after(3000, []));
+      vi.spyOn(ladder, 'runLadder').mockImplementation((_input, pressure) => after(4000, { actions: [], pressure }));
+      vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(() => after(5000, undefined));
+      vi.spyOn(reclaim, 'reclaimForBootWaiters').mockImplementation(() => after(6000, null));
       const daemon = runDaemon({ mode: 'on' });
-      await vi.advanceTimersByTimeAsync(MINUTE_MS + 10_000);
+      await vi.advanceTimersByTimeAsync(MINUTE_MS + 28_000);
       await vi.waitFor(() => expect(ticks()).toHaveLength(1));
       const record = readFileSync(daemonNdjsonFile(), 'utf8')
         .trim()
@@ -311,15 +319,15 @@ describe.skipIf(process.platform === 'win32')(
         .map((line) => JSON.parse(line))
         .find((entry) => entry.event === 'daemon_tick');
       expect(record).toMatchObject({
-        tickMs: 10_000,
+        tickMs: 28_000,
         phases: {
           measureMs: 7000,
-          idleMs: 0,
-          dormantMs: 0,
-          dependenciesMs: 0,
-          ladderMs: 0,
-          maintenanceMs: 3000,
-          reclaimMs: 0,
+          idleMs: 1000,
+          dormantMs: 2000,
+          dependenciesMs: 3000,
+          ladderMs: 4000,
+          maintenanceMs: 5000,
+          reclaimMs: 6000,
         },
         eventLoopDelay: { maxMs: expect.any(Number), p99Ms: expect.any(Number) },
       });
