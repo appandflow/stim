@@ -13,7 +13,7 @@ import { projectIntegrations } from '../integrations/projects.ts';
 import { reactNativeIosProject } from '../integrations/react-native-ios.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
-import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
+import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
@@ -1410,6 +1410,27 @@ describe('Metro prefetch', () => {
 
 describe('the device preparation step', () => {
   beforeEach(() => setExecutor(makeExecutor()));
+
+  test('a boot admission refused before the simulator is created keeps its code and remedy', async () => {
+    reserve();
+    const refused = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => {
+          throw new DeviceAdmissionRefusal({
+            code: 'STIM_AT_CAPACITY',
+            message: 'This run would wait for a boot slot (2/2 boots in flight) held by a, b; queue position 1 of 1.',
+            remedy:
+              'Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise concurrency.maxDevices.',
+          });
+        },
+      },
+    );
+    expect(refused.exitCode).toBe(1);
+    const payload = parseFirst(refused.logs);
+    expect(payload.code).toBe('STIM_AT_CAPACITY');
+    expect(payload.remedy).toMatch(/--wait <seconds>/);
+  });
 
   test('a model or runtime mismatch refusal carries its own remedy, not the toolchain one', async () => {
     reserve();

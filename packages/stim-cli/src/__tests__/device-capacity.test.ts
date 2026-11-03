@@ -5,6 +5,7 @@ import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
   peekDeviceSlots,
+  uncreatedDeviceKey,
   withDeviceBootAdmission,
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
@@ -46,6 +47,20 @@ test('local device counts split by platform and sum to the total, with a booting
     ios: 2,
     android: 0,
   });
+});
+
+test('a boot that rekeys to the device it created counts that device once', async () => {
+  const created = makeIosSim({ udid: 'created', name: 'stim-created', state: 'Booting' });
+  const counted = await withDeviceBootAdmission(
+    { platform: 'ios', key: uncreatedDeviceKey() },
+    async (admitted) => {
+      admitted.rekey('created');
+      return countLiveOwnedDevices({ ...empty, sims: [created] });
+    },
+    { root, sources: empty },
+  );
+  expect(counted).toBe(1);
+  expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
 });
 
 function deferred<T>() {

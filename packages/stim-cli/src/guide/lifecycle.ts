@@ -2162,7 +2162,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
-  critical, or warning with under 2 GB available.
+  critical, or warning with under 2 GB available. A boot that needs a new
+  simulator or emulator creates it inside its slot, and a SimSlim reboot stays
+  in that slot.
 
   A run past a cap WAITS in arrival order per resource: builds in
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
@@ -2184,7 +2186,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   held only by memory keeps waiting while the ladder reclaims.
   \`--wait <seconds>\` bounds a device wait instead; \`--no-wait\` or
   \`--wait 0\` refuses at once and cannot jump queued runs. iOS waits
-  beside its build. Stop cancels a queued run and releases its ticket.
+  beside its build, except a run that creates its simulator: it builds once
+  the simulator exists. Stop cancels a queued run and releases its ticket.
   Status JSON adds build.waitingFor independently of phase: { kind:
   "device-slot" | "build-slot", inUse, max, since, position, resource }, and
   the top-level daemon.waiting lists every waiting run. Positive
