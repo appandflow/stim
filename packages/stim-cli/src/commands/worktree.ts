@@ -104,7 +104,6 @@ export function dependencyInstallCommand(target: string, dir = '.'): string {
   return `cd '${installRoot.replaceAll("'", "'\\''")}' && ${packageManagerInstall(installRoot)}`;
 }
 
-/** `npm ci` deletes node_modules before installing, so it replaces a clone that costs no disk with a private copy. */
 function cloneReplacementNote(target: string, dirs: string[]): string {
   return dirs.some((dir) => packageManagerInstall(resolve(target, dir)) === 'npm ci')
     ? ' `npm ci` deletes node_modules first, so it replaces the clone, which shares its disk with the source checkout, with a private copy of every package.'
