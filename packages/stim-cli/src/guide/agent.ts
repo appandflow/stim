@@ -43,8 +43,8 @@ MULTIPLE DEVICES
 
 Use ios/android --slot <name> to retain multiple devices in one workspace,
 including several of the same model. Reuse the same slot name on subsequent
-runs. Read guide lifecycle options for the complete slot workflow. Use the
-reported device ID for UI interaction. All slots share Metro and reload can
+runs. Read guide lifecycle options for the complete slot workflow. Drive a
+slot's device with stim agent-device --slot <name>. All slots share Metro and reload can
 reach multiple devices. A launch counts a bundle delivery only when it can
 attribute it to its own device; read guide lifecycle options for the rule.
 Use stop --slot <name> for one slot, or plain stop for the whole workspace.
@@ -62,20 +62,29 @@ A named Mac never falls back here; auto can use the local device queue when no
 host admits. Auto keeps a live local slot or recorded hosted session. Follow the
 placement reason and the reported device. Stop reconciles a recorded host
 before changing named placement.
-For hosted iOS or Android, use agent-device <command> --remote-config <file>
-from ios.host.agent or android.host.agent in stim status --json. Open the
-installed app first; never use the host UDID or serial locally. See guide
-lifecycle hosted-ios or hosted-android for the agent policy and setup.
+DRIVING THE DEVICE
 
-When driving a device yourself with agent-device, set AGENT_DEVICE_STATE_DIR
-from agentDevice.stateDir in stim ios|android|macos --json or status --json.
-Its sessions and logs are then cleaned with the workspace. Do not set
-AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR; the runner
-build cache and device claims stay shared. Read stim guide logs for examples.
-stim start writes a boot hook into that directory: an agent-device that reads
-it runs stim revive instead of booting a shut-down simulator or emulator
-itself. When revive refuses, agent-device's error quotes its output; follow
-that remedy.
+Drive this workspace's iOS or Android device through stim agent-device, never
+agent-device directly. Pass agent-device's own arguments and no device ids:
+
+  stim agent-device open <bundle id>
+  stim agent-device snapshot -i --json
+  stim agent-device press @e3
+  stim agent-device scroll down --slot tablet --platform android
+
+Stim adds the platform, the UDID or serial, the session (stim-<slot>-<platform>
+unless you pass --session) and AGENT_DEVICE_STATE_DIR, or the remote config of
+a hosted iOS or Android session (guide lifecycle hosted-ios or hosted-android).
+--slot picks a slot; --platform is needed only when the slot has both. It
+revives an idle-stopped workspace before the command (progress on stderr) and
+refuses with STIM_BAD_ARG a UDID, serial, device or remote config that is not
+this workspace's, and boot and shutdown: Stim owns the device lifecycle. stdout, stderr and the exit
+code are agent-device's, so --json output stays parseable. Take snapshots with
+--json so viewers can outline the element each press acts on. It needs
+agent-device 0.21.30 or later; it does not drive macOS apps (guide macos).
+Without it, set AGENT_DEVICE_STATE_DIR from agentDevice.stateDir in
+stim ios|android|macos --json or status --json (guide logs). Do not set
+AGENT_DEVICE_IOS_RUNNER_DERIVED_PATH or AGENT_DEVICE_CLAIMS_DIR.
 
 NORMAL WORKFLOW
 
@@ -176,7 +185,7 @@ waiting times out.
 
   # Edit JavaScript or TypeScript; Fast Refresh applies the change.
   # For UI work, wait for the expected UI and repeat the affected interaction
-  # on the reported device. Keep using the existing automation session, if any.
+  # with stim agent-device. Keep using the existing session, if any.
   stim logs --errors
   # Retain proof before cleanup: a screenshot, recording, or relevant runtime output.
 
@@ -260,8 +269,8 @@ RULES DURING THE LOOP
   port, server, or build facts. A normal start and platform run already print
   them. Use stim doctor when a build is unexpectedly slow or the environment
   looks incomplete. If status reports a changed Android serial, rerun stim
-  android with the same build options to restore forwarding, then reopen your automation
-  session on the reported serial (guide lifecycle). Each status issue names a
+  android with the same build options to restore forwarding; stim agent-device
+  then targets the new serial (guide lifecycle). Each status issue names a
   remedy to run from its workspace (guide facts status).
 
 OWNERSHIP AND DELETION

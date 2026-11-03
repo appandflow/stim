@@ -598,7 +598,10 @@ unknown formats. Native screenshot events are omitted because their surface
 override is absent from the event metadata. See [native Mac agent actions](./macos.md#agent-actions)
 for the app-scoped command and limits.
 
-For agent-device you run yourself, use the `agentDevice.stateDir` reported by
+[`stim agent-device`](./commands.md#agent-device) runs agent-device in this
+workspace's state directory, on its device (a hosted session keeps
+agent-device's own), so its actions appear here with no
+setup. For agent-device you run directly, use the `agentDevice.stateDir` reported by
 `ios`, `android`, `macos`, or each `status --json` environment. Read it once
 from `status`, run from the app root, and prefix each agent-device command:
 
@@ -629,9 +632,8 @@ own state directory and need no export.
 :::tip[Ask your agent]
 
 ```text
-Read stim guide logs, set AGENT_DEVICE_STATE_DIR from this workspace's
-agentDevice.stateDir, then use agent-device to inspect the app. Keep the runner
-build cache and device claims shared, and check stim logs --source agent.
+Read stim guide agent, inspect the app with stim agent-device, and check
+stim logs --source agent.
 ```
 
 :::

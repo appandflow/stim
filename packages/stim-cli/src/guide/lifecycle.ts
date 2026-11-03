@@ -653,14 +653,14 @@ works for Debug runs while stim start runs; Release runs report driver: none.
 
 android.host.agent in stim status --json provides driver, remoteConfig and
 command, never its token. Each slot has a separate 0600 file under the workspace
-state directory at hosted-android/<slot>/agent-device-remote.json. Use that file:
+state directory at hosted-android/<slot>/agent-device-remote.json. stim agent-device passes that file itself:
 
-  agent-device open <packageId> --remote-config <file>
-  agent-device snapshot --remote-config <file>
-  agent-device click <ref> --remote-config <file>
-  agent-device screenshot --remote-config <file>
+  stim agent-device open <packageId>
+  stim agent-device snapshot
+  stim agent-device click <ref>
+  stim agent-device screenshot
 
-The command shape is agent-device <command> --remote-config <file>. Open leases
+Underneath, the command shape is agent-device <command> --remote-config <file>. Open leases
 the emulator automatically with android-instance, the proxy provider and this
 session's tenant. devices is permitted for the client's open flow; inventory
 contains only this emulator. Never use its serial with a local agent-device.
@@ -958,14 +958,14 @@ works for Debug runs while stim start runs; Release runs report driver: none.
 
 The client writes a separate 0600 remote-config file for each workspace slot.
 Status prints agent: <command>; ios.host.agent in --json carries driver,
-remoteConfig and command, never the token. Use the returned file:
+remoteConfig and command, never the token. stim agent-device passes that file itself:
 
-  agent-device open <bundleId> --remote-config <file>
-  agent-device snapshot --remote-config <file>
-  agent-device click <ref> --remote-config <file>
-  agent-device screenshot --remote-config <file>
+  stim agent-device open <bundleId>
+  stim agent-device snapshot
+  stim agent-device click <ref>
+  stim agent-device screenshot
 
-The command shape is agent-device <command> --remote-config <file>. Open leases
+Underneath, the command shape is agent-device <command> --remote-config <file>. Open leases
 the simulator automatically with ios-instance and the proxy provider, scoped
 to this session's tenant. Close releases it; Stim still owns the simulator.
 The config names daemonBaseUrl, daemonAuthToken, tenant, sessionIsolation,

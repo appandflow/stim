@@ -6,9 +6,12 @@ If Stim is not installed globally, replace stim with npx stim.
 
 AGENT-DEVICE WORKSPACE STATE
 
-When you drive a device yourself with agent-device, opt in to the workspace's
-state directory reported as agentDevice.stateDir in the stim ios, android and
-macos output and in status. Read it once from status, run from the app root:
+stim agent-device <args> runs agent-device in this workspace's state
+directory, on its device (a hosted session keeps agent-device's own) (guide agent, DRIVING THE DEVICE). Its actions appear
+in stim logs --source agent. When you run agent-device directly instead, opt in
+to the workspace's state directory reported as agentDevice.stateDir in the
+stim ios, android and macos output and in status. Read it once from status,
+run from the app root:
 
   STATE_DIR="$(stim status --json | jq -r '.environments[] | select(.path=="'"$(pwd -P)"'") | .agentDevice.stateDir')"
 

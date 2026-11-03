@@ -99,6 +99,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
  * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
+ * `presence` is `presence: true` on `frames.subscribe` and the `presence` event, and the local `presence.publish`.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -166,6 +167,7 @@ export const FEATURES = [
   'desktop-worktree-warm',
   'desktop-plan',
   'share-stop-id',
+  'presence',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -283,6 +285,7 @@ export const METHODS = [
   'share.start',
   'share.stop',
   'share.list',
+  'presence.publish',
 ] as const;
 
 /**
@@ -565,6 +568,8 @@ export interface FrameTarget {
    */
   at?: number;
   rate?: FramesSeekParams['rate'];
+  /** Asks for `presence` events about who acts on the device; the server lists the `presence` feature. */
+  presence?: boolean;
 }
 
 export const VIDEO_CODECS = ['h264'] as const;
@@ -634,6 +639,14 @@ export interface ReplayMarker {
   kind: (typeof REPLAY_MARKER_KINDS)[number];
   command?: string;
   label: string;
+  /**
+   * Where an agent action landed, as fractions 0-1 of the screen in the orientation its agent-device snapshot
+   * measured: the point, or the start of a scroll or swipe, and `x2`/`y2` its end. Absent without a measured screen.
+   */
+  x?: number;
+  y?: number;
+  x2?: number;
+  y2?: number;
 }
 
 /**
@@ -1666,6 +1679,7 @@ export interface Methods {
   };
   'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
+  'presence.publish': { params: PresencePublishParams; result: Record<string, never> };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
   'machines.update.start': { params: { machine: string }; result: ServerUpdateProgress };
@@ -1986,6 +2000,59 @@ export interface FrameDelayedEvent {
   reason?: string;
 }
 
+/** A point or rectangle as fractions 0-1 of the screen, in the orientation the agent measured it. */
+export interface PresencePoint {
+  x: number;
+  y: number;
+}
+
+export interface PresenceRect extends PresencePoint {
+  width: number;
+  height: number;
+}
+
+/** A completed agent gesture, replayed by the client over `durationMs`. */
+export interface PresenceGesture {
+  kind: 'tap' | 'swipe';
+  from: PresencePoint;
+  to?: PresencePoint;
+  durationMs: number;
+  /** The element the agent acted on, when its last snapshot's rect for it contains the point. */
+  target?: PresenceRect;
+}
+
+/** One source of input on a device. `color` is a palette index 0-7: 0 is the host's, 1 the agent's. */
+export interface PresenceParticipant {
+  id: string;
+  kind: 'viewer' | 'host' | 'agent';
+  name: string;
+  color: number;
+  /** Null when the participant left; absent when only its name changed. */
+  touch?: null;
+  gesture?: PresenceGesture;
+}
+
+/** Participants of a `presence: true` subscription's device that changed, oldest change first; the first lists all. */
+export interface PresenceEvent {
+  event: 'presence';
+  subscription: string;
+  participants: PresenceParticipant[];
+}
+
+/**
+ * `stim agent-device` reporting an agent-device command on a workspace device, over the local Unix socket only:
+ * `start` when it runs, `end` when it exits with the gesture it performed, if any.
+ */
+export interface PresencePublishParams {
+  workspace: string;
+  platform: 'ios' | 'android';
+  slot?: string;
+  physical?: boolean;
+  command: string;
+  phase: 'start' | 'end';
+  gesture?: PresenceGesture;
+}
+
 export const CONTROL_END_REASONS = ['idle', 'taken-over', 'device-gone', 'forbidden', 'failed'] as const;
 
 /**
@@ -2287,6 +2354,7 @@ export type ServerEvent =
   | DeviceFrameEvent
   | MacosWindowsEvent
   | FrameDelayedEvent
+  | PresenceEvent
   | ReplayEndedEvent
   | ErrorEvent
   | ControlEndedEvent;

@@ -12,7 +12,9 @@ import { getExecutor } from './exec.ts';
 
 export type ShareMethod = 'share.start' | 'share.stop' | 'share.list';
 
-export type LocalServerAnswer<M extends ShareMethod> = (
+type LocalMethod = ShareMethod | 'presence.publish';
+
+export type LocalServerAnswer<M extends LocalMethod> = (
   | { result: Methods[M]['result'] }
   | { error: { code: string; message: string } }
 ) & {
@@ -32,7 +34,7 @@ const START_POLL_MS = 250;
  * Sends one request to this Stim home's own stim-server over its local Unix socket, after `hello`, and returns the
  * answer. Throws {@link LocalServerUnavailable} when no server listens there.
  */
-export function requestLocalServer<M extends ShareMethod>(
+export function requestLocalServer<M extends LocalMethod>(
   method: M,
   params: Methods[M]['params'],
   { version, timeoutMs = TIMEOUT_MS }: { version: string; timeoutMs?: number },
