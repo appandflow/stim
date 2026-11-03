@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
-import { daemonLine, daemonStatus, waitingLines } from '../daemon/status.ts';
+import { daemonLine, daemonStatus, lastActionLine, waitingLines } from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -26,7 +26,7 @@ import { describeMetroLastStop } from '../supervisor/stop-cause.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
 import { buildStatusLine } from '../engine/build-progress.ts';
 import { formatBytes, volumeRootFor } from '../fs-util.ts';
-import { formatDuration, plural } from '../command-output.ts';
+import { formatDuration, formatLongDuration, plural } from '../command-output.ts';
 import {
   withDerivedFacts,
   withGitChip,
@@ -38,7 +38,8 @@ import {
   archiveRoot,
   readArchives,
   type ArchivedWorkspace,
-  type DormantStageRecord,
+  readDaemonSnapshot,
+  type DaemonSnapshot,
   DEVICE_METRO_IDLE_STOP_REASON,
   DEVICE_RECLAIM_REASON,
   loadPerCore,
@@ -151,8 +152,32 @@ export default function statusCommand(program: Command): void {
     });
 }
 
-function dormantStageLine({ at, deletedDevices, archived }: DormantStageRecord): string {
-  return `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+function timeIn(at: string, now: number): string {
+  const since = Date.parse(at);
+  return Number.isFinite(since) ? ` for ${formatLongDuration(Math.max(0, now - since))}` : '';
+}
+
+/** The workspace's stage and how long it has been in it: running, idle, dormant or stopped. */
+function stageLine(state: EnvironmentState, snapshot: DaemonSnapshot | null, now: number): string {
+  if (state.dormantStage) {
+    const { at, deletedDevices, archived } = state.dormantStage;
+    return `  stage: dormant${timeIn(at, now)}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; the next \`stim ios\` or \`stim android\` creates a device`;
+  }
+  if (state.idleStage) {
+    const { at, idleMinutes, freedBytes } = state.idleStage;
+    const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
+    return `  stage: idle${timeIn(at, now)}, after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`;
+  }
+  if (!state.live) return '  stage: stopped';
+  const decision = snapshot?.workspaces.find((entry) => entry.path === state.path);
+  const last = decision?.lastActivity;
+  const at = Date.parse(last?.at ?? '');
+  const activity =
+    last && Number.isFinite(at)
+      ? `; last activity ${formatLongDuration(Math.max(0, now - at))} ago (${last.basis})`
+      : '';
+  const kept = decision?.outcome === 'kept' && decision.detail ? `; the idle stage leaves it: ${decision.detail}` : '';
+  return `  stage: running${activity}${kept}`;
 }
 
 function renderStatus(
@@ -208,8 +233,12 @@ function renderStatus(
     return out;
   }
 
-  out.push(chalk.dim(daemonLine(daemon)));
-  out.push(...waitingLines(daemon));
+  const now = Date.now();
+  const snapshot = daemon.running ? readDaemonSnapshot() : null;
+  out.push(chalk.dim(daemonLine(daemon, now)));
+  const lastAction = lastActionLine(daemon, now);
+  if (lastAction) out.push(chalk.dim(lastAction));
+  out.push(...waitingLines(daemon, now));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
@@ -242,16 +271,7 @@ function renderStatus(
         : chalk.dim(`  app: ${proj.bundleId ?? '?'} (${(proj.isExpo ?? detectIsExpo(path)) ? 'expo' : 'bare'})`),
     );
 
-    if (state.idleStage) {
-      const { at, idleMinutes, freedBytes } = state.idleStage;
-      const restore = state.metro?.idleStop ? '`stim revive`' : '`stim ios` or `stim android`';
-      out.push(
-        chalk.dim(
-          `  stage: idle since ${at} after ${idleMinutes}m without activity; freed ${formatBytes(freedBytes)}; ${restore} resumes it`,
-        ),
-      );
-    }
-    if (state.dormantStage) out.push(chalk.dim(dormantStageLine(state.dormantStage)));
+    if (!labelOnlyRoots[i]) out.push(chalk.dim(stageLine(state, snapshot, now)));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)

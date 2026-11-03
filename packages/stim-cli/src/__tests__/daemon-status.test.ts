@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { daemonClaimRoot, daemonDir, daemonSnapshotFile, type DaemonStatus } from '@stim-cli/core/state';
 import { releaseClaim, tryAcquireClaim } from '@stim-cli/core/ownership-claim';
-import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
+import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 
 const NOW = Date.parse('2026-11-02T12:00:00.000Z');
 const running = { pid: 4242, since: '2026-11-02T11:00:00.000Z' };
@@ -61,6 +61,22 @@ test('the status line says whether the daemon runs and when it last ticked', () 
   expect(daemonLine(status({ mode: 'off' }), NOW)).toMatch(/^Daemon: off \(daemon\.mode\)/);
 });
 
+test('the last daemon action line names the newest action, its age and what it freed', () => {
+  expect(lastActionLine(status({}), NOW)).toBe(null);
+  const action = { rung: 1, kind: 'idle-stage', target: '/app', outcome: 'done' as const, bytes: 2048, detail: '' };
+  expect(
+    lastActionLine(
+      status({
+        recent: [
+          { ...action, target: '/old', at: '2026-11-02T11:00:00.000Z' },
+          { ...action, at: '2026-11-02T11:58:00.000Z' },
+        ],
+      }),
+      NOW,
+    ),
+  ).toMatch(/^Last daemon action 2m ago: idle stage \/app \(2K\); 2 recent in /);
+});
+
 test("status reports the running daemon's tick and mode, and the setting when the mode differs", () => {
   const home = mkdtempSync(join(tmpdir(), 'stim-daemon-status-'));
   process.env.STIM_HOME = home;
@@ -98,4 +114,20 @@ test("status reports the running daemon's tick and mode, and the setting when th
   expect(daemonStatus({})).toMatchObject({ mode: 'off', setting: 'on', lastTickAt: '2026-11-02T11:01:00.000Z' });
   snapshot(process.pid, 'on');
   expect(daemonStatus({ STIM_DAEMON: 'on' })).not.toHaveProperty('setting');
+  releaseClaim(claim!);
+  const recent = [{ rung: 4, kind: 'dormant-stage', target: '/app', outcome: 'done', bytes: 0, detail: '', at: NOW }];
+  writeFileSync(
+    daemonSnapshotFile(),
+    JSON.stringify({
+      ...JSON.parse('{}'),
+      version: 1,
+      pid: 1,
+      mode: 'on',
+      startedAt: 'x',
+      tickAt: 'y',
+      intervalMs: 60_000,
+      recent,
+    }),
+  );
+  expect(daemonStatus({})).toMatchObject({ running: null, recent });
 });

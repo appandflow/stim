@@ -1,4 +1,11 @@
-import { daemonClaimRoot, daemonNdjsonFile, readDaemonSnapshot, type DaemonStatus } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  daemonNdjsonFile,
+  daemonSnapshotFile,
+  readDaemonSnapshot,
+  type DaemonStatus,
+} from '@stim-cli/core/state';
+import { formatBytes } from '../fs-util.ts';
 import { claimRemoveCommand, readClaimSet } from '@stim-cli/core/ownership-claim';
 import { formatLongDuration } from '../command-output.ts';
 import type { Finding } from '../diagnostics/doctor.ts';
@@ -36,6 +43,7 @@ export function daemonStatus(env: NodeJS.ProcessEnv = process.env): DaemonStatus
     intervalMs: snapshot?.intervalMs ?? null,
     ...(snapshot?.pressure ? { pressure: snapshot.pressure } : {}),
     ...(waiting.length ? { waiting } : {}),
+    ...(read?.recent?.length ? { recent: read.recent } : {}),
     ...(unresolved
       ? {
           claim: {
@@ -67,6 +75,16 @@ export function daemonLine(status: DaemonStatus, now: number = Date.now()): stri
   return status.running
     ? `${label}: running since ${clock(status.running.since)} (pid ${status.running.pid}), ${tick}${pressure}${claim}`
     : `${label}: not running, ${tick}${pressure}; start, ios, android, web, macos and revive start it${claim}`;
+}
+
+/** The last action a daemon of this home took, or null before its first. */
+export function lastActionLine(status: DaemonStatus, now: number = Date.now()): string | null {
+  const action = status.recent?.at(-1);
+  if (!action) return null;
+  const at = Date.parse(action.at);
+  const when = Number.isFinite(at) ? `${formatLongDuration(Math.max(0, now - at))} ago` : 'at an unknown time';
+  const verb = action.outcome === 'would' ? 'would ' : action.outcome === 'failed' ? 'failed to ' : '';
+  return `Last daemon action ${when}: ${verb}${action.kind.replaceAll('-', ' ')} ${action.target}${action.bytes ? ` (${formatBytes(action.bytes)})` : ''}${status.recent!.length > 1 ? `; ${status.recent!.length} recent in ${daemonSnapshotFile()}` : ''}`;
 }
 
 /** One line per run waiting for a build slot or a device boot, in arrival order per resource. */

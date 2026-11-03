@@ -1,11 +1,12 @@
 import {
   daemonNdjsonFile,
+  daemonSnapshotFile,
   maintenanceNdjsonFile,
   readDaemonSnapshot,
   type DaemonPressure,
   type DaemonStatus,
 } from '@stim-cli/core/state';
-import { daemonFindings, daemonLine, daemonStatus } from '../daemon/status.ts';
+import { daemonFindings, daemonLine, daemonStatus, lastActionLine } from '../daemon/status.ts';
 import { discoverToolchain, projectNodeBin, projectNodePin, type ToolchainEntry } from '@stim-cli/core/toolchain';
 import { maintenanceStatus, maintenanceLine } from '../maintenance/status.ts';
 import chalk from 'chalk';
@@ -680,6 +681,7 @@ export default function doctorCommand(
           ? [phaseLine('placement order', `${order.join(', ')} (first with room and load under its limit)`)]
           : []),
         phaseLine('daemon', daemonLine(daemon)),
+        phaseLine('daemon snapshot', lastActionLine(daemon) ?? `${daemonSnapshotFile()}; no action yet`),
         phaseLine('daemon log', daemonNdjsonFile()),
         phaseLine('maintenance log', maintenanceNdjsonFile()),
         phaseLine('last pass', maintenanceLine(maintenance, false) ?? 'no pass has run yet'),

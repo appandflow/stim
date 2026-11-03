@@ -159,14 +159,36 @@ test('status says nothing extra for a project that has only a Metro port', async
   expect(logs.some((l) => /!/.test(l))).toBe(false);
 });
 
-test('the idle stage line names stim revive only when the dev server recorded an idle stop', async () => {
+test('each workspace says its stage and how long it has been in it, and the idle stage names stim revive only after an idle stop', async () => {
   const project = join(tmpHome, 'proj-idle');
-  mkdirSync(project);
-  saveConfig(makeConfig({ version: 2, projects: { [project]: { label: 'idle', metroPort: 8083, platforms: {} } } }));
-  const idleStage = { at: '2026-11-02T10:00:00.000Z', idleMinutes: 15, freedBytes: 1024 };
+  const dormant = join(tmpHome, 'proj-dormant');
+  const stopped = join(tmpHome, 'proj-stopped');
+  for (const dir of [project, dormant, stopped]) mkdirSync(dir);
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [project]: { label: 'idle', metroPort: 8083, platforms: {} },
+        [dormant]: { label: 'dormant', metroPort: 8084, platforms: {} },
+        [stopped]: { label: 'stopped', metroPort: 8085, platforms: {} },
+      },
+    }),
+  );
+  const idleStage = { at: new Date(Date.now() - 2 * 3_600_000).toISOString(), idleMinutes: 15, freedBytes: 1024 };
   writeWorkspaceState(project, { idleStage });
+  writeWorkspaceState(dormant, {
+    dormantStage: {
+      at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+      dormantDays: 3,
+      deletedDevices: [],
+      archived: false,
+    },
+  });
 
-  expect((await runStatus()).join('\n')).toContain('`stim ios` or `stim android` resumes it');
+  const text = (await runStatus()).join('\n');
+  expect(text).toMatch(/stage: idle for 2h\b.*`stim ios` or `stim android` resumes it/);
+  expect(text).toMatch(/stage: dormant for 72h\b/);
+  expect(text).toContain('stage: stopped');
 
   writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
   expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');

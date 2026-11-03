@@ -12,7 +12,9 @@ import {
   isJsonObject,
   macosAppState,
   readMacosRecord,
+  readDaemonSnapshot,
   type DaemonMode,
+  type DaemonRecentAction,
   type DaemonSnapshot,
 } from '@stim-cli/core/state';
 import {
@@ -41,6 +43,7 @@ const TICK_MS = 60_000;
 const CLAIM_TRIES = 30;
 const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
+const RECENT_ACTIONS = 20;
 const WAKE_GRACE_MS = 2000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
@@ -176,6 +179,7 @@ export async function runDaemon({
   const wokenAt = new WeakMap<Socket, number>();
   let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
+  let recent: DaemonRecentAction[] = readDaemonSnapshot()?.recent ?? [];
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
@@ -324,18 +328,40 @@ export async function runDaemon({
           log('info', 'workspace_kept', `${workspace}: ${detail}`, { workspace });
         }
       }
+      const tickAt = new Date(now).toISOString();
+      const taken = [
+        ...workspaces.flatMap((entry) =>
+          (entry.outcome === 'idle' || entry.outcome === 'would-idle') &&
+          !actions.some((action) => action.kind === 'idle-stage' && action.target === entry.path)
+            ? [
+                {
+                  rung: 1,
+                  kind: 'idle-stage',
+                  target: entry.path,
+                  workspace: entry.path,
+                  outcome: entry.outcome === 'idle' ? ('done' as const) : ('would' as const),
+                  bytes: entry.freedBytes ?? 0,
+                  detail: entry.detail,
+                },
+              ]
+            : [],
+        ),
+        ...actions,
+      ].filter((action) => action.outcome !== 'kept');
+      recent = [...recent, ...taken.map((action) => Object.assign(action, { at: tickAt }))].slice(-RECENT_ACTIONS);
       lastSnapshot = {
         version: 1,
         pid: process.pid,
         startedAt,
         mode,
-        tickAt: new Date(now).toISOString(),
+        tickAt,
         tickMs: Math.round(performance.now() - tickStarted),
         intervalMs: tickMs,
         measurement: measured.measurement,
         workspaces,
         pressure,
         actions,
+        recent,
         waiting,
       };
       writeSnapshot(lastSnapshot);
