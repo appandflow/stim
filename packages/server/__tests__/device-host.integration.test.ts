@@ -1323,6 +1323,12 @@ test.skipIf(process.platform === 'win32')(
     const target = host.viewTarget('client', session.id);
     expect(target).toMatchObject({ platform: 'android', session: { device } });
     expect(() => host.viewTarget('other', session.id)).toThrow('Only a ready session');
+    expect(host.owns('client', session.id)).toBe(true);
+    expect(host.owns('other', session.id)).toBe(false);
+    expect(host.owns('client', 'unknown-session')).toBe(false);
+    allowed.delete('client');
+    expect(host.owns('client', session.id)).toBe(false);
+    allowed.add('client');
     const privateHome = join(deviceHostArea(session.id), 'home');
     const record = join(privateHome, 'hosted-device.json');
     for (const change of [{ serial: 'emulator-5556', consolePort: 5556 }, { avdName: 'stim-foreign-avd' }]) {

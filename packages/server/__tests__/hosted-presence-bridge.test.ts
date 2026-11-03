@@ -71,3 +71,14 @@ test('lets go of the host when it was stopped before the subscription opened', a
   await vi.waitFor(() => expect(f.released).toHaveBeenCalledTimes(1));
   expect(f.requests).toEqual([]);
 });
+
+test('opens a new host subscription for a later follower once the host connection was lost', async () => {
+  const f = fixture();
+  f.bridge.follow('key', host);
+  await vi.waitFor(() => expect(f.routes.has('s:up')).toBe(true));
+  f.routes.get('s:up')!.closed(new Error('the host connection closed'));
+  f.bridge.follow('key', host);
+  await vi.waitFor(() =>
+    expect(f.requests.filter((r) => r.method === 'device-host.presence.subscribe')).toHaveLength(2),
+  );
+});

@@ -36,8 +36,16 @@ export class HostedPresenceBridge {
       };
       follow = { listeners: 0, stop: () => end() };
       this.follows.set(id, follow);
+      const entry = follow;
       void (async () => {
-        const close = await this.open(key, host, () => stopped);
+        const close = await this.open(
+          key,
+          host,
+          () => stopped,
+          () => {
+            if (this.follows.get(id) === entry) this.follows.delete(id);
+          },
+        );
         end = close;
         if (stopped) close();
       })();
@@ -58,6 +66,7 @@ export class HostedPresenceBridge {
     key: string,
     host: { machine: string; session: string },
     stopped: () => boolean,
+    lost: () => void,
   ): Promise<() => void> {
     let lease: Lease | undefined;
     try {
@@ -92,7 +101,10 @@ export class HostedPresenceBridge {
           for (const { command, gesture } of parseHostedAgent(event.participants))
             this.hub.agent(key, command, 'end', gesture);
         },
-        closed: () => close(true),
+        closed: () => {
+          lost();
+          close(true);
+        },
       });
       return () => close(false);
     } catch {
