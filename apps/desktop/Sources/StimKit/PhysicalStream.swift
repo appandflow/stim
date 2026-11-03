@@ -216,6 +216,34 @@ import Foundation
     send("input.text", ["text": .string(text)])
   }
 
+  /// The most text `input.clipboard.set` takes, in UTF-8 bytes: `MAX_CLIPBOARD_BYTES` in `packages/core/protocol.ts`.
+  public nonisolated static let maxClipboardBytes = 8192
+
+  /// Replaces the device clipboard's text, then pastes it into the focused field when `paste` is true.
+  public func setClipboard(_ text: String, paste: Bool) async throws {
+    guard text.utf8.count <= Self.maxClipboardBytes else { throw ClipboardTooLarge(bytes: text.utf8.count) }
+    var params: [String: JSONValue] = ["text": .string(text)]
+    if paste { params["paste"] = .bool(true) }
+    _ = try await controlRequest("input.clipboard.set", params)
+  }
+
+  public func clipboard() async throws -> String {
+    let result = try await controlRequest("input.clipboard.get", [:])
+    guard let text = result.objectValue?["text"]?.string else {
+      throw ServerError(code: "bad-request", message: "stim-server answered input.clipboard.get without text.")
+    }
+    return text
+  }
+
+  private func controlRequest(_ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+    guard let server, case .on(let session) = control else {
+      throw ServerError(code: "not-connected", message: "Take over the device to use its clipboard.")
+    }
+    var params = params
+    params["session"] = .string(session)
+    return try await server.request(method, params)
+  }
+
   /// Pins the view to a macOS app's window `id`, bringing it to the front, or with nil follows its front window.
   public func selectWindow(_ id: Int?) {
     send("input.window", ["window": id.map { .number(Double($0)) } ?? .null])
