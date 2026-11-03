@@ -7,7 +7,7 @@ import {
   configuredAndroidEmulatorApp,
   openEmulatorInStimDesktop,
 } from './android-emulator-viewer.ts';
-import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
+import { recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedAvd } from './device-ownership.ts';
 import {
   existsSync,
@@ -30,6 +30,7 @@ import { pidExists, signalProcessTreeAsync } from '../metro.ts';
 import { captureProcessIdentity, inspectProcessIdentity, type ProcessRecord } from '../process-identity.ts';
 import { androidDataPartitionSizeBytes } from '../workspace/settings.ts';
 import { settingDefinition } from '@stim-cli/core/state';
+import { ANDROID_LOCATION_VARIABLES } from './android-locations.ts';
 
 export interface SystemImage {
   api: number;
@@ -425,7 +426,6 @@ export async function deleteAvd(avdName: string, operation?: StimContext): Promi
       ...(root ? { env: { ANDROID_AVD_HOME: root } } : {}),
     },
   );
-  await forgetCreatedDeviceAsync('android', avdName);
 }
 
 export function parseAvdList(text: string): string[] {
@@ -1807,15 +1807,6 @@ export async function getAvdNameForSerialAsync(
 export function resolveOwnedAvdSerial(avdName: string, opts: { timeoutMs?: number } = {}): ResolvedAvdSerial {
   return ownedAvdSerialResolver(opts)(avdName);
 }
-
-const ANDROID_LOCATION_VARIABLES = [
-  'ANDROID_HOME',
-  'ANDROID_SDK_ROOT',
-  'ANDROID_AVD_HOME',
-  'ANDROID_EMULATOR_HOME',
-  'ANDROID_USER_HOME',
-  'ANDROID_SDK_HOME',
-] as const;
 
 /**
  * True when `error` is the emulator binary failing to spawn on a machine with no Android SDK or AVD

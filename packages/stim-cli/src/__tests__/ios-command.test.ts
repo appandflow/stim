@@ -13,7 +13,7 @@ import { projectIntegrations } from '../integrations/projects.ts';
 import { reactNativeIosProject } from '../integrations/react-native-ios.ts';
 import { automaticDevicePlacement } from '../device-host/auto-placement.ts';
 import type { HostedNativeTarget } from '../device-host/hosted-native.ts';
-import { withDeviceBootAdmission } from '../engine/device-capacity.ts';
+import { DeviceAdmissionRefusal, withDeviceBootAdmission } from '../engine/device-capacity.ts';
 import { workspaceId } from '@stim-cli/core';
 import { approvableSchemes } from '../engine/app-schemes.ts';
 import { workerFailureReason } from '../offload/selection.ts';
@@ -447,7 +447,6 @@ function harness(overrides: LooseDeps = {}) {
         ok: false,
         error: { code: 'STIM_METRO_TIMEOUT', message: 'The dev server did not answer.', remedy: 'Run `stim logs`.' },
         lines: [],
-        reclaimed: [],
       };
     },
     verifyLaunch: async (args) => {
@@ -619,7 +618,6 @@ test.each([false, true])('the iOS API preserves retained Metro cleanup after can
             },
             retainedClaimRoots,
             lines: [],
-            reclaimed: [],
           };
         },
       };
@@ -686,7 +684,6 @@ const devServerStarted = (port = 8082, alreadyRunning = false) => ({
   ok: true as const,
   facts: { port, supervisorPid: 4242, mode: 'bare-inproc', logsDir: '/logs', alreadyRunning },
   waited: '(2.0s)',
-  reclaimed: [],
 });
 
 describe('the Metro gate', () => {
@@ -701,7 +698,6 @@ describe('the Metro gate', () => {
       ok: false as const,
       error: { code: 'STIM_BAD_ARG', message: 'The old dev server is running.', remedy: 'Run `stim stop`.' },
       lines: [],
-      reclaimed: [],
     }));
     const { exitCode, calls, logs } = await run({ json: true }, { startDevServer: start });
     expect(start).toHaveBeenCalledOnce();
@@ -831,7 +827,6 @@ describe('the Metro gate', () => {
           ok: false,
           error: { code: 'STIM_SUPERVISOR_EXITED', message: 'The supervisor exited (code 1).', remedy: 'Fix it.' },
           lines: ['metro: SyntaxError in metro.config.js'],
-          reclaimed: [],
         }),
       },
     );
@@ -1415,6 +1410,27 @@ describe('Metro prefetch', () => {
 
 describe('the device preparation step', () => {
   beforeEach(() => setExecutor(makeExecutor()));
+
+  test('a boot admission refused before the simulator is created keeps its code and remedy', async () => {
+    reserve();
+    const refused = await run(
+      { json: true },
+      {
+        ensureOwnedDevice: async () => {
+          throw new DeviceAdmissionRefusal({
+            code: 'STIM_AT_CAPACITY',
+            message: 'This run would wait for a boot slot (2/2 boots in flight) held by a, b; queue position 1 of 1.',
+            remedy:
+              'Stop an environment (stim stop), retry with a longer --wait <seconds>, or raise concurrency.maxDevices.',
+          });
+        },
+      },
+    );
+    expect(refused.exitCode).toBe(1);
+    const payload = parseFirst(refused.logs);
+    expect(payload.code).toBe('STIM_AT_CAPACITY');
+    expect(payload.remedy).toMatch(/--wait <seconds>/);
+  });
 
   test('a model or runtime mismatch refusal carries its own remedy, not the toolchain one', async () => {
     reserve();
@@ -3769,18 +3785,13 @@ describe('concurrency limits', () => {
     expect(!calls.order.includes('ensureOwnedDevice')).toBeTruthy();
   });
 
-  test('the budget gate, capacity check and device setup share one simulator snapshot', async () => {
+  test('the capacity check and device setup share one simulator snapshot', async () => {
     reserve();
-    let budgetSnapshot: IosSimSnapshot | undefined;
     let capacityArgs: CheckDeviceCapacityArgs | undefined;
     const { calls } = await run(
       { json: true, wait: false },
       {
         getConcurrencyLimits: () => ({ maxBuilds: 0, maxDevices: 2 }),
-        budgetGate: async (args) => {
-          budgetSnapshot = args.simSnapshot;
-          return { reclaimed: [], refusal: null };
-        },
         checkDeviceCapacity: (args) => {
           capacityArgs = args;
           return null;
@@ -3788,14 +3799,15 @@ describe('concurrency limits', () => {
       },
     );
     const ensured = calls.args.ensureOwnedDevice as { simSnapshot?: IosSimSnapshot } | undefined;
-    assert(budgetSnapshot && capacityArgs?.sims && ensured?.simSnapshot);
-    expect(ensured.simSnapshot).toBe(budgetSnapshot);
+    assert(capacityArgs?.sims && ensured?.simSnapshot);
     const sim = { udid: 'U1', name: 'stim-x', state: 'Booted', runtime: 'r', deviceTypeIdentifier: 't' };
-    vi.spyOn(budgetSnapshot, 'read').mockReturnValue([
+    vi.spyOn(ensured.simSnapshot, 'readAsync').mockResolvedValue([
       { ...sim, available: true },
       { ...sim, udid: 'U2', available: false },
     ]);
-    expect((capacityArgs.sims as () => { udid: string }[])().map((entry) => entry.udid)).toEqual(['U1']);
+    expect((await (capacityArgs.sims as () => Promise<{ udid: string }[]>)()).map((entry) => entry.udid)).toEqual([
+      'U1',
+    ]);
   });
 
   test('a non-capacity device refusal is not recorded', async () => {
@@ -3817,47 +3829,45 @@ describe('concurrency limits', () => {
     expect(recordCapacityRefusal).not.toHaveBeenCalled();
   });
 
-  test('a budget refusal stops before any device or build and reports what was reclaimed', async () => {
+  test('a disk floor refusal stops before any device or build, with the cleanup phase shown while the ladder runs', async () => {
     reserve();
-    const reclaimed = [{ step: 'idle-devices' as const, targets: ['ios stim-b in /w/b'], failures: 0, freedMb: 0 }];
     const gate: { root?: string } = {};
     const { logs, exitCode, calls } = await run(
       { json: true },
       {
-        budgetGate: async (args) => {
+        diskFloorGate: async (args) => {
           gate.root = args.root;
           args.onReclaim?.('start');
           args.onReclaim?.('failed');
           expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe('cleanup');
-          return { reclaimed, refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' } };
+          return { refusal: { code: 'STIM_LOW_DISK', message: 'low', remedy: 'stim gc' } };
         },
       },
     );
     expect(exitCode).toBe(1);
     expect(gate.root).toBe(root);
-    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_LOW_DISK', reclaimed });
+    expect(parseFirst(logs)).toMatchObject({ code: 'STIM_LOW_DISK' });
     expect(calls.order.includes('ensureOwnedDevice')).toBe(false);
     expect(calls.order.includes('buildIos')).toBe(false);
   });
 
-  test('a run that reclaimed first reports the steps in its success payload', async () => {
+  test('the cleanup phase ends when the ladder completes and the run goes on', async () => {
     reserve();
-    const reclaimed = [{ step: 'workspace-outputs' as const, targets: ['/w/b'], failures: 0, freedMb: 2048 }];
     const { logs, exitCode } = await run(
       { json: true },
       {
-        budgetGate: async (args) => {
+        diskFloorGate: async (args) => {
           const interrupted = parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase;
           args.onReclaim?.('start');
           expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe('cleanup');
           args.onReclaim?.('complete');
           expect(parseActiveBuild(readWorkspaceState(root)?.[ACTIVE_BUILD_KEY])?.phase).toBe(interrupted);
-          return { reclaimed, refusal: null };
+          return { refusal: null };
         },
       },
     );
     expect(exitCode).toBe(null);
-    expect(parseFirst(logs)).toMatchObject({ bundleId: expect.any(String), reclaimed });
+    expect(parseFirst(logs)).toMatchObject({ bundleId: expect.any(String) });
   });
 
   test('maxBuilds takes a slot AFTER the single-flight lock and releases it after the build', async () => {
@@ -7369,17 +7379,8 @@ describe('ios --device: the lease on the phone', () => {
   });
 });
 
-test('devices.reclaimIdleMinutes reaches the device slot wait', async () => {
-  reserve();
-  const off = await run({}, { resolveSettings: () => ({ devices: { reclaimIdleMinutes: 0 } }) });
-  expect(off.exitCode).toBe(null);
-  expect(off.calls.args.ensureBooted).toMatchObject({ deviceSlotWait: { reclaimIdleMinutes: 0 } });
-  const unset = await run({}, { resolveSettings: () => ({}) });
-  expect(unset.calls.args.ensureBooted).toMatchObject({ deviceSlotWait: { reclaimIdleMinutes: 10 } });
-});
-
 describe('--simulator-app', () => {
-  test.each(['xcode', 'siniulator', 'stim-desktop'])(
+  test.each(['xcode', 'siniulator', 'stim-desktop', 'none'])(
     'parses %s and passes it to preparation and boot',
     async (simulatorApp) => {
       reserve();
@@ -7400,7 +7401,7 @@ describe('--simulator-app', () => {
     expect(exitCode).toBe(1);
     expect(parseFirst(logs)).toMatchObject({
       code: 'STIM_BAD_ARG',
-      message: 'Invalid --simulator-app. Use "xcode", "siniulator", or "stim-desktop".',
+      message: 'Invalid --simulator-app. Use "xcode", "siniulator", "stim-desktop", or "none".',
     });
     expect(calls.order).not.toContain('ensureOwnedDevice');
     expect(calls.order).not.toContain('buildIos');
@@ -7764,7 +7765,7 @@ describe('run statistics', () => {
       waitedForBuild: false,
       durationMs: expect.any(Number),
       coldBuildMs: 161000,
-      placement: { decision: 'here', reason: 'no remote machine is paired' },
+      placement: { decision: 'here', reason: 'no remote machine is paired', slotWaitMs: 0 },
       phases: expect.any(Object),
       deviceSetup: false,
     });
@@ -7793,7 +7794,7 @@ describe('run statistics', () => {
       delete process.env.STIM_REMOTE_BUILD;
     }
 
-    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local' });
+    expect(runs[0]?.run.placement).toEqual({ decision: 'here', reason: '--remote-build local', slotWaitMs: 0 });
   });
 
   test('a failed iOS build cancels its parallel queued device and records the wait before returning', async () => {
@@ -8684,13 +8685,12 @@ describe('iOS placement on a hosting Mac', () => {
     'auto validates %j before probing or reclaiming',
     async (flags) => {
       const automatic = vi.fn<typeof automaticDevicePlacement>();
-      const budget = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
-        reclaimed: [],
+      const budget = vi.fn<() => Promise<{ refusal: null }>>(async () => ({
         refusal: null,
       }));
       const result = await run(
         { remote: 'auto', json: true, ...flags },
-        { automaticDevicePlacement: automatic, budgetGate: budget },
+        { automaticDevicePlacement: automatic, diskFloorGate: budget },
       );
       expect(parseFirst(result.logs).code).toBe('STIM_BAD_ARG');
       expect(automatic).not.toHaveBeenCalled();
@@ -8766,8 +8766,7 @@ describe('iOS placement on a hosting Mac', () => {
             memory: () => 'normal',
             budget: async () => 'disk shortfall',
           }),
-        budgetGate: async () => ({
-          reclaimed: [],
+        diskFloorGate: async () => ({
           refusal: { code: 'STIM_LOW_DISK', message: 'disk shortfall', remedy: 'Free disk space.' },
         }),
       },
@@ -8823,8 +8822,7 @@ describe('iOS placement on a hosting Mac', () => {
         startedAt: '2026-10-06T12:00:00Z',
       });
       writeWorkspaceState(root, { lastIosBuild: baseline });
-      const budgetGate = vi.fn<() => Promise<{ reclaimed: []; refusal: null }>>(async () => ({
-        reclaimed: [],
+      const diskFloorGate = vi.fn<() => Promise<{ refusal: null }>>(async () => ({
         refusal: null,
       }));
       const { logs, stderr, exitCode, calls } = await run(
@@ -8853,7 +8851,7 @@ describe('iOS placement on a hosting Mac', () => {
                     }
                   : { probe: { machine, failure: 'declined: occupied' } },
             }),
-          budgetGate,
+          diskFloorGate,
           checkDeviceCapacity: () => ({ code: 'STIM_AT_CAPACITY', message: '3/3 devices in use', remedy: 'stim stop' }),
           placeHostedIos: async (_target, args) => {
             const hosted = { ...placement, selected: 'auto', reason: target.selection!.reason };
@@ -8870,7 +8868,7 @@ describe('iOS placement on a hosting Mac', () => {
           ? { devicePlacement: { decision: 'hosted', machine: 'mini' }, host: { selected: 'auto' } }
           : { code: 'STIM_AT_CAPACITY' },
       );
-      expect(budgetGate).toHaveBeenCalledTimes(admits ? 0 : 1);
+      expect(diskFloorGate).toHaveBeenCalledTimes(admits ? 0 : 1);
       const builtRecord = expect.objectContaining({ status: 'ok' });
       const history = expect.any(Object);
       expect(readWorkspaceState(root)?.lastIosBuild).toEqual(admits ? builtRecord : baseline);
@@ -8897,9 +8895,9 @@ describe('iOS placement on a hosting Mac', () => {
               machines: () => [],
               peek: () => ({ count: 1, max: 3, queued: 0, localLive: true }),
             }),
-          budgetGate: async () => {
+          diskFloorGate: async () => {
             budgetChecks += 1;
-            return { reclaimed: [], refusal: null };
+            return { refusal: null };
           },
         },
       );
@@ -9122,7 +9120,7 @@ describe('iOS placement on a hosting Mac', () => {
           checkDeviceCapacity: () => {
             throw new Error('local quota applied to hosted device');
           },
-          budgetGate: () => {
+          diskFloorGate: () => {
             throw new Error('local device budget applied to hosted device');
           },
           hostSimulatorArch: () => 'arm64',
@@ -10128,7 +10126,7 @@ describe('strict remote machine selection', () => {
 });
 
 test.each([
-  { wait: undefined, expected: 600_000 },
+  { wait: undefined, expected: undefined },
   { wait: '30', expected: 30_000 },
   { wait: false, expected: 0 },
   { wait: '0', expected: 0 },

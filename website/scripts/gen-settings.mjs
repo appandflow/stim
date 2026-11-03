@@ -89,7 +89,7 @@ const isMaintenance = (setting) => setting.key.startsWith('maintenance.') || /^c
 const GROUPS = [
   ['archive', (setting) => setting.key.startsWith('archive.')],
   ['maintenance', isMaintenance],
-  ['budget', (setting) => setting.key.startsWith('budget.')],
+  ['budget', (setting) => setting.key.startsWith('budget.') || setting.key.startsWith('disk.')],
   ['project', (setting) => setting.scopes.some((scope) => scope !== 'machine')],
   ['machine', () => true],
 ];

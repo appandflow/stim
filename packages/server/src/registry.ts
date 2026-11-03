@@ -1,5 +1,14 @@
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, watch, writeFileSync, type FSWatcher } from 'node:fs';
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  watch,
+  writeFileSync,
+  type FSWatcher,
+} from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { configDir, withDirLock } from '@stim-cli/core';
 import { isJsonObject, readJsonObject } from '@stim-cli/core/state';
@@ -203,11 +212,8 @@ function pairingName(name: string, fallback: string): string {
 }
 
 function newDeviceId(): string {
-  const taken = new Set(
-    [...readDevices(), ...readRecords(clientsFile('build')), ...readRecords(clientsFile('device-host'))].map(
-      (device) => device.id,
-    ),
-  );
+  const { devices, build, deviceHost } = readRegistries();
+  const taken = new Set([...devices, ...build, ...deviceHost].map((device) => device.id));
   let id = newId();
   while (taken.has(id)) id = newId();
   return id;
@@ -254,24 +260,89 @@ function parseDevice(value: unknown): PairedDevice | null {
   };
 }
 
+/** A registry file that cannot be read, or a Stim home or server directory that does not answer. */
+export class RegistryUnavailable extends Error {
+  override name = 'RegistryUnavailable';
+}
+
+const why = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/**
+ * The JSON object in `file`, or null when the file does not exist in a server directory that answers, as on a first
+ * run. A server directory that cannot be read, such as one whose Stim home is a symlink to an unmounted volume, and a
+ * file that cannot be read or parsed throw {@link RegistryUnavailable}.
+ */
+function readRegistryFile(file: string): Record<string, unknown> | null {
+  let text: string;
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT'))
+      throw new RegistryUnavailable(`Cannot read ${file}: ${why(error)}`);
+    try {
+      readdirSync(dirname(file));
+    } catch (directoryError) {
+      throw new RegistryUnavailable(`Cannot read ${dirname(file)}: ${why(directoryError)}`);
+    }
+    return null;
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    throw new RegistryUnavailable(`Cannot parse ${file}: ${why(error)}`);
+  }
+  if (!isJsonObject(value)) throw new RegistryUnavailable(`${file} does not hold a JSON object.`);
+  return value;
+}
+
 /** Records of protocol 1, which stored device tokens and tailnet nodes, are not read. */
 function readRecords(file: string): PairedDevice[] {
-  const registry = readJsonObject(file);
-  const devices = registry?.version === REGISTRY_VERSION ? registry.devices : null;
-  return Array.isArray(devices) ? devices.flatMap((entry) => parseDevice(entry) ?? []) : [];
+  const registry = readRegistryFile(file);
+  if (registry?.version !== REGISTRY_VERSION) return [];
+  if (!Array.isArray(registry.devices)) throw new RegistryUnavailable(`${file} has no devices list.`);
+  return registry.devices.flatMap((entry) => parseDevice(entry) ?? []);
+}
+
+function recordsOrNone(file: string): PairedDevice[] {
+  try {
+    return readRecords(file);
+  } catch (error) {
+    if (error instanceof RegistryUnavailable) return [];
+    throw error;
+  }
 }
 
 function writeRecords(file: string, devices: PairedDevice[]): void {
   writeJson(file, { version: REGISTRY_VERSION, devices });
 }
 
+export interface Registries {
+  devices: PairedDevice[];
+  build: PairedDevice[];
+  deviceHost: PairedDevice[];
+}
+
+/**
+ * Every record of the three registries. It throws {@link RegistryUnavailable} when any of them cannot be read, so a
+ * Stim home that stopped answering is never mistaken for one with no clients.
+ */
+export function readRegistries(): Registries {
+  return {
+    devices: readRecords(devicesFile()),
+    build: readRecords(clientsFile('build')),
+    deviceHost: readRecords(clientsFile('device-host')),
+  };
+}
+
+/** Paired devices, or none when `devices.json` cannot be read. */
 export function readDevices(): PairedDevice[] {
-  return readRecords(devicesFile());
+  return recordsOrNone(devicesFile());
 }
 
 /** The machines that may build here. They live apart from `devices.json`, so a server never reads them as devices. */
 export function readBuildClients(): PairedDevice[] {
-  return readRecords(clientsFile('build'));
+  return recordsOrNone(clientsFile('build'));
 }
 
 /** Whether the build client registry parses, so an empty `readBuildClients` means no client rather than a read failure. */
@@ -282,7 +353,7 @@ export function buildClientsReadable(): boolean {
 
 /** Device-host approvals live apart from read/control pairings and build clients. */
 export function readDeviceHostClients(): PairedDevice[] {
-  return readRecords(clientsFile('device-host'));
+  return recordsOrNone(clientsFile('device-host'));
 }
 
 /**
@@ -305,7 +376,7 @@ interface SecretRecord {
 }
 
 function readSecrets(): SecretRecord[] {
-  const secrets = readJsonObject(secretsFile())?.secrets;
+  const secrets = readRegistryFile(secretsFile())?.secrets;
   if (!Array.isArray(secrets)) return [];
   return secrets.flatMap((entry) => {
     if (!isJsonObject(entry)) return [];
@@ -411,7 +482,7 @@ export function dropSetupSecret(journal: string): void {
   });
 }
 
-/** The PSK of the unexpired secret named by `lookup` (hex), or null. */
+/** The PSK of the unexpired secret named by `lookup` (hex), or null. Throws {@link RegistryUnavailable}. */
 export function secretPsk(lookup: string, now: number = Date.now()): Buffer | null {
   const found = readSecrets().find((secret) => secret.lookup === lookup && unexpired(secret, now));
   return found ? Buffer.from(found.psk, 'hex') : null;
@@ -424,10 +495,10 @@ export interface KeyRecords {
   'device-host'?: PairedDevice;
 }
 
-export function recordsForKey(publicKey: string): KeyRecords {
-  const device = readDevices().find((entry) => entry.publicKey === publicKey);
-  const build = readBuildClients().find((entry) => entry.publicKey === publicKey);
-  const host = readDeviceHostClients().find((entry) => entry.publicKey === publicKey);
+export function recordsForKey(publicKey: string, registries: Registries = readRegistries()): KeyRecords {
+  const device = registries.devices.find((entry) => entry.publicKey === publicKey);
+  const build = registries.build.find((entry) => entry.publicKey === publicKey);
+  const host = registries.deviceHost.find((entry) => entry.publicKey === publicKey);
   return { ...(device ? { device } : {}), ...(build ? { build } : {}), ...(host ? { 'device-host': host } : {}) };
 }
 
@@ -470,7 +541,10 @@ export function spendSecret(
     });
     if (secret.kind === 'pairing') {
       const device = record(secret.capabilities, 'Phone');
-      writeRecords(devicesFile(), [...readDevices().filter((each) => each.publicKey !== publicKey), device]);
+      writeRecords(devicesFile(), [
+        ...readRecords(devicesFile()).filter((each) => each.publicKey !== publicKey),
+        device,
+      ]);
       spend();
       return { device };
     }
@@ -509,7 +583,7 @@ export function touchDevice(id: string, now: number = Date.now()): void {
 /** Sets a pairing's read/control permissions. Build and device-host clients are approved only by `stim-server setup`. */
 export function grantDevice(id: string, capabilities: Capability[]): GrantOutcome {
   return transaction<GrantOutcome>(() => {
-    const devices = readDevices();
+    const devices = readRecords(devicesFile());
     const device = devices.find((entry) => entry.id === id);
     if (device) {
       if (capabilities.includes('build')) return 'build-mismatch';
@@ -532,7 +606,7 @@ export function grantDevice(id: string, capabilities: Capability[]): GrantOutcom
  */
 export function setDevicePush(id: string, push: PushRegistration | null): boolean {
   return transaction(() => {
-    const devices = readDevices();
+    const devices = readRecords(devicesFile());
     const device = devices.find((entry) => entry.id === id);
     if (!device) return false;
     for (const other of devices) if (push && other.push?.token === push.token) delete other.push;
@@ -546,7 +620,7 @@ export function setDevicePush(id: string, push: PushRegistration | null): boolea
 /** Removes every registration of a push token the push service no longer delivers to. */
 export function dropPushToken(token: string): void {
   transaction(() => {
-    const devices = readDevices();
+    const devices = readRecords(devicesFile());
     let changed = false;
     for (const device of devices) {
       if (device.push?.token !== token) continue;
@@ -559,7 +633,7 @@ export function dropPushToken(token: string): void {
 
 export function revokeDevice(id: string): boolean {
   return transaction(() => {
-    const devices = readDevices();
+    const devices = readRecords(devicesFile());
     const remaining = devices.filter((device) => device.id !== id);
     if (remaining.length !== devices.length) {
       writeRecords(devicesFile(), remaining);

@@ -446,6 +446,7 @@ export async function inspectDeviceHostMachines(
           target,
           reason: outcome.reason,
           transport: outcome.transport,
+          code: outcome.code,
         };
         const startup =
           !peer && outcome.transport?.kind === 'http' && outcome.transport.status === 503

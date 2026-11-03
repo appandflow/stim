@@ -182,8 +182,8 @@ never replays a build. This transport is a migration prerequisite; existing
 Desktop buttons do not use it yet.
 
 The private `desktop-gc` feature provides `desktop.gc.subscribe` with an absolute
-existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees`, `delete`
-and `idleMs` (positive whole milliseconds). It invokes `createStim.collectGarbage`
+existing `cwd` and optional `cache`, `olderThan` (whole days), `worktrees` and
+`delete`. It invokes `createStim.collectGarbage`
 with the same scoped cleanup and ownership rules as the CLI. Only the proved
 Desktop connection can call it; phone, network and adopted-server connections
 cannot. Ordered `desktop-gc-progress` events end with `desktop-gc-ended`, whose
@@ -586,7 +586,9 @@ device tokens.
 
 A refusal during the handshake closes the WebSocket with code 4401 and the
 reason `unknown-secret` (no valid token or ticket matches), `unauthorized` (no
-record has the key, or it was revoked) or `handshake-failed`. A client that
+record has the key, or it was revoked), `home-unavailable` (the server cannot
+read its Stim home, so it cannot check the key; clients retry and never treat
+it as a revocation) or `handshake-failed`. A client that
 gets another server key than it pinned closes with `server-key-mismatch`. A
 protocol 1 client gets `protocol-unsupported` in cleartext with an "update,
 then pair again" message. Pairings, approvals and credentials from protocol 1
@@ -1531,6 +1533,21 @@ recordings. It does not restore an inaccessible volume or change the server's
 permissions, and a stall that starts after the check passes still blocks the
 server until the operating system returns.
 
+A Stim home that stops answering while the server runs, such as `~/.stim`
+symlinked to an external volume that unmounts, puts the server in the same
+degraded state. The server tells a registry it cannot read (a missing or
+unreadable `server` directory, or a `devices.json`, `build-clients.json` or
+`device-host-clients.json` it cannot read or parse) from one with no clients;
+a file missing from a readable `server` directory means no clients. While it
+cannot read them it revokes nothing: open connections, hosted sessions, builds
+and controllers are left as they are and keep the approvals it last read,
+while new connections, including hosted agent requests, get 503. A handshake or
+`hello` it cannot check, including a first contact whose `secrets.json` it
+cannot read, is refused with `home-unavailable` rather than `unauthorized` or
+`unknown-secret`. It checks the registries every second, and once they read
+again it logs `the Stim home answers again; serving clients.`, serves again and
+applies any revocation it then finds.
+
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the
 install, or changing its Node, needs `install` again.
@@ -2053,7 +2070,10 @@ workspace device with three methods that only the local Unix socket may call
   `{ id, workspace, platform, slot, physical, control, expiresAt, viewers, auth, url, password }`.
   It refuses a device the workspace does not own or lease, a hosted device,
   `control` on a physical iPhone, and `password` with `passwordless`.
-- `share.stop` takes `workspace` and ends its shares, returning `stopped`.
+- `share.stop` takes `workspace` and ends its shares, returning `stopped`. With
+  `id` (the `share-stop-id` feature) it ends only that share of the workspace,
+  and refuses an `id` the workspace does not have with `bad-request`. A server
+  without the feature refuses `id`, so a client checks the feature first.
 - `share.list` returns `shares`, the same rows without `url` or `password`.
 
 `stim-server --share [--port <n>]` is the server `stim share` starts when none
@@ -3011,7 +3031,8 @@ ended or whom it took the device from. Inputs are not logged.
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; `unknown-secret` means the
 server does not hold the pairing token or setup ticket, or not yet, so a client
-with a setup ticket retries until setup runs; clients retry the others.
+with a setup ticket retries until setup runs; `home-unavailable` means the
+server cannot read its Stim home; clients retry the others.
 Refusals during the handshake arrive as the WebSocket close reason with code
 4401, not as a JSON error.
 

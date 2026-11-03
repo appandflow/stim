@@ -23,7 +23,7 @@ import {
   type OffloadChoice,
 } from '../offload/client.ts';
 import { automaticBuild, namedBuildMachine, OffloadRefusal, requireLocalBuild } from '../offload/selection.ts';
-import { getConcurrencyLimits } from '../workspace/config.ts';
+import { admissionLimits } from '../workspace/config.ts';
 import { macosDir } from './state.ts';
 import { reidentifyBundle } from './stage.ts';
 import { validateMacosArtifactPlatform } from './artifact-platform.ts';
@@ -272,7 +272,7 @@ export async function buildMacosBundle({
         slot = await acquireBuildSlot({
           signal,
           automatic: automaticBuild(buildMachine),
-          max: getConcurrencyLimits().maxBuilds,
+          max: admissionLimits().maxBuilds,
           root,
           logFile: writer.file,
           out: note,

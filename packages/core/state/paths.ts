@@ -183,10 +183,6 @@ export function maintenanceStateFile(): string {
   return join(maintenanceDir(), 'state.json');
 }
 
-export function maintenanceAttemptFile(): string {
-  return join(maintenanceDir(), 'attempt.json');
-}
-
 export function maintenanceNdjsonFile(): string {
   return join(maintenanceDir(), 'maintenance.ndjson');
 }
@@ -247,15 +243,43 @@ export function clientIdentityKeyFile(): string {
 }
 
 /**
- * The local Unix socket. sun_path permits 103 UTF-8 bytes on macOS and 107 on Linux. Longer paths use
+ * A Unix socket at `path`. sun_path permits 103 UTF-8 bytes on macOS and 107 on Linux. Longer paths use
  * /tmp/stim-sockets-<uid>/<SHA-256 of the normalized absolute socket path>.sock.
  */
-export function serverLocalSocket(): string {
-  const path = join(configDir(), 'server', 'local.sock');
+function localSocket(path: string): string {
   const uid = process.getuid?.();
   const maximumPathBytes = process.platform === 'linux' ? 107 : 103;
   if (uid === undefined || Buffer.byteLength(path) <= maximumPathBytes) return path;
   return join('/tmp', `stim-sockets-${uid}`, `${createHash('sha256').update(path).digest('hex')}.sock`);
+}
+
+/** stim-server's Unix socket for this machine's own user. */
+export function serverLocalSocket(): string {
+  return localSocket(join(configDir(), 'server', 'local.sock'));
+}
+
+/** The home daemon's directory: its claim, log, snapshot and, when the path fits, its socket. */
+export function daemonDir(): string {
+  return join(configDir(), 'daemon');
+}
+
+/** The ownership claim the running home daemon holds for its lifetime. */
+export function daemonClaimRoot(): string {
+  return join(daemonDir(), 'claim');
+}
+
+export function daemonSocket(): string {
+  return localSocket(join(daemonDir(), 'daemon.sock'));
+}
+
+/** The daemon's own log, rotated like workspace logs. */
+export function daemonNdjsonFile(): string {
+  return join(daemonDir(), 'daemon.ndjson');
+}
+
+/** What the daemon's last tick measured and decided, written atomically each tick. */
+export function daemonSnapshotFile(): string {
+  return join(daemonDir(), 'snapshot.json');
 }
 
 export function serverSetupDir(): string {

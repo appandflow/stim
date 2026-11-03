@@ -478,7 +478,7 @@ test('native Gradle build-worker references route to the rendered native-android
 });
 
 test('the viewer override is discoverable beside the machine preference and boot guidance', () => {
-  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop>');
+  expect(renderSection('lifecycle', 'options')).toContain('--simulator-app <xcode|siniulator|stim-desktop|none>');
   for (const guide of [renderTopic('settings'), renderSection('lifecycle', 'simslim')]) {
     expect(guide).toContain('iosSimulatorApp');
     expect(guide).toContain('--simulator-app siniulator');
@@ -524,6 +524,21 @@ test('the placement words are documented for every workload, and a removed setti
   for (const [key, replaced] of Object.entries(REPLACED_SETTINGS)) {
     for (const name of [`\`${key}\``, replaced.env ?? key, `stim settings unset ${key}`])
       expect(settings).toContain(name);
+  }
+});
+
+test('only the settings topic names a removed setting, and every section of every other topic leaves them out', () => {
+  const removed = Object.keys(REPLACED_SETTINGS).filter((key) => key !== 'remote.buildMode');
+  for (const [name, topic] of Object.entries(TOPICS)) {
+    if (name === 'settings') continue;
+    const bodies = [
+      renderTopic(name),
+      ...Object.keys(topic.sections ?? {}).map((section) => renderSection(name, section)),
+    ];
+    for (const body of bodies) {
+      assert(body);
+      expect(removed.filter((key) => new RegExp(`\\b${key.replaceAll('.', '\\.')}\\b`).test(body))).toEqual([]);
+    }
   }
 });
 
@@ -920,7 +935,7 @@ test('the stats facts document every placement decision and the placement retent
   expect(body).toContain(`the last ${PLACEMENT_LIMIT} from the last ${PLACEMENT_MAX_AGE_MS / 86_400_000} days`);
   expect(body).toContain('capacityRefusals?:');
   expect(body).toContain('capacityWaits?:');
-  expect(body).toContain('reclaimed?');
+  expect(body).not.toContain('reclaimed?');
   expect(body).toContain('deviceSlotWaitMs?');
   expect(body).toContain(
     `the last ${CAPACITY_REFUSAL_LIMIT} from the last ${CAPACITY_REFUSAL_MAX_AGE_MS / 86_400_000} days`,

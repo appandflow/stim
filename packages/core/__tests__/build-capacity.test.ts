@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { machineCapacity } from '../state/build-capacity.ts';
+import { derivedBuildCap } from '../state/config.ts';
 
 describe('machineCapacity', () => {
   let home: string;
@@ -17,8 +18,8 @@ describe('machineCapacity', () => {
     rmSync(home, { recursive: true, force: true });
   });
 
-  it('reads server.maxLoadPerCore and concurrency.maxBuilds, with the registry default', () => {
-    expect(machineCapacity()).toMatchObject({ builds: 0, maxBuilds: 0, maxLoadPerCore: 2 });
+  it('reads server.maxLoadPerCore and concurrency.maxBuilds, deriving the build cap when it is unset', () => {
+    expect(machineCapacity()).toMatchObject({ builds: 0, maxBuilds: derivedBuildCap(), maxLoadPerCore: 2 });
     writeFileSync(
       join(home, 'config.json'),
       JSON.stringify({ concurrency: { maxBuilds: 3 }, server: { maxLoadPerCore: 1.5 } }),

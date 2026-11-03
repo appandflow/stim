@@ -1,6 +1,7 @@
-import type { MaintenanceAction, MaintenancePressure, MaintenanceSize } from '@stim-cli/core/state';
-import { STALE_CACHE_DAYS, type ReclaimedStep, type Budget } from '../budget.ts';
+import type { MaintenanceAction, MaintenanceSize } from '@stim-cli/core/state';
 import type { MaintenanceSettings } from './settings.ts';
+
+const CAP_TARGET = 0.8;
 
 export interface MaintenancePlan {
   actions: MaintenanceAction[];
@@ -8,26 +9,17 @@ export interface MaintenancePlan {
   skips: { target: string; reason: string; workspace?: string }[];
 }
 
+/** The cap trims of the hourly size scan: workspace outputs and the shared caches over their caps, oldest first. */
 export function plan({
-  pressure,
   sizes,
   settings,
-  budget,
-  diskSteps = [],
   protectedRoot,
-  scoped = false,
-  projects = [],
   pinned = () => false,
   recentlyUsed = () => null,
 }: {
-  pressure: MaintenancePressure | null;
   sizes: readonly MaintenanceSize[];
   settings: MaintenanceSettings;
-  budget: Budget;
-  diskSteps?: readonly ReclaimedStep[];
   protectedRoot: string;
-  scoped?: boolean;
-  projects?: readonly string[];
   pinned?: (workspace: string) => boolean;
   recentlyUsed?: (workspace: string) => string | null;
 }): MaintenancePlan {
@@ -48,46 +40,6 @@ export function plan({
     actions.push(action);
     return true;
   };
-  const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
-  const low = pressure?.disk.filter((disk) => disk.freeMb < floor) ?? [];
-  const reason = low
-    .map(
-      (disk) =>
-        `free disk ${(disk.freeMb / 1024).toFixed(1)}G on ${disk.volume} under the ${(floor / 1024).toFixed(1)}G floor`,
-    )
-    .join('; ');
-  const kinds = {
-    'idle-devices': 'would-shutdown-device',
-    'idle-dev-servers': 'would-stop-workspace',
-    'workspace-outputs': 'would-clear-outputs',
-    'stale-cache-entries': 'would-trim-cache',
-  } as const;
-  if (low.length) {
-    for (const step of diskSteps) {
-      if (scoped && step.step === 'idle-devices') continue;
-      for (const target of step.targets) {
-        const workspace =
-          projects.find((root) => root === target || target.endsWith(` in ${root}`)) ??
-          (step.step === 'idle-dev-servers' || step.step === 'workspace-outputs' ? target : undefined);
-        if (workspace === protectedRoot || target === protectedRoot) continue;
-        const size =
-          workspace && step.step !== 'idle-devices'
-            ? sizes.find((entry) => entry.workspace === workspace && entry.category === 'workspace-outputs')
-            : undefined;
-        add({
-          kind: kinds[step.step],
-          target,
-          bytes: step.step === 'workspace-outputs' ? (size?.bytes ?? 0) : 0,
-          reason: `${size?.idleDays == null ? '' : `idle ${size.idleDays} days, `}${reason}`,
-          ...(workspace ? { workspace } : {}),
-          check: 'disk',
-          ...(step.step === 'stale-cache-entries' ? { olderThanDays: STALE_CACHE_DAYS } : {}),
-        });
-      }
-      if (step.failures) blocked.push(`Could not plan ${step.step}: ${step.failures} failures`);
-    }
-    if (actions.length === 0) blocked.push(`${reason}; no reclaimable disk targets`);
-  }
   const caps = [
     ['workspace-outputs', settings.workspaceOutputsMaxGb, 'would-clear-outputs'],
     ['build-cache', settings.buildCacheMaxGb, 'would-trim-cache'],
@@ -100,7 +52,7 @@ export function plan({
     const cap = capGb * 1024 ** 3;
     if (cap === 0 || total <= cap) continue;
     let remaining = total;
-    const targetBytes = (cap * settings.capTargetPercent) / 100;
+    const targetBytes = cap * CAP_TARGET;
     const why = `${category} ${(total / 1024 ** 3).toFixed(1)}G over the ${capGb}G cap; ${
       category === 'compilation-cache' ? 'emptied whole' : `target ${(targetBytes / 1024 ** 3).toFixed(1)}G`
     }`;
@@ -132,11 +84,5 @@ export function plan({
     }
     if (remaining > targetBytes) blocked.push(`${why}; eligible targets cannot reach the target`);
   }
-  if (pressure?.memory.pressured)
-    skips.push({
-      target: 'memory',
-      reason:
-        'memory pressure observed; only idle Gradle and Kotlin daemons are stopped for memory, never devices or dev servers',
-    });
   return { actions, blocked, skips };
 }

@@ -1753,7 +1753,6 @@ export function protocolJsonSchema(): JsonSchema {
               olderThan: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
               worktrees: { type: 'boolean' },
               delete: { type: 'boolean' },
-              idleMs: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
             },
           }),
           request('desktop.worktree.warm.subscribe', {
@@ -2216,7 +2215,7 @@ export function protocolJsonSchema(): JsonSchema {
             type: 'object',
             required: ['workspace'],
             additionalProperties: false,
-            properties: { workspace: { type: 'string', minLength: 1 } },
+            properties: { workspace: { type: 'string', minLength: 1 }, id: { type: 'string', minLength: 1 } },
           }),
           optionalParams('share.list', { type: 'object', maxProperties: 0 }),
           request('machines.update.start', {

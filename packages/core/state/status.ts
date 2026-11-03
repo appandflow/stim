@@ -1,10 +1,17 @@
 import type { HostedAndroidStatus } from './hosted-android.ts';
 import type { HostedIosStatus } from './hosted-ios.ts';
 import type { MaintenanceStatus } from './maintenance.ts';
+import type { DaemonStatus } from './daemon.ts';
 import type { ArchivedWorkspace, ArchivedUsage } from './archive.ts';
 import type { MacosAppState } from './macos.ts';
 import type { TunnelMode, WebViewport } from './settings-registry.ts';
-import type { DeviceIdleShutdownRecord, IdleStopRecord, MetroLastStop } from './workspace-state.ts';
+import type {
+  DeviceIdleShutdownRecord,
+  DormantStageRecord,
+  IdleStageRecord,
+  IdleStopRecord,
+  MetroLastStop,
+} from './workspace-state.ts';
 export type StatsPlatform = 'ios' | 'android';
 
 /** A platform whose build reports phases: the stats platforms and `macos`. */
@@ -40,6 +47,10 @@ export interface BuildWaitingFor {
   inUse: number;
   max: number;
   since: string;
+  /** The run's 1-based place in its admission queue; absent from records written before the queue existed. */
+  position?: number;
+  /** What holds it: `build slots`, `booted devices`, `boots in flight`, `memory`, or `its turn`. */
+  resource?: string;
 }
 
 export interface BuildReport {
@@ -670,6 +681,10 @@ export interface EnvironmentState {
   hidden?: true;
   /** Where the workspace is, from `workspaceStage`; `stim status --json` always sets it. */
   stage?: WorkspaceStage;
+  /** Present while the workspace is in the idle stage: no activity since the daemon stopped it. */
+  idleStage?: IdleStageRecord;
+  /** Present while the workspace is dormant: no Stim command since the daemon deleted its owned devices. */
+  dormantStage?: DormantStageRecord;
   /** The step a `warming` workspace's warm is in; absent in every other phase. */
   warmStep?: WarmStep;
   /**
@@ -871,6 +886,7 @@ export interface MachineUsageState {
 /** The payload `stim status --json` prints, and `status --watch --json` prints on each change. */
 export interface StatusPayload {
   maintenance?: MaintenanceStatus;
+  daemon?: DaemonStatus;
   archived?: ArchivedWorkspace[];
   archivedUsage?: ArchivedUsage;
   environments: (EnvironmentState & { labelOnly?: true })[];

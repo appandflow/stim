@@ -1,5 +1,5 @@
 import { ANDROID_AVD_CONFIG_HELP } from '../workspace/settings.ts';
-import { SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
+import { REPLACED_SETTINGS, SETTINGS, SETTINGS_SCHEMA_URL } from '@stim-cli/core/state';
 
 export default {
   summary: 'Settings Stim reads, and where they can live',
@@ -46,8 +46,8 @@ Resolution order, first match wins:
   3. committed       .stim.json beside the app's package.json or Package.swift
   4. machine         ~/.stim/config.json, top-level optimizations,
                      ios.deviceType, ios.runtime, android.systemImage,
-                     android.deviceProfile, devices.idleShutdownMinutes,
-                     devices.reclaimIdleMinutes and archive.enabled
+                     android.deviceProfile, idle.minutes and
+                     archive.enabled; idle.dormantDays is machine-only
   5. Stim default
 An environment override, where a setting has one, wins over every layer.
 
@@ -485,37 +485,24 @@ ${ANDROID_AVD_CONFIG_HELP.map((line) => `                          ${line}`).joi
                         validates the shape and platform but cannot discover
                         runtime entry-point or dev-menu overrides or auto-fix
                         them. See \`guide metro\` for warmup behavior.
-  metro.idleStopMinutes minutes without a bundle request, client log record or
-                        Stim command before the supervisor stops the dev
-                        server (default 15). 0 never stops it. Never during a
-                        build or bundle response, while the workspace holds
-                        a device lock, or while a workspace device is
-                        driven. Unless devices.idleShutdownMinutes is 0,
-                        the stop first shuts down the workspace's owned
-                        devices idle for the shorter window, and from then
-                        on a Debug launch's device logs do not count as
-                        activity. Read
-                        when \`start\` spawns the supervisor; see
-                        \`guide metro\`.
-  devices.idleShutdownMinutes
-                        minutes an owned simulator or emulator stays idle
-                        (\`gc --idle\` conditions; an open stim-server viewer
-                        counts as activity) before its workspace's supervisor
-                        shuts it down, never deletes it. Default 15; 0 never,
-                        not even at Metro's idle stop. A device whose last
-                        launch needs Metro goes down with Metro's idle stop
-                        even when this is longer: from then on its device
-                        logs do not count as activity. Machine or project
-                        layers. Read when the supervisor starts; see
-                        \`guide lifecycle budget\`.
-  devices.reclaimIdleMinutes
-                        minutes idle before the head of the device slot queue
-                        shuts down the longest-idle eligible owned device in
-                        another workspace of this Stim home. Default 10; 0 off.
-                        Machine or project layers, resolved for the waiting
-                        workspace on each poll. Same idle checks as supervisor
-                        shutdown, one device per poll, never deleted. See
-                        \`guide lifecycle concurrency\`.
+  idle.minutes          minutes without activity before the workspace goes
+                        idle (default 15; 0 never). Activity is a Stim
+                        command, a Metro bundle, manifest or HMR request, an
+                        agent-device action, an input stim-server forwarded to
+                        one of its devices, a stim device lock, or a person
+                        using its frontmost Simulator, Device Hub or emulator
+                        window; device logs, in-app logs, dev server output
+                        and log file times are not. Idle, the stim-daemon
+                        stops the dev server with its port kept, shuts the
+                        owned simulators and emulators down, and deletes the
+                        workspace's regenerable build outputs; \`stim
+                        revive\` resumes it. 0 also turns the dormant stage
+                        off for the workspace. Machine or project layers.
+                        See \`guide lifecycle budget\`.
+  idle.dormantDays      days without activity before a workspace goes
+                        dormant: its owned devices are deleted and its logs
+                        archived (default 3; fractions allowed; 0 never).
+                        Machine layer. See \`guide lifecycle budget\`.
   macos.product         the explicit Swift Package executable product built in
                         Debug by stim macos
   macos.infoPlist       development Info.plist relative to Package.swift,
@@ -644,22 +631,25 @@ or via the environment, which overrides the file:
   concurrency.maxAndroidDevices  STIM_MAX_ANDROID_DEVICES
   concurrency.maxMacosApps       STIM_MAX_MACOS_APPS
 
-Unset, 0, or any non-positive value means NO enforcement -- the default, where
-Stim limits nothing. See \`guide lifecycle concurrency\` for what each cap
-does.
+Unset or 0 means the derived cap: concurrency.maxBuilds max(1, floor(CPU
+cores / 6)), concurrency.maxDevices max(2, floor((RAM - 4 GB) / 1.5 GB)). The
+per-platform caps stay unlimited at 0. See \`guide lifecycle concurrency\` for
+what each cap does.
 
-DISK AND MEMORY BUDGETS ARE MACHINE-LEVEL AND ON BY DEFAULT
-Top-level \`budget\` in ~/.stim/config.json, or the environment, which
-overrides the file:
+DISK PRESSURE THRESHOLDS ARE MACHINE-LEVEL AND ON BY DEFAULT
+In ~/.stim/config.json, or the environment, which overrides the file:
 
-  budget.minFreeDiskGb          STIM_BUDGET_MIN_FREE_DISK_GB         default 20
-  budget.hardFloorDiskGb        STIM_BUDGET_HARD_FLOOR_DISK_GB       default 5
-  budget.maxCommittedMemoryGb   STIM_BUDGET_MAX_COMMITTED_MEMORY_GB  60% of RAM
-  budget.maxLiveWorkspaces      STIM_BUDGET_MAX_LIVE_WORKSPACES      unset
+  disk.minFreeGb          STIM_DISK_MIN_FREE_GB          default 20
+  disk.criticalFreeGb     STIM_DISK_CRITICAL_FREE_GB     default 6
+  disk.hardFloorGb        STIM_DISK_HARD_FLOOR_GB        default 5
 
-0 turns a check off. With STIM_HOME set and no environment variable, the
-budget is off. A value of the wrong shape refuses start, ios and android with
-STIM_BAD_ARG. See \`guide lifecycle budget\` for what each limit reclaims.
+Under disk.minFreeGb on a volume Stim writes to the pressure level is high,
+under disk.criticalFreeGb critical, and under disk.hardFloorGb start, ios and
+android refuse with STIM_LOW_DISK after the pressure ladder ran. 0 turns a
+threshold off. They apply in every Stim home, STIM_HOME ones included. A value
+of the wrong shape refuses start, ios and android with STIM_BAD_ARG. Memory
+has no threshold to set: it never refuses, and the ladder's memory level is
+fixed. See \`guide lifecycle budget\` for the ladder.
 
 DEBUG LOGS ARE MACHINE-LEVEL AND OFF BY DEFAULT
 debug.logs STIM_DEBUG  default false. STIM_DEBUG=1 (or 0) overrides the setting
@@ -672,15 +662,58 @@ generation, and nothing is sent anywhere. Keys named like a secret are redacted.
   stim settings set debug.logs true --scope machine
 See \`guide logs\` for reading the files.
 
+THE STIM DAEMON IS MACHINE-LEVEL AND ON BY DEFAULT
+daemon.mode STIM_DAEMON  default on. One setting governs every pass Stim runs
+on its own: the idle and dormant stages, the pressure ladder, the reclaim for a
+run waiting to boot, and automatic maintenance.
+
+  on      start, ios, android, web, macos and revive start one stim-daemon per
+          Stim home, scoped homes included. It ticks each minute while
+          anything runs there or the pressure level is above normal, and
+          every 5 minutes otherwise. It exits two ticks after nothing runs and
+          no workspace waits for its dormant stage, so the stage fires in a
+          quiet home. A workspace waits until its idle.dormantDays have passed
+          plus one slow tick, and never while maintenance.keep, idle.minutes
+          0, idle.dormantDays 0, a hosted placement, an unreadable state or a
+          failing device listing keeps it out, nor with no activity recorded
+          in its state. A finished-worktree removal does not keep the daemon.
+          Each tick it measures the
+          machine once, classifies the pressure level, moves idle workspaces
+          into the idle stage (idle.minutes) and dormant ones into the dormant
+          stage (idle.dormantDays), runs the pressure ladder above normal,
+          reclaims a device for a run waiting to boot, and runs automatic
+          maintenance.
+  report  the same passes log what they would do and act on nothing.
+  off     no daemon and no pass: each dev server supervisor stops its own dev
+          server and devices after idle.minutes, and nothing times a device
+          with no dev server.
+
+Without a running daemon -- on Windows, which has none, or when one could not
+start -- stim doctor, start, ios and android run automatic maintenance and the
+pressure ladder in their own process, acting in on and only logging in report,
+never taking the command's own workspace. stim gc runs the same passes in its
+own process. It is off in CI unless STIM_DAEMON is set.
+A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
+later change to the machine setting can make a running daemon stricter, never
+laxer. The daemon also keeps the starting command's CI and the environment
+overrides of settings that are not sensitive, such as STIM_DISK_MIN_FREE_GB,
+for its whole life: one exported after it started applies to the daemon only
+once it exits and a command starts a new one. status and doctor show the
+running daemon's mode. Its log is STIM_HOME/daemon/daemon.ndjson and its last
+tick STIM_HOME/daemon/snapshot.json.
+  stim settings set daemon.mode report --scope machine
+
 AUTOMATIC MAINTENANCE IS MACHINE-LEVEL
-maintenance.mode on (the default) removes what gc would under the caps and
-floors below; report measures and plans and deletes nothing; off disables it.
-STIM_HOME and CI make the mode off unless STIM_MAINTENANCE is set.
-maintenance.keep is a project setting: pin a workspace so a pass never clears
-its build outputs or removes its worktree.
-maintenance.idleStopHours takes machine or project layers, so one workspace can
-stop sooner, later or never. On a hosting Mac stim-server reads its machine value
-to stop a hosted session whose client has been gone that long.
+Automatic maintenance runs in daemon.mode: it removes what gc would under the
+caps below, measures sizes at most hourly and waits while the one-minute load
+is above 4 per core.
+maintenance.keep is a project setting: pin a workspace so neither the daemon
+nor a pass ever stages it, clears its build outputs or removes its worktree.
+maintenance.idleStopHours is only for hosted devices: it takes machine or
+project layers and stops a workspace with a device hosted on a remote Mac that
+long after its last activity. On a hosting Mac stim-server reads its machine
+value to stop a hosted session whose client has been gone that long. Every
+other workspace follows idle.minutes and idle.dormantDays.
 See \`guide cleanup\` for checks, plans and log paths.
 
 ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^caches\..*MaxGb$/.test(setting.key))
@@ -692,9 +725,8 @@ ${SETTINGS.filter((setting) => setting.key.startsWith('maintenance.') || /^cache
   )
   .join('\n')}
 
-Maintenance uses the sysctl pressure level on macOS, with no memory signal
-when sysctl fails. os.freemem() and maintenance.minAvailableMemoryGb apply
-only on other platforms.
+Maintenance reads the sysctl pressure level on macOS for status, with no memory
+signal when sysctl fails, and os.freemem() on other platforms.
 
 THE IOS SIMULATOR APP IS MACHINE-LEVEL
 Top-level \`iosSimulatorApp\` in ~/.stim/config.json selects the macOS app that
@@ -713,6 +745,11 @@ To show the booted simulator in Stim Desktop and open no simulator window:
 
   { "iosSimulatorApp": "stim-desktop" }
 
+To boot the simulator with no viewer at all, for agents and other headless
+runs:
+
+  { "iosSimulatorApp": "none" }
+
 Stim Desktop keeps the current page and shows a launch card. Clicking Show
 opens the workspace that owns the simulator and focuses that device.
 It only displays the simulator; it never boots or shuts it down.
@@ -723,7 +760,7 @@ It shows only devices from that home: under another \`STIM_HOME\`, pick
 
 Override the preference for one local launch with
 \`stim ios --simulator-app siniulator\`, \`stim ios --simulator-app stim-desktop\`,
-or \`stim ios --simulator-app xcode\`.
+\`stim ios --simulator-app xcode\`, or \`stim ios --simulator-app none\`.
 The flag also opens an already running owned simulator without rebooting it.
 It leaves the saved preference unchanged and refuses physical or remote targets.
 
@@ -1071,11 +1108,9 @@ the configured entry.
                approved for builds; ignores this machine's load/slot gating
 
 \`remote.buildMode\` and STIM_REMOTE_BUILD_MODE were removed and are no longer read.
-\`doctor\` and \`stim settings\` report any left in a config file or the environment,
 \`stim settings set remote.buildMode\` refuses with the \`remote.build\` command that
-replaces it (auto stays auto, force becomes remote, off becomes local), and
-\`stim settings unset remote.buildMode\` removes the leftover key from every layer
-that has it (--scope limits it to one).
+replaces it (auto stays auto, force becomes remote, off becomes local). See
+REMOVED SETTINGS below.
 
 A name never prompts for pairing, tries another remote machine or falls back here.
 remote-only refuses instead of building here for a build that cannot leave this
@@ -1275,10 +1310,13 @@ DerivedData, compilation cache, ccache and Gradle home under
 \`server.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
 and Stim home per client and repository, and one Gradle home per client. It
 runs as many offloaded builds at once as \`server.maxOffloadedBuilds\` allows
-(default 0, no limit; with it and \`concurrency.maxBuilds\` both unset, only
-the load average limits a burst of builds, and it lags by minutes). It declines a build while that volume has
-less than 10 GB free, while that many offloaded builds run, while its own native builds and the offloaded ones fill
-its \`concurrency.maxBuilds\`, or while its load per core is at or above its
+(default 0, no limit of its own). Offloaded builds share the worker's build
+cap with its own native builds: \`concurrency.maxBuilds\` on the worker, derived
+as max(1, floor(CPU cores / 6)) when 0, so a worker with fewer than 12 cores
+runs one build at a time; set \`concurrency.maxBuilds\` there to allow more. It
+declines a build while that volume has less than 10 GB free, while that many
+offloaded builds run, while its own native builds and the offloaded ones fill
+that cap, or while its load per core is at or above its
 \`server.maxLoadPerCore\`, and reports the reason in its offer. It boots and
 installs nothing. While an offloaded build runs there, it holds one of that
 machine's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
@@ -1625,5 +1663,30 @@ Registration is idempotent and keyed on the directory.
 dir must be absolute (a leading ~ is expanded) and dedicated to the cache.
 register throws for a path that is or contains the home directory, the system
 temporary directory, the Stim config directory or a filesystem root, and gc
-never prunes or empties such a directory.`,
+never prunes or empties such a directory.
+
+REMOVED SETTINGS
+Stim no longer reads these. \`stim settings set\` and \`settings get\` refuse
+each with STIM_BAD_ARG naming what replaced it, and the command that sets the
+replacement to the old value when there is one. \`stim doctor\` and \`stim
+settings\` report any left in a config file or the environment. start, ios,
+android, web, macos, revive and gc refuse with STIM_BAD_ARG while a variable
+marked "refused" is set; unset it, or set its replacement. They also refuse
+while a config layer they read holds a removed setting's old value that turned
+something off: maintenance.mode off or report, or metro.idleStopMinutes or
+devices.idleShutdownMinutes 0. The refusal names the set and unset commands
+that keep the old behavior, or only the unset when a layer already sets the
+replacement, and doctor rates it a cost. maintenance.idleStopHours 0 is still
+read, for hosted sessions, so it never refuses; doctor rates it a cost until
+idle.dormantDays is set, since it no longer keeps workspaces from going
+dormant. \`stim settings unset
+<key>\` removes a leftover key from every layer that has it (--scope limits it
+to one).
+
+${Object.entries(REPLACED_SETTINGS)
+  .map(
+    ([key, removed]) =>
+      `  \`${key}\`${removed.env ? ` (${removed.env}${removed.refuses ? ', refused' : ''})` : ''}\n    ${removed.key ? `replaced by ${removed.replacement}` : removed.replacement}; stim settings unset ${key}`,
+  )
+  .join('\n')}`,
 };

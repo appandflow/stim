@@ -231,38 +231,45 @@ the workflow, stop the workspace and the specific unit you created:
   stim stop
   systemctl --user stop stim-metro-my-worktree.service
 
-  IDLE STOP: the supervisor stops its dev server after metro.idleStopMinutes
-  (default 15; 0 never stops) with no bundle request, no client log record
-  (in-app console logs; for Expo or metro.command, any stdout line of the
-  dev server) and no Stim
-  command in the workspace (start, ios, android, reload, revive, logs,
-  worktree warm). It checks once a minute. It keeps running while a bundle response is in
-  flight, while a build in the workspace is in progress, while a stim ios,
-  android or stop run holds the workspace's native-run lock, while the
-  workspace holds an unexpired device lease (\`stim device lock\` or a
-  --device run, physical devices included), while one of the workspace's
-  devices is driven or its activity is unknown (\`guide facts status\`; on
-  Windows, which has no ps, the host driver-process probe is skipped), and
-  while a \`stim start\` holds the workspace's metro-start lock. It checks
-  all of this again under the native-run and metro-start locks before it
-  stops the server. A Fast Refresh update is not a bundle request:
-  an open app that only hot-reloads and logs nothing counts as idle, and a
-  connected app alone does not keep the server. It records a
-  supervisor_idle_stopped line in metro.ndjson and devServerStop in
-  state.json, so \`status\` shows "stopped (idle)" rather than a crash.
-  With devices.idleShutdownMinutes at 0 the devices stay booted. Otherwise
-  (the default is 15) the idle stop first shuts down the workspace's owned
-  devices idle for the shorter of the two settings, and device log lines no
-  longer count as use of a device whose last launch loads its JS from Metro:
-  that app cannot run without Metro, and its reconnect attempts fill the
-  device log. A Debug app's device therefore goes down with the dev server
-  even when devices.idleShutdownMinutes is longer. An open stim-server live
-  view keeps it booted. Device logs still count for a Release or
-  native-process launch and for a slot with no recorded launch, and for those
-  any change to the workspace's device.ndjson counts, so another slot's
-  reconnect logs keep them booted until that slot's device is shut down. The
-  supervisor_idle_stopped message names each device it shut down and why it
-  kept any other (\`guide lifecycle budget\`). The next \`stim start\`
+  IDLE STOP: once the workspace has had no activity for idle.minutes
+  (default 15; 0 never stops), the stim-daemon moves it into the idle stage
+  in one pass under its native-run and metro-start locks, after deciding
+  again: it stops the dev server, keeping its port reservation and launch
+  records; shuts the owned simulators and emulators down, ending their log
+  collectors; and deletes the workspace's regenerable build outputs (its
+  derived-data and other workspace build directories, the in-tree
+  android/app/build, android/build, android/.gradle and .build that git
+  ignores, and the Metro store unless another running dev server shares it).
+  ios/build stays: pod install writes generated sources there. Activity is
+  the newest of a Stim command in the workspace (start, ios, android, reload,
+  revive, logs, worktree warm) or the end of its native run; a Metro bundle,
+  manifest or HMR request; an agent-device action on its devices; an input a
+  stim-server client sent to one of its devices; and, on macOS, a person's
+  keyboard or mouse input within the last two minutes while Simulator,
+  Device Hub or its emulator's window is frontmost. Device Hub does not say
+  which simulator it shows, so it counts for every booted simulator the home
+  owns, as Simulator does when its CurrentDeviceUDID cannot be read. Device
+  logs, in-app console logs, dev server output and log file times never count, so an open app that only hot-reloads or logs
+  is idle, and a live view that only streams frames does not keep it. It
+  stays running while a bundle response is in flight, while a build in the
+  workspace is in progress, while a stim ios, android or stop run holds the
+  workspace's native-run lock, while the workspace holds an unexpired device
+  lease (\`stim device lock\` or a --device run, physical devices included),
+  while one of its devices is driven, a live agent-device session included,
+  or its activity is unknown (\`guide facts status\`; on Windows, which has
+  no ps, the host driver-process probe is skipped), while simctl or adb cannot
+  list its devices, while its owned Chrome or a hosted device runs, while a
+  web share of it is live (\`guide share\`; stim share stop or its expiry
+  ends that), while maintenance.keep pins it, and while a \`stim start\`
+  holds its metro-start lock. A dev server whose requests Stim cannot see
+  (metro.command, or an Expo SDK before 54) never stops for being idle. The
+  pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
+  devServerStop and idleStage in state.json, so \`status\` shows the idle
+  stage and
+  "stopped (idle)" rather than a crash. With daemon.mode off, or while no
+  daemon runs, the supervisor applies the same clock to itself and its
+  devices, without deleting build outputs (\`guide settings\`). The next
+  \`stim start\`
   starts it again and clears the
   record, also when it reuses a dev server that another process started. A
   Debug \`ios\` or \`android\` run starts it the same way and reports
@@ -291,16 +298,15 @@ the workflow, stop the workspace and the specific unit you created:
   own stops show only in the log).
     requested      a Stim command stopped it and says which: stim stop,
                    stim worktree remove, stim gc --delete, stim start
-                   --reset-cache, budget reclaim (with the workspace whose
-                   ios, android or start run reclaimed it), or automatic
-                   maintenance with its idle reason (guide cleanup, IDLE STOP)
+                   --reset-cache, or automatic maintenance with its idle
+                   reason (guide cleanup, IDLE STOP)
     signal         a SIGTERM or SIGINT with no Stim stop request recorded,
                    so it likely came from outside Stim (level warn)
     server-exited  the dev server exited on its own (level error). Expo CLI
                    also exits 0 when it gets SIGTERM, so "exit code 0" with
                    no request usually means something outside Stim signalled
                    the Expo process
-    idle           metro.idleStopMinutes, above
+    idle           idle.minutes, above
   A supervisor killed with SIGKILL, or one that crashed, cannot write
   anything; neither can one whose state file was not writable. The next
   supervisor logs supervisor_vanished (level warn) for it, and until then

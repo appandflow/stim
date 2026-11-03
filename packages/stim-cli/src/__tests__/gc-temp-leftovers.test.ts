@@ -17,7 +17,7 @@ import { collectTempLeftovers, deleteTempLeftovers } from '../commands/gc/temp-l
 import { takeGcResults } from '../commands/gc/results.ts';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { executeAction } from '../maintenance/act.ts';
-import { planPressureLevels } from '../maintenance/levels.ts';
+import { planRung6 } from '../maintenance/sweep.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import * as claims from '@stim-cli/core/ownership-claim';
@@ -266,28 +266,18 @@ test('a STIM_HOME-scoped run neither reports nor deletes TMPDIR leftovers', asyn
   expect(existsSync(idle)).toBe(true);
 });
 
-test('maintenance at disk pressure level 2 plans and deletes the idle leftovers', async () => {
+test('rung 6 plans and deletes the idle leftovers', async () => {
   const idle = oldDir('stim-server-AbC123', { 'state.json': '{}' });
   const recent = join(fakeTmp, 'stim-server-recent');
   mkdirSync(recent);
-  const settings = { ...resolveMaintenanceSettings(null, { STIM_MAINTENANCE: 'on' }), removeFinishedWorktrees: false };
+  const settings = { ...resolveMaintenanceSettings(null, { STIM_DAEMON: 'on' }), removeFinishedWorktrees: false };
 
-  const planned = await planPressureLevels(2, {
-    settings,
-    sizes: [],
-    protectedRoot: '',
-    pinned: () => false,
-    now: Date.now(),
-  });
+  const planned = await planRung6(settings);
   const action = planned.actions.find((entry) => entry.kind === 'would-delete-temp-leftovers');
-  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp), level: 2 }));
+  expect(action).toEqual(expect.objectContaining({ target: realpathSync.native(fakeTmp) }));
   if (!action) return;
 
-  const outcome = await executeAction(action, {
-    settings,
-    budget: { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
-    protectedRoot: '',
-  });
+  const outcome = await executeAction(action, { settings, protectedRoot: '' });
   expect(outcome).toEqual(expect.objectContaining({ status: 'done', detail: '1 deleted' }));
   expect([existsSync(idle), existsSync(recent)]).toEqual([false, true]);
 });

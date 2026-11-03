@@ -2,7 +2,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import chalk from 'chalk';
 import { phaseLine } from '../command-output.ts';
-import { machineNumber } from '../budget.ts';
+import { machineNumber } from '../machine-number.ts';
 import { register } from '../cache/cache-manifest.ts';
 import { getExecutor } from '../exec.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';

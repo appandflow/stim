@@ -12,6 +12,7 @@ import {
   releaseBuildSlot,
   tryAcquireBuildSlot,
 } from '../engine/build-slots.ts';
+import { liveWaiters, positionCeilingMs, waitCeiling } from '../engine/wait-queue.ts';
 
 let tmpHome: string;
 
@@ -105,15 +106,18 @@ describe('acquireBuildSlot', () => {
       },
     });
     expect(acquired.slotWaitMs).toBe(90_000);
-    expect(lines).toHaveLength(2);
+    expect(lines).toHaveLength(8);
     expect(lines.every((line) => line.endsWith(' -- stim guide lifecycle concurrency'))).toBe(true);
-    expect(lines[0]).toContain('30s elapsed');
-    expect(lines[1]).toContain('1m00s elapsed');
+    expect(lines[0]).toContain('queue position 1 of 1');
+    expect(lines[0]).toContain('10s elapsed');
+    expect(lines[7]).toContain('1m20s elapsed');
     expect(waitingFor.mock.calls[0]?.[0]).toEqual({
       kind: 'build-slot',
       inUse: 1,
       max: 1,
       since: new Date(0).toISOString(),
+      position: 1,
+      resource: 'build slots',
     });
     expect(waitingFor).toHaveBeenLastCalledWith(null);
     releaseBuildSlot(acquired);
@@ -130,6 +134,143 @@ describe('acquireBuildSlot', () => {
     });
     expect(got.slotWaitMs).toBe(0);
     releaseBuildSlot(got);
+  });
+
+  test('a freed slot goes to the oldest waiting build, never to a later one', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const slowTick = async () => {
+      for (let turn = 0; turn < 5; turn++) await tick();
+    };
+    const first = acquireBuildSlot({ max: 1, root: '/w/first', sleep: slowTick });
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(1));
+    const second = acquireBuildSlot({ max: 1, root: '/w/second', sleep: tick });
+    await vi.waitFor(() => expect(liveWaiters('build')).toHaveLength(2));
+    releaseBuildSlot(held);
+    const firstHandle = await first;
+    expect(firstHandle.slot?.projectRoot).toBe('/w/first');
+    await vi.waitFor(() => expect(liveWaiters('build').map((holder) => holder.details.root)).toEqual(['/w/second']));
+    releaseBuildSlot(firstHandle);
+    const secondHandle = await second;
+    expect(secondHandle.slot?.projectRoot).toBe('/w/second');
+    releaseBuildSlot(secondHandle);
+    expect(liveWaiters('build')).toEqual([]);
+  });
+
+  test('a slot whose holder cannot be identified refuses at once when no other slot is busy, never a silent wait', async () => {
+    const planted = plantClaim(
+      buildSlotPath(0),
+      'exclusive',
+      { pid: 4242, processToken: 'nonsense' },
+      {
+        details: { index: 0 },
+      },
+    );
+    await expect(
+      acquireBuildSlot({
+        max: 1,
+        sleep: async () => {
+          throw new Error('an unresolved slot must not make the build wait');
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_CLAIM_REFUSED',
+      message: expect.stringContaining(claimRemoveCommand(planted)),
+    });
+  });
+
+  test('a build behind a live holder keeps waiting until the 90-minute ceiling, then refuses with the queue state', async () => {
+    const held = tryAcquireBuildSlot({ max: 1, root: '/w/held' });
+    assert(held);
+    let clock = 0;
+    try {
+      await expect(
+        acquireBuildSlot({
+          max: 1,
+          root: '/w/waiting',
+          now: () => clock,
+          sleep: async () => {
+            clock += 60_000;
+          },
+        }),
+      ).rejects.toMatchObject({
+        code: 'STIM_AT_CAPACITY',
+        message: expect.stringMatching(/at queue position 1 of 1; held: slot 0 \(\/w\/held/),
+      });
+      expect(clock).toBe(90 * 60_000);
+      expect(liveWaiters('build')).toEqual([]);
+    } finally {
+      releaseBuildSlot(held);
+    }
+  });
+});
+
+test('a build behind a slot whose holder cannot be verified refuses after the position ceiling', async () => {
+  plantClaim(buildSlotPath(0), 'exclusive', { pid: 4242, processToken: 'nonsense' }, { details: { index: 0 } });
+  const held = tryAcquireBuildSlot({ max: 2, root: '/w/held' });
+  assert(held);
+  let clock = 0;
+  try {
+    await expect(
+      acquireBuildSlot({
+        max: 2,
+        root: '/w/waiting',
+        now: () => clock,
+        sleep: async () => {
+          clock += 60_000;
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('cannot be verified for 10m00s'),
+    });
+    expect(clock).toBe(10 * 60_000);
+  } finally {
+    releaseBuildSlot(held);
+  }
+});
+
+test.each([
+  { position: 1, minutes: 10 },
+  { position: 2, minutes: 10 },
+  { position: 3, minutes: 15 },
+  { position: 6, minutes: 30 },
+])('position $position waits $minutes minutes on an unverifiable holder', ({ position, minutes }) => {
+  expect(positionCeilingMs(position)).toBe(minutes * 60_000);
+});
+
+describe('waitCeiling', () => {
+  test('never refuses while every holder is provably alive, until 90 minutes in all', () => {
+    let clock = 0;
+    const ceiling = waitCeiling(() => clock);
+    ceiling.update(1, null);
+    clock = 89 * 60_000;
+    expect(ceiling.overdue()).toBeNull();
+    clock = 90 * 60_000;
+    expect(ceiling.overdue()).toEqual({ kind: 'absolute', waitedMs: 90 * 60_000 });
+  });
+
+  test('refuses once a holder stays unverifiable for the position ceiling, restarted by progress or a live holder', () => {
+    let clock = 0;
+    const ceiling = waitCeiling(() => clock);
+    ceiling.update(3, 'slot 0 cannot be verified');
+    clock = 14 * 60_000;
+    expect(ceiling.overdue()).toBeNull();
+    ceiling.update(2, 'slot 0 cannot be verified');
+    clock = 23 * 60_000;
+    expect(ceiling.overdue()).toBeNull();
+    ceiling.update(2, null);
+    ceiling.update(2, 'slot 0 cannot be verified');
+    clock = 32 * 60_000;
+    expect(ceiling.overdue()).toBeNull();
+    clock = 33 * 60_000;
+    expect(ceiling.overdue()).toEqual({
+      kind: 'unverified',
+      position: 2,
+      waitedMs: 10 * 60_000,
+      reason: 'slot 0 cannot be verified',
+    });
   });
 });
 

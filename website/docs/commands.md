@@ -126,11 +126,16 @@ Homebrew `node`/`node@NN` install. When no install has the version the pin
 names, it names the newest installed Node of the pinned major that is not older
 than the pin, and says so. `--json` adds this as `toolchain`.
 
-A `budget` line reports the free disk on the volumes that hold the app and
-`$STIM_HOME`, and the estimated committed memory, against the
-[machine budget](./settings.md#machine-settings). When the machine is over
-budget, a finding lists what the next `start`, `ios`, or `android` would reclaim
-first. Doctor itself never reclaims. `--json` adds this report as `budget`.
+A `pressure` line reports the machine's pressure level, normal, high or
+critical, and why, against the
+[disk thresholds](./settings.md#machine-settings); above normal a finding says
+what the `stim-daemon`'s ladder reclaims. `--json` adds this report as
+`pressure`. Doctor also prints the [`stim-daemon`](./settings.md#stim-daemon)
+line with its mode, whether it runs and when it last ticked, its last action
+(or its snapshot file before the first), the daemon log and the maintenance
+log with the last pass. It reports a daemon that stopped ticking, a daemon
+claim it cannot resolve, and any [removed setting](./settings.md#stim-daemon)
+left in a config file or the environment, with the setting that replaces it.
 
 `doctor` also flags when an agent harness sandboxes shell commands and Stim is
 not allowed through it, which shows up as unrelated-looking failures against
@@ -329,7 +334,7 @@ same way when it is not running, so running `start` first is optional.
 
 ```text
 stim ios [--slot <name>] [--scheme <name>] [--configuration <name>] [--device-type <name>] [--runtime <version>] [--install-runtime]
-         [--simulator-app <xcode|siniulator|stim-desktop>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
+         [--simulator-app <xcode|siniulator|stim-desktop|none>] [--device [udid]] [--wait <seconds> | --no-wait] [--remote <eas|proxy|auto|local|machine>]
          [--eas-profile <name>] [--no-metro-check] [--no-build-cache] [--plan] [--json]
 ```
 
@@ -386,8 +391,8 @@ can compile on a paired remote machine instead: see `remote.build` in
   A recorded EAS session still running another model refuses with
   `STIM_REMOTE_DEVICE_MISMATCH`; run `stim stop`, then rerun. The
   `ios.deviceType` and `ios.runtime` settings are ignored on an eas/proxy run. A named hosting Mac uses both selectors.
-- `--simulator-app <xcode|siniulator|stim-desktop>` overrides the machine `iosSimulatorApp`
-  preference for this run. It also opens an already running owned simulator in
+- `--simulator-app <xcode|siniulator|stim-desktop|none>` overrides the machine `iosSimulatorApp`
+  preference for this run. `none` opens no viewer. It also opens an already running owned simulator in
   that app without rebooting it. The preference is not saved. Local simulators
   only; cannot be combined with `--device` or a remote target.
 - `--device [udid]` builds, installs, and launches on a connected iPhone instead
@@ -395,15 +400,15 @@ can compile on a paired remote machine instead: see `remote.build` in
   can lease. It ignores `ios.remote` and cannot be combined with `--remote`
   other than `--remote local`. Stim never creates, boots, or deletes hardware.
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
-  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
-  owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue. At the cap, only the queue head
-  reclaims the longest-idle eligible owned device in another workspace, one
-  per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
-  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
-  never deletes, and excludes this workspace, physical, hosted, remote,
-  parked and other homes' devices. Failed reclaim is logged and skipped.
+  `0` refuses immediately if busy). Without `--device`, it bounds the
+  owned-device slot wait across the Stim home; without it, a waiting run
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
+  While a run waits to boot at a full cap, the `stim-daemon` shuts down the
+  longest-idle owned device of another workspace idle 2 minutes, one per
+  tick. Reclaim shuts down, never deletes, and excludes this workspace,
+  physical, hosted, remote, parked and other homes' devices.
 - `--no-wait` bypasses leasing, including when another workspace holds the
   device. Installing the same app terminates that workspace's running app.
   Without `--device`, it refuses a full device cap or existing slot queue
@@ -684,15 +689,15 @@ can compile on a paired remote machine instead: see `remote.build` in
   ignores `android.remote` and cannot be combined with `--remote` other than
   `--remote local`.
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
-  `0` refuses immediately if busy). Without `--device`, it bounds the FIFO
-  owned-device slot wait across the Stim home (default 600 seconds). Remote
-  targets do not join this local slot queue. At the cap, only the queue head
-  reclaims the longest-idle eligible owned device in another workspace, one
-  per attempt, at most once every 15 seconds, then rechecks capacity.
-  `devices.reclaimIdleMinutes` defaults to 10; `0` disables it. The same idle checks as supervisor shutdown (default 15 minutes) exclude
-  drivers, locks, builds, viewers and recent activity. Reclaim shuts down,
-  never deletes, and excludes this workspace, physical, hosted, remote,
-  parked and other homes' devices. Failed reclaim is logged and skipped.
+  `0` refuses immediately if busy). Without `--device`, it bounds the
+  owned-device slot wait across the Stim home; without it, a waiting run
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
+  While a run waits to boot at a full cap, the `stim-daemon` shuts down the
+  longest-idle owned device of another workspace idle 2 minutes, one per
+  tick. Reclaim shuts down, never deletes, and excludes this workspace,
+  physical, hosted, remote, parked and other homes' devices.
 - `--no-wait` bypasses leasing, including another workspace's lease. Installing
   the same app terminates that workspace's running app. Without `--device`, it
   refuses a full device cap or existing slot queue immediately. It cannot be
@@ -1044,7 +1049,7 @@ result.
   and failures for this workspace. Add `--errors` to show only maintenance failures from it;
   failures before a later launch marker are hidden.
 - `--source gc` shows the machine-wide gc log: one record per item that
-  `stim gc`, automatic maintenance or the budget gate cleared, kept or failed to
+  `stim gc` or automatic maintenance cleared, kept or failed to
   clear, with the trigger, size and reason. It works from any directory, stands
   alone (`--source all` leaves it out), and takes `--json`, `--since`, `--tail`
   and `--follow`; `--errors` shows only failed items.
@@ -1318,7 +1323,10 @@ stim settings unset ios.deviceType --scope workspace
 
 An unknown key, a layer the key is not read from, or a value of the wrong
 shape refuses with `STIM_BAD_ARG`, names the expected shape, and writes
-nothing. Machine-file writes take the config lock and replace the file
+nothing. `set` and `get` of a [removed setting](./settings.md#stim-daemon)
+refuse with `STIM_BAD_ARG` naming its replacement, and `unset` removes a
+leftover one from every layer that has it, or from the one `--scope` names.
+Machine-file writes take the config lock and replace the file
 atomically. A committed write keeps the file's other keys and indentation.
 
 `--json` on the list prints one object:
@@ -1414,8 +1422,9 @@ only for live environments; `stim status --watch` shows it for every worktree. S
 fields.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
-`stim worktree warm` runs in it, `[ready]` after a warm until its first run,
-or `[idle]`. An active workspace (phase `live`) has no marker. In `--json`, each environment
+`stim worktree warm` runs in it, or `[ready]` after a warm until its first run.
+Other workspaces have no marker; their `stage:` line says whether they are running,
+idle, dormant or stopped. In `--json`, each environment
 carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
@@ -1486,12 +1495,25 @@ with its run, so to keep a phone listed after the run, hold it with
 `stim device lock`. Stim Desktop and the Stim phone app show each one as a
 tile with a Physical badge.
 
-A dev server that its supervisor stopped after
-[`metro.idleStopMinutes`](./dev-server-and-logs.md#idle-stop) with no use
+A dev server stopped after
+[`idle.minutes`](./dev-server-and-logs.md#idle-stop) with no activity
 prints as `metro: port <port> stopped (idle)`. In `--json` that environment's
 `metro` carries `idleStop` with `reason`, `at`, and `idleMinutes`. Any other
 known cause prints after `not running`, and `metro.lastStop` carries it; see
 [why the dev server stopped](./dev-server-and-logs.md#why-the-dev-server-stopped).
+
+Plain `status` prints a `Daemon` line for the
+[`stim-daemon`](./settings.md#stim-daemon): its mode, whether it runs, when it
+last ticked, and the pressure level with its reasons. A `Last daemon action`
+line follows once a daemon of this home has acted, then a line for each run
+waiting for a build slot or a device boot. Each workspace prints a
+`stage:` line with where the daemon's idle model has it: `running` with its last
+activity, `idle` or `dormant` with the time in it and what the stage freed or
+deleted, or `stopped`. This line is separate from the JSON `stage` object
+above. In `--json`, `daemon` carries `mode`, `running`, `lastTickAt`,
+`pressure`, `waiting` and `recent`, the last 20 actions any daemon of this home
+took, oldest first; an environment the daemon staged carries `idleStage` or
+`dormantStage`.
 
 Status prints the recorded managed Metro tunnel's provider and URL, with
 `tailnet-only` for Tailscale. In `--json`, `metro.tunnel` carries `{ provider, url }`
@@ -1554,8 +1576,8 @@ owners' `memoryMb` falls back to resident memory, which counts pages shared
 between processes once per process, so a simulator reads many times its
 footprint. An environment's `memoryMb` sums its own owners' footprints, builds
 included, with `memorySource: "footprint"`. Without a footprint, or when
-nothing runs and `machine` is `null`, it is the fixed estimate the memory
-budget uses, with `memorySource: "estimate"`. `stim guide facts status`
+nothing runs and `machine` is `null`, it is a fixed estimate, with
+`memorySource: "estimate"`. `stim guide facts status`
 lists every field.
 
 Status always shows this Mac's load, as a `load 17.6/core (busy at 2)` line and
@@ -1566,14 +1588,15 @@ which automatic placement prefers another machine), `limit` and `state`.
 over `limit`. No setting sets `limit` yet, so it is `null` and `state` is
 never `holding`.
 
-While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
-how many of those slots are in use and who holds them, as a `builds 1/2` or
-`devices 6/6` line, and in `--json` as `capacity.builds` and
-`capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+Status shows how many build and device slots are in use and who holds them,
+as a `builds 1/2 (concurrency.maxBuilds)` or
+`devices 6/8 (derived; set concurrency.maxDevices to override)` line, the second
+form while Stim derives the cap because the setting is unset, and in `--json` as
+`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
 it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
-devices could not be listed. With neither cap set, neither field appears.
+devices could not be listed.
 
 `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an
 `iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,
@@ -1619,7 +1642,8 @@ In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
-owned simulator or emulator before the cache lookup counts as `prepare`.
+owned simulator or emulator before the cache lookup counts as `prepare`,
+including a new device's wait for a boot slot.
 `device` starts once the app is ready and covers waiting for the device (its
 boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
@@ -1636,8 +1660,8 @@ cache reads are disabled.
 `completedPhaseMs` holds milliseconds spent in each phase the run already left,
 summing repeated visits. It excludes the current visit; the current phase appears
 only if visited earlier. It is absent before any phase completes and on older Stim versions.
-`cleanup` covers an acting local budget-reclaim plan, including its resource
-remeasurements, and restores the interrupted phase on success. It has no learned
+`cleanup` covers the pressure ladder a run waits for under the disk hard
+floor, and restores the interrupted phase on success. It has no learned
 duration. Raw elapsed time and history include cleanup; estimates and progress
 comparisons exclude it and pause while cleanup is current.
 `expectedMs` and `expectedPhaseMs` are
@@ -1899,16 +1923,14 @@ placements. Placements include `slotWaitMs` and `deviceSlotWaitMs` as whole mill
 
 Owned-device waits print the count, holder workspace names and elapsed time
 at once and about every 10 seconds on stderr. Status JSON includes optional
-`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since }`
+`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since, position, resource }`
 without changing the build phase. Overlapping waits show the one that started
 first, then the remaining wait.
 
 The optional top-level JSON `capacityWaits` lists each owned-device slot wait:
-`{ at, kind: "device-wait", platform, ms, max, workspace, reclaimed? }`. `ms` is whole
+`{ at, kind: "device-wait", platform, ms, max, workspace }`. `ms` is whole
 elapsed milliseconds, including waits that time out or fail. The list keeps
 the last 50 events from 7 days, newest first, and is omitted when empty.
-`reclaimed` is the whole count of devices shut down for that waiting run,
-omitted when zero. Plain stats reports waits with positive reclaim counts.
 Recording is best effort.
 
 The optional top-level JSON `capacityRefusals` lists the last 50 device
@@ -1940,8 +1962,8 @@ only when present. This cache is shared by every SwiftPM build on the machine;
 Stim reports it and never deletes it. `$STIM_HOME/swiftpm-cache-usage.json`
 caches `du -sk` measurements for 10 minutes, keyed on the resolved directory,
 with a 20-second timeout. Only `stats` and unscoped `gc` measure it; server and
-phone stats read the cache. `status`, `start`, `ios`, `android` and the budget
-gate never measure it.
+phone stats read the cache. `status`, `start`, `ios`, `android` and the
+pressure ladder never measure it.
 
 Try it with an agent:
 
@@ -2004,7 +2026,7 @@ worktree locked with `git worktree lock` is refused until you unlock it.
 ## `gc`
 
 ```text
-stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--idle <duration>] [--json]
+stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked|archived|archived:<id>|archived-logs|archived-recordings|archived-agent|archived-logs:<id>|archived-recordings:<id>|archived-agent:<id>|watchman|gradle-daemons|gradle-versions>] [--worktrees] [--json]
 ```
 
 Reports stale workspace entries, orphaned workspace directories (including a
@@ -2012,9 +2034,10 @@ directory with no `workspace.json` that holds only logs or lock files left by a
 removed workspace), clean linked
 worktrees whose branch is merged or whose pull request was merged or closed,
 orphaned owned devices and remote sessions,
-stale locks, shared cache sizes, and the memory of the watchman daemon and the
-Gradle and Kotlin compile daemons. It does not change anything without
-`--delete`. Without `--delete` it also runs no `git fetch` and no `gh`: it
+stale locks, shared cache sizes, the memory of the watchman daemon and the
+Gradle and Kotlin compile daemons, what the `stim-daemon`'s pressure ladder
+would do now at high and at critical with sizes, and each workspace's stage. It
+does not change anything without `--delete`. Without `--delete` it also runs no `git fetch` and no `gh`: it
 judges merges from the refs already on disk and the pull request cache that
 `stim status --watch` and the maintenance worktree check write, and shows a
 verdict that fresher state could change as not refreshed. `--delete` fetches
@@ -2036,11 +2059,31 @@ directory without a readable `workspace.json` is reported and never deleted.
 Nothing deletes a workspace that is in use: a running dev server, a `stim ios`
 or `stim android` run, a live build, or a held tunnel or remote lock.
 
-Unless `maintenance.mode` is `off`, `--delete` also stops each workspace, other than the one it runs in, that has had no real activity for
-[`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop)
-(6 by default), as `stim stop` does: its dev server stops and its owned
-devices shut down, never deleted. The dry run lists those stops in its
-maintenance plan.
+`--delete` without `--cache` also runs the
+[pressure ladder](./build-caches.md#disk-pressure) to its end at high,
+whatever the machine measures: the idle stage for every workspace idle 2
+minutes or more (its dev server stops, its owned devices shut down and its
+build outputs are deleted), parked devices, the shared caches trimmed to half
+their caps, the dormant stage for workspaces idle 10 minutes or more (their
+owned devices are deleted), then idle Gradle and Kotlin daemons, unpinned
+Gradle versions, TMPDIR leftovers and the worktree trash. `--delete --cache all`
+runs it at critical instead, which also empties the Metro and compilation
+caches, makes every idle workspace dormant and deletes the `node_modules` and
+`ios/Pods` of idle linked worktrees. The ladder runs whatever `daemon.mode`
+says and covers every registered workspace, including the one you run `gc`
+from: its dev server stops and its devices shut down after 2 idle minutes, and
+its owned devices are deleted after 10, while its `node_modules` and Pods stay
+unless `--cache all`. It never touches a workspace that is building, driven,
+leased, shared with [`stim share`](./share.md), hosted or pinned by
+`maintenance.keep`, leaves a workspace whose
+`idle.minutes` is `0` out of the idle and dormant stages, and logs each action
+to `$STIM_HOME/daemon/daemon.ndjson`. The dry run lists what it would do at each
+level, with sizes, and each registered workspace's stage: running with its last
+activity, idle or dormant with the time in it, or stopped. Those sizes are
+apparent sizes, while a run reports how much free disk actually rose, so files
+APFS shares with a clone, such as `node_modules` a warm copied, can free 0K. `stim revive`
+resumes an idle workspace; the next `stim ios` or `stim android` creates the
+devices of a dormant one.
 
 `stim status` caches each folder's size, each worktree's pull request and each
 worktree's merge verdict under `$STIM_HOME/disk-usage`,
@@ -2066,7 +2109,8 @@ process list cannot be read. Stim's own SwiftPM macOS builds run `swift` with th
 ambient `TMPDIR`, because SwiftPM keeps the locks for its shared caches there, so
 their temp directories land here too. Jest's cache is never deleted. gc never
 follows a symlink or acts outside `TMPDIR`, and with `STIM_HOME` set it skips
-them. Automatic maintenance runs the same deletion at disk pressure level 2.
+them. The `stim-daemon`'s pressure ladder runs the same deletion daily and at
+once under disk pressure.
 
 `gc` lists each entry of `$STIM_HOME/trash` under "Worktree trash" with its
 size and the worktree it came from: the ignored directories `worktree remove`
@@ -2080,14 +2124,16 @@ that `worktree warm` wrote (its `trash.json` has `"kind": "warm"`) holds paths
 removed from a copy of a live worktree, so `--delete` deletes it once its claim
 is free, whether or not the worktree exists. See [remove a worktree](./worktrees.md#remove-a-worktree).
 
-`--delete` also lightens every workspace that is not building and ran no
-`stim ios`, `stim android` or `stim macos` in the last 15 minutes, even with
-its dev server running or its simulator booted. It clears the build outputs
-(`derived-data/`, `gradle-build/`, `android-cas/`, `cache-provider/`,
-`js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app` and interrupted-build
-`macos/staging-*` directories) and the project's git-ignored
-`android/app/build`, `android/build`, `android/.gradle` and `.build`, and
-prints the bytes freed per workspace. A running, building, unverified or hosted
+`--delete --cache workspaces`, and `--cache all`, clear the build outputs of
+every workspace that is not building and ran no `stim ios`, `stim android` or
+`stim macos` in the last 15 minutes, even with its dev server running or its
+simulator booted: `derived-data/`, `gradle-build/`, `android-cas/`,
+`cache-provider/`, `js-swap-tmp/`, `macos/build`, staged `macos/<Product>.app`
+and interrupted-build `macos/staging-*` directories, and the project's
+git-ignored `android/app/build`, `android/build`, `android/.gradle` and
+`.build`. They print the bytes freed per workspace. Plain `--delete` clears them
+only through the pressure ladder, for a workspace with nothing running idle 2
+minutes or more and in the idle stage of a running one. A running, building, unverified or hosted
 macOS app keeps its workspace untouched. The workspace keeps its state, logs,
 devices, ports, `macos/runtime.lock` and its claim set. See
 [workspace build outputs](./build-caches.md#workspace-build-outputs).
@@ -2119,9 +2165,9 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   client connection once no Gradle daemon is busy. Nothing stops while a Stim
   Android build runs. While stim-server runs, it manages the daemons of builds
   offloaded to this machine, and gc leaves them alone.
-  Automatic maintenance stops the same daemons under memory pressure: at once
-  at `critical`, after `maintenance.memoryWarningMinutes` at `warning`, or off
-  macOS below `maintenance.minAvailableMemoryGb`.
+  The `stim-daemon`'s pressure ladder stops the same daemons whenever the
+  level is high or critical, memory included: critical macOS memory pressure,
+  10 minutes of warning, or, off macOS, under 10% of RAM available.
 - `stim gc --delete --cache gradle-versions` deletes the version caches
   (`caches/<version>`) and wrapper distributions (`wrapper/dists/gradle-<version>-*`)
   under `GRADLE_USER_HOME` for each Gradle version no registered project pins
@@ -2141,11 +2187,12 @@ watchman, and Gradle and Kotlin daemons need `--cache gradle-daemons`:
   it; a later `gc --delete --cache gradle-versions` finishes a removal that
   failed, even while versions are blocked (not while the home is outside a
   scoped `STIM_HOME` or its layout is unsafe). Plain `gc --delete` and
-  automatic maintenance never touch those directories. `modules-2`,
+  automatic maintenance delete them only through pressure ladder rung 6,
+  below. `modules-2`,
   `build-cache-1`, `jdks` and other shared Gradle caches are never deleted,
   and `--cache all` never includes these versions. With `STIM_HOME` set, gc
-  deletes nothing in a Gradle home outside that directory. At disk pressure
-  level 3, automatic maintenance first stops the idle Gradle and Kotlin
+  deletes nothing in a Gradle home outside that directory. Pressure ladder
+  rung 6, daily, at once under disk pressure and in plain `gc --delete`, first stops the idle Gradle and Kotlin
   daemons `stim gc --delete --cache gradle-daemons` would stop, only when
   every Gradle process that keeps a version is such a daemon, and waits up to
   3 seconds for them to exit, then does the
@@ -2205,17 +2252,19 @@ While it works, `gc` prints each slow step on stderr as it starts, such as
 is waiting on. The report stays on stdout, and `--json` prints only its payload
 there.
 
-- `--older-than <days>` also selects devices and workspace build outputs of
-  workspaces no Stim command has used for that many days, and unused cache
-  entries. It limits the parked simulators and emulators `--delete` clears to
-  those parked at least that many days. A cache directory it cannot list
+- `--older-than <days>` also selects devices of workspaces no Stim command has
+  used for that many days and unused cache entries. With `--cache workspaces`
+  it clears only the build outputs of workspaces unused that long. It limits
+  the parked simulators and emulators `--delete` clears to those parked at
+  least that many days. A cache directory it cannot list
   (EACCES, EPERM or ELOOP, for example) counts as a failed trim, not an empty
   one: gc prints how many entries could not be read or removed, records the
   cache as failed and exits 1. A directory that is missing or is not a
   directory is not a failure.
 - `--cache <name|all|workspaces|recordings|parked>` with `--delete` empties the caches whose name
   or directory carries `<name>` whole, or every cache and the workspace build
-  outputs with `all`. `workspaces` clears only the workspace build outputs,
+  outputs with `all`, which also runs the pressure ladder at critical.
+  `workspaces` clears only the workspace build outputs,
   and skips the workspace directories that plain `--delete` removes whole
   (those of dead projects and orphaned directories). A plain `gc --json` dry run
   carries `scopedEmpty` on each cache, which says whether `--delete --cache`
@@ -2227,7 +2276,7 @@ there.
   `all` leaves them alone. `watchman` and `gradle-daemons` act on those
   helpers alone (see above), and `--older-than` with them is refused. Other
   devices and project entries are not inspected, so a scoped run empties
-  caches and reaps nothing.
+  caches and reaps nothing, apart from the ladder that `all` runs.
 - `--worktrees` also selects every clean, idle linked worktree that has a Stim
   workspace, not only the merged ones plain `gc` selects. With `--delete` gc
   runs `stim worktree remove` without `--force` on each of them. Idle means
@@ -2236,15 +2285,6 @@ there.
   use is idle when its git and Stim activity is that old. It cannot be
   combined with `--cache`. See
   [removing finished worktrees in bulk](./worktrees.md#remove-finished-worktrees-in-bulk).
-- `--idle <duration>` shuts down owned simulators and emulators whose
-  [`status` activity](#status) has been idle for at least `<duration>`, such
-  as `30m`, `2h` or `1d`. It acts without `--delete`, never deletes, and
-  leaves each device assigned to its workspace, like `stim stop`. It skips a
-  device that is driven, whose activity is unknown, or whose workspace has a
-  build in progress, and re-checks each device before shutting it down.
-  Without `--idle`, `gc` lists idle devices and how long they have been idle.
-  Physical and remote devices are out of scope. It cannot be combined with
-  `--cache`.
 - `--json` prints the report as one object on stdout and every other line on
   stderr. Agents use it to show you what `gc --delete` would remove before they
   ask to run it.
@@ -2279,7 +2319,6 @@ prints, for example:
 ```json
 {
   "mode": "dry-run",
-  "idle": null,
   "cacheScope": null,
   "olderThan": null,
   "worktreeSweep": { "olderThan": 7, "defaulted": true },
@@ -2416,7 +2455,15 @@ prints, for example:
 }
 ```
 
-The example omits the empty sections and `machineCaches`. `agentDevice`,
+The example omits the empty sections, `machineCaches`, `maintenance` and
+`ladder`. A dry run without `--cache` carries `ladder`:
+`{ pressure, levels, workspaces }`. `pressure` is the level the machine
+measures now. `levels` lists, for `high` and `critical`, the `command` that runs
+that level and its `actions`, each
+`{ rung, kind, target, workspace?, outcome, bytes, detail }` with the bytes it
+would free where gc could measure them.
+`workspaces` gives each registered workspace's `{ path, stage, since, kept? }`,
+where `stage` is `running`, `idle`, `dormant` or `stopped`. `agentDevice`,
 `swiftpmCache` and `machineCaches` are `null` only with a `--cache` scope, including `all`. `memory` lists each helper process as
 `{ kind, cacheKind, pid, startedAt, bytes, measure, version, gradleHome, offloadClient, state, reclaimable, reason, detail }`,
 where `reclaimable` marks the ones `gc --delete --cache <cacheKind>` would
@@ -2429,7 +2476,7 @@ the worktree's branch whose head is or contains HEAD, found with `gh`, with
 `state` `"open"`, `"merged"` or `"closed"`; `pullRequestUnknown` says why `gh`
 could not answer, such as `"gh is not installed"`. `buildState` sizes the
 worktree's in-tree build and dependency directories, the ones automatic
-maintenance clears plus a root `.pnpm-store`, largest first; `du` counts APFS
+maintenance and the pressure ladder clear plus a root `.pnpm-store`, largest first; `du` counts APFS
 clones in full, so the sum can exceed what deleting them frees. gc reuses a
 size for up to an hour while no entry was added to or removed from the
 directory, measures the rest with one `du` per directory, 4 at a time with a
@@ -2445,10 +2492,8 @@ run after you have looked through one.
 `--worktrees`, which still reports merged worktrees. With `--delete`, `mode` is `"delete"`, the sections list what
 the run acted on, `results` lists each outcome, and `failures` counts the entries it could not delete. A
 nonzero count exits with status 1. Run `stim gc --json` again to see what is
-left. `idle` is the `--idle` duration in milliseconds or `null`, and with
-`--idle` `failures` also counts devices it could not shut down. A `--cache`
-name that no cache carries, or `--cache` together with `--worktrees` or
-`--idle`, exits with status 1 and prints
+left. A `--cache` name that no cache carries, or `--cache` together with
+`--worktrees`, exits with status 1 and prints
 `{ "code": "STIM_BAD_ARG", "message": "...", "remedy": "..." }`.
 
 Ctrl+C stops pending GC actions and drains verified owned children before exiting 130. Completed actions remain applied. Unverifiable cleanup retains its ownership
@@ -2460,7 +2505,7 @@ is `"done"`, `"kept"` or `"failed"`, and `detail` says why an entry was kept or
 failed. For example, a deleted simulator reads
 `{ "kind": "device", "status": "done", "label": "stim-app (iPhone 17 26.5)", "id": "9C1F...", "bytes": null, "detail": null }`.
 `results` is empty on a dry run.
-A dry run without `--cache` or `--idle` also carries `inventory`, which is
+A dry run without `--cache` also carries `inventory`, which is
 `null` otherwise. It lists every simulator and AVD on the machine with its
 runtime or system image, last use and `owner`: `workspace` (with `project` and
 `slot`), `parked`, `orphaned`, `otherStimHome` for a `stim-*` device this Stim
@@ -2480,8 +2525,9 @@ acts on a device through it.
 Try it with an agent:
 
 ```text
-Run `stim gc` and show me which owned simulators and emulators are idle and for
-how long. Then run `stim gc --idle 2h` to shut down the ones idle that long.
+Run `stim gc` and show me what the pressure ladder would free at high and at
+critical, and each workspace's stage. Do not run `stim gc --delete` until I
+confirm.
 ```
 
 ```text
@@ -2521,11 +2567,10 @@ Commands exit with code 0 on success. Build, launch, ownership, or input errors
 exit with a nonzero code and print an error code, message, and remedy. An empty
 `logs` result exits with code 0.
 
-When `start`, `ios`, or `android` reclaimed disk or memory before it started,
-its `--json` payload, on success or failure, carries a `reclaimed` array with
-one `{ step, targets, failures, freedMb }` entry per step that acted. A machine
-still below `budget.hardFloorDiskGb` after reclaiming refuses with
-`STIM_LOW_DISK`, naming the largest uses of disk. Run `stim guide errors
+A `start`, `ios` or `android` run that finds free disk under
+`disk.hardFloorGb` has the `stim-daemon` run its pressure ladder first
+and refuses with `STIM_LOW_DISK`, naming the largest uses of disk, only while
+free disk stays under it. Run `stim guide errors
 STIM_LOW_DISK` for the remedies.
 
 ### Archive cache selectors

@@ -1,6 +1,6 @@
 import Foundation
 
-/// What a `stim gc --delete --json` or `stim gc --idle --json` run did, reduced to a short summary: the
+/// What a `stim gc --delete --json` run did, reduced to a short summary: the
 /// entries it acted on, the ones it left alone and why, and the ones that failed.
 public struct GcOutcome: Hashable, Sendable {
   public enum Status: String, Hashable, Sendable {
@@ -48,8 +48,7 @@ public struct GcOutcome: Hashable, Sendable {
 
   /// Whether `arguments` run a `stim gc` that acts and prints its outcome as JSON.
   public static func describes(_ arguments: [String]) -> Bool {
-    arguments.first == "gc" && arguments.contains("--json")
-      && (arguments.contains("--delete") || arguments.contains("--idle"))
+    arguments.first == "gc" && arguments.contains("--json") && arguments.contains("--delete")
   }
 
   public init(json: Data) throws {

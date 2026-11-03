@@ -6,6 +6,7 @@ import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.t
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from '../engine/spawn-claims.ts';
 import { maintenanceRunClaims } from '@stim-cli/core/state';
 import { previewMaintenance, type MaintenancePreview } from '../maintenance/preview.ts';
+import { gcLadderLevel, previewGcLadder, runGcLadder, type GcLadder } from './gc/ladder.ts';
 import { collectArchives, deleteArchives, archiveRefusal, archiveWorkPending } from './gc/archives.ts';
 import { getSwiftpmCacheUsage } from '../devices/swiftpm-cache-usage.ts';
 import { getAgentDeviceUsage } from '../devices/agent-device-usage.ts';
@@ -35,7 +36,7 @@ import {
 } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
-import { listAllIosSims, listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
+import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
@@ -63,8 +64,6 @@ import {
   collectDeviceLeases,
   collectParkedSims,
   collectParkedAvds,
-  deleteParkedAvds,
-  deleteParkedSims,
   eraseParkedDevices,
   deleteProjectDevices,
   describeUnverifiableDevices,
@@ -91,7 +90,6 @@ import {
   type EasSessionSweep,
 } from './gc/eas-sessions.ts';
 import { formatGcReport, gcReportSections, type GcJsonSections, type GcReport } from './gc/report.ts';
-import { collectWorktreeDependencies, lightenWorktreeDependencies } from './gc/dependencies.ts';
 import {
   clearWorkspaceOutputs,
   collectOrphanedWorkspaces,
@@ -112,15 +110,8 @@ import {
 import { readCreatedDevices } from '../devices/created-devices.ts';
 import { collectWorkspaceLogs, trimWorkspaceLogs } from './gc/logs.ts';
 import { collectRecordings, deleteRecordings } from './gc/recordings.ts';
-import { collectTempLeftovers, deleteTempLeftovers } from './gc/temp-leftovers.ts';
-import { collectTrash, deleteTrash } from './gc/trash.ts';
-import {
-  collectIdleDevices,
-  collectIdleDevicesAsync,
-  parseIdleDuration,
-  shutDownIdleDevices,
-  type IdleDevice,
-} from './gc/idle.ts';
+import { collectTempLeftovers } from './gc/temp-leftovers.ts';
+import { collectTrash } from './gc/trash.ts';
 import { workspaceDir } from '../workspace/paths.ts';
 import { workspaceLastUsed } from '../workspace/workspace-state.ts';
 import { collectInventory, type GcInventory } from './gc/inventory.ts';
@@ -128,7 +119,6 @@ import { collectParkedHostedDevices, deleteParkedHostedDevices } from './gc/host
 import { collectHostedAppStorage } from './gc/hosted-apps.ts';
 import { collectFinishedDevices, deleteFinishedDevices, ownedDeviceDisk } from './gc/finished-devices.ts';
 import { ownedDeviceUsage } from '../maintenance/devices.ts';
-import { stopIdleWorkspaces } from './gc/idle-workspaces.ts';
 import {
   collectGcMemory,
   GRADLE_DAEMONS_KIND,
@@ -162,7 +152,6 @@ interface CollectGcReportOptions {
 }
 
 interface RunGcOptions {
-  idle?: number;
   olderThan?: number;
   cache?: string;
   delete?: boolean;
@@ -181,7 +170,6 @@ interface GcRefusal {
 export type GcPayload =
   | {
       mode: 'dry-run' | 'delete';
-      idle: number | null;
       cacheScope: string | null;
       olderThan: number | null;
       worktreeSweep: { olderThan: number; defaulted: boolean } | null;
@@ -189,6 +177,8 @@ export type GcPayload =
       failures: number | null;
       sections: GcJsonSections;
       maintenance?: MaintenancePreview;
+      /** What the pressure ladder would do at each level with sizes, and each workspace's stage; dry runs without --cache. */
+      ladder?: GcLadder;
       results: GcResult[];
       inventory: GcInventory | null;
     }
@@ -296,7 +286,6 @@ export async function collectGcReport(
       buildLocks: { stale: [], live: [], unresolved: [] },
       buildSlots: { stale: [], live: [], unresolved: [] },
       deviceLeases: { expired: [], kept: [] },
-      idleDevices: [],
       deviceSweepNotices: [],
       easSessionSweep: { projectScope: null, orphaned: [], notices: [], deletionSafe: true },
       parkedSims: includesParkedDevices(scope) ? await collectParkedSims(deps, { olderThanDays: olderThan, now }) : [],
@@ -378,7 +367,6 @@ export async function collectGcReport(
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
   let staleLedgerEntries: StaleLedgerEntry[] = staleBrowserProfiles(readCreatedDevices());
-  let idleDevices: IdleDevice[] = [];
   let listed: { sims: IosSimRecord[]; avds: string[] } | null = null;
   let deviceDisk: GcReport['ownedDeviceDisk'] = [];
   const avdSizes = new Map<string, Promise<number>>();
@@ -507,9 +495,6 @@ export async function collectGcReport(
         operation,
       },
     );
-    idleDevices = operation
-      ? await collectIdleDevicesAsync(cfg, sims, deadProjects, now, env, operation.signal, operation)
-      : collectIdleDevices(cfg, sims, deadProjects, now);
     if (simsChecked || avdsChecked) {
       const lists = { sims, avds: [...registeredAvds] };
       listed = lists;
@@ -595,7 +580,6 @@ export async function collectGcReport(
       unresolved: slots.filter((s) => s.unresolved),
     },
     deviceLeases,
-    idleDevices,
     deviceSweepNotices,
     easSessionSweep,
     caches,
@@ -607,7 +591,6 @@ export async function collectGcReport(
       operation,
       lighten: true,
     }),
-    worktreeDependencies: await collectWorktreeDependencies({ now, operation }),
     workspaceLogs: await collectWorkspaceLogs({ exclude: goneWorkspaceDirs, operation }),
     recordings: await collectRecordings({ whole: false, olderThan, now }, goneWorkspaceDirs, operation?.signal),
     worktreeSweep,
@@ -634,7 +617,6 @@ function gcRetryCommand(opts: RunGcOptions): string {
     opts.worktrees && '--worktrees',
     opts.olderThan !== undefined && `--older-than ${opts.olderThan}`,
     opts.cache !== undefined && `--cache ${shellWord(opts.cache)}`,
-    opts.idle !== undefined && `--idle ${opts.idle / 60_000}m`,
     opts.json && '--json',
   ]
     .filter(Boolean)
@@ -675,7 +657,7 @@ export async function withGcMaintenanceClaim<T>(
   opts: GcMutationOptions,
   work: (claim: ClaimHandle | undefined) => Promise<T>,
 ): Promise<T> {
-  if (!opts.delete && opts.idle === undefined) return work(undefined);
+  if (!opts.delete) return work(undefined);
   let claim: ClaimHandle | undefined;
   let retained = false;
   try {
@@ -684,7 +666,7 @@ export async function withGcMaintenanceClaim<T>(
       root,
       mode: 'exclusive',
       label: 'maintenance',
-      details: { trigger: opts.delete ? 'gc --delete' : 'gc --idle' },
+      details: { trigger: 'gc --delete' },
     });
     if (attempt.pending) releaseClaim(attempt.pending);
     claim = attempt.acquired;
@@ -727,15 +709,14 @@ export async function executeGc(
   write: (stream: 'stdout' | 'stderr', line: string) => void,
   claim?: ClaimHandle,
 ): Promise<GcExecutionResult> {
-  const log =
-    opts.delete || opts.idle !== undefined
-      ? openGcLog({
-          trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
-          env: deps.operation?.env,
-          options: gcOptionsOf(opts),
-          holdKept: true,
-        })
-      : null;
+  const log = opts.delete
+    ? openGcLog({
+        trigger: (deps.operation?.env ?? process.env).STIM_DESKTOP_APP ? 'desktop' : 'manual',
+        env: deps.operation?.env,
+        options: gcOptionsOf(opts),
+        holdKept: true,
+      })
+    : null;
   const results = createGcResults(log?.record);
   let failed = false;
   const output: GcOutput = {
@@ -763,12 +744,9 @@ async function sweep(
 ): Promise<GcPayload> {
   const { output } = execution;
   const core = (dependencies: GcDependencies) => runGcCore(opts, dependencies, execution, reportOnly);
-  if (opts.cache && (opts.worktrees || opts.idle !== undefined)) {
-    const flag = opts.worktrees ? '--worktrees' : '--idle';
-    const message = opts.worktrees
-      ? '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.'
-      : '--cache acts only on the named caches, and --idle shuts down idle owned devices.';
-    const remedy = `Run \`stim gc ${flag}${opts.worktrees ? '' : ' <duration>'}\` and \`stim gc --cache <name>\` separately.`;
+  if (opts.cache && opts.worktrees) {
+    const message = '--cache acts only on the named caches, and --worktrees sweeps linked worktrees.';
+    const remedy = 'Run `stim gc --worktrees` and `stim gc --cache <name>` separately.';
     if (reportOnly) return { code: 'STIM_BAD_ARG', message, remedy };
     output.error(chalk.red(message));
     output.error(chalk.dim(remedy));
@@ -941,7 +919,15 @@ async function attachMaintenancePreview(
   refresh: boolean,
   operation?: StimContext,
 ): Promise<void> {
-  if (!deleting) report.maintenance = await previewMaintenance({ devices: !cache, refresh, operation });
+  if (deleting) {
+    if (cache === null || gcLadderLevel(cache) === 'critical') report.ladderRun = gcLadderLevel(cache);
+    return;
+  }
+  report.maintenance = await previewMaintenance({ devices: !cache, refresh, operation });
+  if (cache === null) {
+    phase('ladder', 'previewing the pressure ladder', operation);
+    report.ladder = (await previewGcLadder(report.olderThan, operation)) ?? undefined;
+  }
 }
 
 function scopedDryRunAction(cache: string | null): string {
@@ -952,14 +938,12 @@ function scopedDryRunAction(cache: string | null): string {
   return includesParkedDevices(cache) ? 'erase the parked devices' : 'empty the caches';
 }
 
-function dryRunHint(cache: string | null, all: boolean, actionable: boolean, caches: boolean): string | null {
+function dryRunHint(cache: string | null, all: boolean, actionable: boolean): string | null {
   if (all && (!memoryCacheKind(cache) || actionable)) {
-    return `Dry run. Re-run with --delete to ${scopedDryRunAction(cache)} above.`;
+    return `Dry run. Re-run with --delete to ${scopedDryRunAction(cache)} above${gcLadderLevel(cache) === 'critical' ? ' and run the pressure ladder at critical' : ''}.`;
   }
-  if (actionable) return 'Dry run. Re-run with --delete to reclaim.';
-  if (caches)
-    return 'Pass --delete --cache all to empty the caches above, or --delete --older-than <days> to trim them.';
-  return null;
+  if (cache !== null) return actionable ? 'Dry run. Re-run with --delete to reclaim.' : null;
+  return 'Dry run. --delete reclaims the entries above and runs the pressure ladder at high; --delete --cache all empties every cache and runs it at critical.';
 }
 
 function scopedWorkPending(cache: string | null, report: GcReport): boolean {
@@ -969,13 +953,6 @@ function scopedWorkPending(cache: string | null, report: GcReport): boolean {
 async function pruneStatusCaches(report: GcReport, output: GcOutput, signal?: AbortSignal): Promise<number> {
   if (report.cacheScope !== null) return 0;
   return deleteStaleStatusCaches(collectStaleStatusCaches(listMountedVolumes()).stale, output, signal);
-}
-
-async function reclaimParkedDevices(report: GcReport, deps: GcDependencies, output: GcOutput): Promise<number> {
-  return report.cacheScope
-    ? await eraseParkedDevices(report.parkedSims, report.parkedAvds, output, deps.operation)
-    : (await deleteParkedSims(report.parkedSims, deps, output)) +
-        (await deleteParkedAvds(report.parkedAvds, output, deps.operation));
 }
 
 function reportActionable(report: GcReport): boolean {
@@ -998,13 +975,13 @@ function reportActionable(report: GcReport): boolean {
     report.archives,
     deadProjects.length + invalidProjects.length > 0 ||
       report.orphanedWorkspaces.length > 0 ||
-      Boolean(report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
-      Boolean(report.worktreeDependencies?.candidates.length) ||
+      Boolean(cache !== null && report.workspaceOutputs?.workspaces.some((entry) => entry.willClear)) ||
       report.workspaceLogs.some((entry) => entry.willTrim) ||
       report.recordings.some((entry) => entry.willDelete && !entry.withWorkspace) ||
       Boolean(report.tempLeftovers?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.trash?.entries.some((entry) => entry.willDelete)) ||
       Boolean(report.worktreeSweep?.worktrees.some((entry) => !entry.skipped)) ||
+      Boolean(report.ladder?.levels.some((level) => level.actions.length > 0)) ||
       report.parkedSims.length > 0 ||
       report.parkedAvds.length + report.parkedHostedDevices.filter((device) => device.listed !== false).length > 0 ||
       orphanedDevices.length > 0 ||
@@ -1092,44 +1069,13 @@ async function runGcCore(
     caches,
   } = report;
   const actionable = reportActionable(report);
-  const idle = opts.idle ?? null;
   throwIfCancelled(signal, 'GC');
-  const idleFailures =
-    idle === null
-      ? 0
-      : (
-          await shutDownIdleDevices(
-            report.idleDevices,
-            idle,
-            async () =>
-              deps.operation
-                ? collectIdleDevicesAsync(
-                    loadConfig(),
-                    await listAllIosSimsAsync({ timeoutMs: DEVICE_LIST_TIMEOUT_MS, operation: deps.operation, signal }),
-                    report.deadProjects,
-                    Date.now(),
-                    deps.operation.env,
-                    signal,
-                    deps.operation,
-                  )
-                : collectIdleDevices(
-                    loadConfig(),
-                    listAllIosSims({ timeoutMs: DEVICE_LIST_TIMEOUT_MS }),
-                    report.deadProjects,
-                  ),
-            output,
-            signal,
-            deps.operation,
-          )
-        ).failures;
-  if (idleFailures) output.fail();
   const inventory =
-    opts.json && !opts.delete && idle === null && report.cacheScope === null
+    opts.json && !opts.delete && report.cacheScope === null
       ? await collectInventory(loadConfig(), deadProjects, deps.operation?.env ?? process.env, deps.operation)
       : null;
   const payload = (failures: number | null): GcPayload => ({
     mode: opts.delete ? 'delete' : 'dry-run',
-    idle,
     cacheScope: report.cacheScope,
     olderThan,
     worktreeSweep: report.worktreeSweep?.idle ?? null,
@@ -1137,33 +1083,31 @@ async function runGcCore(
     failures,
     sections: gcReportSections(report),
     ...(report.maintenance ? { maintenance: report.maintenance } : {}),
+    ...(report.ladder ? { ladder: report.ladder } : {}),
     results: reportOnly ? [] : takeResults(),
     inventory,
   });
 
   if (!opts.delete) {
-    const hint = dryRunHint(cache, all, actionable, caches.length > 0);
+    const hint = dryRunHint(cache, all, actionable);
     if (hint && !reportOnly) output.log(chalk.dim(`\n${hint}`));
-    return payload(idle === null ? null : idleFailures);
+    return payload(null);
   }
 
-  let deleteFailures = idleFailures;
-  throwIfCancelled(signal, 'GC');
-  if (cache === null) deleteFailures += await stopIdleWorkspaces(output, deps.operation);
+  let deleteFailures = 0;
   throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteArchives(report.archives, output, signal);
   throwIfCancelled(signal, 'GC');
-  deleteFailures += report.workspaceOutputs
-    ? (
-        await clearWorkspaceOutputs(
-          report.workspaceOutputs,
-          { olderThan, signal, operation: deps.operation, lighten: true },
-          output,
-        )
-      ).failures
-    : 0;
-  throwIfCancelled(signal, 'GC');
-  deleteFailures += await lightenWorktreeDependencies(report.worktreeDependencies, output, deps.operation);
+  deleteFailures +=
+    report.workspaceOutputs && cache !== null
+      ? (
+          await clearWorkspaceOutputs(
+            report.workspaceOutputs,
+            { olderThan, signal, operation: deps.operation, lighten: true },
+            output,
+          )
+        ).failures
+      : 0;
   throwIfCancelled(signal, 'GC');
   deleteFailures += await trimWorkspaceLogs(report.workspaceLogs, output, deps.operation);
   throwIfCancelled(signal, 'GC');
@@ -1174,7 +1118,8 @@ async function runGcCore(
     signal,
   );
   throwIfCancelled(signal, 'GC');
-  deleteFailures += await reclaimParkedDevices(report, deps, output);
+  if (report.cacheScope)
+    deleteFailures += await eraseParkedDevices(report.parkedSims, report.parkedAvds, output, deps.operation);
   throwIfCancelled(signal, 'GC');
   deleteFailures += await deleteParkedHostedDevices(report.parkedHostedDevices, { operation: deps.operation }, output);
   throwIfCancelled(signal, 'GC');
@@ -1213,14 +1158,6 @@ async function runGcCore(
   );
   throwIfCancelled(signal, 'GC');
   deleteFailures += await pruneStatusCaches(report, output, signal);
-  if (report.tempLeftovers)
-    deleteFailures += (
-      await deleteTempLeftovers(
-        { env: deps.operation?.env ?? process.env, signal: deps.operation?.signal, operation: deps.operation },
-        output,
-      )
-    ).failures;
-  if (report.trash) deleteFailures += (await deleteTrash(deps.operation, output)).failures;
 
   for (const lock of buildLocks.stale) {
     throwIfCancelled(signal, 'GC');
@@ -1316,13 +1253,7 @@ async function runGcCore(
   throwIfCancelled(signal, 'GC');
   if (all) {
     deleteFailures += await emptyCaches(caches, output, signal, deps.operation);
-  } else if (olderThan === null) {
-    if (caches.some((entry) => !entry.willEmpty)) {
-      output.log(
-        chalk.dim('Shared caches left alone: pass --cache all to empty them, or --older-than <days> to trim them.'),
-      );
-    }
-  } else {
+  } else if (olderThan !== null) {
     deleteFailures += (
       await trimCaches(
         caches.filter((entry) => !entry.willEmpty),
@@ -1340,6 +1271,11 @@ async function runGcCore(
       signal,
       deps.operation,
     );
+  if (report.ladderRun) {
+    throwIfCancelled(signal, 'GC');
+    deleteFailures += await runGcLadder(report.ladderRun, olderThan, output, deps.operation);
+  }
+  if (deleteFailures) output.fail();
   return payload(deleteFailures);
 }
 
@@ -1347,7 +1283,7 @@ export default function gcCommand(program: Command): void {
   program
     .command('gc')
     .description(
-      'Report what Stim has left behind: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman and of the Gradle and Kotlin daemons, and recognized leftovers in TMPDIR. Reports by default; pass --delete to act.',
+      "Report what Stim has left behind and what the stim-daemon's pressure ladder would reclaim: dead project entries, orphaned workspace directories, clean Stim-managed linked worktrees whose branch is merged or whose pull request was merged or closed, orphaned owned devices and EAS sessions, records of devices that no longer exist, build locks whose builder is gone, expired physical-device leases, the shared build caches, the build outputs and logs of each workspace, the memory of watchman, what the ladder would do at high and at critical with sizes, and each workspace's stage. Reports by default; pass --delete to act.",
     )
     .option(
       '--worktrees',
@@ -1355,11 +1291,11 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--delete',
-      'actually prune the reported entries, reap the reported devices, lighten every workspace that is not building and ran no ios, android or macos command in the last 15 minutes by clearing its build outputs, a running dev server or booted device included, trim its Metro, client and device logs to their newest 8 MiB, and, unless maintenance.mode is off, stop each workspace idle past maintenance.idleStopHours as stim stop does, and shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it',
+      "actually prune the reported entries, reap the reported devices, trim each workspace's Metro, client and device logs to their newest 8 MiB, shut down the shared watchman daemon (after removing its stale roots) when no client, subscription or trigger uses it, and run the pressure ladder to its end now at high whatever the machine measures: the idle stage for every workspace idle 2 minutes or more, parked devices, shared caches trimmed to half their caps, the dormant stage for workspaces idle 10 minutes or more, idle Gradle daemons, unpinned Gradle versions, TMPDIR leftovers and the worktree trash. With --cache all it runs the ladder at critical instead, which empties the Metro and compilation caches, makes every idle workspace dormant and deletes node_modules and Pods of idle linked worktrees. It never touches a workspace that is building, driven, leased, hosted or pinned by maintenance.keep",
     )
     .option(
       '--older-than <days>',
-      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, and clear workspace build outputs only for workspaces idle this long and parked devices only once parked this long',
+      'also reap owned devices whose workspace has not been used this long, trim shared cache entries nothing has used in that time and device recordings made before it, clear workspace build outputs under --cache workspaces only for workspaces idle this long, and let the pressure ladder delete parked devices only once parked this long',
       (v: string) => {
         const n = parseInt(v, 10);
         if (!Number.isFinite(n) || String(n) !== String(v).trim()) {
@@ -1370,20 +1306,10 @@ export default function gcCommand(program: Command): void {
     )
     .option(
       '--cache <name>',
-      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all, only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, the Gradle and Kotlin compile daemons with --cache gradle-daemons, or the Gradle version caches and wrapper distributions no registered project pins with --cache gradle-versions; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman, gradle-daemons and gradle-versions are reserved names that never select a single cache, and --cache all never includes watchman, gradle-daemons or gradle-versions. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
+      'act on the shared caches whose name or directory contains <name>, every cache, the workspace build outputs and the device recordings with --cache all (and the pressure ladder at critical with --delete), only the workspace build outputs with --cache workspaces, only the device recordings with --cache recordings, only the parked simulators and emulators with --cache parked, the watchman daemon and its stale roots with --cache watchman, the Gradle and Kotlin compile daemons with --cache gradle-daemons, or the Gradle version caches and wrapper distributions no registered project pins with --cache gradle-versions; archived, archived:<id>, archived-logs, archived-recordings and archived-agent select archived history explicitly, and the three kind selectors also take :<id> (archived-logs:<id>) to clear one kind of one archive; --cache all excludes archives. all, workspaces, recordings, parked, archived, archived:<id>, archived-logs, archived-recordings, archived-agent, their :<id> forms, watchman, gradle-daemons and gradle-versions are reserved names that never select a single cache, and --cache all never includes watchman, gradle-daemons or gradle-versions. With --delete they are emptied whole (a parked device is erased and stays parked, watchman loses its stale roots and shuts down only when no client uses it, and only daemons proven idle stop), which is the only way to clear an index-backed cache; add --older-than <days> to trim them by age instead. Archive ids, including the :<id> of a kind selector, ignore --older-than; archived and per-kind archive selectors without an id filter by removal age. Only those caches are reported; other devices and project entries are not inspected. Caches outside the config dir are refused while STIM_HOME is set.',
       (v: string) => {
         if (!v.trim()) throw new InvalidArgumentError('must name a cache, e.g. --cache "compilation cache"');
         return v;
-      },
-    )
-    .option(
-      '--idle <duration>',
-      'shut down (never delete) owned simulators and emulators that have had no driver, claim, or activity for at least <duration>, such as 30m, 2h, or 1d; acts without --delete',
-      (v: string) => {
-        const ms = parseIdleDuration(v);
-        if (ms === null)
-          throw new InvalidArgumentError('must be a whole number of minutes, hours, or days, e.g. --idle 2h');
-        return ms;
       },
     )
     .option('--json', 'print the report as JSON on stdout; every other line goes to stderr')

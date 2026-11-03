@@ -56,15 +56,16 @@ holds:
 - **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
   with `--control`.
 - **Rotate left and right**, with `--control`, for an owned simulator or
-  emulator. A physical device rotates only in hand.
-- **Screenshot**, which downloads the current frame as a PNG. It works without
-  `--control`.
+  emulator. A physical device rotates only in hand. The picture turns only when
+  the app in front supports the new orientation (and, on an emulator, auto-rotate
+  is on); a portrait-only app stays upright.
 - **Fullscreen.**
 
-The header shows Live or Waiting and the time left before the share expires.
-With `--control`, click the screen to tap and type with the keyboard. While the
-screen has focus, the arrow keys and Escape go to the device as well (the
-D-pad keys and Escape on Android, the hardware arrow and Escape keys on iOS).
+The page fits the window without scrolling. The line under the toolbar shows
+Live or Waiting and the time left before the share expires. With `--control`,
+click the screen to tap and type with the keyboard. While the screen has focus,
+the arrow keys and Escape go to the device as well (the D-pad keys and Escape
+on Android, the hardware arrow and Escape keys on iOS).
 
 ## Requirements
 
@@ -102,6 +103,21 @@ D-pad keys and Escape on Android, the hardware arrow and Escape keys on iOS).
   approval. The session must be ready. The share ends when the session stops
   or is replaced, and `stim share list` does not show the Mac.
 
+## A live share keeps its workspace up
+
+While a share is live, the [idle stage](./dev-server-and-logs.md#idle-stop),
+the [pressure ladder](./build-caches.md#disk-pressure) and the
+[dormant stage](./owned-devices.md#cleanup-behavior) leave its workspace
+running, whether or not anyone is watching, and the `stim-daemon` never shuts
+its device down for another run waiting for a device slot; that run keeps
+waiting and its progress line names the share. Automatic maintenance and
+`stim gc --delete` keep the devices of its finished worktree too. Frames
+streamed to viewers are not activity, so the share alone holds it. `stim status` names the share on the
+workspace's stage line, and the `stim-daemon` logs it as `workspace_kept`.
+Run `stim share stop`, or let the share expire, and a workspace with no
+activity for `idle.minutes` goes idle on the daemon's next tick. When
+stim-server cannot list its shares, Stim keeps the workspace running.
+
 ## Options
 
 | Option                | Meaning                                                                                           |
@@ -117,7 +133,8 @@ D-pad keys and Escape on Android, the hardware arrow and Escape keys on iOS).
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
-`stim share stop` ends every share of the current workspace.
+`stim share stop` ends every share of the current workspace. To end one share,
+use **Stop** on its row in Stim Desktop's Settings > Web Shares.
 
 Stim Desktop makes, lists and stops shares too: see [Stim Desktop](./desktop.md).
 

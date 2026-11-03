@@ -42,6 +42,29 @@ final class WebSharesModelTests: XCTestCase {
     XCTAssertEqual(model.shares?.count, 0)
   }
 
+  @MainActor func testStopSendsTheShareIdOnlyToAServerThatTakesItAndTheWorkspaceToAnOlderOne() async throws {
+    var calls: [[String: JSONValue]] = []
+    func model(takesId: Bool) -> WebSharesModel {
+      WebSharesModel(
+        toasts: ToastCenter(voiceOver: false),
+        request: { method, params in
+          if method == "share.stop" { calls.append(params) }
+          return try self.json(method == "share.stop" ? "{\"stopped\":[]}" : "{\"shares\":[\(self.row)]}")
+        },
+        serverStopsOneShare: { takesId })
+    }
+    let share = try JSONDecoder().decode(WebShare.self, from: Data(row.utf8))
+    let current = model(takesId: true)
+    await current.refresh()
+    XCTAssertTrue(current.stopsOneShare)
+    await current.stop(share: share)
+    let older = model(takesId: false)
+    await older.refresh()
+    XCTAssertFalse(older.stopsOneShare)
+    await older.stop(share: share)
+    XCTAssertEqual(calls, [["workspace": .string("/w"), "id": .string("w1")], ["workspace": .string("/w")]])
+  }
+
   @MainActor func testAnOldServerLeavesNoShareListAndAnAnswerlessOneIsNoShares() async throws {
     let old = WebSharesModel(toasts: ToastCenter(voiceOver: false)) { _, _ in
       throw ServerError(code: "unknown-method", message: "No")

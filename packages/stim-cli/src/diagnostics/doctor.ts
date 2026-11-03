@@ -1219,6 +1219,7 @@ export async function runDoctor(
       optimizations,
       env: options.operation?.env ?? options.remoteEnv ?? process.env,
       remoteBuild: loadConfig()?.remote?.build,
+      machineConfig: loadConfig(),
       reportedElsewhere: simslimProfileError ? ['ios.simslimProfile'] : [],
     }),
   ].filter((f): f is Finding => Boolean(f));

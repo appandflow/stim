@@ -1,6 +1,6 @@
 import { readHostedAndroidStatus } from './device-host/hosted-android-status.ts';
 import { readHostedIosStatus } from './device-host/hosted-ios-status.ts';
-import { machineNumber } from './budget.ts';
+import { machineNumber } from './machine-number.ts';
 import { readHostedMacosStatus } from './device-host/hosted-macos-status.ts';
 import { inspectProcessIdentity } from './process-identity.ts';
 import { deviceSlotKey, projectDeviceSlots } from './devices/device-slots.ts';
@@ -8,7 +8,7 @@ import { existsSync } from 'fs';
 import { homedir } from 'os';
 import { isAbsentPath, isOnMountedVolume, listMountedVolumes } from './fs-util.ts';
 import { basename, dirname, join } from 'path';
-import { getConcurrencyLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
+import { admissionLimits, getPlatformDeviceLimits, loadConfig } from './workspace/config.ts';
 import { buildSlotUsage } from './engine/build-slots.ts';
 import { deviceSlotUsages } from './engine/device-capacity.ts';
 import type { ProjectRecord, SupervisorRecord } from './workspace/config.ts';
@@ -80,6 +80,9 @@ import {
   readMacosRecord,
   readBuildDetail,
   readDeviceIdleShutdowns,
+  currentStage,
+  readDormantStage,
+  readIdleStage,
   readIdleStop,
   readBuildHistory,
   readLastBuilds,
@@ -279,6 +282,14 @@ export function readStatus({
   return withStateReadCache(() => readStatusFacts(probes, git, cwd));
 }
 
+/** The idle and dormant stages the daemon recorded, each while no Stim command has run in the workspace since. */
+function applyStages(state: EnvironmentState, saved: WorkspaceState | null): void {
+  const idle = currentStage(saved, readIdleStage(saved));
+  if (idle) state.idleStage = idle;
+  const dormant = currentStage(saved, readDormantStage(saved));
+  if (dormant) state.dormantStage = dormant;
+}
+
 async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: string): Promise<StatusSnapshot> {
   const cfg = loadConfig();
   const projects = Object.entries(cfg?.projects || {});
@@ -457,6 +468,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
         if (macosFacts.warning) state.warnings.push(macosFacts.warning);
         state.live ||= macos.state === 'running' || macos.state === 'orphaned' || macos.build.state === 'running';
       }
+      if (!state.live) applyStages(state, saved);
       const missing = isAbsentPath(path) && isOnMountedVolume(path, (mountedVolumes ??= listMountedVolumes()));
       const phase = workspacePhase(state.live, saved, { now: leaseNow });
       Object.assign(state, builds, missing && phase.phase !== 'live' ? { phase: 'idle', phaseSince: null } : phase, {
@@ -511,7 +523,7 @@ async function readStatusFacts(probes: StatusProbes, gitScope: GitScope, cwd: st
   const simNames = Object.fromEntries(sims.map((sim) => [sim.udid.toUpperCase(), sim.name]));
   const busy = sims.some((sim) => sim.state === 'Booted');
   const machine = await readMachineUsage({ states, roots, simNames, tables, busy, probes });
-  const { maxBuilds, maxDevices } = getConcurrencyLimits();
+  const { maxBuilds, maxDevices } = admissionLimits();
   const platformLimits = getPlatformDeviceLimits();
   const slotUsage: StatusSnapshot['slotUsage'] = {
     ...(maxBuilds > 0 ? { builds: buildSlotUsage(maxBuilds) } : {}),

@@ -1,5 +1,5 @@
 import { readJsonObject, isJsonObject } from './json-file.ts';
-import { maintenanceStateFile, maintenanceAttemptFile } from './paths.ts';
+import { maintenanceStateFile } from './paths.ts';
 import type { NdjsonRecord } from './ndjson.ts';
 
 export type MaintenanceMode = 'off' | 'report' | 'on';
@@ -19,7 +19,8 @@ export type MaintenanceActionKind =
   | 'would-delete-dependencies'
   | 'would-stop-gradle-daemons'
   | 'would-delete-gradle-version'
-  | 'would-delete-temp-leftovers';
+  | 'would-delete-temp-leftovers'
+  | 'would-delete-trash';
 
 /** Disk pressure: 0 above every threshold, 1 under the budget floor, 2 under the urgent threshold, 3 under the critical threshold or the hard floor. */
 export type DiskPressureLevel = 0 | 1 | 2 | 3;
@@ -146,6 +147,7 @@ const KINDS: readonly string[] = [
   'would-stop-gradle-daemons',
   'would-delete-gradle-version',
   'would-delete-temp-leftovers',
+  'would-delete-trash',
 ];
 
 /** Rejects missing, corrupt or unsupported payloads without throwing. */
@@ -254,9 +256,4 @@ export function parseMaintenanceState(value: unknown): MaintenanceState | null {
 
 export function readMaintenanceState(): MaintenanceState | null {
   return parseMaintenanceState(readJsonObject(maintenanceStateFile()));
-}
-
-export function readMaintenanceAttempt(): number | undefined {
-  const value = readJsonObject(maintenanceAttemptFile())?.attemptedAt;
-  return finite(value) ? value : undefined;
 }

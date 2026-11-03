@@ -263,7 +263,8 @@ describe('a web share', () => {
     const url = local(share, f.hub.port!);
     const page = await http(url);
     expect(page.status).toBe(200);
-    expect(page.body).toContain('type="password"');
+    expect(page.body).toContain('name="password"');
+    expect(page.body).not.toContain('type="password"');
     expect(page.headers['cache-control']).toBe('no-store');
     for (let attempt = 0; attempt < 3; attempt++) {
       expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
@@ -481,6 +482,19 @@ describe('a web share', () => {
     expect(f.listenerBoundAtRouteClose).toEqual([true]);
     expect(f.hub.port).toBeNull();
     expect(f.hub.list()).toEqual([]);
+  });
+
+  it('stops only the share with the given id, in its own workspace, and leaves the others live', async () => {
+    const first = await started(f);
+    const second = await started(f, { control: true });
+    expect(await f.hub.stopOne('/work/other', first.id)).toBeNull();
+    expect(await f.hub.stopOne(WORKSPACE, 'w99')).toBeNull();
+    expect(f.hub.list()).toHaveLength(2);
+    expect((await f.hub.stopOne(WORKSPACE, first.id))?.id).toBe(first.id);
+    expect(f.hub.list().map((row) => row.id)).toEqual([second.id]);
+    expect(f.routeCloses).toBe(0);
+    expect((await f.hub.stop(WORKSPACE)).map((row) => row.id)).toEqual([second.id]);
+    expect(f.routeCloses).toBe(1);
   });
 
   it('keeps the port a route that failed to be removed still points at bound until a later route replaces it', async () => {

@@ -5,29 +5,28 @@ import { readStatsReport } from '@stim-cli/core/state';
 import { workspaceId } from '@stim-cli/core';
 import {
   peekDeviceSlots,
+  uncreatedDeviceKey,
   withDeviceBootAdmission,
-  deviceSlotWaitingLine,
   countLiveOwnedDevices,
   countLiveOwnedDevicesByPlatform,
   deviceSlotUsages,
   type DeviceSlotWaitPolicy,
 } from '../engine/device-capacity.ts';
-import { reclaimIdleDevice } from '../devices/queue-reclaim.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
+import * as client from '../daemon/client.ts';
+import { liveWaiters } from '../engine/wait-queue.ts';
 import { createRunRecorder, readStats, recordRunStats } from '../engine/stats.ts';
 import { makeIosSim, makeConfig, makeAdbDevices } from './_factories.ts';
-
-vi.mock('../devices/queue-reclaim.ts', () => ({
-  reclaimIdleDevice: vi.fn<typeof import('../devices/queue-reclaim.ts').reclaimIdleDevice>(async () => 0),
-}));
+import { serveShareList, shareRow } from './_share-list-server.ts';
+import { admissionLimits } from '../workspace/config.ts';
 
 let root: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), 'stim-device-queue-')));
   process.env.STIM_HOME = root;
-  vi.mocked(reclaimIdleDevice).mockReset().mockResolvedValue(0);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   delete process.env.STIM_HOME;
   rmSync(root, { recursive: true, force: true });
 });
@@ -48,6 +47,20 @@ test('local device counts split by platform and sum to the total, with a booting
     ios: 2,
     android: 0,
   });
+});
+
+test('a boot that rekeys to the device it created counts that device once', async () => {
+  const created = makeIosSim({ udid: 'created', name: 'stim-created', state: 'Booting' });
+  const counted = await withDeviceBootAdmission(
+    { platform: 'ios', key: uncreatedDeviceKey() },
+    async (admitted) => {
+      admitted.rekey('created');
+      return countLiveOwnedDevices({ ...empty, sims: [created] });
+    },
+    { root, sources: empty },
+  );
+  expect(counted).toBe(1);
+  expect(readClaimSet(join(root, 'device-boots')).live).toEqual([]);
 });
 
 function deferred<T>() {
@@ -152,56 +165,35 @@ describe('per-platform device caps', () => {
       releaseClaim(head);
     }
   });
-
-  test('queue reclaim for a full platform cap only reclaims devices of that platform', async () => {
-    let clock = Date.now();
-    await expect(
-      admit('ios', {
-        max: 0,
-        platformMax: { ios: 1 },
-        sources: { ...empty, sims: [sim('a')] },
-        noWait: false,
-        waitMs: 1000,
-        now: () => clock,
-        sleep: async (ms) => {
-          clock += ms;
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-    expect(reclaimIdleDevice).toHaveBeenCalledWith(
-      root,
-      expect.any(Number),
-      expect.any(Function),
-      expect.any(Function),
-      expect.any(Set),
-      'ios',
-    );
-  });
 });
 
-describe('queue reclaim behind a platform-walled head', () => {
-  test('only the first waiter of a platform reclaims, so two runs queued on a full iOS cap do not both shut devices down', async () => {
-    const head = takeTicket({ platform: 'ios', sequence: 1 });
-    let clock = Date.now();
-    try {
-      await expect(
-        withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-          root,
-          max: 0,
-          platformMax: { ios: 1 },
-          waitMs: 1000,
-          sources: { ...empty, sims: [makeIosSim({ udid: 'a', name: 'stim-a', state: 'Booted' })] },
-          now: () => clock,
-          sleep: async (ms) => {
-            clock += ms;
-          },
-        }),
-      ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-      expect(reclaimIdleDevice).not.toHaveBeenCalled();
-    } finally {
-      releaseClaim(head);
-    }
+test('a wait under the derived device cap says the cap is derived and names the setting that overrides it', async () => {
+  vi.stubEnv('STIM_MAX_DEVICES', '0');
+  const { maxDevices, derived } = admissionLimits();
+  expect(derived.devices).toBe(true);
+  const sims = Array.from({ length: maxDevices }, (_, index) =>
+    makeIosSim({ udid: `held-${index}`, name: `stim-held-${index}`, state: 'Booted' }),
+  );
+  let now = Date.now();
+  const lines: string[] = [];
+  await expect(
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+      root,
+      waitMs: 12_000,
+      sources: { ...empty, sims },
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      out: (line) => lines.push(line),
+    }),
+  ).rejects.toMatchObject({
+    code: 'STIM_AT_CAPACITY',
+    remedy: expect.stringContaining('or set concurrency.maxDevices'),
   });
+  expect(lines[0]).toContain(
+    `(${maxDevices}/${maxDevices} devices booted, the derived device cap of ${maxDevices}; set concurrency.maxDevices to override)`,
+  );
 });
 
 test('a timed-out wait reports elapsed time and count, records both events, and releases its ticket', async () => {
@@ -227,7 +219,7 @@ test('a timed-out wait reports elapsed time and count, records both events, and 
     remedy: expect.stringMatching(/stim stop.*--wait <seconds>.*concurrency.maxDevices/),
   });
   expect(lines).toHaveLength(2);
-  expect(lines[0]).toContain('1/1 in use: stim-holder');
+  expect(lines[0]).toContain('a device slot (1/1 devices booted, concurrency.maxDevices) held by stim-holder');
   expect(lines[1]).toContain('10s elapsed');
   expect(state.mock.calls[0]?.[0]).toMatchObject({ kind: 'device-slot', inUse: 1, max: 1 });
   expect(state).toHaveBeenLastCalledWith(null);
@@ -298,11 +290,54 @@ test('waiting progress names workspaces for live devices and boot claims', async
       },
     }),
   ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-  const expected =
-    'device      waiting for a device slot (2/2 in use: tree-one, tree-two), 0s elapsed -- stim guide lifecycle concurrency';
-  expect(lines[0]).toContain(expected);
-  expect(lines[0]).toContain(join(root, 'device-waits'));
-  expect(deviceSlotWaitingLine({ count: 2, max: 2, holders: ['tree-one', 'tree-two'], elapsedMs: 0 })).toBe(expected);
+  expect(lines[0]).toBe(
+    'device      waiting for a device slot (2/2 devices booted, concurrency.maxDevices) held by tree-one, tree-two: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency',
+  );
+});
+
+const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+describe.skipIf(process.platform === 'win32')('a web share', () => {
+  test.each([
+    {
+      list: 'a live share',
+      answer: { shares: [shareRow('/work/holder-root', expiresAt)] },
+      named: `tree-one stays booted: it has a live web share (ios until ${expiresAt}); stim share stop ends it`,
+    },
+    {
+      list: 'a share list stim-server cannot give',
+      answer: { error: { code: 'internal', message: 'The share hub is closing.' } },
+      named: "tree-one stays booted: this home's web shares cannot be listed (The share hub is closing)",
+    },
+  ])('waiting progress names $list as what keeps a holder booted', async ({ answer, named }) => {
+    let now = Date.now();
+    const lines: string[] = [];
+    const server = await serveShareList(() => answer);
+    onTestFinished(() => server.close());
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
+        root,
+        max: 1,
+        waitMs: 1,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        out: (line) => lines.push(line),
+        sources: {
+          ...empty,
+          sims: occupied,
+          config: makeConfig({
+            projects: {
+              '/work/holder-root': { label: 'tree-one', platforms: { ios: { deviceUdid: 'holder', owned: true } } },
+            },
+          }),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
+    expect(lines[0]).toBe(
+      `device      waiting for a device slot (1/1 devices booted, concurrency.maxDevices) held by tree-one; ${named}: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency`,
+    );
+  });
 });
 
 test('cancelling a queued run promptly releases its ticket without booting', async () => {
@@ -327,7 +362,7 @@ test('cancelling a queued run promptly releases its ticket without booting', asy
 });
 
 test.each(['wait notification', 'progress output'])(
-  'cancellation during %s starts no idle reclaim',
+  'cancellation during %s boots nothing and leaves no ticket',
   async (boundary) => {
     const controller = new AbortController();
     const boot = vi.fn<() => Promise<void>>(async () => {});
@@ -346,7 +381,6 @@ test.each(['wait notification', 'progress output'])(
         },
       }),
     ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(reclaimIdleDevice).not.toHaveBeenCalled();
     expect(boot).not.toHaveBeenCalled();
     expect(waitingFor).toHaveBeenLastCalledWith(null);
     expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
@@ -371,93 +405,6 @@ test('a queued run whose own device starts booting is admitted without waiting f
       },
     });
     expect(boot).toHaveBeenCalledTimes(1);
-  } finally {
-    releaseClaim(head);
-  }
-});
-
-test('the queue head reclaims immediately, then checks capacity before another reclaim and records the count', async () => {
-  let full = true;
-  let clock = Date.now();
-  const order: string[] = [];
-  vi.mocked(reclaimIdleDevice).mockImplementation(async () => {
-    expect(readClaimSet(join(root, 'device-admission.lock')).live).toEqual([]);
-    order.push('reclaim');
-    full = false;
-    return 1;
-  });
-  await withDeviceBootAdmission(
-    { platform: 'ios', key: 'new' },
-    async () => {
-      order.push('boot');
-    },
-    {
-      root,
-      max: 1,
-      sources: {
-        ...empty,
-        sims: () => {
-          order.push('count');
-          return full ? occupied : [];
-        },
-      },
-      now: () => clock,
-      sleep: async (ms) => {
-        order.push('poll');
-        clock += ms;
-      },
-    },
-  );
-  expect(order).toEqual(['count', 'reclaim', 'poll', 'count', 'boot']);
-  expect(reclaimIdleDevice).toHaveBeenCalledTimes(1);
-  expect(vi.mocked(reclaimIdleDevice).mock.calls[0]?.[1]).toBe(10 * 60_000);
-  expect(readStats().record?.capacityWaits).toMatchObject([{ reclaimed: 1 }]);
-});
-
-test('a waiter behind the head does not reclaim even at the cap', async () => {
-  const head = takeTicket();
-  let clock = Date.now();
-  try {
-    await expect(
-      withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-        root,
-        max: 1,
-        waitMs: 2000,
-        sources: { ...empty, sims: occupied },
-        now: () => clock,
-        sleep: async (ms) => {
-          clock += ms;
-        },
-      }),
-    ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-    expect(reclaimIdleDevice).not.toHaveBeenCalled();
-  } finally {
-    releaseClaim(head);
-  }
-});
-
-test('a waiter reclaims immediately when it becomes queue head at the cap', async () => {
-  const head = takeTicket();
-  let clock = 0;
-  let full = true;
-  const attempts: number[] = [];
-  vi.mocked(reclaimIdleDevice).mockImplementation(async () => {
-    attempts.push(clock);
-    full = false;
-    return 1;
-  });
-  try {
-    await withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-      root,
-      max: 1,
-      sources: { ...empty, sims: () => (full ? occupied : []) },
-      now: () => clock,
-      sleep: async (ms) => {
-        clock += ms;
-        if (clock === 4000) releaseClaim(head);
-      },
-    });
-    expect(attempts).toEqual([4000]);
   } finally {
     releaseClaim(head);
   }
@@ -488,59 +435,6 @@ test('cancelling while the admission lock is held exits without waiting for the 
   } finally {
     releaseClaim(held.acquired);
   }
-});
-
-test('an explicit zero reclaimIdleMinutes disables reclaim', async () => {
-  let clock = Date.now();
-  await expect(
-    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-      root,
-      max: 1,
-      reclaimIdleMinutes: 0,
-      waitMs: 2000,
-      sources: { ...empty, sims: occupied },
-      now: () => clock,
-      sleep: async (ms) => {
-        clock += ms;
-      },
-    }),
-  ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
-  expect(reclaimIdleDevice).not.toHaveBeenCalled();
-  expect(readStats().record?.capacityWaits?.[0]).not.toHaveProperty('reclaimed');
-});
-
-test('reclaim attempts are at least fifteen seconds apart while capacity is polled', async () => {
-  const sims = [...occupied, makeIosSim({ udid: 'second', name: 'stim-second', state: 'Booted' })];
-  const attempts: number[] = [];
-  let clock = 0;
-  let polls = 0;
-  vi.mocked(reclaimIdleDevice).mockImplementation(async () => {
-    attempts.push(clock);
-    if (attempts.length > 1) sims.pop();
-    return attempts.length > 1 ? 1 : 0;
-  });
-  await withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
-    root,
-    max: 1,
-    sources: {
-      ...empty,
-      sims: () => {
-        polls++;
-        return [...sims];
-      },
-    },
-    now: () => clock,
-    sleep: async (ms) => {
-      clock += ms;
-    },
-  });
-  expect(attempts[0]).toBe(0);
-  expect(attempts).toHaveLength(3);
-  for (let i = 1; i < attempts.length; i++) {
-    expect(attempts[i]! - attempts[i - 1]!).toBeGreaterThanOrEqual(15_000);
-  }
-  expect(polls).toBeGreaterThan(attempts.length);
-  expect(readStats().record?.capacityWaits?.[0]?.reclaimed).toBe(2);
 });
 
 test('status reports each per-platform cap that is set, with or without the shared cap, from one inventory', async () => {
@@ -611,4 +505,165 @@ test('automatic device admission rechecks exclusion after waiting and clears its
     code: 'STIM_HOSTING_REFUSED',
   });
   await expect(withDeviceBootAdmission(device, boot, { root, max: 0 })).resolves.toBe('booted');
+});
+
+describe('boot admission beyond the device caps', () => {
+  const calm = () => ({ level: 'normal', availableBytes: 8 * 1024 ** 3 });
+  const admit = (policy: Partial<Parameters<typeof withDeviceBootAdmission>[2]>) =>
+    withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => 'booted', {
+      root,
+      max: 8,
+      noWait: true,
+      memory: calm,
+      sources: empty,
+      ...policy,
+    });
+  const booting = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({ platform: 'ios', key: `b${index}`, displayName: `tree-${index}` }));
+
+  test('a freed device slot goes to the queued run, not a newcomer', async () => {
+    let full = true;
+    const sims = () => (full ? occupied : []);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = withDeviceBootAdmission({ platform: 'ios', key: 'queued' }, async () => 'queued booted', {
+      root,
+      max: 1,
+      memory: calm,
+      sources: { ...empty, sims },
+      sleep: () => gate,
+    });
+    await vi.waitFor(() => expect(liveWaiters('boot')).toHaveLength(1));
+    full = false;
+    await expect(admit({ max: 1, sources: { ...empty, sims } })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('its turn in the device queue'),
+    });
+    release();
+    await expect(queued).resolves.toBe('queued booted');
+  });
+
+  test('a finished boot tells the stim-daemon, which wakes the next waiter', async () => {
+    const released = vi.spyOn(client, 'notifyReleased');
+    await withDeviceBootAdmission(
+      { platform: 'ios', key: 'next' },
+      async () => {
+        expect(released).not.toHaveBeenCalled();
+      },
+      { root, max: 8, noWait: true, memory: calm, sources: empty },
+    );
+    expect(released).toHaveBeenCalledWith('boot');
+  });
+
+  test('a third boot waits while two are in flight, even with device slots free', async () => {
+    await expect(admit({ sources: { ...empty, booting: booting(2) } })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('a boot slot (2/2 boots in flight) held by tree-0, tree-1'),
+    });
+    await expect(admit({ sources: { ...empty, booting: booting(1) } })).resolves.toBe('booted');
+  });
+
+  test.each([
+    { memory: { level: 'critical', availableBytes: 8 * 1024 ** 3 }, admitted: false },
+    { memory: { level: 'warning', availableBytes: 1.5 * 1024 ** 3 }, admitted: false },
+    { memory: { level: 'warning', availableBytes: 3 * 1024 ** 3 }, admitted: true },
+    { memory: null, admitted: true },
+  ])(
+    'memory $memory.level with $memory.availableBytes bytes available admits: $admitted',
+    async ({ memory, admitted }) => {
+      const outcome = await admit({ memory: () => memory }).then(
+        (value) => value,
+        (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`,
+      );
+      expect(outcome === 'booted').toBe(admitted);
+      expect(outcome).toMatch(admitted ? /^booted$/ : /^STIM_AT_CAPACITY: .*memory/);
+    },
+  );
+
+  const minuteSleep = (clock: { now: number }) => async () => {
+    clock.now += 60_000;
+  };
+  const listingFails = () => {
+    throw Object.assign(new Error('simctl list timed out'), { code: 'ETIMEDOUT' });
+  };
+
+  test('without --wait a run behind booted devices keeps waiting until the 90-minute ceiling', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
+    await expect(
+      admit({
+        max: 1,
+        noWait: false,
+        sources: { ...empty, sims: occupied },
+        now: () => clock.now,
+        sleep: minuteSleep(clock),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringMatching(/queue position 1 of 1.*, the 90-minute ceiling\.$/),
+    });
+    expect(clock.now - started).toBe(90 * 60_000);
+    expect(readClaimSet(join(root, 'device-waits')).live).toEqual([]);
+  });
+
+  test('devices that cannot be counted make the run wait, and it refuses with the listing error after 10 minutes', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
+    await expect(
+      admit({
+        noWait: false,
+        sources: { ...empty, sims: listingFails },
+        now: () => clock.now,
+        sleep: minuteSleep(clock),
+      }),
+    ).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringMatching(/a device count \(Stim could not count .*simctl list timed out\).*for 10m00s/),
+    });
+    expect(clock.now - started).toBe(10 * 60_000);
+  });
+
+  test('a count that comes back admits the boot, and --no-wait refuses at once on an uncountable count', async () => {
+    let failures = 3;
+    const clock = { now: Date.now() };
+    const sims = () => (failures-- > 0 ? listingFails() : []);
+    await expect(
+      admit({ noWait: false, sources: { ...empty, sims }, now: () => clock.now, sleep: minuteSleep(clock) }),
+    ).resolves.toBe('booted');
+    await expect(admit({ sources: { ...empty, sims: listingFails } })).rejects.toMatchObject({
+      code: 'STIM_AT_CAPACITY',
+      message: expect.stringContaining('This run would wait for a device count'),
+    });
+  });
+
+  test('a boot held only by memory keeps waiting past the position ceiling and boots once memory recovers', async () => {
+    const clock = { now: Date.now() };
+    const started = clock.now;
+    const memory = () =>
+      clock.now - started < 30 * 60_000 ? { level: 'critical', availableBytes: 8 * 1024 ** 3 } : null;
+    await expect(admit({ noWait: false, memory, now: () => clock.now, sleep: minuteSleep(clock) })).resolves.toBe(
+      'booted',
+    );
+    expect(clock.now - started).toBe(30 * 60_000);
+  });
+});
+
+test.each([
+  { cores: 10, gib: 16, builds: 1, devices: 8 },
+  { cores: 12, gib: 32, builds: 2, devices: 18 },
+  { cores: 4, gib: 8, builds: 1, devices: 2 },
+])('derived caps for $cores cores and $gib GB: $builds builds, $devices devices', ({ cores, gib, builds, devices }) => {
+  expect(admissionLimits({ env: {}, cores, totalBytes: gib * 1024 ** 3 })).toEqual({
+    maxBuilds: builds,
+    maxDevices: devices,
+    derived: { builds: true, devices: true },
+  });
+});
+
+test('concurrency settings override the derived caps, and 0 means derived', () => {
+  expect(
+    admissionLimits({ env: { STIM_MAX_BUILDS: '3', STIM_MAX_DEVICES: '0' }, cores: 10, totalBytes: 16 * 1024 ** 3 }),
+  ).toEqual({ maxBuilds: 3, maxDevices: 8, derived: { builds: false, devices: true } });
 });

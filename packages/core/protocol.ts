@@ -98,6 +98,7 @@ export type Capability = (typeof CAPABILITIES)[number];
  * `desktop-run` streams platform build/install/launch progress and facts on the proved local Desktop connection.
  * `desktop-build` streams build-only progress and artifact facts on the proved local Desktop connection.
  * `desktop-plan` reads next-build reports for selected folders on the proved local Desktop connection.
+ * `share-stop-id` lets `share.stop` take a share `id` and end only that share.
  * `desktop-reload` streams reload output and its terminal result on the proved local Desktop connection.
  */
 export const FEATURES = [
@@ -164,6 +165,7 @@ export const FEATURES = [
   'desktop-worktree-remove',
   'desktop-worktree-warm',
   'desktop-plan',
+  'share-stop-id',
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -342,14 +344,16 @@ export const PUSH_TOKEN_PATTERN = '^(Expo|Exponent)PushToken\\[[^\\]\\s]{1,256}\
 /**
  * `unauthorized`, `pairing-expired` and `protocol-unsupported` refuse the client until it pairs again or
  * updates; `unknown-secret` means the server does not hold the pairing token or setup ticket (yet), so a client with a
- * setup ticket retries until setup runs; clients retry the others. A network connection's refusals during the
- * handshake arrive as the WebSocket close reason.
+ * setup ticket retries until setup runs; `home-unavailable` means the server cannot read its Stim home, so it cannot
+ * tell whether it knows the client, and is never a revocation; clients retry the others. A network connection's
+ * refusals during the handshake arrive as the WebSocket close reason.
  */
 export const ERROR_CODES = [
   'unauthorized',
   'pairing-expired',
   'protocol-unsupported',
   'unknown-secret',
+  'home-unavailable',
   'bad-request',
   'unknown-method',
   'already-authenticated',
@@ -1660,7 +1664,7 @@ export interface Methods {
     params: WebShareStartParams;
     result: WebShareRow & { url: string; password?: string; warning?: string };
   };
-  'share.stop': { params: { workspace: string }; result: { stopped: WebShareRow[] } };
+  'share.stop': { params: { workspace: string; id?: string }; result: { stopped: WebShareRow[] } };
   'share.list': { params?: Record<string, never>; result: { shares: WebShareRow[] } };
   'device-host.sessions': { params?: Record<string, never>; result: { sessions: HostedSessionRow[] } };
   'device-host.sessions.stop': { params: { session: string }; result: { id: string; state: 'stopping' | 'stopped' } };
@@ -1769,7 +1773,7 @@ export interface Methods {
     result: SubscribeResult;
   };
   'desktop.gc.subscribe': {
-    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean; idleMs?: number };
+    params: { cwd: string; cache?: string; olderThan?: number; worktrees?: boolean; delete?: boolean };
     result: SubscribeResult;
   };
   'desktop.worktree.warm.subscribe': {

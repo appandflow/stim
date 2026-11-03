@@ -15,7 +15,7 @@ import {
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
-import { ambientContext, withAmbientContext, type StimContext } from '@stim-cli/core';
+import { withAmbientContext, type StimContext } from '@stim-cli/core';
 import { createStim } from '../api.ts';
 import gcCommand, { runGc } from '../commands/gc.ts';
 import { Command } from 'commander';
@@ -27,7 +27,7 @@ import { operationState } from '../engine/operation-state.ts';
 import { collectGradleVersions } from '../commands/gc/gradle-versions.ts';
 import * as tailnet from '../offload/tailnet.ts';
 import { testContext } from './_context.ts';
-import { ensureWorkspaceStorage, workspaceLogsDir } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage } from '../workspace/paths.ts';
 import { macosDir } from '../macos/state.ts';
 import * as gcDevices from '../commands/gc/devices.ts';
 import * as androidDevices from '../devices/android.ts';
@@ -78,7 +78,7 @@ function fixture(name: string) {
   mkdirSync(root);
   mkdirSync(cache, { recursive: true });
   writeFileSync(join(root, 'package.json'), JSON.stringify({ name, private: true }));
-  writeFileSync(join(home, 'config.json'), JSON.stringify({ maintenance: { mode: 'off' } }));
+  writeFileSync(join(home, 'config.json'), JSON.stringify({ daemon: { mode: 'off' } }));
   writeFileSync(
     join(home, 'caches.json'),
     JSON.stringify({ version: 1, caches: [{ name: 'fixture', dir: cache, prune: 'entries' }] }),
@@ -280,7 +280,7 @@ test.each([false, true])(
     }));
     writeFileSync(
       join(item.home, 'config.json'),
-      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, maintenance: { mode: 'off' } }),
+      JSON.stringify({ version: 2, projects: {}, repos: {}, parked: { ios: pool }, daemon: { mode: 'off' } }),
     );
     writeFileSync(
       join(item.home, 'created-devices.json'),
@@ -482,7 +482,7 @@ test.each(
     version: 2,
     projects: kind === 'Gradle project settings' || worktreeProbe ? { [item.root]: {} } : {},
     repos: {},
-    maintenance: { mode: 'off' },
+    daemon: { mode: 'off' },
     parked: {
       [platform]: [
         {
@@ -728,177 +728,6 @@ test.each(
   expect(settled?.()).toBe(unavailable && !cli ? true : undefined);
 });
 
-test.each([
-  ...['idle refresh', 'shutdown inventory', 'shutdown'].map((phase) => ({ phase, unavailable: false })),
-  ...['device session inventory', 'device session close'].flatMap((phase) =>
-    [false, true].map((unavailable) => ({ phase, unavailable })),
-  ),
-])(
-  'GC idle $phase drains its child and preserves registration with cleanup refusal=$unavailable',
-  async ({ phase, unavailable }) => {
-    const item = fixture('idle-shutdown');
-    const home = join(item.home, '.stim');
-    mkdirSync(home);
-    const id = 'OWNED-IDLE-SIM';
-    const env = {
-      ...item.env,
-      HOME: item.home,
-      USERPROFILE: item.home,
-      STIM_HOME: undefined,
-      STIM_NATIVE_PROBE_TAG: phase,
-      STIM_MAINTENANCE: 'off',
-      AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
-      AGENT_DEVICE_CLAIMS_DIR: join(item.home, 'claims'),
-      AGENT_DEVICE_IOS_RUNNER_LEASE_DIR: join(item.home, 'leases'),
-    };
-    const config = JSON.stringify({
-      version: 2,
-      projects: { [item.root]: { platforms: { ios: { deviceUdid: id, owned: true } } } },
-      repos: {},
-      maintenance: { mode: 'off' },
-    });
-    writeFileSync(join(home, 'config.json'), config);
-    const ledger = JSON.stringify({ version: 1, ios: [id], android: [], web: [] });
-    writeFileSync(join(home, 'created-devices.json'), ledger);
-    withAmbientContext(testContext({ home, env, projectRoot: item.root, cwd: item.root }), () => {
-      const logs = workspaceLogsDir(item.root);
-      mkdirSync(logs, { recursive: true });
-      writeFileSync(
-        join(logs, 'device.ndjson'),
-        JSON.stringify({ ts: Date.now() - 3_600_000, src: 'device', platform: 'ios', msg: 'old app log' }) + '\n',
-      );
-    });
-    const controller = new AbortController();
-    const executor = getExecutor();
-    const original = executor.runFileAsync.bind(executor);
-    const find = executor.findExecutable.bind(executor);
-    const executable = vi
-      .spyOn(executor, 'findExecutable')
-      .mockImplementation((name) => (name === 'agent-device' ? 'fixture-agent-device' : find(name)));
-    const sync = vi.spyOn(executor, 'runFile').mockImplementation(() => {
-      throw new Error('Idle GC must not execute a synchronous native query');
-    });
-    const quiet = vi.spyOn(executor, 'runFileQuiet').mockReturnValue(null);
-    let listed = 0;
-    let observedPid: number | undefined;
-    let owned: { pid: number; processToken: string } | undefined;
-    let closed: Promise<void> = Promise.resolve();
-    let handles: ClaimHandle[] = [];
-    const targets: { pid: number; processToken: string }[] = [];
-    const inspect = vi
-      .spyOn(identities, 'inspectProcessIdentity')
-      .mockImplementation((record) =>
-        unavailable && owned && record?.pid === owned.pid ? 'unknown' : inspectProcessIdentity(record),
-      );
-    const infoFile = join(item.root, 'child.json');
-    let observedContext: unknown;
-    const shutdowns: string[] = [];
-    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      const inventory = file === 'xcrun' && args.includes('devices');
-      const shutdown = file === 'xcrun' && args[1] === 'shutdown';
-      if (inventory) listed++;
-      if (shutdown) shutdowns.push(args[2] ?? 'missing device');
-      const wanted = phase.startsWith('device session')
-        ? file === 'agent-device' && args[0] === (phase === 'device session close' ? 'close' : 'session')
-        : phase === 'shutdown'
-          ? shutdown
-          : inventory && listed === (phase === 'idle refresh' ? 3 : 4);
-      if (wanted)
-        return original(
-          process.execPath,
-          [
-            '-e',
-            'require("node:fs").writeFileSync(process.argv[1],JSON.stringify({pid:process.pid,parent:process.ppid,cwd:process.cwd(),tag:process.env.STIM_NATIVE_PROBE_TAG})); console.log("ready"); ' +
-              (unavailable ? 'setInterval(()=>{},1000)' : 'setTimeout(()=>{},250)'),
-            infoFile,
-          ],
-          {
-            ...options,
-            onSpawn: (child) => {
-              options.onSpawn?.(child);
-              const birth = child.pid === undefined ? null : captureProcessIdentity(child.pid);
-              if (!birth?.ok || child.pid === undefined) throw new Error('The fixture idle child has no identity');
-              owned = { pid: child.pid, processToken: birth.token };
-              targets.push(owned);
-              handles = [...operationState(ambientContext()).declaring];
-              closed = new Promise<void>((resolve) => child.once('close', resolve));
-              child.stdout?.once('data', () => {
-                observedPid = readClaimSet(join(home, 'maintenance', 'run.claims')).live[0]?.child?.pid;
-                const metadata = JSON.parse(readFileSync(infoFile, 'utf8'));
-                observedContext = { cwd: metadata.cwd, tag: metadata.tag };
-                for (const pid of process.platform === 'win32' ? [metadata.pid, metadata.parent] : [metadata.pid]) {
-                  if (targets.some((record) => record.pid === pid)) continue;
-                  const captured = captureProcessIdentity(pid);
-                  if (!captured.ok) throw new Error(captured.reason);
-                  targets.push({ pid, processToken: captured.token });
-                }
-                controller.abort();
-              });
-            },
-          },
-        );
-      if (file === 'agent-device')
-        return Promise.resolve(
-          JSON.stringify({
-            success: true,
-            data: {
-              sessions: [
-                {
-                  name: 'stim-owned',
-                  platform: 'ios',
-                  device_udid: id,
-                  createdAt: 1,
-                },
-              ],
-            },
-          }),
-        );
-      if (inventory)
-        return Promise.resolve(
-          JSON.stringify({
-            devices: {
-              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-                { udid: id, name: 'stim-idle', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone' },
-              ],
-            },
-          }),
-        );
-      return Promise.resolve('');
-    });
-    try {
-      await expect(
-        trackRead((signal) =>
-          createStim({ projectRoot: item.root, env }).collectGarbage({
-            idleMs: 60_000,
-            signal: AbortSignal.any([signal, controller.signal]),
-          }),
-        ),
-      ).rejects.toMatchObject({ code: unavailable ? 'STIM_CLAIM_UNAVAILABLE' : 'STIM_CANCELLED' });
-      if (!owned) throw new Error('The controlled idle probe did not start');
-      expect(observedPid).toBe(owned.pid);
-      expect(observedContext).toEqual({ cwd: item.root, tag: phase });
-      expect(unavailable ? ['same'] : ['gone', 'different']).toContain(inspectProcessIdentity(owned));
-      expect(shutdowns).toEqual(phase === 'shutdown' ? [id] : []);
-      expect(readFileSync(join(home, 'config.json'), 'utf8')).toBe(config);
-      expect(readFileSync(join(home, 'created-devices.json'), 'utf8')).toBe(ledger);
-      expect(readClaimSet(join(home, 'maintenance', 'run.claims')).live.map((holder) => holder.child?.pid)).toEqual(
-        unavailable ? [owned.pid] : [],
-      );
-    } finally {
-      controller.abort();
-      probe.mockRestore();
-      sync.mockRestore();
-      quiet.mockRestore();
-      executable.mockRestore();
-      inspect.mockRestore();
-      for (const target of targets.toReversed()) killFixtureChild(target);
-      await closed;
-      for (const target of targets) expect(await waitForProcessExit(target, 5000)).toBe(true);
-      for (const handle of handles) releaseClaim(handle);
-    }
-  },
-);
-
 test.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
   'GC returns a failed exit status and partial report when a cache entry cannot be deleted',
   async () => {
@@ -1024,7 +853,7 @@ test('GC API matches CLI JSON and ignores mutation options supplied by a JavaScr
     log.mockRestore();
     error.mockRestore();
   }
-  const request = { cache: 'fixture', delete: true, idle: 0 };
+  const request = { cache: 'fixture', delete: true };
   const result = await createStim({ projectRoot: item.root, home: item.home, env: item.env }).gc(request);
   expect(result).toEqual(JSON.parse(json));
   expect(readFileSync(join(item.cache, 'artifact'), 'utf8')).toBe('parity');
@@ -1122,13 +951,13 @@ test('explicit doctor checks record completed platforms in their own homes while
   try {
     await trackRead((signal) => firstClient.doctor({ platform: 'ios', signal }));
     expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
     });
     await expect(firstClient.doctor({ record: true, signal: AbortSignal.abort() })).rejects.toMatchObject({
       code: 'STIM_CANCELLED',
     });
     expect(JSON.parse(readFileSync(join(first.home, 'config.json'), 'utf8'))).toEqual({
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
     });
     const before = Date.now();
     await Promise.all([
@@ -1171,7 +1000,7 @@ test('doctor reports the selected project without synchronous children or record
     expect(run).not.toHaveBeenCalled();
     expect(file).not.toHaveBeenCalled();
     expect(quiet).not.toHaveBeenCalled();
-    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'))).toEqual({ maintenance: { mode: 'off' } });
+    expect(JSON.parse(readFileSync(join(item.home, 'config.json'), 'utf8'))).toEqual({ daemon: { mode: 'off' } });
   } finally {
     run.mockRestore();
     file.mockRestore();
@@ -1187,7 +1016,7 @@ test.each([false, true])('doctor device-cap reads stay responsive with cancellat
       version: 2,
       projects: { [item.root]: { platforms: { android: { avdName: 'stim-owned', consolePort: 5554, owned: true } } } },
       repos: {},
-      maintenance: { mode: 'off' },
+      daemon: { mode: 'off' },
       concurrency: cancel ? { maxBuilds: 1 } : { maxDevices: 2 },
     }),
   );
@@ -1576,7 +1405,7 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
                   ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
                 }
               : {}),
-            STIM_MAINTENANCE: index === 0 ? 'report' : 'off',
+            STIM_DAEMON: index === 0 ? 'report' : 'off',
             ...(index === 0 ? { STIM_ANDROID_CAS_TOOLCHAIN: 'manifest.json' } : {}),
           },
         }).doctor({ platform: 'android', signal }),
@@ -1587,80 +1416,6 @@ test('concurrent doctor clients use their own maintenance and compiler-cache env
   expect(reports[0]?.findings.some((finding) => finding.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toBe(true);
   expect(reports[1]?.findings.some((finding) => finding.detail.includes('STIM_ANDROID_CAS_TOOLCHAIN'))).toBe(false);
 });
-
-test(
-  'GC pressure previews inspect real worktree artifacts without synchronous children',
-  async () => {
-    const item = fixture('pressure-preview');
-    const repo = join(scratch, 'pressure-repository');
-    const build = join(repo, 'android', 'build');
-    mkdirSync(build, { recursive: true });
-    writeFileSync(join(repo, 'package.json'), '{}');
-    writeFileSync(join(build, 'keep'), 'regenerable bytes');
-    const executor = getExecutor();
-    const gitExecutable = executor.findExecutable('git');
-    if (!gitExecutable) throw new Error('The pressure fixture requires Git');
-    for (const args of [
-      ['init', '-b', 'main'],
-      [
-        '-c',
-        'commit.gpgsign=false',
-        '-c',
-        'user.name=Fixture',
-        '-c',
-        'user.email=fixture@example.test',
-        'commit',
-        '--allow-empty',
-        '-m',
-        'fixture',
-      ],
-    ])
-      await executor.runFileAsync('git', args, { cwd: repo, timeoutMs: 10_000 });
-    writeFileSync(
-      join(item.home, 'config.json'),
-      JSON.stringify({
-        version: 2,
-        projects: { [repo]: {} },
-        repos: {},
-        maintenance: { mode: 'report' },
-      }),
-    );
-    const sync = vi.spyOn(executor, 'runFile');
-    const quiet = vi.spyOn(executor, 'runFileQuiet');
-    try {
-      const report = await trackRead((signal) =>
-        createStim({
-          projectRoot: item.root,
-          home: item.home,
-          env: {
-            ...item.env,
-            ...(process.platform === 'win32'
-              ? {
-                  PATH: [dirname(process.execPath), dirname(gitExecutable)].join(delimiter),
-                  JAVA_HOME: join(item.home, 'jdk'),
-                  ANDROID_HOME: join(item.home, 'android-sdk'),
-                  ANDROID_SDK_ROOT: join(item.home, 'android-sdk'),
-                }
-              : {}),
-            STIM_MAINTENANCE: 'report',
-            STIM_BUDGET_MIN_FREE_DISK_GB: '1000000',
-            STIM_MAINTENANCE_REMOVE_FINISHED_WORKTREES: 'false',
-            STIM_MAINTENANCE_GRADLE_VERSION_IDLE_DAYS: '0',
-          },
-        }).gc({ cache: 'fixture', signal }),
-      );
-      expect(report.maintenance?.mode).toBe('report');
-      expect(report.maintenance?.skips.some((entry) => entry.target === build)).toBe(true);
-      expect(sync).not.toHaveBeenCalled();
-      expect(quiet).not.toHaveBeenCalled();
-      expect(readFileSync(join(build, 'keep'), 'utf8')).toBe('regenerable bytes');
-    } finally {
-      sync.mockRestore();
-      quiet.mockRestore();
-    }
-  },
-  process.platform === 'win32' ? 70_000 : 5000,
-);
 
 test.each([false, true])(
   'aborting doctor drains a verified probe or refuses unavailable identity (%s)',
@@ -1713,91 +1468,6 @@ test.each([false, true])(
       while (inspectProcessIdentity(owned) === 'same' && performance.now() < deadline)
         await new Promise((resolve) => setTimeout(resolve, 20));
       expect(inspectProcessIdentity(owned)).not.toBe('same');
-    }
-  },
-);
-
-test.each(
-  [null, 'absolute', 'relative'].flatMap((leasePath) => [false, true].map((mutation) => ({ leasePath, mutation }))),
-)(
-  'unscoped GC respects runner lease paths ($leasePath, mutation=$mutation) without synchronous children',
-  async ({ leasePath, mutation }) => {
-    const item = fixture('unscoped-activity');
-    const defaultHome = join(item.home, '.stim');
-    mkdirSync(defaultHome);
-    const id = 'OWNED-REPORT-SIM';
-    writeFileSync(
-      join(defaultHome, 'config.json'),
-      JSON.stringify({
-        version: 2,
-        projects: { [item.root]: { platforms: { ios: { deviceUdid: id, deviceName: 'stim-report', owned: true } } } },
-        repos: {},
-        maintenance: { mode: 'off' },
-      }),
-    );
-    writeFileSync(
-      join(defaultHome, 'created-devices.json'),
-      JSON.stringify({ version: 1, ios: [id], android: [], web: [] }),
-    );
-    const leaseDir = join(item.root, 'fixture-leases');
-    mkdirSync(join(leaseDir, `${id}.json`), { recursive: true });
-    const controller = new AbortController();
-    const executor = getExecutor();
-    const original = executor.runFileAsync.bind(executor);
-    const sync = vi.spyOn(executor, 'runFileQuiet').mockReturnValue(null);
-    let pid: number | undefined;
-    let devicesListed = false;
-    const probe = vi.spyOn(executor, 'runFileAsync').mockImplementation((file, args, options) => {
-      if (file === 'ps' && args.includes('-axww') && devicesListed)
-        return original(process.execPath, ['-e', 'setTimeout(() => {}, 150)'], {
-          ...options,
-          onSpawn: (child) => {
-            pid = child.pid;
-          },
-        });
-      if (file === 'xcrun' && args.includes('devices')) {
-        devicesListed = true;
-        return Promise.resolve(
-          JSON.stringify({
-            devices: {
-              'com.apple.CoreSimulator.SimRuntime.iOS-26-5': [
-                { udid: id, name: 'stim-report', state: 'Booted', isAvailable: true, deviceTypeIdentifier: 'iphone' },
-              ],
-            },
-          }),
-        );
-      }
-      return Promise.resolve('');
-    });
-    try {
-      const client = createStim({
-        projectRoot: item.root,
-        env: {
-          ...item.env,
-          HOME: item.home,
-          USERPROFILE: item.home,
-          STIM_HOME: undefined,
-          STIM_MAINTENANCE: 'off',
-          AGENT_DEVICE_STATE_DIR: join(item.home, 'agent-device'),
-          AGENT_DEVICE_IOS_RUNNER_LEASE_DIR:
-            leasePath === null ? undefined : leasePath === 'relative' ? 'fixture-leases' : leaseDir,
-        },
-      });
-      const report = mutation
-        ? (await client.collectGarbage({ idleMs: 1000, signal: controller.signal })).report
-        : await client.gc({ signal: controller.signal });
-      expect(sync).not.toHaveBeenCalled();
-      expect('sections' in report && report.sections.idleDevices.some((entry) => entry.id === id)).toBe(
-        leasePath === null,
-      );
-      if (pid === undefined) throw new Error('The controlled activity probe did not start');
-      const ownPid = pid;
-      expect(() => process.kill(ownPid, 0)).toThrow(/ESRCH/);
-      expect(readFileSync(join(defaultHome, 'created-devices.json'), 'utf8')).toContain(id);
-    } finally {
-      controller.abort();
-      probe.mockRestore();
-      sync.mockRestore();
     }
   },
 );

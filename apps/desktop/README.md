@@ -163,12 +163,9 @@ actions use typed local-server operations for the selected workspace. The comman
   default device) so the shared server and other slots keep running --
   `--slot` is per slot, not per platform, so it also stops that slot's
   Android device if the slot holds one.
-- Idle devices: when the storage preview lists idle devices, the
-  sheet offers **Shut Down Idle** with a duration (30 minutes to 1 day), then
-  runs `stim gc --idle <duration> --json` after a confirmation. That shuts the devices
-  down like `stim stop` and never deletes them. The preview marks idle and
-  unrecognized `stim-*` devices as kept, because `stim gc --delete` never
-  touches them.
+- Pressure ladder: the storage preview lists what `stim gc --delete` runs of
+  the stim-daemon's pressure ladder at high, with sizes, and marks unrecognized
+  `stim-*` devices as kept, because `stim gc --delete` never touches them.
 
 Click the toolbar's CPU, memory or disk figure for its details. Each popover
 includes **Open Machines** to open the Machines page.
@@ -606,8 +603,7 @@ Other actions open an activity sheet. While the command runs, the sheet shows a
 spinner and its latest progress line; only the CLI's progress labels (`stim
 guide lifecycle progress`) count as progress. When it finishes, the sheet
 confirms it in one line and stays open until closed. A failure shows the CLI's
-message and remedy. Cleanups run `stim gc --delete --json` or `stim gc --idle
---json`, and the sheet summarizes the payload's `results`: what was freed and
+message and remedy. Cleanups run `stim gc --delete --json`, and the sheet summarizes the payload's `results`: what was freed and
 deleted, then what gc left alone and what failed, each with its reason. It
 stays open until closed. **Command Output** is collapsed by default and contains
 the command and raw output, both while running and after completion. Launch
@@ -750,8 +746,8 @@ always lists every row, so none of the rows **Free** acts on are hidden.
 Free still previews or confirms its commands first, collapsed or not. The app
 remembers each section's choices in its own preferences.
 
-- **Headline**: free space on the fullest volume against the Stim disk budget
-  (`budget.minFreeDiskGb`), and one bar split into Stim devices (owned by a
+- **Headline**: free space on the fullest volume with the disk pressure level
+  the stim-daemon's last tick measured, and one bar split into Stim devices (owned by a
   workspace, parked or orphaned), Stim caches and outputs (shared caches,
   workspace build outputs, logs and orphaned workspace directories),
   `node_modules`, other simulators and AVDs, runtimes and system images, and
@@ -817,52 +813,51 @@ those categories as unknown.
 
 ## Automatic maintenance
 
-Stim's CLI cleans up on its own (`maintenance.mode`, on by default), on every
-Mac, whether this app runs or not: stim commands, dev server supervisors and
-this app's status watch start its passes. It shuts down owned simulators and
-emulators idle for `devices.idleShutdownMinutes`, never deleting them, and once
-a day clears the build outputs of workspaces and the cache entries unused for
-`maintenance.olderThanDays` and deletes devices parked that long. It removes
-the worktrees of merged or closed pull requests, and reclaims more space when
-free disk falls under `budget.minFreeDiskGb`. Run `stim guide cleanup` for the
-rules.
+The stim-daemon keeps the machine healthy on its own (`daemon.mode`, on by
+default), on every Mac, whether this app runs or not: `stim start`, `ios`,
+`android`, `web`, `macos` and `revive` start it, and it exits once nothing runs
+in the Stim home. A workspace with no activity for `idle.minutes` goes idle: its
+dev server stops, its owned simulators and emulators shut down and its
+regenerable build outputs are deleted, which `stim revive` brings back. After
+`idle.dormantDays` its owned devices are deleted. Once a day it clears the
+build outputs and cache entries unused for `maintenance.olderThanDays` and
+deletes devices parked that long, and it removes the worktrees of merged or
+closed pull requests. Under disk or memory pressure it runs its pressure ladder
+each minute. Run `stim guide cleanup` for the rules.
 
-The **Automatic Maintenance** section of the App preferences shows the mode
-and the last pass (when, actions and bytes freed, and why it was blocked) from
-`stim status --json`, read only. **Clean up what is unused for** sets
-`maintenance.olderThanDays` (7 days by default; Never is 0) and **Shut down
-idle devices after** sets `devices.idleShutdownMinutes` (15 minutes by
-default; Never is 0), and **Also remove clean, pushed worktrees unused that
-long** sets `maintenance.removeIdleWorktrees` (off by default; it removes
-unmerged linked worktrees no Stim command used that long, git-ignored files
-included, and only while `maintenance.removeFinishedWorktrees` is on and the
-age is not Never), all with `stim settings set ... --scope machine`. Every
-other `maintenance.*` setting is under **Stim Settings**. A `stim` whose status
-has no `maintenance` block cleans up nothing on its own; the section then says
-to update `stim`, and the app does not clean up in its place. Idle device
-shutdown without a dev server, the daily cleanup of parked devices,
-**Never** for the cleanup age and the worktree switch need a `stim` newer than
-1.25.0; with an older one the switch is disabled with an update note, and
-`on` mode does the rest. A project's own `devices.idleShutdownMinutes`
-overrides the machine value the picker writes. **Cleanup
-History** (below) lists what each cleanup removed.
+The app reads the daemon through the status stim-server serves, read only: its
+mode, the pressure level of its last tick and its last actions. It runs no timer
+and keeps no thresholds of its own. The **Automatic Maintenance** section of the
+App preferences shows the mode, the level, the last actions and the last
+maintenance pass (when, actions and bytes freed, and why it was blocked).
+**Clean up what is unused for** sets `maintenance.olderThanDays` (7 days by
+default; Never is 0), **Stop idle workspaces after** sets `idle.minutes` (15
+minutes by default; Never is 0), and **Also remove clean, pushed worktrees
+unused that long** sets `maintenance.removeIdleWorktrees` (off by default; it
+removes unmerged linked worktrees no Stim command used that long, git-ignored
+files included, and only while `maintenance.removeFinishedWorktrees` is on and
+the age is not Never), all with `stim settings set ... --scope machine`. Every
+other setting is under **Stim Settings**. A project's own `idle.minutes`
+overrides the machine value the picker writes. A `stim` whose status has no
+`daemon` block reports nothing here; the section then says to update `stim`,
+and the app does not clean up in its place. **Cleanup History** (below) lists
+what each cleanup removed.
 
-While free disk is under the budget, the Machine page shows the plan, such as
-"Clear the build outputs of 3 idle workspaces and remove 1 merged worktree to
-free about 300 MB", with a **Do it** button that runs `stim gc --delete`, and
-the sidebar marks Machine. When the CLI's maintenance is not on, or its last
-pass was blocked while disk is still under the budget, the app posts the plan
-once per episode as a notification with **Do it**. **Do it** in a notification
-runs only while disk is still under the budget, and otherwise opens Machine;
-the app removes its delivered pressure notifications once free disk is back
-above the budget. The **Free disk falls under the Stim budget** notification
-is on by default and needs the bundled app.
+The Machine page shows the daemon's level and its last three actions. While the
+level is high or critical it shows the reasons, the sidebar marks Machine, and
+**Free Disk Space** runs `stim gc --delete`, which runs the pressure ladder to
+its end at high. When the level is critical, or high while no daemon acts on it
+(`daemon.mode` is not `on`, or none runs), the app posts one notification per
+episode with **Do it**. **Do it** in a notification runs `stim gc --delete` only
+while the level is still raised, and otherwise opens Machine; the app removes
+its delivered pressure notification once the level is back to normal. The
+pressure notification is on by default and needs the bundled app.
 
 ## Cleanup History
 
 The **Cleanup History** section of the App preferences lists every run that deleted or changed
-something, newest first: `stim gc`, Stim's automatic maintenance and the budget check before a
-build, whoever started them (this app, an agent or a terminal). It runs
+something, newest first: `stim gc`, with the pressure ladder actions it runs, and Stim's automatic
+maintenance, whoever started them (this app, an agent or a terminal). It runs
 `stim logs --source gc --json` from the home directory every 30 seconds while the App tab is showing
 and never reads `$STIM_HOME`. A row shows what started the run, when, how many items it cleared,
 kept and failed, and the bytes freed; expanding it lists each item with its path and the reason a
@@ -1114,9 +1109,13 @@ devices and macOS apps have no Share item.
 **Stim > Settings > Web Shares** lists the server's live shares, read with
 `share.list` every 5 seconds: one section per workspace, one row per share with
 its platform, **View only** or **View and control**, **No password** when it has none,
-viewers and time left. `share.stop` takes a workspace, so the section's **Stop** ends
-every share of that workspace (**Stop All** when it has several). An older server
-that does not answer `share.*` shows a message instead. The methods work only on
+viewers and time left. Each row has **Stop**, which sends `share.stop` with the
+workspace and the share's `id`; a workspace with several shares also has **Stop All**
+in its header, which sends the workspace alone. When the local server's hello lacks
+the `share-stop-id` feature, it would ignore `id` and end every share of the workspace,
+so Desktop sends no `id`, shows no row **Stop** and the header's **Stop** (**Stop All** when there are
+several) says it ends them all. An older server that does not answer `share.*` shows a
+message instead. The methods work only on
 the local Unix socket and need no Desktop authority.
 
 Quitting Desktop asks first when Desktop started the stim-server it runs and

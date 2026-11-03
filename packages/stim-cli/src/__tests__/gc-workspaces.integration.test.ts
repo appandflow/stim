@@ -1,6 +1,5 @@
 import { execSync } from 'node:child_process';
 import {
-  chmodSync,
   existsSync,
   lstatSync,
   readFileSync,
@@ -34,7 +33,6 @@ import {
 } from '../commands/gc/workspaces.ts';
 import {
   collectWorktreeSweep,
-  removeWorktrees,
   worktreeRemovalReason,
   worktreeSkipReason,
   type WorktreeFacts,
@@ -50,7 +48,7 @@ import {
 } from '../workspace/pull-request.ts';
 import { getProject, saveConfig, upsertProject } from '../workspace/config.ts';
 import { register } from '../cache/cache-manifest.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir, workspaceName } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceDir, workspaceName } from '../workspace/paths.ts';
 import { workspaceInUse, withIdleWorkspace } from '../workspace/in-use.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { withManagedRemoteWorktreeLock, withManagedTunnelLock } from '../engine/tunnel.ts';
@@ -496,8 +494,39 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
+  const claims = join(tmpHome, 'build-claims');
+  plantClaim(claims, 'exclusive', liveClaimOwner(), { claimId: 'build-1' });
+  const at = new Date().toISOString();
+  writeWorkspaceState(busy.root, {
+    activeBuild: {
+      platform: 'ios',
+      phase: 'compile',
+      startedAt: at,
+      phaseStartedAt: at,
+      claim: { root: claims, claimId: 'build-1' },
+    },
+  });
 
-  expect((await gcJson({ olderThan: 3 })).payload.results).toEqual([]);
+  const preview = (await gcJson({ olderThan: 3 })).payload;
+  expect(preview.results).toEqual([]);
+  for (const level of preview.ladder.levels)
+    expect(level.actions).toContainEqual(
+      expect.objectContaining({
+        rung: 1,
+        kind: 'delete-build-outputs',
+        target: stale.root,
+        outcome: 'would',
+        bytes: expect.any(Number),
+      }),
+    );
+  expect(
+    preview.ladder.levels[0].actions.find((action: { target: string }) => action.target === stale.root).bytes,
+  ).toBeGreaterThan(0);
+  expect(preview.ladder.workspaces).toContainEqual(
+    expect.objectContaining({ path: stale.root, stage: 'stopped', since: expect.any(String) }),
+  );
+  expect(preview.ladder.workspaces).toContainEqual(expect.objectContaining({ path: busy.root, stage: 'running' }));
+  for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
   const { payload } = await gcJson({ olderThan: 3, delete: true });
 
   expect(payload.results).toEqual(
@@ -514,15 +543,11 @@ test('gc --delete --json reports what it removed apart from what it kept', async
         label: stale.root,
         bytes: expect.any(Number),
       }),
-      expect.objectContaining({
-        kind: 'workspaceOutputs',
-        status: 'kept',
-        label: busy.root,
-        detail: expect.stringMatching(/^in use: /),
-      }),
     ]),
   );
   expect(payload.results.filter((r: { status: string }) => r.status === 'failed')).toEqual([]);
+  expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
+  for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
 });
 
@@ -832,13 +857,13 @@ test('gc --cache workspaces lists and clears a workspace with only macOS outputs
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
-test('plain gc --delete clears idle workspaces, and --older-than limits it by last use', async () => {
+test('gc --delete --cache workspaces clears idle workspaces, and --older-than limits it by last use', async () => {
   const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const report = await captureLog(() => runGc({ delete: true, olderThan: 3 }));
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces', olderThan: 3 }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(stale.dir, output))).toBe(false);
     expect(existsSync(join(recent.dir, output))).toBe(true);
@@ -846,14 +871,14 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   }
   expect(report).toMatch(/Kept the build outputs of .*busy: in use/);
 
-  await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(recent.dir, output))).toBe(false);
     expect(existsSync(join(busy.dir, output))).toBe(true);
   }
 });
 
-test('plain gc --delete lightens a workspace whose dev server runs, but never a building or just-built one, or the build cache', async () => {
+test('plain gc --delete leaves a workspace whose dev server runs, and --cache workspaces lightens it, but never a building or just-built one, or the build cache', async () => {
   const iosBuild = (minutesAgo: number) => ({
     lastIosBuild: {
       platform: 'ios',
@@ -889,7 +914,11 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
   ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
 
-  const report = await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true }));
+  for (const output of OUTPUTS) expect(existsSync(join(active.dir, output))).toBe(true);
+  expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(true);
+
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(active.dir, output))).toBe(false);
     expect(existsSync(join(building.dir, output))).toBe(true);
@@ -1285,11 +1314,11 @@ describe('linked worktree sweep classification', () => {
       const reason = (candidate: Partial<Parameters<typeof worktreeRemovalReason>[0]>, idleMs: number | null) =>
         worktreeRemovalReason(
           { merge: noOwnCommits, pullRequest: null, idleDays: null, activity: null, ...candidate },
-          { now, noOwnCommitsIdleMs: idleMs, underPressure: true },
+          { now, noOwnCommitsIdleMs: idleMs },
         );
       expect(reason({ idleDays: 12 }, null)).toBe('no commits of its own beyond origin/main, idle 12d');
       expect(reason({ idleDays: 0, activity: { at: now - 12 * 60_000, basis: 'a git index write' } }, 600_000)).toBe(
-        'no commits of its own beyond origin/main, inactive for 12m under disk pressure',
+        'no commits of its own beyond origin/main, inactive for 12m',
       );
     });
   });
@@ -1333,7 +1362,7 @@ describe('linked worktree sweep classification', () => {
       );
     });
 
-    test('decides a worktree with no commits of its own under disk pressure by its activity, and never without it', () => {
+    test('decides a worktree with no commits of its own by its activity, and never without it', () => {
       const ownless = linked({ idleDays: 0, merge: noOwnCommits, activity: activity(30) });
       const off = { ms: 0, now };
       expect(worktreeSkipReason(ownless, null, off, 10 * 60_000)).toBe(null);
@@ -2080,7 +2109,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
   expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
 }, 60_000);
 
-test('one gc report lists simulators and AVDs once, however many worktrees own devices', async () => {
+test('one gc report lists simulators and AVDs once for its report and once more for its ladder preview, which lists simulators only on macOS, however many worktrees own devices', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const real = getExecutor();
@@ -2133,7 +2162,10 @@ test('one gc report lists simulators and AVDs once, however many worktrees own d
 
   const payload = await baseline();
 
-  expect(lists).toEqual({ sims: without.sims + 1, avds: without.avds + 1 });
+  expect(lists).toEqual({
+    sims: without.sims + (process.platform === 'darwin' ? 2 : 1),
+    avds: without.avds + 2,
+  });
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );
@@ -2750,98 +2782,6 @@ test('gc keeps a finished worktree that holds the running stim, and worktree rem
     error.mockRestore();
   }
   expect(existsSync(merged)).toBe(true);
-}, 240_000);
-
-test('disk pressure level 3 removes a worktree with no commits of its own once idle for the pressure window', async () => {
-  unscopedHome();
-  const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
-  const at = (name: string) => worktrees[name] ?? name;
-  backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
-  backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
-  const options = { protectedRoot: realpathSync.native(repo), pinned: () => false, graceMs: 10 * 60_000 };
-
-  const regular = await planWorktrees({ ...options, now: Date.now() });
-  expect(regular.actions.map((action) => action.target)).not.toContain(at('fresh'));
-
-  const pressured = await planWorktrees({ ...options, now: Date.now(), level: 3 });
-  const planned = pressured.actions.filter((action) => [at('fresh'), at('reused')].includes(action.target));
-  expect(planned.map((action) => action.reason)).toEqual([
-    expect.stringMatching(/^no commits of its own beyond origin\/main, inactive for 30m\d*s? under disk pressure$/),
-    expect.stringMatching(/^no commits of its own beyond origin\/main, inactive for 30m\d*s? under disk pressure$/),
-  ]);
-  const targets = pressured.actions.map((action) => action.target);
-  expect(targets).not.toContain(at('followup'));
-  expect(targets).not.toContain(at('open'));
-
-  await captureLog(() => removeWorktrees(pressured.sweep));
-  for (const name of ['fresh', 'reused']) expect(existsSync(at(name))).toBe(false);
-  for (const name of ['followup', 'open', 'dirty']) expect(existsSync(at(name))).toBe(true);
-}, 240_000);
-
-test.skipIf(process.platform === 'win32')(
-  'disk pressure level 3 keeps a worktree with no commits of its own that was active minutes ago, even with no pressure window',
-  async () => {
-    unscopedHome();
-    const { repo, worktrees } = repoWithMergedBranches({ registerWorktrees: false });
-    const at = (name: string) => worktrees[name] ?? name;
-    backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 1000));
-    backdateWorktreeActivity(at('reused'), new Date(Date.now() - 30 * 60_000));
-    upsertProject(at('reused'), { metroPort: null });
-    const logs = workspaceLogsDir(at('reused'));
-    mkdirSync(logs, { recursive: true });
-    chmodSync(logs, 0o000);
-    try {
-      const pressured = await planWorktrees({
-        protectedRoot: realpathSync.native(repo),
-        pinned: () => false,
-        now: Date.now(),
-        level: 3,
-        graceMs: 0,
-      });
-      const verdicts = Object.fromEntries(
-        (
-          await collectWorktreeSweep({
-            idle: false,
-            olderThan: null,
-            now: Date.now(),
-            graceMs: 0,
-            underPressure: true,
-          })
-        ).worktrees.map((w) => [w.path, w.skipCode]),
-      );
-      expect(pressured.actions.map((action) => action.target)).not.toContain(at('fresh'));
-      expect(pressured.actions.map((action) => action.target)).not.toContain(at('reused'));
-      expect(verdicts[at('fresh')]).toBe('recent-activity');
-      expect(verdicts[at('reused')]).toBe('activity-unknown');
-    } finally {
-      chmodSync(logs, 0o755);
-    }
-  },
-  240_000,
-);
-
-test('disk pressure level 3 keeps a worktree with no commits of its own that became active after the plan', async () => {
-  unscopedHome();
-  const { repo, worktrees, git } = gitRepoWithWorktrees(['fresh']);
-  git('remote set-head origin --auto');
-  upsertProject(repo, { metroPort: null });
-  recordWorkspaceUse(repo);
-  const at = (name: string) => worktrees[name] ?? name;
-  backdateWorktreeActivity(at('fresh'), new Date(Date.now() - 30 * 60_000));
-  const pressured = await planWorktrees({
-    protectedRoot: realpathSync.native(repo),
-    pinned: () => false,
-    now: Date.now(),
-    level: 3,
-    graceMs: 0,
-  });
-  expect(pressured.actions.map((action) => action.target)).toContain(at('fresh'));
-  backdateWorktreeActivity(at('fresh'), new Date());
-
-  const output = await captureLog(() => removeWorktrees(pressured.sweep));
-
-  expect(existsSync(at('fresh'))).toBe(true);
-  expect(output).toContain(`Kept the worktree ${at('fresh')}: recent activity: a git `);
 }, 240_000);
 
 test('gc keeps a merged worktree when the fetch fails, and when its HEAD moves after the report', async () => {

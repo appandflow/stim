@@ -19,7 +19,8 @@ Branch on the code, never on the message.`,
     STIM_HOSTING_REFUSED: {
       summary: 'a hosting Mac refused or could not confirm its native session; no fallback after reservation',
       body: () => `STIM_HOSTING_REFUSED
-  The message names the hosting Mac and its reason: unreachable, a changed
+  The message names the hosting Mac and its reason: unreachable, a Stim home
+  it cannot read (retry once the disk that holds it answers), a changed
   server key, a stim-server too old to speak protocol 2 (stim doctor names
   the update command), no installed simulator or emulator choice, no capacity, elevated or unknown
   memory pressure, or an unresolved reservation or delivery. Stim boots nothing
@@ -983,79 +984,67 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   \`lease: null\` in \`--json\`.`,
     },
     STIM_AT_CAPACITY: {
-      summary: 'owned-device slot wait timed out, or --no-wait reached the cap or queue',
+      summary: 'a build or boot waited past its queue ceiling, or --no-wait reached a cap or the queue',
       body: () => `STIM_AT_CAPACITY
-  Only when concurrency.maxDevices, concurrency.maxIosDevices or
-  concurrency.maxAndroidDevices is set (all unset by default). A boot must fit
-  its platform cap and concurrency.maxDevices; the message names the limit that
-  was full with its count and cap. New owned devices queue in FIFO order across $STIM_HOME for 600 seconds by default.
-  This refusal means the wait expired, or \`--no-wait\` / \`--wait 0\`
-  found the cap full or another run queued. The message gives the current
-  count and, on timeout, how long it waited. iOS waits beside its build,
-  so a rerun can reuse the artifact. A workspace's own booted or booting
-  device bypasses the queue. At the cap, the FIFO head shuts down the
-  longest-idle eligible owned device from another workspace, one per attempt,
-  at most once every 15 seconds, then rechecks capacity.
-  devices.reclaimIdleMinutes defaults to 10; 0 off. The same idle checks as supervisor shutdown (default 15 minutes) protect drivers,
-  locks, builds, viewers and recent activity. Reclaim excludes this workspace,
-  physical, hosted, remote, parked and other homes' devices and never deletes.
-  A failed reclaim is logged and skipped; the run keeps waiting.
+  Every native build and every boot of an owned device takes a slot: builds
+  under concurrency.maxBuilds (derived max(1, floor(CPU cores / 6)) when 0),
+  boots under concurrency.maxDevices (derived max(2, floor((RAM - 4 GB) / 1.5
+  GB)) when 0) and the per-platform caps, at most 2 boots at once, and no boot
+  while memory pressure is critical. A run past a cap waits in arrival order
+  per resource and prints its queue position every 10 seconds, and keeps
+  waiting while every holder ahead of it is alive. This code means it waited 90
+  minutes, a holder could not be verified (an unresolved slot claim, or a
+  device listing that fails) for max(10 minutes, position x 5 minutes) without
+  the run's position improving, a device wait outlived \`--wait <seconds>\`, or
+  \`--no-wait\` / \`--wait 0\` found a cap full or another run queued. The message names what it waited
+  for, who holds it and the queue. iOS waits for an existing simulator beside
+  its build, so a rerun can reuse the artifact; a run that creates its
+  simulator waits before it builds. While a run waits to boot at a full device
+  cap, the stim-daemon shuts down the longest-idle device of another workspace
+  idle 2 minutes, one per tick (\`guide lifecycle concurrency\`). A boot that
+  needs a new simulator or emulator creates it inside its slot.
   --remote remote-only (and macos.remote remote-only) has no local queue: when every
   approved host is full, loaded or short of memory it polls the hosts every 5 seconds
-  for the same wait (--wait, default 600 seconds) and then refuses with this code;
+  for 600 seconds or --wait and then refuses with this code;
   --no-wait and --wait 0 refuse at once. Builds under remote-only refuse with
   STIM_OFFLOAD_REFUSED instead.
-  Stop an environment (\`stim stop\`), pass a longer \`--wait <seconds>\`,
-  or raise the limit the message names (concurrency.maxDevices, or the
-  platform's concurrency.maxIosDevices / maxAndroidDevices). On a stim-server
-  worker the hosted offer and reserve name the full limit too, including
-  concurrency.maxMacosApps. With --remote auto, remote.machines and
-  the opt-in remote.easFallback (billed EAS Simulator) are tried before this
-  wait; \`stim logs --source placement\` says why neither took the run. Waiting prints holder names and elapsed
-  time; status JSON exposes build.waitingFor independently of phase.
-  Stats records capacityWaits for waits and capacityRefusals for this code.
-  See \`guide lifecycle concurrency\`.`,
+  Stop an environment (\`stim stop\`), retry once a build finishes, pass a
+  longer \`--wait <seconds>\`, or raise the limit the message names
+  (concurrency.maxBuilds, concurrency.maxDevices, or the platform's
+  concurrency.maxIosDevices / maxAndroidDevices). On a stim-server worker the
+  hosted offer and reserve name the full limit too, including
+  concurrency.maxMacosApps. With --remote auto, remote.machines and the opt-in
+  remote.easFallback (billed EAS Simulator) are tried before this wait;
+  \`stim logs --source placement\` says why neither took the run. Status JSON
+  exposes build.waitingFor with the position and resource, and daemon.waiting
+  lists every waiting run. Stats records capacityWaits for device waits and
+  capacityRefusals for this code. See \`guide lifecycle concurrency\`.`,
     },
     STIM_LOW_DISK: {
-      summary: 'free disk stayed below budget.hardFloorDiskGb after reclaiming',
+      summary: 'free disk stayed below disk.hardFloorGb after the pressure ladder ran',
       body: () => `STIM_LOW_DISK
   \`start\`, \`ios\` and \`android\` check free disk on the volumes holding
-  the app and $STIM_HOME before they build or boot anything. Below
-  budget.minFreeDiskGb (20 GB by default) they first reclaim what Stim can
-  prove idle (\`guide lifecycle budget\`). This code means a volume was still
-  below budget.hardFloorDiskGb (5 GB by default) afterwards, so the run
-  stopped instead of filling the disk. Nothing was built or booted.
+  the app and $STIM_HOME before they build or boot anything. Under
+  disk.hardFloorGb (5 GB by default) they first have the pressure
+  ladder run (\`guide lifecycle budget\`): idle workspaces, parked devices,
+  shared caches, dormant devices, node_modules and Pods of idle worktrees,
+  Gradle and TMPDIR leftovers. This code means a volume was still under the
+  hard floor afterwards, so the run stopped instead of filling the disk.
+  Nothing was built or booted.
 
   The message names the free space and the largest uses it could measure:
   Stim state, the shared build cache, simulators, Xcode DerivedData and
-  Android emulators. The \`--json\` payload lists what was already reclaimed
-  under \`reclaimed\`. To free more:
+  Android emulators. \`stim status\` shows the pressure level and
+  $STIM_HOME/daemon/daemon.ndjson what the ladder did. To free more:
 
-    stim gc                            # what else Stim can reclaim
-    stim gc --delete                   # clear idle workspace outputs, dead entries
-    stim gc --delete --cache all       # empty the shared caches
+    stim gc                            # what the ladder and gc would reclaim
+    stim gc --delete                   # run the ladder at high, prune dead entries
+    stim gc --delete --cache all       # the ladder at critical, empty the caches
     stim gc --delete --worktrees       # remove clean, idle worktrees
 
   Ask before deleting anything outside Stim, such as Xcode DerivedData or
-  simulators Stim did not create. Lowering budget.hardFloorDiskGb (0 never
+  simulators Stim did not create. Lowering disk.hardFloorGb (0 never
   refuses) only removes the protection.`,
-    },
-    STIM_BUILD_SLOT_TIMEOUT: {
-      summary: 'the maxBuilds wait gave up with every slot held by a running process',
-      body: () => `STIM_BUILD_SLOT_TIMEOUT
-  Only when concurrency.maxBuilds is set. The build cap does not refuse, it
-  WAITS -- this code is that wait giving up: ~90 minutes elapsed and every one
-  of the N slots was still held by a running process, or by a holder Stim could
-  not identify. A dead
-  builder's slot is reclaimed within a poll, and a recycled pid does not hold a
-  slot, so this is never a slot leaked by a crash; it is either that many
-  genuinely long compiles, or a slot directory whose owner is not really
-  building. A slot whose holder cannot be identified at all is skipped while any
-  other slot is merely busy, and becomes STIM_CLAIM_REFUSED only when no slot is
-  left to wait for. Slots live under ~/.stim/build-slots and
-  the message names the directory: remove the slot of a builder that is not
-  building, or raise concurrency.maxBuilds
-  (\`guide lifecycle concurrency\`).`,
     },
     STIM_NO_REMOTE_SESSION: {
       summary: 'the backend could not use agent-device, or metro.tunnel names an unusable provider',
@@ -1446,7 +1435,13 @@ captured"  (in metro.ndjson, bare RN)
   image that has it, or an sdkmanager install when none does.
   \`gc --json --cache <name>\` refuses with STIM_BAD_ARG when no shared cache
   carries the name; the remedy names the caches on this machine. \`gc\`
-  refuses --cache together with --worktrees the same way.
+  refuses --cache together with --worktrees the same way. \`stim settings
+  set\` and \`get\` refuse a removed setting, naming what replaced it, and
+  \`start\`, \`ios\`, \`android\`, \`web\`, \`macos\`, \`revive\` and \`gc\` refuse
+  while the environment sets a removed setting's variable, such as
+  STIM_MAINTENANCE, or a config file still holds a removed setting's old value
+  that turned something off; unset it, or set its replacement, such as
+  STIM_DAEMON or daemon.mode (\`guide settings\`, REMOVED SETTINGS).
   A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object
@@ -1795,7 +1790,7 @@ not on any remote"  (worktree remove)
   have, which is exactly what these carry warnings report.`,
     },
     environment: {
-      summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',
+      summary: 'npx registry E401/E404, the Node floor, no free Metro port',
       separator: '--- ENVIRONMENT ---',
       body: () => `"npm error code E401 / E404" while \`npx\` resolves the stim package
   The repo probably pins a private registry in \`.npmrc\`, so \`npx\` looked for
@@ -1813,11 +1808,7 @@ not on any remote"  (worktree remove)
 
 "Found no free Metro port between ..."
   200 consecutive ports are claimed or occupied. \`stim status\` shows what
-  Stim knows about; the rest is other software.
-
-"Could not reserve a Metro port after 5 attempts"
-  Several commands raced for the same ports and each one lost. Nothing is
-  wrong; retry.`,
+  Stim knows about; the rest is other software.`,
     },
     sandbox: {
       summary: 'running under a sandboxing harness: EPERM under STIM_HOME, CoreSimulatorService, adb',

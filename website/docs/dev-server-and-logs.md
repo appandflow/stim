@@ -102,50 +102,60 @@ An invalid pin still refuses with `STIM_BAD_ARG`. Release builds skip Metro.
 
 ## Idle stop
 
-A dev server holds about 450 MB. The supervisor stops it after
-[`metro.idleStopMinutes`](./settings.md#committed-settings) minutes, 15 by
-default, with no bundle request, no client log record and no Stim command
-(`start`, `ios`, `android`, `reload`, `revive`, `logs` or `worktree warm`) in the workspace. For
-Expo, every line the Expo CLI prints on stdout counts as a client log. The
-supervisor never stops the server while a bundle is still being served, while
-a build or another `stim ios`, `stim android` or `stim stop` runs in the
-workspace, while the workspace holds a device lock from `stim device lock` or
-a `--device` run, physical devices included, while one of the workspace's
-devices is driven, for example by agent-device, or its activity cannot be
-read, or while `stim start` is running. It checks all of this again just
-before it stops the server. On Windows, which has no `ps`, Stim does not look
-for host processes driving an Android device; the on-device check for UI
-Automator and instrumentation still applies. Set the value to `0` to keep the
-server running. A value that is not a whole number of 0 or more is refused, as
-`stim settings set` refuses it.
+A dev server holds about 450 MB, a booted simulator several GB, and a
+workspace's build outputs several more. Once a workspace has had no activity
+for [`idle.minutes`](./settings.md#stim-daemon) minutes, 15 by default, the
+per-home `stim-daemon` moves it into the idle stage in one pass: it stops the
+dev server and keeps its port, shuts down the workspace's owned simulators and
+emulators, and deletes its regenerable build outputs (its DerivedData and other
+workspace build directories, the in-tree `android/app/build`, `android/build`,
+`android/.gradle` and `.build` that git ignores, and the Metro transform store
+unless another running dev server shares it). `ios/build` stays, because
+`pod install` writes generated sources there.
 
-A Fast Refresh update is not a bundle request, and an app that is only
-connected does not count either. An app you edit with Fast Refresh for 15 minutes
-without reloading and without console output therefore counts as idle. Raise
-`metro.idleStopMinutes` for that workflow.
+Activity is the newest of:
 
-The stop is recorded in the timeline as `supervisor_idle_stopped`, and
-`stim status` shows the port as `stopped (idle)` instead of a crash. Unless
-`devices.idleShutdownMinutes` is `0`, the stop first shuts down the
-workspace's owned simulators and emulators idle for the shorter of
-`metro.idleStopMinutes` and `devices.idleShutdownMinutes`. From then on, device log lines no
-longer count as use of a device whose app loads its JavaScript from Metro: a
-Debug app cannot run without its dev server, and its reconnect attempts fill
-the device log. A Debug app's device therefore goes down with the dev server,
-even when `devices.idleShutdownMinutes` is longer than
-`metro.idleStopMinutes`. A phone app viewing the device through `stim-server`
-keeps it booted, and device logs still count for a Release or native-process
-launch, whose app runs without Metro. The `supervisor_idle_stopped` message
-names each device the stop shut down and why it kept any other, and
-`stim status` shows the device as `shut down ... (with Metro's idle stop)`.
-`stim revive` brings back the dev server, the device and the app. With
-`devices.idleShutdownMinutes` at `0`, the devices stay booted. The next `stim start` starts the server again, or reuses one that
-another process started, and clears that state. A Debug `stim ios` or
-`stim android` run starts it again too, and its JSON result reports
-`devServer: { "started": true, "reason": "stopped (idle)" }`. The setting is
-read when the supervisor is launched.
+- a Stim command in the workspace (`start`, `ios`, `android`, `reload`,
+  `revive`, `logs` or `worktree warm`) or the end of its native build;
+- a Metro bundle, manifest or HMR request;
+- an agent-device action on one of its devices;
+- an input a `stim-server` client (the phone app or Stim Desktop) sent to one
+  of its devices; a live view that only streams frames does not count;
+- a `stim device lock` lease on one of its devices, for as long as it lasts;
+- on macOS, your keyboard or mouse input within the last two minutes while
+  Simulator, Device Hub or one of its emulators' windows is frontmost. Device
+  Hub does not say which simulator it shows, so it counts for every booted
+  simulator the home owns, as Simulator does when it does not name its current
+  device.
 
-<StimTabs code={`stim settings set metro.idleStopMinutes 120 --scope workspace`} />
+Device logs, in-app console logs, dev server output and log file times never
+count, so a chatty app does not keep a workspace awake. Nothing is stopped
+while a bundle is being served, while a build or another `stim ios`,
+`stim android` or `stim stop` runs in the workspace, while one of its devices is
+driven, by an agent-device session too, or its activity cannot be read, while
+the simulator or emulator list cannot be read, while its owned Chrome or a
+hosted device runs, while a [web share](./share.md) of it is live, while
+`maintenance.keep` pins it, or while `stim start` is running. The daemon checks all of this again under the workspace's locks just
+before it acts. A dev server whose requests Stim cannot see, `metro.command`
+or an Expo SDK before 54, never stops for being idle. Set `idle.minutes` to
+`0` to keep everything running. Under disk or memory pressure the
+`stim-daemon`'s [pressure ladder](./build-caches.md#disk-pressure), and
+`stim gc --delete`, move every workspace idle 2 minutes or more into the idle
+stage without waiting for `idle.minutes`, except one whose `idle.minutes` is
+`0`.
+
+The stage is recorded in the timeline as `workspace_idle`, with the bytes it
+freed, and `stim status` shows `stage: idle` and the port as `stopped (idle)`
+instead of a crash. The next `stim start` starts the server again, or reuses
+one that another process started. A Debug `stim ios` or `stim android` run
+starts it again too, and its JSON result reports
+`devServer: { "started": true, "reason": "stopped (idle)" }`.
+
+With [`daemon.mode`](./settings.md#stim-daemon) `off`, or while no daemon
+runs, the dev server's own supervisor applies the same clock to itself and its
+devices, without deleting build outputs.
+
+<StimTabs code={`stim settings set idle.minutes 60 --scope workspace`} />
 
 ### Resume after an idle stop
 
@@ -169,13 +179,14 @@ the app's UI again and check stim logs --errors.
 
 ## Idle workspace stop
 
-Automatic maintenance, in its idle check every `maintenance.idleCheckMinutes`
-(5), and `stim gc --delete` while `maintenance.mode` is not `off`, stop a workspace whose dev server runs, whose
-owned simulator or emulator is booted, or whose device is hosted on a remote Mac once it has had no real activity for
-`maintenance.idleStopHours`: 6 hours by default, `0` never. Six hours outlasts
-a lunch break, a meeting or an agent's pause between tasks, and still frees the
-memory overnight. The setting takes machine and project layers, accepts
-fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+While [`daemon.mode`](./settings.md#stim-daemon) is `on`, automatic maintenance
+stops a workspace whose device is hosted on a remote Mac once it has had no
+real activity for `maintenance.idleStopHours`: 6 hours by default, `0` never.
+Six hours outlasts a lunch break, a meeting or an agent's pause between tasks,
+and still frees the memory overnight. The setting takes machine and project
+layers, accepts fractions, and `STIM_MAINTENANCE_IDLE_STOP_HOURS` overrides it.
+Every other workspace follows the [idle stop](#idle-stop) at `idle.minutes`
+instead.
 
 Real activity is the newest of:
 
@@ -185,8 +196,10 @@ Real activity is the newest of:
 - the start, progress or end of a Metro bundle or Expo manifest request, or an
   HMR update;
 - an agent-device command in the workspace's agent-device sessions;
-- an open live view of the device through stim-server, from Stim Desktop or
-  the phone app.
+- an input sent to the device through stim-server, from Stim Desktop or the
+  phone app;
+- on macOS, use of the device in the frontmost Simulator, Device Hub or
+  emulator window.
 
 Device and system log lines, in-app console logs, dev server output and
 maintenance's own records never count, and an app that only stays connected to
@@ -202,12 +215,11 @@ emulator's AVD name that Stim cannot read keeps the workspace. A stale offline
 emulator in `adb devices` has no readable AVD name; `adb kill-server` clears it. Maintenance logs each stop with the idle time and
 each workspace kept past the window with its reason (`stim logs --source maintenance`).
 The port is released, so `stim status` shows the workspace idle as after
-`stim stop`, and the timeline's `supervisor_stopped` line names automatic
-maintenance and the idle time as the requester. The next
+`stim stop`, and the timeline's `supervisor_stopped` line names the idle time
+and the requester, automatic maintenance. The next
 `stim start`, `stim ios` or `stim android` starts it again. A stop never
-targets the workspace of the command that started the pass, `stim gc --delete`
-included; a pass that a dev server supervisor or `stim status --watch` starts on
-its timer can stop its own workspace.
+targets the workspace of the command that started the pass; a pass the
+`stim-daemon` runs can stop any workspace.
 
 A workspace whose iOS, Android or macOS device is hosted on a remote Mac is
 stopped the same way, once the host confirms the session is `ready`. The stop
@@ -235,8 +247,8 @@ Try it with an agent:
 
 ```text
 Run `stim settings get maintenance.idleStopHours` and tell me after how many
-hours without activity Stim stops this workspace's dev server and simulator.
-If I am about to step away for longer, set it for this workspace only with
+hours without activity Stim stops this workspace while its device is hosted on
+a remote Mac. If I am about to step away for longer, set it for this workspace only with
 `stim settings set maintenance.idleStopHours <hours> --scope workspace`.
 ```
 
@@ -249,17 +261,13 @@ the workspace keeps its port. `stim stop` releases the port, so its own stops
 show only in the timeline. In `--json`, the environment's `metro.lastStop`
 carries it:
 
-| `reason`        | Meaning                                                                                                                                                                                                                                                         |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, `budget reclaim` from another workspace's run, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
-| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                                                                    |
-| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                                                                   |
-| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                                                                        |
-| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                                                                         |
-
-Budget reclaim stops idle dev servers of other workspaces when a
-`stim ios`, `stim android` or `stim start` run finds the machine over its
-disk or memory budget. See [machine settings](./settings.md#machine-settings).
+| `reason`        | Meaning                                                                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `requested`     | A Stim command stopped it. `by` names the command: `stim stop`, `stim worktree remove`, `stim gc --delete`, `stim start --reset-cache`, or `automatic maintenance` with its [idle reason](#idle-workspace-stop). |
+| `signal`        | A SIGTERM or SIGINT with no Stim stop request recorded, so it likely came from outside Stim.                                                                                                                     |
+| `server-exited` | The dev server exited on its own. Expo CLI also exits with code 0 on SIGTERM, so exit code 0 with no request usually means something outside Stim signalled the Expo process.                                    |
+| `idle`          | [Idle stop](#idle-stop).                                                                                                                                                                                         |
+| `vanished`      | The supervisor is gone and recorded no cause, usually because of SIGKILL, a crash or a machine restart. The next supervisor logs `supervisor_vanished`.                                                          |
 
 ## Watchman roots
 

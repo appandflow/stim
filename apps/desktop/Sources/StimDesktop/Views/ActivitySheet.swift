@@ -7,7 +7,6 @@ struct ActivitySheet: View {
   @EnvironmentObject private var actions: ActionCenter
   @Environment(\.dismiss) private var dismiss
   @State private var confirmingDelete = false
-  @State private var idleDuration: String?
   @State private var showsCommandOutput = false
   @State private var showsKept = false
 
@@ -244,9 +243,6 @@ struct ActivitySheet: View {
         Text("Closing keeps it running. Find it under Operations in the sidebar footer.").foregroundStyle(Palette.tertiary)
       }
       Spacer()
-      if case .success(let report) = report, run.command.arguments == ["gc", "--json"], !report.idleDevices.isEmpty {
-        idleMenu(report)
-      }
       if case .success(let report) = report, let deleteArguments {
         Button("Delete\u{2026}", role: .destructive) { confirmingDelete = true }
           .disabled(!report.actionable)
@@ -265,35 +261,6 @@ struct ActivitySheet: View {
           .buttonStyle(.stim(.primary))
       }
       Button("Close") { dismiss() }.keyboardShortcut(.cancelAction)
-    }
-  }
-
-  private func idleMenu(_ report: GcPreview) -> some View {
-    Menu("Shut Down Idle\u{2026}") {
-      ForEach(GcPreview.idleDurations, id: \.self) { duration in
-        let count = GcPreview.idleSeconds(duration).map { report.idleShutdownCount(atLeast: $0) } ?? 0
-        Button("Idle \(duration) or more (\(count))") { idleDuration = duration }
-          .disabled(count == 0)
-      }
-    }
-    .fixedSize()
-    .help("stim gc --idle <duration> shuts down owned devices with no driver or activity for that long. It never deletes them.")
-    .confirmationDialog(
-      "Shut Down Devices Idle \(idleDuration ?? "") or More?",
-      isPresented: Binding(get: { idleDuration != nil }, set: { if !$0 { idleDuration = nil } }),
-      titleVisibility: .visible
-    ) {
-      if let duration = idleDuration {
-        Button("Run stim gc --idle \(duration)") {
-          actions.run(
-            "Shut down idle devices", StimCommand(["gc", "--idle", duration, "--json"], cwd: run.command.cwd),
-            key: ActionCenter.machineKey)
-        }
-      }
-    } message: {
-      Text(
-        "Stim shuts down owned simulators and emulators idle that long, like stim stop: they stay assigned and boot again on the next run. It checks each device again first and keeps any that became busy."
-      )
     }
   }
 

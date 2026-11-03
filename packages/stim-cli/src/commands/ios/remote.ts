@@ -155,7 +155,7 @@ export async function selectIosPlacement(
   | (ReturnType<typeof resolveIosRemote> & {
       machine: string | null;
       auto?: { target: HostedIosTarget | null };
-      budget?: Awaited<ReturnType<IosDeps['budgetGate']>>;
+      budget?: Awaited<ReturnType<IosDeps['diskFloorGate']>>;
       devicePlacement?: DevicePlacement;
     })
   | { failure: FailArgs }
@@ -262,7 +262,7 @@ export async function selectIosPlacement(
       machine: placed.target?.host.machine ?? null,
       recorded: undefined,
       auto: { target: placed.target as HostedIosTarget | null },
-      budget: placed.target ? { reclaimed: [], refusal: null } : undefined,
+      budget: placed.target ? { refusal: null } : undefined,
       devicePlacement: placed.placement,
     };
   } catch (error) {
@@ -328,13 +328,12 @@ export async function iosPlacementBudget(
   root: string,
   note: (line: string) => void,
   hosted: boolean,
-  automatic?: Awaited<ReturnType<IosDeps['budgetGate']>>,
-  simSnapshot?: IosSimSnapshot,
+  automatic?: Awaited<ReturnType<IosDeps['diskFloorGate']>>,
   env?: NodeJS.ProcessEnv,
   onReclaim?: ReclaimObserver,
-): ReturnType<IosDeps['budgetGate']> {
+): ReturnType<IosDeps['diskFloorGate']> {
   if (automatic) return { ...automatic, refusal: hosted ? null : automatic.refusal };
-  return hosted ? { reclaimed: [], refusal: null } : d.budgetGate({ root, note, simSnapshot, env, onReclaim });
+  return hosted ? { refusal: null } : d.diskFloorGate({ root, note, env, onReclaim });
 }
 
 export function hostedIosMetroNote(

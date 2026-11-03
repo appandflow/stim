@@ -41,7 +41,6 @@ import {
 import { finishHostedIosRun } from './ios/hosted.ts';
 import type { CompilationCacheActivity, DevServerStart } from '../engine/build-facts.ts';
 import {
-  deviceReclaimIdleMinutesSetting,
   iosLanHostSetting,
   iosLanHostSettingError,
   iosSigningIdentitySetting,
@@ -76,7 +75,6 @@ import { COMPILATION_CACHE_NOT_RUN } from '../engine/xcode.ts';
 import { setRemoteLogSink } from '../remote-log.ts';
 import { parseBuildMachineOption } from '../offload/selection.ts';
 import type { NdjsonWriter } from '../ndjson.ts';
-import type { ReclaimedStep } from '../budget.ts';
 import { workspaceLogsDir } from '../workspace/paths.ts';
 import { recordWorkspaceUseAsync } from '../workspace/workspace-state.ts';
 import { printLightenedFailure, restoreLightenedDependencies } from '../workspace/lightened.ts';
@@ -188,7 +186,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--simulator-app <app>',
-      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
+      'Open the owned simulator in xcode, siniulator, or stim-desktop for this run, or none to open no viewer, overriding the machine iosSimulatorApp setting. Also opens an already running simulator; local simulators only.',
     )
     .option(
       '--device [udid]',
@@ -207,7 +205,7 @@ export function registerIos(program: Command, deps: Partial<IosDeps> = {}): void
     )
     .option(
       '--wait <seconds>',
-      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, wait for an owned-device slot (default 600 seconds; --no-wait refuses immediately).',
+      'How long to wait for another workspace to release the phone it leases, before refusing with STIM_DEVICE_BUSY (default 60, 0 refuses at once). Without --device, bound the owned-device slot wait; without --wait, a queued run waits while the devices ahead of it are listed, and refuses after 90 minutes or once the devices cannot be counted for max(10 minutes, position x 5 minutes) (--no-wait refuses immediately).',
     )
     .option(
       '--no-wait',
@@ -479,7 +477,6 @@ async function runIos(
   const recordRun = deviceWaitRun.record;
 
   let compilationCache: CompilationCacheActivity = COMPILATION_CACHE_NOT_RUN;
-  let reclaimed: ReclaimedStep[] = [];
   let buildMachine = 'auto';
   let devicePlacement: DevicePlacement | undefined;
   let builtConfiguration: string | null = null;
@@ -543,7 +540,6 @@ async function runIos(
           ...(devicePlacement ? { devicePlacement } : {}),
           ...(compilationCache.status === 'not-run' ? {} : { compilationCache }),
           ...(lease === undefined ? {} : { lease }),
-          ...(reclaimed.length ? { reclaimed } : {}),
         }),
       );
     }
@@ -648,7 +644,6 @@ async function runIos(
   const deviceSlotWait = {
     automatic: false,
     waitMs: deviceSlotWaitMs,
-    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     ...deviceWaitRun.policy,
     onWait: (ms: number) => {
       deviceWaitRun.policy.onWait?.(ms);
@@ -770,11 +765,9 @@ async function runIos(
       note,
       Boolean(hostedTarget),
       remoteSelection.budget,
-      simSnapshot,
       context.env,
       onReclaim,
     );
-    reclaimed = budget.reclaimed;
     if (budget.refusal) return fail(budget.refusal);
     const backendConnection = await connectIosBackend(root, remoteBackend, opts.deviceType, d, context.env, context);
     if ('failure' in backendConnection) return fail(backendConnection.failure);
@@ -865,7 +858,8 @@ async function runIos(
         platform: PLATFORM,
         project: proj,
         max: limits.maxDevices,
-        sims: () => simSnapshot.read().filter((sim) => sim.available),
+        sims: async () =>
+          (simSnapshot.readAsync ? await simSnapshot.readAsync() : simSnapshot.read()).filter((sim) => sim.available),
       });
       if (capacity) {
         const { max: fullMax, ...refusal } = capacity;
@@ -972,7 +966,6 @@ async function runIos(
           onReclaim,
           readState: d.readWorkspaceState,
         });
-        reclaimed = [...reclaimed, ...gate.reclaimed];
         if (!gate.ok) {
           return {
             ok: false,
@@ -1255,7 +1248,6 @@ async function runIos(
           closeWriter: () => writer?.close(),
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: true }),
-          reclaimed,
           devServer,
           fail,
           note,
@@ -1351,7 +1343,6 @@ async function runIos(
           releaseLease,
           devicePlacement,
           recordRun: (outcome) => recordRun({ ...outcome, remoteDevice: Boolean(remoteDevice) }),
-          reclaimed,
           devServer,
           enterPhase: progress.step,
           enterActivity: progress.activity,

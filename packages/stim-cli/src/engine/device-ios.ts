@@ -49,6 +49,7 @@ import {
   DeviceAdmissionRefusal,
   deviceTypeMismatch,
   runtimeMismatch,
+  uncreatedDeviceKey,
   withDeviceBootAdmission,
   type DeviceSlotWaitPolicy,
 } from './device-capacity.ts';
@@ -90,6 +91,29 @@ function recordBootPhase(record: IosBootRecorder, udid: string, origin?: IosBoot
   };
 }
 
+async function bootAdmittedIosSim(
+  udid: string,
+  configure: () => Promise<unknown>,
+  label: string,
+  out: Notify,
+  simulatorApp: IosSimulatorApp | undefined,
+  root: string,
+  slot: string | undefined,
+  origin: IosBootOrigin,
+): Promise<void> {
+  await requireOwnedIosSim(udid);
+  out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
+  await bootIosSim(udid, {
+    label,
+    out,
+    simulatorApp,
+    env: ambientContext()?.env,
+    onPhase: recordBootPhase(iosBootRecorder(root, slot, udid), udid, origin),
+  });
+  await configure();
+  await muteBootedSimulator(udid, out);
+}
+
 function startIosBoot(
   udid: string,
   configure: () => Promise<unknown>,
@@ -103,23 +127,43 @@ function startIosBoot(
 ): IosBoot {
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: udid },
-    async () => {
-      await requireOwnedIosSim(udid);
-      out(chalk.dim(phaseLine('device', `booting ${label} (${udid})`)));
-      await bootIosSim(udid, {
-        label,
-        out,
-        simulatorApp,
-        env: ambientContext()?.env,
-        onPhase: recordBootPhase(iosBootRecorder(root, slot, udid), udid, origin),
-      });
-      await configure();
-      await muteBootedSimulator(udid, out);
-    },
+    () => bootAdmittedIosSim(udid, configure, label, out, simulatorApp, root, slot, origin),
     { ...deviceSlotWait, root, out },
   );
   done.catch(() => {});
   return { udid, done };
+}
+
+type CreatedIosSim = Awaited<ReturnType<typeof createOwnedIosSim>>;
+
+async function createAndStartIosBoot(
+  create: () => Promise<CreatedIosSim>,
+  configure: (sim: CreatedIosSim) => Promise<unknown>,
+  out: Notify,
+  simulatorApp: IosSimulatorApp | undefined,
+  root: string,
+  slot: string | undefined,
+  deviceSlotWait?: DeviceSlotWaitPolicy,
+): Promise<{ sim: CreatedIosSim; booting: IosBoot }> {
+  let created!: (sim: CreatedIosSim) => void;
+  let failed!: (error: unknown) => void;
+  const creation = new Promise<CreatedIosSim>((resolve, reject) => {
+    created = resolve;
+    failed = reject;
+  });
+  const done = withDeviceBootAdmission(
+    { platform: 'ios', key: uncreatedDeviceKey() },
+    async (admitted) => {
+      const sim = await create();
+      admitted.rekey(sim.udid);
+      created(sim);
+      await bootAdmittedIosSim(sim.udid, () => configure(sim), sim.name, out, simulatorApp, root, slot, 'created');
+    },
+    { ...deviceSlotWait, root, out },
+  );
+  done.catch(failed);
+  const sim = await creation;
+  return { sim, booting: { udid: sim.udid, done } };
 }
 
 const SPRINGBOARD_MUTE_WAIT_MS = 60000;
@@ -344,26 +388,25 @@ export async function ensureOwnedIosDevice({
     return { ...adopted, booting, deviceType: choice.deviceType, runtime: choice.runtime };
   }
 
-  const created = await withIosDeviceNameLock(async () => {
-    const suffix = ownedIosNameSuffix(
-      label,
-      { model: choice.deviceType, runtime: choice.runtime },
-      projectPath,
-      undefined,
-      await listAllIosSimsAsync({ includeUnavailable: true }),
-    );
-    const result = await createOwnedIosSim(label, { suffix }, choice);
-    await withConfigLockAsync(() =>
-      setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot),
-    );
-    return result;
-  });
-  const newRecord = { deviceUdid: created.udid, owned: true, deviceName: created.name };
-  const booting = startIosBoot(
-    created.udid,
-    () =>
+  const { sim: created, booting } = await createAndStartIosBoot(
+    async () =>
+      await withIosDeviceNameLock(async () => {
+        const suffix = ownedIosNameSuffix(
+          label,
+          { model: choice.deviceType, runtime: choice.runtime },
+          projectPath,
+          undefined,
+          await listAllIosSimsAsync({ includeUnavailable: true }),
+        );
+        const result = await createOwnedIosSim(label, { suffix }, choice);
+        await withConfigLockAsync(() =>
+          setDevice(projectPath, 'ios', { deviceUdid: result.udid, owned: true, deviceName: result.name }, slot),
+        );
+        return result;
+      }),
+    (sim) =>
       configureOwnedIosSim({
-        record: newRecord,
+        record: { deviceUdid: sim.udid, owned: true, deviceName: sim.name },
         projectPath,
         slot,
         profile: simslimProfile,
@@ -372,16 +415,16 @@ export async function ensureOwnedIosDevice({
         out,
         reconcileIosSimulator,
       }),
-    created.name,
     out,
     flags.simulatorApp,
     projectPath,
     slot,
-    'created',
     flags.deviceSlotWait,
   );
   return {
-    ...newRecord,
+    deviceUdid: created.udid,
+    owned: true,
+    deviceName: created.name,
     created: true,
     booting,
     deviceType: created.deviceType,
@@ -723,8 +766,8 @@ async function bootOwnedIosSim({
   const record = iosBootRecorder(projectPath, slot, udid);
   const onPhase = recordBootPhase(record, udid, origin ?? (device.adoptionPending ? 'adopted' : 'existing'));
   const openViewer = async () => {
-    await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid);
-    onPhase({ phase: 'viewer_opened' });
+    if (await configuredIosSimulatorViewer(simulatorApp, ambientContext()?.env).open(udid))
+      onPhase({ phase: 'viewer_opened' });
   };
   const ready = async (): Promise<IosBootAttempt> => {
     try {

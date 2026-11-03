@@ -15,9 +15,17 @@
         <h1>Enter the password</h1>
         <p class="hint">The person who shared this app gave you one.</p>
         <input
-          type="password"
+          type="text"
           name="password"
+          class="secret"
           autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          data-1p-ignore
+          data-lpignore="true"
+          data-bwignore
+          data-form-type="other"
           autofocus
           required
           maxlength="128"
@@ -28,7 +36,10 @@
       </form>
     </main>
     <footer>
-      Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a>
+      <p class="credit">
+        Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by
+        <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">App &amp; Flow</a>
+      </p>
     </footer>
   </body>
 </html>
