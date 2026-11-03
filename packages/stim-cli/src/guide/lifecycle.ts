@@ -2283,7 +2283,14 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     4. dormant stage now: at high for workspaces idle 10 minutes, at critical
        for every idle one
     5. at critical only: node_modules and Pods of idle linked worktrees,
-       recorded so the next start, ios or android runs \`stim worktree warm\`
+       recorded so the next start, ios or android runs \`stim worktree warm\`.
+       Each one holding 256 MB or more of its own (private) bytes goes, most
+       first; a copy-on-write clone holding less frees almost nothing and is
+       kept, logged as kept. A tree whose private size is unknown (off APFS,
+       without the Command Line Tools, or not measured since its last
+       install) goes after the measured ones, longest-idle first. The daemon
+       measures each tree in the background, one walk at a time on the
+       machine, after its install changes and at least every 6 hours
     6. idle Gradle and Kotlin daemons, unpinned Gradle versions unmodified for
        maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for
        24 hours, and the worktree trash; automatic maintenance's daily sweep
@@ -2314,9 +2321,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
   simulators and emulators are deleted through centralized teardown (the
   parked pool is untouched) and its logs are archived when archive.enabled is
-  on. node_modules and Pods stay. \`stim status\` shows a dormant stage line,
-  and --json \`dormantStage\` { at, dormantDays, deletedDevices, archived },
-  until the next Stim command in it. When it deleted a device, the next
+  on. node_modules and Pods that hold 256 MB or more of their own (private)
+  bytes in a linked worktree are deleted, recorded for \`stim worktree warm\`,
+  and logged as dormant_dependencies; copy-on-write clones under that, and
+  trees whose private size is unknown, stay. \`stim status\` shows a dormant
+  stage line, and --json \`dormantStage\` { at, dormantDays, deletedDevices,
+  archived }, until the next Stim command in it. When it deleted a device, the next
   \`stim ios\` or \`stim android\` creates one; with none deleted, \`stim
   revive\` resumes the workspace while its dev server's idle stop survives.
 

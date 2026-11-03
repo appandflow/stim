@@ -17,15 +17,16 @@ import { ownedAvdDirectory } from '../devices/android.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { readParked } from '../devices/sim-pool.ts';
-import { restoreProblem, workspaceKeys } from '../workspace/lightened.ts';
+import { restoreProblem } from '../workspace/lightened.ts';
 import { formatBytes, measuredDirectorySizeAsync } from '../fs-util.ts';
 import { executeAction, type ActContext } from '../maintenance/act.ts';
-import { artifactWorktrees, clearArtifact, collectArtifactsAsync } from '../maintenance/artifacts.ts';
+import { artifactWorktrees } from '../maintenance/artifacts.ts';
 import { cacheBlocked } from '../maintenance/measure.ts';
-import { cacheEntryProtection, maintenancePinned } from '../maintenance/protect.ts';
+import { cacheEntryProtection } from '../maintenance/protect.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from '../maintenance/settings.ts';
 import { planRung6 } from '../maintenance/sweep.ts';
 import type { Config, ProjectRecord } from '../workspace/config.ts';
+import { clearDependency, rankDependencies, selectDependencies } from './dependencies.ts';
 import { idleOutputs, PRESSURE_IDLE_MS, writeWorkspaceEvent, type IdlePassInput } from './idle.ts';
 import {
   clearStoppedOutputs,
@@ -33,7 +34,6 @@ import {
   dormantCandidates,
   enterDormantStage,
   idleStageCandidates,
-  stillIdle,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -421,90 +421,81 @@ function canonicalOrNull(path: string): string | null {
 
 /**
  * Rung 5, at critical only: node_modules and Pods of linked worktrees whose workspace in this Stim home is idle 2
- * minutes by the activity definition with nothing running, longest-idle first, each recorded for `stim worktree warm`.
+ * minutes by the activity definition with nothing running, each recorded for `stim worktree warm`: those holding
+ * REAL_BYTES_THRESHOLD or more private bytes, most first, then those of unknown size, longest-idle first. A
+ * copy-on-write clone below the threshold is kept.
  */
 async function dependenciesRung(context: RungContext): Promise<void> {
   if (context.level !== 'critical') return;
   const idle = await idleStageCandidates(context.config, context, PRESSURE_IDLE_MS);
-  const rank = new Map(
-    idle.flatMap((candidate, index) => {
-      const key = canonicalOrNull(candidate.path);
-      return key ? [[key, index] as const] : [];
-    }),
-  );
-  if (!rank.size) return;
-  const options = {
-    now: Date.now(),
-    windowMs: 0,
-    protectedRoot: context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '',
-    pinned: maintenancePinned,
-  };
-  const found = await collectArtifactsAsync(
-    'dependencies',
-    options,
-    context.operation?.signal ?? new AbortController().signal,
-    context.operation,
-  );
-  const worktrees = artifactWorktrees();
-  const ranked = found.candidates
-    .flatMap((candidate) => {
-      const workspace = workspaceKeys(candidate.keys).find((key) => rank.has(canonicalOrNull(key) ?? ''));
-      return workspace ? [{ candidate, workspace, order: rank.get(canonicalOrNull(workspace) ?? '') ?? 0 }] : [];
-    })
-    .toSorted((a, b) => a.order - b.order);
+  const protectedRoot = context.protectedRoot ? (canonicalOrNull(context.protectedRoot) ?? '') : '';
+  const { take, kept } = selectDependencies(await rankDependencies(idle, protectedRoot, context.operation), 'take');
+  for (const { dependency, detail } of kept)
+    recordAction(
+      context,
+      {
+        rung: 5,
+        kind: 'delete-dependencies',
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
+        outcome: 'kept',
+        bytes: 0,
+        detail,
+      },
+      context.why,
+    );
+  const worktrees = take.length ? artifactWorktrees() : [];
   const restoreCache: Parameters<typeof restoreProblem>[1] = new Map();
-  for (const { candidate, workspace } of ranked) {
+  for (const dependency of take) {
     if (!(await context.stillShort())) return;
+    const why =
+      dependency.privateBytes === null
+        ? `${context.why}; its real size is unknown`
+        : `${context.why}; ${formatBytes(dependency.privateBytes)} of it is its own`;
     const plan: MaintenanceAction = {
       kind: 'would-delete-dependencies',
-      target: candidate.path,
-      bytes: 0,
-      reason: context.why,
-      workspace,
+      target: dependency.candidate.path,
+      bytes: dependency.privateBytes ?? 0,
+      reason: why,
+      workspace: dependency.workspace,
     };
     if (!context.act) {
-      const unrestorable = await restoreProblem(candidate, restoreCache, context.operation);
+      const unrestorable = await restoreProblem(dependency.candidate, restoreCache, context.operation);
       if (unrestorable)
         recordAction(
           context,
           {
             rung: 5,
             kind: 'delete-dependencies',
-            target: candidate.path,
-            workspace,
+            target: dependency.candidate.path,
+            workspace: dependency.workspace,
             outcome: 'kept',
             bytes: 0,
             detail: unrestorable,
           },
-          context.why,
+          why,
         );
-      else await run(context, plan, { restore: 'stim worktree warm', bytes: () => pathsBytes([candidate.path]) });
+      else
+        await run({ ...context, why }, plan, {
+          restore: 'stim worktree warm',
+          bytes: async () => dependency.privateBytes ?? (await pathsBytes([dependency.candidate.path])),
+        });
       continue;
     }
-    let result;
-    try {
-      result = await clearArtifact(plan, 'dependencies', {
-        ...options,
-        worktrees,
-        requireRestorable: true,
-        recheck: async (key) => ((await stillIdle(key, PRESSURE_IDLE_MS)) ? null : 'it is no longer idle'),
-      });
-    } catch (error) {
-      result = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
-    }
+    const result = await clearDependency(dependency, PRESSURE_IDLE_MS, protectedRoot, worktrees, why);
     recordAction(
       context,
       {
         rung: 5,
         kind: 'delete-dependencies',
-        target: candidate.path,
-        workspace,
+        target: dependency.candidate.path,
+        workspace: dependency.workspace,
         outcome: result.status,
         bytes: result.bytes,
         detail: result.detail,
         ...(result.status === 'done' ? { restore: 'stim worktree warm' } : {}),
       },
-      context.why,
+      why,
     );
   }
 }

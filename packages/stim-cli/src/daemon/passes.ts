@@ -11,6 +11,7 @@ import { createNdjsonWriter } from '../ndjson.ts';
 import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, requestDaemonTick } from './client.ts';
 import { commandWorkspace } from './command-workspace.ts';
+import { runDormantDependencies } from './dependencies.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
 import { idleOutputBytes, runLadder } from './ladder.ts';
@@ -93,6 +94,7 @@ export async function runHomePasses({
         );
   const reading = { devices: measured.devices, simsFailed: measured.sims === null };
   actions.push(...(await runDormantPass({ config, act, log, ...reading })));
+  actions.push(...(await runDormantDependencies({ config, act, log, ...reading })));
   if (config && pressure.level !== 'normal') {
     const ladder = await runLadder(
       {

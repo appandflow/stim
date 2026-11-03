@@ -100,7 +100,10 @@ function artifactWorktree(
   return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
-async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
+export async function artifactWorktreesAsync(
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
   for (const root of scopedRoots(await candidateRootsAsync(operation), operation?.env)) {
     signal.throwIfAborted();

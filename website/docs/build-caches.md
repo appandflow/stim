@@ -705,8 +705,18 @@ and above normal runs one ladder top-down until the level clears:
 | 2    | Parked simulators and emulators, oldest first, until the level clears                               | All parked devices                                                                                                      |
 | 3    | Build and Metro caches trimmed, least recently used first, to half their caps                       | Metro and Swift compilation caches emptied; build cache trimmed to the entries a workspace, parked device or build uses |
 | 4    | The dormant stage for workspaces idle 10 minutes                                                    | The dormant stage for every idle workspace                                                                              |
-| 5    | Nothing                                                                                             | `node_modules` and `ios/Pods` of idle linked worktrees, never the source checkout, restored by `stim worktree warm`     |
+| 5    | Nothing                                                                                             | `node_modules` and `ios/Pods` of idle linked worktrees holding 256 MB of their own, restored by `stim worktree warm`    |
 | 6    | Idle Gradle and Kotlin daemons, unpinned Gradle versions, TMPDIR leftovers, the worktree trash      | Same                                                                                                                    |
+
+Rung 5 never takes the source checkout. `stim worktree warm` clones
+`node_modules` and `ios/Pods` from the source checkout on APFS, and a clone
+shares its blocks, so deleting it frees almost nothing and costs a re-warm.
+The `stim-daemon` measures each tree's private bytes, the blocks no clone or
+outside hard link shares, in the background after its install changes. Rung 5
+deletes a tree holding 256 MB or more of its own, most first, and keeps and
+logs a clone under that. A tree it cannot size (off APFS, without the Command
+Line Tools, or not measured since its last install) is deleted after the
+measured ones, as before private sizes existed.
 
 Each rung measures free disk and memory again first, never touches a
 workspace with a build, a driver, a lease or lock, a live web share, a hosted
