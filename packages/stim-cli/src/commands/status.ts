@@ -209,10 +209,7 @@ function renderStatus(
   };
   const pools = (['ios', 'android'] as const).map((platform) => {
     const { max, error } = parkedMaxSetting(platform);
-    return {
-      error,
-      line: poolLine({ platform, parked: readParked(platform).length, max }),
-    };
+    return { error, line: poolLine({ platform, parked: readParked(platform).length, max }) };
   });
 
   const maintenance = maintenanceStatus();
@@ -439,9 +436,7 @@ export function runStatusWatch({
   let sources: StatusSources | null = null;
   let tablesAt = 0;
   let machineDue = false;
-  const measurer: StatusMeasurer = createStatusMeasurer({
-    updated: () => scheduler.trigger('light'),
-  });
+  const measurer: StatusMeasurer = createStatusMeasurer({ updated: () => scheduler.trigger('light') });
   const scheduler = createRefreshScheduler({
     debounceMs: WATCH_DEBOUNCE_MS,
     lightIntervalMs: WATCH_LIGHT_INTERVAL_MS,

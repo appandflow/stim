@@ -242,12 +242,7 @@ its reported load:
   "state": "approved",
   "offloadable": false,
   "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
-  "problems": [
-    {
-      "code": "stim-build",
-      "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
-    }
-  ],
+  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
   "capacity": {
     "running": 0,
     "max": 1,
@@ -1339,12 +1334,7 @@ atomically. A committed write keeps the file's other keys and indentation.
 ```json
 {
   "project": "/path/to/app",
-  "files": {
-    "machine": "...",
-    "workspace": "...",
-    "repo": "...",
-    "committed": "..."
-  },
+  "files": { "machine": "...", "workspace": "...", "repo": "...", "committed": "..." },
   "settings": [
     {
       "key": "ios.runtime",
@@ -1790,16 +1780,8 @@ one) carries `missReason`: why the cache had no app for it.
   "kind": "changed",
   "summary": "native dependency added: expo-clipboard",
   "changes": [
-    {
-      "source": "node_modules/expo-clipboard/ios",
-      "change": "added",
-      "category": "native-dependency"
-    },
-    {
-      "source": "expoAutolinkingConfig:ios",
-      "change": "changed",
-      "category": "autolinking"
-    }
+    { "source": "node_modules/expo-clipboard/ios", "change": "added", "category": "native-dependency" },
+    { "source": "expoAutolinkingConfig:ios", "change": "changed", "category": "autolinking" }
   ],
   "changeCount": 2,
   "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
@@ -2342,13 +2324,7 @@ prints, for example:
   "results": [],
   "sections": {
     "deadProjects": [{ "path": "/path/to/removed-app" }],
-    "orphanedWorkspaces": [
-      {
-        "dir": "~/.stim/workspaces/old--1a2b",
-        "projectRoot": "/path/to/old",
-        "bytes": 52428800
-      }
-    ],
+    "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
     "linkedWorktrees": [
       {
         "path": "/path/to/feature",
@@ -2450,11 +2426,7 @@ prints, for example:
         "dir": "/Users/example/.agent-device",
         "present": true,
         "bytes": 8192,
-        "sessions": {
-          "dir": "/Users/example/.agent-device/sessions",
-          "bytes": 4096,
-          "count": 1
-        },
+        "sessions": { "dir": "/Users/example/.agent-device/sessions", "bytes": 4096, "count": 1 },
         "logs": { "dir": "/Users/example/.agent-device/logs", "bytes": 4096 },
         "other": { "bytes": 0, "largest": [] }
       },
