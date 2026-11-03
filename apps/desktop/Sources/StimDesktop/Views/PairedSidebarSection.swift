@@ -37,6 +37,7 @@ struct PairedSidebarSection: View {
             } label: {
               PairedProjectRow(summary: tree.summary)
             }
+            .selectionDisabled()
           }
         case .none:
           ForEach(trees, id: \.summary.project) { tree in rows(tree.entries, subtitle: tree.summary.project.name) }

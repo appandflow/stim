@@ -293,7 +293,7 @@ right now is tried again, not reported as revoked.
 has one connection, and `StatusStore.usePairedServers` follows each one's status in memory. Below this Mac's
 projects, the sidebar gets a section per paired server: its name, connection dot, a **View Only** pill (**View and
 Control** for a `--control` pairing), and its
-workspaces with the same grouping and status filter as this Mac's. Hidden, expanded and collapsed state for those
+workspaces with the same grouping, status filter and row layout as this Mac's: the status sits beside the name when the whole name fits and on its own line below it otherwise. Hidden, expanded and collapsed state for those
 rows is kept in memory only, keyed by the owner and path, and this Mac's hidden paths never apply to them. A paired
 row opens a page: the status, the path as text, the agent and device lines with the machine each runs on
 ("Running on janics-mac-mini-2"), the build and where it compiles, and "Viewing floco · read-only" or "Controlled by
@@ -2108,7 +2108,7 @@ In a normal debug session, **Window > SwiftUI Playground** opens the same fixtur
 that session's main window keeps its normal live services. The standalone entry is the
 backend-free option. Release builds exclude the playground and its fixture seams, and refuse `--playground`.
 
-Choose live or archived Workspaces, Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
+Choose live or archived Workspaces, the Sidebar (this Mac's and a paired machine's projects at three sidebar widths), Notifications, Builds, Simulator controls, Settings or Design tokens. Each screen offers
 its applicable named scenarios: ready, loading, empty, error, long text and large data.
 Notifications includes 200 entries; Builds includes the retained maximum of 10 runs per platform. Local inboxes and fixed
 simulator forms omit loading/error or large-list scenarios that their production views do not have.
