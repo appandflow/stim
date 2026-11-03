@@ -47,8 +47,8 @@ stim share stop, stim stop and a stim-server restart end a share and its link
 stops working. stim share ios|android saves the link's 256-bit URL token and its
 passwords, in clear, in share-links.json in the workspace's directory under
 $STIM_HOME/workspaces (mode 0600; written when a share starts; deleted with the
-workspace, by stim share stop --forget, and when any stim share command in the
-workspace finds it expired). stim share ios|android --reuse starts that
+workspace, by stim share stop --forget, and when stim share, starting, reusing or
+stopping in the workspace, finds it expired). stim share ios|android --reuse starts that
 target's saved link again (--device and --slot pick the target) until it
 expires: the same URL token, passwords and setup, the same expiry. The control,
 view-only and password setup comes from the saved share, so --reuse with

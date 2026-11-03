@@ -248,10 +248,10 @@ export async function startShareServer(
 
 /**
  * Stops the stim-server `stim share` started for this Stim home, when it holds no share. A server started any other
- * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns the stopped pid once the
- * server has exited (waiting up to 15 seconds), so a share started next never meets a server that is stopping.
+ * way (Stim Desktop, the LaunchAgent, by hand) holds no such claim and is never stopped. Returns its pid and whether it exited,
+ * after waiting up to 15 seconds, so a share started next does not meet a server that is stopping.
  */
-export async function stopIdleShareServer(version: string): Promise<number | null> {
+export async function stopIdleShareServer(version: string): Promise<{ pid: number; exited: boolean } | null> {
   const holder = readClaimSet(shareServerPaths().claim).live[0];
   if (!holder) return null;
   try {
@@ -265,5 +265,5 @@ export async function stopIdleShareServer(version: string): Promise<number | nul
   while (pidExists(holder.owner.pid) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return holder.owner.pid;
+  return { pid: holder.owner.pid, exited: !pidExists(holder.owner.pid) };
 }

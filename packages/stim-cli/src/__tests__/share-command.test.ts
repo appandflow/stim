@@ -398,6 +398,39 @@ describe('stim share', () => {
       expect(deps.sent).toEqual([]);
     });
 
+    it('does not say the password was saved when saving the link failed', async () => {
+      mkdirSync(workspaceShareLinksFile('/work/app'), { recursive: true });
+      const deps = fake([started()]);
+      const result = await runShare('android', {}, deps, '1.0.0');
+      expect(deps.notes).toEqual([expect.stringContaining('could not save the link')]);
+      expect(result).toMatchObject({
+        ok: true,
+        text: expect.stringContaining('Password: generated-pw-1'),
+      });
+      expect(result).toMatchObject({ text: expect.stringContaining('shown only now') });
+      expect(JSON.stringify(result)).not.toMatch(/--reuse|--forget/);
+    });
+
+    it('keeps the saved links when stop --forget could not stop the shares', async () => {
+      const deps = fake([started(), () => ({ error: { code: 'bad-request', message: 'stim-server refused.' } })]);
+      await runShare('android', {}, deps, '1.0.0');
+      expect(await runShare('stop', { forget: true }, deps, '1.0.0')).toMatchObject({
+        ok: false,
+        error: { code: 'STIM_SHARE_REFUSED' },
+      });
+      expect(links()).toHaveProperty('android');
+    });
+
+    it('says when the stim-server it stopped has not exited yet', async () => {
+      const deps = fake([() => ({ result: { stopped: [ROW] } })]);
+      deps.stopServer = async () => ({ pid: 4242, exited: false });
+      expect(await runShare('stop', {}, deps, '1.0.0')).toMatchObject({
+        ok: true,
+        output: { stoppedServer: 4242, stillStopping: true },
+        text: expect.stringContaining('has not exited yet'),
+      });
+    });
+
     it('tells the person to update an older stim-server that does not take a saved link', async () => {
       const deps = fake([
         started(),

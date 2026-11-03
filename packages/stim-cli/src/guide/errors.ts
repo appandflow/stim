@@ -1201,7 +1201,7 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   stim share ios|android --reuse starts the link and passwords that this
   workspace last shared for that platform (and --slot, and --device) again, but
   there is none to start: no share was started from the CLI for that target, its
-  link expired (a saved link is never extended, and an expired one is removed),
+  link expired (an expired link is never used, and stim share removes it the next time it starts, reuses or stops),
   stim share stop --forget deleted it, or the workspace was removed. Nothing
   is shared and no new link is made. Run stim share ios|android without
   --reuse to start a new share. A share started from Stim Desktop is not saved.`,

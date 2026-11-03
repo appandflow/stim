@@ -202,8 +202,8 @@ stim share stop --forget                     # stop, and make the saved links un
 
 The saved links live in `share-links.json` in the workspace's directory under
 `$STIM_HOME/workspaces/`, readable only by you (mode 0600), written when a share
-starts and removed with the workspace (`stim worktree remove`), by `--forget`, and when a
-`stim share` command in the workspace finds them expired. They hold the link's 256-bit token
+starts and removed with the workspace (`stim worktree remove`), by `--forget`, and
+when `stim share` starts a share, reuses one or stops and finds them expired. They hold the link's 256-bit token
 and the passwords in clear, so anyone who can read your Stim home can start the
 share again until it expires. A share started from Stim Desktop is not saved.
 

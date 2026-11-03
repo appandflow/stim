@@ -92,14 +92,33 @@ describe('starting a stim-server for a share', () => {
       if (signal === 0 && exited) throw Object.assign(new Error('no such process'), { code: 'ESRCH' });
       return true;
     });
-    let stopped: number | null | undefined;
+    let stopped: Awaited<ReturnType<typeof stopIdleShareServer>> | undefined;
     void stopIdleShareServer('1.0.0').then((pid) => (stopped = pid));
     await vi.waitFor(() => expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM'));
     await vi.advanceTimersByTimeAsync(5000);
     expect(stopped).toBeUndefined();
     exited = true;
     await vi.advanceTimersByTimeAsync(100);
-    expect(stopped).toBe(process.pid);
+    expect(stopped).toEqual({ pid: process.pid, exited: true });
+    releaseClaim(claim.acquired);
+    await server.close();
+  });
+
+  it('says the server has not exited when it is still there after 15 s', async () => {
+    const server = await serveShareList(() => ({ shares: [] }));
+    const claim = tryAcquireClaim({
+      root: join(configDir(), 'server', 'share-server'),
+      mode: 'exclusive',
+      details: { port: 1 },
+    });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    let stopped: Awaited<ReturnType<typeof stopIdleShareServer>> | undefined;
+    void stopIdleShareServer('1.0.0').then((result) => (stopped = result));
+    await vi.waitFor(() => expect(kill).toHaveBeenCalledWith(process.pid, 'SIGTERM'));
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(stopped).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(stopped).toEqual({ pid: process.pid, exited: false });
     releaseClaim(claim.acquired);
     await server.close();
   });
