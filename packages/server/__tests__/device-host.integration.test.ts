@@ -123,6 +123,8 @@ if(input.mode === 'inspect') {
   writeFileSync(join(home,'hosted-device.json'),JSON.stringify(adopted));
   out({state:input.deviceType === 'adopt-failure'?'unknown':'ready',device:adopted});
 } else if(input.mode === 'resume') {
+  writeFileSync(join(home,'resume-entered'),String(process.pid));
+  while(existsSync(join(home,'hold-resume'))) await new Promise(resolve=>setTimeout(resolve,20));
   const stored=JSON.parse(readFileSync(join(home,'hosted-device.json'),'utf8'));
   if(existsSync(join(home,'unresumable'))) { out({state:'unknown',device:stored,notice:'the simulator is no longer Booted'}); process.exit(0); }
   out({state:'ready',device:stored});
@@ -983,6 +985,46 @@ describe('a hosted session across a server restart', () => {
       result: { state: 'unknown', notice: expect.stringContaining('interrupted by a server restart') },
     });
     expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('result');
+  });
+
+  test('refuses client requests until the resume verified the device, and a close then waits and still detaches it', async () => {
+    const { session, app } = await installed();
+    await host.close();
+    host = nextServer();
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+
+    expect(host.attach('client', { session: session.id })).toHaveProperty('result.state', 'unknown');
+    expect(host.appOffer('client', appOffer(session.id, 'app-second').params)).toHaveProperty('error');
+    expect(await host.metroOpen('client', { session: session.id })).toHaveProperty('error');
+    expect(host.appAttach('client', app.params)).toHaveProperty('result.state', 'installed');
+
+    const closing = host.close();
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await closing;
+    expect(readHostedSessions().find((record) => record.id === session.id)?.state).toBe('ready');
+    expect(modes(session.id)).not.toContain('stop');
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
+  });
+
+  test('a stop that began during the resume leaves its claim to the stop and starts no agent control', async () => {
+    const { session } = await installed();
+    await host.close();
+    host = nextServer();
+    agentCalls = [];
+    const workerHome = join(deviceHostArea(session.id), 'home');
+    writeFileSync(join(workerHome, 'hold-resume'), '');
+    const resuming = host.resumeSessions();
+    await vi.waitFor(() => expect(existsSync(join(workerHome, 'resume-entered'))).toBe(true));
+    host.stop('client', { session: session.id });
+    rmSync(join(workerHome, 'hold-resume'));
+    await resuming;
+    await state(session.id, 'stopped');
+    expect(agentCalls.filter(([kind]) => kind === 'running')).toEqual([]);
+    expect(readClaimSet(join(deviceHostRoot(), `${session.id}.claims`)).live).toHaveLength(0);
   });
 
   test('a session with an install in flight keeps the stop path on close', async () => {
