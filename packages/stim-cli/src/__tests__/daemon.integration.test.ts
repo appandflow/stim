@@ -271,7 +271,11 @@ test('doctor, and start, ios and android with no daemon holding the home, run au
       throw new Error('no daemon starts in this test');
     },
   });
-  onTestFinished(() => resetExecutor());
+  const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+  onTestFinished(() => {
+    platform.mockRestore();
+    resetExecutor();
+  });
   const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on' };
   delete env[HOME_PASSES_TEST_GUARD_ENV];
 
