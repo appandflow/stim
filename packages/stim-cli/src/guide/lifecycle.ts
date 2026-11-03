@@ -1240,13 +1240,14 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     device      stim-app-412 (BF2A..) created (2m14s)
 
-  On iOS that step does not wait the boot out. It creates the simulator, asks
-  it to boot, and hands the wait back, so the run fingerprints the native
-  inputs and resolves the build cache while \`simctl bootstatus\` is still
-  running; it joins the boot before it installs anything. The
-  \`device ... booted\` and \`fingerprint ...\` lines each report their own
-  elapsed time, and those two overlap -- adding every line up overstates the
-  run.
+  On iOS that step does not wait the boot out. A run that creates its
+  simulator first waits for a boot slot, and that wait is part of the step's
+  time. It creates the simulator, asks it to boot, and hands the wait back,
+  so the run fingerprints the native inputs and resolves the build cache
+  while \`simctl bootstatus\` is still running; it joins the boot before it
+  installs anything. The \`device ... booted\` and \`fingerprint ...\` lines
+  each report their own elapsed time, and those two overlap -- adding every
+  line up overstates the run.
 
   A step that is still running heartbeats every 30 seconds, on the 30-second
   grid, so the values read 30s, 1m00s, 1m30s and never repeat. A heartbeat

@@ -1642,7 +1642,8 @@ In `--json`, each environment carries `build`: `null`, or
 `{ platform, slot, state, phase, startedAt, phaseStartedAt, outcome, outcomeKnown, cacheLookupOutcome?, expectedMs, expectedPhaseMs, completedPhaseMs?, basis, plannedPhases }`.
 `phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
-owned simulator or emulator before the cache lookup counts as `prepare`.
+owned simulator or emulator before the cache lookup counts as `prepare`,
+including a new device's wait for a boot slot.
 `device` starts once the app is ready and covers waiting for the device (its
 boot, adoption cleanup, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's

@@ -1566,7 +1566,8 @@ RULES
                    pause during cleanup. wait is waiting on another
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
-                   before the cache lookup is prepare time. device starts
+                   before the cache lookup is prepare time, including a
+                   new device's wait for a boot slot. device starts
                    once the app is ready and covers waiting for the
                    device: its boot, adoption cleanup, or a physical
                    device's lease and connection check. A boot that
