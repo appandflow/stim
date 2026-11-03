@@ -186,11 +186,19 @@ struct AppPreferencesView: View {
       Section {
         Toggle("Automatically check for updates", isOn: $updater.automaticallyChecksForUpdates)
           .disabled(!updater.isAvailable)
+        Toggle("Get prerelease updates", isOn: $updater.prereleaseUpdates)
+          .disabled(!updater.isAvailable)
       } header: {
         Text("Updates")
       } footer: {
         if !updater.isAvailable {
           Text("This build has no update key, so it never checks for updates.").foregroundStyle(Palette.tertiary)
+        } else {
+          Text(
+            "Prereleases are notarized builds of every Desktop change on main, so they can be unfinished. "
+              + "Turning this off keeps the installed build until a newer stable release."
+          )
+          .foregroundStyle(Palette.tertiary)
         }
       }
 

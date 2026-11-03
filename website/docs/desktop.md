@@ -41,6 +41,23 @@ brew install --cask appandflow/tap/stim
   or use `npx stim`. The setup guide offers this optional installation.
 - Xcode 27 for live simulator screens.
 
+### Prerelease updates
+
+Every merge to `main` that changes Desktop also builds a notarized prerelease, so you can try a change
+before the next release. In **Settings > App > Updates**, turn on **Get prerelease updates**. Desktop then
+offers these builds like any update, and **Check for Updates...** includes them. The setting is off by
+default, and a stable build with it off never sees a prerelease. Turning it off later keeps the installed
+build until a newer stable release arrives. You can also download a prerelease from the
+[GitHub releases](https://github.com/appandflow/stim/releases) marked as such; a build downloaded that way
+starts with the setting on. A prerelease is versioned `0.3.0-next.<UTC commit time>.g<commit>`, can be
+unfinished, and is not offered through Homebrew or the **Download** button. Only the newest few are kept.
+
+Ask your agent to turn it on for you:
+
+```text
+Open Stim Desktop's Settings > App > Updates and turn on Get prerelease updates.
+```
+
 Setup fixes and device lease releases in the inbox run through the bundled local server. Doctor asks for confirmation before repairing project state.
 
 Hosted iOS simulators and Android emulators started with
