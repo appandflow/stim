@@ -448,6 +448,21 @@ it('subscribes again on a new host connection and keeps streaming to the same lo
   expect(local.inbox).toEqual([]);
 });
 
+it('fails at once, without retrying, when the host refuses this machine on the new connection', async () => {
+  const local = await client();
+  expect(await local.request('frames.subscribe', target())).toMatchObject({ result: { subscription: 's1' } });
+  await local.next();
+  helloError = 'This machine lost device-host access.';
+  const before = connections;
+  requests.find((request) => request.method === 'device-host.frames.subscribe')!.socket.terminate();
+  expect(await local.next()).toMatchObject({
+    event: 'error',
+    subscription: 's1',
+    error: { code: 'frames-failed', message: expect.stringContaining('lost device-host access') },
+  });
+  expect(connections).toBe(before + 1);
+});
+
 it('turns upstream close into one frames-failed event and drops the local subscription once the host session stopped', async () => {
   const local = await client();
   const reply = await local.request('frames.subscribe', target());

@@ -563,8 +563,10 @@ export class HostedRelay {
             if ('error' in again) throw hostError(again.error);
             if (!isJsonObject(again.result) || typeof again.result.subscription !== 'string')
               throw new Error('the host sent no subscription');
-            if ((again.result.video === 'h264') !== (videoMode === 'h264'))
+            if ((again.result.video === 'h264') !== (videoMode === 'h264')) {
+              this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
               throw new FatalHostError('the host streams another video format now');
+            }
             if (!this.frames.has(subscription) || this.closed)
               return this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
             leased = next;
