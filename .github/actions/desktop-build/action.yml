@@ -1,0 +1,259 @@
+name: Build, sign and notarize Stim Desktop
+description: >-
+  Builds the universal app, signs it with the Developer ID certificate, notarizes it and writes the
+  Sparkle update item. The caller checks out the commit to build with full history and publishes the
+  result. Used by the desktop-release and desktop-next workflows.
+
+inputs:
+  version:
+    description: The app's CFBundleShortVersionString.
+    required: true
+  tag:
+    description: The GitHub release tag the Sparkle item links to.
+    required: true
+  channel:
+    description: The Sparkle channel of the item. Empty for the stable channel.
+    required: false
+    default: ''
+  appcast-url:
+    description: The appcast's own URL.
+    required: true
+  sparkle-public-ed-key:
+    description: The public half of the Sparkle EdDSA key.
+    required: false
+    default: ''
+  sentry-dsn:
+    description: The Sentry DSN written into the bundle.
+    required: false
+    default: ''
+  cert-p12-base64:
+    description: The Developer ID Application certificate as a base64 .p12.
+    required: false
+    default: ''
+  cert-password:
+    description: The password of that .p12.
+    required: false
+    default: ''
+  provisioning-profile-base64:
+    description: The Developer ID provisioning profile with Associated Domains, base64.
+    required: false
+    default: ''
+  asc-key-p8-base64:
+    description: The App Store Connect API key, base64.
+    required: false
+    default: ''
+  asc-key-id:
+    description: The App Store Connect key ID.
+    required: false
+    default: ''
+  asc-issuer-id:
+    description: The App Store Connect issuer ID.
+    required: false
+    default: ''
+  sparkle-ed-private-key:
+    description: The private EdDSA key that signs the update.
+    required: false
+    default: ''
+  sentry-auth-token:
+    description: The Sentry auth token for the dSYM upload.
+    required: false
+    default: ''
+  sentry-org:
+    description: The Sentry organization slug.
+    required: false
+    default: ''
+  sentry-project:
+    description: The Sentry Desktop project slug.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Select Xcode
+      shell: bash
+      run: sudo xcode-select -s /Applications/Xcode_26.3.app
+
+    - name: Show the toolchain
+      shell: bash
+      run: |
+        xcodebuild -version
+        swift --version
+
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+      with:
+        node-version: 22
+        package-manager-cache: false
+
+    - uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+      with:
+        cache: false
+        install: false
+
+    - name: Install the bundled server's workspace packages (lifecycle scripts stay blocked)
+      shell: bash
+      run: pnpm install --frozen-lockfile --filter '@stim-cli/server...' --filter stim-monorepo
+
+    - name: Build before any secret is loaded
+      shell: bash
+      working-directory: apps/desktop
+      env:
+        SPARKLE_PUBLIC_ED_KEY: ${{ inputs.sparkle-public-ed-key }}
+        STIM_DESKTOP_SENTRY_DSN: ${{ inputs.sentry-dsn }}
+      run: |
+        DESKTOP_SERVER_RUNTIME="$GITHUB_WORKSPACE/apps/desktop/.build/stim-server"
+        echo "DESKTOP_SERVER_RUNTIME=$DESKTOP_SERVER_RUNTIME" >> "$GITHUB_ENV"
+        node scripts/server-runtime.mjs "$DESKTOP_SERVER_RUNTIME" --universal
+        scripts/bundle.sh --universal --release --server "$DESKTOP_SERVER_RUNTIME"
+
+    - name: Import the Developer ID certificate
+      shell: bash
+      env:
+        CERT_P12_BASE64: ${{ inputs.cert-p12-base64 }}
+        CERT_PASSWORD: ${{ inputs.cert-password }}
+      run: |
+        if [ -z "$CERT_P12_BASE64" ] && [ -z "$CERT_PASSWORD" ]; then
+          echo "::notice::DESKTOP_CERT_P12_BASE64 and DESKTOP_CERT_PASSWORD are not set; the app is signed ad hoc."
+          exit 0
+        fi
+        if [ -z "$CERT_P12_BASE64" ] || [ -z "$CERT_PASSWORD" ]; then
+          echo "::error::Set both DESKTOP_CERT_P12_BASE64 and DESKTOP_CERT_PASSWORD, or neither."
+          exit 1
+        fi
+        keychain="$RUNNER_TEMP/desktop-signing.keychain-db"
+        keychain_password=$(openssl rand -base64 32)
+        security create-keychain -p "$keychain_password" "$keychain"
+        echo "DESKTOP_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+        security set-keychain-settings -lut 21600 "$keychain"
+        security unlock-keychain -p "$keychain_password" "$keychain"
+        printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/desktop-cert.p12"
+        security import "$RUNNER_TEMP/desktop-cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+        rm -f "$RUNNER_TEMP/desktop-cert.p12"
+        security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+        security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+        identity=$(security find-identity -v -p codesigning "$keychain" | awk '/"Developer ID Application: / { print $2; exit }')
+        if [ -z "$identity" ]; then
+          echo "::error::DESKTOP_CERT_P12_BASE64 holds no valid Developer ID Application identity."
+          exit 1
+        fi
+        echo "DESKTOP_SIGNING_IDENTITY=$identity" >> "$GITHUB_ENV"
+
+    - name: Install the Associated Domains profile
+      if: env.DESKTOP_SIGNING_IDENTITY != ''
+      shell: bash
+      env:
+        PROFILE_BASE64: ${{ inputs.provisioning-profile-base64 }}
+      run: |
+        if [ -z "$PROFILE_BASE64" ]; then
+          echo "::error::Set DESKTOP_PROVISIONING_PROFILE_BASE64 to a Developer ID profile for dev.stim.desktop with Associated Domains enabled."
+          exit 1
+        fi
+        profile="$RUNNER_TEMP/desktop.provisionprofile"
+        printf '%s' "$PROFILE_BASE64" | base64 --decode > "$profile"
+        echo "DESKTOP_PROVISIONING_PROFILE=$profile" >> "$GITHUB_ENV"
+
+    - name: Write the App Store Connect API key
+      shell: bash
+      env:
+        KEY_P8_BASE64: ${{ inputs.asc-key-p8-base64 }}
+        KEY_ID: ${{ inputs.asc-key-id }}
+        ISSUER_ID: ${{ inputs.asc-issuer-id }}
+      run: |
+        if [ -z "$KEY_P8_BASE64" ] && [ -z "$KEY_ID" ] && [ -z "$ISSUER_ID" ]; then
+          echo "::notice::ASC_KEY_P8_BASE64, ASC_KEY_ID and ASC_ISSUER_ID are not set; the app is not notarized."
+          exit 0
+        fi
+        if [ -z "$KEY_P8_BASE64" ] || [ -z "$KEY_ID" ] || [ -z "$ISSUER_ID" ]; then
+          echo "::error::Set all of ASC_KEY_P8_BASE64, ASC_KEY_ID and ASC_ISSUER_ID, or none."
+          exit 1
+        fi
+        dir="$RUNNER_TEMP/asc"
+        mkdir -p "$dir"
+        chmod 700 "$dir"
+        printf '%s' "$KEY_P8_BASE64" | base64 --decode > "$dir/AuthKey_$KEY_ID.p8"
+        chmod 600 "$dir/AuthKey_$KEY_ID.p8"
+        {
+          echo "ASC_KEY_PATH=$dir/AuthKey_$KEY_ID.p8"
+          echo "ASC_KEY_ID=$KEY_ID"
+          echo "ASC_ISSUER_ID=$ISSUER_ID"
+        } >> "$GITHUB_ENV"
+
+    - name: Install sentry-cli for the dSYM upload
+      shell: bash
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_PROJECT: ${{ inputs.sentry-project }}
+      run: |
+        if [ -z "$SENTRY_AUTH_TOKEN" ]; then
+          echo "::notice::SENTRY_AUTH_TOKEN is not set; no dSYM is uploaded to Sentry."
+          exit 0
+        fi
+        if [ -z "$SENTRY_ORG" ] || [ -z "$SENTRY_PROJECT" ]; then
+          echo "::error::SENTRY_AUTH_TOKEN is set; also set the SENTRY_ORG and SENTRY_DESKTOP_PROJECT variables."
+          exit 1
+        fi
+        npm install --global @sentry/cli@3.8.0
+
+    - name: Build, sign and notarize
+      shell: bash
+      working-directory: apps/desktop
+      env:
+        VERSION: ${{ inputs.version }}
+        SPARKLE_PUBLIC_ED_KEY: ${{ inputs.sparkle-public-ed-key }}
+        STIM_DESKTOP_SENTRY_DSN: ${{ inputs.sentry-dsn }}
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_PROJECT: ${{ inputs.sentry-project }}
+      run: scripts/release.sh "$VERSION"
+
+    - name: Sign the update for Sparkle
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        TAG: ${{ inputs.tag }}
+        CHANNEL: ${{ inputs.channel }}
+        APPCAST_URL: ${{ inputs.appcast-url }}
+        SPARKLE_PUBLIC_ED_KEY: ${{ inputs.sparkle-public-ed-key }}
+        SPARKLE_ED_PRIVATE_KEY: ${{ inputs.sparkle-ed-private-key }}
+        SPARKLE_VERSION: 2.10.0
+        SPARKLE_SHA256: c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
+      run: |
+        if [ -z "$SPARKLE_ED_PRIVATE_KEY" ] && [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+          echo "::notice::SPARKLE_ED_PRIVATE_KEY and SPARKLE_PUBLIC_ED_KEY are not set; the app does not check for updates and no appcast is generated."
+          exit 0
+        fi
+        if [ -z "$SPARKLE_ED_PRIVATE_KEY" ] || [ -z "$SPARKLE_PUBLIC_ED_KEY" ]; then
+          echo "::error::Set both the SPARKLE_ED_PRIVATE_KEY secret and the SPARKLE_PUBLIC_ED_KEY variable, or neither."
+          exit 1
+        fi
+        archive="$RUNNER_TEMP/Sparkle-$SPARKLE_VERSION.tar.xz"
+        curl -fsSL --retry 3 -o "$archive" \
+          "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+        echo "$SPARKLE_SHA256  $archive" | shasum -a 256 -c -
+        mkdir -p "$RUNNER_TEMP/sparkle"
+        tar -xJf "$archive" -C "$RUNNER_TEMP/sparkle"
+        out=apps/desktop/build/release
+        zip="$out/Stim-$VERSION.zip"
+        plist=apps/desktop/build/Stim.app/Contents/Info.plist
+        signature=$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$RUNNER_TEMP/sparkle/bin/sign_update" --ed-key-file - -p "$zip")
+        length=$(stat -f %z "$zip")
+        build=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$plist")
+        minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$plist")
+        base="https://github.com/$GITHUB_REPOSITORY/releases"
+        channel_line=
+        if [ -n "$CHANNEL" ]; then channel_line="<sparkle:channel>$CHANNEL</sparkle:channel>"; fi
+        cat > "$out/appcast-item.xml" <<EOF
+        <item>
+          <title>$VERSION</title>
+          <pubDate>$(date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>
+          <link>$base/tag/$TAG</link>
+          <sparkle:version>$build</sparkle:version>
+          <sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>
+          $channel_line
+          <sparkle:minimumSystemVersion>$minimum</sparkle:minimumSystemVersion>
+          <enclosure url="$base/download/$TAG/Stim-$VERSION.zip" length="$length" type="application/octet-stream" sparkle:edSignature="$signature"/>
+        </item>
+        EOF
+        node scripts/desktop-appcast.mjs merge --item "$out/appcast-item.xml" --link "$APPCAST_URL" --out "$out/appcast.xml"
+        cat "$out/appcast.xml"
