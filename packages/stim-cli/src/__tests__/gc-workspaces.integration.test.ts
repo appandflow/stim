@@ -494,6 +494,18 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
+  const claims = join(tmpHome, 'build-claims');
+  plantClaim(claims, 'exclusive', liveClaimOwner(), { claimId: 'build-1' });
+  const at = new Date().toISOString();
+  writeWorkspaceState(busy.root, {
+    activeBuild: {
+      platform: 'ios',
+      phase: 'compile',
+      startedAt: at,
+      phaseStartedAt: at,
+      claim: { root: claims, claimId: 'build-1' },
+    },
+  });
 
   const preview = (await gcJson({ olderThan: 3 })).payload;
   expect(preview.results).toEqual([]);
@@ -513,6 +525,7 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   expect(preview.ladder.workspaces).toContainEqual(
     expect.objectContaining({ path: stale.root, stage: 'stopped', since: expect.any(String) }),
   );
+  expect(preview.ladder.workspaces).toContainEqual(expect.objectContaining({ path: busy.root, stage: 'running' }));
   for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
   const { payload } = await gcJson({ olderThan: 3, delete: true });
 

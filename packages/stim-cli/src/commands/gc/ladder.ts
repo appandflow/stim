@@ -10,6 +10,7 @@ import {
 } from '@stim-cli/core/state';
 import { formatLongDuration } from '../../command-output.ts';
 import { runForcedLadder } from '../../daemon/passes.ts';
+import { ACTIVE_BUILD_KEY, activeBuildState, parseActiveBuild } from '../../engine/build-progress.ts';
 import { formatBytes } from '../../fs-util.ts';
 import { loadConfig } from '../../workspace/config.ts';
 import { readWorkspaceState } from '../../workspace/workspace-state.ts';
@@ -61,6 +62,8 @@ function workspaceStages(paths: readonly string[], running: readonly DaemonWorks
         ...(decision.outcome === 'kept' ? { kept: decision.detail } : {}),
       };
     const state = readWorkspaceState(path);
+    const build = parseActiveBuild(state?.[ACTIVE_BUILD_KEY]);
+    if (build && activeBuildState(build.claim) === 'running') return { path, stage: 'running', since: null };
     const dormant = currentStage(state, readDormantStage(state));
     if (dormant) return { path, stage: 'dormant', since: dormant.at };
     const idle = currentStage(state, readIdleStage(state));
