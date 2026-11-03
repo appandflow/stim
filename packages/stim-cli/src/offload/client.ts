@@ -92,7 +92,6 @@ const RESUME_DELAY_MS = 2000;
 const RESUME_MAX_DELAY_MS = 15_000;
 /** What `build.attach` answers for a job its stim-server does not hold, which is the case after the server restarted. */
 const BUILD_JOB_UNKNOWN = /No such build job/;
-/** How often one build starts again on its machine after that machine's stim-server lost the job. */
 const MAX_WORKER_RESTARTS = 2;
 const PAGE_BYTES = 48 * 1024;
 const CHUNK_BYTES = 60 * 1024;
@@ -822,7 +821,7 @@ function nativeTransferInput(
 }
 
 type MachineProbe =
-  | { credential: BuildMachineCredential; failure: string }
+  | { credential: BuildMachineCredential; failure: string; refused?: boolean }
   | { credential: BuildMachineCredential; connection: BuildConnection; offer: BuildOffer };
 
 /** Connects to one paired machine and asks it for an offer; the caller closes the connection it returns. */
@@ -848,7 +847,8 @@ async function probeMachine(
     'build',
     reportSignal(ambientContext()),
   );
-  if (!(connection instanceof BuildConnection)) return { credential, failure: connection.failure };
+  if (!(connection instanceof BuildConnection))
+    return { credential, failure: connection.failure, refused: connection.refused };
   if (identity.native && !connection.supports(NATIVE_BUILD_FEATURE[identity.native])) {
     connection.close();
     return { credential, failure: unsupportedNative(identity.native) };
@@ -1572,7 +1572,6 @@ export async function offloadBuild(
     note: (line: string) => void;
     /** The fingerprint sources behind `expectedFingerprint` and the gitignored files they read, as absolute paths. */
     fingerprintInputs?: () => Promise<FingerprintInputs>;
-    /** How often this build already started again after its machine's stim-server restarted. */
     restarts?: number;
   } & (
     | { request: Extract<BuildRequest, { platform: 'macos' }>; expectedFingerprint?: never }
@@ -1617,13 +1616,14 @@ export async function offloadBuild(
     const deadline = Date.now() + RESUME_WINDOW_MS;
     let delay = RESUME_DELAY_MS;
     let probe = await probeAgain();
-    while ('failure' in probe && Date.now() + delay < deadline) {
+    while ('failure' in probe && !probe.refused && Date.now() + delay < deadline) {
       if (!patient) break;
       await wait(delay, undefined, { signal }).catch(() => {});
       checkCancelled();
       delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
       probe = await probeAgain();
     }
+    checkCancelled();
     if ('failure' in probe) return fail(probe.failure);
     const placement = pickOffer({
       here: choice.here,
