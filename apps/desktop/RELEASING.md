@@ -43,14 +43,15 @@ The workflow, `.github/workflows/desktop-release.yml`:
 2. Runs `apps/desktop/scripts/release.sh <version>`, which builds, signs,
    notarizes and staples the app, then writes `Stim-<version>.dmg`,
    `Stim-<version>.zip` and `SHA256SUMS` to `apps/desktop/build/release`.
-3. Signs the zip with the Sparkle EdDSA key and writes `appcast.xml`.
+3. Signs the zip with the Sparkle EdDSA key and writes the appcast item.
 4. Uploads everything as a workflow artifact.
 5. Creates the `desktop-v<version>` GitHub release, never marked as the
    repository's latest release, and attaches the DMG, the zip and
    `SHA256SUMS`. A version with a prerelease suffix is marked as a prerelease.
 6. For a stable version only, unless `desktop-latest` already serves a newer
-   build: uploads `Stim.dmg` and `appcast.xml` to the `desktop-latest` release
-   and bumps the Homebrew cask.
+   build: uploads `Stim.dmg` to the `desktop-latest` release, replaces the stable
+   item of its `appcast.xml` while keeping the [next channel](#next-channel)
+   items that are newer, and bumps the Homebrew cask.
 7. Deletes the keychain and the key file.
 
 A tag push stops before step 5 when the build is not Developer ID signed and
@@ -69,6 +70,56 @@ replaces its assets on every stable release:
 
 The `desktop-latest` tag stays on the commit of the first stable release; its
 notes name the release its assets came from.
+
+## Next channel
+
+Every merge to `main` that changes Desktop also publishes a notarized prerelease on the Sparkle `next`
+channel, so testers get Desktop changes without waiting for a `desktop-v*` tag. The `Desktop next` workflow,
+`.github/workflows/desktop-next.yml`, runs the same build steps as the stable workflow through the shared
+composite action `.github/actions/desktop-build`.
+
+- **Trigger.** A push to `main` that changes `apps/desktop/**`, the composite action or the workflow. An
+  hourly schedule is the safety net, and Actions -> Desktop next -> Run workflow with `publish` set on
+  `main` builds the head without waiting for the throttle. Every run first checks that Desktop changed
+  since the newest published build, the newest stable tag or the newest next item in the appcast, whichever
+  is later, so a run with no Desktop change builds nothing. It builds the head of `main` at the time it runs,
+  once that head passed the merge queue's `merge gate`, or the CI release-gate jobs for a push that
+  bypassed the queue, and skips a head that is already in the appcast.
+- **Throttle.** A cheap Linux job waits until 30 minutes (`DESKTOP_NEXT_THROTTLE_MINUTES`) after the newest
+  next prerelease was published, then the macOS job builds whatever is the head of `main` then. GitHub keeps
+  one run active and one pending under the workflow's own concurrency group, so a burst of merges queues at
+  most one build, and a pending stable release is never replaced because the stable workflow has another
+  group. The notarization of a build takes minutes of a macOS runner, which is the cost of each build.
+- **Version.** `<next minor of the newest stable desktop-v tag>-next.<UTC commit time>.g<short sha>`, so
+  `0.3.0-next.20261103170000.gabc1234` while `0.2.16` is the newest stable release. `CFBundleVersion` is the
+  commit count of the built head, which is above the stable build tagged before it, so Sparkle ranks the
+  prerelease above that stable build and a later stable release above the prerelease.
+- **Publish.** The job creates the GitHub prerelease `desktop-next-<version>` (marked prerelease, never the
+  repository's latest) with the DMG, the zip and `SHA256SUMS`, then adds an item with
+  `<sparkle:channel>next</sparkle:channel>` to the appcast on `desktop-latest`. It never changes the stable
+  item, `Stim.dmg` or the Homebrew cask. The tag does not start with `desktop-v`, so the repository's
+  `release tags` ruleset, which forbids deleting `desktop-v*` tags, does not apply to it and the job can
+  delete old ones. A build that is not Developer ID signed and notarized, or has no appcast item, publishes
+  nothing.
+- **Pruning.** The appcast keeps the newest five next items (`DESKTOP_NEXT_KEEP`), dropping those a stable
+  release supersedes, and the job deletes older `desktop-next-*` prereleases and their tags.
+  `scripts/desktop-appcast.mjs` does the merge for both workflows, so a stable release keeps the next items
+  that are still newer than it. `scripts/desktop-publish-appcast.sh` uploads the merged file and merges again
+  when another run replaced the appcast in between.
+- **In the app.** Sparkle offers a `next` item only to a build that returns `next` from
+  `allowedChannels(for:)`: **Settings > App > Updates > Get prerelease updates**, off by default and on for a
+  build whose version contains `-next.`. A stable build with it off never sees one. Turning it off keeps the
+  installed prerelease until a newer stable release. A prerelease is a candidate only for a build with a
+  lower commit count, so a stable release tagged at a commit older than the newest next build is not offered
+  to builds on the channel until a newer item appears.
+- **Bundled server.** A next build bundles the `stim-server` of the commit it builds, as a stable release
+  does. That server reports the version `packages/server` carries on `main`, such as `1.39.0`, although its
+  code can be newer than that npm release; the npm `next` dist-tag carries the unreleased packages.
+- **Pause.** `gh variable set DESKTOP_NEXT_PAUSED --body true` skips the workflow until
+  `gh variable delete DESKTOP_NEXT_PAUSED`.
+- **Dry run.** Dispatching the workflow on `main` with `publish` off builds the head with the `release`
+  environment's secrets and publishes nothing. The environment only runs `main` and the release tags, so
+  another branch cannot start it.
 
 ## Dry run
 
