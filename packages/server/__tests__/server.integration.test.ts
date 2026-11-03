@@ -1051,6 +1051,15 @@ describe.skipIf(!fakeTailscale)('Desktop route setup', () => {
     expect(await local.request('share.stop', { workspace: root, id: '' })).toMatchObject({
       error: { code: 'bad-request' },
     });
+    for (const [params, message] of [
+      [{ slug: 'Pokedex' }, 'params.slug must be'],
+      [{ slug: 'assets' }, 'params.slug cannot be assets'],
+      [{ slug: 'pokedex', passwordless: true }, 'needs a password'],
+    ] as const) {
+      expect(await local.request('share.start', { workspace: root, platform: 'ios', ...params })).toMatchObject({
+        error: { code: 'bad-request', message: expect.stringContaining(message) },
+      });
+    }
   });
 
   it('refuses setup when Tailscale is unavailable and rejects target parameters', async () => {

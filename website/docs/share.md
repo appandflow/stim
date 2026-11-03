@@ -253,18 +253,18 @@ stim-server cannot list its shares, Stim keeps the workspace running.
 
 ## Options
 
-| Option                | Meaning                                                                                                                          |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `ios` / `android`     | Which of the workspace's devices to share.                                                                                       |
-| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                |
-| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                 |
-| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                              |
-| `--no-password`       | No login: anyone with the link can open the share.                                                                               |
-| `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                               |
-| `--slug <name>`       | Use `/s/<name>/` as the link instead of a random token; needs a password.                                                        |
-| `--device`            | Share the physical device the workspace leases.                                                                                  |
-| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                     |
-| `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
+| Option                | Meaning                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `ios` / `android`     | Which of the workspace's devices to share.                                                                                               |
+| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                                                        |
+| `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                                                         |
+| `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                                                                      |
+| `--no-password`       | No login: anyone with the link can open the share.                                                                                       |
+| `--view-password [v]` | With `--control`, a second password that only watches (generated without a value).                                                       |
+| `--slug <name>`       | Use `/s/<name>/` as the link instead of a random token; needs a password.                                                                |
+| `--device`            | Share the physical device the workspace leases.                                                                                          |
+| `--slot <name>`       | Share the device of another [device slot](./commands.md#named-device-slots).                                                             |
+| `--json`              | Print one payload: `url`, `auth`, `viewAuth`, `slug`, `expiresAt`, `control`, target; `password` and `viewPassword` only when generated. |
 
 `stim share list` lists the live shares of this Stim home with their target,
 control, viewer count and expiry, never their link or password.
