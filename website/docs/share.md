@@ -70,7 +70,11 @@ the view password sees "View only" in the bar and gets no device controls; the
 server drops every input it sends. It can enter the control password from the
 bar ("Have the control password?") to raise itself to control, and keeps its
 name and place. `--json` adds `viewAuth` and, when it was generated,
-`viewPassword`.
+`viewPassword`. A share keeps 32 signed-in sessions. A new login drops the
+oldest session with the same access first, so logging in with the view password
+never signs out a control session (when only control sessions are left, the
+view login is refused), and a share admits 30 new view sessions in ten
+minutes.
 
 ## The viewer
 
@@ -94,7 +98,11 @@ name, a short trail while they drag, and a ripple for a tap, for every viewer
 with the share open and for the host when the device is controlled from Stim
 Desktop or the phone app. The login page has an optional name field; a share
 without a password asks for a name when you first open it, and you can skip.
-Without a name a viewer is "Guest 1", "Guest 2" and so on. Names are kept only
+Without a name a viewer is "Guest 1", "Guest 2" and so on. Host, Agent and
+Guest N belong to the server, so a viewer that chooses one of them is shown as
+its own Guest N. A viewer sees only the people of its own share, even when two
+share links point at the same device; every share also shows the agent's
+actions and the host's touches. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
 top bar lists who is here; an eye marks the view-only ones. Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds

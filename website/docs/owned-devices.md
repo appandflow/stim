@@ -33,6 +33,16 @@ workspace references them. It lists any other `stim-*` device, including one
 another `STIM_HOME` created, with the command that deletes it (`rm -rf <dir>`
 for AVD data with no registration), and leaves it for you to run.
 
+A booted simulator also gets a folder under `/private/var/tmp`,
+`com.apple.CoreSimulator.SimDevice.<udid>`, where CoreSimulator keeps its
+`launchd.log` and the SimSlim overrides Stim applies. `simctl delete` leaves
+that folder behind, so Stim removes it when it deletes an owned simulator.
+`stim gc` lists the folders whose UDID has no simulator in Xcode's device set,
+with their sizes, and never deletes them: a simulator in another `simctl`
+device set is not in Xcode's list, and removing its folder would drop its
+SimSlim overrides. Remove one yourself with `rm -rf` once you are sure its
+simulator is gone.
+
 With `STIM_HOME` set, gc skips the device sweep because simulators and AVDs are
 machine-global. Pruning a dead project still deletes the devices its record marks
 as owned, and the dry run lists them under "Device sweep notices". Every other

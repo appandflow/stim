@@ -856,6 +856,22 @@ import Testing
     #expect(report.deletableCount == 1)
   }
 
+  @Test func leftoverSimulatorLaunchdFoldersAreKeptAndNotCountedAsReclaimable() throws {
+    let json = """
+      {"mode":"dry-run","actionable":false,"failures":null,"sections":{
+        "simulatorLaunchdFolders":[{"udid":"A48B2B1E-3768-48D8-9816-86B2AC7F2188","path":"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188","bytes":2097152,"command":"rm -rf \\"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\\""}]
+      }}
+      """
+    let report = try GcPreview(json: Data(json.utf8))
+    #expect(report.sections.map(\.title) == ["Simulator launchd folders with no simulator"])
+    #expect(report.sections[0].entries.count == 1)
+    #expect(
+      report.sections[0].entries[0].kept?.hasSuffix(
+        "run: rm -rf \"/private/var/tmp/com.apple.CoreSimulator.SimDevice.A48B2B1E-3768-48D8-9816-86B2AC7F2188\"") == true)
+    #expect(report.deletableCount == 0)
+    #expect(report.reclaimableBytes == 0)
+  }
+
   @Test func marksWhatDeleteLeavesAlone() throws {
     let json = """
       {"mode":"dry-run","actionable":true,"failures":null,"sections":{

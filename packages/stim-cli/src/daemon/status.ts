@@ -68,7 +68,7 @@ export function daemonLine(
   if (status.mode === 'off' && !status.running)
     return `Daemon: off (daemon.mode); each dev server supervisor times its own idle stop${claim}`;
   if (platform === 'win32' && !status.running)
-    return `Daemon: none on Windows; start, ios, android, doctor and gc run the passes in their own process (daemon.mode ${status.mode})${claim}`;
+    return `Daemon: none on Windows; start, ios, android and doctor run the passes in their own process and other commands in the background (daemon.mode ${status.mode})${claim}`;
   const tickAt = Date.parse(status.lastTickAt ?? '');
   const tick = Number.isFinite(tickAt)
     ? `last tick ${formatLongDuration(Math.max(0, now - tickAt))} ago`

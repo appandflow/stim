@@ -664,6 +664,19 @@ function serve(socket, device) {
     },
   };
 
+  let deviceClipboard = 'Text on the mock device clipboard';
+  handlers['input.clipboard.set'] = (params) => {
+    if (!controls.has(params.session)) return { error: ['unknown-session', 'No mock control session.'] };
+    if (typeof params.text !== 'string' || Buffer.byteLength(params.text) > 8192)
+      return { error: ['bad-request', 'The clipboard text is at most 8192 bytes.'] };
+    deviceClipboard = params.text;
+    return { result: {} };
+  };
+  handlers['input.clipboard.get'] = (params) =>
+    controls.has(params.session)
+      ? { result: { text: deviceClipboard } }
+      : { error: ['unknown-session', 'No mock control session.'] };
+
   for (const method of ['input.touch', 'input.text', 'input.button', 'input.rotate'])
     handlers[method] = (params) =>
       controls.has(params.session) ? { result: {} } : { error: ['unknown-session', 'No mock control session.'] };
@@ -722,7 +735,15 @@ function hello(clientKey, deviceName) {
     protocol: 2,
     server: { name: values.name, version: '0.0.0-mock', stim: fixtures.stimVersion, home: fixtures.home },
     capabilities: values.read ? ['read'] : ['read', 'control'],
-    features: ['ios-hosted', 'android-hosted', 'physical-ios', 'physical-android', 'notifications', 'workspace-diff'],
+    features: [
+      'ios-hosted',
+      'android-hosted',
+      'physical-ios',
+      'physical-android',
+      'notifications',
+      'workspace-diff',
+      'device-clipboard',
+    ],
     actions: values.read ? [] : ACTIONS,
     device: { id: hash(clientKey).slice(0, 8), name: deviceName },
   };

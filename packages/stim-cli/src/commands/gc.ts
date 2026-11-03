@@ -36,7 +36,7 @@ import {
 } from '../ownership-claim.ts';
 import { detectIsExpo, findProjectRoot } from '../workspace/project.ts';
 import { reclaimProject } from '../devices/reclaim.ts';
-import { listAllIosSimsAsync, type IosSimRecord } from '../devices/ios.ts';
+import { listAllIosSimsAsync, listIosLaunchdOverridesFolders, type IosSimRecord } from '../devices/ios.ts';
 import { parkedMaxSetting, POOL_SETTING_REMEDY } from '../devices/sim-pool.ts';
 import { listAvdsAsync, listOrphanedAvdDirectories, ownedAvdDirectory } from '../devices/android.ts';
 import { discoverCaches, sizeCaches } from '../cache/caches.ts';
@@ -72,10 +72,13 @@ import {
   deviceSweepIsScoped,
   DEVICE_LIST_TIMEOUT_MS,
   findOrphanedDevices,
+  findSimulatorLaunchdLeftovers,
   findStaleDeviceRecords,
   findStaleProjectDevices,
+  sizeSimulatorLaunchdFolders,
   withAndroidAvdSizes,
   type GcDeviceDependencies,
+  type SimulatorLaunchdFolder,
   type StaleDeviceRecord,
   type StaleProjectDevice,
   type UnverifiedDevice,
@@ -282,6 +285,7 @@ export async function collectGcReport(
       orphanedWorkspaces: [],
       orphanedDevices: [],
       unverifiedDevices: [],
+      simulatorLaunchdFolders: [],
       staleDevices: [],
       finishedDevices: [],
       ownedDeviceDisk: [],
@@ -370,6 +374,7 @@ export async function collectGcReport(
   const deviceSweepNotices: string[] = [...hosted.notices, ...hostedApps.notices];
   let orphanedDevices: OrphanedDevice[] = [];
   let unverifiedDevices: UnverifiedDevice[] = [];
+  let simulatorLaunchdFolders: SimulatorLaunchdFolder[] = [];
   let staleDevices: StaleProjectDevice[] = [];
   let staleDeviceRecords: StaleDeviceRecord[] = [];
   let staleLedgerEntries: StaleLedgerEntry[] = staleBrowserProfiles(readCreatedDevices());
@@ -456,6 +461,13 @@ export async function collectGcReport(
       avdsChecked = false;
       deviceSweepNotices.push(
         `android device sweep skipped: emulator tooling did not answer within ${DEVICE_LIST_TIMEOUT_MS / 1000}s`,
+      );
+    }
+
+    if (everySim !== null) {
+      simulatorLaunchdFolders = await sizeSimulatorLaunchdFolders(
+        findSimulatorLaunchdLeftovers({ folders: listIosLaunchdOverridesFolders(), sims: everySim }),
+        operation,
       );
     }
 
@@ -584,6 +596,7 @@ export async function collectGcReport(
     otherHomes: otherHomes?.homes ?? [],
     orphanedDevices,
     unverifiedDevices,
+    simulatorLaunchdFolders,
     staleDevices,
     staleDeviceRecords,
     staleLedgerEntries,

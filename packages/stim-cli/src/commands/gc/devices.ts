@@ -8,6 +8,8 @@ import chalk from 'chalk';
 import { clearDevice, getProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { plural } from '../../command-output.ts';
 import { directorySizeAsync } from '../../fs-util.ts';
+import { runOperationFile } from '../../engine/operation-exec.ts';
+import { getExecutor } from '../../exec.ts';
 import { leaseIsExpired, listLeaseFiles, type LeaseFileEntry } from '../../engine/device-lease.ts';
 import {
   listAllIosSimsAsync,
@@ -184,6 +186,51 @@ export interface UnverifiedDevice {
 
 function isStimCreated(device: UnverifiedDevice): boolean {
   return device.kind === 'ios' ? isStimOwnedSim({ udid: device.id, name: device.name }) : isStimOwnedAvd(device.id);
+}
+
+export interface SimulatorLaunchdFolder {
+  udid: string;
+  path: string;
+  bytes: number | null;
+}
+
+export function findSimulatorLaunchdLeftovers({
+  folders,
+  sims,
+}: {
+  folders: readonly { udid: string; path: string }[];
+  sims: readonly IosSimRecord[];
+}): { udid: string; path: string }[] {
+  const known = new Set(sims.map((sim) => sim.udid));
+  return folders.filter((folder) => !known.has(folder.udid));
+}
+
+const LAUNCHD_FOLDER_SIZE_TIMEOUT_MS = 30000;
+
+export async function sizeSimulatorLaunchdFolders(
+  folders: readonly { udid: string; path: string }[],
+  operation?: StimContext,
+): Promise<SimulatorLaunchdFolder[]> {
+  if (folders.length === 0) return [];
+  let out = '';
+  try {
+    out = await runOperationFile(operation, getExecutor(), 'du', ['-sk', ...folders.map((folder) => folder.path)], {
+      timeoutMs: LAUNCHD_FOLDER_SIZE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      signal: operation?.signal,
+      cwd: operation?.cwd,
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceProcessCleanupError) throw error;
+    operation?.signal.throwIfAborted();
+    if (error instanceof Error && 'stdout' in error && typeof error.stdout === 'string') out = error.stdout;
+  }
+  const sizes = new Map<string, number>();
+  for (const line of out.split('\n')) {
+    const [, kilobytes, path] = /^(\d+)\s+(.+)$/.exec(line.trim()) ?? [];
+    if (kilobytes !== undefined && path !== undefined) sizes.set(path, Number(kilobytes) * 1024);
+  }
+  return folders.map((folder) => ({ ...folder, bytes: sizes.get(folder.path) ?? null }));
 }
 
 export function unverifiedDeviceCommand(device: UnverifiedDevice): string {

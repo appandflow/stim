@@ -1,7 +1,7 @@
 import type { StimContext } from '@stim-cli/core';
 import { runOperationFile } from '../engine/operation-exec.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
-import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, readdirSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import { isJsonObject } from '@stim-cli/core/state';
 import { forgetCreatedDeviceAsync, recordCreatedDeviceAsync } from './created-devices.ts';
 import { isStimOwnedSim } from './device-ownership.ts';
@@ -841,7 +841,53 @@ export function resolveOwnedIosSim(udid: string, listed: IosSimRecord[] = listAl
   return { sim };
 }
 
-export async function deleteIosSim(udid: string, operation?: StimContext): Promise<void> {
+/**
+ * CoreSimulator's launchd_sim keeps a simulator's launchd overrides (the SimSlim disabled.plist) and
+ * launchd.log under /private/var/tmp, keyed by UDID and outside the device directory; `simctl delete`
+ * leaves that folder behind (Xcode 27).
+ */
+const IOS_LAUNCHD_OVERRIDES_ROOT = '/private/var/tmp';
+const IOS_LAUNCHD_OVERRIDES_FOLDER =
+  /^com\.apple\.CoreSimulator\.SimDevice\.([0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$/;
+
+function iosLaunchdOverridesFolder(udid: string, root: string): string | null {
+  const name = `com.apple.CoreSimulator.SimDevice.${udid}`;
+  return IOS_LAUNCHD_OVERRIDES_FOLDER.test(name) ? join(root, name) : null;
+}
+
+export function listIosLaunchdOverridesFolders(
+  root: string = IOS_LAUNCHD_OVERRIDES_ROOT,
+): { udid: string; path: string }[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(root, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const folders: { udid: string; path: string }[] = [];
+  for (const entry of entries) {
+    const udid = IOS_LAUNCHD_OVERRIDES_FOLDER.exec(entry.name)?.[1];
+    if (udid !== undefined && entry.isDirectory()) folders.push({ udid, path: join(root, entry.name) });
+  }
+  return folders.toSorted((a, b) => a.udid.localeCompare(b.udid));
+}
+
+function removeIosLaunchdOverrides(udid: string, root: string, operation: StimContext | undefined): void {
+  const folder = iosLaunchdOverridesFolder(udid, root);
+  if (folder === null) return;
+  try {
+    rmSync(folder, { recursive: true, force: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    operation?.output('stderr', `warning: could not remove ${folder}: ${message}\n`);
+  }
+}
+
+export async function deleteIosSim(
+  udid: string,
+  operation?: StimContext,
+  { launchdOverridesRoot = IOS_LAUNCHD_OVERRIDES_ROOT }: { launchdOverridesRoot?: string } = {},
+): Promise<void> {
   const result = resolveOwnedIosSim(udid, await listAllIosSimsAsync({ operation, signal: operation?.signal }));
   if (result.missing) return;
   if (result.notOwned) {
@@ -853,12 +899,17 @@ export async function deleteIosSim(udid: string, operation?: StimContext): Promi
     ...SIMCTL_OPTIONS,
     cwd: operation?.cwd,
   });
+  removeIosLaunchdOverrides(udid, launchdOverridesRoot, operation);
   await forgetCreatedDeviceAsync('ios', udid);
 }
 
 const PARKED_DELETE_TIMEOUT_MS = 30000;
 
-export async function deleteParkedIosSim(udid: string, operation?: StimContext): Promise<void> {
+export async function deleteParkedIosSim(
+  udid: string,
+  operation?: StimContext,
+  { launchdOverridesRoot = IOS_LAUNCHD_OVERRIDES_ROOT }: { launchdOverridesRoot?: string } = {},
+): Promise<void> {
   const sim = (
     await listAllIosSimsAsync({
       includeUnavailable: true,
@@ -875,6 +926,7 @@ export async function deleteParkedIosSim(udid: string, operation?: StimContext):
     timeoutMs: PARKED_DELETE_TIMEOUT_MS,
     cwd: operation?.cwd,
   });
+  removeIosLaunchdOverrides(udid, launchdOverridesRoot, operation);
   await forgetCreatedDeviceAsync('ios', udid);
 }
 

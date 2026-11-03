@@ -18,6 +18,8 @@ public enum AppPreferences {
     public static let defaultView = "defaultView"
     public static let lastProjectPath = "lastProjectPath"
     public static let dismissedStimUpdate = "dismissedStimUpdate"
+    /// Whether Sparkle also offers the `next` channel's prerelease builds. Unset follows `UpdateChannel.prereleaseUpdatesDefault`.
+    public static let prereleaseUpdates = "updates.prerelease"
     public static let tileSize = "tileSize"
     public static let maxFramesPerSecond = "maxFramesPerSecond"
     public static let streamQuality = "streamQuality"

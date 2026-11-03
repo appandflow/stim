@@ -6,7 +6,7 @@ import { cancellableSleep } from '../cancellation.ts';
 import { ANDROID_LOCATION_VARIABLES } from '../devices/android-locations.ts';
 import { getExecutor } from '../exec.ts';
 import { spawnEntry } from '../spawn-entry.ts';
-import { daemonMode, spawnsDaemon } from './mode.ts';
+import { daemonMode, platformHasDaemon, spawnsDaemon } from './mode.ts';
 
 const CONTACT_TIMEOUT_MS = 250;
 const CLAIM_WAIT_MS = 5000;
@@ -151,20 +151,40 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
 }
 
 const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
-const PASS_COMMANDS = ['start', 'ios', 'android'];
+const INLINE_COMMANDS = ['doctor', 'start', 'ios', 'android'];
+/** Commands that never run the passes: `gc` runs its own, and `agent-device` runs once per UI action. */
+const PASSLESS_COMMANDS = ['guide', 'settings', 'help', 'gc', 'agent-device'];
+
+export type PassPlacement = 'inline' | 'background' | 'none';
+
+/**
+ * Where a top-level command runs the in-process passes when no daemon holds the home. `doctor`, `start`, `ios` and
+ * `android` run them before the command; on a platform with no daemon every other command but `guide`, `settings`,
+ * `help`, `gc` and `agent-device` starts them in a detached child, at most once a minute.
+ */
+export function passPlacement(name: string, platform: NodeJS.Platform = process.platform): PassPlacement {
+  if (INLINE_COMMANDS.includes(name)) return 'inline';
+  return !platformHasDaemon(platform) && !PASSLESS_COMMANDS.includes(name) ? 'background' : 'none';
+}
 
 /**
  * Before a top-level command runs: commands that create running state record the use of their workspace and make sure
- * the home's daemon runs; `doctor`, and `start`, `ios` and `android` when no daemon holds the home, run automatic
- * maintenance and the pressure ladder in this process, never taking the command's own workspace.
+ * the home's daemon runs; the commands `passPlacement` names run the in-process passes (maintenance, the activity pass
+ * over workspaces with no dev server, the pressure ladder), never taking the command's own workspace.
  */
 export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
   const creates = DAEMON_COMMANDS.includes(name);
-  if (!creates && name !== 'doctor') return;
+  const placement = passPlacement(name);
+  if (!creates && placement === 'none') return;
   const { commandWorkspace } = await import('./command-workspace.ts');
   const root = commandWorkspace(creates, env);
   const held = creates && (await ensureDaemon(env));
-  if (name !== 'doctor' && (held || !PASS_COMMANDS.includes(name))) return;
+  if (held || placement === 'none') return;
+  if (placement === 'background') {
+    const { spawnBackgroundPasses } = await import('./background.ts');
+    spawnBackgroundPasses(name, env);
+    return;
+  }
   const { runPassesInProcess } = await import('./passes.ts');
   await runPassesInProcess(name, env, root);
 }

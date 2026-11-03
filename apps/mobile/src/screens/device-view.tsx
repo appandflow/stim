@@ -1,5 +1,6 @@
 import { t } from '@lingui/core/macro';
 import { Trans } from '@lingui/react/macro';
+import * as Clipboard from 'expo-clipboard';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -62,6 +63,7 @@ import {
   useWorkspace,
 } from '@/hooks/machines';
 import { useSettings, type VideoQuality } from '@/hooks/settings';
+import { CLIPBOARD_LIMIT_KIB, clipboardAvailable, copyDeviceClipboard, pasteFromPhone } from '@/lib/device-clipboard';
 import { framePoint, orientationOf, otherDriver } from '@/lib/device-control';
 import { matchingDeviceFrame } from '@/lib/device-frame';
 import { deviceUnavailable } from '@/lib/device-unavailable';
@@ -304,28 +306,28 @@ export function DeviceView({
     );
     return { transform: [{ translateY: -shift }] };
   });
-  const [rotateNote, setRotateNote] = useState<{ text: string; turned: boolean } | null>(null);
-  useAnnounce(rest ? rotateNote?.text : null);
+  const [note, setNote] = useState<{ text: string; success: boolean } | null>(null);
+  useAnnounce(rest ? note?.text : null);
   const screenReader = useScreenReaderEnabled();
   useEffect(() => {
-    if (!rotateNote) return;
-    const timer = setTimeout(() => setRotateNote(null), screenReader ? ROTATE_NOTE_SCREEN_READER_MS : ROTATE_NOTE_MS);
+    if (!note) return;
+    const timer = setTimeout(() => setNote(null), screenReader ? ROTATE_NOTE_SCREEN_READER_MS : ROTATE_NOTE_MS);
     return () => clearTimeout(timer);
-  }, [rotateNote, screenReader]);
+  }, [note, screenReader]);
   const orientation = orientationOf(source);
   const [rotating, setRotating] = useState<'landscape' | 'portrait' | null>(null);
   if (rotating && orientation && orientation !== rotating) {
     setRotating(null);
     const name = orientationName(orientation);
-    setRotateNote({ text: t`Rotated to ${name}`, turned: true });
+    setNote({ text: t`Rotated to ${name}`, success: true });
   }
   useEffect(() => {
     if (!rotating) return;
     const timer = setTimeout(() => {
       const name = orientationName(rotating);
-      setRotateNote({
+      setNote({
         text: t`The screen stayed in ${name}. The app in front may not support rotating.`,
-        turned: false,
+        success: false,
       });
       setRotating(null);
     }, ROTATE_WAIT_MS);
@@ -333,7 +335,7 @@ export function DeviceView({
   }, [rotating]);
   const rotate = (direction: RotateDirection) => {
     control.rotate(direction);
-    setRotateNote(null);
+    setNote(null);
     setRotating(orientation);
   };
 
@@ -416,6 +418,53 @@ export function DeviceView({
     control.begin(false);
   };
   const press = (button: InputButton) => control.button(button);
+  const [clipboardBusy, setClipboardBusy] = useState(false);
+  const showClipboard = clipboardAvailable(
+    { platform, physical, controlling },
+    link.kind === 'open' ? link.features : null,
+  );
+  const clipboardFailed = (title: string) => (cause: Error) => Alert.alert(title, cause.message);
+  const pasteFromPhoneToDevice = () => {
+    setClipboardBusy(true);
+    pasteFromPhone({ read: Clipboard.getStringAsync, set: control.clipboardSet })
+      .then(
+        (outcome) => {
+          if (outcome === 'empty') return setNote({ text: t`The phone clipboard is empty.`, success: false });
+          if (outcome === 'too-large')
+            return setNote({
+              text: t`The phone clipboard is over ${CLIPBOARD_LIMIT_KIB} KiB. Copy a shorter text to paste it.`,
+              success: false,
+            });
+          setNote({
+            text:
+              platform === 'ios'
+                ? t`Pasted. If nothing appears, tap the paste suggestion on the device.`
+                : t`Pasted from the phone.`,
+            success: true,
+          });
+        },
+        clipboardFailed(t`Paste Failed`),
+      )
+      .finally(() => setClipboardBusy(false));
+  };
+  const copyFromDevice = () => {
+    setClipboardBusy(true);
+    copyDeviceClipboard({
+      get: control.clipboardGet,
+      write: (text) => Clipboard.setStringAsync(text).then(() => undefined),
+    })
+      .then(
+        (outcome) => {
+          setNote(
+            outcome === 'empty'
+              ? { text: t`The device clipboard is empty.`, success: false }
+              : { text: t`Copied the device clipboard.`, success: true },
+          );
+        },
+        clipboardFailed(t`Copy Failed`),
+      )
+      .finally(() => setClipboardBusy(false));
+  };
   const postures = control.state.kind === 'on' ? control.state.postures : [];
   const shown = stream.frame?.posture ?? stream.video?.posture;
   const move = (posture: DevicePosture) => {
@@ -606,6 +655,23 @@ export function DeviceView({
         disabled: changingOption,
         onPress: () => changeSimulator({ action: 'slow-animations', enabled: !simulator.slowAnimations }),
       });
+    if (showClipboard)
+      secondary.push(
+        {
+          id: 'paste-from-phone',
+          icon: 'doc.on.clipboard',
+          label: t`Paste from Phone`,
+          disabled: clipboardBusy,
+          onPress: pasteFromPhoneToDevice,
+        },
+        {
+          id: 'copy-device-clipboard',
+          icon: 'doc.on.doc',
+          label: t`Copy Device Clipboard`,
+          disabled: clipboardBusy,
+          onPress: copyFromDevice,
+        },
+      );
     secondary.push(
       ...postures.map((posture): ViewerAction => ({
         id: posture,
@@ -920,7 +986,7 @@ export function DeviceView({
               </Animated.View>
             </Animated.View>
           ) : null}
-          {rotateNote && rest ? (
+          {note && rest ? (
             <Animated.View
               pointerEvents="none"
               style={[
@@ -933,12 +999,12 @@ export function DeviceView({
               <Text
                 variant="footnote"
                 weight="semibold"
-                tone={rotateNote.turned ? 'success' : 'warning'}
+                tone={note.success ? 'success' : 'warning'}
                 accessibilityLiveRegion="polite"
                 accessibilityRole="alert"
                 style={styles.note}
               >
-                {rotateNote.text}
+                {note.text}
               </Text>
             </Animated.View>
           ) : null}

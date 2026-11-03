@@ -25,6 +25,21 @@ jest.mock('@/lib/machine-store', () => {
 const machines = (jest.requireMock('@/lib/machine-store') as { created: ReturnType<typeof createMachineStore>[] })
   .created[0]!;
 
+function openLink(connection: object, features: string[] = []) {
+  machines.patchLink('m1', {
+    connection: connection as unknown as StimConnection,
+    state: {
+      kind: 'open',
+      protocol: 1,
+      server: { name: 'stim-server', version: '1', stim: '1' },
+      actions: null,
+      capabilities: ['control'],
+      features,
+      deviceId: null,
+    },
+  });
+}
+
 test('ends a control session that begins after the screen unmounted', async () => {
   const begins: ((result: unknown) => void)[] = [];
   const request = jest.fn((method: string) =>
@@ -35,18 +50,7 @@ test('ends a control session that begins after the screen unmounted', async () =
     [{ id: 'm1', name: 'Mac', endpoint: 'ws://mac', pairedAt: '2026-09-30T00:00:00Z', serverKey: 'k' }],
     false,
   );
-  machines.patchLink('m1', {
-    connection: connection as unknown as StimConnection,
-    state: {
-      kind: 'open',
-      protocol: 1,
-      server: { name: 'stim-server', version: '1', stim: '1' },
-      actions: null,
-      capabilities: ['control'],
-      features: [],
-      deviceId: null,
-    },
-  });
+  openLink(connection);
 
   const { result, unmount } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
   await act(async () => result.current.begin());
@@ -215,3 +219,32 @@ test.each(['platform', 'postures', 'reason'])(
     await unmount();
   },
 );
+
+test('sends the clipboard methods on the control session and returns the device text', async () => {
+  const request = jest.fn((method: string) => {
+    if (method === 'control.begin')
+      return Promise.resolve({ session: 'c2', platform: 'ios', lease: null, postures: [] });
+    if (method === 'input.clipboard.get') return Promise.resolve({ text: 'device text' });
+    return Promise.resolve({});
+  });
+  const connection = { request, onControlEnded: () => () => {}, reconnect: () => {} };
+  openLink(connection, ['device-clipboard']);
+
+  const { result } = await renderHook(() => useDeviceControl('/app', 'ios', 'default'));
+  await act(async () => result.current.begin());
+  await act(async () => {
+    await result.current.clipboardSet('pasted', true);
+    await result.current.clipboardSet('copied only', false);
+  });
+  let text = '';
+  await act(async () => {
+    text = await result.current.clipboardGet();
+  });
+
+  expect(text).toBe('device text');
+  expect(request.mock.calls.filter(([method]) => String(method).startsWith('input.clipboard'))).toEqual([
+    ['input.clipboard.set', { session: 'c2', text: 'pasted', paste: true }],
+    ['input.clipboard.set', { session: 'c2', text: 'copied only' }],
+    ['input.clipboard.get', { session: 'c2' }],
+  ]);
+});

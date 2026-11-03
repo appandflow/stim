@@ -15,6 +15,7 @@ export default defineConfig({
     'pull-requests': 'src/workspace/pull-request.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
     'daemon-run': 'src/daemon/run.ts',
+    'passes-run': 'src/daemon/passes-run.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
     'web-run': 'src/web/run.ts',

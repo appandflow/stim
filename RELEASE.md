@@ -589,6 +589,15 @@ npm install --global stim@next
 - **Pause:** `gh variable set NEXT_PAUSED --body true` skips the job until
   `gh variable delete NEXT_PAUSED`. Stable releases are unaffected.
 
+### Desktop prereleases
+
+Stim Desktop has its own `next` channel. A push to `main` that changes `apps/desktop/**` starts the
+`Desktop next` workflow (`.github/workflows/desktop-next.yml`), which builds, signs and notarizes the head
+of `main` through the same build steps as a stable Desktop release and publishes it as a GitHub prerelease
+and a Sparkle item on the `next` channel. See [apps/desktop/RELEASING.md](./apps/desktop/RELEASING.md#next-channel)
+for the details; this repository's variable `DESKTOP_NEXT_PAUSED` set to `true` pauses it, as `NEXT_PAUSED`
+pauses the npm channel. A stable `desktop-v*` release is unaffected.
+
 ## Stim Host releases
 
 `stim-server service install` installs the Stim Host app on a hosting Mac

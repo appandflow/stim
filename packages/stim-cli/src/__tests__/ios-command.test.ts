@@ -1432,6 +1432,190 @@ describe('the device preparation step', () => {
     expect(payload.remedy).toMatch(/--wait <seconds>/);
   });
 
+  describe('a simulator still waiting in the boot queue', () => {
+    const RUNTIME_ID = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0';
+
+    function pendingCreation() {
+      let resolve!: (device: Record<string, unknown>) => void;
+      let reject!: (error: unknown) => void;
+      const created = new Promise<Record<string, unknown>>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return {
+        resolve: () => resolve({ deviceUdid: UDID, deviceName: 'stim-fixture', owned: true, created: true }),
+        reject,
+        device: async () => ({ owned: true, creating: { runtimeId: RUNTIME_ID, created } }),
+      };
+    }
+
+    test('builds for any simulator before it exists, then boots, installs and launches on the created one', async () => {
+      reserve();
+      const creation = pendingCreation();
+      let markBuilding!: () => void;
+      const building = new Promise<void>((resolve) => {
+        markBuilding = resolve;
+      });
+      const seen: { order: string[] } = { order: [] };
+      const pending = run(
+        {},
+        {
+          ensureOwnedDevice: creation.device,
+          buildIos: async (args) => {
+            seen.order = [...seen.order, 'buildIos'];
+            buildArgs = args;
+            markBuilding();
+            return makeIosBuildSuccess({
+              appPath: join(root, 'build', 'Fixture.app'),
+              bundleId: 'com.example.app',
+              durationMs: 1000,
+              scheme: 'Fixture',
+            });
+          },
+          ensureBooted: async (args) => {
+            seen.order = [...seen.order, 'ensureBooted'];
+            bootedDevice = args;
+            return { ok: true, udid: UDID };
+          },
+        },
+      );
+      let buildArgs: Record<string, unknown> | undefined;
+      let bootedDevice: unknown;
+      await building;
+      await vi.advanceTimersByTimeAsync(0);
+      expect(seen.order).toEqual(['buildIos']);
+      expect(buildArgs).toMatchObject({ udid: null, destination: 'generic/platform=iOS Simulator', arch: 'arm64' });
+      creation.resolve();
+      await vi.runAllTimersAsync();
+      const { exitCode, calls } = await pending;
+      expect(exitCode).toBe(null);
+      expect(seen.order).toEqual(['buildIos', 'ensureBooted']);
+      expect(bootedDevice).toMatchObject({ device: { deviceUdid: UDID, created: true } });
+      expect(calls.args['installIosApp']).toMatchObject({ udid: UDID });
+      expect(calls.args['launchIosApp']).toMatchObject({ udid: UDID });
+    });
+
+    test('stores the build under the key a run with an existing simulator uses, and keeps that run on its udid', async () => {
+      reserve();
+      const existing = await run({});
+      const creation = pendingCreation();
+      creation.resolve();
+      const waiting = await run({}, { ensureOwnedDevice: creation.device });
+      expect(existing.calls.args['buildIos']).toMatchObject({ udid: UDID, destination: null, arch: null });
+      expect(waiting.calls.args['storeBuild']).toEqual(existing.calls.args['storeBuild']);
+    });
+
+    test('a build that fails while the simulator is still queued abandons the queue and creates nothing', async () => {
+      reserve();
+      let slotSignal: AbortSignal | undefined;
+      const { exitCode, calls } = await run(
+        {},
+        {
+          ensureOwnedDevice: async (args) => {
+            const policy = args.flags?.deviceSlotWait;
+            slotSignal = policy?.signal;
+            policy?.waitingFor?.({
+              kind: 'device-slot',
+              inUse: 1,
+              max: 1,
+              since: new Date().toISOString(),
+              position: 1,
+              resource: 'booted devices',
+            });
+            const created = new Promise<never>((_resolve, reject) => {
+              policy?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+            });
+            return { owned: true, creating: { runtimeId: RUNTIME_ID, created } };
+          },
+          buildIos: async () => makeIosBuildFailure({ code: 'STIM_BUILD_FAILED' }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(slotSignal?.aborted).toBe(true);
+      expect(calls.order).not.toContain('ensureBooted');
+    });
+
+    test('a build that fails after the simulator was admitted waits for its creation and ledger entry before the run exits', async () => {
+      reserve();
+      let ledgerWritten = false;
+      let writeLedger!: () => void;
+      let markBuilt!: () => void;
+      const built = new Promise<void>((resolve) => {
+        markBuilt = resolve;
+      });
+      let ledgerAtExit: boolean | undefined;
+      const pending = run(
+        {},
+        {
+          ensureOwnedDevice: async () => ({
+            owned: true,
+            creating: {
+              runtimeId: RUNTIME_ID,
+              created: new Promise((resolve) => {
+                writeLedger = () => {
+                  ledgerWritten = true;
+                  resolve({ deviceUdid: UDID, deviceName: 'stim-fixture', owned: true, created: true });
+                };
+              }),
+            },
+          }),
+          buildIos: async () => {
+            markBuilt();
+            return makeIosBuildFailure({ code: 'STIM_BUILD_FAILED' });
+          },
+        },
+        () => {
+          ledgerAtExit = ledgerWritten;
+        },
+      );
+      await built;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ledgerAtExit).toBeUndefined();
+      writeLedger();
+      const { exitCode } = await pending;
+      expect(exitCode).toBe(1);
+      expect(ledgerAtExit).toBe(true);
+    });
+
+    test('a creation that fails during the build refuses with its code after the build, before any boot or install', async () => {
+      reserve();
+      const creation = pendingCreation();
+      let markBuilding!: () => void;
+      const building = new Promise<void>((resolve) => {
+        markBuilding = resolve;
+      });
+      const pending = run(
+        { json: true },
+        {
+          ensureOwnedDevice: creation.device,
+          buildIos: async () => {
+            markBuilding();
+            return makeIosBuildSuccess({
+              appPath: join(root, 'build', 'Fixture.app'),
+              bundleId: 'com.example.app',
+              durationMs: 1000,
+              scheme: 'Fixture',
+            });
+          },
+        },
+      );
+      await building;
+      creation.reject(
+        new DeviceAdmissionRefusal({
+          code: 'STIM_AT_CAPACITY',
+          message: 'Waited 1m00s for a boot slot (2/2 boots in flight).',
+          remedy: 'Stop an environment (stim stop), retry with a longer --wait <seconds>.',
+        }),
+      );
+      await vi.runAllTimersAsync();
+      const { exitCode, logs, calls } = await pending;
+      expect(exitCode).toBe(1);
+      expect(parseFirst(logs).code).toBe('STIM_AT_CAPACITY');
+      expect(calls.order).not.toContain('ensureBooted');
+      expect(calls.order).not.toContain('installIosApp');
+    });
+  });
+
   test('a model or runtime mismatch refusal carries its own remedy, not the toolchain one', async () => {
     reserve();
     const mismatch = await run(
