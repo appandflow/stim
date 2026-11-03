@@ -6,7 +6,7 @@ import { join } from 'path';
 import { fileURLToPath } from 'node:url';
 import { createServer as createHttpServer } from 'node:http';
 import { getExecutor, resetExecutor } from '../exec.ts';
-import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort } from '../workspace/config.ts';
+import { upsertProject, setDevice, saveConfig, getProject, claimMetroPort, type Config } from '../workspace/config.ts';
 import {
   computeNextPort,
   createPortProbe,
@@ -196,6 +196,37 @@ test('reserveMetroPort moves on when another project claims the port first', asy
   assert(recA);
   expect(recB.metroPort).toBe(8084);
   expect(recA.metroPort).toBe(8082);
+});
+
+const freeNextTurn = async () => {
+  await new Promise(setImmediate);
+  return true;
+};
+
+test('concurrent reservations in one home each get a distinct port', async () => {
+  const roots = Array.from({ length: 16 }, (_, index) => join(tmpHome, `w${index}`));
+  for (const root of roots) {
+    mkdirSync(root);
+    upsertProject(root, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  }
+  const ports = await Promise.all(roots.map((root) => reserveMetroPort(root, async () => false, freeNextTurn)));
+  expect(ports.toSorted((a, b) => a - b)).toEqual(Array.from({ length: 16 }, (_, index) => 8082 + index));
+  expect(roots.map((root) => getProject(root)?.metroPort)).toEqual(ports);
+});
+
+test('concurrent reservations refuse only when the port range is exhausted', async () => {
+  const projects: Config['projects'] = {};
+  for (let port = 8082; port < 8281; port++)
+    projects[join(tmpHome, `held-${port}`)] = { metroPort: port, platforms: {} };
+  saveConfig({ version: 2, projects, repos: {} });
+  const roots = [join(tmpHome, 'x'), join(tmpHome, 'y')];
+  for (const root of roots) upsertProject(root, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  const liveMetro = async () => true;
+  const results = await Promise.allSettled(roots.map((root) => reserveMetroPort(root, liveMetro, freeNextTurn)));
+  expect(results.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))).toEqual([8281]);
+  expect(results.flatMap((result) => (result.status === 'rejected' ? [String(result.reason)] : []))).toEqual([
+    expect.stringContaining('Found no free Metro port between 8082 and 8281'),
+  ]);
 });
 
 test('reserveMetroPort records a pinned port and refuses one another workspace reserved', async () => {

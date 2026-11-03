@@ -1813,11 +1813,7 @@ not on any remote"  (worktree remove)
 
 "Found no free Metro port between ..."
   200 consecutive ports are claimed or occupied. \`stim status\` shows what
-  Stim knows about; the rest is other software.
-
-"Could not reserve a Metro port after 5 attempts"
-  Several commands raced for the same ports and each one lost. Nothing is
-  wrong; retry.`,
+  Stim knows about; the rest is other software.`,
     },
     sandbox: {
       summary: 'running under a sandboxing harness: EPERM under STIM_HOME, CoreSimulatorService, adb',
