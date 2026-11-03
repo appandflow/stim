@@ -239,10 +239,13 @@ Records no longer listed in their session ledger are already removed and skipped
 The CLI leaves the journal unchanged, and the server clears the parked marker
 when it reconciles the empty ledger.
 
-A clean `stim-server` close parks eligible devices, which persist across restart
-and can be adopted by the next reserve. The server never re-attaches to a booted
-device after restart. A running session left by a crashed server stays `unknown`
-until an explicit `stim stop` reconciles it, or until its client has been gone for
+A `stim-server` restart leaves ready iOS and Android sessions running, and the
+restarted server resumes them once their ownership claim is provably free,
+verified against the session's private ledger. A device that cannot be verified
+is stopped. Parked devices persist across restart and can be adopted by the next
+reserve. A running session whose owner is still held by a live process stays
+`unknown` until an explicit `stim stop` reconciles it, and a resumed session is
+stopped after its client has been gone for
 [`maintenance.idleStopHours`](./dev-server-and-logs.md#idle-workspace-stop) and the
 server proves the session's ownership claim is free.
 

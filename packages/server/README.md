@@ -837,7 +837,9 @@ named driver that fails to load leaves the app with `{ "driver": "none" }` and
 a generic notice; the reason, which can name paths on the hosting Mac, goes to
 stim-server's stderr. `stim-server` reference-counts the driver's daemon on running
 hosted macOS apps: it starts with the first, stops after the last, on
-revocation and on server shutdown, and restarts if it exits while apps run. The
+revocation and on server shutdown, and restarts if it exits while apps run. A
+hosted iOS or Android session the server leaves running at shutdown keeps its
+agent-device session directories; the next server starts its daemon again. The
 daemon is held under an ownership claim at `server/agent-device.claims` whose
 child is the daemon, and its state lives in `server/agent-device`.
 
@@ -935,7 +937,20 @@ private ledger ownership.
 The worker persists the journal under `$STIM_HOME/server/device-host-sessions/`
 and chooses an isolated worker home under `$STIM_HOME/device-host/sessions/`.
 An uncertain create, child exit, journal or deletion outcome retains the slot
-as `unknown`. Explicit stop can reconcile a complete record after a server
+as `unknown`. Closing the server leaves a ready iOS or Android session ready, its
+device booted, and releases its claims; the next server resumes it at start. For each
+ready record of an approved client it takes the exclusive session claim, which a live
+child of the previous server (an install, log or input worker) keeps held, and
+runs the worker mode `resume` in the session's private home. `resume` only reads: the
+ledger lists the one device, `hosted-device.json` matches, and the simulator is
+`Booted` under its recorded name (Android: the emulator answers as the recorded AVD
+with the recorded ABI). A verified session gets its installed attempt back, its Metro
+bridge listening on the recorded port, and agent control again; an `installing`
+attempt becomes `unknown`. An unverified device takes the normal stop path. A session
+with work in flight at close, a revoked or unapproved one, and macOS apps take the
+stop path at close and are not resumed. The agent grant's token comes from the server
+key (HKDF over `identity.key` and the session id), so it is the same after a restart
+and is written nowhere. Explicit stop can reconcile a complete record after a server
 restart; a live or unverifiable owner is refused. Missing ownership records
 need operator investigation, never a replacement inferred from a simulator name.
 Revoking this client's approval stops its sessions without granting access to

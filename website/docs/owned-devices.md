@@ -845,9 +845,15 @@ slot. Reload reports the failure and remedy in JSON when no other app can
 reload, and logs remain readable. A hello refusal after this machine loses hosting
 access clears its placement during stop or worktree removal; other refusals
 retain it.
-A clean host server restart stops its sessions and preserves eligible parked
-devices for adoption by the same client. A running session left by a crash stays
-`unknown` until explicit stop; booted devices are never re-attached after restart.
+A host server restart leaves ready iOS and Android sessions running, and the
+restarted server resumes them once their ownership claim is provably free. The
+simulator or emulator stays booted, the Metro bridge listens on its recorded port
+again and the agent-device grant keeps its token, so a rerun reattaches and the
+client's Metro links and agent config keep working. A session whose device is not
+verified as the recorded, ledger-owned, running one is stopped instead; an install
+that was in flight at shutdown, a revoked session and a macOS app are stopped too.
+A session whose owner is still held by a live process stays `unknown` until explicit
+stop. Eligible parked devices persist for adoption by the same client.
 On the hosting Mac, `stim gc` lists parked hosted devices and `stim gc --delete`
 deletes them through their owning session homes under a session claim. A held
 claim or unverified ledger ownership keeps the device. Android deletion requires

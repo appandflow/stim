@@ -473,7 +473,11 @@ outside it moves to its own issue and pull request.
   Parked hosted devices stay ledger-owned in their session home and are adopted
   only by the same client.
   Keep a child-aware ownership claim across native work and a claim for the
-  session lifetime. Serialize hosted admission, including unresolved sessions;
+  session lifetime. Server close leaves a ready iOS or Android session ready
+  and its device booted when no native work is in flight, and the next server
+  resumes it only after taking its exclusive claim (a live child keeps it held)
+  and the worker's `resume` verifies the exact ledger-owned, recorded, running
+  device; anything unproven takes the stop path, and macOS apps always do. Serialize hosted admission, including unresolved sessions;
   ordinary local producers do not participate, so it is not a machine-wide hard
   capacity guarantee. Reconnect to the recorded attempt/session after a lost
   reply. Unknown creation, journal, owner or shutdown state refuses replacement;

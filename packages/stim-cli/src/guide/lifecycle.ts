@@ -630,10 +630,11 @@ stop and worktree remove wait for device-host.stop, park the host's eligible own
 emulator within pool.androidParkedMax (delete otherwise), close the Metro links and clear placement. stop --json reports
 outcomes.device["android:host:<slot>"]. Forbidden or unknown-session also clears
 placement; an unreachable host keeps it and fails cleanup. A clean host restart
-parks eligible devices; a later reserve by the same client adopts a compatible
-parked emulator with all third-party apps removed. Running sessions left by a
-crash stay unknown until explicit stop; booted devices are never re-attached
-after restart. See hosted-ios for retention and eviction. JavaScript logs
+leaves a ready session and its running emulator in place and the restarted server
+resumes it, verified against its private ledger; a later reserve by the same client
+adopts a compatible parked emulator with all third-party apps removed. A session the
+restarted server cannot verify is stopped, or stays unknown when that is unprovable.
+See hosted-ios for retention and eviction. JavaScript logs
 arrive through local Metro.
 
 AGENT CONTROL
@@ -866,9 +867,15 @@ The default slot appears only in ios, never in slots[]. No host UDID enters loca
 status. Hosted ios --json results use udid: null and the actual simulator name as
 deviceName; host.agent.command addresses the hosted app. Ready is normal;
 stopped has a rerun hint; unknown or unreachable is
-unverified. A clean host server restart stops its sessions and retains eligible
-parked devices. A running session left by a crash stays unknown until explicit
-stop; the restarted server never re-attaches to a booted device.
+unverified. A host server restart leaves ready iOS and Android sessions running and
+the restarted server resumes them once their ownership claim is provably free: the
+journal stays ready, the simulator or emulator stays booted, the Metro bridge listens
+on its recorded port again and the agent-device grant keeps the same token, so the
+Metro links and remote config of the client keep working and a rerun reattaches. A
+session whose device is not verified as the recorded, ledger-owned, running one is
+stopped, as are sessions with an install in flight at shutdown, revoked sessions and
+macOS apps. An install a restart interrupted is marked unknown for that attempt only.
+A session whose owner is still held by a live process stays unknown until explicit stop.
 
 stop and worktree remove wait for the host to stop, park its eligible owned
 simulator within pool.iosParkedMax (delete otherwise), close the Metro links and clear placement. stop --json
