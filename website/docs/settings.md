@@ -996,9 +996,11 @@ took the time.
 override `STIM_DAEMON`. `start`, `ios`, `android`, `web`, `macos` and `revive`
 start one `stim-daemon` process per Stim home, scoped homes included. It ticks
 each minute while anything runs there or the pressure level is above normal, and
-every 5 minutes otherwise, and exits
-two ticks after nothing runs and every workspace is dormant or removed, so the
-dormant stage fires in a quiet home. Each tick it measures the machine once,
+every 5 minutes otherwise. It exits two ticks after nothing runs and no
+workspace waits for its dormant stage, so the stage fires in a quiet home; a
+workspace waits until its `idle.dormantDays` have passed, unless
+`maintenance.keep`, `idle.minutes` 0, a hosted placement or an unreadable state
+keeps it out. Each tick it measures the machine once,
 moves workspaces with no activity for `idle.minutes` into the
 [idle stage](./dev-server-and-logs.md#idle-stop), runs the pressure ladder above
 normal, and runs automatic maintenance. It also wakes the oldest run waiting for a build slot as soon as

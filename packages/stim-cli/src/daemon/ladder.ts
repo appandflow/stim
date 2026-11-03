@@ -30,6 +30,7 @@ import {
   dormantCandidates,
   enterDormantStage,
   idleStageCandidates,
+  stillIdle,
   stoppedOutputCandidates,
 } from './stages.ts';
 
@@ -370,7 +371,12 @@ async function dependenciesRung(context: RungContext): Promise<void> {
     }
     let result;
     try {
-      result = await clearArtifact(plan, 'dependencies', { ...options, worktrees, requireRestorable: true });
+      result = await clearArtifact(plan, 'dependencies', {
+        ...options,
+        worktrees,
+        requireRestorable: true,
+        recheck: async (key) => ((await stillIdle(key, PRESSURE_IDLE_MS)) ? null : 'it is no longer idle'),
+      });
     } catch (error) {
       result = { status: 'failed' as const, bytes: 0, detail: error instanceof Error ? error.message : String(error) };
     }

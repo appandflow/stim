@@ -2,6 +2,9 @@ import { existsSync, readdirSync } from 'node:fs';
 import {
   DORMANT_STAGE_KEY,
   readDormantStage,
+  readIdleStage,
+  readInteractions,
+  workspaceStateFile,
   type DaemonLadderAction,
   type DormantStageRecord,
 } from '@stim-cli/core/state';
@@ -144,6 +147,11 @@ function hasOutputs(path: string): boolean {
   );
 }
 
+/** Whether the workspace is still idle `thresholdMs`, for a caller that holds its native-run claim. */
+export async function stillIdle(path: string, thresholdMs: number): Promise<boolean> {
+  return (await idleFor(path, thresholdMs, 'the pressure idle threshold', true)) !== null;
+}
+
 /** Workspaces with nothing running, idle `thresholdMs` by the activity definition, longest-idle first. */
 export function idleStageCandidates(
   config: Config,
@@ -224,21 +232,48 @@ function alreadyDormant(path: string): boolean {
   return stage !== null && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at));
 }
 
+/** The newest activity `state.json` records: a Stim command, the end of a native run, a window interaction, the idle stage. */
+function recordedActivityAt(path: string): number {
+  const state = readWorkspaceState(path);
+  const build = state?.lastBuild;
+  const builtAt =
+    Date.parse(String(build?.startedAt ?? '')) + (typeof build?.durationMs === 'number' ? build.durationMs : 0);
+  const times = [
+    Date.parse(String(state?.lastUsedAt ?? '')),
+    builtAt,
+    Date.parse(readIdleStage(state)?.at ?? ''),
+    ...Object.values(readInteractions(state)).map((at) => Date.parse(at)),
+  ].filter(Number.isFinite);
+  return times.length ? Math.max(...times) : Number.NaN;
+}
+
 /**
  * A workspace the dormant stage will take later, which keeps the daemon alive: registered, not dormant yet, with an
- * owned device or logs to act on, and not kept out by `maintenance.keep` or `idle.minutes` 0. Null when there is none
- * or the stage is off.
+ * owned device or logs to act on, until its dormant due time plus `graceMs`. None that the dormant pass keeps skipping
+ * whatever the daemon does: `maintenance.keep`, `idle.minutes` 0, a hosted placement, an unreadable state, or an owned
+ * simulator while the tick's simulator listing failed. Null when there is none or the stage is off.
  */
-export function pendingDormant(config: Config | null): string | null {
-  if (!config || dormantAfterMs(config) <= 0) return null;
+export function pendingDormant(
+  config: Config | null,
+  reading: Pick<DeviceReading, 'simsFailed'>,
+  { now = Date.now(), graceMs }: { now?: number; graceMs: number },
+): string | null {
+  const afterMs = dormantAfterMs(config);
+  if (!config || afterMs <= 0) return null;
   for (const [path, project] of Object.entries(config.projects)) {
     if (alreadyDormant(path) || !(ownsDevice(project) || hasLogs(path))) continue;
+    if (!readWorkspaceState(path) && existsSync(workspaceStateFile(path))) continue;
+    if (reading.simsFailed && projectDeviceSlots(project).some(({ platforms }) => platforms.ios?.owned)) continue;
+    const hosted = hostedFacts(path);
+    if (hosted.placements.length || hosted.unreadable.length) continue;
     try {
       const { settings } = resolveProjectSettings(path);
       if (maintenanceKeepSetting(settings) || idleMinutesSetting(settings) === 0) continue;
     } catch {
       continue;
     }
+    const activityAt = recordedActivityAt(path);
+    if (Number.isFinite(activityAt) && now >= activityAt + afterMs + graceMs) continue;
     return path;
   }
   return null;
