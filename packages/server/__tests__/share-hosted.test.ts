@@ -73,6 +73,29 @@ describe('a share of a hosted device', () => {
     expect(f.requests.at(-1)).toEqual({ method: 'device-host.unsubscribe', params: { subscription: 'up' } });
   });
 
+  it('asks the host for the device frame only when a viewer wants it, and replays the artwork to a late viewer', async () => {
+    const f = fixture({ 'device-host.frames.subscribe': { subscription: 'up' } });
+    const art = vi.fn<(artwork: unknown) => void>();
+    f.source.subscribe({ ...listener(), artwork: art }, hint);
+    await vi.waitFor(() => expect(f.routes.has('s:up')).toBe(true));
+    expect(f.requests[0]).toEqual({
+      method: 'device-host.frames.subscribe',
+      params: { session: 'host-session', fps: 10, maxEdge: 1280, deviceFrame: true },
+    });
+    const artwork = {
+      width: 2,
+      height: 4,
+      aperture: { x: 0, y: 0, width: 2, height: 4 },
+      background: 'a',
+      foreground: 'b',
+    };
+    f.routes.get('s:up')?.event({ event: 'device-frame', subscription: 'up', artwork });
+    expect(art).toHaveBeenCalledWith(artwork);
+    const late = vi.fn<(artwork: unknown) => void>();
+    f.source.subscribe({ ...listener(), artwork: late }, hint);
+    expect(late).toHaveBeenCalledWith(artwork);
+  });
+
   it('fails every viewer, naming the host, when the host refuses or ends the stream', async () => {
     const refused = fixture({
       'device-host.frames.subscribe': {

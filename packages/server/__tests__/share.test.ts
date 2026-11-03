@@ -323,7 +323,11 @@ describe('a web share', () => {
     expect(f.subscribed).toHaveLength(1);
     expect(f.subscribed[0]!.device).toEqual({ platform: 'ios', udid: 'SIM-1', foldable: false });
     expect(f.hub.list()[0]!.viewers).toBe(1);
-    const frame = new Promise<Buffer>((resolve) => socket.once('message', (data) => resolve(data as Buffer)));
+    const frame = new Promise<Buffer>((resolve) =>
+      socket.on('message', (data, binary) => {
+        if (binary) resolve(data as Buffer);
+      }),
+    );
     f.subscribed[0]!.listener.frame({ width: 1, height: 1, capturedAt: '', data: JPEG.toString('base64') });
     expect(Buffer.compare(await frame, JPEG)).toBe(0);
 
@@ -364,12 +368,71 @@ describe('a web share', () => {
     expect(f.hub.unrecordedTargets()).toEqual(new Set());
   });
 
+  it('serves its stylesheet and script without a token, and nothing else under that path', async () => {
+    const share = await started(f);
+    const base = new URL(local(share, f.hub.port ?? 0)).origin;
+    const script = await http(`${base}/s/assets/viewer.js`);
+    expect(script.status).toBe(200);
+    expect(String(script.headers['content-type'])).toContain('javascript');
+    expect((await http(`${base}/s/assets/viewer.css`)).status).toBe(200);
+    expect((await http(`${base}/s/assets/secret.js`)).status).toBe(404);
+    expect((await http(`${base}/s/assets/viewer.js`, { method: 'POST', body: 'x=1' })).status).toBe(404);
+  });
+
+  it('tells a viewer when the share expires and sends the device artwork as image data', async () => {
+    const share = await started(f);
+    const url = local(share, f.hub.port ?? 0);
+    const messages: Record<string, unknown>[] = [];
+    const socket = new WebSocket(`${url.replace(/^http/, 'ws')}ws`, {
+      headers: { origin: origin(url), cookie: await login(url, share.password ?? '') },
+    });
+    socket.on('message', (data, binary) => {
+      if (!binary) messages.push(JSON.parse(String(data)));
+    });
+    await vi.waitFor(() => expect(f.subscribed).toHaveLength(1));
+    f.subscribed[0]?.listener.artwork?.({
+      width: 10,
+      height: 20,
+      aperture: { x: 1, y: 1, width: 8, height: 18 },
+      cornerRadius: 2,
+      quarterTurns: 0,
+      background: 'Qkc=',
+      foreground: 'Rkc=',
+    });
+    await vi.waitFor(() => expect(messages).toHaveLength(2));
+    expect(messages[0]).toEqual({ type: 'hello', expiresAt: share.expiresAt });
+    expect(messages[1]).toMatchObject({
+      type: 'artwork',
+      artwork: {
+        aperture: { width: 8 },
+        background: 'data:image/png;base64,Qkc=',
+        foreground: 'data:image/png;base64,Rkc=',
+      },
+    });
+    socket.close();
+  });
+
+  it('with --control, rotates the shared device in the two directions only', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password ?? '') });
+    socket.send(JSON.stringify({ type: 'rotate', direction: 'up' }));
+    socket.send(JSON.stringify({ type: 'rotate', direction: 'left' }));
+    await vi.waitFor(() => expect(f.inputs).toHaveLength(1));
+    expect(f.inputs).toEqual([{ session: 'c1', command: { input: 'rotate', direction: 'left' } }]);
+    socket.close();
+  });
+
   it('keeps no recording exemption for a device whose control another client holds', async () => {
     f.refuseControl = true;
     const share = await started(f, { control: true });
     const url = local(share, f.hub.port!);
     const { socket } = await connect(url, { origin: origin(url), cookie: await login(url, share.password!) });
-    const refused = new Promise<string>((resolve) => socket.once('message', (data) => resolve(String(data))));
+    const refused = new Promise<string>((resolve) =>
+      socket.on('message', (data, binary) => {
+        if (!binary && String(data).includes('"control"')) resolve(String(data));
+      }),
+    );
     socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
     const told = JSON.parse(await refused);
     expect(told).toMatchObject({ type: 'control' });
@@ -496,7 +559,11 @@ describe('a web share', () => {
       expect(f.subscribed).toEqual([]);
       const record = f.hostedSources[0]!;
       expect(record.subscribed).toHaveLength(1);
-      const frame = new Promise<Buffer>((resolve) => socket.once('message', (data) => resolve(data as Buffer)));
+      const frame = new Promise<Buffer>((resolve) =>
+        socket.on('message', (data, binary) => {
+          if (binary) resolve(data as Buffer);
+        }),
+      );
       record.subscribed[0]!.frame({ width: 1, height: 1, capturedAt: '', data: JPEG.toString('base64') });
       expect(Buffer.compare(await frame, JPEG)).toBe(0);
       socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.25, y: 0.75 }));

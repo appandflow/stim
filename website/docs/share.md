@@ -46,6 +46,24 @@ is safer. With `--no-password` there is no login: anyone with the link can
 watch, or control with `--control`. `stim share` warns about it on stderr and
 `stim share list` marks the share "no password".
 
+## The viewer
+
+The viewer draws the device inside its frame when Stim has artwork for it (an
+iOS simulator today) and as a rounded screen otherwise, scaled to fit any
+window, in light or dark to match the browser. A toolbar under the device
+holds:
+
+- **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
+  with `--control`.
+- **Rotate left and right**, with `--control`, for an owned simulator or
+  emulator. A physical device rotates only in hand.
+- **Screenshot**, which downloads the current frame as a PNG. It works without
+  `--control`.
+- **Fullscreen.**
+
+The header shows Live or Waiting and the time left before the share expires.
+With `--control`, click the screen to tap and type with the keyboard.
+
 ## Requirements
 
 - **stim-server** for this Stim home. When none runs (no Stim Desktop or
@@ -87,7 +105,7 @@ watch, or control with `--control`. `stim share` warns about it on stderr and
 | Option                | Meaning                                                                                           |
 | --------------------- | ------------------------------------------------------------------------------------------------- |
 | `ios` / `android`     | Which of the workspace's devices to share.                                                        |
-| `--control`           | Let viewers tap, type and press Home, Lock, Back or Apps.                                         |
+| `--control`           | Let viewers tap, type, rotate and press Home, Lock, Back or Apps.                                 |
 | `--expires <minutes>` | Minutes until the share ends, 1 to 480 (default 60). No "never".                                  |
 | `--password <value>`  | Use this password, 8 to 128 characters, instead of a generated one.                               |
 | `--no-password`       | No login: anyone with the link can open the share.                                                |
@@ -157,8 +175,9 @@ the next listener, after the last share ends.
   Funnel never reaches stim-server's API, and `stim-server setup` and
   `service` never enable Funnel. In proxy mode nothing is added to Tailscale.
 - **Three routes per share.** The viewer page, the frame stream of the one
-  shared device, and, with `--control`, input to that same device. Anything
-  else, including an unknown link, answers 404. No other device, log, file,
+  shared device, and, with `--control`, input to that same device. The page's
+  stylesheet and script are static files under `/s/assets/`; they hold no
+  share data. Anything else, including an unknown link, answers 404. No other device, log, file,
   command or stim-server method is reachable through it.
 - **Secrets.** The link carries 256 random bits. The generated password is 16
   random characters (about 79 bits); one you set is 8 to 128 characters.
@@ -176,7 +195,7 @@ the next listener, after the last share ends.
   costs only its listener and route. A share never records anything to disk.
 - **Control is the existing control path.** Input goes through the same
   control session and device lease Stim Desktop and the phone app use, limited
-  to taps, text and the hardware buttons of the shared device. A device an
+  to taps, text, rotation and the hardware buttons of the shared device. A device an
   agent or another client is driving answers busy; a share never takes it over.
 - **Ephemeral.** Shares live only in stim-server's memory. A share ends at its
   expiry, on `stim share stop`, `stim stop` (without `--slot`),

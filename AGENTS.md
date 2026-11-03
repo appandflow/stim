@@ -524,7 +524,9 @@ outside it moves to its own issue and pull request.
   listener, under an ownership claim at `server/share-route`, and removes it
   with the last share, and after a crash on the next start, only while the
   serve config still holds exactly that route. A share never starts the
-  recorder or capture before a signed-in viewer connects. A workspace whose
+  recorder or capture before a signed-in viewer connects. The viewer's
+  stylesheet and script are two fixed bundled files served without a token
+  under `/s/assets/`; they carry no share data. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription for all viewers, control through
   `device-host.control.begin` and `device-host.input.*`); the worker sees only

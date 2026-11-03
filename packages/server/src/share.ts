@@ -8,10 +8,10 @@ import { parseInput } from './control.ts';
 import { LatestFrames } from './frame-delivery.ts';
 import type { FrameHint } from './frame-helper.ts';
 import { deviceKey, ownedDevice, type Device, type Frame, type FramePool, type LeaseLookup } from './frames.ts';
-import type { ServerMessage } from './protocol.ts';
+import type { DeviceFrameArtwork, ServerMessage } from './protocol.ts';
 import { targetKey } from './recorder.ts';
 import { hostedOf, type HostedTarget, type ShareSource } from './share-hosted.ts';
-import { endedPage, loginPage, viewerPage } from './share-page.ts';
+import { endedPage, loginPage, SHARE_ASSETS, viewerPage } from './share-page.ts';
 import type { OpenedRoute } from './share-route.ts';
 
 type SharePlatform = 'ios' | 'android';
@@ -128,6 +128,15 @@ const VIEWER_TEXT = {
   inputRefused: 'That input was not accepted.',
   controlEnded: 'Control ended.',
 };
+const CSP =
+  "default-src 'none'; img-src blob: data:; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+const ROTATE_COST = 30;
+const INPUT_METHODS = new Map<string, Parameters<typeof parseInput>[0]>([
+  ['touch', 'input.touch'],
+  ['text', 'input.text'],
+  ['button', 'input.button'],
+  ['rotate', 'input.rotate'],
+]);
 const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
@@ -140,6 +149,16 @@ function drivenNow(payload: StatusPayload | null, request: ShareRequest): boolea
   const slot = request.slot ?? 'default';
   const devices = slot === 'default' ? environment : environment?.slots?.find((candidate) => candidate.slot === slot);
   return devices?.[request.platform]?.activity?.state === 'driven';
+}
+
+/** The artwork as the viewer draws it: both layers as image data URLs. */
+function viewerArtwork(artwork: DeviceFrameArtwork) {
+  const { background, foreground, ...geometry } = artwork;
+  return {
+    ...geometry,
+    background: `data:image/png;base64,${background}`,
+    foreground: `data:image/png;base64,${foreground}`,
+  };
 }
 
 function closeServer(server: Server): void {
@@ -640,41 +659,56 @@ export class ShareHub {
     return session !== null && TOKEN.test(session) && share.sessions.has(digest(session).toString('hex'));
   }
 
-  private respond(response: ServerResponse, status: number, html: string, nonce: string, extra = {}): void {
+  private respond(response: ServerResponse, status: number, html: string, extra = {}): void {
     response.writeHead(status, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
       'x-frame-options': 'DENY',
       'x-content-type-options': 'nosniff',
-      'content-security-policy': `default-src 'none'; img-src blob:; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`,
+      'content-security-policy': CSP,
       ...extra,
     });
     response.end(html);
   }
 
+  private asset(request: IncomingMessage, response: ServerResponse): boolean {
+    const asset = /^\/s\/assets\/([\w.]+)$/.exec(request.url ?? '');
+    const file = asset?.[1] ? SHARE_ASSETS[asset[1]] : undefined;
+    if (!file || (request.method !== 'GET' && request.method !== 'HEAD')) return false;
+    response.writeHead(200, {
+      'content-type': file.type,
+      'cache-control': 'no-cache',
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+      'content-security-policy': CSP,
+    });
+    response.end(request.method === 'HEAD' ? undefined : file.body);
+    return true;
+  }
+
   private serve(request: IncomingMessage, response: ServerResponse): void {
-    const nonce = randomBytes(16).toString('base64');
+    if (this.asset(request, response)) return;
     const found = this.find(request);
     if (!found || (found.rest !== '' && found.rest !== 'login')) {
       request.resume();
-      return this.respond(response, 404, endedPage(nonce), nonce);
+      return this.respond(response, 404, endedPage());
     }
     const { share, rest } = found;
     if (rest === '' && request.method === 'GET') {
       if (this.signedIn(share, request)) {
+        const { platform, control, physical } = share.request;
         return this.respond(
           response,
           200,
-          viewerPage(nonce, { control: share.request.control, buttons: BUTTONS[share.request.platform] }),
-          nonce,
+          viewerPage({ control, platform, buttons: BUTTONS[platform], rotate: !physical }),
         );
       }
-      return this.respond(response, 200, loginPage(nonce, null), nonce);
+      return this.respond(response, 200, loginPage(null));
     }
     if (rest !== 'login' || request.method !== 'POST' || share.passwordDigest === null) {
       request.resume();
-      return this.respond(response, 404, endedPage(nonce), nonce);
+      return this.respond(response, 404, endedPage());
     }
     const chunks: Buffer[] = [];
     let size = 0;
@@ -686,20 +720,20 @@ export class ShareHub {
       }
       chunks.push(chunk);
     });
-    request.on('end', () => this.login(share, request, response, Buffer.concat(chunks).toString('utf8'), nonce));
+    request.on('end', () => this.login(share, request, response, Buffer.concat(chunks).toString('utf8')));
   }
 
-  private login(share: Share, request: IncomingMessage, response: ServerResponse, body: string, nonce: string): void {
-    if (share.ended || !share.passwordDigest) return this.respond(response, 404, endedPage(nonce), nonce);
+  private login(share: Share, request: IncomingMessage, response: ServerResponse, body: string): void {
+    if (share.ended || !share.passwordDigest) return this.respond(response, 404, endedPage());
     const now = Date.now();
     share.failures = share.failures.filter((at) => now - at < this.limits.failureWindowMs);
     if (share.failures.length >= this.limits.maxFailures) {
-      return this.respond(response, 429, loginPage(nonce, 'Too many wrong passwords. Try again later.'), nonce);
+      return this.respond(response, 429, loginPage('Too many wrong passwords. Try again later.'));
     }
     const given = new URLSearchParams(body).get('password') ?? '';
     if (!timingSafeEqual(digest(given), share.passwordDigest)) {
       share.failures.push(now);
-      return this.respond(response, 401, loginPage(nonce, 'Wrong password.'), nonce);
+      return this.respond(response, 401, loginPage('Wrong password.'));
     }
     const session = token();
     share.sessions.add(digest(session).toString('hex'));
@@ -758,10 +792,12 @@ export class ShareHub {
       {
         frame: (frame) => delivery.push(frame),
         delayed: (delayed) => json({ type: 'delayed', delayed }),
+        artwork: (artwork) => json({ type: 'artwork', artwork: artwork && viewerArtwork(artwork) }),
         failed: (message) => queueMicrotask(() => void this.end(share, message)),
       },
       VIEW_HINT,
     );
+    json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString() });
     let stopped = false;
     const viewer: Viewer = {
       socket,
@@ -811,16 +847,18 @@ export class ShareHub {
     }
     if (!isJsonObject(message)) return;
     const { type, ...fields } = message;
-    const method =
-      type === 'touch' ? 'input.touch' : type === 'text' ? 'input.text' : type === 'button' ? 'input.button' : null;
+    const method = INPUT_METHODS.get(String(type));
     if (!method) return;
-    if (!take(viewer.inputs, 1, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
+    const cost = method === 'input.rotate' ? ROTATE_COST : 1;
+    if (!take(viewer.inputs, cost, this.limits.inputPerSecond, this.limits.inputPerSecond)) return;
     const params =
       method === 'input.touch'
         ? { phase: fields.phase, x: fields.x, y: fields.y }
         : method === 'input.text'
           ? { text: fields.text }
-          : { button: fields.button };
+          : method === 'input.rotate'
+            ? { direction: fields.direction }
+            : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
     const session = await this.controlSession(share, viewer);
     if (!session || share.ended) return;
