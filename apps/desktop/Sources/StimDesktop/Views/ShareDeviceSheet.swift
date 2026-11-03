@@ -19,6 +19,8 @@ struct ShareDeviceSheet: View {
   @State private var options = WebShareOptions()
   @State private var kind = PasswordKind.generated
   @State private var custom = ""
+  @State private var viewKind = ViewKind.off
+  @State private var viewCustom = ""
   @State private var starting = false
   @State private var failure: String?
   @State private var started: StartedWebShare?
@@ -27,6 +29,12 @@ struct ShareDeviceSheet: View {
     case generated = "Generated"
     case custom = "Choose"
     case none = "None"
+  }
+
+  private enum ViewKind: String, CaseIterable {
+    case off = "Off"
+    case generated = "Generated"
+    case custom = "Choose"
   }
 
   private static let expiries: [(minutes: Int, label: String)] = [
@@ -66,6 +74,15 @@ struct ShareDeviceSheet: View {
           if kind == .custom {
             SecureField("Password", text: $custom, prompt: Text("8 to 128 characters"))
           }
+          if offersViewPassword {
+            Picker("View-only password", selection: $viewKind) {
+              ForEach(ViewKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            if viewKind == .custom {
+              SecureField("View-only password", text: $viewCustom, prompt: Text("8 to 128 characters"))
+            }
+          }
         } footer: {
           Text(passwordNote).foregroundStyle(kind == .none ? Palette.warning : Palette.tertiary)
         }
@@ -88,7 +105,13 @@ struct ShareDeviceSheet: View {
     }
   }
 
+  /// A separate view-only password makes sense only for a share that has control and a password.
+  private var offersViewPassword: Bool { model.offersViewPassword && options.control && kind != .none }
+
   private var passwordNote: String {
+    if offersViewPassword && viewKind != .off {
+      return "The first password controls the device; the view-only one only watches. Stim shows generated passwords once."
+    }
     switch kind {
     case .generated: "Stim generates a password and shows it once. Send it to viewers separately from the link."
     case .custom: "Stim never shows this password again and does not keep it."
@@ -104,10 +127,20 @@ struct ShareDeviceSheet: View {
     case .custom: chosen.password = .custom(custom)
     case .none: chosen.password = .none
     }
+    switch viewKind {
+    case .off: chosen.viewPassword = .off
+    case .generated: chosen.viewPassword = .generated
+    case .custom: chosen.viewPassword = .custom(viewCustom)
+    }
+    if !offersViewPassword { chosen.viewPassword = .off }
     return chosen
   }
 
-  private var problem: String? { kind == .custom && custom.isEmpty ? "Enter a password." : chosen.problem }
+  private var problem: String? {
+    if kind == .custom && custom.isEmpty { return "Enter a password." }
+    if offersViewPassword && viewKind == .custom && viewCustom.isEmpty { return "Enter a view-only password." }
+    return chosen.problem
+  }
 
   private func start() {
     guard problem == nil, !starting else { return }
@@ -120,6 +153,7 @@ struct ShareDeviceSheet: View {
         started = try await model.start(
           workspace: request.workspace, platform: request.platform, slot: request.slot, options: choices)
         custom = ""
+        viewCustom = ""
       } catch {
         failure = error.localizedDescription
       }
@@ -131,13 +165,19 @@ struct ShareDeviceSheet: View {
       Form {
         Section {
           secretRow("Link", value: started.url)
+          let controlTitle = started.share.viewAuth == nil ? "Password" : "Control password"
           switch started.share.auth {
           case .generated:
-            secretRow("Password", value: started.password ?? "")
+            secretRow(controlTitle, value: started.password ?? "")
           case .set:
-            LabeledContent("Password", value: "The one you chose")
+            LabeledContent(controlTitle, value: "The one you chose")
           case .none:
-            LabeledContent("Password", value: "None")
+            LabeledContent(controlTitle, value: "None")
+          }
+          switch started.share.viewAuth {
+          case .generated: secretRow("View password", value: started.viewPassword ?? "")
+          case .set: LabeledContent("View password", value: "The one you chose")
+          case nil: EmptyView()
           }
         } header: {
           Text("Shared \(platformName) of \(workspaceTitle(request.workspace))").font(.stim(.headline))
@@ -166,6 +206,10 @@ struct ShareDeviceSheet: View {
   }
 
   private func resultNote(_ started: StartedWebShare) -> String {
+    if started.share.viewAuth != nil {
+      return
+        "Anyone with the link and a password can open it until it ends. Generated passwords are shown only now: Stim Desktop does not keep them."
+    }
     switch started.share.auth {
     case .generated:
       "Anyone with both can open it until it ends. The password is shown only now: Stim Desktop does not keep it."
