@@ -35,6 +35,7 @@ import { withWorkspaceProcessLock, workspaceProcessLockError } from './workspace
 import { workspaceDisplayLabel, workspaceLabels } from '../workspace/display-label.ts';
 import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
 import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
+import { readWebShares, shareKeepReason } from '../local-server.ts';
 import type { StimContext } from '@stim-cli/core';
 import type {
   BuildWaitingFor,
@@ -661,8 +662,29 @@ function slotHolders(inventory: DeviceInventory, keys: Set<string>): StatusDevic
     .toSorted((a, b) => a.label.localeCompare(b.label) || a.platform.localeCompare(b.platform));
 }
 
-function deviceHolders(inventory: DeviceInventory, keys: Set<string>): string[] {
-  return [...new Set(slotHolders(inventory, keys).map((holder) => holder.label))].toSorted();
+function holderLabels(holders: readonly StatusDeviceSlotHolder[]): string[] {
+  return [...new Set(holders.map((holder) => holder.label))].toSorted();
+}
+
+/**
+ * Each holder whose workspace a live web share keeps booted, named with the share, or every holder when the shares
+ * cannot be listed: the daemon reclaims none of them.
+ */
+async function sharedHolders(holders: readonly StatusDeviceSlotHolder[], now: number): Promise<string[]> {
+  const roots = new Map(holders.flatMap((holder) => (holder.workspace ? [[holder.workspace, holder.label]] : [])));
+  if (!roots.size) return [];
+  const shares = await readWebShares();
+  if (shares === null) return [];
+  if (!Array.isArray(shares)) {
+    const labels = [...new Set(roots.values())];
+    return [
+      `${labels.join(', ')} ${labels.length === 1 ? 'stays' : 'stay'} booted: this home's web shares cannot be listed (${shares.unreadable})`,
+    ];
+  }
+  return [...roots].flatMap(([root, label]) => {
+    const reason = shareKeepReason(shares, root, now);
+    return reason ? [`${label} stays booted: ${reason}`] : [];
+  });
 }
 
 /**
@@ -827,7 +849,7 @@ export async function withDeviceBootAdmission<T>(
   let started: number | undefined;
   let lastLine = -Infinity;
   let visibleWait = false;
-  let lastInventory: { limit: DeviceLimit; holders: string[] } | undefined;
+  let lastInventory: { limit: DeviceLimit; holders: StatusDeviceSlotHolder[] } | undefined;
   let lastTurn = false;
   let binding: DeviceLimit | undefined;
   let lastListed = -Infinity;
@@ -855,6 +877,7 @@ export async function withDeviceBootAdmission<T>(
               limit: DeviceLimit | undefined,
               holders: string[],
               unverified: string | null = null,
+              held: readonly StatusDeviceSlotHolder[] = [],
             ) => {
               const shown = holders.length ? `${what} held by ${holders.join(', ')}` : what;
               const queue = `queue position ${position} of ${Math.max(waiters.length, position)}`;
@@ -883,7 +906,15 @@ export async function withDeviceBootAdmission<T>(
                   `Waited ${formatElapsed(elapsed)} for ${state}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : waitMs === undefined ? ', the 90-minute ceiling' : ''}.`,
                   remedy,
                 );
-              return { what: shown, resource, use, limit, position, waiting: Math.max(waiters.length, position) };
+              return {
+                what: shown,
+                resource,
+                use,
+                limit,
+                position,
+                waiting: Math.max(waiters.length, position),
+                held,
+              };
             };
             if (ticket && lastInventory && ahead.length > 0 && !lastTurn && now() - lastListed < INVENTORY_REFRESH_MS) {
               const booting = sources.booting ?? readBootingDevices;
@@ -894,6 +925,8 @@ export async function withDeviceBootAdmission<T>(
                 'booted devices',
                 { inUse: lastInventory.limit.count, max: lastInventory.limit.max },
                 lastInventory.limit,
+                holderLabels(lastInventory.holders),
+                null,
                 lastInventory.holders,
               );
             }
@@ -923,7 +956,7 @@ export async function withDeviceBootAdmission<T>(
               const held = limit.platform
                 ? new Set([...keys].filter((key) => key.startsWith(`${limit.platform}:`)))
                 : keys;
-              lastInventory = { limit, holders: deviceHolders(inventory, held) };
+              lastInventory = { limit, holders: slotHolders(inventory, held) };
             }
             if (full)
               return wait(
@@ -931,6 +964,8 @@ export async function withDeviceBootAdmission<T>(
                 'booted devices',
                 { inUse: full.count, max: full.max },
                 full,
+                holderLabels(lastInventory?.holders ?? []),
+                null,
                 lastInventory?.holders ?? [],
               );
             const booting = inventory.booting.filter((entry) => deviceKey(entry.platform, entry.key) !== own);
@@ -970,9 +1005,10 @@ export async function withDeviceBootAdmission<T>(
         });
         if (now() - lastLine >= 10_000) {
           lastLine = now();
+          const shared = await sharedHolders(result.held, now());
           out(
             deviceSlotWaitingLine({
-              what: result.what,
+              what: [result.what, ...shared].join('; '),
               position: result.position,
               waiting: result.waiting,
               elapsedMs: now() - started!,

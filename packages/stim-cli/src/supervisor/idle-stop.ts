@@ -5,6 +5,7 @@ import { ownedAvdSerialResolver } from '../devices/android.ts';
 import { parseDeviceSlotKey, projectDeviceSlots } from '../devices/device-slots.ts';
 import { workspaceBuildInProgress } from '../commands/gc/idle.ts';
 import { deviceLeasePath, leaseIsExpired, parseLease, parseWorkspaceLeases } from '../engine/device-lease.ts';
+import { liveShareKeepReason } from '../local-server.ts';
 import { getProject } from '../workspace/config.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { describeError } from './errors.ts';
@@ -51,7 +52,7 @@ export function trackDevServerActivity(now: () => number): DevServerActivity {
 
 export interface IdleProbe {
   lastActivityAt(): number;
-  blocker(): string | null;
+  blocker(): string | null | Promise<string | null>;
 }
 
 function deviceTargets(root: string): Omit<ActivityTarget, 'workspace'>[] {
@@ -92,7 +93,7 @@ export function workspaceIdleProbe(
 ): IdleProbe {
   return {
     lastActivityAt: () => workspaceDeviceLastUseAt(root),
-    blocker() {
+    async blocker() {
       if (workspaceBuildInProgress(root)) return 'a build is in progress';
       for (const native of ['ios', 'android'] as const) {
         const records = Object.values(hostedNativeRecords(readWorkspaceState(root), native));
@@ -119,7 +120,7 @@ export function workspaceIdleProbe(
           return `${target.platform} device ${target.id} has unknown activity (${unknown.join(', ')})`;
         }
       }
-      return null;
+      return liveShareKeepReason(root);
     },
   };
 }
@@ -136,15 +137,15 @@ export function watchIdleDevServer({
   now: () => number;
   serverActivityAt: () => number;
   probe: IdleProbe;
-  onIdle: (idleMinutes: () => number | null) => Promise<void>;
+  onIdle: (idleMinutes: () => Promise<number | null>) => Promise<void>;
   checkMs?: number;
 }): () => void {
-  const idleMinutes = (): number | null => {
+  const idleMinutes = async (): Promise<number | null> => {
     const last = Math.max(serverActivityAt(), ...[probe.lastActivityAt()].filter(Number.isFinite));
     if (now() - last < idleStopMs) return null;
     let blocker: string | null;
     try {
-      blocker = probe.blocker();
+      blocker = await probe.blocker();
     } catch (error) {
       blocker = describeError(error);
     }
@@ -153,11 +154,13 @@ export function watchIdleDevServer({
   let deciding = false;
   const timer = setInterval(
     () => {
-      if (deciding || idleMinutes() === null) return;
+      if (deciding) return;
       deciding = true;
-      void onIdle(idleMinutes).finally(() => {
-        deciding = false;
-      });
+      void idleMinutes()
+        .then((minutes) => (minutes === null ? undefined : onIdle(idleMinutes)))
+        .finally(() => {
+          deciding = false;
+        });
     },
     Math.min(checkMs, idleStopMs),
   );

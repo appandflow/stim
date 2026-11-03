@@ -18,11 +18,12 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import type { IosSimRecord } from '../devices/ios.ts';
 import { teardownOwnedIosSim, teardownOwnedAvd } from '../devices/teardown.ts';
 import { tryAcquireClaim, releaseClaim, type ClaimHandle } from '../ownership-claim.ts';
-import { takeWaitTicket } from '../engine/wait-queue.ts';
+import { liveWaiters, takeWaitTicket } from '../engine/wait-queue.ts';
 import { workspaceProcessLockPath } from '../engine/workspace-process-lock.ts';
 import { upsertProject } from '../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 
 vi.mock('../commands/gc/idle.ts', () => ({
   collectOwnedDeviceActivity: vi.fn<typeof import('../commands/gc/idle.ts').collectOwnedDeviceActivity>(),
@@ -160,6 +161,67 @@ test('a device of another Stim home counts toward the cap, and only a device thi
   await expect(reclaim()).resolves.toMatchObject({ target: 'mine-2', outcome: 'done' });
   expect(teardownOwnedIosSim).not.toHaveBeenCalledWith('unledgered-2', expect.anything());
 });
+
+test.skipIf(process.platform === 'win32')(
+  'a device whose workspace has a live web share is never reclaimed, and the waiting run stays queued',
+  async () => {
+    const shared = add('shared', 30);
+    add('fresh', 1);
+    const server = await serveShareList(() => ({
+      shares: [shareRow(shared.project, new Date(NOW + 30 * MINUTE).toISOString())],
+    }));
+    onTestFinished(() => server.close());
+
+    await expect(reclaim()).resolves.toBeNull();
+    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+    expect(devices.map((device) => device.id)).toContain('shared');
+    expect(liveWaiters('boot').map((holder) => holder.claimId)).toEqual([ticket?.claimId]);
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a share that goes live before the workspace lock is taken keeps the device, named in the kept action',
+  async () => {
+    const shared = add('shared', 30);
+    add('fresh', 1);
+    const expiresAt = new Date(NOW + 30 * MINUTE).toISOString();
+    let reads = 0;
+    const server = await serveShareList(() => ({ shares: reads++ === 0 ? [] : [shareRow(shared.project, expiresAt)] }));
+    onTestFinished(() => server.close());
+
+    await expect(reclaim()).resolves.toMatchObject({
+      target: 'shared',
+      outcome: 'kept',
+      detail: `kept iOS simulator stim-shared: it has a live web share (ios until ${expiresAt}); stim share stop ends it`,
+    });
+    expect(reads).toBe(2);
+    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      'device_reclaim_kept',
+      expect.stringContaining('live web share'),
+      expect.anything(),
+    );
+  },
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a share list stim-server cannot give reclaims nothing and says why',
+  async () => {
+    add('idle', 30);
+    add('other', 40);
+    const server = await serveShareList(() => ({ error: { code: 'internal', message: 'The share hub is closing.' } }));
+    onTestFinished(() => server.close());
+
+    await expect(reclaim()).resolves.toBeNull();
+    expect(teardownOwnedIosSim).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      'warn',
+      'device_reclaim_kept',
+      "no device reclaimed for a waiting run: this home's web shares cannot be listed (The share hub is closing)",
+    );
+  },
+);
 
 test('a failed simulator listing reclaims nothing', async () => {
   add('idle', 30);

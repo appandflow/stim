@@ -20,6 +20,7 @@ import { getProject, loadConfig, saveConfig, upsertProject } from '../workspace/
 import * as lightened from '../workspace/lightened.ts';
 import { ensureWorkspaceStorage, workspaceDir, workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState, recordWorkspaceUse, writeWorkspaceState } from '../workspace/workspace-state.ts';
+import { serveShareList, shareRow } from './_share-list-server.ts';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -178,19 +179,26 @@ describe('the dormant stage', () => {
     expect(await dormant()).toEqual([expect.objectContaining({ target: root, outcome: 'done' })]);
   });
 
-  test('a booted device, maintenance.keep, or a failed simulator listing keeps a workspace out of it', async () => {
+  test('a booted device, maintenance.keep, a live web share, or a failed simulator listing keeps a workspace out of it', async () => {
     const booted = workspace('booted', 4 * DAY_MS, 'Booted');
     const pinned = workspace('pinned', 4 * DAY_MS, 'Shutdown');
     writeFileSync(join(pinned.root, '.stim.json'), JSON.stringify({ maintenance: { keep: true } }));
+    const shared = process.platform === 'win32' ? null : workspace('shared', 4 * DAY_MS, 'Shutdown');
+    if (shared) {
+      const server = await serveShareList(() => ({ shares: [shareRow(shared.root, '2099-01-01T00:00:00.000Z')] }));
+      onTestFinished(() => server.close());
+    }
     expect(
       await runDormantPass({ config: loadConfig(), act: true, log, devices: await devicesNow(), simsFailed: false }),
     ).toEqual([]);
     const listed = workspace('unlisted', 4 * DAY_MS, 'Shutdown');
     expect(await dormant(true)).toEqual([]);
     expect(deleted).toEqual([]);
-    expect([booted, pinned, listed].every(({ root }) => readDormantStage(readWorkspaceState(root)) === null)).toBe(
-      true,
-    );
+    expect(
+      [booted, pinned, ...(shared ? [shared] : []), listed].every(
+        ({ root }) => readDormantStage(readWorkspaceState(root)) === null,
+      ),
+    ).toBe(true);
   });
 
   test('idle.dormantDays 0 turns the dormant stage off, and idle.minutes 0 keeps a workspace out of it', async () => {

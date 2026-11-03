@@ -342,9 +342,9 @@ Ask the user before these actions:
   parked devices are deleted, shared caches are trimmed, and workspaces idle
   10 minutes or more go dormant, losing their owned devices. That includes
   the workspace you run it from: an app you are not driving right now stops.
-  It never touches a workspace that is building, driven, leased, hosted or
-  pinned by maintenance.keep, and keeps node_modules and Pods unless --cache
-  all. Run stim gc
+  It never touches a workspace that is building, driven, leased, shared
+  with stim share, hosted or pinned by maintenance.keep, and keeps
+  node_modules and Pods unless --cache all. Run stim gc
   --json first and show the user its sections and its ladder (guide facts
   gc). gc --delete --cache all also empties the shared build caches and the
   build outputs, and runs the ladder at critical, which deletes node_modules

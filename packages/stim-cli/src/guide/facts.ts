@@ -1016,9 +1016,11 @@ RULES
                               worktree gc keeps although its branch is
                               merged or its pull request ended; --delete
                               deletes them unless the workspace is in use,
-                              leased, driven, locked, pinned by
-                              maintenance.keep or used within
-                              gc.worktreeGraceMinutes
+                              leased, driven, locked, shared with a live
+                              stim share, pinned by maintenance.keep or used
+                              within gc.worktreeGraceMinutes; the listing
+                              does not read shares, so a shared workspace's
+                              devices can be listed and still kept
     ownedDeviceDisk         { kind, count, bytes, unmeasured }  disk of the
                               owned simulators and emulators of registered
                               workspaces, per platform; unmeasured counts the

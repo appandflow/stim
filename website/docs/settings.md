@@ -761,7 +761,8 @@ clears: idle stage for every workspace idle 2 minutes, parked devices, the
 shared caches, the dormant stage, at critical the `node_modules` and Pods of
 idle worktrees, then Gradle daemons, unpinned Gradle versions, TMPDIR leftovers
 and the worktree trash. Each rung measures again first, skips a workspace with
-a build, a driver, a lease or `maintenance.keep`, and takes the longest-idle
+a build, a driver, a lease, a live [web share](./share.md) or
+`maintenance.keep`, and takes the longest-idle
 workspace first; a level raised by memory alone runs only what frees memory.
 Every action is logged with its reason, the bytes it freed and the command
 that brings it back. `stim start`, `stim ios` and `stim android` refuse with

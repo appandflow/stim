@@ -667,8 +667,8 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
    checked again.
 7. Owned simulators and emulators of a finished worktree that is kept, such as
    a dirty one, once idle for `gc.worktreeGraceMinutes`. Idle means no dev
-   server, native run, build, lease, managed lock, driven or busy device, and
-   no recorded use. The next run recreates them. The devices of any workspace
+   server, native run, build, lease, managed lock, driven or busy device, live
+   [web share](./share.md), and no recorded use. The next run recreates them. The devices of any workspace
    without activity for `idle.dormantDays` go with its
    [dormant stage](./owned-devices.md#cleanup-behavior) instead.
 8. In the daily sweep, pressure ladder rung 6: idle Gradle and Kotlin daemons,
@@ -709,8 +709,8 @@ and above normal runs one ladder top-down until the level clears:
 | 6    | Idle Gradle and Kotlin daemons, unpinned Gradle versions, TMPDIR leftovers, the worktree trash      | Same                                                                                                                    |
 
 Each rung measures free disk and memory again first, never touches a
-workspace with a build, a driver, a lease or lock, a hosted placement or
-`maintenance.keep`, and takes the longest-idle workspace first. A level raised
+workspace with a build, a driver, a lease or lock, a live web share, a hosted
+placement or `maintenance.keep`, and takes the longest-idle workspace first. A level raised
 by memory alone runs only the idle stage and the Gradle daemons. The age sweep
 runs rung 6 daily. A directory is cleared only when it is a real directory
 inside its worktree, git tracks nothing in it, and its worktree is not in use,

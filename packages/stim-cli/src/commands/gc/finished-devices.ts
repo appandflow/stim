@@ -64,7 +64,7 @@ export function finishedDeviceLines(devices: readonly FinishedDevice[] = []): st
     lines.push(`  ${device.kind} ${device.name} (${device.id})${device.bytes ? ` ${formatBytes(device.bytes)}` : ''}`);
     lines.push(`              ${device.project}: ${device.reason}`);
   }
-  lines.push('              --delete keeps a workspace that is in use, leased, driven, locked or pinned.');
+  lines.push('              --delete keeps a workspace that is in use, leased, driven, locked, shared or pinned.');
   return lines;
 }
 
