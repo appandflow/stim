@@ -586,7 +586,9 @@ device tokens.
 
 A refusal during the handshake closes the WebSocket with code 4401 and the
 reason `unknown-secret` (no valid token or ticket matches), `unauthorized` (no
-record has the key, or it was revoked) or `handshake-failed`. A client that
+record has the key, or it was revoked), `home-unavailable` (the server cannot
+read its Stim home, so it cannot check the key; clients retry and never treat
+it as a revocation) or `handshake-failed`. A client that
 gets another server key than it pinned closes with `server-key-mismatch`. A
 protocol 1 client gets `protocol-unsupported` in cleartext with an "update,
 then pair again" message. Pairings, approvals and credentials from protocol 1
@@ -1529,6 +1531,21 @@ missing directories are created by that protocol. The check preserves claims and
 recordings. It does not restore an inaccessible volume or change the server's
 permissions, and a stall that starts after the check passes still blocks the
 server until the operating system returns.
+
+A Stim home that stops answering while the server runs, such as `~/.stim`
+symlinked to an external volume that unmounts, puts the server in the same
+degraded state. The server tells a registry it cannot read (a missing or
+unreadable `server` directory, or a `devices.json`, `build-clients.json` or
+`device-host-clients.json` it cannot read or parse) from one with no clients;
+a file missing from a readable `server` directory means no clients. While it
+cannot read them it revokes nothing: open connections, hosted sessions, builds
+and controllers are left as they are and keep the approvals it last read,
+while new connections, including hosted agent requests, get 503. A handshake or
+`hello` it cannot check, including a first contact whose `secrets.json` it
+cannot read, is refused with `home-unavailable` rather than `unauthorized` or
+`unknown-secret`. It checks the registries every second, and once they read
+again it logs `the Stim home answers again; serving clients.`, serves again and
+applies any revocation it then finds.
 
 The job runs in your GUI login session, so it starts when you log in and not at
 boot. On a Mac with no one at the screen, turn on automatic login. Moving the
@@ -3008,7 +3025,8 @@ ended or whom it took the device from. Inputs are not logged.
 The error codes `unauthorized`, `pairing-expired`, and `protocol-unsupported`
 refuse the client until it pairs again or updates; `unknown-secret` means the
 server does not hold the pairing token or setup ticket, or not yet, so a client
-with a setup ticket retries until setup runs; clients retry the others.
+with a setup ticket retries until setup runs; `home-unavailable` means the
+server cannot read its Stim home; clients retry the others.
 Refusals during the handshake arrive as the WebSocket close reason with code
 4401, not as a JSON error.
 

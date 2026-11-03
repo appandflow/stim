@@ -441,7 +441,15 @@ export function doctorIo(operation?: StimContext): TailnetMachineIo {
  */
 export async function diagnoseOutcome(
   io: Pick<TailnetMachineIo, 'startup' | 'ping'>,
-  input: { entry: string; peer: TailnetPeer; port: number; target: Endpoint; reason: string; transport?: Transport },
+  input: {
+    entry: string;
+    peer: TailnetPeer;
+    port: number;
+    target: Endpoint;
+    reason: string;
+    transport?: Transport;
+    code?: string;
+  },
 ): Promise<RemoteDiagnosis> {
   const { target, ...rest } = input;
   const needsStartup = rest.transport?.kind === 'http' && rest.transport.status === 503;
@@ -474,6 +482,7 @@ export async function diagnoseConnectFailure(
       reason: failure.failure,
       startup,
       ...(failure.transport ? { transport: failure.transport } : {}),
+      ...(failure.code ? { code: failure.code } : {}),
     });
   }
   const peer = findPeer(await tailscaleStatusAsync(signal), parsed.name);
@@ -487,6 +496,7 @@ export async function diagnoseConnectFailure(
       target: endpoint(peer, parsed.port),
       reason: failure.failure,
       ...(failure.transport ? { transport: failure.transport } : {}),
+      ...(failure.code ? { code: failure.code } : {}),
     },
   );
 }
@@ -527,7 +537,7 @@ export type AccessOutcome =
   | { state: 'unconfirmed'; credential: MachineCredential; fingerprint: string }
   | { state: 'not-asked' }
   | { state: 'outdated'; credential: MachineCredential; command: string | null }
-  | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport };
+  | { state: 'unreachable'; credential?: MachineCredential; reason: string; transport?: Transport; code?: string };
 
 export interface AccessInput {
   machine: string;
@@ -724,6 +734,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       reason:
         'failed' in reply ? reply.failed : 'error' in reply ? reply.error.message : 'it did not grant this access',
       ...('failed' in reply && reply.transport ? { transport: reply.transport } : {}),
+      ...('error' in reply ? { code: reply.error.code } : {}),
     };
   };
   if (!credential) return input.fix ? ask() : { state: 'not-asked' };
@@ -743,6 +754,7 @@ export async function reachMachine(input: AccessInput): Promise<AccessOutcome> {
       credential,
       reason: 'failed' in reply ? reply.failed : reply.error.message,
       ...('failed' in reply && reply.transport ? { transport: reply.transport } : {}),
+      ...('error' in reply ? { code: reply.error.code } : {}),
     };
   }
   if (input.fix && given && given !== credential.ticket) return ask();

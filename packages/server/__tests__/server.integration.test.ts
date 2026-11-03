@@ -1409,6 +1409,62 @@ describe('pairing', () => {
       }
     },
   );
+  it('keeps sessions and revokes nothing while the Stim home is away, then serves again once it is back', async () => {
+    const port = await start();
+    const { keyPair } = await pair(port);
+    const live = await returning(port, keyPair);
+    const waiting = await connect(port, undefined, { keyPair });
+    const revoke = vi.spyOn(DeviceHost.prototype, 'revoke');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const health = async () => (await fetch(`http://127.0.0.1:${port}/health`)).status;
+    const home = join(root, 'home');
+    try {
+      renameSync(home, `${home}.away`);
+      for (let tries = 0; tries < 300 && (await health()) !== 503; tries++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
+        startup: { state: 'degraded', cause: 'home-unreadable' },
+      });
+      const reply = waiting.request('hello', { client: CLIENT });
+      expect(await Promise.race([reply, waiting.closedWith])).not.toHaveProperty('result');
+      expect(await waiting.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+      await expect(connect(port, undefined, { keyPair })).rejects.toThrow('503');
+      expect(live.socket.readyState).toBe(WebSocket.OPEN);
+      expect(revoke).not.toHaveBeenCalled();
+
+      renameSync(`${home}.away`, home);
+      for (let tries = 0; tries < 300 && (await health()) !== 200; tries++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(await health()).toBe(200);
+      expect(logged).toHaveBeenCalledWith('stim-server: the Stim home answers again; serving clients.');
+      expect(live.socket.readyState).toBe(WebSocket.OPEN);
+      (await returning(port, keyPair)).socket.close();
+    } finally {
+      revoke.mockRestore();
+      logged.mockRestore();
+    }
+  });
+
+  it('still closes hosted devices when it stops while the Stim home is away', async () => {
+    const port = await start();
+    const home = join(root, 'home');
+    const hostedClose = vi.spyOn(DeviceHost.prototype, 'close');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      renameSync(home, `${home}.away`);
+      for (let tries = 0; tries < 300; tries++) {
+        if ((await fetch(`http://127.0.0.1:${port}/health`)).status === 503) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(503);
+      await server?.close();
+      server = null;
+      expect(hostedClose).toHaveBeenCalledOnce();
+    } finally {
+      hostedClose.mockRestore();
+      logged.mockRestore();
+    }
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
