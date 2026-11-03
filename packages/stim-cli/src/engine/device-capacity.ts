@@ -1017,11 +1017,10 @@ export async function withDeviceBootAdmission<T>(
     const reused = await shared();
     const waiting = reused && decide(reused);
     if (waiting) return waiting;
-    const listedAt = now();
     const read = await readInventoryAsync(sources);
     if (!('code' in read)) {
       const listing: SharedListing = {
-        listedAt,
+        listedAt: now(),
         sims: read.sims,
         adb: recordsOwnedEmulator(read.config) ? read.adb : null,
       };

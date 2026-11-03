@@ -207,6 +207,36 @@ test('a shared listing never admits a boot: a device that finished booting after
   }
 });
 
+test.each([8_000, 11_000])('a listing that takes %ims stays shared for 10s after it returns', async (listingMs) => {
+  const head = takeTicket({ sequence: 1 });
+  const controller = new AbortController();
+  let clock = Date.now();
+  let rounds = 0;
+  const listDevices = vi.fn<() => typeof occupied>(() => {
+    clock += listingMs;
+    return occupied;
+  });
+  try {
+    await expect(
+      withDeviceBootAdmission({ platform: 'ios', key: 'queued' }, async () => {}, {
+        root,
+        max: 1,
+        memory: () => null,
+        signal: controller.signal,
+        now: () => clock,
+        sleep: async (ms) => {
+          clock += ms;
+          if (++rounds === 10) controller.abort();
+        },
+        sources: { ...empty, sims: listDevices },
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(listDevices).toHaveBeenCalledTimes(2);
+  } finally {
+    releaseClaim(head);
+  }
+});
+
 describe('per-platform device caps', () => {
   const sim = (udid: string) => makeIosSim({ udid, name: `stim-${udid}`, state: 'Booted' });
   const admit = (platform: string, policy: Partial<Parameters<typeof withDeviceBootAdmission>[2]>) =>
