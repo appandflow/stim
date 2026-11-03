@@ -4,6 +4,7 @@ const body = document.body;
 const control = body.dataset.control === 'true';
 const allowedButtons = (body.dataset.buttons || '').split(' ').filter(Boolean);
 const canRotate = control && body.dataset.canRotate === 'true';
+const viewOnly = body.dataset.viewOnly === 'true';
 const device = document.getElementById('device');
 const aperture = document.getElementById('aperture');
 const screen = document.getElementById('screen');
@@ -14,6 +15,10 @@ const statusBox = document.getElementById('status');
 const statusText = document.getElementById('status-text');
 const leftText = document.getElementById('left');
 const context = screen.getContext('2d');
+const overlay = window.createOverlay(
+  document.getElementById('overlay'),
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+);
 
 let artwork = null;
 let expiresAt = null;
@@ -272,6 +277,44 @@ function showVideo(buffer) {
 /** Device clipboard reads waiting for their reply, by request id. */
 const copies = new Map();
 
+let me = null;
+let busy = false;
+let chosenName = '';
+const roster = new Map();
+const rosterList = document.getElementById('roster');
+const eye = document.getElementById('eye');
+
+function renderRoster() {
+  const items = [...roster.values()]
+    .toSorted((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)))
+    .map((entry) => {
+      const item = document.createElement('li');
+      item.style.background = window.PALETTE[entry.color % window.PALETTE.length];
+      item.style.color = window.PALETTE_TEXT[entry.color % window.PALETTE_TEXT.length];
+      item.textContent = [...entry.name][0] ? [...entry.name][0].toUpperCase() : '?';
+      item.title = entry.name + (entry.self ? ' (you)' : '') + (entry.viewOnly ? ', view only' : '');
+      if (entry.self) item.classList.add('you');
+      if (entry.viewOnly) item.append(eye.content.cloneNode(true));
+      return item;
+    });
+  rosterList.replaceChildren(...items);
+}
+
+function showPresence(participants) {
+  for (const participant of participants) {
+    if (participant.touch === null) roster.delete(participant.id);
+    else {
+      roster.set(participant.id, {
+        name: participant.name,
+        color: participant.color,
+        viewOnly: participant.viewOnly === true,
+      });
+    }
+  }
+  renderRoster();
+  overlay.presence(participants);
+}
+
 const socketUrl = location.href
   .replace(/#.*$/, '')
   .replace(/^http/, 'ws')
@@ -280,10 +323,17 @@ let socket = null;
 let pending = Promise.resolve();
 
 function connect(codec) {
+  roster.clear();
+  me = null;
+  overlay.clear();
+  renderRoster();
   const current = new WebSocket(socketUrl + (codec === 'h264' ? '?codec=h264' : ''));
   socket = current;
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
+  current.addEventListener('open', () => {
+    if (chosenName) send({ type: 'name', name: chosenName });
+  });
   current.addEventListener('message', (event) => {
     if (current !== socket) return;
     if (typeof event.data !== 'string') {
@@ -306,6 +356,15 @@ function connect(codec) {
     else if (message.type === 'delayed') {
       live = !message.delayed && hasFrame;
       refreshStatus();
+    } else if (message.type === 'you') {
+      me = { id: message.id, name: message.name, color: message.color };
+      roster.set(me.id, { ...me, self: true, viewOnly });
+      renderRoster();
+    } else if (message.type === 'presence') showPresence(message.participants);
+    else if (message.type === 'busy') {
+      busy = true;
+      if (me) overlay.fade(me.id);
+      showNote(message.name + ' is using the screen.');
     } else if (message.type === 'control') showNote(message.message || '');
     else if (message.type === 'ended') finish(message.message);
   });
@@ -364,6 +423,49 @@ else {
   });
 }
 
+const upgrade = document.getElementById('upgrade');
+upgrade.hidden = body.dataset.upgrade !== 'true';
+document.getElementById('upgrade-open').addEventListener('click', () => {
+  document.getElementById('upgrade-fields').hidden = false;
+  upgrade.querySelector('input').focus();
+});
+const upgradeResult = new URLSearchParams(location.search).get('upgrade');
+if (upgradeResult) {
+  showNote(upgradeResult === 'limited' ? 'Too many wrong passwords. Try again later.' : 'Wrong password.');
+  history.replaceState(null, '', location.pathname);
+}
+
+const nameForm = document.getElementById('name-form');
+const nameInput = document.getElementById('name-input');
+const NAME_KEY = 'stim-share-name';
+function rememberedName() {
+  try {
+    return localStorage.getItem(NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+function chooseName(name) {
+  chosenName = name;
+  try {
+    localStorage.setItem(NAME_KEY, name);
+  } catch {
+    /* the name is still used for this page */
+  }
+  nameForm.hidden = true;
+  if (name) send({ type: 'name', name });
+}
+if (body.dataset.askName === 'true') {
+  const remembered = rememberedName();
+  if (remembered === null) nameForm.hidden = false;
+  else chosenName = remembered;
+  nameForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    chooseName(nameInput.value);
+  });
+  document.getElementById('name-skip').addEventListener('click', () => chooseName(''));
+}
+
 const fullscreen = document.getElementById('full');
 if (document.fullscreenEnabled) {
   fullscreen.addEventListener('click', () => {
@@ -409,11 +511,20 @@ if (control) {
       marker.style.top = 100 * pair[index].y + '%';
     });
   };
+  const sendTouch = (message) => {
+    if (message.phase === 'down') busy = false;
+    if (!busy || message.phase === 'down') send(message);
+    if (me) {
+      const second = message.x2 === undefined ? null : { x: message.x2, y: message.y2 };
+      overlay.own(me, message.phase, message.x, message.y, busy, second);
+    }
+    if (message.phase === 'up') busy = false;
+  };
   let queuedMove = null;
   let frame = 0;
   const flushMove = () => {
     frame = 0;
-    if (queuedMove) send(queuedMove);
+    if (queuedMove) sendTouch(queuedMove);
     queuedMove = null;
   };
   const emit = (messages) => {
@@ -423,7 +534,7 @@ if (control) {
         frame ||= requestAnimationFrame(flushMove);
       } else {
         queuedMove = null;
-        send(message);
+        sendTouch(message);
       }
     }
   };
@@ -445,7 +556,7 @@ if (control) {
       drawMarkers();
     } else {
       down = true;
-      send({ type: 'touch', phase: 'down', ...at(event) });
+      sendTouch({ type: 'touch', phase: 'down', ...at(event) });
     }
   });
   screen.addEventListener('pointermove', (event) => {
@@ -457,7 +568,7 @@ if (control) {
     if (mirror.active) {
       emit(mirror.move(at(event), event.shiftKey, event.altKey));
       if (!event.altKey) emit(mirror.release());
-    } else if (down) send({ type: 'touch', phase: 'move', ...at(event) });
+    } else if (down) sendTouch({ type: 'touch', phase: 'move', ...at(event) });
     else if (event.altKey) mirror.hover(at(event), event.shiftKey);
     else emit(mirror.release());
     drawMarkers();
@@ -471,7 +582,7 @@ if (control) {
       drawMarkers();
     } else if (down) {
       down = false;
-      send({ type: 'touch', phase: 'up', ...at(event) });
+      sendTouch({ type: 'touch', phase: 'up', ...at(event) });
     }
   };
   screen.addEventListener('pointerup', up);

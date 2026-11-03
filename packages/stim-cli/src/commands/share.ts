@@ -34,6 +34,8 @@ interface ShareOptions {
   expires?: string;
   /** A string from `--password <value>`, false from `--no-password`. */
   password?: string | false;
+  /** A string from `--view-password <value>`, true from `--view-password` alone. */
+  viewPassword?: string | true;
   /** Both `--password` and `--no-password` were passed. */
   bothPasswords?: boolean;
   json?: boolean;
@@ -142,7 +144,7 @@ function parseMinutes(value: string | undefined): number | ShareFailure {
 
 function describeRow(row: ShareRow): string {
   const target = `${row.platform}${row.physical ? ' device' : ''}${row.slot === 'default' ? '' : ` (slot ${row.slot})`}`;
-  const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}`;
+  const mode = `${row.control ? 'view and control' : 'view only'}${row.auth === 'none' ? ', no password' : ''}${row.viewAuth ? ', view password' : ''}`;
   return `${target} of ${row.workspace}: ${mode}, ${row.viewers} viewer${row.viewers === 1 ? '' : 's'}, expires ${row.expiresAt}`;
 }
 
@@ -230,6 +232,49 @@ export async function runShare(
     };
   }
   const passwordless = opts.password === false;
+  const view = opts.viewPassword;
+  if (view !== undefined) {
+    if (!opts.control) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          '--view-password needs --control: a view-only share has one password already.',
+          'Add --control, or use --password to set the only password.',
+        ),
+      };
+    }
+    if (passwordless) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          '--view-password and --no-password cannot be used together.',
+          'Leave --no-password out, or leave --view-password out.',
+        ),
+      };
+    }
+    if (typeof view === 'string' && (view.length < MIN_PASSWORD || view.length > MAX_PASSWORD)) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          `--view-password must be ${MIN_PASSWORD} to ${MAX_PASSWORD} characters.`,
+          'Pass a longer password, or leave the value out to have one generated.',
+        ),
+      };
+    }
+    if (typeof view === 'string' && view === chosen) {
+      return {
+        ok: false,
+        error: failure(
+          'STIM_BAD_ARG',
+          '--view-password and --password must differ.',
+          'Pass two different passwords, or leave one out to have it generated.',
+        ),
+      };
+    }
+  }
   if (passwordless) {
     deps.note(
       `Warning: this share has no password. Anyone with the link can ${opts.control ? 'watch and control' : 'watch'} the device until it expires.`,
@@ -247,6 +292,7 @@ export async function runShare(
       expiresMinutes: minutes,
       ...(chosen !== undefined ? { password: chosen } : {}),
       ...(passwordless ? { passwordless: true } : {}),
+      ...(view !== undefined ? { view: typeof view === 'string' ? { password: view } : {} } : {}),
     },
     version,
     true,
@@ -254,8 +300,15 @@ export async function runShare(
   if ('code' in answer) return { ok: false, error: answer };
   const started = answer.result;
   if (started.warning) deps.note(`Warning: ${started.warning}`);
-  const secret =
-    started.auth === 'none'
+  const secret = started.viewAuth
+    ? [
+        `Control password: ${started.password ?? 'the one you set'}`,
+        `View password:    ${started.viewPassword ?? 'the one you set'}`,
+        started.password !== undefined || started.viewPassword !== undefined
+          ? 'Anyone with the link and a password can open it from the internet until it expires. Generated passwords are shown only now.'
+          : 'Anyone with the link and a password can open it from the internet until it expires.',
+      ]
+    : started.auth === 'none'
       ? ['Password: none; anyone with the link can open it from the internet until it expires.']
       : started.auth === 'set'
         ? ['Password: the one you set; anyone with the link and it can open it from the internet until it expires.']
@@ -268,7 +321,7 @@ export async function runShare(
     output: started,
     text: [
       `Shared ${describeRow(started)}.`,
-      `URL:      ${started.url}`,
+      `URL:${started.viewAuth ? '              ' : '      '}${started.url}`,
       ...secret,
       'Stop it with: stim share stop',
     ].join('\n'),
@@ -297,6 +350,10 @@ export function registerShare(program: Command, version: string, deps: Partial<S
     .option('--control', 'Let viewers tap, type and press buttons (watch only without it)')
     .option('--password <value>', 'Use this password (8 to 128 characters) instead of a generated one')
     .option('--no-password', 'Need no password: anyone with the link can open the share')
+    .option(
+      '--view-password [value]',
+      'With --control, a second password that only watches (8 to 128 characters, generated without a value)',
+    )
     .option('--expires <minutes>', `Minutes until the share ends, 1 to ${MAX_MINUTES}`, String(DEFAULT_MINUTES))
     .option('--json', 'Emit one JSON payload')
     .action(async (action: string, opts: ShareOptions) => {

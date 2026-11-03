@@ -1327,6 +1327,7 @@ describe('pairing', () => {
           'share-stop-id',
           'presence',
           'device-clipboard',
+          'share-view-password',
         ],
         actions: [],
         device: { name: 'Test phone' },

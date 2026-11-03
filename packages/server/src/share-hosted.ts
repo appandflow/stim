@@ -4,7 +4,14 @@ import type { Controller, InputCommand, SessionTarget } from './control.ts';
 import type { FrameHint } from './frame-helper.ts';
 import type { Frame, FrameListener } from './frames.ts';
 import { CONGESTION_NOTICE_MS, type HostConnections, type Upstream } from './hosted-relay.ts';
-import type { ControlBeginParams, DeviceFrameArtwork, ErrorCode, ProtocolError, ServerMessage } from './protocol.ts';
+import type {
+  ControlBeginParams,
+  DeviceFrameArtwork,
+  ErrorCode,
+  PresenceParticipant,
+  ProtocolError,
+  ServerMessage,
+} from './protocol.ts';
 import { accessUnitOf } from './video.ts';
 
 /** The device-host session a workspace slot runs in, as `stim status` reports it. */
@@ -38,14 +45,26 @@ export interface ShareSource {
     allowed: () => boolean,
   ) => Promise<{ session: string } | Refusal>;
   targetOf: (owner: Controller, session: string) => SessionTarget | null;
-  /** `method` and `params` are the already validated wire form of `command`. */
+  /**
+   * `method` and `params` are the already validated wire form of `command`; `participant` is the viewer it came from.
+   * A touch refused because another viewer holds the pointer comes back with `busy`, that viewer's name.
+   */
   input: (
     owner: Controller,
     session: string,
     method: string,
     params: Record<string, unknown>,
     command: InputCommand,
+    participant: PresenceParticipant,
   ) => Promise<Refusal | null | object>;
+  /** `participant` left: lifts the pointer for it when it holds it. */
+  release?: (owner: Controller, session: string, participant: PresenceParticipant) => void;
+  /** Who else is on the device and where they touch; absent for a source that shows only a viewer's own touches. */
+  presence?: {
+    subscribe: (listener: (participants: PresenceParticipant[]) => void) => () => void;
+    join: (who: PresenceParticipant) => void;
+    leave: (id: string) => void;
+  };
   endFor: (owner: Controller, message: string) => void;
   close: () => void;
 }
