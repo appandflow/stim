@@ -2242,11 +2242,11 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   registered project, the build worker root) and memory:
 
     normal    otherwise
-    high      free disk under budget.minFreeDiskGb (20 GB) on any volume,
+    high      free disk under disk.minFreeGb (20 GB) on any volume,
               macOS memory pressure warning for 10 minutes, or available
               memory under 10% of RAM
     critical  free disk under disk.criticalFreeGb (6 GB), or under
-              budget.hardFloorDiskGb when that is higher, or macOS memory
+              disk.hardFloorGb when that is higher, or macOS memory
               pressure critical
 
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
@@ -2283,15 +2283,19 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   Every action goes to $STIM_HOME/daemon/daemon.ndjson and to the workspace's
   metro.ndjson as a pressure_action record with its reason, bytes freed and
   the command that brings back what it removed. daemon.mode report logs each
-  action it would take and acts on nothing.
+  action it would take and acts on nothing; daemon.mode off runs no rung.
+  \`stim gc\` shows what the ladder would do now at high and at critical, with
+  sizes; \`stim gc --delete\` runs it to its end at high whatever the level,
+  and \`stim gc --delete --cache all\` at critical (\`guide cleanup\`).
 
   7. refuse: \`start\`, \`ios\` and \`android\` refuse with STIM_LOW_DISK only
      while free disk on the workspace's or $STIM_HOME's volume is under
-     budget.hardFloorDiskGb (5 GB) after the ladder ran: they ask the daemon
+     disk.hardFloorGb (5 GB) after the ladder ran: they ask the daemon
      for a tick first, or run the ladder themselves when no daemon holds the
      home. With no daemon holding the home (always on Windows), they run
      automatic maintenance and the ladder from rung 2 in the command before
-     building; the idle stage of rung 1 is the daemon's alone.
+     building, unless daemon.mode is off; the idle stage of rung 1 is the
+     daemon's alone.
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
@@ -2326,8 +2330,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   and dormant off, and an explicit 0 stays 0.
 
   The thresholds apply in every Stim home, a STIM_HOME one included. Change
-  one with \`stim settings set budget.minFreeDiskGb 30\`;
-  budget.maxCommittedMemoryGb and budget.maxLiveWorkspaces are no longer read.
+  one with \`stim settings set disk.minFreeGb 30 --scope machine\`. The
+  memory rules are fixed; \`guide settings\` lists the removed settings.
   \`stim doctor\` prints the current level and a finding while it is above
   normal. See \`guide errors STIM_LOW_DISK\`.`,
     },

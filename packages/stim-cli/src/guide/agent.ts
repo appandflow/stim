@@ -27,6 +27,18 @@ the source checkout is infrastructure, not a workspace: you edit, build, and run
 in the worktree, and you keep the seed fit to copy. Every rule below about the
 source checkout's fitness as a seed belongs to this workflow.
 
+DISPOSABLE STATE
+
+In every workspace, node_modules, ios/Pods, Xcode DerivedData and the build
+directories (android/app/build, android/build, android/.gradle, .build) are
+disposable. The stim-daemon deletes a workspace's build outputs when it goes
+idle, and node_modules and Pods of idle linked worktrees under critical disk
+pressure; the next start, ios or android restores them from the build cache
+or with worktree warm. Never fix a dependency by editing files inside them:
+the change is lost. Put dependency changes in the project's own patch
+mechanism, such as patch-package, pnpm patch, yarn patch or a Podfile
+post_install hook, and commit them.
+
 MULTIPLE DEVICES
 
 Use ios/android --slot <name> to retain multiple devices in one workspace,
@@ -323,23 +335,23 @@ Ask the user before these actions:
   files.
 - gc --delete, because it deletes orphaned resources, removes clean linked
   worktrees whose branch or pull request is merged (or whose pull request
-  was closed), and lightens every workspace that is not building and ran
-  no ios, android or macos command in the last 15 minutes, a running dev
-  server included, by clearing its build outputs and its git-ignored
-  in-tree build directories, and deletes node_modules and ios/Pods of idle
-  linked worktrees, which the next start, ios or android restores with
-  worktree warm. Run stim gc --json first and show
-  the user the entries its sections list (guide facts gc). gc --delete
-  --cache all empties the shared build caches and those outputs instead, and
-  gc --delete --cache workspaces clears only the outputs; both inspect
-  nothing else.
+  was closed), and runs the pressure ladder to its end at high: every
+  workspace idle 2 minutes or more goes idle (stim revive resumes it),
+  parked devices are deleted, shared caches are trimmed, and workspaces idle
+  10 minutes or more go dormant, losing their owned devices. It never touches
+  a workspace that is building, driven, leased, hosted or pinned. Run stim gc
+  --json first and show the user its sections and its ladder (guide facts
+  gc). gc --delete --cache all also empties the shared build caches and the
+  build outputs, and runs the ladder at critical, which deletes node_modules
+  and ios/Pods of idle linked worktrees (worktree warm restores them).
+  gc --delete --cache workspaces clears only the outputs.
 - gc --delete --worktrees, because it runs worktree remove on every clean,
   idle linked worktree Stim manages, across projects.
-- settings set maintenance.mode on in a home where it is off or report, because
-  it lets Stim itself clear build outputs, trim caches and remove finished
-  worktrees later, with no command from you. It is on by default outside CI
-  and scoped STIM_HOME homes. maintenance.keep true pins a workspace against
-  that; maintenance.mode report or off stops it.
+- settings set daemon.mode on in a home where it is off or report, because
+  it lets Stim itself stop idle workspaces, delete their build outputs and
+  devices, trim caches and remove finished worktrees later, with no command
+  from you. It is on by default outside CI. maintenance.keep true pins a
+  workspace against that; daemon.mode report or off stops it.
 - stop when the workspace owns an EAS session, because it irreversibly ends
   that remote session. For a local device, stop shuts it down but does not
   delete it. An explicit stop shuts down a Stim-owned simulator even when

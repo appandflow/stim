@@ -841,7 +841,7 @@ RULES
     gc: {
       summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
       body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked>]
-          [--worktrees] [--idle <duration>] --json
+          [--worktrees] --json
 
   The report the text prints, as one payload. Show the user its sections
   before you run \`gc --delete\`. Under --delete it is the report that run
@@ -850,7 +850,6 @@ RULES
   \`stim gc --json\` again to see what is left.
 
   mode            "dry-run" | "delete"
-  idle            the --idle duration in milliseconds, or null
   cacheScope      the --cache name, or null. When set, devices, project
                   entries and locks were not inspected and their sections
                   are empty, except that --cache parked fills
@@ -861,14 +860,14 @@ RULES
                   the default 7 because --older-than was not given. Merged
                   worktrees are swept either way
   actionable      true when --delete with the same flags reclaims something
-  failures        null on a dry run without --idle; otherwise the entries it
-                  could not delete or shut down
-  results         what --delete or --idle did, one { kind, status, label,
+  failures        null on a dry run; otherwise the entries it could not
+                  delete or shut down
+  results         what --delete did, one { kind, status, label,
                   id, bytes, detail } per entry it acted on; empty on a dry
                   run. status is "done", "kept" (left alone, detail says
                   why) or "failed" (detail says why and what to retry).
-                  kind: device, parkedDevice, parkedHostedDevice, idleDevice,
-                  deviceRecord,
+                  kind: device, parkedDevice, parkedHostedDevice,
+                  devServer, deviceRecord, gradleDaemon,
                   workspaceOutputs, worktreeDependencies, recording,
                   workspaceDirectory, project,
                   buildLock, buildSlot, deviceLease, easSession, worktree,
@@ -879,8 +878,12 @@ RULES
                   label is a device, path or cache name; id is the UDID,
                   AVD name or path behind it, or null. Under --cache
                   parked, a "done" parkedDevice was erased and stays
-                  parked; otherwise it was deleted
-  inventory       null except on a dry run without --cache or --idle. Report
+                  parked; otherwise it was deleted. The pressure ladder's
+                  actions come as devServer (the idle stage), workspaceOutputs,
+                  parkedDevice, cache, device (the dormant stage),
+                  worktreeDependencies, gradleDaemon, gradleVersion,
+                  tempLeftover and trash, labelled with their target
+  inventory       null except on a dry run without --cache. Report
                   only: gc never acts on it, even under --delete.
                   { devices, runtimes, systemImages, notices }
     devices       { kind, id, name, model, runtime, state, lastUsedAt, bytes,
@@ -917,6 +920,26 @@ RULES
                   skips, note, invalid? }, the next maintenance plan
                   from live pressure and cached sizes. note says when no
                   pass has run yet. No du runs for this preview.
+  ladder          top-level, on a dry run without --cache: { pressure,
+                  levels, workspaces }. pressure is the level the machine
+                  measures now (\`guide lifecycle budget\`). levels is
+                  [{ level: "high" | "critical", command, actions }]: what
+                  the pressure ladder would do now at that level whatever
+                  the machine measures, which \`command\` runs ("stim gc
+                  --delete" at high, "stim gc --delete --cache all" at
+                  critical). Each action is { rung, kind, target,
+                  workspace?, outcome: "would", bytes, detail }, bytes being
+                  what it would free where gc could measure it. kind is
+                  idle-stage, delete-build-outputs, delete-parked-device,
+                  trim-cache, empty-cache, dormant-stage, delete-dependencies
+                  (critical only), stop-gradle-daemons,
+                  delete-gradle-version, delete-temp-leftovers or
+                  delete-trash. workspaces is each registered workspace's
+                  { path, stage: "running" | "idle" | "dormant" | "stopped",
+                  since, kept? }: since is its last activity while running,
+                  when the daemon staged it while idle or dormant, and its
+                  last Stim command while stopped; kept says why the idle
+                  stage leaves a running workspace whatever its activity
   sections        one array per report section, in the text order. Every key
                   is present, empty when there is nothing to report:
     deadProjects            { path }
@@ -1020,11 +1043,6 @@ RULES
                               $STIM_HOME/disk-usage, pull-requests and
                               git-merge whose path is gone from a
                               mounted volume; --delete removes the file
-    idleDevices             { kind, id, name, project, slot, lastActivityAt,
-                              idleForMs, buildInProgress }  booted owned
-                              devices whose status activity is "idle";
-                              --idle shuts down those idle long enough,
-                              --delete never touches them
     orphanedEasSessions     { id, name, platform, status, projectScope }
     staleBuildLocks         { path, platform, key, pid, projectRoot }
     staleBuildSlots         { path, index, pid, projectRoot }
@@ -1043,11 +1061,6 @@ RULES
                               Metro, client and device logs over twice the
                               8 MiB cap; willTrim marks the ones it would
                               trim
-    worktreeDependencies    { path, willDelete, detail }  node_modules and
-                              ios/Pods of linked worktrees; willDelete marks
-                              the ones --delete would lighten, and detail
-                              says why the others stay. Sizes are not
-                              measured: APFS clones make them misleading
     recordings              { dir, projectRoot, bytes, deleteBytes,
                               willDelete, withWorkspace, reason, detail }
                               recordings/ of each workspace; deleteBytes is
@@ -1065,7 +1078,9 @@ RULES
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
-                              --delete would lighten; --cache workspaces omits the
+                              --delete --cache workspaces would lighten (plain
+                              --delete clears only idle ones, through the
+                              ladder); --cache workspaces omits the
                               directories that --delete removes whole (dead
                               projects and orphanedWorkspaces), and --cache
                               all does not
@@ -1191,7 +1206,7 @@ RULES
 
   - a --cache name that no shared cache carries; the remedy names the
     caches on this machine
-  - --cache together with --worktrees or --idle
+  - --cache together with --worktrees
   - --cache watchman or gradle-daemons together with --older-than`,
     },
     status: {
@@ -1451,8 +1466,6 @@ RULES
   dormantStage  { at, dormantDays, deletedDevices, archived }
   deletedDevices names the owned devices it deleted; archived says its logs
   moved to the archive. The next stim ios or stim android creates a device.
-  \`gc --idle <duration>\` shuts down owned devices idle that long
-  (\`guide cleanup gc\`).
 
   An owned booted simulator or detected emulator also carries app, whether
   the workspace's app process is alive on it now:
@@ -1881,10 +1894,9 @@ RULES
   What is using CPU and memory now is the top-level machine section:
 
   daemon { mode, setting?, running: { pid, since } | null, lastTickAt, intervalMs,
-           claim?, pressure?, waiting? }
+           claim?, pressure?, waiting?, recent? }
     mode is on, report or off: the running daemon's mode, which it keeps from
-    the command that started it, else daemon.mode as resolved here (always off
-    on Windows). setting is that resolved daemon.mode when it differs from the
+    the command that started it, else daemon.mode as resolved here. setting is that resolved daemon.mode when it differs from the
     running daemon's. running comes from a live claim at
     $STIM_HOME/daemon/claim. lastTickAt and
     intervalMs come from $STIM_HOME/daemon/snapshot.json, which also holds
@@ -1896,7 +1908,13 @@ RULES
     budget\`), absent until a tick measured it; the snapshot also lists the
     ladder's actions. waiting lists the runs queued for a build slot or a
     device boot now, { resource: "build" | "boot", position, workspace,
-    label, platform?, since }, absent when none waits.
+    label, platform?, since }, absent when none waits. recent is the last 20
+    actions any daemon of this home took, oldest first, each a ladder action
+    with the tick's time { rung, kind, target, workspace?, outcome, bytes,
+    detail, restore?, at }; the idle stage at idle.minutes is rung 1 there
+    too. Plain status prints the newest as "Last daemon action" and every
+    workspace's stage line: running with its last activity, idle or dormant
+    with the time in it, or stopped.
 
   maintenance { mode, lastChecks: { pressure, size, worktree, sweep }, pressure, sizes,
                 lastPass, running, recent, plan, invalid?, claim? }
