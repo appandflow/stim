@@ -189,8 +189,10 @@ Device Clipboard** for an iOS simulator, an Android emulator or an Android phone
 when the Mac's `stim-server` is new enough to offer them. Paste reads the phone's
 clipboard when you tap it (iOS asks you to allow the paste), sets the device
 clipboard to that text and pastes it into the focused field. Text over 8 KiB is
-not sent. On an iOS simulator the first paste can leave a "Paste from
-CoreSimulatorBridge" suggestion on the device to tap, and a simulator slimmed by
+not sent. An iOS simulator types printable ASCII, line breaks and tabs into the field,
+about 35 characters a second, so no paste prompt is involved. Text with other characters,
+such as accents and emoji, is pasted instead, which can leave a "Paste from
+CoreSimulatorBridge" suggestion on the device to tap; a simulator slimmed by
 `ios.simslimProfile` cannot show it. Copy reads the device clipboard into the
 phone's. Nothing syncs by itself, only text is sent, and Stim never logs it.
 

@@ -126,8 +126,9 @@ public final class SimulatorButtons {
 
   public init() {}
 
-  /// Copies text to the controlled guest pasteboard and presses Command-V.
-  public func paste(_ text: String) async -> Bool { await view?.paste(text) ?? false }
+  /// Copies text to the controlled guest pasteboard, then types it into the focused field, or presses Command-V when
+  /// the HID keyboard cannot type it.
+  public func paste(_ text: String) async -> SimulatorPasteOutcome { await view?.paste(text) ?? .failed }
 
   /// Replaces the controlled guest pasteboard's text without pasting it.
   public func setClipboard(_ text: String) async -> Bool { await view?.setClipboard(text) ?? false }
@@ -164,6 +165,7 @@ public final class SimulatorDisplayNSView: NSView {
   private var retryTimer: Timer?
   private var interactive = false
   private var hid: SimulatorHID?
+  private var typing: Task<Void, Never>?
   private var inputTask: Task<Void, Never>?
   private var inputTimer: Timer?
   private var nextInputAttempt = Date.distantPast
@@ -485,12 +487,17 @@ public final class SimulatorDisplayNSView: NSView {
     return hid
   }
 
-  func paste(_ text: String) async -> Bool {
+  func paste(_ text: String) async -> SimulatorPasteOutcome {
+    let keys = SimulatorTyping.keys(for: text)
     guard acceptsInput, let udid, let hid = inputClient(), hid.isConnected,
       (SimulatorKit.usageForKeyCode?(0x37) ?? 0) != 0, (SimulatorKit.usageForKeyCode?(0x09) ?? 0) != 0
-    else { return false }
+    else { return .failed }
     guard await setClipboard(text), !Task.isCancelled, acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else {
-      return false
+      return .failed
+    }
+    if let keys {
+      type(keys, on: hid, udid: udid)
+      return .typed
     }
     let command: UInt16 = 0x37
     let v: UInt16 = 0x09
@@ -498,7 +505,27 @@ public final class SimulatorDisplayNSView: NSView {
     hid.hardwareKey(code: v, down: true)
     hid.hardwareKey(code: v, down: false)
     hid.hardwareKey(code: command, down: false)
-    return true
+    return .pasted
+  }
+
+  /// Types `keys` after any earlier typed paste, one every 25 ms like the HID keyboard `stim-server` types with, so
+  /// the main thread never waits and a long paste stops when the device or input goes away.
+  private func type(_ keys: [(code: UInt16, shift: Bool)], on hid: SimulatorHID, udid: String) {
+    let earlier = typing
+    typing = Task { [weak self] in
+      await earlier?.value
+      for key in keys {
+        guard !Task.isCancelled, let self, self.acceptsInput, self.udid == udid, self.hid === hid, hid.isConnected else {
+          return
+        }
+        if key.shift { hid.hardwareKey(code: 0x38, down: true) }
+        hid.hardwareKey(code: key.code, down: true)
+        try? await Task.sleep(for: .milliseconds(10))
+        hid.hardwareKey(code: key.code, down: false)
+        if key.shift { hid.hardwareKey(code: 0x38, down: false) }
+        try? await Task.sleep(for: .milliseconds(15))
+      }
+    }
   }
 
   func setClipboard(_ text: String) async -> Bool {

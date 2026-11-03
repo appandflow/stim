@@ -158,7 +158,12 @@ import Testing
     let pasted = try #require(server.take("input.clipboard.set"))
     #expect(pasted.params["paste"] == .bool(true))
     pasted.reply.resume(returning: .object([:]))
-    try await paste.value
+    #expect(try await paste.value == false)
+
+    let typedPaste = Task { try await stream.setClipboard("x", paste: true) }
+    await settle()
+    try #require(server.take("input.clipboard.set")).reply.resume(returning: .object(["typed": .bool(true)]))
+    #expect(try await typedPaste.value == true)
 
     let read = Task { try await stream.clipboard() }
     await settle()
