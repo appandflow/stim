@@ -1032,7 +1032,9 @@ a slot, and a stage line for every workspace: running with its last activity,
 idle or dormant with the time in it, or stopped. `stim status --json` carries
 the last 20 actions as `daemon.recent`. `stim doctor` prints the daemon line, its
 last action or snapshot file and its log, and reports a daemon that stopped
-ticking or a claim it cannot resolve.
+ticking or a claim it cannot resolve. On Windows, which has no daemon yet, the
+line says that `start`, `ios`, `android`, `doctor` and `gc` run the passes in
+their own process.
 
 `idle.minutes` takes machine and project layers; `0` turns the idle and dormant
 stages off. `idle.dormantDays` is a machine setting.
