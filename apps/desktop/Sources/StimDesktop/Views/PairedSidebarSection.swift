@@ -106,8 +106,10 @@ private struct PairedServerHeader: View {
     Button(action: toggle) {
       HStack(spacing: Space.sm) {
         StatusDot(color: Color(entry.status.tone), size: 6, label: entry.status.title)
-        Text(verbatim: name.uppercased()).textStyle(.caption, weight: .bold).tracking(0.6)
-          .foregroundStyle(Palette.secondary).lineLimit(1).truncationMode(.middle)
+        (Text(verbatim: (name.isEmpty ? "Machine" : name).uppercased()).font(.stim(.caption, weight: .bold)).tracking(0.6)
+          .foregroundStyle(Palette.secondary)
+          + Text(verbatim: " (viewing)").font(.stim(.caption)).foregroundStyle(Palette.tertiary))
+          .lineLimit(1).truncationMode(.middle)
         Pill(tone: .neutral, size: .small) { Text(accessLabel) }
         Spacer(minLength: 0)
         if !expanded, active > 0 {
@@ -119,7 +121,9 @@ private struct PairedServerHeader: View {
       .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
-    .accessibilityLabel(Text(verbatim: [name, entry.status.title, accessLabel].joined(separator: ", ")))
+    .accessibilityLabel(
+      Text(verbatim: [PairedServerWording.sectionTitle(name: name), entry.status.title, accessLabel].joined(separator: ", "))
+    )
     .accessibilityHint(expanded ? "Collapses this machine's workspaces" : "Shows this machine's workspaces")
     .help(Text(verbatim: "Workspaces \(name) controls, as its stim-server reports them"))
   }
@@ -161,7 +165,8 @@ private struct PairedWorkspaceRow: View {
   var body: some View {
     let isHidden = state.hidden.contains(key)
     TimelineView(.everyMinute) { _ in
-      WorkspaceRowContent(env: env, now: Date(), place: place, showsGit: showsGit, openLogs: nil, isHidden: isHidden)
+      WorkspaceRowContent(
+        env: env, now: Date(), place: place, showsGit: showsGit, openLogs: nil, isHidden: isHidden, owner: key.owner)
     }
     .sidebarTag(.pairedWorkspace(key), selection: selection)
     .contextMenu {

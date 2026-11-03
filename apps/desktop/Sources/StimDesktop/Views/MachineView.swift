@@ -23,6 +23,7 @@ struct MachineView: View {
   @State private var selectedMachine: String?
   @State private var selectedTab: MachineTab = .overview
   @State private var selectedPairing: String?
+  @State private var hosted = HostedSessionsModel()
   @ObservedObject private var pairedSessions = PairedServerSessions.shared
   @State private var selection: Set<FreeAction>?
   @State private var confirming: (commands: [StimCommand], items: [String])?
@@ -78,11 +79,16 @@ struct MachineView: View {
         if let pairing {
           PairedMachineSection(
             entry: pairing, session: pairedSessions.sessions[pairing.id], status: status.paired[pairing.id],
-            work: RemoteWork.list(status.ownedEnvironments).filter { $0.owner == .paired(pairing.id) })
+            work: ForeignWork.list(status.ownedEnvironments, server: pairing.id))
         } else if let machine {
-          MachineBuildMachines(model: buildMachines, checkout: checkout, selectedMachine: machine)
+          MachineBuildMachines(
+            model: buildMachines, checkout: checkout, selectedMachine: machine,
+            placed: PlacedWork.list(status.ownedEnvironments).filter { $0.isOn(machine) })
         } else {
-          MachineHeading(icon: "laptopcomputer", title: Host.current().localizedName ?? "This Mac", subtitle: "This Mac") {
+          MachineHeading(
+            icon: "laptopcomputer", title: Host.current().localizedName ?? MachineChoices.thisMachineName,
+            subtitle: MachineChoices.thisMachineName
+          ) {
             EmptyView()
           }
           tabs
@@ -101,6 +107,9 @@ struct MachineView: View {
               cleanupSummary(report)
             }
             CapacitySection(status: status)
+            HostingSection(sessions: hosted.sessions ?? [], stopping: hosted.stopping) { session in
+              Task { await hosted.stop(session) }
+            }
             ThisMacPlacements(model: buildMachines, limit: 3)
           case .builds:
             ThisMacPlacements(model: buildMachines, showsEmpty: true)
@@ -124,6 +133,7 @@ struct MachineView: View {
       await buildMachines.refreshTailnet()
       while !Task.isCancelled {
         await buildMachines.refresh(checkout: checkout)
+        await hosted.refresh()
         try? await Task.sleep(for: .seconds(60))
       }
     }
@@ -178,99 +188,34 @@ struct MachineView: View {
         !(buildMachines.entries ?? []).contains { machineName($0) == name }
       }
     }
+  #else
+    private var previewMachineNames: [String] { [] }
   #endif
 
   private var machineChoices: some View {
-    ViewThatFits(in: .horizontal) {
-      HStack(spacing: Space.md) {
-        Button {
-          selectedMachine = nil
-          selectedPairing = nil
-        } label: {
-          machineLabel("This Mac", subtitle: "Local", tone: nil, selected: machine == nil && pairing == nil)
-        }
-        .buttonStyle(.hoverRow(radius: Radius.control, selected: machine == nil && pairing == nil))
-        .accessibilityAddTraits(machine == nil && pairing == nil ? .isSelected : [])
-        #if DEBUG
-          ForEach(previewMachineNames, id: \.self) { name in
-            Button {
-            } label: {
-              machineLabel(name, subtitle: "Preview", tone: .tertiary, selected: false)
-            }
-            .buttonStyle(.hoverRow(radius: Radius.control))
-            .disabled(true)
-            .help("Visual preview only. This machine is not connected.")
-          }
-        #endif
-        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
-          Button {
-            selectedMachine = entry
-            selectedPairing = nil
-          } label: {
-            let readiness = buildMachines.check(in: checkout)?.statuses.first { $0.machine == entry }?.readiness
-            machineLabel(
-              machineName(entry), subtitle: readiness?.title ?? "Not checked", tone: readiness?.tone ?? .neutral,
-              selected: machine == entry && pairing == nil)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.control, selected: machine == entry && pairing == nil))
-          .accessibilityAddTraits(machine == entry && pairing == nil ? .isSelected : [])
-          .help(entry)
-        }
-        ForEach(pairedSessions.entries) { entry in
-          Button {
-            selectedPairing = entry.id
-          } label: {
-            machineLabel(
-              pairedName(entry), subtitle: entry.status.title, tone: entry.status.tone, selected: pairing?.id == entry.id)
-          }
-          .buttonStyle(.hoverRow(radius: Radius.control, selected: pairing?.id == entry.id))
-          .accessibilityAddTraits(pairing?.id == entry.id ? .isSelected : [])
-          .help(Text(verbatim: "\(pairedName(entry)), paired: the work its stim-server controls"))
-        }
-      }
-      .fixedSize(horizontal: true, vertical: false)
-      Picker("Machine", selection: Binding(get: { choice }, set: { choose($0) })) {
-        Text("This Mac").tag(MachineChoice?.none)
-        #if DEBUG
-          ForEach(previewMachineNames, id: \.self) { name in
-            Text("\(name) (preview)").tag(Optional(MachineChoice.buildMachine("preview:\(name)"))).disabled(true)
-          }
-        #endif
-        ForEach(buildMachines.entries ?? [], id: \.self) { entry in
-          Text(verbatim: machineName(entry)).tag(Optional(MachineChoice.buildMachine(entry)))
-        }
-        ForEach(pairedSessions.entries) { entry in
-          Text(verbatim: pairedName(entry)).tag(Optional(MachineChoice.paired(entry.id)))
-        }
-      }
-      .pickerStyle(.menu)
-      .frame(maxWidth: 360, alignment: .leading)
-    }
+    MachineChoiceBar(
+      groups: MachineChoices.groups(remote: buildMachines.entries ?? [], paired: pairedSessions.entries.map(\.id)),
+      selection: choice, previews: previewMachineNames, chip: chip(for:), select: choose
+    )
   }
 
-  private func machineLabel(_ title: String, subtitle: String, tone: Tone?, selected: Bool) -> some View {
-    HStack(spacing: Space.lg) {
-      if let tone {
-        StatusDot(color: Color(tone))
-          .padding(2)
-          .background(Circle().fill(selected ? Palette.onBrand : Color.clear))
-          .accessibilityHidden(true)
-      } else {
-        Image(systemName: "laptopcomputer").accessibilityHidden(true)
+  private func chip(for choice: MachineChoice) -> MachineChip {
+    switch choice {
+    case .thisMachine:
+      return MachineChip(title: MachineChoices.thisMachineName, subtitle: "Local", tone: nil)
+    case .remote(let entry):
+      let readiness = buildMachines.check(in: checkout)?.statuses.first { $0.machine == entry }?.readiness
+      return MachineChip(
+        title: machineName(entry), subtitle: readiness?.title ?? "Not checked", tone: readiness?.tone ?? .neutral,
+        help: "\(entry): your work placed on this machine")
+    case .paired(let id):
+      guard let entry = pairedSessions.entries.first(where: { $0.id == id }) else {
+        return MachineChip(title: "Machine", subtitle: "", tone: .neutral)
       }
-      VStack(alignment: .leading, spacing: Space.xxs) {
-        Text(verbatim: title).font(.stim(.callout, weight: .semibold))
-        Text(verbatim: subtitle).font(.stim(.caption))
-          .foregroundStyle(selected ? Palette.onBrand.opacity(0.85) : Palette.secondary)
-      }
+      return MachineChip(
+        title: pairedName(entry), subtitle: entry.status.title, tone: entry.status.tone,
+        help: "\(pairedName(entry)), viewing: the work its stim-server controls")
     }
-    .foregroundStyle(selected ? Palette.onBrand : Palette.text)
-    .padding(.horizontal, Space.xl)
-    .padding(.vertical, Space.lg)
-    .frame(minWidth: 120, alignment: .leading)
-    .background(RoundedRectangle(cornerRadius: Radius.control).fill(selected ? Palette.brand : Palette.surface))
-    .overlay(RoundedRectangle(cornerRadius: Radius.control).strokeBorder(selected ? Color.clear : Palette.border))
-    .contentShape(RoundedRectangle(cornerRadius: Radius.control))
   }
 
   private var tabs: some View {
@@ -297,31 +242,26 @@ struct MachineView: View {
     .background(alignment: .bottom) { Rectangle().fill(Palette.border).frame(height: 1) }
   }
 
-  private enum MachineChoice: Hashable {
-    case buildMachine(String)
-    case paired(String)
-  }
-
-  private var choice: MachineChoice? {
+  private var choice: MachineChoice {
     if let pairing { return .paired(pairing.id) }
-    return machine.map { .buildMachine($0) }
+    return machine.map { .remote($0) } ?? .thisMachine
   }
 
-  private func choose(_ choice: MachineChoice?) {
+  private func choose(_ choice: MachineChoice) {
     switch choice {
-    case .buildMachine(let entry):
+    case .remote(let entry):
       selectedMachine = entry
       selectedPairing = nil
     case .paired(let id):
       selectedPairing = id
-    case nil:
+    case .thisMachine:
       selectedMachine = nil
       selectedPairing = nil
     }
   }
 
   private func pairedName(_ entry: PairedServers.Entry) -> String {
-    pairedSessions.sessions[entry.id]?.name ?? entry.pairing?.name ?? "Paired machine"
+    pairedSessions.sessions[entry.id]?.name ?? entry.pairing?.name ?? "Machine"
   }
 
   private var header: some View {

@@ -798,15 +798,20 @@ pairing and pair again. A build of Desktop without the Keychain entitlement, suc
 copy, keeps pairings only until it quits and says so in the sheet.
 
 Once paired, the machine gets its own section in the sidebar, below this Mac's
-projects, with its name, a connection dot and **View Only**, or **View and Control**
-for a control pairing. Its workspaces open the same workspace page as this Mac's own,
+projects, titled "<name> (viewing)" because the work in it belongs to that machine, with a
+connection dot and **View Only**, or **View and Control** for a control pairing. Its workspaces open the same workspace page as this Mac's own,
 with the devices, build, Metro and agent sections the machine reports, and a line
 under the header that names the machine controlling them, such as "Viewing floco ·
 read-only" or "Controlled by floco". Controls that need the machine's files, logs or
 `stim`, such as **Run**, **Show Logs**, build **Details** and **Review Changes**, are
 disabled with the reason as their help text.
-**Machines** lists the paired machine after your build machines, with its
-capacity, its hosted devices and its offloaded builds. When the machine is
+The **Machines** page groups its machine buttons under **Your machines** (this machine
+and your remote machines) and **Viewing** (paired machines). The group labels appear once a
+machine is paired. A remote machine's page lists **Your work on <machine>**, the hosted
+simulators and offloaded builds your workspaces run there. A paired machine's page shows
+its capacity and the hosted devices and offloaded builds it places on other machines,
+worded "<name> runs it on <machine>". In the sidebar, a device of yours that runs on a
+remote machine reads "on <machine>", and one a paired machine placed reads "theirs, on <machine>". When the machine is
 offline, Desktop keeps showing its last status with "Offline since" and the
 time. Hiding a paired machine's workspace lasts until Desktop quits.
 
@@ -841,6 +846,9 @@ here, with their client, device, app, state and session age. **Stop** asks for
 confirmation, then ends the session and deletes or parks its device on this Mac.
 Parked sessions remain listed without a Stop button. The list refreshes every
 five seconds and stays hidden when an older local server does not support it.
+The Machines page for this machine lists the same sessions under **Hosting for other
+machines**, each labelled with its client's name. They are other machines' work and never
+appear among this machine's workspaces.
 
 The phone validates server replies and live events before displaying them.
 Malformed known data triggers a reconnect with a connection error; message

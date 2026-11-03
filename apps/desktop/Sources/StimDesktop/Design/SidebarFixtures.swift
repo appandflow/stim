@@ -23,7 +23,8 @@
     }
 
     private func environment(
-      _ path: String, branch: String, building: Bool = false, session: String? = nil, pull: Int? = nil, changed: Int = 0
+      _ path: String, branch: String, building: Bool = false, session: String? = nil, pull: Int? = nil, changed: Int = 0,
+      hostedOn: String? = nil
     ) -> String {
       let started = ISO8601DateFormatter().string(from: now.addingTimeInterval(-95))
       let repository = path.components(separatedBy: "/.worktrees/")[0]
@@ -39,11 +40,15 @@
         : ""
       let agents =
         session.map { #","agents":[{"tool":"codex","sessionId":"\#(branch)","title":"\#($0)","cwd":"\#(path)"}]"# } ?? ""
+      let ios =
+        hostedOn.map {
+          #","ios":{"name":"stim-app (iPhone 17 Pro 27.0)","udid":"","owned":false,"state":"ready","host":{"machine":"\#($0)","session":"\#(branch)"}}"#
+        } ?? ""
       return #"""
         {"path":"\#(path)","live":\#(building || session != nil),"warnings":[],
          "worktree":{"path":"\#(path)","branch":"\#(branch)","repository":"\#(repository)",
                      "git":{"changed":\#(changed),"untracked":0,"upstream":"origin/\#(branch)","ahead":1,"behind":0},
-                     "gitChip":{"parts":[\#(chip)],"ci":"passing"}\#(request)}\#(build)\#(agents)}
+                     "gitChip":{"parts":[\#(chip)],"ci":"passing"}\#(request)}\#(build)\#(agents)\#(ios)}
         """#
     }
 
@@ -60,7 +65,8 @@
       payload([
         environment(
           "/Playground/stim/.worktrees/issue-4980-sidebar-rows", branch: "fix/4980-sidebar-rows",
-          session: "Fix the sidebar rows", pull: 4981, changed: 2),
+          session: "Fix the sidebar rows", pull: 4981, changed: 2,
+          hostedOn: "mini:7443"),
         environment(
           "/Playground/stim/.worktrees/issue-4666-project-heading-overlaps-expanded-worktree-rows", branch: "fix/4666",
           building: true, session: "Investigate the overlap", pull: 4667, changed: 5),
@@ -77,7 +83,7 @@
         environment("/home/bot/work/savemyschoolwork-app", branch: "main"),
         environment(
           "/home/bot/work/savemyschoolwork-app/.worktrees/issue-1234-fix-dark-mode-appearances",
-          branch: "fix/1234-dark-mode-appearances", building: true, changed: 2),
+          branch: "fix/1234-dark-mode-appearances", building: true, changed: 2, hostedOn: "mini-2:7443"),
       ])
     }
 

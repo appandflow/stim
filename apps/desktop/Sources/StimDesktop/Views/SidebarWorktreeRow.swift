@@ -81,9 +81,12 @@ struct SidebarWorktreeRow: View {
             ArchiveRowFacts(page: adapted, showsGit: showsGit)
           } else {
             RowDetailLine(context: context(summary), git: summary.git)
-            ForEach(page.apps.flatMap(\.orderedDevices).filter { $0.placement != nil }) {
-              device in
-              DevicePlacementView(device: device)
+            ForEach(
+              page.apps.flatMap(\.orderedDevices).map { OwnedDevice(owner: .local, ref: $0) }.filter {
+                $0.placementBadge != nil
+              }
+            ) { device in
+              if let badge = device.placementBadge { PlacementBadgeView(badge: badge) }
             }
           }
         }

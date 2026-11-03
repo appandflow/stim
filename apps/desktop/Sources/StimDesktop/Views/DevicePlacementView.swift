@@ -15,3 +15,17 @@ struct DevicePlacementView: View {
     }
   }
 }
+
+/// A sidebar row's note that one of its devices runs on another machine, worded by whose work it is.
+struct PlacementBadgeView: View {
+  var badge: PlacementBadge
+
+  var body: some View {
+    Label(badge.text, systemImage: badge.owned ? "desktopcomputer" : "eye")
+      .font(.stim(.caption))
+      .foregroundStyle(Palette.tertiary)
+      .lineLimit(1)
+      .help(badge.reason ?? "")
+      .accessibilityLabel(badge.accessibilityLabel)
+  }
+}

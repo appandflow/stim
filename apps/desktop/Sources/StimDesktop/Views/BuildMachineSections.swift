@@ -49,6 +49,8 @@ struct MachineBuildMachines: View {
   var model: BuildMachinesModel
   var checkout: String?
   var selectedMachine: String
+  /// This machine's work placed on `selectedMachine`.
+  var placed: [PlacedWork] = []
 
   private var machines: [BuildMachineStatus] { model.check(in: checkout)?.statuses ?? [] }
 
@@ -110,6 +112,7 @@ struct MachineBuildMachines: View {
       MachineUpdateLine(machine: machine.machine, phase: model.updates[machine.machine], install: install) {
         Task { await model.update(machine.machine, checkout: checkout) }
       }
+      PlacedWorkSection(machine: machineName(machine.machine), work: placed)
       let detail = model.detail(for: machine.machine, checkout: checkout)
       ForEach(detail.groups) { group in
         VStack(alignment: .leading, spacing: Space.md) {
