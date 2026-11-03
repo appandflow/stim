@@ -189,6 +189,7 @@ test('a shared listing never admits a boot: a device that finished booting after
         max: 2,
         platformMax: { android: 1 },
         waitMs: 6_000,
+        memory: () => null,
         now: () => clock,
         sleep: async (ms) => {
           clock += ms;
