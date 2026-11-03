@@ -897,8 +897,8 @@ describe('a web share', () => {
         const client = await connect(url, { origin: origin(url) });
         client.socket.send(JSON.stringify({ type: 'name', name }));
         await vi.waitFor(() => expect(client.messages.filter((m) => m.type === 'you')).toHaveLength(2));
-        const you = client.messages.findLast((m) => m.type === 'you')!;
-        return { ...client, who: { id: String(you.id), kind: 'viewer' as const, name, color: Number(you.color) } };
+        const you = client.messages.findLast((m) => m.type === 'you');
+        return { ...client, who: { id: String(you?.id), kind: 'viewer' as const, name, color: Number(you?.color) } };
       };
       const ann = await join(first, 'Ann');
       const bea = await join(second, 'Bea');
