@@ -510,14 +510,14 @@ describe('a web share', () => {
 
   it('gives the viewer a toolbar control for every button and rotation the server accepts', async () => {
     const share = await started(f, { passwordless: true, control: true });
-    const page = (await http(local(share, f.hub.port!))).body;
-    const accepted = /data-buttons="([^"]*)"/.exec(page)![1]!.split(' ');
+    const page = (await http(local(share, f.hub.port ?? 0))).body;
+    const accepted = (/data-buttons="([^"]*)"/.exec(page)?.[1] ?? '').split(' ');
     expect(accepted).toEqual(['home', 'lock']);
     for (const button of accepted) expect(page).toContain(`data-button="${button}"`);
     for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
     expect(page).toContain('data-control="true"');
     const view = await started(f, { passwordless: true, control: false });
-    expect((await http(local(view, f.hub.port!))).body).toContain('data-control="false"');
+    expect((await http(local(view, f.hub.port ?? 0))).body).toContain('data-control="false"');
   });
 
   it("styles the viewer with Stim Desktop's design tokens in light and dark", async () => {
@@ -545,10 +545,12 @@ describe('a web share', () => {
       wait: 'warning',
       danger: 'error',
     } as const;
-    for (const [variable, token] of Object.entries(names)) {
-      expect(light[variable], variable).toBe(colors.light[token].toLowerCase());
-      expect(night[variable], variable).toBe(colors.dark[token].toLowerCase());
-    }
+    const pick = (values: Record<string, string>) =>
+      Object.fromEntries(Object.keys(names).map((key) => [key, values[key]]));
+    const expected = (palette: Record<string, string>) =>
+      Object.fromEntries(Object.entries(names).map(([key, token]) => [key, (palette[token] ?? '').toLowerCase()]));
+    expect(pick(light)).toEqual(expected(colors.light));
+    expect(pick(night)).toEqual(expected(colors.dark));
     expect(light.screen).toBe(media.screen.toLowerCase());
     expect(light.note).toBe(media.note);
   });
