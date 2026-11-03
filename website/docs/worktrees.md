@@ -149,7 +149,10 @@ it was installed from (npm `node_modules/.package-lock.json`, pnpm
 the nearest one at or above that `node_modules` within the worktree,
 and prints the install command when they differ. A pnpm install run with
 `--filter` or `--prod` records only part of the lockfile and also reads as a
-difference. Otherwise it compares the source checkout's lockfile with
+difference. For an npm lockfile that
+command is `npm ci`, which deletes `node_modules` first, so it replaces the
+clone, which costs no disk, with a private copy of every package; warm says
+so on the same line. Otherwise it compares the source checkout's lockfile with
 this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
