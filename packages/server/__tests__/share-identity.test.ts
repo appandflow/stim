@@ -33,3 +33,21 @@ test('guests are numbered from the lowest number free, and colors skip the host 
   expect(viewerColor([2, 3, 5])).toBe(4);
   expect(viewerColor([2, 3, 4, 5, 6, 7])).toBe(2);
 });
+
+test('a name the server assigns to the host, the agent or an unnamed viewer is not a chosen name', () => {
+  for (const reserved of [
+    'Host',
+    ' hOsT ',
+    'Agent',
+    'AGENT',
+    'Agent \u00b7 press',
+    'agent\u00b7tap',
+    'Guest 3',
+    'guest12',
+    'Guest  4',
+  ])
+    expect(cleanName(reserved)).toBeNull();
+  expect(cleanName('\uff28\uff4f\uff53\uff54')).toBeNull();
+  for (const kept of ['Hostel', 'Agent Smith', 'Guest', 'Guest 1a', 'Ghost 1', 'The Host'])
+    expect(cleanName(kept)).toBe(kept);
+});

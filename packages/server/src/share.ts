@@ -63,6 +63,8 @@ export interface StartedShare extends ShareRow {
 export interface ShareLimits {
   maxViewers: number;
   maxFailures: number;
+  /** New view sessions one share admits per `failureWindowMs`. */
+  maxViewLogins: number;
   failureWindowMs: number;
   statusWaitMs: number;
   inputPerSecond: number;
@@ -74,6 +76,7 @@ export interface ShareLimits {
 const SHARE_LIMITS: ShareLimits = {
   maxViewers: 5,
   maxFailures: 10,
+  maxViewLogins: 30,
   failureWindowMs: 10 * 60_000,
   statusWaitMs: 20_000,
   inputPerSecond: 120,
@@ -208,6 +211,21 @@ function take(bucket: { tokens: number; at: number }, cost: number, perSecond: n
   return true;
 }
 
+/**
+ * Makes room for a new session of `access` under {@link MAX_SESSIONS}: drops the oldest session of that access, and
+ * for a control login, with none left, the oldest view one. A view login never drops a control session; false when it
+ * would have to.
+ */
+function makeRoom(sessions: Map<string, Login>, access: ShareAccess): boolean {
+  if (sessions.size < MAX_SESSIONS) return true;
+  const entries = [...sessions];
+  const oldest =
+    entries.find(([, login]) => login.access === access) ?? (access === 'control' ? entries[0] : undefined);
+  if (!oldest) return false;
+  sessions.delete(oldest[0]);
+  return true;
+}
+
 function cookieOf(request: IncomingMessage): string | null {
   for (const part of (request.headers.cookie ?? '').split(';')) {
     const [name, ...value] = part.trim().split('=');
@@ -248,6 +266,8 @@ interface Share {
   source: ShareSource;
   sessions: Map<string, Login>;
   failures: number[];
+  /** When each recent new view session was admitted. */
+  viewLogins: number[];
   viewers: Set<Viewer>;
   owner: Controller;
   controlSession: string | null;
@@ -410,6 +430,7 @@ export class ShareHub {
       source,
       sessions: new Map(),
       failures: [],
+      viewLogins: [],
       viewers: new Set(),
       owner: {
         device: { id: `share-${id}`, name: 'Web share' },
@@ -837,10 +858,18 @@ export class ShareHub {
       if (access === 'control') existing.access = 'control';
       return back('');
     }
+    if (access === 'view') {
+      share.viewLogins = share.viewLogins.filter((at) => now - at < this.limits.failureWindowMs);
+      if (share.viewLogins.length >= this.limits.maxViewLogins) {
+        return this.respond(response, 429, loginPage('Too many logins. Try again later.'));
+      }
+    }
+    if (!makeRoom(share.sessions, access)) {
+      return this.respond(response, 429, loginPage('Too many sessions are signed in. Try again later.'));
+    }
+    if (access === 'view') share.viewLogins.push(now);
     const session = token();
     share.sessions.set(digest(session).toString('hex'), { access, name: cleanName(form.get('name')) });
-    const [oldest] = share.sessions.keys();
-    if (share.sessions.size > MAX_SESSIONS && oldest !== undefined) share.sessions.delete(oldest);
     const maxAge = Math.max(1, Math.floor((share.expiresAt - now) / 1000));
     response.writeHead(303, {
       location: path,
@@ -926,7 +955,7 @@ export class ShareHub {
     json({ type: 'hello', expiresAt: new Date(share.expiresAt).toISOString() });
     let stopPresence: (() => void) | null = null;
     const viewer: Viewer = {
-      who: { id: `v${this.nextViewer++}`, kind: 'viewer', name: '', color: 0 },
+      who: { id: `${share.id}-v${this.nextViewer++}`, kind: 'viewer', name: '', color: 0 },
       chosen: login?.name ?? null,
       renamedAt: -Infinity,
       login,
@@ -947,7 +976,11 @@ export class ShareHub {
     this.introduce(share, viewer);
     stopPresence =
       share.source.presence?.subscribe((participants) => {
-        const others = participants.filter((participant) => participant.id !== viewer.who.id);
+        const others = participants.filter(
+          (participant) =>
+            participant.id !== viewer.who.id &&
+            (participant.kind !== 'viewer' || participant.id.startsWith(`${share.id}-`)),
+        );
         const sent =
           socket.bufferedAmount > PRESENCE_BACKLOG_BYTES
             ? others.filter((participant) => participant.touch?.phase !== 'move')

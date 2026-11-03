@@ -4,10 +4,17 @@ import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
 import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
-import { PresenceHub } from '../src/presence.ts';
+import { PresenceHub, presenceKey } from '../src/presence.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
 import { viewerPage } from '../src/share-page.ts';
-import { BUTTONS, ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
+import {
+  BUTTONS,
+  ShareHub,
+  type ShareLimits,
+  type ShareRequest,
+  type StartedShare,
+  type StatusListener,
+} from '../src/share.ts';
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 
 const WORKSPACE = '/work/app';
@@ -55,7 +62,7 @@ interface Fixture {
   }[];
 }
 
-function fixture(): Fixture {
+function fixture(limits: Partial<ShareLimits> = {}): Fixture {
   const listeners = new Set<StatusListener>();
   let latest = payload();
   const f: Fixture = {
@@ -183,7 +190,7 @@ function fixture(): Fixture {
       };
       return source;
     },
-    limits: { maxFailures: 3 },
+    limits: { maxFailures: 3, ...limits },
     idle: () => f.idle++,
   });
   return f;
@@ -732,6 +739,139 @@ describe('a web share', () => {
       expect(JSON.stringify(received)).not.toContain('Too soon');
       socket.close();
       other.socket.close();
+    });
+  });
+
+  describe('names that only the server assigns', () => {
+    const seen = (messages: Record<string, unknown>[]) => messages.filter((m) => m.type === 'you').map((m) => m.name);
+
+    it('shows a viewer that logs in as Host, Agent or Guest N under its Guest N, never under that name', async () => {
+      const share = await started(f, { control: true });
+      const url = local(share, f.hub.port ?? 0);
+      const headers = { origin: origin(url) };
+      const names: string[] = [];
+      for (const chosen of ['host', 'AGENT', 'Agent%20%C2%B7%20tap', 'Guest%207']) {
+        const answer = await http(`${url}login`, { method: 'POST', body: `password=${share.password}&name=${chosen}` });
+        expect(answer.status).toBe(303);
+        const { socket, messages } = await connect(url, {
+          ...headers,
+          cookie: String(answer.headers['set-cookie']).split(';')[0] ?? '',
+        });
+        await vi.waitFor(() => expect(seen(messages)).toHaveLength(1));
+        names.push(String(seen(messages).at(0)));
+        socket.close();
+        await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(0));
+      }
+      expect(names).toEqual(['Guest 1', 'Guest 1', 'Guest 1', 'Guest 1']);
+      const named = await http(`${url}login`, { method: 'POST', body: `password=${share.password}&name=Hostel` });
+      const { socket, messages } = await connect(url, {
+        ...headers,
+        cookie: String(named.headers['set-cookie']).split(';')[0] ?? '',
+      });
+      await vi.waitFor(() => expect(seen(messages)).toEqual(['Hostel']));
+      socket.close();
+    });
+
+    it('keeps a viewer that renames itself to one of them under its Guest N', async () => {
+      const share = await started(f, { passwordless: true });
+      const url = local(share, f.hub.port ?? 0);
+      const { socket, messages } = await connect(url, { origin: origin(url) });
+      await vi.waitFor(() => expect(seen(messages)).toEqual(['Guest 1']));
+      socket.send(JSON.stringify({ type: 'name', name: ' Host ' }));
+      await vi.waitFor(() => expect(seen(messages)).toEqual(['Guest 1', 'Guest 1']));
+      socket.close();
+    });
+  });
+
+  describe('with two shares of one device', () => {
+    const key = presenceKey(WORKSPACE, 'ios', 'default', false);
+    const text = (messages: Record<string, unknown>[]) => JSON.stringify(messages.filter((m) => m.type === 'presence'));
+
+    it("keeps each share's viewers to itself and shows both the host's touches and the agent", async () => {
+      const first = await started(f, { passwordless: true, control: true });
+      const second = await started(f, { passwordless: true, control: true });
+      const join = async (share: StartedShare, name: string) => {
+        const url = local(share, f.hub.port ?? 0);
+        const client = await connect(url, { origin: origin(url) });
+        client.socket.send(JSON.stringify({ type: 'name', name }));
+        await vi.waitFor(() => expect(client.messages.filter((m) => m.type === 'you')).toHaveLength(2));
+        const you = client.messages.findLast((m) => m.type === 'you')!;
+        return { ...client, who: { id: String(you.id), kind: 'viewer' as const, name, color: Number(you.color) } };
+      };
+      const ann = await join(first, 'Ann');
+      const bea = await join(second, 'Bea');
+      const bob = await join(second, 'Bob');
+      f.presence.touch(key, bea.who, { phase: 'down', x: 0.5, y: 0.5, at: 1 });
+      f.presence.agent(key, 'press', 'start');
+      f.presence.touch(
+        key,
+        { id: 'c1', kind: 'host', name: 'Host', color: 0 },
+        { phase: 'down', x: 0.1, y: 0.2, at: 2 },
+      );
+      for (const client of [ann, bea, bob]) {
+        await vi.waitFor(() => expect(text(client.messages)).toContain('"kind":"host"'));
+        expect(text(client.messages)).toContain('Agent \u00b7 press');
+      }
+      expect(text(ann.messages)).not.toMatch(/Bea|Bob/);
+      expect(text(bob.messages)).toMatch(/Bea/);
+      expect(text(bea.messages)).toMatch(/Bob/);
+      expect(text(bea.messages)).not.toMatch(/Ann/);
+      expect(text(bob.messages)).not.toMatch(/Ann/);
+      bea.socket.close();
+      await vi.waitFor(() => expect(text(bob.messages)).toMatch(/"name":"Bea","color":\d,"touch":null/));
+      expect(text(ann.messages)).not.toMatch(/Bea|Bob/);
+      for (const client of [ann, bob]) client.socket.close();
+    });
+  });
+
+  describe('when many sessions log in', () => {
+    const body = (password: string) => ({ method: 'POST', body: `password=${password}` });
+    const cookieOf = (answer: { headers: Record<string, string | string[] | undefined> }) =>
+      String(answer.headers['set-cookie']).split(';')[0] ?? '';
+
+    it('never drops a control session to make room for a view login, and drops the oldest view one first', async () => {
+      f = fixture({ maxViewLogins: 1000 });
+      const share = await started(f, { control: true, password: 'control pass', view: { password: 'view pass' } });
+      const url = local(share, f.hub.port ?? 0);
+      const control = cookieOf(await http(`${url}login`, body('control%20pass')));
+      const firstView = cookieOf(await http(`${url}login`, body('view%20pass')));
+      const views: string[] = [];
+      for (let attempt = 0; attempt < 40; attempt++)
+        views.push(cookieOf(await http(`${url}login`, body('view%20pass'))));
+      expect((await http(url, { cookie: control })).body).toContain('data-control="true"');
+      expect((await http(url, { cookie: firstView })).body).toContain('name="password"');
+      expect((await http(url, { cookie: views.at(-1) })).body).toContain('data-view-only="true"');
+    });
+
+    it('refuses a view login that would have to drop a control session, and lets a control login drop the oldest one', async () => {
+      f = fixture({ maxViewLogins: 1000 });
+      const share = await started(f, { control: true, password: 'control pass', view: { password: 'view pass' } });
+      const url = local(share, f.hub.port ?? 0);
+      const controls: string[] = [];
+      for (let attempt = 0; attempt < 32; attempt++)
+        controls.push(cookieOf(await http(`${url}login`, body('control%20pass'))));
+      const refused = await http(`${url}login`, body('view%20pass'));
+      expect(refused.status).toBe(429);
+      expect(refused.headers['set-cookie']).toBeUndefined();
+      const another = cookieOf(await http(`${url}login`, body('control%20pass')));
+      expect((await http(url, { cookie: controls[0] })).body).toContain('name="password"');
+      expect((await http(url, { cookie: controls[1] })).body).toContain('data-control="true"');
+      expect((await http(url, { cookie: another })).body).toContain('data-control="true"');
+    });
+
+    it('limits new view sessions per share and window, and leaves control logins and other shares alone', async () => {
+      const share = await started(f, { control: true, password: 'control pass', view: { password: 'view pass' } });
+      const other = await started(f, { control: true, password: 'control pass', view: { password: 'view pass' } });
+      const url = local(share, f.hub.port ?? 0);
+      const control = cookieOf(await http(`${url}login`, body('control%20pass')));
+      for (let attempt = 0; attempt < 30; attempt++)
+        expect((await http(`${url}login`, body('view%20pass'))).status).toBe(303);
+      const limited = await http(`${url}login`, body('view%20pass'));
+      expect(limited.status).toBe(429);
+      expect(limited.headers['set-cookie']).toBeUndefined();
+      expect((await http(`${url}login`, body('control%20pass'))).status).toBe(303);
+      expect((await http(url, { cookie: control })).body).toContain('data-control="true"');
+      expect((await http(`${local(other, f.hub.port ?? 0)}login`, body('view%20pass'))).status).toBe(303);
     });
   });
 

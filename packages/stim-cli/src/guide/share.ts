@@ -42,10 +42,13 @@ VIEWERS SEE EACH OTHER
 
 Every viewer has a name (the optional name field on the login page, or on first
 load for a share without a password; empty means Guest 1, Guest 2 and so on)
-and a color. Viewers see each other's touches live, with the name, and the
-host's touches when the device is controlled from Stim Desktop or the phone,
-shown as Host. The names live in stim-server's memory for the share and are
-never logged or written to disk. Presence shows where people tap, a PIN pad
+and a color. The names Host, Agent (also "Agent \u00b7 <command>") and Guest N
+are the server's own, so a viewer that picks one of them is shown as its Guest
+N. Viewers of one share see each other's touches live, with the name, and never
+those of another share's viewers, even of the same device; every share also
+sees the agent's actions and the host's touches, shown as Host, when the device
+is controlled from Stim Desktop or the phone. The names live in stim-server's
+memory for the share and are never logged or written to disk. Presence shows where people tap, a PIN pad
 included; the screen is already shared, so it adds little, but say so when you
 share a device that shows secrets. One viewer at a time holds the touch
 pointer, from finger down to finger up or ten seconds without input: another
@@ -165,7 +168,10 @@ SECURITY MODEL
   "View only" and no device controls. A view session can raise itself to
   control from the bar by entering the control password (same login, same
   cookie); a session is never lowered. The access level is held in the server's
-  memory, never in the cookie.
+  memory, never in the cookie. A share keeps 32 sessions. A new login drops
+  the oldest session of its own access first; a view login never drops a
+  control session and is refused when only control sessions are left, and a
+  share admits 30 new view sessions in ten minutes.
 - A correct password sets an HttpOnly, Secure, SameSite=Strict cookie scoped
   to the share's path that ends with the share. The frame socket needs that
   cookie and a same-origin request. A share without a password needs no
