@@ -1147,6 +1147,58 @@ describe('a web share', () => {
     expect(f.routeCloses).toBe(1);
   });
 
+  describe('with a slug', () => {
+    it('serves the share at /s/<slug>/ behind its password and lists the slug', async () => {
+      const share = await started(f, { slug: 'pokedex' });
+      expect(share.url).toBe('https://mac.tail.ts.net:10000/s/pokedex/');
+      expect(share).toMatchObject({ auth: 'generated', slug: 'pokedex' });
+      expect(f.hub.list()).toMatchObject([{ slug: 'pokedex' }]);
+      const url = local(share, f.hub.port ?? 0);
+      const page = await http(url);
+      expect(page.body).toContain('name="password"');
+      expect(page.body).not.toContain('id="screen"');
+      expect((await connect(url, { origin: origin(url) })).status).toBe(401);
+      expect((await http(`${url}login`, { method: 'POST', body: 'password=wrong' })).status).toBe(401);
+      const cookie = await login(url, share.password ?? '');
+      const { socket, status } = await connect(url, { origin: origin(url), cookie });
+      expect(status).toBeNull();
+      socket.close();
+    });
+
+    it('refuses a slug without a password', async () => {
+      expect(await f.hub.start(shareRequest({ slug: 'pokedex', passwordless: true }))).toMatchObject({
+        code: 'bad-request',
+      });
+      expect(f.hub.list()).toEqual([]);
+    });
+
+    it('refuses a slug a live share holds, naming it, and frees it when that share ends', async () => {
+      const first = await started(f, { slug: 'pokedex' });
+      const firstUrl = local(first, f.hub.port ?? 0);
+      const oldCookie = await login(firstUrl, first.password ?? '');
+      const refused = await f.hub.start(shareRequest({ slug: 'pokedex', control: true }));
+      expect(refused).toMatchObject({ code: 'action-failed' });
+      expect('message' in refused && refused.message).toContain(first.id);
+      expect(f.hub.list().map((row) => row.id)).toEqual([first.id]);
+      await f.hub.stop(WORKSPACE);
+      const second = await started(f, { slug: 'pokedex' });
+      expect(second.url).toBe(first.url);
+      const url = local(second, f.hub.port ?? 0);
+      expect((await http(url, { cookie: oldCookie })).body).toContain('name="password"');
+      expect((await connect(url, { origin: origin(url), cookie: oldCookie })).status).toBe(401);
+    });
+
+    it('gives a slug to only one of two shares that start at once', async () => {
+      const results = await Promise.all([
+        f.hub.start(shareRequest({ slug: 'pokedex' })),
+        f.hub.start(shareRequest({ slug: 'pokedex' })),
+      ]);
+      expect(results.filter((result) => 'url' in result)).toHaveLength(1);
+      expect(results.filter((result) => 'code' in result)).toMatchObject([{ code: 'action-failed' }]);
+      expect(f.hub.list()).toHaveLength(1);
+    });
+  });
+
   it('keeps the port a route that failed to be removed still points at bound until a later route replaces it', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     await started(f);

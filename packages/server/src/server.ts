@@ -136,6 +136,8 @@ import {
   PUSH_TOKEN_PATTERN,
   REPLAY_RATES,
   RELOAD_PLATFORMS,
+  RESERVED_SHARE_SLUGS,
+  SHARE_SLUG_PATTERN,
   SERVER_UPDATE_METHODS,
   ARCHIVED_PAGE_LIMIT,
   type DesktopReportTarget,
@@ -1240,10 +1242,12 @@ function leaseGrace(leaseFor: string): { leaseGraceMs?: number } {
   return { leaseGraceMs: Number(amount) * (unit === 's' ? 1000 : unit === 'm' ? 60_000 : 3_600_000) };
 }
 
+const SHARE_SLUG = new RegExp(SHARE_SLUG_PATTERN);
+
 /** Validates `share.start` params; returns why they are refused. */
 function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { workspace: string }) | string {
   if (!isJsonObject(params)) return 'params must be an object.';
-  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, ...rest } =
+  const { workspace, platform, slot, physical, control, expiresMinutes, password, passwordless, view, slug, ...rest } =
     params;
   if (Object.keys(rest).length) return `share.start does not take ${Object.keys(rest).join(', ')}.`;
   if (typeof workspace !== 'string') return 'params.workspace must be a workspace path.';
@@ -1269,6 +1273,12 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     if (view.password !== undefined && view.password === password)
       return 'The view password and the control password must differ.';
   }
+  if (slug !== undefined) {
+    if (typeof slug !== 'string' || !SHARE_SLUG.test(slug))
+      return 'params.slug must be 3 to 32 lowercase letters, digits or hyphens, starting and ending with a letter or digit.';
+    if (RESERVED_SHARE_SLUGS.includes(slug)) return `params.slug cannot be ${slug}: the share pages use that path.`;
+    if (passwordless) return 'A share with a slug needs a password: anyone can guess a slug.';
+  }
   const minutes = expiresMinutes ?? SHARE_EXPIRY.default;
   if (typeof minutes !== 'number' || !Number.isInteger(minutes) || minutes < 1 || minutes > SHARE_EXPIRY.max)
     return `params.expiresMinutes must be a whole number of minutes from 1 to ${SHARE_EXPIRY.max}.`;
@@ -1282,6 +1292,7 @@ function parseShareStart(params: unknown): (Omit<ShareRequest, 'workspace'> & { 
     ...(typeof password === 'string' ? { password } : {}),
     ...(passwordless ? { passwordless } : {}),
     ...(view ? { view: typeof view.password === 'string' ? { password: view.password } : {} } : {}),
+    ...(typeof slug === 'string' ? { slug } : {}),
   };
 }
 

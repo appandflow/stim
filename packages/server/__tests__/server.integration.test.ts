@@ -1341,6 +1341,7 @@ describe('pairing', () => {
           'device-clipboard',
           'share-view-password',
           'hosted-presence',
+          'share-slug',
         ],
         actions: [],
         device: { name: 'Test phone' },
