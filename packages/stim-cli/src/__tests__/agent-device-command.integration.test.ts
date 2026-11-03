@@ -115,46 +115,54 @@ test.skipIf(process.platform === 'win32')(
   },
 );
 
-test('a hosted session shows the agent to stim-server at once and ends it with no gesture, which its host sends', async () => {
-  const session = '4f88400a-48eb-4a07-ba6a-734c42768b2a';
-  const config = join(home, 'hosted', 'agent.json');
-  mkdirSync(workspaceStateDir(app), { recursive: true });
-  writeFileSync(
-    join(workspaceStateDir(app), 'state.json'),
-    JSON.stringify({
-      ios: {
-        host: { machine: 'local:mini', session, agent: { driver: 'agent-device', remoteConfig: config, command: 'x' } },
-      },
-    }),
-  );
-  const socket = serverLocalSocket();
-  mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
-  const published: unknown[] = [];
-  const listener = createServer();
-  const sockets = new WebSocketServer({ server: listener });
-  sockets.on('connection', (peer) =>
-    peer.on('message', (data) => {
-      const { id, method, params } = JSON.parse(data.toString());
-      if (method === 'presence.publish') published.push(params);
-      peer.send(JSON.stringify({ id, result: {} }));
-    }),
-  );
-  await new Promise<void>((resolve) => listener.listen(socket, resolve));
-  try {
-    const child = spawn(process.execPath, [cli, 'agent-device', 'press', '@e1', '--json'], {
-      cwd: app,
-      env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off' },
-    });
-    let stdout = '';
-    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
-    await new Promise((resolve) => child.once('close', resolve));
-    expect(JSON.parse(stdout).argv).toEqual(['press', '@e1', '--json', '--remote-config', config]);
-    expect(published).toEqual([
-      { workspace: app, platform: 'ios', command: 'press', phase: 'start' },
-      { workspace: app, platform: 'ios', command: 'press', phase: 'end' },
-    ]);
-  } finally {
-    sockets.close();
-    await new Promise((resolve) => listener.close(resolve));
-  }
-}, 60_000);
+test.skipIf(process.platform === 'win32')(
+  'a hosted session shows the agent to stim-server at once and ends it with no gesture, which its host sends',
+  async () => {
+    const session = '4f88400a-48eb-4a07-ba6a-734c42768b2a';
+    const config = join(home, 'hosted', 'agent.json');
+    mkdirSync(workspaceStateDir(app), { recursive: true });
+    writeFileSync(
+      join(workspaceStateDir(app), 'state.json'),
+      JSON.stringify({
+        ios: {
+          host: {
+            machine: 'local:mini',
+            session,
+            agent: { driver: 'agent-device', remoteConfig: config, command: 'x' },
+          },
+        },
+      }),
+    );
+    const socket = serverLocalSocket();
+    mkdirSync(dirname(socket), { recursive: true, mode: 0o700 });
+    const published: unknown[] = [];
+    const listener = createServer();
+    const sockets = new WebSocketServer({ server: listener });
+    sockets.on('connection', (peer) =>
+      peer.on('message', (data) => {
+        const { id, method, params } = JSON.parse(data.toString());
+        if (method === 'presence.publish') published.push(params);
+        peer.send(JSON.stringify({ id, result: {} }));
+      }),
+    );
+    await new Promise<void>((resolve) => listener.listen(socket, resolve));
+    try {
+      const child = spawn(process.execPath, [cli, 'agent-device', 'press', '@e1', '--json'], {
+        cwd: app,
+        env: { ...process.env, STIM_HOME: home, STIM_AGENT_DEVICE_BIN: bin, STIM_DAEMON: 'off' },
+      });
+      let stdout = '';
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
+      await new Promise((resolve) => child.once('close', resolve));
+      expect(JSON.parse(stdout).argv).toEqual(['press', '@e1', '--json', '--remote-config', config]);
+      expect(published).toEqual([
+        { workspace: app, platform: 'ios', command: 'press', phase: 'start' },
+        { workspace: app, platform: 'ios', command: 'press', phase: 'end' },
+      ]);
+    } finally {
+      sockets.close();
+      await new Promise((resolve) => listener.close(resolve));
+    }
+  },
+  60_000,
+);
