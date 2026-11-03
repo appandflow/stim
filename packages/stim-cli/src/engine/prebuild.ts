@@ -170,7 +170,10 @@ type NativeDirCarry = { generatedFrom: string } | { reason: string };
  */
 export async function nativeDirCarry(appRoot: string, platform: string): Promise<NativeDirCarry> {
   const dir = nativeDirName(platform);
-  const regenerates = `stim ${platform} generates ${dir}/ fresh here`;
+  const regenerates =
+    platform === 'ios'
+      ? `stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone`
+      : `stim ${platform} generates ${dir}/ fresh here`;
   const recorded = prebuildRecord(readWorkspaceState(appRoot))[platform];
   if (typeof recorded !== 'string') {
     return {

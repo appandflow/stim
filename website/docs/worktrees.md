@@ -86,7 +86,7 @@ Otherwise warm leaves the directory out, with its Pods and build output, and
 prints why on stderr:
 
 ```text
-carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here
+carry       left out example/ios: Stim has no record of generating the source's ios/, so it cannot show the directory is current; stim ios generates ios/ fresh here and installs its Pods there, a private copy instead of a clone
 ```
 
 A directory generated outside Stim, for example by `npx expo prebuild` or
@@ -149,12 +149,16 @@ it was installed from (npm `node_modules/.package-lock.json`, pnpm
 the nearest one at or above that `node_modules` within the worktree,
 and prints the install command when they differ. A pnpm install run with
 `--filter` or `--prod` records only part of the lockfile and also reads as a
-difference. Otherwise it compares the source checkout's lockfile with
+difference. For an npm lockfile that
+command is `npm ci`, which deletes `node_modules` first, so it replaces the
+clone, which costs no disk, with a private copy of every package; warm says
+so on the same line. Otherwise it compares the source checkout's lockfile with
 this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
 In every workspace, `node_modules`, `ios/Pods`, Xcode DerivedData and the build
-directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`)
+directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`,
+`android/.cxx`, `android/<module>/.cxx` and a `.dd` directory laid out as DerivedData)
 are disposable. The `stim-daemon` deletes a workspace's build outputs when it
 goes idle, and the `node_modules` and Pods of idle linked worktrees under
 critical disk pressure; the next `stim start`, `stim ios` or `stim android`

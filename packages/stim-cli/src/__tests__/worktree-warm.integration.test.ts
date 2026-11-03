@@ -337,7 +337,7 @@ test('warm reports carried dependency and Pods lockfile mismatches against the l
   write(root, 'ios/Pods/Manifest.lock', 'main pods');
   const result = await runWarm(target);
   expect(result.code).toBe(0);
-  expect(result.stderr).toMatch(/carried dependencies may be stale.*package-lock.json/);
+  expect(result.stderr).toMatch(/carried dependencies may be stale.*package-lock.json.*`npm ci` deletes node_modules/);
   expect(result.stderr).toMatch(/carried ios\/Pods does not match/);
   expect(readFileSync(join(target, 'ios/Podfile.lock'), 'utf-8')).toBe('branch pods\n');
 }, 30_000);
@@ -370,7 +370,17 @@ test('warm reports carried node_modules installed from an older lockfile that bo
   expect(result.code).toBe(0);
   expect(result.stdout).toEqual([]);
   expect(result.stderr).toMatch(/carried node_modules was installed from a different package-lock.json.*npm ci/);
+  expect(result.stderr).toMatch(/`npm ci` deletes node_modules first.*private copy/);
   expect(result.stderr).not.toMatch(/carried dependencies may be stale/);
+}, 30_000);
+
+test('warm does not call a pnpm install a private copy of the carried node_modules', async () => {
+  write(root, 'pnpm-lock.yaml', 'lockfileVersion: 9\nsource\n');
+  write(target, 'pnpm-lock.yaml', 'lockfileVersion: 9\nbranch\n');
+  write(root, 'node_modules/.pnpm/lock.yaml', 'lockfileVersion: 9\nsource\n');
+  const result = await runWarm(target);
+  expect(result.stderr).toMatch(/carried node_modules was installed from a different pnpm-lock.yaml.*pnpm install/);
+  expect(result.stderr).not.toMatch(/private copy/);
 }, 30_000);
 
 function seedPnpmStore(): void {
@@ -747,5 +757,7 @@ describe('an Expo app whose native directories git ignores', () => {
     expect(existsSync(join(target, 'app/ios'))).toBe(false);
     expect(existsSync(join(target, 'app/android'))).toBe(false);
     expect(result.stderr).toMatch(/left out app\/ios: Stim has no record of generating the source's ios\//);
+    expect(result.stderr).toMatch(/left out app\/ios: .*installs its Pods there, a private copy instead of a clone/);
+    expect(result.stderr).not.toMatch(/left out app\/android: .*Pods/);
   }, 30_000);
 });

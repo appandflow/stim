@@ -713,11 +713,8 @@ export class ShareHub {
     if (rest === '' && request.method === 'GET') {
       if (this.signedIn(share, request)) {
         const { platform, control, physical } = share.request;
-        return this.respond(
-          response,
-          200,
-          viewerPage({ control, platform, buttons: BUTTONS[platform], rotate: !physical }),
-        );
+        const rotate = !physical && !(share.host && platform === 'android');
+        return this.respond(response, 200, viewerPage({ control, platform, buttons: BUTTONS[platform], rotate }));
       }
       return this.respond(response, 200, loginPage(null));
     }

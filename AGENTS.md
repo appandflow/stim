@@ -606,7 +606,9 @@ ledger. Ownership is per Stim home. A device is this home's only when its
 ledger lists it, or, for devices created before the ledger, when its config
 records it in the device pool or in a project with `owned: true`. A name or an
 AVD `config.ini` never proves ownership: every Stim home writes the same ones,
-and a home cannot enumerate other homes. The ownership re-check
+and a home cannot enumerate other homes; the machine list of homes
+(`~/.stim/machine/homes`) lets an unscoped `gc` report them, never own their
+devices or tear them down. The ownership re-check
 before boot and teardown applies that rule, and `gc` only lists other `stim-*`
 devices with a manual delete command. Never do any of those actions to a
 user-created emulator or simulator. Keep a device record
@@ -737,6 +739,14 @@ before any test can redirect `HOME`, and the ledger and project-lock writers
 throw when they would write that root while the marker is set. Attribution is
 per process, so a real `stim` run elsewhere on the machine, which carries no
 marker, is unaffected.
+
+The machine list of Stim homes, `~/.stim/machine/homes/homes.json`, follows the
+same rules. A home other than `~/.stim` lists itself there when it creates a
+workspace or a device; registration is best-effort bookkeeping and never fails
+the command. Tests pass a temporary `root` or point `HOME` at a temporary
+directory, `vitest.setup.ts` records the real root in
+`STIM_TEST_GUARD_REAL_HOMES_ROOT`, and its writers throw when they would write
+that root while the marker is set.
 
 ### 6. Compare canonical paths
 

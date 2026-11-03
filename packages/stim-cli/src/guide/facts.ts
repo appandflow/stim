@@ -963,17 +963,24 @@ RULES
                               kept. eligibleAt is the ISO time a
                               recent-activity worktree becomes removable,
                               else null. buildState is { bytes, dirs:
-                              { path, bytes, privateBytes } } for the in-tree build and
+                              { path, bytes, privateBytes, reportOnly? } } for the in-tree build and
                               dependency directories automatic maintenance
                               clears (android/app/build, android/build,
-                              android/.gradle, .build, node_modules,
+                              android/.gradle, .build, android/.cxx,
+                              android/<module>/.cxx, a .dd laid out as
+                              DerivedData, node_modules,
                               ios/Pods, at the root, a
                               project root, or apps/* and packages/* for
                               build directories) and a root .pnpm-store,
                               paths relative to the worktree, largest
-                              first; du counts APFS clones in full.
-                              privateBytes is what deleting node_modules
-                              or ios/Pods would free on APFS: blocks no
+                              first; reportOnly is true on xcodebuild
+                              output under another name (a DerivedData
+                              layout directory such as build-device), which
+                              is listed and never deleted; du counts APFS
+                              clones in full.
+                              privateBytes is what deleting node_modules,
+                              ios/Pods, .dd, android/.cxx or xcodebuild
+                              output would free on APFS: blocks no
                               copy-on-write clone or hard link outside it
                               shares; null for other directories and off
                               APFS. A bytes is null when it could not be
@@ -1010,6 +1017,21 @@ RULES
                               device; false means already removed and is not
                               actionable; null means unreadable. --older-than
                               filters by parkedAt; --cache scopes leave this empty
+    otherHomes              { path, state: "present" | "gone" | "unverified",
+                              createdAt, lastSeenAt, bytes, privateBytes,
+                              workspaces, devices: [{ kind, id, name,
+                              present, command }], teardown, forgettable }
+                              Stim homes of the machine list
+                              (~/.stim/machine/homes/homes.json) other than
+                              this one, from an unscoped gc only; empty
+                              under STIM_HOME. Report-only: devices are
+                              the other home's, never this home's. teardown
+                              is the ordered commands that tear a present
+                              home down; present is whether the device is on
+                              this machine (null when the listing failed);
+                              command deletes a present device of a gone
+                              home by hand. forgettable (gone, nothing left)
+                              makes --delete drop the list entry only
     orphanedDevices         { kind, id, name, bytes, directory }
     unverifiedDevices       { kind, id, name, command }  stim-* devices this
                               Stim home has no record of creating; never
@@ -1083,7 +1105,8 @@ RULES
                               macos/staging-* of each workspace; inTreeDirs
                               lists the project's android/app/build,
                               android/build,
-                              android/.gradle and .build that --delete
+                              android/.gradle, .build, android/.cxx,
+                              android/<module>/.cxx and .dd that --delete
                               clears with them, every file in them
                               ignored by git and none tracked, and
                               bytes includes them; willClear marks the ones
