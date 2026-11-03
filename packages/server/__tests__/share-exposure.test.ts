@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { request } from 'node:http';
-import { createServer } from 'node:net';
+import { connect as connectTcp, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
@@ -89,9 +89,15 @@ describe('web shares in proxy mode', () => {
     });
   }
 
-  async function start(config: Partial<ShareSettings>, password = true): Promise<StartedShare> {
+  function build(
+    config: Partial<ShareSettings>,
+    funnel: Pick<ShareRoute, 'open' | 'close' | 'stranded' | 'removeStranded'> = new ShareRoute(
+      join(home, 'share-route'),
+      tool,
+    ),
+  ) {
     const exposed = new ExposedRoute(
-      new ShareRoute(join(home, 'share-route'), tool),
+      funnel,
       () => ({ exposure: 'proxy', publicUrl: undefined, port: undefined, ...config }),
       async () => {
         throw new Error('proxy mode must not ask tailscale');
@@ -120,6 +126,10 @@ describe('web shares in proxy mode', () => {
       },
       route: exposed,
     });
+  }
+
+  async function start(config: Partial<ShareSettings>, password = true): Promise<StartedShare> {
+    build(config);
     const share = await hub.start({
       workspace: '/work/app',
       platform: 'ios',
@@ -132,7 +142,7 @@ describe('web shares in proxy mode', () => {
   }
 
   function http(url: string, options: { method?: string; body?: string; cookie?: string } = {}) {
-    return new Promise<{ status: number; headers: Record<string, string | string[] | undefined> }>(
+    return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }>(
       (resolve, reject) => {
         const sent = request(
           url,
@@ -145,8 +155,10 @@ describe('web shares in proxy mode', () => {
             },
           },
           (response) => {
-            response.resume();
-            response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers }));
+            let body = '';
+            response.setEncoding('utf8');
+            response.on('data', (chunk: string) => (body += chunk));
+            response.on('end', () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body }));
           },
         );
         sent.on('error', reject);
@@ -235,6 +247,108 @@ describe('web shares in proxy mode', () => {
     });
     expect(refused).toBeNull();
     socket.close();
+  });
+
+  const accepts = (port: number) =>
+    new Promise<boolean>((resolve) => {
+      const probe = connectTcp(port, '127.0.0.1', () => {
+        probe.destroy();
+        resolve(true);
+      });
+      probe.once('error', () => resolve(false));
+    });
+
+  it('keeps the listener bound with no share and answers every path with the not-found page and no share data', async () => {
+    const port = await freePort();
+    build({ port, publicUrl: PUBLIC });
+    await hub.keep();
+    expect(hub.port).toBe(port);
+    const unknown = `/s/${'A'.repeat(43)}/`;
+    for (const path of ['/', unknown, `${unknown}login`, '/s/assets/missing.js', '/anything/else']) {
+      const answer = await http(`http://127.0.0.1:${port}${path}`);
+      expect(answer.status).toBe(404);
+      expect(answer.headers['cache-control']).toBe('no-store');
+      expect(String(answer.headers['content-security-policy'])).toContain("default-src 'none'");
+      expect(answer.body).toContain('This share has ended or the link is wrong');
+      expect(answer.body).not.toMatch(/work\/app|password|<script/i);
+    }
+    expect((await http(`http://127.0.0.1:${port}${unknown}login`, { method: 'POST', body: 'password=x' })).status).toBe(
+      404,
+    );
+    expect(tailscaleCalls).toEqual([]);
+  });
+
+  it('serves a share on the kept listener and keeps it bound, answering 404 for that link, after the share ends', async () => {
+    const port = await freePort();
+    build({ port, publicUrl: PUBLIC });
+    await hub.keep();
+    const share = await hub.start({ workspace: '/work/app', platform: 'ios', control: false, expiresMinutes: 60 });
+    if ('code' in share) throw new Error(share.message);
+    const local = `http://127.0.0.1:${port}${new URL(share.url).pathname}`;
+    expect((await http(local)).status).toBe(200);
+    await hub.stop(null);
+    expect(hub.port).toBe(port);
+    const ended = await http(local);
+    expect(ended.status).toBe(404);
+    expect(ended.body).toContain('This share has ended or the link is wrong');
+    expect(ended.body).not.toContain(new URL(share.url).pathname.split('/')[2] ?? 'missing');
+  });
+
+  it('moves a kept listener to the port a changed setting names when the next share starts', async () => {
+    const first = await freePort();
+    const config = { port: first, publicUrl: PUBLIC };
+    build(config);
+    await hub.keep();
+    expect(await accepts(first)).toBe(true);
+    config.port = await freePort();
+    const share = await hub.start({ workspace: '/work/app', platform: 'ios', control: false, expiresMinutes: 60 });
+    if ('code' in share) throw new Error(share.message);
+    expect(hub.port).toBe(config.port);
+    expect(await accepts(first)).toBe(false);
+  });
+
+  it('releases the port when the server stops', async () => {
+    const port = await freePort();
+    build({ port, publicUrl: PUBLIC });
+    await hub.keep();
+    await hub.close();
+    expect(hub.port).toBeNull();
+    expect(await accepts(port)).toBe(false);
+  });
+
+  it('keeps nothing without a public address, where the person has no proxy yet', async () => {
+    const port = await freePort();
+    build({ port });
+    await hub.keep();
+    expect(hub.port).toBeNull();
+    expect(await accepts(port)).toBe(false);
+  });
+
+  it('keeps nothing under tailscale exposure and adds no Funnel route', async () => {
+    const opened: number[] = [];
+    build(
+      { exposure: 'tailscale', port: await freePort(), publicUrl: PUBLIC },
+      {
+        open: async (target) => {
+          opened.push(target);
+          return { url: 'https://mac.tail.ts.net', port: 443 };
+        },
+        close: async () => {},
+        stranded: () => null,
+        removeStranded: async () => {},
+      },
+    );
+    await hub.keep();
+    expect(hub.port).toBeNull();
+    expect(opened).toEqual([]);
+  });
+
+  it('does not keep a listener for a hub that never called keep, such as the one stim share starts', async () => {
+    const port = await freePort();
+    await start({ port, publicUrl: PUBLIC });
+    await hub.stop(null);
+    await vi.waitFor(() => expect(hub.port).toBeNull());
+    expect(await accepts(port)).toBe(false);
   });
 
   it('refuses to start, naming the setting, when the port is taken', async () => {
