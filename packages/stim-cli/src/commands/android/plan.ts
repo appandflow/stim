@@ -1,6 +1,5 @@
 import { productFlavorRefusal, readProductFlavors } from '../../integrations/react-native-build.ts';
 import { lookupRecordedBuild, type RecordedBuildRequest } from '../../engine/recorded-build.ts';
-import { DEFAULT_DEVICE_SLOT_WAIT_MS } from '../../engine/device-capacity.ts';
 import type { CacheProviderConfig } from '@stim-cli/cache';
 import {
   artifactCachePolicy,
@@ -132,7 +131,8 @@ export interface AndroidBuildPlan {
 
 export interface AndroidRunPlan extends AndroidBuildPlan {
   readonly target: AndroidTargetPlan;
-  readonly deviceSlotWaitMs: number;
+  /** An explicit `--wait` in milliseconds, 0 for `--no-wait`; absent, the queue's liveness ceiling applies. */
+  readonly deviceSlotWaitMs: number | undefined;
   readonly isExpo: boolean;
 }
 
@@ -480,11 +480,7 @@ export async function resolveAndroidRunPlan(
     plan: {
       ...plannedBuild.plan,
       target,
-      deviceSlotWaitMs: noWait
-        ? 0
-        : waitFlag === undefined && !physical
-          ? DEFAULT_DEVICE_SLOT_WAIT_MS
-          : waitSeconds * 1000,
+      deviceSlotWaitMs: noWait ? 0 : waitFlag === undefined && !physical ? undefined : waitSeconds * 1000,
       isExpo,
     },
   };

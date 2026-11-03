@@ -21,7 +21,6 @@ import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {
-  DEFAULT_DEVICE_SLOT_WAIT_MS,
   type DeviceSlotWaitPolicy,
   layerNote,
   unknownIosDeviceTypeRefusal,
@@ -342,7 +341,9 @@ export function printDiagnostics(note: (line: string) => void, result: Extract<B
 export function resolveIosWait(
   opts: IosCommandOptions,
   physical: boolean,
-): { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number; checkCapacity: boolean } | { failure: FailArgs } {
+):
+  | { waitSeconds: number; noWait: boolean; deviceSlotWaitMs: number | undefined; checkCapacity: boolean }
+  | { failure: FailArgs } {
   const noWait = opts.wait === false;
   if (opts.waitConflict) {
     return {
@@ -368,11 +369,7 @@ export function resolveIosWait(
     waitSeconds: waitParsed.seconds,
     noWait,
     checkCapacity: !physical && (noWait || waitParsed.seconds === 0),
-    deviceSlotWaitMs: noWait
-      ? 0
-      : opts.wait === undefined && !physical
-        ? DEFAULT_DEVICE_SLOT_WAIT_MS
-        : waitParsed.seconds * 1000,
+    deviceSlotWaitMs: noWait ? 0 : opts.wait === undefined && !physical ? undefined : waitParsed.seconds * 1000,
   };
 }
 

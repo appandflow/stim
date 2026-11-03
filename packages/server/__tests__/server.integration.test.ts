@@ -3873,6 +3873,7 @@ describe('offloaded builds', () => {
     { skip: !fakeTailscale },
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
       const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });

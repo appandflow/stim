@@ -19,7 +19,6 @@ import type { BuildLedgerExtras } from '../../engine/build-ledger.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
-import type { ReclaimedStep } from '../../budget.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 
 export function lastBuildRecord({
@@ -271,7 +270,6 @@ export interface ReportIosResultArgs {
   webPreviewUrl: string | null;
   lease?: { kind: string; expiresAt: string } | null;
   recordRun: RunRecorder['record'];
-  reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
   links?: WorkspaceLinks;
 }
@@ -315,7 +313,6 @@ export function reportIosResult({
   webPreviewUrl,
   lease,
   recordRun,
-  reclaimed = [],
   devServer = null,
   links,
 }: ReportIosResultArgs): IosFacts {
@@ -386,7 +383,7 @@ export function reportIosResult({
     delete facts.agentDevice;
   }
   if (json) {
-    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
+    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${bundleId} on ${host ? `${device.deviceName} (iOS ${device.runtime?.replace(/^iOS /, '')}) on ${host.machine}` : deviceLabel(device, udid)}, ` +

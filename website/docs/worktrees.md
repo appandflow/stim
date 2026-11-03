@@ -449,8 +449,7 @@ that never got a commit, holds nothing git would lose. `gc --delete` and the
 maintenance worktree check remove it once its git and Stim activity (the same
 sources as the grace period below) is older than both `gc.worktreeGraceMinutes`
 and `maintenance.protectRecentHours`, 2 hours by default, unless it has an open
-pull request. At disk pressure level 3 the window is
-`maintenance.pressureProtectMinutes`, and never shorter than 5 minutes. Before
+pull request, and never sooner than 5 minutes. Before
 removing it, gc checks again that its HEAD did not move and that it is still
 idle. A program Stim does not track, such as a benchmark started from that
 checkout, does not keep it; lock such a checkout with `git worktree lock`.
@@ -466,8 +465,7 @@ Ignored files such as `node_modules` and build output are not saved. It checks
 the patch with `git apply --check -R`, checks the tarball lists every file, and
 checks again just before git removes the worktree that no archived file
 changed; any failure keeps the worktree. It also keeps the worktree when the
-archive would leave less free disk than `budget.hardFloorDiskGb`, and disk
-pressure level 3 never archives. Archives are private to your user but not
+archive would leave less free disk than `budget.hardFloorDiskGb`. Archives are private to your user but not
 redacted: an untracked `.env` file that git does not ignore is saved with the
 rest, so set `archive.enabled false` for a sensitive repository. A `git status`
 or editor refresh that rewrites the index counts as activity and restarts the

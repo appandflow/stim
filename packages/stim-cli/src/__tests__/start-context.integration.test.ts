@@ -208,7 +208,7 @@ test.each(['cancel', 'deadline'] as const)(
             out: () => {},
             note: () => {},
           },
-          { platform: 'win32', budgetGate: async () => ({ reclaimed: [], refusal: null }) },
+          { platform: 'win32', diskFloorGate: async () => ({ refusal: null }) },
         ),
     ).catch((error: unknown) => error);
     try {
@@ -285,7 +285,7 @@ test.each(['direct', 'win32'] as const)(
             },
             {
               platform: launch === 'win32' ? 'win32' : 'linux',
-              budgetGate: async () => ({ reclaimed: [], refusal: null }),
+              diskFloorGate: async () => ({ refusal: null }),
               providers: () => ['ngrok'],
               startTunnelSequence: async () => ({
                 provider: 'ngrok',
@@ -331,7 +331,7 @@ test('cancellation inside managed tunnel admission stays a cancellation and star
           note: () => {},
         },
         {
-          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          diskFloorGate: async () => ({ refusal: null }),
           providers: () => ['ngrok'],
           withTunnelLock: (workspaceRoot, work, options) =>
             withManagedTunnelLock(
@@ -375,7 +375,7 @@ test('remote startup refuses a live PID whose recorded tunnel identity no longer
       out: () => {},
       note: () => {},
     },
-    { budgetGate: async () => ({ reclaimed: [], refusal: null }), providers: () => ['ngrok'] },
+    { diskFloorGate: async () => ({ refusal: null }), providers: () => ['ngrok'] },
   );
   expect(result).toMatchObject({ ok: false, error: { code: 'STIM_REMOTE_START_REQUIRED' } });
   expect(spawn).not.toHaveBeenCalled();
@@ -409,7 +409,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
         }
       });
       const program = new Command();
-      registerStart(program, { providers: () => ['ngrok'], budgetGate: async () => ({reclaimed:[], refusal:null}) });
+      registerStart(program, { providers: () => ['ngrok'], diskFloorGate: async () => ({ refusal: null }) });
       await program.parseAsync(['node', 'stim', 'start', '--json', '--wait', '30'${kind === 'tunnel' ? ", '--remote'" : ''}]);
     `,
       );
@@ -490,7 +490,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
               note: () => {},
             },
             {
-              budgetGate: async () => ({ reclaimed: [], refusal: null }),
+              diskFloorGate: async () => ({ refusal: null }),
               providers: () => ['ngrok'],
               startTunnelSequence: async () => ({
                 provider: 'ngrok',
@@ -573,7 +573,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
           },
           note: () => {},
         },
-        { budgetGate: async () => ({ reclaimed: [], refusal: null }) },
+        { diskFloorGate: async () => ({ refusal: null }) },
       );
       expect(result).toMatchObject({ ok: false, error: { code: 'STIM_CLAIM_UNAVAILABLE' } });
       assert(child);
@@ -616,7 +616,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
           note: () => {},
         },
         {
-          budgetGate: async () => ({ reclaimed: [], refusal: null }),
+          diskFloorGate: async () => ({ refusal: null }),
           terminateSupervisorChild: async () => {
             assert(child?.pid);
             const processToken = captureProcessToken(child.pid);
@@ -669,7 +669,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
               note: () => {},
             },
             {
-              budgetGate: async () => ({ reclaimed: [], refusal: null }),
+              diskFloorGate: async () => ({ refusal: null }),
               providers: () => ['ngrok'],
               startTunnelSequence: (options) =>
                 startTunnelSequence({
@@ -736,7 +736,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
           out: () => {},
           note: () => {},
         },
-        { budgetGate: async () => ({ reclaimed: [], refusal: null }) },
+        { diskFloorGate: async () => ({ refusal: null }) },
       );
       expect(result).toMatchObject({ ok: false, error: { code: 'STIM_SUPERVISOR_EXITED' } });
       expect(readFileSync(supervisorLogFile(root), 'utf8')).toContain('fixture-started');
@@ -789,7 +789,7 @@ describe.skipIf(process.platform === 'win32')('POSIX spawned startup ownership',
                 },
                 note: () => {},
               },
-              { budgetGate: async () => ({ reclaimed: [], refusal: null }) },
+              { diskFloorGate: async () => ({ refusal: null }) },
             ),
         ).catch((cause: unknown) => cause);
         expect(result).toMatchObject(

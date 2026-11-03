@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { sep } from 'node:path';
 import { buildCacheRoot, metroCacheRoot, type StimContext } from '@stim-cli/core';
 import { sharedCompilationCache, type MaintenanceAction } from '@stim-cli/core/state';
-import { cacheLabel, type Budget } from '../budget.ts';
+import { cacheLabel } from '../budget.ts';
 import { unregister, readManifest } from '../cache/cache-manifest.ts';
 import { discoverCaches, pruneCache, type CacheDescriptor } from '../cache/caches.ts';
 import { emptyCaches, planCacheEmptying } from '../commands/gc/caches.ts';
@@ -10,6 +10,7 @@ import { canonicalPath } from '../commands/gc/paths.ts';
 import { deleteGradleVersion, waitForGradleExit } from '../commands/gc/gradle-versions.ts';
 import { stopIdleGradleDaemons } from '../commands/gc/memory.ts';
 import { deleteTempLeftovers } from '../commands/gc/temp-leftovers.ts';
+import { deleteTrash } from '../commands/gc/trash.ts';
 import { plural } from '../command-output.ts';
 import { takeGcResults, GC_OUTPUT, type GcResult, type GcOutput } from '../commands/gc/results.ts';
 import {
@@ -33,11 +34,10 @@ import { listAvdsAsync } from '../devices/android.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 import { projectDeviceSlots } from '../devices/device-slots.ts';
 import { listAllIosSimsAsync } from '../devices/ios.ts';
-import { stopOwnedMetro } from '../supervisor/cache-reset.ts';
 import { withIdleWorkspace } from '../workspace/in-use.ts';
 import { isOnMountedVolume, listMountedVolumes } from '../fs-util.ts';
 import { loadConfig } from '../workspace/config.ts';
-import { cacheBlocked, measureDisk, measureDiskAsync } from './measure.ts';
+import { cacheBlocked, lowestFree, measureDisk, measureDiskAsync } from './measure.ts';
 import { cacheEntryProtection, maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.ts';
 import { artifactWorktrees, clearArtifact, type ArtifactWorktree } from './artifacts.ts';
 import {
@@ -47,7 +47,6 @@ import {
   workspaceActiveReasonAsync,
 } from './activity.ts';
 import { stopIdleWorkspace } from './idle-stop.ts';
-import { levelFloors, lowestFree, protectWindowMs } from './pressure.ts';
 import type { MaintenanceSettings } from './settings.ts';
 
 export interface ActionOutcome {
@@ -59,14 +58,15 @@ export interface ActionOutcome {
 
 export interface ActContext {
   settings: MaintenanceSettings;
-  budget: Budget;
   protectedRoot: string;
   background?: boolean;
   worktreeSweep?: WorktreeSweep;
-  pressureSweep?: WorktreeSweep;
   protect?: (entry: string) => string | null;
   worktrees?: ArtifactWorktree[];
 }
+
+const protectWindowMs = (settings: Pick<MaintenanceSettings, 'protectRecentHours'>) =>
+  settings.protectRecentHours * 3_600_000;
 
 function freedSince(beforeMb: number, disk = measureDisk()): number {
   const freed = lowestFree(disk) - beforeMb;
@@ -151,12 +151,7 @@ function trimCache(action: MaintenanceAction, context: ActContext): ActionOutcom
   };
 }
 
-async function emptyCompilationCache(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  if (action.level === 3) {
-    const floor = levelFloors(context.budget, context.settings)[3];
-    if (!measureDisk().some((disk) => disk.freeMb < floor))
-      return kept('free disk is back above the level 3 floor, and this cache can only be emptied whole');
-  }
+async function emptyCompilationCache(action: MaintenanceAction): Promise<ActionOutcome> {
   const dir = sharedCompilationCache();
   const blocked = cacheBlocked({ name: 'Swift compilation cache', dir, category: 'compilation-cache' });
   if (blocked) return kept(blocked);
@@ -172,24 +167,23 @@ async function clearOutputs(action: MaintenanceAction, context: ActContext): Pro
   if (!root) return kept('the action names no workspace');
   if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
   if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const lighten = action.level === 2;
-  const recent = lighten ? null : recentUse(root, context.settings, protectWindowMs(action, context.settings));
+  const recent = recentUse(root, context.settings, protectWindowMs(context.settings));
   if (recent) return kept(recent);
   const olderThan = action.olderThanDays ?? null;
   const now = Date.now();
-  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, lighten, only: root });
+  const report = collectWorkspaceOutputs({ olderThan, now, measure: false, only: root });
   const entry = report.workspaces.find(
     (candidate) => candidate.projectRoot && canonicalPath(candidate.projectRoot) === root,
   );
   if (!entry) return kept('it has no build outputs any more');
   const { results } = await quietly(() =>
-    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now, lighten }),
+    clearWorkspaceOutputs({ ...report, workspaces: [entry] }, { olderThan, now }),
   );
   return outcomeOf(results, action.bytes);
 }
 
 async function removeWorktree(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const sweep = action.level === 3 ? context.pressureSweep : context.worktreeSweep;
+  const sweep = context.worktreeSweep;
   const worktree = sweep?.worktrees.find((candidate) => candidate.path === action.target);
   if (!sweep || !worktree) return kept("it is not in this pass's worktree check");
   const path = canonicalPath(worktree.path);
@@ -276,29 +270,6 @@ async function deleteOwnedDevicesOf(
   return failures ? { status: 'failed', bytes: 0, detail: `${failures} owned devices could not be deleted` } : null;
 }
 
-async function stopWorkspace(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
-  const root = action.workspace ?? action.target;
-  if (root === context.protectedRoot) return kept('the command that started this pass runs in it');
-  if (maintenancePinned(root)) return kept('pinned by maintenance.keep');
-  const windowMs = protectWindowMs(action, context.settings);
-  const active = workspaceActiveReason(root, Date.now(), windowMs);
-  if (active) return kept(active);
-  const before = lowestFree(measureDisk());
-  const run = await withIdleWorkspace(
-    root,
-    async (): Promise<ActionOutcome | null> => {
-      if (workspaceActiveReason(root, Date.now(), windowMs)) return kept('it became active');
-      const metro = await stopOwnedMetro(root, { by: 'automatic maintenance', workspace: context.protectedRoot });
-      if ('reason' in metro) return kept(`its dev server: ${metro.reason}`);
-      return (await quietly(() => deleteOwnedDevicesOf(root))).value;
-    },
-    { purpose: 'automatic maintenance', supervisor: false },
-  );
-  if (!run.ran) return kept(`in use: ${run.reasons.join('; ')}`);
-  const bytes = freedSince(before);
-  return run.value ? { ...run.value, bytes } : { status: 'done', bytes, detail: root };
-}
-
 /**
  * Deletes the owned simulators and emulators of a workspace that stays idle for `windowMs`, under its native-run
  * claim, without stopping anything: a running dev server, lease, lock or driver keeps every device.
@@ -349,7 +320,6 @@ export async function deleteIdleWorkspaceDevices(
 }
 
 function deviceWindowMs(action: MaintenanceAction, context: ActContext): number {
-  if (action.level !== undefined) return protectWindowMs(action, context.settings);
   if (action.olderThanDays !== undefined) return action.olderThanDays * 86_400_000;
   return Math.max(context.worktreeSweep?.graceMs ?? 0, context.settings.protectRecentHours * 3_600_000);
 }
@@ -367,7 +337,7 @@ async function deleteDevices(action: MaintenanceAction, context: ActContext): Pr
 
 async function clearArtifacts(action: MaintenanceAction, context: ActContext): Promise<ActionOutcome> {
   return clearArtifact(action, action.kind === 'would-delete-dependencies' ? 'dependencies' : 'build', {
-    windowMs: protectWindowMs(action, context.settings),
+    windowMs: protectWindowMs(context.settings),
     protectedRoot: context.protectedRoot,
     pinned: maintenancePinned,
     worktrees: (context.worktrees ??= artifactWorktrees()),
@@ -409,6 +379,14 @@ async function deleteGradleVersionAction(action: MaintenanceAction, context: Act
   }
 }
 
+async function deleteTrashAction(): Promise<ActionOutcome> {
+  const { value: done } = await quietly(() => deleteTrash(undefined));
+  if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
+  return done.count
+    ? { status: 'done', bytes: done.bytes, detail: `${done.count} deleted` }
+    : kept('none is deletable now');
+}
+
 async function deleteTempLeftoversAction(): Promise<ActionOutcome> {
   const { value: done } = await quietly(() => deleteTempLeftovers());
   if (done.failures) return { status: 'failed', bytes: done.bytes, detail: `${done.failures} could not be deleted` };
@@ -433,7 +411,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-trim-cache':
       return trimCache(action, context);
     case 'would-empty-cache':
-      return emptyCompilationCache(action, context);
+      return emptyCompilationCache(action);
     case 'would-remove-worktree':
       return removeWorktree(action, context);
     case 'would-remove-orphan':
@@ -447,7 +425,6 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
     case 'would-shutdown-device':
       return kept('automatic maintenance does not stop devices or dev servers for disk');
     case 'would-stop-workspace':
-      if (action.level === 3) return stopWorkspace(action, context);
       return action.check === 'idle'
         ? stopIdleWorkspace(action, {
             protectedRoot: context.background ? '' : context.protectedRoot,
@@ -455,7 +432,7 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
             hostedOnly: true,
           })
         : kept(
-            'automatic maintenance stops dev servers only at disk pressure level 3 or, with a hosted device, after maintenance.idleStopHours',
+            'the stim-daemon stops idle workspaces; maintenance stops one with a hosted device after maintenance.idleStopHours',
           );
     case 'would-clear-build-dirs':
     case 'would-delete-dependencies':
@@ -466,12 +443,9 @@ export async function executeAction(action: MaintenanceAction, context: ActConte
       return deleteGradleVersionAction(action, context);
     case 'would-delete-temp-leftovers':
       return deleteTempLeftoversAction();
+    case 'would-delete-trash':
+      return deleteTrashAction();
     default:
       return kept('automatic maintenance does not stop devices or dev servers yet');
   }
-}
-
-export function diskRecovered(budget: Budget): boolean {
-  const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
-  return measureDisk().every((disk) => disk.freeMb >= floor);
 }

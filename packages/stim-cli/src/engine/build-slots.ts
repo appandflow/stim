@@ -1,12 +1,13 @@
 import { readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { buildSlotsDir, tryAcquireBuildSlotClaim, requireAutomaticMachine } from '@stim-cli/core/state';
 import type { BuildWaitingFor, StatusBuildSlotHolder, StatusBuildSlots } from '@stim-cli/core/state';
 import { formatElapsed } from '../command-output.ts';
 import { readClaimSet, releaseClaim, type ClaimHandle, type ClaimHolder } from '../ownership-claim.ts';
 import { declareSpawnsOn, stopDeclaringSpawnsOn } from './spawn-claims.ts';
 import { ambientContext } from '@stim-cli/core';
-import { buildSlotWaiter, notifyBuildSlotReleased } from '../daemon/client.ts';
+import { daemonWaiter, notifyReleased } from '../daemon/client.ts';
+import { liveWaiters, queuePosition, takeWaitTicket, waitCeiling } from './wait-queue.ts';
 import { throwIfCancelled } from '../cancellation.ts';
 
 const SLOT_PREFIX = 'slot-';
@@ -35,6 +36,7 @@ interface AcquireBuildSlotOptions extends TryAcquireBuildSlotOptions {
   now?: () => number;
   intervalMs?: number;
   progressMs?: number;
+  /** A fixed wait before `STIM_AT_CAPACITY`; absent, the queue's liveness ceiling applies. */
   ceilingMs?: number;
 }
 
@@ -61,9 +63,19 @@ export interface BuildSlotInfo {
   unresolved: boolean;
 }
 
+/** A build that waited past its ceiling for a slot. */
+export class BuildSlotCapacityError extends Error {
+  readonly code = 'STIM_AT_CAPACITY';
+  readonly remedy: string;
+
+  constructor(message: string, remedy: string) {
+    super(message);
+    this.remedy = remedy;
+  }
+}
+
 export const SLOT_POLL_MS = 1000;
-export const SLOT_PROGRESS_MS = 30000;
-export const SLOT_CEILING_MS: number = 90 * 60 * 1000;
+export const SLOT_PROGRESS_MS = 10_000;
 
 function toRecord(holder: ClaimHolder): BuildSlotRecord {
   const details = holder.details as {
@@ -108,10 +120,44 @@ export function tryAcquireBuildSlot({
   };
 }
 
-export function slotWaitingLine({ max, elapsedMs }: { max: number; elapsedMs: number }): string {
-  return `${'build'.padEnd(11)} waiting for a build slot (all ${max} in use, ${formatElapsed(elapsedMs)} elapsed) -- stim guide lifecycle concurrency`;
+export function slotWaitingLine({
+  max,
+  position,
+  waiting,
+  elapsedMs,
+}: {
+  max: number;
+  position: number;
+  waiting: number;
+  elapsedMs: number;
+}): string {
+  return `${'build'.padEnd(11)} waiting for a build slot: queue position ${position} of ${waiting}, all ${max} in use, ${formatElapsed(elapsedMs)} elapsed -- stim guide lifecycle concurrency`;
 }
 
+function busySlots(max: number): BuildSlotInfo[] {
+  return listBuildSlots().filter(
+    ({ index, alive, unresolved }) => index !== null && index < max && (alive || unresolved),
+  );
+}
+
+function queueState(max: number, waiters: readonly ClaimHolder[]): string {
+  const holders = busySlots(max).map((slot) =>
+    slot.unresolved
+      ? `slot ${slot.index} (holder cannot be verified, ${slot.path})`
+      : `slot ${slot.index} (${slot.client ? `client ${slot.client}` : (slot.projectRoot ?? `pid ${slot.pid}`)}${slot.startedAt ? ` since ${slot.startedAt}` : ''})`,
+  );
+  const queue = waiters.map(
+    (holder, index) => `${index + 1}. ${String(holder.details.displayName ?? holder.details.root ?? holder.claimId)}`,
+  );
+  return `held: ${holders.join(', ') || 'none'}; queue: ${queue.join(', ') || 'empty'}`;
+}
+
+/**
+ * Takes one of `max` build slots in arrival order. A run that finds no free slot, or older runs waiting, joins the
+ * build queue under `$STIM_HOME/build-waits`, retries each second and when the daemon wakes it, and prints a progress
+ * line every 10 seconds. It refuses with `STIM_AT_CAPACITY` after `ceilingMs`; without it, once a slot's holder has
+ * stayed unverifiable for the position-based ceiling, or after 90 minutes in all.
+ */
 export async function acquireBuildSlot({
   max,
   root = null,
@@ -123,45 +169,67 @@ export async function acquireBuildSlot({
   sleep: sleepOverride,
   intervalMs = SLOT_POLL_MS,
   progressMs = SLOT_PROGRESS_MS,
-  ceilingMs = SLOT_CEILING_MS,
+  ceilingMs,
   automatic = false,
 }: AcquireBuildSlotOptions): Promise<BuildSlotHandle> {
   throwIfCancelled(signal, 'build slot');
   if (automatic) requireAutomaticMachine('build', 'local');
   if (!max || max <= 0) return { acquired: true, unlimited: true };
-  const waiter = buildSlotWaiter();
+  const waiter = daemonWaiter('build');
   const sleep = sleepOverride ?? ((ms: number) => waiter.wait(ms, signal));
   const started = now();
+  const ceiling = waitCeiling(now);
   let lastProgress = started;
-  let waited = false;
+  let ticket: ClaimHandle | undefined;
   try {
     for (;;) {
       throwIfCancelled(signal, 'build slot');
       if (automatic) requireAutomaticMachine('build', 'local');
-      const got = tryAcquireBuildSlot({ max, root, logFile });
-      if (got) return { ...got, slotWaitMs: waited ? Math.max(0, Math.round(now() - started)) : 0 };
-
-      waited = true;
-      waitingFor({ kind: 'build-slot', inUse: max, max, since: new Date(started).toISOString() });
+      const waiters = liveWaiters('build');
+      const position = queuePosition(waiters, ticket);
+      const busy = busySlots(max);
+      if (position <= max - busy.filter((slot) => slot.alive).length) {
+        const got = tryAcquireBuildSlot({ max, root, logFile });
+        if (got) return { ...got, slotWaitMs: ticket ? Math.max(0, Math.round(now() - started)) : 0 };
+      }
+      if (!ticket) {
+        ticket = takeWaitTicket('build', { root, displayName: root ? basename(root) : 'build', logFile }, waiters);
+        continue;
+      }
+      const unverified = busy.filter((slot) => slot.unresolved);
+      ceiling.update(
+        position,
+        unverified.length ? `the holder of ${unverified.map((slot) => slot.path).join(', ')} cannot be verified` : null,
+      );
+      waitingFor({
+        kind: 'build-slot',
+        inUse: max,
+        max,
+        since: new Date(started).toISOString(),
+        position,
+        resource: 'build slots',
+      });
       const elapsed = now() - started;
-      if (elapsed >= ceilingMs) {
-        const err = new Error(
-          `Waited ${formatElapsed(elapsed)} for one of ${max} build slots, and every slot is held by a ` +
-            'process that is still running, or by a holder Stim cannot identify. Slots live under ' +
-            buildSlotsDir() +
-            '; ' +
-            'remove a slot directory whose builder is not really building, or raise concurrency.maxBuilds.',
-        ) as Error & { code?: string };
-        err.code = 'STIM_BUILD_SLOT_TIMEOUT';
-        throw err;
+      const overdue =
+        ceilingMs === undefined
+          ? ceiling.overdue()
+          : elapsed >= ceilingMs
+            ? ({ kind: 'absolute', waitedMs: elapsed } as const)
+            : null;
+      if (overdue) {
+        throw new BuildSlotCapacityError(
+          `Waited ${formatElapsed(elapsed)} for one of ${max} build slots (concurrency.maxBuilds, derived from the CPU cores when 0) at queue position ${position} of ${waiters.length}${overdue.kind === 'unverified' ? `; ${overdue.reason} for ${formatElapsed(overdue.waitedMs)}` : ''}; ${queueState(max, waiters)}.`,
+          `Retry once a build finishes, stop a run that holds a slot, or raise concurrency.maxBuilds. A slot whose holder is not really building lives under ${buildSlotsDir()}.`,
+        );
       }
       if (now() - lastProgress >= progressMs) {
         lastProgress = now();
-        out(slotWaitingLine({ max, elapsedMs: elapsed }));
+        out(slotWaitingLine({ max, position, waiting: waiters.length, elapsedMs: elapsed }));
       }
       await sleep(intervalMs);
     }
   } finally {
+    releaseClaim(ticket);
     waiter.close();
     waitingFor(null);
   }
@@ -171,7 +239,7 @@ export function releaseBuildSlot(handle?: BuildSlotHandle | null): boolean {
   if (!handle || handle.unlimited) return false;
   stopDeclaringSpawnsOn(ambientContext(), handle.claim);
   const released = releaseClaim(handle.claim);
-  if (released) notifyBuildSlotReleased();
+  if (released) notifyReleased('build');
   return released;
 }
 

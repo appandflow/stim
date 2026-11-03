@@ -33,9 +33,13 @@ import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import { configuredDaemonMode, daemonMode, parseDaemonMode, stricterDaemonMode } from './client.ts';
 import { ownedHere } from './idle.ts';
 import type { TickMeasurement } from './measure.ts';
+import { listWaiting } from '../engine/wait-queue.ts';
 import { runHomePasses } from './passes.ts';
+import { reclaimForBootWaiters } from './reclaim.ts';
+import { pendingDormant } from './stages.ts';
 
 const TICK_MS = 60_000;
+const SLOW_TICKS = 5;
 const CLAIM_TRIES = 30;
 const CLAIM_RETRY_MS = 100;
 const EMPTY_TICKS_BEFORE_EXIT = 2;
@@ -43,6 +47,13 @@ const WAKE_GRACE_MS = 2000;
 const SIGNALS = ['SIGTERM', 'SIGINT'] as const;
 
 type Level = 'debug' | 'info' | 'warn' | 'error';
+type Resource = 'build' | 'boot';
+
+const RESOURCES: readonly Resource[] = ['build', 'boot'];
+const OPS: Record<Resource, { wait: string; waiting: string; released: string; changed: string }> = {
+  build: { wait: 'slot.wait', waiting: 'slot.waiting', released: 'slot.released', changed: 'slot.changed' },
+  boot: { wait: 'boot.wait', waiting: 'boot.waiting', released: 'boot.released', changed: 'boot.changed' },
+};
 
 async function takeClaim(mode: DaemonMode): Promise<ClaimHandle | null> {
   for (let tries = 0; ; tries++) {
@@ -136,16 +147,30 @@ function homeAlive(config: Config | null, measured: TickMeasurement): string | n
 }
 
 /**
- * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute and on demand, each
- * tick measuring once, running the activity pass and automatic maintenance, and writing `snapshot.json`. It exits
- * after two ticks in a row with nothing running in the home and no contact, when `daemon.mode` turns off, or when a
- * tick throws, releasing its claim so each supervisor's own idle timer takes over.
+ * Work the daemon still has to do in a quiet home, which keeps it alive at the slow cadence: a workspace the dormant
+ * stage will take, until its due time plus one slow tick.
+ */
+function pendingWork(config: Config | null, measured: TickMeasurement, slowTickMs: number): string | null {
+  const dormant = pendingDormant(config, { simsFailed: measured.sims === null }, { graceMs: slowTickMs });
+  return dormant ? `${dormant} is not dormant yet` : null;
+}
+
+/**
+ * The per-home daemon: holds `$STIM_HOME/daemon/claim`, serves its socket, and ticks every minute while something
+ * runs in the home or the pressure level is above normal, every 5 minutes otherwise, and on demand, each tick measuring
+ * once, running the activity, dormant and pressure passes and automatic maintenance, and writing `snapshot.json`. A
+ * command's contact brings it back to the minute. It exits after two ticks in a row with nothing running, no work
+ * pending (`pendingWork`) and no contact, when `daemon.mode` turns off, or when a tick throws, releasing its claim so
+ * each supervisor's own idle timer takes over.
  */
 export async function runDaemon({
   tickMs = TICK_MS,
+  slowTickMs = tickMs * SLOW_TICKS,
   mode: startMode = daemonMode({}),
 }: {
   tickMs?: number;
+  /** The tick interval while nothing runs in the home and the pressure level is normal: 5 minutes. */
+  slowTickMs?: number;
   /** The mode the starting command resolved; a later `daemon.mode` change in config can only make it stricter. */
   mode?: DaemonMode;
 } = {}): Promise<void> {
@@ -163,20 +188,32 @@ export async function runDaemon({
     return;
   }
   const path = daemonSocket();
-  const waiters: Socket[] = [];
+  const waiters: Record<Resource, Socket[]> = { build: [], boot: [] };
   const wokenAt = new WeakMap<Socket, number>();
+  let tickReplies: Socket[] = [];
   let lastSnapshot: DaemonSnapshot | null = null;
   let lastContact = Date.now();
   let closing = false;
   let tickRequested = false;
   let interrupt: (() => void) | null = null;
+  let hasten: (() => void) | null = null;
   const requestTick = () => {
     tickRequested = true;
     interrupt?.();
   };
   const drop = (socket: Socket) => {
-    const at = waiters.indexOf(socket);
-    if (at >= 0) waiters.splice(at, 1);
+    for (const list of Object.values(waiters)) {
+      const at = list.indexOf(socket);
+      if (at >= 0) list.splice(at, 1);
+    }
+    tickReplies = tickReplies.filter((entry) => entry !== socket);
+  };
+  const wakeOldest = (resource: Resource) => {
+    const now = Date.now();
+    const next = waiters[resource].find((waiter) => now - (wokenAt.get(waiter) ?? 0) >= WAKE_GRACE_MS);
+    if (!next) return;
+    wokenAt.set(next, now);
+    next.write(`${JSON.stringify({ op: OPS[resource].changed })}\n`);
   };
   const server = createServer((socket) => {
     lastContact = Date.now();
@@ -198,22 +235,29 @@ export async function runDaemon({
           return;
         }
         lastContact = Date.now();
-        if (op === 'hello') socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
-        else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
-        else if (op === 'slot.wait') {
-          if (!waiters.includes(socket)) waiters.push(socket);
-          socket.write(`${JSON.stringify({ op: 'slot.waiting', position: waiters.indexOf(socket) + 1 })}\n`);
+        if (op === 'hello') {
+          hasten?.();
+          socket.end(`${JSON.stringify({ op: 'hello', pid: process.pid })}\n`);
+        } else if (op === 'snapshot') socket.end(`${JSON.stringify({ op: 'snapshot', snapshot: lastSnapshot })}\n`);
+        else if (op === 'tick') {
+          if (!tickReplies.includes(socket)) tickReplies.push(socket);
           requestTick();
-        } else if (op === 'slot.released') {
-          socket.end();
-          const now = Date.now();
-          const next = waiters.find((waiter) => now - (wokenAt.get(waiter) ?? 0) >= WAKE_GRACE_MS);
-          if (next) {
-            wokenAt.set(next, now);
-            next.write(`${JSON.stringify({ op: 'slot.changed' })}\n`);
+        } else {
+          const resource = RESOURCES.find((entry) => op === OPS[entry].wait || op === OPS[entry].released);
+          if (!resource) {
+            socket.destroy();
+            return;
+          }
+          if (op === OPS[resource].wait) {
+            const list = waiters[resource];
+            if (!list.includes(socket)) list.push(socket);
+            socket.write(`${JSON.stringify({ op: OPS[resource].waiting, position: list.indexOf(socket) + 1 })}\n`);
+          } else {
+            socket.end();
+            wakeOldest(resource);
           }
           requestTick();
-        } else socket.destroy();
+        }
       }
     });
   });
@@ -224,7 +268,7 @@ export async function runDaemon({
     closing = true;
     interrupt?.();
     server.close();
-    for (const waiter of waiters) waiter.destroy();
+    for (const waiter of [...waiters.build, ...waiters.boot, ...tickReplies]) waiter.destroy();
     if (bound) rmSync(path, { force: true });
     releaseClaim(claim);
     for (const signal of SIGNALS) process.off(signal, onSignal);
@@ -245,18 +289,26 @@ export async function runDaemon({
     `pid ${process.pid} listening on ${path} after ${Math.round(performance.now() - started)}ms`,
   );
   let emptyTicks = 0;
+  let interval = tickMs;
   const kept = new Map<string, string>();
   for (;;) {
     if (!tickRequested) {
       await new Promise<void>((done) => {
-        const timer = setTimeout(done, tickMs);
+        let timer = setTimeout(done, interval);
         interrupt = () => {
           clearTimeout(timer);
           done();
         };
+        hasten = () => {
+          if (interval <= tickMs) return;
+          clearTimeout(timer);
+          interval = tickMs;
+          timer = setTimeout(done, tickMs);
+        };
       });
     }
     interrupt = null;
+    hasten = null;
     if (closing) break;
     tickRequested = false;
     const configured = configuredDaemonMode();
@@ -267,10 +319,36 @@ export async function runDaemon({
     }
     const tickStarted = performance.now();
     const contactSince = lastContact;
+    const replying = tickReplies;
+    tickReplies = [];
     let alive: string | null;
+    let pending: string | null = null;
+    let wentDormant = false;
     try {
-      const { config, now, measured, workspaces } = await runHomePasses({ act: mode === 'on', trigger: 'daemon', log });
-      alive = waiters.length ? 'a build waits for a slot' : homeAlive(config, measured);
+      const { config, now, measured, workspaces, pressure, actions } = await runHomePasses({
+        act: mode === 'on',
+        trigger: 'daemon',
+        log,
+        memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
+      });
+      const reclaimed = await reclaimForBootWaiters({
+        devices: measured.devices,
+        sims: measured.sims,
+        act: mode === 'on',
+        log,
+      });
+      if (reclaimed) {
+        actions.push(reclaimed);
+        if (reclaimed.outcome === 'done') wakeOldest('boot');
+      }
+      const waiting = listWaiting();
+      alive =
+        waiters.build.length || waiters.boot.length || waiting.length
+          ? 'a run waits for a build slot or a device boot'
+          : homeAlive(config, measured);
+      pending = alive ? null : pendingWork(config, measured, slowTickMs);
+      wentDormant = actions.some((action) => action.kind === 'dormant-stage' && action.outcome === 'done');
+      interval = alive || pressure.level !== 'normal' ? tickMs : slowTickMs;
       for (const { path: workspace, outcome, detail } of workspaces) {
         if (outcome !== 'kept') kept.delete(workspace);
         else if (kept.get(workspace) !== detail) {
@@ -285,12 +363,17 @@ export async function runDaemon({
         mode,
         tickAt: new Date(now).toISOString(),
         tickMs: Math.round(performance.now() - tickStarted),
-        intervalMs: tickMs,
+        intervalMs: interval,
         measurement: measured.measurement,
         workspaces,
+        pressure,
+        actions,
+        waiting,
       };
       writeSnapshot(lastSnapshot);
+      for (const socket of replying) socket.end(`${JSON.stringify({ op: 'ticked', level: pressure.level })}\n`);
     } catch (error) {
+      for (const socket of replying) socket.destroy();
       shutdown(
         `the tick failed, so each supervisor's own idle timer takes over: ${error instanceof Error ? error.message : String(error)}`,
         'error',
@@ -298,9 +381,13 @@ export async function runDaemon({
       break;
     }
     if (closing) break;
-    const idle = !alive && Date.now() - contactSince >= tickMs;
+    const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
-    log('debug', 'daemon_tick', `tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? 'nothing running'}`);
+    log(
+      'debug',
+      'daemon_tick',
+      `tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? (pending ? `nothing running; ${pending}, next tick in ${Math.round(interval / 60_000)} minutes` : 'nothing running')}`,
+    );
     if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
       shutdown('nothing runs in this Stim home');
       break;

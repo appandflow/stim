@@ -698,11 +698,18 @@ function parsePlacement(value: unknown): ActiveBuildRecord['placement'] | null {
 
 function parseWaitingFor(value: unknown): BuildWaitingFor | null {
   if (!value || typeof value !== 'object') return null;
-  const { kind, inUse, max, since } = value as BuildWaitingFor;
+  const { kind, inUse, max, since, position, resource } = value as BuildWaitingFor;
   if (kind !== 'build-slot' && kind !== 'device-slot') return null;
   if (!Number.isInteger(inUse) || inUse < 0 || !Number.isInteger(max) || max <= 0) return null;
   if (typeof since !== 'string' || !Number.isFinite(Date.parse(since))) return null;
-  return { kind, inUse, max, since };
+  return {
+    kind,
+    inUse,
+    max,
+    since,
+    ...(Number.isInteger(position) && position! > 0 ? { position } : {}),
+    ...(typeof resource === 'string' ? { resource } : {}),
+  };
 }
 
 function parseActivity(value: unknown): ActiveBuildRecord['activity'] | null {

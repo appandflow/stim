@@ -1,5 +1,5 @@
 import { maintenanceStatus, maintenanceLines } from '../maintenance/status.ts';
-import { daemonLine, daemonStatus } from '../daemon/status.ts';
+import { daemonLine, daemonStatus, waitingLines } from '../daemon/status.ts';
 import {
   createRefreshScheduler,
   WATCH_DEBOUNCE_MS,
@@ -38,6 +38,7 @@ import {
   archiveRoot,
   readArchives,
   type ArchivedWorkspace,
+  type DormantStageRecord,
   DEVICE_METRO_IDLE_STOP_REASON,
   DEVICE_RECLAIM_REASON,
   loadPerCore,
@@ -150,6 +151,13 @@ export default function statusCommand(program: Command): void {
     });
 }
 
+function dormantStageLine({ at, deletedDevices, archived }: DormantStageRecord, idleStopped: boolean): string {
+  const back = deletedDevices.length
+    ? 'the next `stim ios` or `stim android` creates a device'
+    : `${idleStopped ? '`stim revive`' : '`stim ios` or `stim android`'} resumes it`;
+  return `  stage: dormant since ${at}; ${deletedDevices.length ? `deleted ${deletedDevices.join(', ')}` : 'no owned device deleted'}${archived ? '; logs archived' : ''}; ${back}`;
+}
+
 function renderStatus(
   {
     archived,
@@ -204,6 +212,7 @@ function renderStatus(
   }
 
   out.push(chalk.dim(daemonLine(daemon)));
+  out.push(...waitingLines(daemon));
   out.push(...maintenanceLines(maintenance).map((line) => chalk.dim(line)));
   if (usage.count) out.push(`Archived: ${plural(usage.count, 'workspace')}, ${formatBytes(usage.bytes)}`);
 
@@ -245,6 +254,7 @@ function renderStatus(
         ),
       );
     }
+    if (state.dormantStage) out.push(chalk.dim(dormantStageLine(state.dormantStage, Boolean(state.metro?.idleStop))));
     if (state.metro) {
       const label = state.metro.running
         ? chalk.green(`running (pid ${state.metro.pid})`)
@@ -535,7 +545,7 @@ function idleShutdownSuffix(record: DeviceIdleShutdownRecord | undefined): strin
   if (!record) return '';
   const why =
     record.reason === DEVICE_RECLAIM_REASON
-      ? 'reclaimed for a waiting run; devices.reclaimIdleMinutes'
+      ? 'reclaimed for a waiting run after 2m idle'
       : record.reason === DEVICE_METRO_IDLE_STOP_REASON
         ? "with Metro's idle stop; idle.minutes"
         : 'idle.minutes';

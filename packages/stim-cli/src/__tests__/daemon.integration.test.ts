@@ -9,7 +9,8 @@ import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } f
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
-import { beforeCommand, ensureDaemon } from '../daemon/client.ts';
+import { beforeCommand, ensureDaemon, requestDaemonTick } from '../daemon/client.ts';
+import * as measure from '../daemon/measure.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
 import { runDaemon } from '../daemon/run.ts';
 import * as maintenanceRun from '../maintenance/run.ts';
@@ -17,13 +18,21 @@ import { saveConfig } from '../workspace/config.ts';
 
 const entry = fileURLToPath(new URL('../daemon/run.ts', import.meta.url));
 let home: string;
+interface SpawnedDaemon {
+  child: ReturnType<ReturnType<typeof getExecutor>['spawn']>;
+  exited: Promise<number | null>;
+}
+let daemons: SpawnedDaemon[] = [];
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-test-'));
   process.env.STIM_HOME = home;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const daemon of daemons) daemon.child.kill('SIGTERM');
+  await Promise.all(daemons.map((daemon) => daemon.exited));
+  daemons = [];
   rmSync(home, { recursive: true, force: true });
   delete process.env.STIM_HOME;
 });
@@ -32,9 +41,10 @@ function daemonLog(): string {
   return existsSync(daemonNdjsonFile()) ? readFileSync(daemonNdjsonFile(), 'utf8') : '';
 }
 
-function startDaemonProcess() {
+function startDaemonProcess(): SpawnedDaemon {
   const child = getExecutor().spawn(process.execPath, [entry], { env: { ...process.env }, stdio: 'ignore' });
   const exited = new Promise<number | null>((done) => child.once('exit', (code) => done(code)));
+  daemons.push({ child, exited });
   return { child, exited };
 }
 
@@ -56,28 +66,27 @@ function lines(socket: Socket): string[] {
   return received;
 }
 
-async function waiter(): Promise<{ socket: Socket; received: string[] }> {
+async function waiter(resource: 'slot' | 'boot' = 'slot'): Promise<{ socket: Socket; received: string[] }> {
   const socket = connect(daemonSocket());
   onTestFinished(() => {
     socket.destroy();
   });
   const received = lines(socket);
-  socket.write(`${JSON.stringify({ op: 'slot.wait' })}\n`);
-  await vi.waitFor(() => expect(received.join()).toContain('"op":"slot.waiting"'), { timeout: 10_000, interval: 20 });
+  socket.write(`${JSON.stringify({ op: `${resource}.wait` })}\n`);
+  await vi.waitFor(() => expect(received.join()).toContain(`"op":"${resource}.waiting"`), {
+    timeout: 10_000,
+    interval: 20,
+  });
   return { socket, received };
 }
 
-function release(): void {
+function release(resource: 'slot' | 'boot' = 'slot'): void {
   const socket = connect(daemonSocket());
-  socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'slot.released' })}\n`));
+  socket.once('connect', () => socket.end(`${JSON.stringify({ op: `${resource}.released` })}\n`));
 }
 
 test('one daemon per home: a second one exits and leaves the first one holding the claim and socket', async () => {
   const first = startDaemonProcess();
-  onTestFinished(async () => {
-    first.child.kill('SIGTERM');
-    await first.exited;
-  });
   await listening();
   const second = startDaemonProcess();
   expect(await second.exited).toBe(0);
@@ -87,11 +96,7 @@ test('one daemon per home: a second one exits and leaves the first one holding t
 }, 20_000);
 
 test('a released build slot wakes the oldest waiter at once, and the next release the one after it', async () => {
-  const daemon = startDaemonProcess();
-  onTestFinished(async () => {
-    daemon.child.kill('SIGTERM');
-    await daemon.exited;
-  });
+  startDaemonProcess();
   await listening();
   const holder = tryAcquireBuildSlot({ max: 1 });
   assert(holder);
@@ -111,12 +116,57 @@ test('a released build slot wakes the oldest waiter at once, and the next releas
   });
 }, 20_000);
 
+test('a finished boot wakes the oldest boot waiter only, never a build waiter', async () => {
+  startDaemonProcess();
+  await listening();
+  const build = await waiter('slot');
+  const first = await waiter('boot');
+  const second = await waiter('boot');
+  release('boot');
+  await vi.waitFor(() => expect(first.received.join()).toContain('"op":"boot.changed"'), {
+    timeout: 10_000,
+    interval: 20,
+  });
+  expect(second.received.join()).not.toContain('"op":"boot.changed"');
+  expect(build.received.join()).not.toContain('changed');
+  first.socket.destroy();
+  release('boot');
+  await vi.waitFor(() => expect(second.received.join()).toContain('"op":"boot.changed"'), {
+    timeout: 10_000,
+    interval: 20,
+  });
+}, 20_000);
+
+test('a tick request is answered when a tick finishes, and the snapshot carries the pressure level', async () => {
+  startDaemonProcess();
+  await listening();
+  await expect(requestDaemonTick({ STIM_DAEMON: 'on' })).resolves.toBe(true);
+  expect(readDaemonSnapshot()).toMatchObject({
+    pressure: { level: expect.stringMatching(/^(normal|high|critical)$/) },
+    actions: expect.any(Array),
+    waiting: [],
+  });
+}, 20_000);
+
 test('exits after two ticks with nothing running in its home, releasing its claim and removing its socket', async () => {
+  const measureTick = measure.measureTick;
+  const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+    const measured = await measureTick(...args);
+    return {
+      ...measured,
+      measurement: {
+        ...measured.measurement,
+        disk: [{ volume: '/', freeMb: 500_000 }],
+        memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+      },
+    };
+  });
+  onTestFinished(() => normal.mockRestore());
   await runDaemon({ tickMs: 50 });
   expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   expect(existsSync(daemonSocket())).toBe(false);
   expect(daemonLog().match(/"event":"daemon_tick"/g)).toHaveLength(2);
-  expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 50, workspaces: [] });
+  expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
 }, 20_000);
 
 test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {

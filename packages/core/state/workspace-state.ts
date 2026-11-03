@@ -66,6 +66,29 @@ export function readIdleStage(state: WorkspaceState | null | undefined): IdleSta
   };
 }
 
+export const DORMANT_STAGE_KEY = 'dormantStage';
+
+/** The dormant stage the daemon last moved the workspace into: the owned devices it deleted, and its archived logs. */
+export interface DormantStageRecord {
+  at: string;
+  dormantDays: number;
+  deletedDevices: string[];
+  archived: boolean;
+}
+
+export function readDormantStage(state: WorkspaceState | null | undefined): DormantStageRecord | null {
+  const record = state?.[DORMANT_STAGE_KEY];
+  if (!isJsonObject(record) || typeof record.at !== 'string' || typeof record.dormantDays !== 'number') return null;
+  return {
+    at: record.at,
+    dormantDays: record.dormantDays,
+    deletedDevices: Array.isArray(record.deletedDevices)
+      ? record.deletedDevices.filter((entry): entry is string => typeof entry === 'string')
+      : [],
+    archived: record.archived === true,
+  };
+}
+
 export const INTERACTIONS_KEY = 'interactions';
 
 /** When a person last used each device slot's focused Simulator or emulator window, by device slot key. */

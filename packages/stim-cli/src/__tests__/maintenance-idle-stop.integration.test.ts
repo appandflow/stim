@@ -17,7 +17,6 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import * as stopCommand from '../commands/stop.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { resolveBudget } from '../budget.ts';
 import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
 import type { GcOutput } from '../commands/gc/results.ts';
 import { executeAction } from '../maintenance/act.ts';
@@ -555,7 +554,7 @@ test('a daemon pass may stop the hosted workspace a command runs in, a command-s
   vi.spyOn(hostedClient, 'probeHostedSession').mockResolvedValue({ state: 'ready' });
   const stopped = vi.spyOn(stopCommand, 'runStop').mockRejectedValue(new Error('the stop was reached'));
   const { actions } = await plan();
-  const context = { settings: resolveMaintenanceSettings(), budget: resolveBudget().budget, protectedRoot: root };
+  const context = { settings: resolveMaintenanceSettings(), protectedRoot: root };
 
   expect(await Promise.all(actions.map((action) => executeAction(action, context)))).toEqual([
     expect.objectContaining({ status: 'kept', detail: expect.stringMatching(/command that started this pass/) }),

@@ -19,10 +19,9 @@ import {
   resolveSettings,
   settingShapeErrors,
   settingValueAt,
-  deviceReclaimIdleMinutesSetting,
   unknownSettingKeys,
 } from '../workspace/settings.ts';
-import { saveConfig, writeConfigSetting, type Config } from '../workspace/config.ts';
+import { writeConfigSetting } from '../workspace/config.ts';
 import { SETTINGS } from '@stim-cli/core/state';
 
 let tmpHome: string;
@@ -398,14 +397,4 @@ test('ios.signingIdentitySha1 takes exactly the 40-hex hash find-identity prints
   expect(iosSigningIdentitySha1SettingError({ ios: { signingIdentitySha1: `${sha1}00` } })).toMatch(
     /Invalid ios\.signingIdentitySha1/,
   );
-});
-
-test('devices.reclaimIdleMinutes defaults to 10, an explicit 0 keeps it off, and a project layer overrides the machine', () => {
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(10);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 0 } } as Config);
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(0);
-  saveConfig({ version: 2, projects: {}, repos: {}, devices: { reclaimIdleMinutes: 45 } } as Config);
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({}))).toBe(45);
-  writeFileSync(join(tmpHome, '.stim.json'), JSON.stringify({ devices: { reclaimIdleMinutes: 0 } }));
-  expect(deviceReclaimIdleMinutesSetting(resolveSettings({ repoRoot: tmpHome }))).toBe(0);
 });

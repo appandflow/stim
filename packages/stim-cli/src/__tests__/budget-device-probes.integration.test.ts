@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
-import { enforceBudget } from '../budget.ts';
 import { collectIdleDevicesAsync } from '../commands/gc/idle.ts';
 
 import { createIosSimSnapshot } from '../devices/ios.ts';
@@ -105,27 +104,6 @@ function delayedTools({ wedgedFirst = false, failedHost = false, failedInstrumen
   };
   return { executor, calls };
 }
-
-test('budget measurements yield and retain all owned slots and idle-preview targets', async () => {
-  const { executor } = delayedTools();
-  setExecutor(executor);
-  const outcome = await responsive(() =>
-    enforceBudget({
-      root: join(base, 'current'),
-      note: () => {},
-      dryRun: true,
-      env: { HOME: join(base, 'private-user') },
-      budget: { minFreeDiskMb: 0, hardFloorDiskMb: 0, maxCommittedMemoryMb: 1, maxLiveWorkspaces: 0 },
-    }),
-  );
-  expect(outcome).toMatchObject({ status: 'ok', measure: { memory: { committedMb: 6500, liveWorkspaces: 1 } } });
-  assert(outcome.status === 'ok');
-  expect(outcome.reclaimed.find((entry) => entry.step === 'idle-devices')?.targets).toEqual([
-    `ios stim-fixture in ${project}`,
-    `android stim-a in ${project}`,
-    `android stim-b in ${project}`,
-  ]);
-});
 
 test.each(['host', 'instrumentation'])(
   'failed %s observation never makes an owned device eligible for idle reclaim',

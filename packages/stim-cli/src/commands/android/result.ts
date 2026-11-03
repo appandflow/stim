@@ -15,7 +15,6 @@ import { PLATFORM } from './support.ts';
 import { formatDuration, phaseLine } from '../../command-output.ts';
 import type { RemoteUploadLike, LaunchResultLike, AndroidRecord, AndroidWriter } from './types.ts';
 import type { RunRecorder } from '../../engine/stats.ts';
-import type { ReclaimedStep } from '../../budget.ts';
 import { type WorkspaceLinks, workspaceLinkLine } from '../../devices/stim-desktop.ts';
 import { buildDiagnostics, type BuildMissReason } from '@stim-cli/core/state';
 import { recordFinishedBuild } from '../../engine/build-progress.ts';
@@ -260,7 +259,6 @@ export interface ReportAndroidResultArgs {
   emit: (line: string) => void;
   out: (line: string) => void;
   recordRun: RunRecorder['record'];
-  reclaimed?: ReclaimedStep[];
   devServer?: DevServerStart | null;
   links?: WorkspaceLinks;
 }
@@ -295,7 +293,6 @@ export function reportAndroidResult({
   out,
   lease,
   recordRun,
-  reclaimed = [],
   devServer = null,
   links,
 }: ReportAndroidResultArgs): AndroidFacts {
@@ -338,7 +335,7 @@ export function reportAndroidResult({
 
   if (record.devicePlacement) facts.devicePlacement = record.devicePlacement;
   if (json) {
-    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}), ...(reclaimed.length ? { reclaimed } : {}) }));
+    emit(JSON.stringify({ ...facts, ...(links ? { links } : {}) }));
   } else {
     const summary =
       `${launchWarning ? 'WARNING' : 'OK'}: ${androidPackage} launched on ${host ? `${host.device?.name ?? 'Android emulator'} on ${host.machine}` : serial}, ` +

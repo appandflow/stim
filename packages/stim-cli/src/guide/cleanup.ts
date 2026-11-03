@@ -25,13 +25,17 @@ and logs, and never deletes anything. off disables it. It is off in CI and
 scoped STIM_HOME homes unless STIM_MAINTENANCE is explicit, so a scratch home
 or CI run never deletes on its own.
 The stim-daemon (guide settings, daemon.mode) runs a pass in its own process
-on each tick when a check is due: disk and memory pressure (every minute),
-hosted idle stops (every 5 minutes, maintenance.idleCheckMinutes), directory
-sizes (hourly), finished worktrees (every 15 minutes) and the age sweep
-(daily). While no daemon holds the home (on Windows, with daemon.mode off, or
-when it cannot start), stim doctor runs the same pass in its own process, and
-start, ios and android run it before they build; no other command starts one.
-gc without --delete prints the maintenance plan itself.
+on each tick when a check is due: a disk and memory reading for status (every
+minute), hosted idle stops (every 5 minutes, maintenance.idleCheckMinutes),
+directory sizes (hourly), finished worktrees (every 15 minutes) and the age
+sweep (daily). Pressure itself is the daemon's: each tick classifies the
+machine normal, high or critical and runs the pressure ladder above normal
+(stim guide lifecycle budget), whatever maintenance.mode says. While no daemon
+holds the home (on Windows, with daemon.mode off, or when it cannot start),
+stim doctor runs the same maintenance pass in its own process, and start, ios
+and android run it and the pressure ladder from rung 2 before they build; no
+other command starts one. gc without --delete prints the maintenance plan
+itself.
 Size, idle, worktree and sweep checks defer under high load. Measured directories are workspace build outputs and Stim's
 shared native, Metro, ccache, Swift compilation and registered caches. The size
 check also records the disk of each owned and parked simulator and emulator
@@ -39,12 +43,10 @@ check also records the disk of each owned and parked simulator and emulator
 Pressure checks read free disk on the Stim home, projects and worker root
 volumes. On macOS the memory signal is the sysctl pressure level, with no
 signal if sysctl fails. Other platforms use os.freemem(); macOS never falls
-back to it. Under memory pressure a pass stops the idle Gradle and Kotlin
-daemons verified idle by the common daemon inventory, with its build-running
-gates; stopping devices, dev servers and other helpers for memory is not automatic.
-Idle devices and dev servers of a workspace with no hosted device are the
-daemon's activity pass (guide metro); the idle check stops only a workspace
-whose device is hosted on a remote Mac (IDLE STOP). While the level is warning or critical, the
+back to it. Idle devices and dev servers of a workspace with no hosted device
+are the daemon's activity pass (guide metro), and memory pressure its ladder,
+not a maintenance check; the idle check stops only a workspace whose device is
+hosted on a remote Mac (IDLE STOP). While the level is warning or critical, the
 check also names abnormally large processes (guide lifecycle simslim) in
 status's maintenance block and the maintenance log.
 
@@ -115,7 +117,7 @@ In on mode a pass runs, cheapest to rebuild first:
   1. orphaned workspace directories whose project is gone, and registered
      caches whose directory no longer exists
   2. build outputs of idle workspaces, over maintenance.workspaceOutputsMaxGb,
-     below the free-disk floor, or unused for maintenance.olderThanDays
+     or unused for maintenance.olderThanDays
   3. build-cache and Metro entries, least recently used first, down to
      maintenance.capTargetPercent of caches.buildCacheMaxGb or
      caches.metroCacheMaxGb, and entries unused for olderThanDays
@@ -138,17 +140,21 @@ In on mode a pass runs, cheapest to rebuild first:
      sweep, through centralized teardown with ownership checked again
   7. owned simulators and emulators of a finished worktree that is kept, such
      as a dirty one (not one locked with git worktree lock), once it finished
-     and was idle for gc.worktreeGraceMinutes (at least protectRecentHours),
-     and of any
-     workspace idle for maintenance.deviceIdleDays (3; 0 turns it off) in the
-     age sweep. Devices are recreated on the next run.
+     and was idle for gc.worktreeGraceMinutes (at least protectRecentHours).
+     Devices are recreated on the next run. The devices of any workspace
+     without activity for idle.dormantDays go with its dormant stage instead
+     (stim guide lifecycle budget).
+  8. the age sweep also runs pressure ladder rung 6: idle Gradle and Kotlin
+     daemons, unpinned Gradle versions unmodified for
+     maintenance.gradleVersionIdleDays, Stim TMPDIR leftovers unmodified for 24
+     hours, and the worktree trash.
 The age sweep runs every maintenance.sweepHours (24) on a stim-daemon tick, or,
 while no daemon holds the home, in stim doctor, start, ios or android; never at
 a set hour.
 maintenance.olderThanDays (7) is its age for steps 2, 3, 5 and 6; with 0 the
 sweep removes nothing in them by age, while step 1, step 7, finished
 worktrees and the cap and disk-driven parts of steps 2 and 3 still run.
-Disk-driven steps stop once free space is back above the floor. Kept for
+Kept for
 every pass: a workspace that is in use, holds a lock, was used within
 maintenance.protectRecentHours, is pinned with maintenance.keep, or is the
 workspace of the command that started the pass; cache entries used within
@@ -156,76 +162,26 @@ protectRecentHours, named by a project's last builds, a parked device or a
 live build lock, or in a Metro store with a running or unverifiable dev
 server. Anything the pass cannot verify is kept. A device is deleted only when
 its workspace is idle: no dev server, native run, build, lease, managed lock,
-driven or busy device, and no recorded use within the window. Below disk
-pressure level 3 a pass stops a dev server only by IDLE STOP above and never
-stops watchman; removing a
+driven or busy device, and no recorded use within the window. A pass stops a
+dev server only by IDLE STOP above and never stops watchman; removing a
 finished worktree or orphaned directory does tear down that workspace's own
 dev server, owned devices and Chrome profile, as gc --delete does. ccache evicts by itself under
 caches.ccacheMaxGb.
 
-DISK PRESSURE LEVELS
-  Level 1 is free disk under the floor above (budget.minFreeDiskGb, 20 GB).
-  Level 2 is under maintenance.urgentFreeDiskGb (12), and level 3 is under
-  maintenance.criticalFreeDiskGb (6) or budget.hardFloorDiskGb, where builds
-  refuse. When level 1 leaves free disk under the floor, a pass goes on with
-  level 2, which runs until free disk is back above the floor; level 3 runs
-  only while free disk stays under the level 3 floor. At levels 2 and 3 the
-  protection window is maintenance.pressureProtectMinutes (10) instead of
-  protectRecentHours, except for the build outputs and build directories of
-  level 2, which follow the lightening rule of gc --delete (WORKSPACE BUILD
-  OUTPUTS): a running dev server, a booted or hosted device and a managed
-  tunnel do not keep them, a build or a running macOS app does, and they stay
-  for 15 minutes after the workspace's last ios, android or macos run.
-  Each step re-measures first and stops once free disk is back above its
-  level's floor, cheapest to rebuild first.
-  Level 2:
-    1. build outputs of workspaces, with the lightening rule above
-    2. parked simulators and emulators, deleted through centralized teardown
-    3. build directories of worktrees with a Stim workspace, by the same
-       rule: android/app/build, android/build, android/.gradle and .build, at
-       a project root, the worktree root, or apps/* and packages/*. ios/build
-       stays: React Native's pod install writes the codegen output and
-       podspec facades there that only pod install recreates
-    4. owned simulators and emulators of workspaces idle for the short window
-    5. Stim temp directories, xctrace recordings and SwiftPM temp directories
-       in TMPDIR unmodified for 24 hours, with gc --delete's checks (see stim guide cleanup gc)
-  Level 3:
-    1. the Swift compilation cache, emptied whole under the same build rule;
-       when a build keeps it, the last pass's blocked reasons name its size
-       and the build
-    2. finished worktrees, and clean, pushed worktrees with no commits of
-       their own beyond the default branch, with the short window as grace
-       period and idle window (maintenance.removeFinishedWorktrees still applies)
-    3. workspaces whose dev server runs but that are otherwise inactive for
-       the short window: their dev server stops and their owned simulators
-       and emulators are deleted
-    4. node_modules and ios/Pods at the root or a project root of idle linked
-       worktrees, never the source checkout, with the running-process checks
-       of WORKTREE DEPENDENCIES; when worktree warm can restore them they are
-       recorded for the next start, ios or android to restore
-    5. idle Gradle and Kotlin daemons, using the common identity and idle checks
-       (never during a build that could use them, never a busy or unverified
-       one, never with STIM_HOME set), only when every Gradle
-       process that keeps step 6 from running is such a daemon; the pass
-       waits up to 3 seconds for them to exit
-    6. Gradle version caches and wrapper distributions no registered project
-       pins, once unmodified for maintenance.gradleVersionIdleDays days (7;
-       0 turns steps 5 and 6 off), with the same checks as gc --cache
-       gradle-versions, run again after step 5 so a daemon that did not exit
-       still keeps them
-  A directory is cleared only when it is a real directory inside its
-  worktree, git tracks nothing in it, its worktree is not in use, is not
-  locked with git worktree lock, holds no build lock and is not pinned, and, for the node_modules and ios/Pods of
-  level 3, nothing under it, nor the worktree's git index, HEAD or Stim
-  state, changed within the short window. A build directory of level 2 also
-  stays in a worktree where no Stim workspace has recorded any state; a build
-  that Stim did not run is not detected. A dirty or
-  unpushed worktree can still be stopped and have these directories cleared;
-  only its removal is refused. Caches of other tools (pnpm and npm stores,
-  CocoaPods, SwiftPM, the shared Gradle caches) are never deleted.
-  status shows the level and, at level 3, the shortfall in the last pass;
-  every command prints one stderr line while the last check, at most 10
-  minutes old, measured level 3.
+DISK PRESSURE
+  Disk and memory pressure are the stim-daemon's: one level per tick and one
+  ladder (stim guide lifecycle budget), not maintenance levels. The ladder
+  reuses maintenance's removal code for parked devices, the Swift compilation
+  cache, Gradle daemons and versions, and the node_modules and ios/Pods of
+  idle linked worktrees, with the running-process checks of WORKTREE
+  DEPENDENCIES; dependencies that worktree warm can restore are recorded for
+  the next start, ios or android to restore. A directory is cleared only when
+  it is a real directory inside its worktree, git tracks nothing in it, its
+  worktree is not in use, is not locked with git worktree lock, holds no build
+  lock and is not pinned. Caches of other tools (pnpm and npm stores,
+  CocoaPods, SwiftPM, the shared Gradle caches) are never deleted. Every
+  command prints one stderr line while the daemon's last tick, at most 10
+  minutes old, found the disk critical.
 
   stim status                     last checks, plan and running pass
   stim status --json              maintenance observations and recent records
@@ -259,8 +215,8 @@ pass writes it again at its end.
 WHAT WAS CLEARED
 Every run that deletes or changes something appends one record per item to
 the machine gc log, $STIM_HOME/gc/gc.ndjson: gc --delete with any flags, gc
---idle, gc --cache --delete, each maintenance action taken, and what the budget gate
-reclaims before stim start, ios or android. A dry run writes nothing, and a
+--idle, gc --cache --delete, and each maintenance action taken. The
+stim-daemon's pressure ladder logs its actions to daemon.ndjson instead. A dry run writes nothing, and a
 gc run that only kept items writes nothing. Failed and kept items carry their
 reason. The file rotates at maintenance.logMaxMb and its old generation is
 kept for maintenance.logRetentionDays, like the maintenance log.
@@ -288,7 +244,8 @@ WHAT RECLAIMS AN OWNED DEVICE
   stim worktree remove    parks eligible owned simulators and emulators
                             (\`guide lifecycle pool\`); deletes them when
                             parking is disabled, their setup cannot be
-                            verified, or free disk is at pressure level 2 or 3
+                            verified, or the disk pressure level is high or
+                            critical
   stim gc --delete        sweeps devices this Stim home created that no project
                             references (\`guide cleanup gc\`), clears
                             verified parked simulators and emulators, and
@@ -486,12 +443,12 @@ a scoped STIM_HOME or its layout is unsafe), since nothing uses those
 directories, and reports it again when that fails; plain gc --delete and
 automatic maintenance never touch them. modules-2, build-cache-1, jdks and
 other shared Gradle caches are never deleted, and --cache all never includes these versions.
-With STIM_HOME set, gc deletes nothing in a Gradle home outside it. At disk
-pressure level 3 automatic maintenance first stops the idle Gradle and Kotlin
-daemons using the common identity, idle and build checks, only when every Gradle
-process that keeps a version is such a daemon, then does the same for
-versions unmodified for maintenance.gradleVersionIdleDays days (7; 0 turns
-both off). A manual gc --delete --cache gradle-versions never stops daemons.
+With STIM_HOME set, gc deletes nothing in a Gradle home outside it. Pressure
+ladder rung 6 (daily in the age sweep, at once under disk pressure) first stops
+the idle Gradle and Kotlin daemons using the common identity, idle and build
+checks, then deletes versions unmodified for maintenance.gradleVersionIdleDays
+days (7; 0 keeps the versions) once every Gradle process that keeps one was
+such a daemon. A manual gc --delete --cache gradle-versions never stops daemons.
 
 OTHER TOOLS' MACHINE-WIDE CACHES (REPORT ONLY)
 Unscoped gc also reports large caches other tools keep for the whole machine,
@@ -604,7 +561,7 @@ SWEEPING FINISHED WORKTREES
   source checkout and roots outside git.
 
   Each worktree line also shows its in-tree build state: the size of the
-  build and dependency directories maintenance clears (DISK PRESSURE LEVELS
+  build and dependency directories the pressure ladder clears (DISK PRESSURE
   above) and a root .pnpm-store, largest first (APFS clones count in full).
   A size comes from the disk-usage cache while it is under an hour old and
   no entry was added to or removed from its directory since (a build that
@@ -699,9 +656,8 @@ SWEEPING FINISHED WORKTREES
   one without an open pull request once the RECENT ACTIVITY sources above
   are older than gc.worktreeGraceMinutes and maintenance.protectRecentHours
   (2 hours by default), and never younger than 5 minutes (reason
-  recent-activity until then, activity-unknown when they cannot be read). At
-  disk pressure level 3 the window is maintenance.pressureProtectMinutes,
-  still at least 5 minutes. Removal re-checks, under the removal locks, that
+  recent-activity until then, activity-unknown when they cannot be read).
+  Removal re-checks, under the removal locks, that
   HEAD did not move and the worktree is still idle, and \`stim worktree
   remove\` still refuses dirty or unpushed work. A process Stim does not
   track, such as a benchmark run from a detached build, does not keep it.
@@ -723,8 +679,7 @@ SWEEPING FINISHED WORKTREES
   archive.maxTotalGb 0, whose untracked files or patch exceed
   archive.maxTotalGb, whose archive would leave less free disk than
   budget.hardFloorDiskGb, whose staged version of a file differs from its
-  working tree, or that holds an untracked nested repository; disk
-  pressure level 3 never archives. Archives are 0700 and 0600 with no
+  working tree, or that holds an untracked nested repository. Archives are 0700 and 0600 with no
   redaction, so an untracked secret such as a .env file that git does not
   ignore is saved; use archive.enabled false for a sensitive repository. A
   \`git status\` or editor refresh that rewrites the index restarts RECENT
@@ -837,8 +792,8 @@ TMPDIR LEFTOVERS
   so their temp directories land here too. Jest's cache and every other entry
   are never deleted. gc never follows a symlink and never acts outside TMPDIR.
   With STIM_HOME set it neither reports nor deletes them, because TMPDIR is
-  shared by every Stim home. Automatic maintenance runs the same deletion at disk pressure
-  level 2.
+  shared by every Stim home. Pressure ladder rung 6 runs the same deletion
+  daily in the age sweep, and at once under disk pressure.
 
 STALE STATUS CACHE ENTRIES
   \`stim status\` caches each folder's size under $STIM_HOME/disk-usage and
@@ -1246,7 +1201,7 @@ WORKSPACE BUILD OUTPUTS
   anything else, by clearing them, and prints the bytes freed per workspace.
   A workspace whose worktree is locked with git worktree lock is never
   lightened: not its outputs, not its project's build directories, at any
-  disk pressure level, including gc --older-than and the budget, and gc and
+  disk pressure level, including gc --older-than and the pressure ladder, and gc and
   the maintenance log name the lock. The outputs also stay when git lists
   nothing for a project inside a git checkout (code lock-unknown). A
   running dev server, a booted or hosted simulator or emulator and a managed
@@ -1264,9 +1219,9 @@ WORKSPACE BUILD OUTPUTS
   orphaned directories); \`--cache all\` includes them. macos/ itself,
   macos/runtime.lock and its claim set, workspace.json, state.json, logs/,
   other macOS files, locks and device records stay. The workspace keeps its
-  devices, ports and running dev server. Automatic maintenance at disk
-  pressure level 2 clears them by the same rule (DISK PRESSURE LEVELS); level
-  1 keeps its own rules. A running, building, unverified or hosted macOS app
+  devices, ports and running dev server. The pressure ladder's idle stage
+  (stim guide lifecycle budget) clears them for a workspace idle 2 minutes
+  under disk pressure. A running, building, unverified or hosted macOS app
   keeps its workspace untouched.
     stim gc --delete --cache workspaces --older-than 7
   Last use is the newest of the lastUsedAt that start, ios, android, reload,

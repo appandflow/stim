@@ -32,6 +32,49 @@ export interface DaemonWorkspaceDecision {
   /** `idle` when the tick moved it into the idle stage, or would have in report mode. */
   outcome: 'active' | 'kept' | 'idle' | 'would-idle' | 'failed';
   detail: string;
+  /** The bytes of build outputs the idle stage deleted. */
+  freedBytes?: number;
+}
+
+export type PressureLevel = 'normal' | 'high' | 'critical';
+
+/** The machine's pressure level for one tick: the higher of the disk and memory levels, and why. */
+export interface DaemonPressure {
+  level: PressureLevel;
+  disk: PressureLevel;
+  memory: PressureLevel;
+  /** One line per condition that raised the level; empty at normal. */
+  reasons: string[];
+  /** When macOS memory pressure turned warning, while it still is; the level counts it after 10 minutes. */
+  memoryWarningSince: string | null;
+}
+
+/** One action of the pressure ladder or the dormant stage, as the daemon logged it. */
+export interface DaemonLadderAction {
+  /**
+   * The ladder rung, 1 to 6; the dormant stage reached by `idle.dormantDays` is rung 4, and the admission reclaim of
+   * a device for a run waiting to boot is 0.
+   */
+  rung: number;
+  kind: string;
+  target: string;
+  workspace?: string;
+  outcome: 'done' | 'kept' | 'failed' | 'would';
+  bytes: number;
+  detail: string;
+  /** The command that brings back what the action removed, when one does. */
+  restore?: string;
+}
+
+/** A run waiting for a build slot or a device boot, in arrival order per resource. */
+export interface DaemonWaiter {
+  resource: 'build' | 'boot';
+  /** 1 for the run that gets the next free slot of its resource. */
+  position: number;
+  workspace: string | null;
+  label: string;
+  platform?: string;
+  since: string;
 }
 
 /** `$STIM_HOME/daemon/snapshot.json`: the daemon's identity and its last tick. */
@@ -45,6 +88,11 @@ export interface DaemonSnapshot {
   intervalMs: number;
   measurement: DaemonMeasurement;
   workspaces: DaemonWorkspaceDecision[];
+  /** Absent from snapshots written before the pressure ladder existed. */
+  pressure?: DaemonPressure;
+  /** The ladder and dormant actions this tick took, or would take in report mode. */
+  actions?: DaemonLadderAction[];
+  waiting?: DaemonWaiter[];
 }
 
 /** Whether the home daemon runs, and when it last ticked; `status` and `doctor` print it. */
@@ -57,6 +105,10 @@ export interface DaemonStatus {
   lastTickAt: string | null;
   intervalMs: number | null;
   claim?: { unresolved: string; removeCommand: string };
+  /** The last tick's pressure level; absent until a daemon with the pressure ladder ticked. */
+  pressure?: DaemonPressure;
+  /** Runs waiting for a build slot or a device boot now, read from the wait queues. */
+  waiting?: DaemonWaiter[];
 }
 
 function isDaemonSnapshot(record: Record<string, unknown> | null): record is Record<string, unknown> & DaemonSnapshot {

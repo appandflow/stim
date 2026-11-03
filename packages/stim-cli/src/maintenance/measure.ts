@@ -4,13 +4,14 @@ import { configDir, metroCacheRoot, buildCacheRoot, type StimContext } from '@st
 import {
   buildWorkerRoot,
   loadConfig,
+  readDaemonSnapshot,
   sharedCcache,
   sharedCompilationCache,
-  type DiskPressureLevel,
   type MaintenancePressure,
   type MaintenanceSize,
 } from '@stim-cli/core/state';
-import { readVolumeSpace, readVolumeSpaceAsync, resolveBudget } from '../budget.ts';
+import { readVolumeSpace, readVolumeSpaceAsync } from '../budget.ts';
+import { memoryPressure } from '../daemon/pressure.ts';
 import { measuredDirectorySizeAsync } from '../fs-util.ts';
 import { readHostMemoryPressure, readHostMemoryPressureAsync, type HostMemoryPressure } from '../host-memory.ts';
 import { discoverCaches, type CacheDescriptor } from '../cache/caches.ts';
@@ -18,8 +19,7 @@ import { planCacheEmptying } from '../commands/gc/caches.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs } from '../commands/gc/workspaces.ts';
 import { cacheUser } from '../cache/cache-claim.ts';
-import { diskPressureLevel, lowestFree, memoryPressureFromObservations } from './pressure.ts';
-import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
+import type { MaintenanceSettings } from './settings.ts';
 
 export function measureDisk(): MaintenancePressure['disk'] {
   return readVolumeSpace([configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())]);
@@ -32,21 +32,15 @@ export function measureDiskAsync(operation: StimContext): Promise<MaintenancePre
   );
 }
 
-/** The disk pressure level of the fullest volume Stim writes to, measured now. */
-export function currentDiskLevel(disk: MaintenancePressure['disk'] = measureDisk()): DiskPressureLevel {
-  return diskPressureLevel(lowestFree(disk), resolveBudget().budget, resolveMaintenanceSettings());
+export function lowestFree(disk: MaintenancePressure['disk']): number {
+  return disk.length ? Math.min(...disk.map((volume) => volume.freeMb)) : Infinity;
 }
 
-export function measurePressure(
-  settings: MaintenanceSettings,
-  previous: MaintenancePressure | null,
-  now: number,
-): MaintenancePressure {
-  return pressureFromObservations(settings, previous, now, readHostMemoryPressure(), measureDisk());
+export function measurePressure(previous: MaintenancePressure | null, now: number): MaintenancePressure {
+  return pressureFromObservations(previous, now, readHostMemoryPressure(), measureDisk());
 }
 
 export async function measurePressureAsync(
-  settings: MaintenanceSettings,
   previous: MaintenancePressure | null,
   now: number,
   operation: StimContext,
@@ -56,26 +50,31 @@ export async function measurePressureAsync(
     [configDir(), ...Object.keys(loadConfig()?.projects ?? {}), buildWorkerRoot(loadConfig())],
     operation.signal,
   );
-  return pressureFromObservations(settings, previous, now, level, disk);
+  return pressureFromObservations(previous, now, level, disk);
 }
 
+/**
+ * Disk and memory as status shows them. `pressured` is the stim-daemon's memory level above normal; the warning clock
+ * carries over from the last measurement, or from the daemon's last tick.
+ */
 function pressureFromObservations(
-  settings: MaintenanceSettings,
   previous: MaintenancePressure | null,
   now: number,
   level: HostMemoryPressure | null,
   disk: MaintenancePressure['disk'],
 ): MaintenancePressure {
+  const availableBytes = process.platform === 'darwin' ? null : freemem();
+  const since = previous?.warningSince ?? Date.parse(readDaemonSnapshot()?.pressure?.memoryWarningSince ?? '');
+  const memory = memoryPressure(
+    { level, availableBytes, totalBytes: totalmem() },
+    Number.isFinite(since) ? new Date(since).toISOString() : null,
+    now,
+  );
+  const warningSince = Date.parse(memory.warningSince ?? '');
   return {
     disk,
-    ...memoryPressureFromObservations(
-      settings,
-      previous,
-      now,
-      level,
-      process.platform === 'darwin' ? null : freemem(),
-      totalmem(),
-    ),
+    memory: { level, availableBytes, pressured: memory.level !== 'normal' },
+    warningSince: Number.isFinite(warningSince) ? warningSince : null,
   };
 }
 

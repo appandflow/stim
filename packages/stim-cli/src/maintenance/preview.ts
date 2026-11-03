@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { configDir, isScopedHome, type StimContext } from '@stim-cli/core';
+import { configDir, type StimContext } from '@stim-cli/core';
 import {
   loadConfig,
   readMaintenanceState,
@@ -7,7 +7,6 @@ import {
   type MaintenanceSize,
   type MaintenanceMode,
 } from '@stim-cli/core/state';
-import { enforceBudget, resolveBudget } from '../budget.ts';
 import { findProjectRoot } from '../workspace/project.ts';
 import { canonicalPath } from '../commands/gc/paths.ts';
 import { collectWorkspaceOutputs, workspaceDirRemoved } from '../commands/gc/workspaces.ts';
@@ -20,8 +19,6 @@ import { maintenancePinned, maintenancePinnedAsync, recentUse } from './protect.
 import { planSweep, planWorktrees } from './sweep.ts';
 import { cachedDeviceActivity, cachedDeviceActivityAsync } from './activity.ts';
 import { planIdleStop } from './idle-stop.ts';
-import { planMemoryDaemonStop, planPressureLevels } from './levels.ts';
-import { diskPressureLevel, lowestFree } from './pressure.ts';
 import { resolveMaintenanceSettings, type MaintenanceSettings } from './settings.ts';
 import { WorkspaceProcessCleanupError } from '../engine/workspace-process-lock.ts';
 
@@ -33,11 +30,9 @@ export function triggeringRoot(operation?: StimContext): string {
 
 export interface PlannedMaintenance extends MaintenancePlan {
   worktreeSweep?: WorktreeSweep;
-  pressureSweep?: WorktreeSweep;
 }
 
 export async function plannedMaintenance(
-  pressure: MaintenancePressure | null,
   recordedSizes: readonly MaintenanceSize[],
   settings: MaintenanceSettings,
   {
@@ -61,23 +56,7 @@ export async function plannedMaintenance(
   } = {},
 ): Promise<PlannedMaintenance> {
   const env = operation?.env ?? process.env;
-  const resolved = resolveBudget({ env });
-  if (resolved.error) throw new Error(resolved.error);
-  const budget = {
-    ...resolved.budget,
-    maxCommittedMemoryMb: 0,
-    maxLiveWorkspaces: 0,
-  };
   const root = triggeringRoot(operation);
-  const floor = Math.max(budget.minFreeDiskMb, budget.hardFloorDiskMb);
-  const low = pressure?.disk.some((disk) => disk.freeMb < floor);
-  const outcome = low
-    ? await enforceBudget(
-        { root, note: () => {}, dryRun: true, budget, env, cwd: operation?.cwd, signal: operation?.signal, operation },
-        { volumes: () => pressure!.disk },
-      )
-    : null;
-  if (outcome && outcome.status !== 'ok') throw new Error(outcome.refusal.message);
   const outputs = await collectWorkspaceOutputs({
     olderThan: null,
     now: Date.now(),
@@ -123,15 +102,9 @@ export async function plannedMaintenance(
     return value;
   };
   const result = plan({
-    pressure,
     sizes: currentSizes,
     settings,
-    budget,
-    diskSteps:
-      outcome?.status === 'ok' ? outcome.reclaimed.filter((step) => devices || step.step !== 'idle-devices') : [],
     protectedRoot: root,
-    scoped: isScopedHome(env),
-    projects: Object.keys(loadConfig()?.projects ?? {}).map(canonicalPath),
     pinned,
     recentlyUsed: (workspace) => recentUse(workspace, settings),
   }) as PlannedMaintenance;
@@ -142,7 +115,6 @@ export async function plannedMaintenance(
           (entry) =>
             entry.kind === action.kind &&
             entry.target === action.target &&
-            (entry.level === action.level || action.kind === 'would-delete-devices') &&
             (action.check !== 'idle' || entry.check === 'idle'),
         )
       )
@@ -188,37 +160,6 @@ export async function plannedMaintenance(
       result.blocked.push(`idle stop could not be planned: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  if (pressure) {
-    const level = diskPressureLevel(lowestFree(pressure.disk), budget, settings);
-    const pressured = await planPressureLevels(level, {
-      settings,
-      sizes: currentSizes,
-      protectedRoot: root,
-      pinned,
-      now: Date.now(),
-      refresh,
-      operation,
-    });
-    merge(pressured);
-    if (pressured.pressureSweep) result.pressureSweep = pressured.pressureSweep;
-    if (pressure.memory.pressured && settings.memoryPressureLevel !== 'off') {
-      const memory = await planMemoryDaemonStop(operation);
-      if (memory.actions.length)
-        result.actions = result.actions.filter((action) => action.kind !== 'would-stop-gradle-daemons');
-      merge(memory);
-    }
-  }
-  if (low) {
-    result.skips.push(
-      ...outputs.workspaces
-        .filter((entry) => !entry.willClear && entry.keptReason)
-        .map((entry) => ({
-          target: entry.dir,
-          reason: entry.keptReason!,
-          workspace: entry.projectRoot ?? undefined,
-        })),
-    );
-  }
   return result;
 }
 
@@ -258,9 +199,9 @@ export async function previewMaintenance({
         note: 'maintenance.mode is off',
       };
     const pressure = operation
-      ? await measurePressureAsync(settings, state?.pressure ?? null, Date.now(), operation)
-      : measurePressure(settings, state?.pressure ?? null, Date.now());
-    const result = await plannedMaintenance(pressure, state?.sizes ?? [], settings, {
+      ? await measurePressureAsync(state?.pressure ?? null, Date.now(), operation)
+      : measurePressure(state?.pressure ?? null, Date.now());
+    const result = await plannedMaintenance(state?.sizes ?? [], settings, {
       devices,
       sweep: true,
       idle: true,

@@ -22,7 +22,7 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
+import { admissionLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import { resolveProjectSettingsAsync } from '../../workspace/settings.ts';
 import { recordWorkspaceUseAsync } from '../../workspace/workspace-state.ts';
@@ -206,7 +206,7 @@ export async function buildAndroidOperation(
               easBuild,
               androidPackage: (await integration.appIds()).androidPackage,
               record,
-              maxBuilds: getConcurrencyLimits().maxBuilds,
+              maxBuilds: admissionLimits().maxBuilds,
               progress: {
                 phase,
                 out: note,

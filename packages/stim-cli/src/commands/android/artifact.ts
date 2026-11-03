@@ -24,7 +24,7 @@ import { skippedMissReason } from '../../cache/miss-reason.ts';
 import { buildPlacementRecord, type PlacementCandidate } from '../../placement-log.ts';
 import { formatDuration, phaseLine, shortHash, stepTimer } from '../../command-output.ts';
 import type { acquireBuildLock, releaseBuildLock, waitForBuild as waitForOtherBuild } from '../../engine/build-lock.ts';
-import type { acquireBuildSlot, releaseBuildSlot } from '../../engine/build-slots.ts';
+import { BuildSlotCapacityError, type acquireBuildSlot, type releaseBuildSlot } from '../../engine/build-slots.ts';
 import { acquireArtifact, settleArtifactUploads, type ArtifactRun } from '../../engine/acquire-artifact.ts';
 import type { ReadyArtifact } from '../../engine/artifact-lifecycle.ts';
 import { CCACHE_NOT_RUN, CCACHE_UNAVAILABLE, ccacheActivityLine } from '../../engine/ccache.ts';
@@ -479,7 +479,7 @@ export async function acquireAndroidArtifact(
     } catch (err) {
       throwIfCancelled(signal, 'Android build');
       requireLocalBuild(buildMachine);
-      const refusal = claimFailure(err, 'stim android');
+      const refusal = err instanceof BuildSlotCapacityError ? err : claimFailure(err, 'stim android');
       if (refusal) {
         phaseFailure = fail(refusal.code, refusal.message, refusal.remedy, { lastBuildStatus: true });
         return false;

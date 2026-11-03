@@ -18,7 +18,6 @@ import { collectArtifactsAsync } from '../maintenance/artifacts.ts';
 import { cachedDeviceActivityAsync, workspaceActiveReasonAsync } from '../maintenance/activity.ts';
 import { previewMaintenance } from '../maintenance/preview.ts';
 import * as maintenanceMeasure from '../maintenance/measure.ts';
-import { enforceBudget } from '../budget.ts';
 
 let dir: string;
 let path: string | undefined;
@@ -50,7 +49,6 @@ test.each([
   'maintenance artifacts',
   'maintenance activity',
   'maintenance preview',
-  'maintenance budget',
   ...(process.platform === 'darwin' ? ['maintenance pressure'] : []),
 ])('a cancelled repository %s probe preserves its actual claim when child cleanup is unverifiable', async (kind) => {
   const controller = new AbortController();
@@ -135,23 +133,7 @@ test.each([
         async (handle) => {
           claim = handle;
           const options = { ...childEnvironment(context.env), signal: context.signal, declareFor: context };
-          if (kind === 'maintenance pressure') {
-            const { resolveMaintenanceSettings } = await import('../maintenance/settings.ts');
-            return readPressure(resolveMaintenanceSettings(undefined, context.env), null, Date.now(), context);
-          }
-          if (kind === 'maintenance budget')
-            return enforceBudget(
-              {
-                root: join(dir, 'trigger'),
-                dryRun: true,
-                note: () => {},
-                budget: { minFreeDiskMb: 10, hardFloorDiskMb: 0, maxCommittedMemoryMb: 0, maxLiveWorkspaces: 0 },
-                env: { ...context.env, STIM_HOME: undefined },
-                signal: context.signal,
-                operation: context,
-              },
-              { volumes: () => [{ volume: dir, freeMb: 0 }] },
-            );
+          if (kind === 'maintenance pressure') return readPressure(null, Date.now(), context);
           if (kind === 'maintenance pin') return maintenancePinnedAsync(dir, context);
           if (kind === 'maintenance artifacts')
             return collectArtifactsAsync(
