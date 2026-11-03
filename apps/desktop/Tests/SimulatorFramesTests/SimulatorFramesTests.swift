@@ -70,6 +70,40 @@ import Testing
   }
 }
 
+@Suite struct ScreenOrientationTests {
+  @Test func aPortraitAppFollowsTheDeviceOrientation() {
+    #expect(screenOrientation(app: 1, device: 1) == 1)
+    #expect(screenOrientation(app: 1, device: 3) == 4)
+    #expect(screenOrientation(app: 1, device: 4) == 3)
+    #expect(screenOrientation(app: 1, device: 2) == 2)
+  }
+
+  @Test func theDeviceOrientationDrawsTheInterfaceItShowsUpright() {
+    for device in UInt32(1)...4 {
+      #expect(deviceOrientation(interface: screenOrientation(app: 1, device: device)) == device)
+    }
+  }
+
+  @Test func anAppThatTurnedItselfKeepsItsOwnOrientation() {
+    #expect(screenOrientation(app: 3, device: 1) == 3)
+    #expect(screenOrientation(app: 4, device: 3) == 4)
+    #expect(screenOrientation(app: 2, device: 4) == 2)
+  }
+
+  @Test func anUnturnedDeviceFollowsTheApp() {
+    for app in UInt32(1)...4 { #expect(screenOrientation(app: app, device: nil) == app) }
+  }
+
+  @Test func touchesOnAPortraitAppReachTheNativePointTheSidewaysImageShows() {
+    let upright = CGPoint(x: 0.25, y: 0.75)
+    let landscapeLeft = nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 3))
+    #expect(landscapeLeft == CGPoint(x: 1 - 0.75, y: 0.25))
+    let landscapeRight = nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 4))
+    #expect(landscapeRight == CGPoint(x: 0.75, y: 1 - 0.25))
+    #expect(nativeScreenPoint(upright, orientation: screenOrientation(app: 1, device: 2)) == CGPoint(x: 0.75, y: 0.25))
+  }
+}
+
 @Suite struct KeyUsageTests {
   @Test(.enabled(if: SimulatorKit.usageForKeyCode != nil, "needs an Xcode whose SimulatorKit exports hidUsageForCGKeyCode"))
   func mapsEditingAndNavigationKeysToTheirHIDUsages() throws {
