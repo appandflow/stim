@@ -495,6 +495,11 @@ test('status --json reports the machine load against server.maxLoadPerCore, and 
   expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
   expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
   expect(capacity.devices).toEqual({ max: admissionLimits().maxDevices, inUse: 0, holders: [] });
+  const plain = (await runStatus()).join('\n');
+  expect(plain).toContain('builds 0/2 (concurrency.maxBuilds)');
+  expect(plain).toContain(
+    `devices 0/${admissionLimits().maxDevices} (derived; set concurrency.maxDevices to override)`,
+  );
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {

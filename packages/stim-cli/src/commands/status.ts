@@ -20,7 +20,7 @@ import { totalmem, userInfo } from 'os';
 import { join } from 'path';
 import { quotedPath } from '@stim-cli/core';
 import type { Command } from 'commander';
-import { getConfigDir } from '../workspace/config.ts';
+import { admissionLimits, getConfigDir } from '../workspace/config.ts';
 import { getExecutor } from '../exec.ts';
 import { describeMetroLastStop } from '../supervisor/stop-cause.ts';
 import { detectIsExpo, projectShortcut } from '../workspace/project.ts';
@@ -253,7 +253,7 @@ function renderStatus(
     }
     for (const line of deviceLeaseLines(leases, leaseNow)) out.push(line);
     out.push(chalk.dim(loadLine(cap.load)));
-    for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
+    for (const line of slotUsageLines(cap, admissionLimits().derived)) out.push(chalk.dim(line));
     return out;
   }
 
@@ -373,7 +373,7 @@ function renderStatus(
     ),
   );
   out.push(chalk.dim(loadLine(cap.load)));
-  for (const line of slotUsageLines(cap)) out.push(chalk.dim(line));
+  for (const line of slotUsageLines(cap, admissionLimits().derived)) out.push(chalk.dim(line));
   const volumes = readVolumes(cwdRoot || cwd);
   const line = diskLine(volumes);
   if (line) {

@@ -1588,14 +1588,15 @@ which automatic placement prefers another machine), `limit` and `state`.
 over `limit`. No setting sets `limit` yet, so it is `null` and `state` is
 never `holding`.
 
-While `concurrency.maxBuilds` or `concurrency.maxDevices` is set, status shows
-how many of those slots are in use and who holds them, as a `builds 1/2` or
-`devices 6/6` line, and in `--json` as `capacity.builds` and
-`capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
+Status shows how many build and device slots are in use and who holds them,
+as a `builds 1/2 (concurrency.maxBuilds)` or
+`devices 6/8 (derived; set concurrency.maxDevices to override)` line, the second
+form while Stim derives the cap because the setting is unset, and in `--json` as
+`capacity.builds` and `capacity.devices`: `max`, `inUse` and `holders`. A build slot's holder names
 the workspace building in it, or the client whose offloaded build this Mac
 runs; a device's holder names the workspace label and device slot that record
 it. `capacity.devices.inUse` is `null`, with `unknown` saying why, when the
-devices could not be listed. With neither cap set, neither field appears.
+devices could not be listed.
 
 `concurrency.maxIosDevices` and `concurrency.maxAndroidDevices` add an
 `iOS simulators 1/2` or `Android emulators 0/1` line and, in `--json`,

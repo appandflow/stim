@@ -2172,7 +2172,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   run prints its queue position and what it waits for:
 
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency
-    device      waiting for a device slot (8/8 devices booted, concurrency.maxDevices) held by app-a, app-b: queue position 1 of 1, 10s elapsed -- stim guide lifecycle concurrency
+    device      waiting for a device slot (8/8 devices booted, the derived device cap of 8; set concurrency.maxDevices to override) held by app-a, app-b: queue position 1 of 1, 10s elapsed -- stim guide lifecycle concurrency
+
+  When concurrency.maxDevices sets the cap, the line names that setting instead.
 
   A waiting run never refuses while its position improves or every holder
   ahead of it is alive: a slot claim whose process is live, or a device the
