@@ -3253,17 +3253,20 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`ios.simslim off\` opts that app out and restores stock services on its
   simulator. The defaults disable push, StoreKit, iCloud, Safari sync, Mail,
   Calendar and Contacts services, among others; move an app that needs them
-  to a profile that keeps those categories, or to \`off\`. A running
-  simulator is slimmed on the next \`stim ios\`, without a boot first, and a
-  parked simulator when Stim adopts it. An already slim simulator is left
-  alone, so only the first slim reboots it.
+  to a profile that keeps those categories, or to \`off\`. A shut-down
+  simulator (a new one, a stopped one, or a parked one Stim adopts) is
+  slimmed as part of its boot: SimSlim writes its settings while it is shut
+  down and boots it once, already slim. A running simulator is slimmed on the
+  next \`stim ios\` without a boot first, which reboots it. An already slim
+  simulator is left alone.
   Without the \`simslim\` command, doctor reports it and \`stim ios\` boots
   the simulator unslimmed with a one-line note. Hosted simulators on a named
   Mac are never slimmed, whatever either Mac's setting says.
 
   SimSlim 0.8 requires iOS 18.5 or newer. On each local \`stim ios\`,
-  Stim reconciles that profile on the owned simulator before the app build.
-  The first change can update services and reboot the simulator. Stim records
+  Stim reconciles that profile on the owned simulator: on a shut-down
+  simulator as its boot, alongside the app build, and on a running one before
+  the app build, where a change reboots the simulator. Stim records
   the applied profile (the default categories, or a hash of the profile file)
   and the boot of the simulator it was applied on, so a later launch on the
   same boot with the same profile skips the \`simslim\` call. A changed
@@ -3272,7 +3275,8 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   reboots or the profile changes. The settings persist across normal
   shutdowns and reboots. Removing the setting restores stock services when
   Stim applied the profile. Stim never changes an unowned or remote simulator.
-  Each SimSlim operation has a 12-minute outer deadline, including discovery.
+  Each SimSlim operation has a 12-minute outer deadline, including discovery
+  and a boot SimSlim runs; Stim's own boot wait starts after it.
   This cap also applies when SimSlim's own timeout is increased. On timeout,
   Ctrl-C, or SIGTERM, Stim attempts to stop only its verified process group, then waits up to
   10 seconds to confirm termination before returning or exiting.
