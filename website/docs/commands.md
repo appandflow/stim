@@ -402,8 +402,9 @@ can compile on a paired remote machine instead: see `remote.build` in
 - `--wait <seconds>` bounds the wait for a physical-device lease (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the
   owned-device slot wait across the Stim home; without it, a waiting run
-  refuses once its queue position has not improved for max(10 minutes,
-  position x 5 minutes). Remote targets do not join this local slot queue.
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
   While a run waits to boot at a full cap, the `stim-daemon` shuts down the
   longest-idle owned device of another workspace idle 2 minutes, one per
   tick. Reclaim shuts down, never deletes, and excludes this workspace,
@@ -442,7 +443,8 @@ not running, including after an idle stop. With eas/proxy `--remote`, it starts 
 `devServer: { "started": true, "reason": "not running" | "stopped (idle)" }`.
 The run refuses only when that start fails, with the start's error code.
 
-A React Native or Expo non-Debug configuration embeds its JavaScript bundle.
+A React Native or Expo configuration whose name contains `Debug`, such as `Debug` or `Dev.Debug`,
+uses the dev server, as React Native's bundling script decides. Any other configuration embeds its JavaScript bundle.
 
 A locally compiled device build is local-tier only. Its cache key ends `-device`, so it cannot
 collide with a simulator build, and no build-cache provider or Expo remote cache
@@ -689,8 +691,9 @@ can compile on a paired remote machine instead: see `remote.build` in
 - `--wait <seconds>` bounds the physical-device lease wait (default 60;
   `0` refuses immediately if busy). Without `--device`, it bounds the
   owned-device slot wait across the Stim home; without it, a waiting run
-  refuses once its queue position has not improved for max(10 minutes,
-  position x 5 minutes). Remote targets do not join this local slot queue.
+  keeps waiting while the devices ahead of it are listed and refuses after 90
+  minutes, or once the devices cannot be counted for max(10 minutes, position
+  x 5 minutes). Remote targets do not join this local slot queue.
   While a run waits to boot at a full cap, the `stim-daemon` shuts down the
   longest-idle owned device of another workspace idle 2 minutes, one per
   tick. Reclaim shuts down, never deletes, and excludes this workspace,
@@ -997,6 +1000,25 @@ com.example.app relaunched from cold on Simulator stim-my-app (iPhone 17 Pro 26.
 reads the workspace's boot hook; revive then restores only the launch on that
 device, plus Metro. See
 [agent-device actions](./dev-server-and-logs.md#agent-device-actions).
+
+## `share`
+
+```text
+stim share ios|android [--control] [--expires <minutes>] [--password <value> | --no-password] [--device] [--slot <name>] [--json]
+stim share stop [--json]
+stim share list [--json]
+```
+
+Gives anyone a public, password-protected web link to watch the workspace's
+running app, and with `--control` to tap, type and press its buttons. The share
+runs inside this Stim home's stim-server, which `stim share` starts in the
+background when none runs, and is served through Tailscale Funnel. The
+password is generated unless you set one with `--password` or drop it with
+`--no-password`. Every share expires (60 minutes by default, at most 480) and ends with
+`stim share stop`, `stim stop` (without `--slot`), `stim worktree remove`, its
+device, or stim-server. It refuses with `STIM_SERVER_NOT_RUNNING` when it cannot start a
+stim-server and `STIM_SHARE_REFUSED` with the reason otherwise. See
+[Share a running app](./share.md) for the requirements and the security model.
 
 ## `logs`
 
@@ -1898,16 +1920,14 @@ placements. Placements include `slotWaitMs` and `deviceSlotWaitMs` as whole mill
 
 Owned-device waits print the count, holder workspace names and elapsed time
 at once and about every 10 seconds on stderr. Status JSON includes optional
-`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since }`
+`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since, position, resource }`
 without changing the build phase. Overlapping waits show the one that started
 first, then the remaining wait.
 
 The optional top-level JSON `capacityWaits` lists each owned-device slot wait:
-`{ at, kind: "device-wait", platform, ms, max, workspace, reclaimed? }`. `ms` is whole
+`{ at, kind: "device-wait", platform, ms, max, workspace }`. `ms` is whole
 elapsed milliseconds, including waits that time out or fail. The list keeps
 the last 50 events from 7 days, newest first, and is omitted when empty.
-`reclaimed` is the whole count of devices shut down for that waiting run,
-omitted when zero. Plain stats reports waits with positive reclaim counts.
 Recording is best effort.
 
 The optional top-level JSON `capacityRefusals` lists the last 50 device

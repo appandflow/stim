@@ -131,7 +131,7 @@ export interface AndroidBuildPlan {
 
 export interface AndroidRunPlan extends AndroidBuildPlan {
   readonly target: AndroidTargetPlan;
-  /** An explicit `--wait` in milliseconds, 0 for `--no-wait`; absent, the position-based ceiling applies. */
+  /** An explicit `--wait` in milliseconds, 0 for `--no-wait`; absent, the queue's liveness ceiling applies. */
   readonly deviceSlotWaitMs: number | undefined;
   readonly isExpo: boolean;
 }

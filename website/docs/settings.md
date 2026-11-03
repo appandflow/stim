@@ -310,9 +310,11 @@ once, and no boot starts while macOS memory pressure is critical, or warning
 with under 2 GB available.
 
 A run past a cap waits in arrival order per resource and prints its queue
-position and what it waits for every 10 seconds. It refuses with
-`STIM_AT_CAPACITY` and the queue state once its position has not improved for
-`max(10 minutes, position x 5 minutes)`. Use `--wait <seconds>` to bound a
+position and what it waits for every 10 seconds, and keeps waiting while every
+holder ahead of it is alive. It refuses with `STIM_AT_CAPACITY` and the queue
+state after 90 minutes, or once a holder cannot be verified (an unresolved slot
+claim, or a device listing that fails) for `max(10 minutes, position x 5
+minutes)`. A boot held only by memory keeps waiting. Use `--wait <seconds>` to bound a
 device wait instead, or `--no-wait` / `--wait 0` to refuse immediately. A
 workspace's own live device bypasses the queue. `stim stop` cancels a queued
 run and releases its ticket without booting its device. Status adds
@@ -644,10 +646,13 @@ under `C:\sw` instead (see [Windows worker](./remote-machines.md#windows-worker)
 large volume. It boots or installs nothing. It declines a build while that
 volume has less than 10 GB free, while `server.maxOffloadedBuilds` offloaded
 builds already run (default 0, no limit),
-while its own Stim builds and the offloaded ones fill its
-`concurrency.maxBuilds`, or while its load per core is at or above its
-`server.maxLoadPerCore`. While an offloaded build runs, it holds one of the
-remote machine's `concurrency.maxBuilds` slots, so a local `stim ios` or
+while its own Stim builds and the offloaded ones fill its build cap, or while
+its load per core is at or above its
+`server.maxLoadPerCore`. Offloaded builds share that cap with the worker's own
+builds: `concurrency.maxBuilds` on the worker, derived as
+`max(1, floor(CPU cores / 6))` when `0`, so a worker with fewer than 12 cores
+runs one build at a time; set `concurrency.maxBuilds` there to allow more.
+While an offloaded build runs, it holds one of the remote machine's build slots, so a local `stim ios` or
 `stim android` there waits for the slot and counts the machine as busy. The
 slot is freed when the build ends, is cancelled, or its process is gone. Delete
 a client's directory there to reclaim its space.
@@ -799,6 +804,19 @@ cross-volume copy costs and invalid values.
 
 Use a top-level [`optimizations` object](./build-optimizations.md) in this file to
 control build optimizations on this machine without changing project files.
+
+### Web share exposure
+
+`stim share` is reached through Tailscale Funnel or through your own reverse
+proxy. All three settings are machine settings:
+
+```bash
+stim settings set share.exposure proxy                      # auto (default), tailscale or proxy
+stim settings set share.publicUrl https://demo.example.com  # links print under this address
+stim settings set share.port 7790                           # loopback port the proxy forwards to
+```
+
+See [Share a running app](./share.md#custom-domain) for the Caddyfile.
 
 ## Device recordings
 
@@ -980,9 +998,11 @@ and dormant stages, the [pressure ladder](./build-caches.md#disk-pressure), the
 reclaim for a run waiting to boot, and
 [automatic maintenance](#automatic-maintenance). `start`, `ios`, `android`,
 `web`, `macos` and `revive` start one `stim-daemon` process per Stim home,
-scoped homes included, and it exits on its own two minutes after nothing runs
-there. Each minute it measures the machine once, classifies the pressure level,
-moves workspaces with no activity for `idle.minutes` into the
+scoped homes included. It ticks each minute while anything runs there and every
+5 minutes otherwise, and exits two ticks after nothing runs and every workspace
+is dormant or removed, so the dormant stage fires in a quiet home. Each tick it
+measures the machine once, classifies the pressure level, moves workspaces with
+no activity for `idle.minutes` into the
 [idle stage](./dev-server-and-logs.md#idle-stop) and those idle for
 `idle.dormantDays` into the dormant stage, runs the pressure ladder above
 normal, and runs automatic maintenance. It also wakes the oldest run waiting

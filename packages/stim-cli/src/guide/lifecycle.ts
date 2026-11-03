@@ -741,8 +741,8 @@ The same setup serves macos --remote and macos.remote. Approval is separate from
 and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
-there is a free concurrency.maxDevices slot and platform cap slot (0 means unlimited), no device
-waiter ahead, normal host memory pressure, no budget shortfall,
+there is a free concurrency.maxDevices slot (derived from RAM when 0) and platform cap slot (0 means
+no per-platform cap), no device waiter ahead, normal host memory pressure, disk pressure normal,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto and remote are local and remote-only refuses with STIM_HOSTING_REFUSED. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes
@@ -2174,8 +2174,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
     build       waiting for a build slot: queue position 2 of 3, all 1 in use, 40s elapsed -- stim guide lifecycle concurrency
     device      waiting for a device slot (8/8 devices booted, concurrency.maxDevices) held by app-a, app-b: queue position 1 of 1, 10s elapsed -- stim guide lifecycle concurrency
 
-  A run whose queue position has not improved for max(10 minutes, position x
-  5 minutes) refuses with STIM_AT_CAPACITY and the queue state.
+  A waiting run never refuses while its position improves or every holder
+  ahead of it is alive: a slot claim whose process is live, or a device the
+  listing shows. It refuses with STIM_AT_CAPACITY and the queue state after 90
+  minutes, or once a holder cannot be verified (an unresolved slot claim, or a
+  device listing that fails) for max(10 minutes, position x 5 minutes). A boot
+  held only by memory keeps waiting while the ladder reclaims.
   \`--wait <seconds>\` bounds a device wait instead; \`--no-wait\` or
   \`--wait 0\` refuses at once and cannot jump queued runs. iOS waits
   beside its build. Stop cancels a queued run and releases its ticket.
@@ -2787,8 +2791,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   simulator slice on a phone or publish an iphoneos app under a key simulator
   builds resolve.
 
-  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-sdk
-  iphoneos\`, the project's own signing settings, no signing flags on the argv.
+  THE BUILD is the \`iphoneos\` slice for the selected phone -- \`-destination
+  id=<udid>\`, the project's own signing settings, no signing flags on the argv.
   It is installed with \`devicectl device install app\` and launched with
   \`devicectl device process launch\`. Every device install is SIGNED, Debug
   included, so the signing gate runs before it: the app's own
@@ -3149,7 +3153,9 @@ THE POOL: WHICH DEVICE AN ID-LESS \`--device\` PICKS
   \`ios --configuration <name>\` selects the Xcode configuration --
   for React Native and Expo, \`--configuration Release\` builds a SIMULATOR
   Release app with the JS bundle embedded. It overrides the ios.configuration setting (the app-level
-  default); unset, the Debug flow is unchanged. A non-Debug configuration
+  default); unset, the Debug flow is unchanged. A configuration whose name contains
+  "Debug" (\`Debug\`, \`Dev.Debug\`) runs the Debug flow, as React Native's bundling
+  script decides. Any other configuration
   skips Metro ENTIRELY: no gate, no port wiring, no dev-client deep link (a
   plain \`simctl launch\`), and the payload says \`metroPort: null\` --
   \`launched\` is verified by the app PROCESS staying alive, not by a bundle

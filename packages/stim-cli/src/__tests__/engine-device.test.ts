@@ -27,6 +27,7 @@ import { recordCreatedDevice } from '../devices/created-devices.ts';
 import { parkSim, readParked } from '../devices/sim-pool.ts';
 import { workspaceId, workspaceLogsDir } from '../workspace/paths.ts';
 import { decodeStats, statsFile } from '@stim-cli/core/state';
+import * as iosDevices from '../devices/ios.ts';
 import { createIosSimSnapshot, ownedSimName } from '../devices/ios.ts';
 import { makeAdbDevices, makeConfig, makeExitingChild, makeIosSim } from './_factories.ts';
 import { androidBuildOptions } from '../commands/android/support.ts';
@@ -422,6 +423,7 @@ describe('ensureBooted: ios', () => {
 describe('ensureBooted: android', () => {
   beforeEach(() => {
     upsertProject(tmpHome, {});
+    vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockResolvedValue([]);
   });
 
   test.each([
@@ -1528,6 +1530,7 @@ describe('ensureOwnedDevice: android', () => {
   let prevFallbackRoots: Record<string, string | undefined>;
 
   beforeEach(() => {
+    vi.spyOn(iosDevices, 'listAllIosSimsAsync').mockResolvedValue([]);
     androidHome = mkdtempSync(join(tmpdir(), 'stim-test-sdk-'));
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'arm64-v8a'), { recursive: true });
     mkdirSync(join(androidHome, 'system-images', 'android-36', 'google_apis', 'x86_64'), { recursive: true });

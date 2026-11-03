@@ -12,7 +12,7 @@ public enum ServerProtocol {
   /// The methods stim-server answers only on its Unix socket (`desktopMethod` in `packages/server/src/server.ts`).
   public static func isLocalOnly(_ method: String) -> Bool {
     method.hasPrefix("desktop.") || method == "route.setup" || method.hasPrefix("machines.update.")
-      || method.hasPrefix("device-host.sessions")
+      || method.hasPrefix("device-host.sessions") || method.hasPrefix("share.")
   }
 
   /// `number` as an Int when it is a whole number JSON carries exactly, at most 2^53.

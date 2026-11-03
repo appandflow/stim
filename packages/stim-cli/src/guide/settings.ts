@@ -668,12 +668,15 @@ on its own: the idle and dormant stages, the pressure ladder, the reclaim for a
 run waiting to boot, and automatic maintenance.
 
   on      start, ios, android, web, macos and revive start one stim-daemon per
-          Stim home, scoped homes included; it exits two minutes after nothing
-          runs there. Each minute it measures the machine once, classifies the
-          pressure level, moves idle workspaces into the idle stage
-          (idle.minutes) and dormant ones into the dormant stage
-          (idle.dormantDays), runs the pressure ladder above normal, reclaims
-          a device for a run waiting to boot, and runs automatic maintenance.
+          Stim home, scoped homes included. It ticks each minute while
+          anything runs there and every 5 minutes otherwise, and exits two
+          ticks after nothing runs and every workspace is dormant or removed,
+          so the dormant stage fires in a quiet home. Each tick it measures
+          the machine once, classifies the pressure level, moves idle
+          workspaces into the idle stage (idle.minutes) and dormant ones into
+          the dormant stage (idle.dormantDays), runs the pressure ladder above
+          normal, reclaims a device for a run waiting to boot, and runs
+          automatic maintenance.
   report  the same passes log what they would do and act on nothing.
   off     no daemon and no pass: each dev server supervisor stops its own dev
           server and devices after idle.minutes, and nothing times a device
@@ -681,9 +684,9 @@ run waiting to boot, and automatic maintenance.
 
 Without a running daemon -- on Windows, which has none, or when one could not
 start -- stim doctor, start, ios and android run automatic maintenance and the
-pressure ladder in their own process, acting in on and only logging in report.
-stim gc runs the same passes in its own process. It is off in CI unless
-STIM_DAEMON is set.
+pressure ladder in their own process, acting in on and only logging in report,
+never taking the command's own workspace. stim gc runs the same passes in its
+own process. It is off in CI unless STIM_DAEMON is set.
 A command starts the daemon in the mode it resolves, STIM_DAEMON included; a
 later change to the machine setting can make a running daemon stricter, never
 laxer. The daemon also keeps the starting command's CI and the environment
@@ -1296,10 +1299,13 @@ DerivedData, compilation cache, ccache and Gradle home under
 \`server.workerRoot\` (absolute; default $STIM_HOME/build-worker), one area
 and Stim home per client and repository, and one Gradle home per client. It
 runs as many offloaded builds at once as \`server.maxOffloadedBuilds\` allows
-(default 0, no limit; with it and \`concurrency.maxBuilds\` both unset, only
-the load average limits a burst of builds, and it lags by minutes). It declines a build while that volume has
-less than 10 GB free, while that many offloaded builds run, while its own native builds and the offloaded ones fill
-its \`concurrency.maxBuilds\`, or while its load per core is at or above its
+(default 0, no limit of its own). Offloaded builds share the worker's build
+cap with its own native builds: \`concurrency.maxBuilds\` on the worker, derived
+as max(1, floor(CPU cores / 6)) when 0, so a worker with fewer than 12 cores
+runs one build at a time; set \`concurrency.maxBuilds\` there to allow more. It
+declines a build while that volume has less than 10 GB free, while that many
+offloaded builds run, while its own native builds and the offloaded ones fill
+that cap, or while its load per core is at or above its
 \`server.maxLoadPerCore\`, and reports the reason in its offer. It boots and
 installs nothing. While an offloaded build runs there, it holds one of that
 machine's \`concurrency.maxBuilds\` slots, so a local Stim build there waits for it
@@ -1362,6 +1368,19 @@ in ~/.stim/config.json, or STIM_GC_WORKTREE_GRACE_MINUTES in the environment,
 which overrides the file. Absent means 120. \`0\` removes a finished worktree at
 once. A value that is not a whole number 0 or more is warned about by \`gc\`,
 which then uses 120. See \`guide cleanup\` for what else keeps a worktree.
+
+WEB SHARE EXPOSURE
+Three machine settings choose how \`stim share\` is reached; \`guide share\` has the
+reverse proxy setup:
+  share.exposure   auto (default), tailscale or proxy. auto uses a Tailscale
+                   Funnel route when the tailscale command is installed and
+                   logged in, else proxy. proxy never runs tailscale serve or
+                   tailscale funnel
+  share.publicUrl  the https address your reverse proxy serves, optionally with
+                   a path prefix the proxy keeps, such as
+                   https://demo.example.com
+  share.port       the loopback port proxy mode binds (default 7790), so the
+                   proxy can name it
 
 DEVICE RECORDINGS CAN BE TURNED OFF
 stim-server records the screens of owned simulators, emulators and the

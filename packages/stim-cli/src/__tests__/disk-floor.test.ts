@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { daemonClaimRoot, daemonNdjsonFile, readDormantStage } from '@stim-cli/core/state';
 import * as budget from '../budget.ts';
 import * as client from '../daemon/client.ts';
+import { beforeCommand } from '../daemon/client.ts';
 import { diskFloorGate } from '../daemon/floor.ts';
 import { runPassesInProcess } from '../daemon/passes.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from '../daemon/passes-guard-env.ts';
@@ -100,6 +101,44 @@ describe('with no daemon holding the home, as on Windows', () => {
       .filter((entry) => typeof entry.rung === 'number');
     expect(rungs.length).toBeGreaterThan(0);
     expect(rungs.every((entry) => entry.src === 'command' && entry.rung >= 2)).toBe(true);
+  });
+
+  test.each([
+    { level: 'high', freeGb: 10 },
+    { level: 'critical', freeGb: 5.5 },
+  ])("at $level pressure a command's passes never take its own workspace", async ({ freeGb }) => {
+    free = freeGb * GB;
+    writeFileSync(join(root, 'package.json'), '{}');
+    const other = join(home, 'other');
+    mkdirSync(other);
+    ensureWorkspaceStorage(other);
+    upsertProject(other, {});
+    recordWorkspaceUse(other, new Date(Date.now() - 4 * 24 * 60 * 60_000));
+    mkdirSync(workspaceLogsDir(other), { recursive: true });
+    writeFileSync(join(workspaceLogsDir(other), 'device.ndjson'), '{}\n');
+    const env: NodeJS.ProcessEnv = { ...process.env, STIM_DAEMON: 'on', HOME: home, USERPROFILE: home };
+    delete env[HOME_PASSES_TEST_GUARD_ENV];
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await runPassesInProcess('ios', env);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(readDormantStage(readWorkspaceState(root))).toBeNull();
+    expect(readDormantStage(readWorkspaceState(other))).toMatchObject({ dormantDays: 3 });
+  });
+
+  test('a command that creates running state records its use before any pass runs', async () => {
+    writeFileSync(join(root, 'package.json'), '{}');
+    const cwd = process.cwd();
+    process.chdir(root);
+    try {
+      await beforeCommand('ios', { ...process.env, STIM_DAEMON: 'off', HOME: home, USERPROFILE: home });
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(Date.now() - Date.parse(String(readWorkspaceState(root)?.lastUsedAt))).toBeLessThan(60_000);
   });
 
   test('at normal pressure the command runs no activity pass, so it takes no workspace dormant', async () => {

@@ -417,6 +417,13 @@ opt-in (**Serve to phones**, with the Phone app flag on).
   report and shows its age and the error. If the server lacks storage-report
   support, update Stim and restart its local server. Storage reads share the
   same response limit and do not retry through the CLI.
+- **Web shares.** A running simulator or emulator's menu has **Share...**, which
+  makes the same public link as [`stim share`](./share.md): view only or with
+  control, an expiry from 15 minutes to 8 hours, and a generated, chosen or no
+  password. The link and a generated password appear once, each with a Copy button;
+  Desktop does not keep them. **Settings > Web Shares** lists the live shares with
+  their viewers and time left, and **Stop** ends a workspace's shares. Quitting
+  Desktop asks first while the server it started holds live shares, since quitting ends them.
 - **Cleanup history.** **Settings > App > Cleanup History** lists every run that deleted
   or changed something, newest first: `stim gc` from this app, an agent or a terminal,
   and automatic maintenance. A row shows what started

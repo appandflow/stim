@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
+import * as gcDevices from '../commands/gc/devices.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
 import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
@@ -186,6 +187,7 @@ test.skipIf(process.platform === 'win32')(
 test.skipIf(process.platform === 'win32')(
   'gc --delete runs the ladder at high, which keeps dependencies, and --cache all deletes only those of an idle linked worktree that warm can restore and nothing runs in',
   async () => {
+    const scope = vi.spyOn(gcDevices, 'deviceSweepIsScoped').mockReturnValue(false);
     const roots = idleRepo([
       { name: 'feature', workspace: true },
       { name: 'busy', workspace: true },
@@ -205,6 +207,7 @@ test.skipIf(process.platform === 'win32')(
       await quietly(() => runGc({ delete: true, cache: 'all' }));
     } finally {
       child.kill('SIGKILL');
+      scope.mockRestore();
     }
 
     expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
@@ -212,6 +215,23 @@ test.skipIf(process.platform === 'win32')(
     for (const name of ['repo', 'busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
+  },
+  60_000,
+);
+
+test.skipIf(process.platform === 'win32')(
+  'a scoped STIM_HOME does not consider the dependencies of a linked worktree it does not list',
+  async () => {
+    const roots = idleRepo([
+      { name: 'feature', workspace: true },
+      { name: 'keyless', workspace: false },
+    ]);
+
+    const { payload } = await gcJson();
+
+    const paths: string[] = payload.sections.worktreeDependencies.map((entry: { path: string }) => entry.path);
+    expect(paths.some((path) => path.startsWith(`${roots.feature}/`))).toBe(true);
+    expect(paths.some((path) => path.startsWith(`${roots.keyless}/`))).toBe(false);
   },
   60_000,
 );

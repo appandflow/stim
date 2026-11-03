@@ -70,29 +70,47 @@ export function queuePosition(waiters: readonly ClaimHolder[], ticket: ClaimHand
   return index < 0 ? waiters.length + 1 : index + 1;
 }
 
+/** The longest a run waits in a queue, whatever holds it up: the old build-slot ceiling. */
+const ABSOLUTE_WAIT_CEILING_MS = 90 * MINUTE_MS;
+
 /**
- * How long a run waits at `position` before it refuses with `STIM_AT_CAPACITY`: max(10 minutes, position x 5
- * minutes), counted from the last time its position improved.
+ * How long a run at `position` waits while what holds it up cannot be shown to be alive, before it refuses with
+ * `STIM_AT_CAPACITY`: max(10 minutes, position x 5 minutes).
  */
 export function positionCeilingMs(position: number): number {
   return Math.max(10 * MINUTE_MS, position * 5 * MINUTE_MS);
 }
 
-/** Tracks a waiter's position and when it last improved, for the position-based ceiling. */
-export function positionClock(now: () => number): {
-  update: (position: number) => void;
-  overdue: () => { position: number; waitedMs: number } | null;
+export type WaitOverdue =
+  | { kind: 'absolute'; waitedMs: number }
+  | { kind: 'unverified'; position: number; waitedMs: number; reason: string };
+
+/**
+ * A waiter's ceiling. It never refuses while every holder ahead of it is provably alive or its position improves; it
+ * refuses once a holder's liveness has stayed unestablished for the position ceiling, or after 90 minutes in all.
+ * `update` takes the position and why a holder's liveness is unknown, or null when every holder is provably alive.
+ */
+export function waitCeiling(now: () => number): {
+  update: (position: number, unverified: string | null) => void;
+  overdue: () => WaitOverdue | null;
 } {
+  const started = now();
   let position = Infinity;
-  let since = now();
+  let since: number | null = null;
+  let reason = '';
   return {
-    update(next) {
-      if (next < position) since = now();
+    update(next, unverified) {
+      if (unverified === null) since = null;
+      else if (since === null || next < position) since = now();
+      reason = unverified ?? '';
       position = next;
     },
     overdue() {
-      const waitedMs = now() - since;
-      return Number.isFinite(position) && waitedMs >= positionCeilingMs(position) ? { position, waitedMs } : null;
+      const at = now();
+      if (at - started >= ABSOLUTE_WAIT_CEILING_MS) return { kind: 'absolute', waitedMs: at - started };
+      return since !== null && at - since >= positionCeilingMs(position)
+        ? { kind: 'unverified', position, waitedMs: at - since, reason }
+        : null;
     },
   };
 }

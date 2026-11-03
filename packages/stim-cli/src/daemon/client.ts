@@ -154,14 +154,19 @@ const DAEMON_COMMANDS = ['start', 'ios', 'android', 'web', 'macos', 'revive'];
 const PASS_COMMANDS = ['start', 'ios', 'android'];
 
 /**
- * Before a top-level command runs: commands that create running state make sure the home's daemon runs; `doctor`,
- * and `start`, `ios` and `android` when no daemon holds the home, run automatic maintenance in this process.
+ * Before a top-level command runs: commands that create running state record the use of their workspace and make sure
+ * the home's daemon runs; `doctor`, and `start`, `ios` and `android` when no daemon holds the home, run automatic
+ * maintenance and the pressure ladder in this process, never taking the command's own workspace.
  */
 export async function beforeCommand(name: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const held = DAEMON_COMMANDS.includes(name) && (await ensureDaemon(env));
+  const creates = DAEMON_COMMANDS.includes(name);
+  if (!creates && name !== 'doctor') return;
+  const { commandWorkspace } = await import('./command-workspace.ts');
+  const root = commandWorkspace(creates, env);
+  const held = creates && (await ensureDaemon(env));
   if (name !== 'doctor' && (held || !PASS_COMMANDS.includes(name))) return;
   const { runPassesInProcess } = await import('./passes.ts');
-  await runPassesInProcess(name, env);
+  await runPassesInProcess(name, env, root);
 }
 
 function send(op: string): void {

@@ -11,6 +11,15 @@ import {
 } from './src/tailscale.ts';
 import { watchTailscale, type TailscaleMonitor, type TailscaleSnapshot } from './src/tailscale-monitor.ts';
 
+export {
+  addFunnelRoute,
+  freeFunnelPort,
+  funnelPorts,
+  holdsFunnelRoute,
+  readServeConfig,
+  removeFunnelRoute,
+  type FunnelRoute,
+} from './src/funnel.ts';
 export { planServe, type ServeRecord } from './src/serve-plan.ts';
 export {
   findTailscale,
