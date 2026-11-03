@@ -646,12 +646,21 @@ function holderLabels(holders: readonly StatusDeviceSlotHolder[]): string[] {
   return [...new Set(holders.map((holder) => holder.label))].toSorted();
 }
 
-/** Each holder whose workspace a live web share keeps booted, named with the share; the daemon never reclaims it. */
+/**
+ * Each holder whose workspace a live web share keeps booted, named with the share, or every holder when the shares
+ * cannot be listed: the daemon reclaims none of them.
+ */
 async function sharedHolders(holders: readonly StatusDeviceSlotHolder[], now: number): Promise<string[]> {
   const roots = new Map(holders.flatMap((holder) => (holder.workspace ? [[holder.workspace, holder.label]] : [])));
   if (!roots.size) return [];
   const shares = await readWebShares();
-  if (!Array.isArray(shares)) return [];
+  if (shares === null) return [];
+  if (!Array.isArray(shares)) {
+    const labels = [...new Set(roots.values())];
+    return [
+      `${labels.join(', ')} ${labels.length === 1 ? 'stays' : 'stay'} booted: this home's web shares cannot be listed (${shares.unreadable})`,
+    ];
+  }
   return [...roots].flatMap(([root, label]) => {
     const reason = shareKeepReason(shares, root, now);
     return reason ? [`${label} stays booted: ${reason}`] : [];

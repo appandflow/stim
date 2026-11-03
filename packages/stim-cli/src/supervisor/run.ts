@@ -405,7 +405,7 @@ export async function runSupervisor({
           await withIdleWorkspace(
             root,
             async () => {
-              if (!stopping)
+              if (!stopping && !(await liveShareKeepReason(root)))
                 await deviceIdle.shutDown(root, deviceIdleMs, (entry) => writer.write({ src: 'metro', ...entry }));
             },
             { purpose: 'device idle shutdown', supervisor: false, managedLocks: false },

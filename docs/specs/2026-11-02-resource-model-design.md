@@ -79,11 +79,15 @@ process, Android instrumentation), a held device lease, a live web share, a host
 closed), and `maintenance.keep`.
 
 Amended 2026-11-02 (approved): a web share (`stim share`) that has started, not ended and not passed its expiry is a
-blocker for the idle stage, every pressure rung, the dormant stage and the admission reclaim (4.3), whether or not a
-viewer is connected. The activity reader asks this home's stim-server for `share.list`. No running stim-server means no
-share, since a share lives only in its server's memory; a list a running server cannot give keeps the workspace. With
-no daemon, the supervisor fallback reads it before its own idle stop and device shutdown, and logs nothing new: the
-share blocks the idle probe as a driver does. `stim share stop` or the expiry lets the idle stage proceed.
+blocker, whether or not a viewer is connected, for every automatic path that would shut down or delete its workspace's
+devices: the idle stage, every pressure rung, the dormant stage, the admission reclaim (4.3) and the deletion of a
+finished worktree's devices by automatic maintenance and `gc --delete`. The activity reader asks this home's stim-server
+for `share.list`. No running stim-server, or one without `share.list` (a server before 1.39), means no share, since a
+share lives only in its server's memory; a list a running server cannot give keeps the workspace. Each path reads it
+again under the workspace's native-run claim before it acts. `share.start` takes no workspace lock, so a share started
+during that locked shutdown can still lose its device (#4863). With no daemon, the supervisor fallback reads it before
+its own idle stop and device shutdown, and logs nothing new: the share blocks the idle probe as a driver does. `stim
+share stop` or the expiry lets the idle stage proceed.
 
 Per-slot exceptions: none. Release and native-process slots use signals 1 and 3 to 6; their app has no Metro, so 2
 never fires. This replaces the #4799 rule that device logs count for those slots.

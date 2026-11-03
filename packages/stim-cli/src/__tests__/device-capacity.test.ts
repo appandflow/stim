@@ -250,11 +250,22 @@ test('waiting progress names workspaces for live devices and boot claims', async
   );
 });
 
-test('waiting progress names the live web share that keeps a holder booted', async () => {
+const expiresAt = new Date(Date.now() + 30 * 60_000).toISOString();
+test.each([
+  {
+    list: 'a live share',
+    answer: { shares: [shareRow('/work/holder-root', expiresAt)] },
+    named: `tree-one stays booted: it has a live web share (ios until ${expiresAt}); stim share stop ends it`,
+  },
+  {
+    list: 'a share list stim-server cannot give',
+    answer: { error: { code: 'internal', message: 'The share hub is closing.' } },
+    named: "tree-one stays booted: this home's web shares cannot be listed (The share hub is closing)",
+  },
+])('waiting progress names $list as what keeps a holder booted', async ({ answer, named }) => {
   let now = Date.now();
   const lines: string[] = [];
-  const expiresAt = new Date(now + 30 * 60_000).toISOString();
-  const server = await serveShareList(() => ({ shares: [shareRow('/work/holder-root', expiresAt)] }));
+  const server = await serveShareList(() => answer);
   onTestFinished(() => server.close());
   await expect(
     withDeviceBootAdmission({ platform: 'ios', key: 'new' }, async () => {}, {
@@ -278,7 +289,7 @@ test('waiting progress names the live web share that keeps a holder booted', asy
     }),
   ).rejects.toMatchObject({ code: 'STIM_AT_CAPACITY' });
   expect(lines[0]).toBe(
-    `device      waiting for a device slot (1/1 devices booted, concurrency.maxDevices) held by tree-one; tree-one stays booted: it has a live web share (ios until ${expiresAt}); stim share stop ends it: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency`,
+    `device      waiting for a device slot (1/1 devices booted, concurrency.maxDevices) held by tree-one; ${named}: queue position 1 of 1, 0s elapsed -- stim guide lifecycle concurrency`,
   );
 });
 

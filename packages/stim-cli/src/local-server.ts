@@ -97,7 +97,11 @@ export async function endWorkspaceShares(workspace: string): Promise<void> {
   } catch {}
 }
 
-/** This Stim home's web shares: null when no stim-server runs, since a share lives only in its server's memory. */
+/**
+ * This Stim home's web shares. Null when no stim-server runs, or the one that answers has no `share.list` (a server
+ * before 1.39): a share lives only in its server's memory, so neither can hold one. `unreadable` when a running server
+ * cannot give the list.
+ */
 export type WebShareList = WebShareRow[] | null | { unreadable: string };
 
 /** Lists this Stim home's web shares through its stim-server's `share.list`. */
@@ -116,9 +120,9 @@ export async function readWebShares(): Promise<WebShareList> {
 }
 
 /**
- * Why `shares` keep `workspace` out of the idle stage, the pressure ladder, the dormant stage and the admission
- * reclaim: each of its shares that has not ended or passed its expiry, or a list that cannot be read. Null when none
- * is live.
+ * Why `shares` keep `workspace` out of the idle stage, the pressure ladder, the dormant stage, the admission reclaim
+ * and finished-worktree device deletion: each of its shares that has not ended or passed its expiry, or a list that
+ * cannot be read. Null when none is live.
  */
 export function shareKeepReason(shares: WebShareList, workspace: string, now: number = Date.now()): string | null {
   if (shares === null) return null;

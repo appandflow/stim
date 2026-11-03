@@ -2072,7 +2072,8 @@ says and covers every registered workspace, including the one you run `gc`
 from: its dev server stops and its devices shut down after 2 idle minutes, and
 its owned devices are deleted after 10, while its `node_modules` and Pods stay
 unless `--cache all`. It never touches a workspace that is building, driven,
-leased, hosted or pinned by `maintenance.keep`, leaves a workspace whose
+leased, shared with [`stim share`](./share.md), hosted or pinned by
+`maintenance.keep`, leaves a workspace whose
 `idle.minutes` is `0` out of the idle and dormant stages, and logs each action
 to `$STIM_HOME/daemon/daemon.ndjson`. The dry run lists what it would do at each
 level, with sizes, and each registered workspace's stage: running with its last

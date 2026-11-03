@@ -271,6 +271,14 @@ describe('a web share', () => {
     expect(tornDown).toEqual([udid]);
   });
 
+  test('a stim-server without share.list, from before 1.39, holds no share and keeps nothing', async () => {
+    const { root, udid } = bootedWorkspace('older-server', 20 * MINUTE_MS);
+    answer = { error: { code: 'unknown-method', message: 'Unknown method share.list.' } };
+
+    expect(await pass()).toEqual([expect.objectContaining({ path: root, outcome: 'idle' })]);
+    expect(tornDown).toEqual([udid]);
+  });
+
   test('a share list stim-server cannot give keeps the workspace', async () => {
     const { root, derivedData } = bootedWorkspace('unreadable', 20 * MINUTE_MS);
     answer = { error: { code: 'internal', message: 'The share hub is closing.' } };

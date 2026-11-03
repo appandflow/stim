@@ -738,11 +738,14 @@ describe('device idle shutdown', () => {
       return { shares };
     });
     onTestFinished(() => server.close());
+    let shutDowns: number[] = [];
     const seen = await startDeviceIdleSupervisor({
       deviceMinutes: 1,
       metroMinutes: 2,
       probe: workspaceIdleProbe(root),
+      due: () => shutDowns.length === 0,
     });
+    shutDowns = seen.shutDowns;
     await vi.advanceTimersByTimeAsync(3 * MINUTE);
     expect(seen.shutDowns).toEqual([]);
     expect(seen.closed).toBe(0);
