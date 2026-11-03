@@ -117,7 +117,7 @@ afterEach(async () => {
   rmSync(home, { recursive: true, force: true });
 });
 
-describe('an iOS simulator clipboard', () => {
+describe.skipIf(process.platform === 'win32')('an iOS simulator clipboard (simctl exists only on macOS)', () => {
   const device: Device = { platform: 'ios', udid: 'SIM-UDID', foldable: false };
 
   it('sets the text through simctl pbcopy with UTF-8 stdin, then pastes with the helper', async () => {
@@ -175,15 +175,18 @@ describe('an Android emulator clipboard', () => {
     return { ...process.env, ANDROID_HOME: sdk };
   }
 
-  it('sets it through the helper, then pastes with a paste key event over adb', async () => {
-    const id = await session(device, env());
-    expect(await hub.input(owner, id, set(TEXT, true))).toBeNull();
-    expect(helper.clipboard).toHaveBeenCalledWith({ text: TEXT, paste: false });
-    expect(calls()).toEqual([
-      { args: ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', 'KEYCODE_PASTE'], lang: undefined, input: '' },
-    ]);
-    expect(events.filter((event) => event.startsWith('helper'))).toEqual(['helper clipboard set paste=false']);
-  });
+  it.skipIf(process.platform === 'win32')(
+    'sets it through the helper, then pastes with a paste key event over adb (the fake adb is a shebang script, which Windows cannot spawn)',
+    async () => {
+      const id = await session(device, env());
+      expect(await hub.input(owner, id, set(TEXT, true))).toBeNull();
+      expect(helper.clipboard).toHaveBeenCalledWith({ text: TEXT, paste: false });
+      expect(calls()).toEqual([
+        { args: ['-s', 'emulator-5554', 'shell', 'input', 'keyevent', 'KEYCODE_PASTE'], lang: undefined, input: '' },
+      ]);
+      expect(events.filter((event) => event.startsWith('helper'))).toEqual(['helper clipboard set paste=false']);
+    },
+  );
 
   it('reads it through the helper, also above the set limit', async () => {
     const id = await session(device, env());
