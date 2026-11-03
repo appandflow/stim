@@ -1605,13 +1605,24 @@ export async function offloadBuild(
     closeOffload(choice);
   };
   signal?.addEventListener('abort', cancel, { once: true });
-  const reprobe = async (): Promise<Extract<OffloadOutcome, { ok: false }> | null> => {
+  let jobLost = false;
+  const reprobe = async (patient = false): Promise<Extract<OffloadOutcome, { ok: false }> | null> => {
     choice.connection.close();
-    const probe = await probeMachine(choice.credential, {
-      ...identity,
-      dependencies: dependencySelection(identity, choice.target),
-      ...(native ? { native: native.provider } : {}),
-    });
+    const probeAgain = () =>
+      probeMachine(choice.credential, {
+        ...identity,
+        dependencies: dependencySelection(identity, choice.target),
+        ...(native ? { native: native.provider } : {}),
+      });
+    const deadline = Date.now() + RESUME_WINDOW_MS;
+    let delay = RESUME_DELAY_MS;
+    let probe = await probeAgain();
+    while (patient && 'failure' in probe && Date.now() + delay < deadline) {
+      await wait(delay, undefined, { signal }).catch(() => {});
+      checkCancelled();
+      delay = Math.min(delay * 2, RESUME_MAX_DELAY_MS);
+      probe = await probeAgain();
+    }
     if ('failure' in probe) return fail(probe.failure);
     const placement = pickOffer({
       here: choice.here,
@@ -1631,7 +1642,7 @@ export async function offloadBuild(
     const restarts = input.restarts ?? 0;
     if (restarts >= MAX_WORKER_RESTARTS) return fail(reason);
     note(`offload: ${choice.machine} ${lost} (${reason}); starting the build again there`);
-    const refused = await reprobe();
+    const refused = await reprobe(true);
     if (refused) return refused;
     const retried = await offloadBuild({ ...input, restarts: restarts + 1 });
     keepStaging = retried.ok;
@@ -1642,7 +1653,7 @@ export async function offloadBuild(
       ? await retryAfterLoss(failure, 'dropped the connection')
       : fail(failure);
   const workerFailed = async (result: Record<string, unknown>): Promise<OffloadOutcome> =>
-    result.code === 'restarted'
+    jobLost
       ? await retryAfterLoss(String(result.message), 'restarted and lost the build')
       : keepCorruptCacheMessage(fail(workerFailureReason(result.code, result.message)), result);
   const retryCachedMiss = async (reason: string): Promise<OffloadOutcome> => {
@@ -1682,7 +1693,10 @@ export async function offloadBuild(
         return;
       }
       if (typeof resumed === 'string') return settle({ ok: false, code: 'closed', message: `${why}; ${resumed}` });
-      if ('lost' in resumed) return settle({ ok: false, code: 'restarted', message: `${why}; ${resumed.lost}` });
+      if ('lost' in resumed) {
+        jobLost = true;
+        return settle({ ok: false, code: 'closed', message: `${why}; ${resumed.lost}` });
+      }
       choice.connection = resumed.connection;
       resumed.connection.watch();
       note(`offload: reattached to the build on ${choice.machine}`);

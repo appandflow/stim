@@ -469,6 +469,50 @@ describe('offloadBuild', () => {
     );
   });
 
+  it('waits for the machine to answer again before it starts the build there', async () => {
+    let hellos = 0;
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      {
+        lostJob: 'once',
+        hello: () =>
+          ++hellos === 3
+            ? { error: { code: 'identity-unavailable', message: 'tailscale whois failed' } }
+            : { result: { capabilities: ['build'] } },
+      },
+    );
+    machines.push(machine);
+    expect(await run(['mini'], () => {})).toEqual({
+      ok: false,
+      machine: 'mini',
+      reason: 'worker-failed: xcodebuild failed',
+    });
+    expect(hellos).toBe(4);
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(2);
+  });
+
+  it('returns the app the second attempt built after the machine lost the first job', async () => {
+    mkdirSync(join(repo, 'archive-source', 'Sample.app'), { recursive: true });
+    writeFileSync(join(repo, 'archive-source', 'Sample.app', 'Info.plist'), 'plist');
+    const archivePath = join(repo, 'artifact.tgz');
+    execFileSync('tar', ['-czf', archivePath, '-C', join(repo, 'archive-source'), 'Sample.app']);
+    const archive = readFileSync(archivePath);
+    const digest = createHash('sha256').update(archive).digest('hex');
+    const machine = await fakeMachine(
+      'mini',
+      offer(0.1),
+      { result: { job: 'j1' } },
+      { lostJob: 'once', artifact: { archive, digest, fingerprint: 'f00d' } },
+    );
+    machines.push(machine);
+    const outcome = await run(['mini'], () => {});
+    expect(outcome).toMatchObject({ ok: true, machine: 'mini' });
+    expect(machine.methods.filter((method) => method === 'build.start')).toHaveLength(2);
+    expect(existsSync(join(repo, 'staging', 'Sample.app', 'Info.plist'))).toBe(true);
+  });
+
   it('starts again on the same machine when its connection drops during sync, at most twice', async () => {
     const machine = await fakeMachine('mini', offer(0.1), { result: { job: 'j1' } }, { dropOnSync: true });
     machines.push(machine);

@@ -628,9 +628,9 @@ A dropped connection is not a failure by itself: Stim pings the machine every
 then reconnects to the same machine for up to 3 minutes and takes the running
 build back. The machine keeps a build running for 5 minutes without a
 connection before it cancels it. When the machine's `stim-server` restarted and no
-longer holds the build, or the connection drops before the build started, Stim starts
-the same build again on that machine, up to twice, before `auto` builds here or a named
-machine refuses. A drop while the app is fetched still builds
+longer holds the build, or the connection drops while the source syncs and no other machine
+can take the build, Stim waits for the machine to answer (up to 3 minutes) and starts the same
+build again there, up to twice, before `auto` builds here or a named machine refuses. A drop while the app is fetched still builds
 here. Ctrl-C cancels the build on the machine; a run killed another way, or
 interrupted while it reconnects, leaves it running until those 5 minutes pass. An
 offloaded app lands only in this machine's build cache, not in a remote cache
