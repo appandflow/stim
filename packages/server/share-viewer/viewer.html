@@ -18,60 +18,15 @@
     data-buttons="{{buttons}}"
     data-can-rotate="{{rotate}}"
   >
-    <main class="stage" id="stage">
-      <div class="device" id="device">
-        <img class="layer" id="bezel-back" alt="" draggable="false" hidden />
-        <div class="aperture" id="aperture">
-          <canvas id="screen" aria-label="Shared device screen" role="img"></canvas>
-          <canvas id="overlay" aria-hidden="true"></canvas>
-          <p class="note" id="note" role="status"></p>
-        </div>
-        <img class="layer" id="bezel-front" alt="" draggable="false" hidden />
-      </div>
-      <form class="name-card" id="name-form" hidden>
-        <label for="name-input">Your name <span class="optional">(optional)</span></label>
-        <input class="field" id="name-input" maxlength="24" autocomplete="nickname" />
-        <button class="primary small" type="submit">Join</button>
-        <button class="link" id="name-skip" type="button">Skip</button>
-      </form>
-    </main>
-    <nav class="toolbar" id="toolbar" aria-label="Device controls">
-      <div class="group" data-group="hardware">
-        <button type="button" data-button="back" data-tip="Back" aria-label="Back">
-          <svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" /></svg>
-        </button>
-        <button type="button" data-button="home" data-tip="Home" aria-label="Home">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7" /></svg>
-        </button>
-        <button type="button" data-button="app-switch" data-tip="Apps" aria-label="Apps">
-          <svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
-        </button>
-        <button type="button" data-button="lock" data-tip="Lock" aria-label="Lock">
-          <svg viewBox="0 0 24 24">
-            <rect x="6" y="11" width="12" height="9" rx="2" />
-            <path d="M8.5 11V8a3.5 3.5 0 017 0v3" />
-          </svg>
-        </button>
-      </div>
-      <div class="group" data-group="rotate">
-        <button type="button" data-rotate="left" data-tip="Rotate left" aria-label="Rotate left">
-          <svg viewBox="0 0 24 24"><path d="M4 9a8 8 0 1114 7M4 4v5h5" /></svg>
-        </button>
-        <button type="button" data-rotate="right" data-tip="Rotate right" aria-label="Rotate right">
-          <svg viewBox="0 0 24 24"><path d="M20 9a8 8 0 10-14 7M20 4v5h-5" /></svg>
-        </button>
-      </div>
-      <div class="group" data-group="tools">
-        <button type="button" id="full" data-tip="Fullscreen" aria-label="Fullscreen">
-          <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
-        </button>
-      </div>
-    </nav>
-    <footer>
-      <p class="status" id="status" role="status">
-        <span class="dot"></span><span id="status-text">Connecting</span><span class="left" id="left"></span>
+    <header class="topbar">
+      <p class="status" id="status" role="status" data-state="waiting">
+        <span class="dot"></span><span class="source"></span><span class="sep">&middot;</span
+        ><span id="status-text">Connecting</span>
       </p>
-      <p class="status view-only" id="view-only" hidden>View only</p>
+      <span class="spacer"></span>
+      <p class="pill" id="left"></p>
+      <p class="pill mode"></p>
+      <ul class="roster" id="roster" aria-label="Who is here"></ul>
       <form class="upgrade" id="upgrade" method="post" action="login" hidden>
         <button class="link" id="upgrade-open" type="button">Have the control password?</button>
         <span class="upgrade-fields" id="upgrade-fields" hidden>
@@ -94,7 +49,67 @@
           <button class="primary small" type="submit">Control</button>
         </span>
       </form>
-      <ul class="roster" id="roster" aria-label="Who is here"></ul>
+      <span class="rule"></span>
+      <button type="button" class="iconbtn" id="full" title="Fullscreen" aria-label="Fullscreen">
+        <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M10 10L4 4M4 4h5.5M4 4v5.5M14 14l6 6M20 20h-5.5M20 20v-5.5" />
+        </svg>
+      </button>
+    </header>
+    <main class="stage" id="stage">
+      <div class="device" id="device">
+        <img class="layer" id="bezel-back" alt="" draggable="false" hidden />
+        <div class="aperture" id="aperture">
+          <canvas id="screen" aria-label="Shared device screen" role="img"></canvas>
+          <canvas id="overlay" aria-hidden="true"></canvas>
+          <p class="note" id="note" role="status"></p>
+        </div>
+        <img class="layer" id="bezel-front" alt="" draggable="false" hidden />
+      </div>
+      <form class="name-card" id="name-form" hidden>
+        <label for="name-input">Your name <span class="optional">(optional)</span></label>
+        <input class="field" id="name-input" maxlength="24" autocomplete="nickname" />
+        <button class="primary small" type="submit">Join</button>
+        <button class="link" id="name-skip" type="button">Skip</button>
+      </form>
+    </main>
+    <nav class="toolbar" id="toolbar" aria-label="Device controls">
+      <div class="group" data-group="hardware">
+        <button type="button" data-button="home" title="Home" aria-label="Home">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /></svg>
+        </button>
+        <button type="button" data-button="back" title="Back" aria-label="Back">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+        </button>
+        <button type="button" data-button="app-switch" title="Apps" aria-label="Apps">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="4" y="9" width="11" height="11" rx="2.5" />
+            <path d="M9 6.5V6a2 2 0 012-2h7a2 2 0 012 2v7a2 2 0 01-2 2h-.5" />
+          </svg>
+        </button>
+        <button type="button" data-button="lock" title="Lock" aria-label="Lock">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="6" y="11" width="12" height="9" rx="2.5" />
+            <path d="M8.5 11V8.5a3.5 3.5 0 017 0V11" />
+          </svg>
+        </button>
+      </div>
+      <div class="group" data-group="rotate">
+        <button type="button" data-rotate="left" title="Rotate left" aria-label="Rotate left">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="8" y="11" width="11" height="9" rx="2.5" />
+            <path d="M17 4.5A7.5 7.5 0 005 10M5 5.5V10h4.5" />
+          </svg>
+        </button>
+        <button type="button" data-rotate="right" title="Rotate right" aria-label="Rotate right">
+          <svg class="symbol" viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="11" width="11" height="9" rx="2.5" />
+            <path d="M7 4.5A7.5 7.5 0 0119 10M19 5.5V10h-4.5" />
+          </svg>
+        </button>
+      </div>
+    </nav>
+    <footer>
       <p class="credit">
         Shared with <a href="https://stim.appandflow.com" target="_blank" rel="noopener noreferrer">Stim</a> by
         <a href="https://appandflow.com" target="_blank" rel="noopener noreferrer">App &amp; Flow</a>

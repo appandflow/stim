@@ -155,7 +155,7 @@ const VIEW_HINT: FrameHint = { fps: 10, maxEdge: 1280 };
 const VIDEO_HINT: FrameHint = { fps: FRAME_FPS.video, maxEdge: VIEW_HINT.maxEdge };
 const VIDEO_SUBSCRIPTION = 'share';
 const KEYFRAME_REQUEST = '{"type":"keyframe"}';
-const BUTTONS: Record<SharePlatform, readonly string[]> = {
+export const BUTTONS: Record<SharePlatform, readonly string[]> = {
   ios: ['home', 'lock'],
   android: ['back', 'home', 'app-switch'],
 };

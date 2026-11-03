@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { connect as tcpConnect, Socket } from 'node:net';
 import { WebSocket } from 'ws';
@@ -5,7 +6,8 @@ import type { FrameHint } from '../src/frame-helper.ts';
 import type { Device, FrameListener } from '../src/frames.ts';
 import { PresenceHub } from '../src/presence.ts';
 import type { ShareSource } from '../src/share-hosted.ts';
-import { ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
+import { viewerPage } from '../src/share-page.ts';
+import { BUTTONS, ShareHub, type ShareRequest, type StartedShare, type StatusListener } from '../src/share.ts';
 import { accessUnitOf, type AccessUnit } from '../src/video.ts';
 
 const WORKSPACE = '/work/app';
@@ -731,6 +733,61 @@ describe('a web share', () => {
       socket.close();
       other.socket.close();
     });
+  });
+
+  it('gives the viewer a toolbar control for every button the server accepts and for both rotations', () => {
+    for (const platform of ['ios', 'android'] as const) {
+      const page = viewerPage({
+        control: true,
+        viewOnly: false,
+        upgrade: false,
+        askName: false,
+        platform,
+        buttons: BUTTONS[platform],
+        rotate: true,
+      });
+      for (const button of BUTTONS[platform]) expect(page).toContain(`data-button="${button}"`);
+      for (const direction of ['left', 'right']) expect(page).toContain(`data-rotate="${direction}"`);
+    }
+  });
+
+  it("styles the viewer with Stim Desktop's design tokens in light and dark", async () => {
+    const share = await started(f);
+    const base = new URL(local(share, f.hub.port ?? 0)).origin;
+    const css = (await http(`${base}/s/assets/viewer.css`)).body;
+    const dark = css.indexOf('prefers-color-scheme: dark');
+    const variables = (block: string) =>
+      Object.fromEntries([...block.matchAll(/--([a-z-]+): (#[0-9a-f]{6}|rgba?\([^)]*\));/g)].map((m) => [m[1], m[2]]));
+    const light = variables(css.slice(0, dark));
+    const night = variables(css.slice(dark, css.indexOf('}\n}', dark)));
+    const names = {
+      bg: 'background',
+      canvas: 'grouped',
+      card: 'surface',
+      raised: 'raised',
+      line: 'border',
+      fg: 'text',
+      muted: 'secondary',
+      tertiary: 'tertiary',
+      accent: 'primary',
+      control: 'accent',
+      'on-accent': 'onPrimary',
+      live: 'success',
+      danger: 'error',
+    } as const;
+    const source = readFileSync(new URL('../../../apps/mobile/src/design/tokens.ts', import.meta.url), 'utf8');
+    const tokens = (opening: string): Record<string, string> => {
+      const block = source.slice(source.indexOf(opening)).split('\n}')[0] ?? '';
+      return Object.fromEntries([...block.matchAll(/^\s+(\w+): '([^']+)'/gm)].map((m) => [m[1] ?? '', m[2] ?? '']));
+    };
+    const pick = (values: Record<string, string>) =>
+      Object.fromEntries(Object.keys(names).map((key) => [key, values[key]]));
+    const expected = (palette: Record<string, string>) =>
+      Object.fromEntries(Object.entries(names).map(([key, token]) => [key, (palette[token] ?? '').toLowerCase()]));
+    expect(pick(light)).toEqual(expected(tokens('const light = {')));
+    expect(pick(night)).toEqual(expected(tokens('const dark: Record<ColorToken, string> = {')));
+    expect(light.screen).toBe((tokens('export const media = {').screen ?? '').toLowerCase());
+    expect(light.note).toBe(tokens('export const media = {').note);
   });
 
   it('serves its stylesheet and scripts without a token, and nothing else under that path', async () => {

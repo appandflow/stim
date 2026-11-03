@@ -1,31 +1,38 @@
+/* Values of apps/mobile/src/design/tokens.ts (colors.light, colors.dark, media), where Stim Desktop's tokens come from. */
 :root {
   color-scheme: light dark;
-  --bg: #f4f4f8;
-  --bg-glow: #e6e1fb;
-  --fg: #17151f;
-  --muted: #696678;
-  --card: #fff;
-  --line: #dcdae6;
+  --bg: #ffffff;
+  --canvas: #f6f4fa;
+  --card: #fcfbff;
+  --raised: #f3efff;
+  --line: #ece7fa;
+  --fg: #121212;
+  --muted: #5f5f5f;
+  --tertiary: #706b7a;
   --accent: #5521ff;
-  --on-accent: #fff;
-  --live: #1f9d55;
-  --wait: #c27c0e;
-  --danger: #d70015;
+  --control: #7045ff;
+  --on-accent: #ffffff;
+  --live: #0f6c31;
+  --danger: #b31d1d;
+  --screen: #0c0a11;
+  --note: rgba(0, 0, 0, 0.85);
   --shadow: 0 24px 60px -20px rgb(40 20 120 / 0.35), 0 2px 8px rgb(0 0 0 / 0.08);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f0e14;
-    --bg-glow: #221b3d;
-    --fg: #f3f2f8;
-    --muted: #a09dae;
-    --card: #1a1822;
-    --line: #2f2c3b;
+    --bg: #15121d;
+    --canvas: #0e0c13;
+    --card: #201b2b;
+    --raised: #2a2338;
+    --line: #352a48;
+    --fg: #f3efff;
+    --muted: #b8b0cc;
+    --tertiary: #948daa;
     --accent: #b39cff;
+    --control: #aa90ff;
     --on-accent: #15121d;
-    --live: #4cd98a;
-    --wait: #f0b24a;
-    --danger: #ff6b7a;
+    --live: #4ade80;
+    --danger: #ff6b6b;
     --shadow: 0 24px 60px -20px rgb(0 0 0 / 0.8), 0 2px 8px rgb(0 0 0 / 0.4);
   }
 }
@@ -50,10 +57,10 @@ body {
   margin: 0;
   display: flex;
   flex-direction: column;
-  background: radial-gradient(ellipse 80% 60% at 50% 40%, var(--bg-glow), var(--bg) 70%) var(--bg);
+  background: var(--canvas);
   color: var(--fg);
   font:
-    15px/1.45 -apple-system,
+    14px/1.45 -apple-system,
     BlinkMacSystemFont,
     'Segoe UI',
     Roboto,
@@ -104,43 +111,131 @@ footer .credit a:hover {
   align-items: center;
   justify-content: center;
   gap: 4px 12px;
-  padding: 2px 16px max(8px, env(safe-area-inset-bottom));
+  padding: 6px 16px max(6px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--card);
 }
 
-.status {
-  margin: 0;
+.topbar {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 10px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
+  gap: 8px;
+  padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 8px
+    max(16px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 15px;
+}
+.topbar .spacer {
+  flex: 1;
+}
+.status {
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.status .dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1px solid var(--tertiary);
+  border-radius: 50%;
+}
+.status[data-state='live'] .dot {
+  border-color: var(--live);
+  background: var(--live);
+}
+.status #status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status .source {
+  font-weight: 600;
+}
+.status .source::before {
+  content: 'Share';
+}
+body[data-platform='ios'] .source::before {
+  content: 'iOS';
+}
+body[data-platform='android'] .source::before {
+  content: 'Android';
+}
+.status .sep,
+.status #status-text {
+  color: var(--muted);
+  font-weight: 400;
+}
+.pill {
+  flex: none;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: var(--card);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.viewer .status {
-  white-space: normal;
+.pill:empty:not(.mode) {
+  display: none;
 }
-.status .dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--muted);
+.pill.mode {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
 }
-.status[data-state='live'] .dot {
-  background: var(--live);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 25%, transparent);
+.pill.mode::before {
+  content: 'View only';
 }
-.status[data-state='waiting'] .dot {
-  background: var(--wait);
+body[data-control='true'] .pill.mode::before {
+  content: 'Control';
 }
-.status[data-state='live'] #status-text {
-  color: var(--fg);
+body:not([data-control='true']) .pill.mode {
+  background: var(--card);
+  color: var(--muted);
 }
-.status .left:not(:empty)::before {
-  content: '\00b7';
-  margin-right: 6px;
+.topbar .rule {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+}
+.topbar .rule:last-child {
+  display: none;
+}
+.topbar .iconbtn {
+  flex: none;
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+}
+.topbar .iconbtn:hover {
+  background: var(--raised);
+}
+.topbar .iconbtn:active {
+  opacity: 0.7;
+}
+.topbar .iconbtn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .stage {
@@ -149,7 +244,7 @@ footer .credit a:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: max(8px, env(safe-area-inset-top)) 16px 4px;
+  padding: 20px max(20px, env(safe-area-inset-right)) 12px max(20px, env(safe-area-inset-left));
   container-type: size;
 }
 .device {
@@ -158,7 +253,6 @@ footer .credit a:hover {
   container-type: inline-size;
   width: min(100cqw, 100cqh * var(--ratio));
   aspect-ratio: var(--ratio);
-  filter: drop-shadow(0 18px 28px rgb(20 10 70 / 0.28));
 }
 .layer {
   position: absolute;
@@ -173,9 +267,12 @@ footer .credit a:hover {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  border-radius: 7cqw;
-  background: #000;
-  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.12);
+  border-radius: 12px;
+  background: var(--screen);
+  box-shadow: 0 0 0 1px var(--line);
+}
+body[data-control='true'] .aperture {
+  box-shadow: 0 0 0 2px var(--control);
 }
 .device.framed .aperture {
   box-shadow: none;
@@ -184,7 +281,7 @@ footer .credit a:hover {
   display: block;
   width: 100%;
   height: 100%;
-  background: #000;
+  background: var(--screen);
   touch-action: none;
   user-select: none;
   outline: none;
@@ -206,7 +303,7 @@ body[data-control='true'] #screen {
   margin: 0;
   padding: 8px 12px;
   border-radius: 12px;
-  background: rgb(20 18 30 / 0.82);
+  background: var(--note);
   color: #fff;
   font-size: 13px;
   text-align: center;
@@ -217,18 +314,22 @@ body[data-control='true'] #screen {
 }
 
 .toolbar {
+  flex: none;
   display: flex;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 16px 6px;
+  gap: 6px;
+  padding: 0 16px 20px;
+}
+.toolbar:not(:has(.group:not([hidden]))) {
+  display: none;
 }
 .group {
   display: flex;
   gap: 2px;
   padding: 4px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 999px;
   background: var(--card);
 }
 .group[hidden],
@@ -236,59 +337,39 @@ body[data-control='true'] #screen {
   display: none;
 }
 .toolbar button {
-  position: relative;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 10px;
+  border-radius: 999px;
   background: transparent;
   color: var(--fg);
   cursor: pointer;
 }
 .toolbar button:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .toolbar button:active {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  opacity: 0.7;
 }
-.toolbar svg {
-  width: 22px;
-  height: 22px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.8;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-.toolbar button::after {
-  content: attr(data-tip);
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: var(--fg);
-  color: var(--bg);
-  font-size: 12px;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.12s;
-  z-index: 2;
-}
-@media (hover: hover) {
-  .toolbar button:hover::after {
-    opacity: 1;
-    transition-delay: 0.4s;
+@media (pointer: coarse) {
+  .toolbar button {
+    width: 40px;
+    height: 40px;
   }
 }
-.toolbar button:focus-visible::after {
-  opacity: 1;
+.toolbar svg {
+  width: 17px;
+  height: 17px;
+}
+svg.symbol {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .center {
@@ -306,7 +387,7 @@ body[data-control='true'] #screen {
   gap: 12px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 18px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
 }
 .card h1 {
@@ -357,21 +438,7 @@ button.primary:hover {
 }
 
 :fullscreen {
-  background: var(--bg);
-}
-
-@media (max-width: 480px) {
-  .stage {
-    padding: max(6px, env(safe-area-inset-top)) 8px 0;
-  }
-  .toolbar {
-    gap: 6px;
-    padding-inline: 8px;
-  }
-  .toolbar button {
-    width: 38px;
-    height: 38px;
-  }
+  background: var(--canvas);
 }
 
 #overlay {
@@ -380,10 +447,6 @@ button.primary:hover {
   width: 100%;
   height: 100%;
   pointer-events: none;
-}
-.status.view-only {
-  color: var(--fg);
-  font-weight: 600;
 }
 .link {
   font: inherit;
@@ -395,7 +458,8 @@ button.primary:hover {
   text-decoration: underline;
 }
 button.primary.small {
-  padding: 6px 12px;
+  padding: 4px 10px;
+  font-size: 12.5px;
 }
 .upgrade,
 .upgrade-fields,
@@ -406,13 +470,17 @@ button.primary.small {
 }
 .upgrade[hidden],
 .upgrade-fields[hidden],
-.name-card[hidden],
-.status[hidden] {
+.name-card[hidden] {
   display: none;
 }
+.upgrade {
+  flex: none;
+  font-size: 12.5px;
+}
 .upgrade input.field {
-  width: 11em;
-  padding: 5px 9px;
+  width: 10em;
+  padding: 3px 8px;
+  border-radius: 7px;
 }
 .name-card {
   position: absolute;
@@ -422,7 +490,7 @@ button.primary.small {
   flex-wrap: wrap;
   padding: 8px 12px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--card);
   box-shadow: var(--shadow);
   font-size: 13px;
@@ -434,12 +502,14 @@ button.primary.small {
 .name-card input.field {
   width: 10em;
   padding: 5px 9px;
+  border-radius: 7px;
 }
 .roster {
+  flex: none;
   display: flex;
   gap: 4px;
   margin: 0;
-  padding: 0;
+  padding: 0 2px;
   list-style: none;
 }
 .roster:empty {
@@ -473,4 +543,26 @@ button.primary.small {
   fill: none;
   stroke: var(--fg);
   stroke-width: 2.5;
+}
+
+@media (max-width: 360px) {
+  .pill.mode {
+    display: none;
+  }
+}
+@media (max-width: 480px) {
+  .topbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-inline: 12px;
+  }
+  .status .sep {
+    display: none;
+  }
+  .stage {
+    padding: 12px 12px 8px;
+  }
+  .toolbar {
+    padding: 0 8px 12px;
+  }
 }

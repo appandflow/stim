@@ -74,19 +74,20 @@ name and place. `--json` adds `viewAuth` and, when it was generated,
 
 ## The viewer
 
-The viewer draws the device inside its frame when Stim has artwork for it (an
-iOS simulator today) and as a rounded screen otherwise, scaled to fit any
-window, in light or dark to match the browser. A toolbar under the device
-holds:
+The viewer follows the layout of the device viewer in Stim Desktop and uses the
+same colors, in light or dark to match the browser. A bar across the top shows
+a status dot with the platform and Live or Waiting, the time left before the
+share expires, whether the share is Control or View only, and a Fullscreen
+button. The device sits below it inside its frame when Stim has artwork for it
+(an iOS simulator today) and as a rounded screen otherwise, scaled to fit any
+window. With `--control`, button groups under the device hold:
 
-- **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
-  with `--control`.
-- **Rotate left and right**, with `--control`, for an owned simulator or
+- **Hardware buttons** (Home and Lock on iOS; Home, Back and Apps on Android).
+- **Rotate left and right**, for an owned simulator or
   emulator. A physical device rotates only in hand. On an iOS simulator the
   device turns as in Simulator.app, so a portrait-only app shows sideways in a
   turned frame. On an emulator the picture turns only when the app in front
   supports the new orientation and auto-rotate is on.
-- **Fullscreen.**
 
 Everyone watching sees who touches the screen: a colored dot with the person's
 name, a short trail while they drag, and a ripple for a tap, for every viewer
@@ -95,7 +96,7 @@ Desktop or the phone app. The login page has an optional name field; a share
 without a password asks for a name when you first open it, and you can skip.
 Without a name a viewer is "Guest 1", "Guest 2" and so on. Names are kept only
 in stim-server's memory while the share lives. A row of colored initials in the
-bar lists who is here; an eye marks the view-only ones. Presence shows where
+top bar lists who is here; an eye marks the view-only ones. Presence shows where
 people tap, a PIN pad included. The screen is already shared, so this adds
 little, but keep it in mind when the device shows secrets.
 
@@ -104,9 +105,8 @@ or until ten seconds pass without input. A touch from another viewer in the
 meantime is dropped, and that viewer sees "Name is using the screen". A share
 of a hosted session shows each viewer only its own touches.
 
-The page fits the window without scrolling. The line under the toolbar shows
-Live or Waiting and the time left before the share expires. With `--control`,
-click the screen to tap and type with the keyboard. While the screen has focus,
+A watch-only share has no button groups. The page fits the window without
+scrolling. With `--control`, click the screen to tap and type with the keyboard. While the screen has focus,
 the arrow keys and Escape go to the device as well (the D-pad keys and Escape
 on Android, the hardware arrow and Escape keys on iOS).
 
