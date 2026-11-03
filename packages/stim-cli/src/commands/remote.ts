@@ -82,7 +82,7 @@ function confirmer(json: boolean) {
   return keyConfirmer(interactive ? confirmInTerminal : null);
 }
 
-const ANSWERED = new Set(['approved', 'pending', 'revoked', 'outdated']);
+const ANSWERED = new Set(['approved', 'pending', 'revoked', 'outdated', 'key-unconfirmed']);
 const UNREACHABLE = new Set(['unreachable', 'tailscale-off', 'not-on-tailnet']);
 
 function reachability(states: string[]): 'key-changed' | 'reachable' | 'unreachable' | 'unknown' {
@@ -90,6 +90,14 @@ function reachability(states: string[]): 'key-changed' | 'reachable' | 'unreacha
   if (states.some((state) => ANSWERED.has(state))) return 'reachable';
   if (states.some((state) => UNREACHABLE.has(state))) return 'unreachable';
   return 'unknown';
+}
+
+function readableCredentials(): MachineCredential[] {
+  let hosting: MachineCredential[] = [];
+  try {
+    hosting = readDeviceHostMachines();
+  } catch {}
+  return [...readBuildMachines(), ...hosting];
 }
 
 function revokeCommands(credentials: MachineCredential[]): string[] {
@@ -160,7 +168,7 @@ export default function remoteCommand(program: Command, version: string, io: Tai
         const options = { fix: false, version, confirmKey: confirmer(Boolean(opts.json)) };
         const build = await inspectBuildMachines(options, io, entries);
         const host = await inspectDeviceHostMachines(options, io, entries);
-        const credentials = [...readBuildMachines(), ...readDeviceHostMachines()];
+        const credentials = readableCredentials();
         const machines = entries.map((machine, at) => {
           const buildReport = build.machines.find((each) => each.machine === machine) ?? null;
           const hostReport = host.machines.find((each) => each.machine === machine) ?? null;

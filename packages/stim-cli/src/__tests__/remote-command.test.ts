@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Command } from 'commander';
@@ -124,6 +124,41 @@ test('list --json gives each machine its server key fingerprint, reachability an
     { machine: 'studio', serverKeyFingerprint: null, reachability: 'unreachable', revoke: [] },
     { machine: 'local:127.0.0.1:1', serverKeyFingerprint: null, reachability: 'unknown', revoke: [] },
   ]);
+});
+
+async function listJson(io: TailnetMachineIo): Promise<Record<string, unknown>[]> {
+  const out = await remote(io, 'list', '--json');
+  const { machines }: { machines: Record<string, unknown>[] } = JSON.parse(out);
+  return machines;
+}
+
+test('list --json reports a changed key over another approval that still answers', async () => {
+  await approveMini();
+  vi.restoreAllMocks();
+  const mismatch: HelloReply = { error: { code: 'server-key-mismatch', message: 'key changed' } };
+  const [mini] = await listJson(fakeIo([mismatch, granted('device-host')]));
+  expect(mini).toMatchObject({ build: { state: 'key-changed' }, deviceHost: { state: 'approved' } });
+  expect(mini?.reachability).toBe('key-changed');
+});
+
+test('list --json counts a local machine that answered with an unconfirmed key as reachable', async () => {
+  await remote(fakeIo([notYet, notYet]), 'add', 'local:10.0.0.92');
+  vi.restoreAllMocks();
+  const [machine] = await listJson(fakeIo([granted('build'), granted('device-host')]));
+  expect(machine).toMatchObject({ build: { state: 'key-unconfirmed' }, reachability: 'reachable' });
+});
+
+test('list --json still prints one payload when the device-host credentials cannot be read', async () => {
+  await approveMini();
+  writeFileSync(join(home, 'device-host-machines.json'), '{not json');
+  vi.restoreAllMocks();
+  const [mini] = await listJson(fakeIo([granted('build')]));
+  expect(process.exitCode).toBeUndefined();
+  expect(mini).toMatchObject({
+    deviceHost: { state: 'credentials-unavailable' },
+    serverKeyFingerprint: keyFingerprint(Buffer.from(SERVER_KEY, 'base64url')),
+    revoke: ['stim-server devices revoke dev-mini'],
+  });
 });
 
 test('remove drops the entry and its credentials, keeps the others, and prints the revoke command for there', async () => {
