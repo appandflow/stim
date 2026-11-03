@@ -1,4 +1,4 @@
-import { LOG_ROTATE_BYTES } from '@stim-cli/core';
+import { LOG_ROTATE_BYTES, type StimContext } from '@stim-cli/core';
 import {
   daemonNdjsonFile,
   readDaemonSnapshot,
@@ -12,7 +12,7 @@ import { loadConfig, type Config } from '../workspace/config.ts';
 import { daemonClaimHeld, requestDaemonTick } from './client.ts';
 import { daemonMode } from './mode.ts';
 import { runIdlePass, type IdlePassInput } from './idle.ts';
-import { runLadder } from './ladder.ts';
+import { idleOutputBytes, runLadder } from './ladder.ts';
 import { HOME_PASSES_TEST_GUARD_ENV } from './passes-guard-env.ts';
 import { measureDisk, measureMemory, measureTick, type TickMeasurement } from './measure.ts';
 import { classifyPressure, diskThresholds } from './pressure.ts';
@@ -155,6 +155,96 @@ async function runCommandLadder(trigger: string, env: NodeJS.ProcessEnv): Promis
     );
   } finally {
     writer.close();
+  }
+}
+
+export interface ForcedLadder {
+  /** The level the machine measures now; the forced run ignores it. */
+  pressure: DaemonPressure;
+  /** Each workspace with something running, as the activity pass decides at `idle.minutes`; empty when acting. */
+  running: DaemonWorkspaceDecision[];
+  levels: { level: 'high' | 'critical'; actions: DaemonLadderAction[] }[];
+}
+
+/**
+ * The pressure ladder forced to each of `levels` whatever the machine measures, every rung in order without stopping
+ * once the level clears: the idle stage for every workspace idle 2 minutes or more, then rungs 1 to 6 (rung 5 only at
+ * critical). `stim gc --delete` runs one level with `act`; `stim gc` previews both from one measurement, measuring what
+ * each action would free. Logs to `daemon.ndjson` under `trigger` when acting. Null without a Stim config.
+ */
+export async function runForcedLadder({
+  levels,
+  act,
+  why,
+  trigger,
+  operation,
+}: {
+  levels: readonly ('high' | 'critical')[];
+  act: boolean;
+  why: string;
+  trigger: string;
+  operation?: StimContext;
+}): Promise<ForcedLadder | null> {
+  const config = loadConfig();
+  if (!config) return null;
+  const now = Date.now();
+  const measured = await measureTick(config, now, { probe: act });
+  const { thresholds } = diskThresholds(config);
+  const pressure = classifyPressure({
+    ...measured.measurement,
+    thresholds,
+    previousWarningSince: readDaemonSnapshot()?.pressure?.memoryWarningSince ?? null,
+    now,
+  });
+  const writer = act ? createNdjsonWriter(daemonNdjsonFile(), { maxBytes: LOG_ROTATE_BYTES }) : null;
+  const log: IdlePassInput['log'] = (logLevel, event, msg, fields = {}) =>
+    writer?.write({ src: trigger, level: logLevel, event, msg, ...fields });
+  try {
+    const reading = {
+      config,
+      now,
+      sims: measured.sims,
+      simsError: measured.simsError,
+      devices: measured.devices,
+      log,
+    };
+    const running = act ? [] : await runIdlePass({ ...reading, act: false });
+    const result: ForcedLadder['levels'] = [];
+    for (const level of levels) {
+      const actions: DaemonLadderAction[] = [];
+      for (const entry of await runIdlePass({ ...reading, act, pressure: { level, reasons: [why] } })) {
+        if (entry.outcome !== 'idle' && entry.outcome !== 'would-idle' && entry.outcome !== 'failed') continue;
+        actions.push({
+          rung: 1,
+          kind: 'idle-stage',
+          target: entry.path,
+          workspace: entry.path,
+          outcome: entry.outcome === 'idle' ? 'done' : entry.outcome === 'would-idle' ? 'would' : 'failed',
+          bytes: entry.freedBytes ?? (entry.outcome === 'would-idle' ? await idleOutputBytes(entry.path, config) : 0),
+          detail: entry.outcome === 'would-idle' ? 'stim gc --delete would do this' : entry.detail,
+          ...(entry.outcome === 'idle' ? { restore: 'stim revive' } : {}),
+        });
+      }
+      const ladder = await runLadder(
+        {
+          config,
+          act,
+          log,
+          devices: measured.devices,
+          sims: measured.sims,
+          simsFailed: measured.sims === null,
+          remeasure: async () => pressure,
+          force: { level, why },
+          measure: !act,
+          operation,
+        },
+        pressure,
+      );
+      result.push({ level, actions: [...actions, ...ladder.actions] });
+    }
+    return { pressure, running, levels: result };
+  } finally {
+    writer?.close();
   }
 }
 

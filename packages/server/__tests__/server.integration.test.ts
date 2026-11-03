@@ -12467,8 +12467,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       { cwd: workspace, delete: 'yes' },
       { cwd: workspace, worktrees: 1 },
       { cwd: workspace, olderThan: 1.5 },
-      { cwd: workspace, idleMs: 0 },
-      { cwd: workspace, idleMs: 1.5 },
+      { cwd: workspace, idleMs: 60_000 },
       { cwd: workspace, signal: {} },
     ])
       expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');

@@ -17,8 +17,6 @@ import * as hostedClient from '../device-host/hosted-client.ts';
 import * as stopCommand from '../commands/stop.ts';
 import * as ios from '../devices/ios.ts';
 import * as teardown from '../devices/teardown.ts';
-import { stopIdleWorkspaces } from '../commands/gc/idle-workspaces.ts';
-import type { GcOutput } from '../commands/gc/results.ts';
 import { executeAction } from '../maintenance/act.ts';
 import * as measurements from '../maintenance/measure.ts';
 import { previewMaintenance } from '../maintenance/preview.ts';
@@ -379,21 +377,6 @@ test.skipIf(!posixModes)('an unreadable Metro log keeps the workspace', async ()
   expect(skips).toEqual([
     expect.objectContaining({ target: root, reason: expect.stringMatching(/Metro log cannot be read/) }),
   ]);
-});
-
-test('gc --delete stops idle workspaces only while maintenance is not off, and counts a failed stop', async () => {
-  const { root } = bootedWorkspace('failing', 7 * HOUR_MS);
-  vi.spyOn(teardown, 'teardownOwnedIosSim').mockRejectedValue(new Error('simctl refused'));
-  vi.spyOn(ios, 'listAllIosSims').mockImplementation(() => sims);
-  const record = vi.fn<GcOutput['record']>();
-  const output = { log: () => {}, error: () => {}, record, fail: () => {} };
-
-  expect(await stopIdleWorkspaces(output)).toBe(0);
-  expect(record).not.toHaveBeenCalled();
-
-  vi.stubEnv('STIM_DAEMON', 'on');
-  expect(await stopIdleWorkspaces(output)).toBe(1);
-  expect(record).toHaveBeenCalledWith('devServer', 'failed', root, expect.anything());
 });
 
 test.each([

@@ -487,7 +487,25 @@ test('gc --delete --json reports what it removed apart from what it kept', async
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  expect((await gcJson({ olderThan: 3 })).payload.results).toEqual([]);
+  const preview = (await gcJson({ olderThan: 3 })).payload;
+  expect(preview.results).toEqual([]);
+  for (const level of preview.ladder.levels)
+    expect(level.actions).toContainEqual(
+      expect.objectContaining({
+        rung: 1,
+        kind: 'delete-build-outputs',
+        target: stale.root,
+        outcome: 'would',
+        bytes: expect.any(Number),
+      }),
+    );
+  expect(
+    preview.ladder.levels[0].actions.find((action: { target: string }) => action.target === stale.root).bytes,
+  ).toBeGreaterThan(0);
+  expect(preview.ladder.workspaces).toContainEqual(
+    expect.objectContaining({ path: stale.root, stage: 'stopped', since: expect.any(String) }),
+  );
+  for (const output of OUTPUTS) expect(existsSync(join(stale.dir, output))).toBe(true);
   const { payload } = await gcJson({ olderThan: 3, delete: true });
 
   expect(payload.results).toEqual(
@@ -504,15 +522,11 @@ test('gc --delete --json reports what it removed apart from what it kept', async
         label: stale.root,
         bytes: expect.any(Number),
       }),
-      expect.objectContaining({
-        kind: 'workspaceOutputs',
-        status: 'kept',
-        label: busy.root,
-        detail: expect.stringMatching(/^in use: /),
-      }),
     ]),
   );
   expect(payload.results.filter((r: { status: string }) => r.status === 'failed')).toEqual([]);
+  expect(payload.results.filter((r: { label: string }) => r.label === busy.root)).toEqual([]);
+  for (const output of OUTPUTS) expect(existsSync(join(busy.dir, output))).toBe(true);
   expect(existsSync(orphan.dir)).toBe(false);
 });
 
@@ -822,13 +836,13 @@ test('gc --cache workspaces lists and clears a workspace with only macOS outputs
   expect(existsSync(join(dir, 'workspace.json'))).toBe(true);
 });
 
-test('plain gc --delete clears idle workspaces, and --older-than limits it by last use', async () => {
+test('gc --delete --cache workspaces clears idle workspaces, and --older-than limits it by last use', async () => {
   const recent = builtWorkspace('recent', { usedDaysAgo: 1 });
   const stale = builtWorkspace('stale', { usedDaysAgo: 10 });
   const busy = builtWorkspace('busy', { usedDaysAgo: 30 });
   holdNativeRun(busy.root);
 
-  const report = await captureLog(() => runGc({ delete: true, olderThan: 3 }));
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces', olderThan: 3 }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(stale.dir, output))).toBe(false);
     expect(existsSync(join(recent.dir, output))).toBe(true);
@@ -836,14 +850,14 @@ test('plain gc --delete clears idle workspaces, and --older-than limits it by la
   }
   expect(report).toMatch(/Kept the build outputs of .*busy: in use/);
 
-  await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(recent.dir, output))).toBe(false);
     expect(existsSync(join(busy.dir, output))).toBe(true);
   }
 });
 
-test('plain gc --delete lightens a workspace whose dev server runs, but never a building or just-built one, or the build cache', async () => {
+test('plain gc --delete leaves a workspace whose dev server runs, and --cache workspaces lightens it, but never a building or just-built one, or the build cache', async () => {
   const iosBuild = (minutesAgo: number) => ({
     lastIosBuild: {
       platform: 'ios',
@@ -879,7 +893,11 @@ test('plain gc --delete lightens a workspace whose dev server runs, but never a 
     payload.sections.workspaceBuildOutputs.find((w: { projectRoot: string }) => w.projectRoot === active.root),
   ).toMatchObject({ willClear: true, inTreeDirs: [join(active.root, 'android', 'app', 'build')] });
 
-  const report = await captureLog(() => runGc({ delete: true }));
+  await captureLog(() => runGc({ delete: true }));
+  for (const output of OUTPUTS) expect(existsSync(join(active.dir, output))).toBe(true);
+  expect(existsSync(join(active.root, 'android', 'app', 'build'))).toBe(true);
+
+  const report = await captureLog(() => runGc({ delete: true, cache: 'workspaces' }));
   for (const output of OUTPUTS) {
     expect(existsSync(join(active.dir, output))).toBe(false);
     expect(existsSync(join(building.dir, output))).toBe(true);
@@ -2064,7 +2082,7 @@ test('gc asks GitHub once per repository, and a repository whose query fails lea
   expect(byName.gamma).toMatchObject({ pullRequest: null, pullRequestUnknown: 'gh api graphql failed: HTTP 502' });
 }, 60_000);
 
-test('one gc report lists simulators and AVDs once, however many worktrees own devices', async () => {
+test('one gc report lists simulators and AVDs once for its report and once for its ladder preview, however many worktrees own devices', async () => {
   const { worktrees } = gitRepoWithWorktrees(['one', 'two', 'three']);
   for (const path of Object.values(worktrees)) upsertProject(path, { metroPort: null });
   const real = getExecutor();
@@ -2117,7 +2135,7 @@ test('one gc report lists simulators and AVDs once, however many worktrees own d
 
   const payload = await baseline();
 
-  expect(lists).toEqual({ sims: without.sims + 1, avds: without.avds + 1 });
+  expect(lists).toEqual({ sims: without.sims + 2, avds: without.avds + 2 });
   const byName = Object.fromEntries(
     payload.sections.linkedWorktrees.map((w: { path: string }) => [basename(w.path), w]),
   );

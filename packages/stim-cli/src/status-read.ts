@@ -80,6 +80,7 @@ import {
   readMacosRecord,
   readBuildDetail,
   readDeviceIdleShutdowns,
+  currentStage,
   readDormantStage,
   readIdleStage,
   readIdleStop,
@@ -283,11 +284,9 @@ export function readStatus({
 
 /** The idle and dormant stages the daemon recorded, each while no Stim command has run in the workspace since. */
 function applyStages(state: EnvironmentState, saved: WorkspaceState | null): void {
-  const current = <T extends { at: string }>(stage: T | null): T | null =>
-    stage && !(Date.parse(String(saved?.lastUsedAt ?? '')) > Date.parse(stage.at)) ? stage : null;
-  const idle = current(readIdleStage(saved));
+  const idle = currentStage(saved, readIdleStage(saved));
   if (idle) state.idleStage = idle;
-  const dormant = current(readDormantStage(saved));
+  const dormant = currentStage(saved, readDormantStage(saved));
   if (dormant) state.dormantStage = dormant;
 }
 

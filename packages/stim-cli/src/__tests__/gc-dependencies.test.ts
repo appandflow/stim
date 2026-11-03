@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { runGc } from '../commands/gc.ts';
 import { saveConfig, upsertProject } from '../workspace/config.ts';
-import { ensureWorkspaceStorage, workspaceDir, workspaceStateFile } from '../workspace/paths.ts';
+import { ensureWorkspaceStorage, workspaceStateFile } from '../workspace/paths.ts';
 import { recordWorkspaceUse } from '../workspace/workspace-state.ts';
 import { recordLightened, restoreLightenedDependencies } from '../workspace/lightened.ts';
 import { testContext } from './_context.ts';
@@ -152,49 +152,39 @@ async function quietly(fn: () => Promise<unknown>): Promise<string> {
   return lines.join('\n');
 }
 
+type LadderPayload = {
+  ladder: { levels: { level: string; actions: { rung: number; kind: string; target: string }[] }[] };
+};
+
+function criticalDependencies(payload: LadderPayload): string[] {
+  return (payload.ladder.levels.find((level) => level.level === 'critical')?.actions ?? []).flatMap((action) =>
+    action.kind === 'delete-dependencies' ? [action.target] : [],
+  );
+}
+
 test.skipIf(process.platform === 'win32')(
-  'gc --delete never lightens a git-locked worktree, and says it is locked',
+  'gc --delete --cache all never deletes the dependencies of a git-locked worktree',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
       { name: 'rollback', workspace: true },
     ]);
     execSync(`git worktree lock --reason rollback "${roots.rollback}"`, { cwd: roots.repo, timeout: 15_000 });
-    const outputs = (name: string) => join(workspaceDir(roots[name]!), 'derived-data', 'blob');
-    for (const name of ['feature', 'rollback']) write(outputs(name));
 
     const { payload } = await gcJson();
-    const report = await quietly(() => runGc({ delete: true }));
+    await quietly(() => runGc({ delete: true, cache: 'all' }));
 
+    expect(criticalDependencies(payload)).toContain(join(roots.feature!, 'node_modules'));
+    expect(criticalDependencies(payload).filter((path) => path.startsWith(`${roots.rollback}/`))).toEqual([]);
     expect(existsSync(join(roots.feature!, 'node_modules'))).toBe(false);
-    expect(existsSync(outputs('feature'))).toBe(false);
     expect(existsSync(join(roots.rollback!, 'node_modules', 'pkg', 'index.js'))).toBe(true);
     expect(existsSync(join(roots.rollback!, 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
-    expect(existsSync(outputs('rollback'))).toBe(true);
-    expect(
-      payload.sections.worktreeDependencies.filter((entry: { path: string }) =>
-        entry.path.startsWith(`${roots.rollback}/`),
-      ),
-    ).toEqual([
-      expect.objectContaining({ willDelete: false, detail: 'locked with git worktree lock' }),
-      expect.objectContaining({ willDelete: false, detail: 'locked with git worktree lock' }),
-    ]);
-    expect(
-      payload.sections.workspaceBuildOutputs.find(
-        (entry: { projectRoot: string }) => entry.projectRoot === roots.rollback,
-      ),
-    ).toMatchObject({
-      willClear: false,
-      reason: 'locked',
-      detail: 'locked with git worktree lock',
-    });
-    expect(report).toContain(`Kept the build outputs of ${roots.rollback}: locked with git worktree lock`);
   },
   60_000,
 );
 
 test.skipIf(process.platform === 'win32')(
-  'gc --delete lightens only an idle linked worktree that warm can restore and nothing runs in',
+  'gc --delete runs the ladder at high, which keeps dependencies, and --cache all deletes only those of an idle linked worktree that warm can restore and nothing runs in',
   async () => {
     const roots = idleRepo([
       { name: 'feature', workspace: true },
@@ -209,32 +199,19 @@ test.skipIf(process.platform === 'win32')(
     };
     writeFileSync(join(at('drifted'), 'pnpm-lock.yaml'), 'lockfileVersion: 9\npackages: {}\n');
     const child = spawn('sleep', ['60'], { cwd: roots.busy, stdio: 'ignore' });
-    let report: string;
-    let payload: { sections: { worktreeDependencies: { path: string; detail: string | null }[] } };
     try {
-      ({ payload } = await gcJson());
-      report = await quietly(() => runGc({ delete: true }));
+      await quietly(() => runGc({ delete: true }));
+      expect(existsSync(join(at('feature'), 'node_modules', 'pkg', 'index.js'))).toBe(true);
+      await quietly(() => runGc({ delete: true, cache: 'all' }));
     } finally {
       child.kill('SIGKILL');
     }
 
     expect(existsSync(join(at('feature'), 'node_modules'))).toBe(false);
     expect(recordedDirs(at('feature'))).toEqual([join(at('feature'), 'node_modules')]);
-    expect(report).toMatch(/Lightened .*feature: deleted .*node_modules/);
     for (const name of ['repo', 'busy', 'keyless', 'drifted'])
       expect(existsSync(join(at(name), 'node_modules', 'pkg', 'index.js'))).toBe(true);
-    const detail = (name: string) =>
-      payload.sections.worktreeDependencies.find((entry: { path: string }) => entry.path.startsWith(`${at(name)}/`))
-        ?.detail;
-    expect(detail('busy')).toBe(`process ${child.pid} works in it`);
-    expect(detail('keyless')).toMatch(/no workspace/);
-    expect(detail('drifted')).toMatch(/pnpm-lock.yaml differs/);
     expect(existsSync(join(at('feature'), 'ios', 'Pods', 'Manifest.lock'))).toBe(true);
-    expect(
-      payload.sections.worktreeDependencies.find(
-        (entry: { path: string }) => entry.path === join(at('feature'), 'ios', 'Pods'),
-      )?.detail,
-    ).toMatch(/would not copy ios\/Pods back/);
   },
   60_000,
 );

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync } from 'node:fs';
 import {
+  currentStage,
   DORMANT_STAGE_KEY,
   readDormantStage,
   type DaemonLadderAction,
@@ -199,8 +200,7 @@ function hasLogs(path: string): boolean {
 
 function alreadyDormant(path: string): boolean {
   const state = readWorkspaceState(path);
-  const stage = readDormantStage(state);
-  return stage !== null && !(Date.parse(String(state?.lastUsedAt ?? '')) > Date.parse(stage.at));
+  return currentStage(state, readDormantStage(state)) !== null;
 }
 
 /**
