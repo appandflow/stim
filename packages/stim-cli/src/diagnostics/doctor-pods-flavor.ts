@@ -31,7 +31,7 @@ function mismatchedPrebuiltPods(
     return flavor !== null &&
       flavor !== configuration &&
       FLAVORS.includes(flavor) &&
-      lastBuildConfiguration(worktreePods, pod) !== null
+      lastBuildConfiguration(worktreePods, pod) === flavor
       ? [{ pod, flavor }]
       : [];
   });

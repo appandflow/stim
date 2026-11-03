@@ -50,6 +50,7 @@ test('a single mismatched pod is reported alone', () => {
   markAll(source, 'Debug');
   markAll(worktree, 'Debug');
   mark(source, 'hermes-engine', 'Release');
+  mark(worktree, 'hermes-engine', 'Release');
   expect(inspectPodsFlavor(source, worktree, 'Debug')?.detail).toContain('hermes-engine (Release), but');
 });
 
@@ -77,4 +78,10 @@ test('a configuration React Native does not extract by name reports nothing', ()
   markAll(source, 'Release');
   markAll(worktree, 'Release');
   expect(inspectPodsFlavor(source, worktree, 'Staging')).toBeNull();
+});
+
+test('a worktree that already swapped to the build configuration reports nothing', () => {
+  markAll(source, 'Release');
+  markAll(worktree, 'Debug');
+  expect(inspectPodsFlavor(source, worktree, 'Debug')).toBeNull();
 });
