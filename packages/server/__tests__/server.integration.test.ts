@@ -10780,6 +10780,7 @@ describe('frames.subscribe', () => {
       let closing: Promise<void> | undefined;
       try {
         await locked;
+        await until(() => existsSync(`${toolCalls}.started`));
         grantDevice(id, capabilitiesFor(false));
         expect(await client.next()).toMatchObject({ event: 'control-ended', session, reason: 'forbidden' });
         expect(await reader.request('machine.get')).toMatchObject({ result: expect.any(Object) });
