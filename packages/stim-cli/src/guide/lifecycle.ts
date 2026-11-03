@@ -1240,13 +1240,14 @@ result as proof instead of requiring an unrelated screenshot.`,
 
     device      stim-app-412 (BF2A..) created (2m14s)
 
-  On iOS that step does not wait the boot out. It creates the simulator, asks
-  it to boot, and hands the wait back, so the run fingerprints the native
-  inputs and resolves the build cache while \`simctl bootstatus\` is still
-  running; it joins the boot before it installs anything. The
-  \`device ... booted\` and \`fingerprint ...\` lines each report their own
-  elapsed time, and those two overlap -- adding every line up overstates the
-  run.
+  On iOS that step does not wait the boot out. A run that creates its
+  simulator first waits for a boot slot, and that wait is part of the step's
+  time. It creates the simulator, asks it to boot, and hands the wait back,
+  so the run fingerprints the native inputs and resolves the build cache
+  while \`simctl bootstatus\` is still running; it joins the boot before it
+  installs anything. The \`device ... booted\` and \`fingerprint ...\` lines
+  each report their own elapsed time, and those two overlap -- adding every
+  line up overstates the run.
 
   A step that is still running heartbeats every 30 seconds, on the 30-second
   grid, so the values read 30s, 1m00s, 1m30s and never repeat. A heartbeat
@@ -2162,7 +2163,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
 
   Beyond the caps, at most 2 boots run at once in a Stim home, and no boot
   starts while the stim-daemon's last tick measured macOS memory pressure
-  critical, or warning with under 2 GB available.
+  critical, or warning with under 2 GB available. A boot that needs a new
+  simulator or emulator creates it inside its slot, and a SimSlim reboot stays
+  in that slot.
 
   A run past a cap WAITS in arrival order per resource: builds in
   $STIM_HOME/build-waits, boots in $STIM_HOME/device-waits. A waiter takes a
@@ -2184,7 +2187,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   held only by memory keeps waiting while the ladder reclaims.
   \`--wait <seconds>\` bounds a device wait instead; \`--no-wait\` or
   \`--wait 0\` refuses at once and cannot jump queued runs. iOS waits
-  beside its build. Stop cancels a queued run and releases its ticket.
+  beside its build, except a run that creates its simulator: it builds once
+  the simulator exists. Stop cancels a queued run and releases its ticket.
   Status JSON adds build.waitingFor independently of phase: { kind:
   "device-slot" | "build-slot", inUse, max, since, position, resource }, and
   the top-level daemon.waiting lists every waiting run. Positive

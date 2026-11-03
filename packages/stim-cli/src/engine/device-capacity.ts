@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { basename, join } from 'node:path';
 import { deviceSlotPlatforms, projectDeviceSlots } from '../devices/device-slots.ts';
 import {
@@ -588,7 +589,7 @@ export interface DeviceSlotWaitPolicy {
   sleep?: (ms: number) => Promise<void>;
 }
 
-/** Boots that may run at once in a Stim home. */
+/** Boots, each an owned device's creation when it needs one and its boot, that may run at once in a Stim home. */
 export const BOOTS_IN_FLIGHT = 2;
 const LOW_MEMORY_FOR_BOOT_BYTES = 2 * 1024 ** 3;
 
@@ -777,18 +778,29 @@ async function admissionTransaction<T>(
   }
 }
 
+/** The boot admission let start. */
+export interface AdmittedBoot {
+  /** Counts the boot under `key` from now on: the device it created under a key from {@link uncreatedDeviceKey}. */
+  rekey(key: string): void;
+}
+
+/** The key a boot counts under until it creates its device, unique so no other run takes it for its own device. */
+export function uncreatedDeviceKey(): string {
+  return `new-${randomUUID()}`;
+}
+
 /**
  * Boots an owned device once admission lets it: in arrival order per the `device-waits` queue, while the booted devices
  * can be counted and stay under `concurrency.maxDevices` (derived from RAM when 0) and the per-platform caps, at most
- * two boots run at once, and memory pressure is not critical (nor warning with under 2 GB available). The boot holds a
- * marker that counts it until it finishes. A waiting run prints a progress line every 10 seconds, and refuses with
- * `STIM_AT_CAPACITY` after `waitMs`; without it, once the devices have stayed uncountable for the position-based
- * ceiling, or after 90 minutes in all. The stim-daemon wakes it when a boot finishes and reclaims an idle device of
- * another workspace for it.
+ * two boots run at once, and memory pressure is not critical (nor warning with under 2 GB available). A boot that
+ * needs a new device creates it inside `boot`. The boot holds a marker that counts it until it finishes or throws. A
+ * waiting run prints a progress line every 10 seconds, and refuses with `STIM_AT_CAPACITY` after `waitMs`; without
+ * it, once the devices have stayed uncountable for the position-based ceiling, or after 90 minutes in all. The
+ * stim-daemon wakes it when a boot finishes and reclaims an idle device of another workspace for it.
  */
 export async function withDeviceBootAdmission<T>(
   device: BootingDevice,
-  boot: () => Promise<T>,
+  boot: (admitted: AdmittedBoot) => Promise<T>,
   {
     root,
     max: maxOption,
@@ -1047,7 +1059,13 @@ export async function withDeviceBootAdmission<T>(
     }
     requireMembership();
     onBootStart();
-    return await boot();
+    return await boot({
+      rekey(key) {
+        const next = takeBootMarker({ ...device, key });
+        releaseClaim(marker);
+        marker = next;
+      },
+    });
   } finally {
     if (releaseClaim(marker)) notifyReleased('boot');
   }

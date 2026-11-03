@@ -21,6 +21,7 @@ import { resolveBuildPlacement } from '../../offload/selection.ts';
 import { resolveOptimizations, type Optimizations } from '../../optimizations.ts';
 import type { SettingScope } from '@stim-cli/core/state';
 import {
+  DeviceAdmissionRefusal,
   type DeviceSlotWaitPolicy,
   layerNote,
   unknownIosDeviceTypeRefusal,
@@ -30,6 +31,7 @@ import { parseIosSimulatorApp, type IosSimulatorApp } from '../../devices/ios-si
 import { listIosRuntimes, type IosSimSnapshot } from '../../devices/ios.ts';
 import { IosDeviceMismatchError } from '../../engine/device-ios.ts';
 import { RecordedDeviceLostError } from '../../engine/device.ts';
+import { claimFailure } from '../../ownership-claim.ts';
 import type { RemoteDeviceBackend } from '../../engine/device-remote.ts';
 import { describeDiagnostic } from '../../engine/errors-xcode.ts';
 import type { SimulatorArch } from '../../engine/agent-device.ts';
@@ -253,9 +255,11 @@ export async function deviceModelRefusal({
 }
 
 export function ownedSimFailure(error: unknown): { code: string; message: string; remedy: string } {
-  if (error instanceof RecordedDeviceLostError) {
+  if (error instanceof RecordedDeviceLostError || error instanceof DeviceAdmissionRefusal) {
     return { code: error.code, message: error.message, remedy: error.remedy };
   }
+  const refusal = claimFailure(error, 'stim ios');
+  if (refusal) return refusal;
   return {
     code: 'STIM_NO_DEVICE',
     message: `Could not ensure an owned iOS simulator: ${(error as Error)?.message || error}`,

@@ -307,7 +307,9 @@ slot. The caps are derived from the machine, and `concurrency.maxBuilds` and
 `max(1, floor(CPU cores / 6))` builds and `max(2, floor((RAM - 4 GB) / 1.5 GB))`
 booted or booting owned devices (8 on a 16 GB Mac). At most 2 boots run at
 once, and no boot starts while macOS memory pressure is critical, or warning
-with under 2 GB available.
+with under 2 GB available. A boot that needs a new simulator or emulator
+creates it inside its slot, so a burst of new workspaces creates at most 2
+devices at a time.
 
 A run past a cap waits in arrival order per resource and prints its queue
 position and what it waits for every 10 seconds, and keeps waiting while every
