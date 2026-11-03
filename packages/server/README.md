@@ -1417,11 +1417,12 @@ Start control with `device-host.control.begin` and
 control session ID and `lease: null`: the hosted lifetime claim protects this
 private device. Only one controller can drive the device; `takeOver: true`
 replaces the previous controller. Use the returned control ID with
-`device-host.input.touch|text`, using the same parameters as ordinary input.
+`device-host.input.touch|text|key`, using the same parameters as ordinary input
+(`key` takes the arrows and Escape on iOS and Android).
 iOS also supports `device-host.input.button|rotate|posture`. Android supports
 `device-host.input.button` through scrcpy; rotation and posture are unavailable
 on this path, as for physical Android devices. macOS also supports
-`device-host.input.scroll|key`; these two methods are for macOS sessions only.
+`device-host.input.scroll`, and `device-host.input.key` with its full key set and modifiers; scroll is for macOS sessions only.
 Touch coordinates range from 0 to 1 on the streamed display.
 End it with `device-host.control.end` and `{"session":"<control-id>"}`.
 
@@ -2899,7 +2900,12 @@ sends reaches any other device.
   Without `display`, a touch on an iPhone Duo goes to the panel its latest
   frame showed, and before any frame to the cover.
   `input.text` takes up to 256 printable ASCII characters, where `\n` presses
-  Return, `\t` Tab and `\b` Delete. `input.button` takes `home` or `lock`,
+  Return, `\t` Tab and `\b` Delete. On an iOS or Android device, `input.key`
+  takes `left`, `right`, `up`, `down` or `escape` with no modifiers: the
+  simulator gets the hardware key, an emulator the key through its gRPC
+  keyboard or `KEYCODE_DPAD_*` and `KEYCODE_ESCAPE` over `adb` without one,
+  and a phone the same Android key events through scrcpy. A web page takes no
+  keys. `input.button` takes `home` or `lock`,
   and on Android also `back` or `app-switch`. `input.rotate` takes
   `direction` (`left` or `right`) and turns the device a quarter turn. An
   iPhone Duo rotates through its Virtualization provider in folded, half-open

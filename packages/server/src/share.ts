@@ -135,6 +135,7 @@ const ROTATE_COST = 30;
 const INPUT_METHODS = new Map<string, Parameters<typeof parseInput>[0]>([
   ['touch', 'input.touch'],
   ['text', 'input.text'],
+  ['key', 'input.key'],
   ['button', 'input.button'],
   ['rotate', 'input.rotate'],
 ]);
@@ -901,9 +902,11 @@ export class ShareHub {
         ? { phase: fields.phase, x: fields.x, y: fields.y }
         : method === 'input.text'
           ? { text: fields.text }
-          : method === 'input.rotate'
-            ? { direction: fields.direction }
-            : { button: fields.button };
+          : method === 'input.key'
+            ? { key: fields.key }
+            : method === 'input.rotate'
+              ? { direction: fields.direction }
+              : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
     const session = await this.controlSession(share, viewer);
     if (!session || share.ended) return;
