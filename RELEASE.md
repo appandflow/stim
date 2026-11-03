@@ -559,8 +559,8 @@ npm install --global stim@next
   the version the packages carry on `main`, so `1.39.0` on `main` publishes
   `1.40.0-next.20261103040825.g751e1f0`. It sorts above every published
   release and below the next minor, and a plain `npm install stim` or a `^`
-  range never selects it. All the packages publish at that one version,
-  dependencies before the packages that depend on them.
+  range never selects it. All the packages publish at that one version: the
+  libraries first, then `stim`, then `@stim-cli/ci` and `@stim-cli/server`.
 - **Throttle.** The job waits until `NEXT_THROTTLE_MINUTES` (5) after the
   current `next` was published, then publishes whatever is the head of `main`
   at that moment. GitHub keeps one run active and one pending, so under
@@ -581,7 +581,9 @@ npm install --global stim@next
 - **Release candidates.** A candidate also publishes to `next`. While the
   packages on `main` carry a prerelease version (from the candidate's version
   commit until the stable one), the job publishes nothing, so `next` stays on
-  the candidate and its `smoke` check of `dist-tags.next` is not raced.
+  the candidate and its `smoke` check of `dist-tags.next` is not raced. A
+  channel run that resolved `main` before the candidate's version commit can
+  still be publishing then; let it finish before pushing the candidate's tag.
 - **What `next` points to:** `npm view stim dist-tags.next`. Each run's
   summary names the version, its commit and which packages published.
 - **Pause:** `gh variable set NEXT_PAUSED --body true` skips the job until

@@ -370,10 +370,13 @@ jobs:
             echo "stim has no next dist-tag yet"
             exit 0
           fi
-          published=$(npm view stim time --json | node -e '
+          if ! published=$(npm view stim time --json | node -e '
             const time = JSON.parse(require("fs").readFileSync(0, "utf8"));
             process.stdout.write(String(Math.floor(Date.parse(time[process.argv[1]]) / 1000)));
-          ' "$current")
+          ' "$current"); then
+            echo "::warning::could not read when $current was published; publishing without waiting"
+            exit 0
+          fi
           wait=$((published + NEXT_THROTTLE_MINUTES * 60 - $(date +%s)))
           echo "next is $current, published $(date -u -d "@$published" +%FT%TZ)"
           if [ "$wait" -gt 0 ]; then
