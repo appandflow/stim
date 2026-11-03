@@ -370,6 +370,7 @@ function connect(codec) {
       refreshStatus();
     } else if (message.type === 'waiting') {
       away = true;
+      resuming = false;
       live = false;
       body.dataset.away = 'true';
       refreshStatus();
