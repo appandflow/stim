@@ -1602,8 +1602,8 @@ RULES
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
                    before the cache lookup is prepare time, except a new
-                   simulator that waits for a boot slot: it is created
-                   beside the build. device starts
+                   simulator that waits to boot: the run builds while it
+                   waits. device starts
                    once the app is ready and covers waiting for the
                    device: its boot, adoption cleanup, a new simulator's
                    creation after the build, or a physical device's lease

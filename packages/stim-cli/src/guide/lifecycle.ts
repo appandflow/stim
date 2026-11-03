@@ -1241,10 +1241,10 @@ result as proof instead of requiring an unrelated screenshot.`,
     device      stim-app-412 (BF2A..) created (2m14s)
 
   On iOS that step does not wait the boot out. A run that creates its
-  simulator and finds no boot slot free does not wait for one: it builds for
-  any simulator, and the line's time runs from the start of the step to the
-  creation, inside the slot. A run that finds a slot creates the simulator,
-  asks it to boot, and hands the wait back,
+  simulator and has to wait to boot (a full device cap, a boot slot or memory)
+  builds for any simulator meanwhile, and the line's time runs from the start
+  of the step to the creation, inside the slot. A run that does not wait
+  creates the simulator, asks it to boot, and hands the wait back,
   so the run fingerprints the native inputs and resolves the build cache
   while \`simctl bootstatus\` is still running; it joins the boot before it
   installs anything. The \`device ... booted\` and \`fingerprint ...\` lines

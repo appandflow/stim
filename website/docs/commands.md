@@ -1749,8 +1749,8 @@ In `--json`, each environment carries `build`: `null`, or
 `phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`,
-except a new iOS simulator that waits for a boot slot: the run builds for any
-simulator while it waits.
+except a new iOS simulator that waits to boot (a full device cap, a boot slot or
+memory): the run builds for any simulator while it waits.
 `device` starts once the app is ready and covers waiting for the device (its
 boot, adoption cleanup, a new simulator's creation, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
