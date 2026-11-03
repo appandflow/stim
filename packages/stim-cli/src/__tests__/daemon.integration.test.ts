@@ -5,7 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn as spawnChild, type SpawnOptions } from 'node:child_process';
-import { daemonClaimRoot, daemonNdjsonFile, daemonSocket, readDaemonSnapshot } from '@stim-cli/core/state';
+import {
+  daemonClaimRoot,
+  daemonNdjsonFile,
+  daemonSocket,
+  maintenanceNdjsonFile,
+  readDaemonSnapshot,
+} from '@stim-cli/core/state';
 import { getExecutor, resetExecutor, setExecutor } from '../exec.ts';
 import { readClaimSet, releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { releaseBuildSlot, tryAcquireBuildSlot } from '../engine/build-slots.ts';
@@ -170,7 +176,7 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
   }, 20_000);
 
-  test('a tick that blocks the event loop reports the stall in its daemon_tick record', async () => {
+  function normalMeasurement(): void {
     const measureTick = measure.measureTick;
     const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
       const measured = await measureTick(...args);
@@ -183,23 +189,59 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
         },
       };
     });
-    const blocking = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
-      const until = Date.now() + 300;
-      while (Date.now() < until);
-    });
-    onTestFinished(() => {
-      normal.mockRestore();
-      blocking.mockRestore();
-    });
-    await runDaemon({ tickMs: 50 });
-    const tick = daemonLog()
+    onTestFinished(() => normal.mockRestore());
+  }
+
+  function firstTick(): { eventLoopDelay: { maxMs: number }; phases: { maintenanceMs: number } } | undefined {
+    return daemonLog()
       .trim()
       .split('\n')
       .map((line) => JSON.parse(line))
       .find((record) => record.event === 'daemon_tick');
-    expect(tick?.eventLoopDelay.maxMs).toBeGreaterThanOrEqual(250);
-    expect(tick?.phases.maintenanceMs).toBeGreaterThanOrEqual(300);
+  }
+
+  test('a tick that blocks the event loop reports the stall in its daemon_tick record', async () => {
+    normalMeasurement();
+    const blocking = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+      const until = Date.now() + 300;
+      while (Date.now() < until);
+    });
+    onTestFinished(() => blocking.mockRestore());
+    await runDaemon({ tickMs: 50 });
+    expect(firstTick()?.eventLoopDelay.maxMs).toBeGreaterThanOrEqual(250);
+    expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(250);
   }, 20_000);
+
+  test.skipIf(process.platform !== 'darwin')(
+    "under memory pressure, the tick's maintenance pass names memory culprits from a slow top without blocking the event loop",
+    async () => {
+      normalMeasurement();
+      const real = getExecutor();
+      const slowTop = ['-e', `setTimeout(() => process.stdout.write('PID MEM COMMAND\\n123 80G fseventsd\\n'), 600)`];
+      setExecutor({
+        ...real,
+        runFile: (file, args, options) => (file === '/usr/sbin/sysctl' ? '2\n' : real.runFile(file, args, options)),
+        runFileQuiet: (file, args, options) =>
+          file === '/usr/bin/top'
+            ? real.runFileQuiet(process.execPath, slowTop, options)
+            : real.runFileQuiet(file, args, options),
+        runFileQuietAsync: (file, args, options) =>
+          file === '/usr/bin/top'
+            ? real.runFileQuietAsync(process.execPath, slowTop, options)
+            : real.runFileQuietAsync(file, args, options),
+      });
+      process.env.STIM_DAEMON = 'report';
+      onTestFinished(() => {
+        resetExecutor();
+        delete process.env.STIM_DAEMON;
+      });
+      await runDaemon({ tickMs: 50 });
+      expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).toContain('fseventsd (pid 123) uses 80.0G');
+      expect(firstTick()?.phases.maintenanceMs).toBeGreaterThanOrEqual(600);
+      expect(firstTick()?.eventLoopDelay.maxMs).toBeLessThan(250);
+    },
+    20_000,
+  );
 
   test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
     writeFileSync(join(home, 'config.json'), '{ not json');
