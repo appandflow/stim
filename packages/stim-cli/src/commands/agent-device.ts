@@ -10,6 +10,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { constants } from 'node:os';
 import { dirname, join } from 'node:path';
 import chalk from 'chalk';
 import type { Command } from 'commander';
@@ -79,9 +80,39 @@ const REFUSED_COMMANDS: Record<string, string> = {
     "Stim shuts this workspace's devices down itself. Run `stim stop` to stop the workspace and shut its device down, or `stim agent-device close` to end the session.",
 };
 
-/** agent-device's global flags that take a value, so their value is not the command. */
-const AGENT_DEVICE_VALUE_FLAGS = new Set(['--config', '--level']);
+/** agent-device 0.21.35's flags that take a separate value, so the value is neither the command nor its target. */
+const AGENT_DEVICE_VALUE_FLAGS = new Set([
+  '--config',
+  '--level',
+  '--timeout',
+  '--depth',
+  '-d',
+  '--scope',
+  '-s',
+  '--count',
+  '--interval-ms',
+  '--hold-ms',
+  '--jitter-px',
+  '--settle-quiet',
+]);
 
+/** agent-device 0.21.35's command names (`agent-device help commands`). */
+const AGENT_DEVICE_COMMANDS = new Set(
+  (
+    'action-button alert app-switcher apps appstate artifacts audio auth back batch boot capabilities cdp click ' +
+    'clipboard close connect connection daemon debug device devices diff doctor events fill find focus fold gesture ' +
+    'get hardware-button help home hover install install-from-source is keyboard logs longpress mcp metro network ' +
+    'open orientation perf plugins prepare press proxy push react-devtools react-native record reinstall replay ' +
+    'screenshot scroll session settings shutdown snapshot swipe takeover telephony test trace trigger-app-event ' +
+    'tv-remote type uninstall viewport wait web'
+  ).split(' '),
+);
+
+/**
+ * The positions of the positional arguments, past the values of agent-device's value flags. The command is the
+ * first known command name among them, so a value of a flag agent-device adds later cannot pass for it; a command
+ * this list does not know yet falls back to the first positional.
+ */
 function positionals(rest: readonly string[]): number[] {
   const found: number[] = [];
   for (let i = 0; i < rest.length; i++) {
@@ -89,7 +120,8 @@ function positionals(rest: readonly string[]): number[] {
     if (AGENT_DEVICE_VALUE_FLAGS.has(arg)) i++;
     else if (!arg.startsWith('-')) found.push(i);
   }
-  return found;
+  const known = found.findIndex((index) => AGENT_DEVICE_COMMANDS.has(rest[index] ?? ''));
+  return known > 0 ? found.slice(known) : found;
 }
 
 /** Commands that take no device selection flags; agent-device refuses them with one. */
@@ -135,6 +167,17 @@ function readFlags(argv: readonly string[]): { flags: Partial<Record<ValueFlag, 
     flags[flag] = value;
   }
   return { flags, rest };
+}
+
+/** The arguments of a command that selects no device, such as `daemon status`, without Stim's flags; null otherwise. */
+export function unselectedArgs(argv: readonly string[]): string[] | null {
+  const read = readFlags(argv);
+  if (typeof read === 'string') return null;
+  const [at = -1] = positionals(read.rest);
+  const command = read.rest[at];
+  if (command === undefined || !UNSELECTED_COMMANDS.has(command)) return null;
+  const session = read.flags['--session'];
+  return [...read.rest, ...(session === undefined ? [] : ['--session', session])];
 }
 
 function refusal(code: string, message: string, remedy: string): { refusal: AgentDeviceRefusal } {
@@ -260,8 +303,6 @@ export function agentDeviceArgs(
 ): { args: string[]; session: string | null } | { refusal: AgentDeviceRefusal } {
   const { device } = plan;
   const session = plan.session === undefined ? [] : ['--session', plan.session];
-  if (plan.command !== null && UNSELECTED_COMMANDS.has(plan.command))
-    return { args: [...plan.args, ...session], session: null };
   if (device.kind === 'hosted') {
     if (!device.remoteConfig) {
       return refusal(
@@ -437,9 +478,9 @@ function writeSnapshot(root: string, session: string, text: string): void {
   const tree = parseAgentSnapshot(text);
   if (!tree) return;
   const file = agentSnapshotFile(root, session);
-  mkdirSync(dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   try {
+    mkdirSync(dirname(file), { recursive: true });
     writeFileSync(tmp, JSON.stringify(tree));
     renameSync(tmp, file);
   } catch {
@@ -490,7 +531,6 @@ function publish(version: string, params: PresencePublishParams): Promise<void> 
 /** The terminal already sends SIGINT to agent-device, in the same foreground process group; Stim only outlives it. */
 const FORWARDED_SIGNALS = ['SIGTERM', 'SIGHUP'] as const;
 const COMMAND_NAME = /^[a-z][a-z0-9-]{0,31}$/;
-const SIGNAL_CODES: Record<string, number> = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1, SIGKILL: 9 };
 
 async function runAgentDevice(argv: string[], version: string): Promise<void> {
   const json = argv.includes('--json');
@@ -522,6 +562,8 @@ async function runAgentDevice(argv: string[], version: string): Promise<void> {
   if (needsNoWorkspace(argv)) return execute(invocation, argv, null, null, version);
   const root = await findCommandWorkspaceAsync(process.cwd(), repoRootAsync, (line) => console.error(line));
   if (!root) return refuseNoProject({ json });
+  const unselected = unselectedArgs(argv);
+  if (unselected) return execute(invocation, unselected, null, root, version);
   let project = getProject(root);
   let state = readWorkspaceState(root);
   let plan = planAgentDevice(await resolveDevices(root, project, state), argv);
@@ -626,7 +668,7 @@ async function execute(
     child.once('close', (code, signal) => resolve({ code, signal }));
   });
   for (const [signal, handler] of handlers) process.off(signal, handler);
-  process.exitCode = exit.signal ? 128 + (SIGNAL_CODES[exit.signal] ?? 0) : (exit.code ?? 1);
+  process.exitCode = exit.signal ? 128 + (constants.signals[exit.signal] ?? 0) : (exit.code ?? 1);
   if (!tracked || !target || !run) return;
   if (tee && bytes <= MAX_SNAPSHOT_BYTES)
     writeSnapshot(tracked.root, tracked.session, Buffer.concat(chunks).toString('utf8'));

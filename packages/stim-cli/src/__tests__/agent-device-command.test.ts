@@ -6,6 +6,7 @@ import {
   agentDeviceArgs,
   needsRevive,
   planAgentDevice,
+  unselectedArgs,
   workspaceDevices,
   type WorkspaceDevice,
 } from '../commands/agent-device.ts';
@@ -57,7 +58,12 @@ describe('planAgentDevice', () => {
     expect(planAgentDevice([sim], ['boot', '--platform', 'ios'])).toMatchObject({
       refusal: { code: 'STIM_BAD_ARG', remedy: expect.stringContaining('stim revive') },
     });
-    for (const argv of [['--level', 'digest', 'boot'], ['shutdown'], ['close', '--shutdown']]) {
+    for (const argv of [
+      ['--level', 'digest', 'boot'],
+      ['--timeout', '60000', 'boot'],
+      ['--some-future-flag', 'value', 'shutdown'],
+      ['close', '--shutdown'],
+    ]) {
       expect(planAgentDevice([sim], argv)).toMatchObject({ refusal: { code: 'STIM_BAD_ARG' } });
     }
   });
@@ -109,7 +115,18 @@ describe('planAgentDevice', () => {
       target: 'label="Email"',
     });
     expect(planAgentDevice([sim], ['scroll', 'down'])).toMatchObject({ target: undefined });
+    expect(planAgentDevice([sim], ['press', '--settle-quiet', '300', '@e7'])).toMatchObject({ target: '@e7' });
   });
+});
+
+test('a command that selects no device runs without one, keeping the agent session and dropping --slot', () => {
+  expect(unselectedArgs(['daemon', 'status', '--slot', 'tablet', '--session', 'mine'])).toEqual([
+    'daemon',
+    'status',
+    '--session',
+    'mine',
+  ]);
+  expect(unselectedArgs(['press', '@e1'])).toBeNull();
 });
 
 describe('workspaceDevices', () => {
