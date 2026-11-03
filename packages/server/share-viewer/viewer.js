@@ -36,8 +36,9 @@ function showNote(text) {
 function timeLeft() {
   if (expiresAt === null) return '';
   const seconds = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
-  if (seconds >= 3600) return Math.floor(seconds / 3600) + ' h ' + Math.round((seconds % 3600) / 60) + ' min left';
-  if (seconds >= 300) return Math.round(seconds / 60) + ' min left';
+  const minutes = Math.round(seconds / 60);
+  if (minutes >= 60) return Math.floor(minutes / 60) + ' h ' + (minutes % 60) + ' min left';
+  if (seconds >= 300) return minutes + ' min left';
   return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0') + ' left';
 }
 

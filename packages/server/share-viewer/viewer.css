@@ -184,7 +184,7 @@ body[data-platform='android'] .source::before {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.pill:empty {
+.pill:empty:not(.mode) {
   display: none;
 }
 .pill.mode {
