@@ -21,7 +21,7 @@ import { projectRegistry } from '../../integrations/projects.ts';
 import { createNdjsonWriter } from '../../ndjson.ts';
 import { artifactCachePolicy, optimizationBuildProfile } from '../../optimizations.ts';
 import { setRemoteLogSink } from '../../remote-log.ts';
-import { getConcurrencyLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
+import { admissionLimits, getProject, upsertProject, withConfigLockAsync } from '../../workspace/config.ts';
 import { workspaceDir, workspaceLogsDir } from '../../workspace/paths.ts';
 import {
   resolveCacheProviderConfig,
@@ -242,7 +242,7 @@ export async function buildIosOperation(
                 disabledByFlag: options.buildCache === false,
               },
               easBuild,
-              maxBuilds: getConcurrencyLimits().maxBuilds,
+              maxBuilds: admissionLimits().maxBuilds,
               progress: {
                 phase,
                 note,

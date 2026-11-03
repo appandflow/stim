@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { bucketRows, derivedDeviceCap, longestStreak, sampleQuality, secondsWhere } from './analysis.mjs';
 import { createAssertions, judgeIdleTiming, outcome, STATUS } from './assertions.mjs';
 import { bootsInFlight, idleFacts } from './evidence.mjs';
-import { checkRungOrder, diffState } from './ladder.mjs';
+import { checkLadderOrder, diffState, ladderActions } from './ladder.mjs';
 import { createBallast } from './ballast.mjs';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -98,6 +98,27 @@ describe('idle timing judgment', () => {
     });
     expect(verdict).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 14 * MIN });
   });
+  describe('dormancy with a quiet daemon', () => {
+    const window = 20 * MIN;
+    const judge = (afterMs, previousAfterMs = null) =>
+      judgeIdleTiming({
+        ...base,
+        windowMs: window,
+        tickMs: MIN,
+        lateTickMs: 5 * MIN,
+        previousPollStartMs: previousAfterMs === null ? null : base.commandEndMs + previousAfterMs,
+        idlePollStartMs: base.commandEndMs + afterMs - 2000,
+        idlePollEndMs: base.commandEndMs + afterMs,
+      });
+    it('allows up to the window plus the quiet tick, and no more', () => {
+      expect(judge(24.5 * MIN, 24 * MIN).ok).toBe(true);
+      expect(judge(26.5 * MIN, 25.5 * MIN).ok).toBe(false);
+    });
+    it('does not let the quiet tick move the earliest time: a delete on the 15 minute idle clock fails', () => {
+      expect(judge(15.3 * MIN)).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 19 * MIN });
+      expect(judge(19.2 * MIN).ok).toBe(true);
+    });
+  });
   describe('an idle stop before the window ends', () => {
     const idleAt = base.commandEndMs + 3 * MIN;
     const judge = (pressureLevel, when = idleAt) =>
@@ -182,7 +203,7 @@ describe('idle facts from status', () => {
   });
 });
 
-describe('ladder order', () => {
+describe('ladder state changes', () => {
   const ws = { metroUp: true, devicesUp: 1, deviceExists: true, derived: true, nodeModules: true, pods: true };
   it('names what each transition freed', () => {
     const next = { ...ws, metroUp: false, devicesUp: 0, derived: false, deviceExists: false, pods: false };
@@ -200,15 +221,95 @@ describe('ladder order', () => {
       'cache-trim',
     ]);
   });
-  it('fails when a later rung freed state before an earlier one', () => {
-    const events = [
-      { at: 1000, rung: 4, kind: 'device-delete', workspace: 'a' },
-      { at: 50_000, rung: 1, kind: 'idle-stop', workspace: 'b' },
-    ];
-    expect(checkRungOrder(events, 15_000).verdict).toBe('fail');
+});
+
+const line = (record) => JSON.stringify(record);
+const A04 = '/h/work/r-04';
+const A05 = '/h/work/r-05';
+const action = (ts, rung, kind, target, extra = {}) =>
+  line({ event: 'pressure_action', rung, kind, target, outcome: 'done', bytes: 0, ts, ...extra });
+const idle = (ts, workspace) => line({ event: 'workspace_idle', workspace, freedBytes: 5, ts });
+const tick = (ts) => line({ event: 'daemon_tick', ts });
+
+describe('ladder order from the daemon log', () => {
+  const run = [
+    idle(1000, A04),
+    idle(1900, A05),
+    tick(2000),
+    action(200_000, 4, 'dormant-stage', A04, { workspace: A04 }),
+    tick(200_100),
+    action(500_000, 3, 'empty-cache', '/h/compilation-cache', { bytes: 2_969_333_760 }),
+    action(500_100, 3, 'empty-cache', '/h/build-cache', { outcome: 'kept' }),
+    action(560_000, 4, 'dormant-stage', A05, { workspace: A05 }),
+    action(570_000, 5, 'delete-dependencies', `${A04}/node_modules`, { workspace: A04, bytes: 1_180_147_712 }),
+    tick(580_000),
+  ].join('\n');
+
+  it('passes a correct ladder even though rung 3 first acts after rung 4 had acted in an earlier tick', () => {
+    const ladder = ladderActions({ daemonText: run });
+    const verdict = checkLadderOrder(ladder);
+    expect(verdict.verdict).toBe('pass');
+    expect(verdict.rungs).toEqual([1, 3, 4, 5]);
+    expect(verdict.evidence.some((e) => e.includes('rung 4 dormant-stage r-04'))).toBe(true);
   });
-  it('is no verdict with a single rung', () => {
-    expect(checkRungOrder([{ at: 1, rung: 1, kind: 'idle-stop', workspace: 'a' }], 15_000).verdict).toBe('unavailable');
+
+  it('ignores actions that kept something and takes the device deletion time from the daemon', () => {
+    const { actions } = ladderActions({ daemonText: run });
+    expect(actions.filter((a) => a.kind === 'empty-cache')).toHaveLength(1);
+    expect(actions.find((a) => a.kind === 'dormant-stage' && a.workspace === A04).ts).toBe(200_000);
+  });
+
+  it('counts an action once when the workspace log keeps a copy of it', () => {
+    const copy = action(200_001, 4, 'dormant-stage', A04);
+    const { actions } = ladderActions({ daemonText: run, workspaceLogs: [{ workspace: A04, text: copy }] });
+    expect(actions.filter((a) => a.kind === 'dormant-stage' && a.target === A04)).toHaveLength(1);
+  });
+
+  it('fails when a tick goes back to an earlier rung', () => {
+    const text = [
+      action(10, 5, 'delete-dependencies', A04, { workspace: A04 }),
+      action(20, 3, 'empty-cache', '/h/cc'),
+      tick(30),
+    ].join('\n');
+    expect(checkLadderOrder(ladderActions({ daemonText: text })).verdict).toBe('fail');
+  });
+
+  it('skips the within-tick rule, and says so, when the log has no tick records', () => {
+    const text = [
+      idle(1000, A04),
+      action(2000, 4, 'dormant-stage', A04, { workspace: A04 }),
+      action(3000, 3, 'empty-cache', '/h/cc'),
+    ].join('\n');
+    const verdict = checkLadderOrder(ladderActions({ daemonText: text }));
+    expect(verdict.verdict).toBe('pass');
+    expect(verdict.evidence.some((e) => e.includes('no tick records'))).toBe(true);
+  });
+
+  it('leaves out the workspaces the scenario starts and stops again', () => {
+    const text = [
+      action(10, 4, 'dormant-stage', A04, { workspace: A04 }),
+      tick(15),
+      idle(20_000, A04),
+      tick(20_100),
+      idle(30_000, A05),
+      tick(30_100),
+    ].join('\n');
+    expect(checkLadderOrder(ladderActions({ daemonText: text })).verdict).toBe('fail');
+    expect(checkLadderOrder(ladderActions({ daemonText: text }), { skipWorkspaces: [A04] }).verdict).toBe('pass');
+  });
+
+  it('fails when a workspace is idled after it went dormant, and has no verdict with one rung', () => {
+    const text = [
+      action(10, 4, 'dormant-stage', A04, { workspace: A04 }),
+      tick(15),
+      idle(20_000, A04),
+      tick(20_100),
+    ].join('\n');
+    expect(checkLadderOrder(ladderActions({ daemonText: text })).verdict).toBe('fail');
+    expect(checkLadderOrder(ladderActions({ daemonText: [idle(1, A04), tick(2)].join('\n') })).verdict).toBe(
+      'unavailable',
+    );
+    expect(checkLadderOrder(ladderActions({ daemonText: '' })).verdict).toBe('unavailable');
   });
 });
 

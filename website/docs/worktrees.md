@@ -144,6 +144,17 @@ difference. Otherwise it compares the source checkout's lockfile with
 this one. Warm never installs. Install missing dependencies with the project's
 package manager when the source checkout has none to copy.
 
+In every workspace, `node_modules`, `ios/Pods`, Xcode DerivedData and the build
+directories (`android/app/build`, `android/build`, `android/.gradle`, `.build`)
+are disposable. The `stim-daemon` deletes a workspace's build outputs when it
+goes idle, and the `node_modules` and Pods of idle linked worktrees under
+critical disk pressure; the next `stim start`, `stim ios` or `stim android`
+restores them from the build cache or with `stim worktree warm`. Never fix a
+dependency by editing files inside them, because the change is lost. Put
+dependency changes in the project's own patch mechanism, such as
+patch-package, `pnpm patch`, `yarn patch` or a Podfile `post_install` hook, and
+commit them.
+
 ## Refresh the source checkout first
 
 Every worktree is a copy of the source checkout, so a stale one seeds stale
@@ -242,7 +253,7 @@ environment's `phase`:
 
 `phaseSince` is when the warm started or finished. A warm that fails or is
 killed reads as `idle`, never as `warming`. Plain `stim status` marks the
-workspace `[warming: copy]`, `[ready]` or `[idle]`. A warm that finds no app
+workspace `[warming: copy]` or `[ready]`. A warm that finds no app
 registers nothing, and the worktree stays in `unprovisionedWorktrees` until
 `start`, `ios`, `android`, or `doctor` registers it.
 
@@ -370,8 +381,9 @@ stim gc --delete
 stim gc --delete --worktrees --older-than 3`}
 />
 
-Automatic maintenance (`maintenance.mode`, on by default) removes finished
-worktrees on its own, by the same rules as `gc --delete`. Turn that off with
+Automatic maintenance ([`daemon.mode`](./settings.md#stim-daemon), on by
+default) removes finished worktrees on its own, by the same rules as
+`gc --delete`. Turn that off with
 `maintenance.removeFinishedWorktrees false`.
 
 With `maintenance.removeIdleWorktrees true`, which is off by default, its daily
@@ -401,7 +413,8 @@ case gc archives its uncommitted files first (see below). In use includes a
 running dev server, a Stim run or live build, a booted owned simulator or
 emulator, a held device lease, and a worktree that holds the running `stim`
 or the `stim` on your PATH; a device left booted keeps the worktree until
-`stim stop` or `stim gc --idle` shuts it down. With `--delete`, gc runs
+`stim stop` or the [idle stage](./dev-server-and-logs.md#idle-stop) shuts it
+down. With `--delete`, gc runs
 `stim worktree remove` without `--force` on each removable worktree. That
 command checks the worktree again before removing it, parks or shuts down its
 devices, and handles branches as it does when you run it yourself. A worktree that fails is
@@ -411,7 +424,7 @@ plain `gc --delete` removes those.
 
 Each worktree line shows its in-tree build state: the size of `node_modules`,
 `ios/Pods`, `android/app/build`, `.build` and the other
-directories automatic maintenance clears, plus a project-local `.pnpm-store`.
+directories automatic maintenance and the pressure ladder clear, plus a project-local `.pnpm-store`.
 A directory directly under a repository's `.worktrees/` that
 `git worktree list` no longer shows, and that no other repository claims, is listed with its size and the `rm -rf`
 command to remove it. gc never removes it, because git can no longer say
@@ -449,8 +462,7 @@ that never got a commit, holds nothing git would lose. `gc --delete` and the
 maintenance worktree check remove it once its git and Stim activity (the same
 sources as the grace period below) is older than both `gc.worktreeGraceMinutes`
 and `maintenance.protectRecentHours`, 2 hours by default, unless it has an open
-pull request. At disk pressure level 3 the window is
-`maintenance.pressureProtectMinutes`, and never shorter than 5 minutes. Before
+pull request, and never sooner than 5 minutes. Before
 removing it, gc checks again that its HEAD did not move and that it is still
 idle. A program Stim does not track, such as a benchmark started from that
 checkout, does not keep it; lock such a checkout with `git worktree lock`.
@@ -466,8 +478,7 @@ Ignored files such as `node_modules` and build output are not saved. It checks
 the patch with `git apply --check -R`, checks the tarball lists every file, and
 checks again just before git removes the worktree that no archived file
 changed; any failure keeps the worktree. It also keeps the worktree when the
-archive would leave less free disk than `budget.hardFloorDiskGb`, and disk
-pressure level 3 never archives. Archives are private to your user but not
+archive would leave less free disk than `disk.hardFloorGb`. Archives are private to your user but not
 redacted: an untracked `.env` file that git does not ignore is saved with the
 rest, so set `archive.enabled false` for a sensitive repository. A `git status`
 or editor refresh that rewrites the index counts as activity and restarts the
@@ -514,10 +525,10 @@ Plain `gc`, without `--delete`, runs no fetch and no `gh`. It checks merges
 against the `origin/<default>` ref already on disk, and reads pull requests
 from the cache that `stim status --watch` and the maintenance worktree check
 write, when that cache describes the worktree's current branch and HEAD. The
-worktree check runs in the background when a stim command such as `start`,
-`ios`, `android` or `status` starts a maintenance pass with it due (`gc`,
-`guide`, `settings` and help never do), every `maintenance.worktreeCheckMinutes`
-(15 by default). The ref and the cache count as fresh while they are younger
+worktree check runs every `maintenance.worktreeCheckMinutes` (15 by default)
+in a maintenance pass: on a `stim-daemon` tick, or, while no daemon holds the
+home, when `stim doctor`, `stim start`, `stim ios` or `stim android` runs one;
+`gc` never starts one. The ref and the cache count as fresh while they are younger
 than twice that interval, and never less than 10 minutes. A merge found this
 way stays true as the default branch moves on, so the report calls a worktree
 removable only on facts that fresh state keeps. The exceptions are a
@@ -526,7 +537,7 @@ reopened since the lookup, and the grace period of a pull request merged or clos
 after its merge commit was made. When fresher state could change a kept worktree's
 verdict, the report says "merge state not refreshed", and a worktree that is
 only not merged shows the reason `merge-unknown` instead of `not-merged`.
-With `maintenance.mode` off or `maintenance.removeFinishedWorktrees` false,
+With `daemon.mode` off or `maintenance.removeFinishedWorktrees` false,
 the worktree check never runs, and only `gc --delete` refreshes. `gc --delete`
 fetches (unless the checkout fetched in the last 10 minutes) and asks GitHub
 before it removes anything; a `stim worktree remove` run from the report

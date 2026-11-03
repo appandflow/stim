@@ -14,7 +14,7 @@ export default defineConfig({
     'cache-manifest': 'src/cache/cache-manifest.ts',
     'pull-requests': 'src/workspace/pull-request.ts',
     'build-artifact-cache': 'src/offload/build-artifact-cache.ts',
-    'maintenance-run': 'src/maintenance/run.ts',
+    'daemon-run': 'src/daemon/run.ts',
     'supervisor-run': 'src/supervisor/run.ts',
     'collector-run': 'src/collector/run.ts',
     'web-run': 'src/web/run.ts',
@@ -38,6 +38,7 @@ export default defineConfig({
       writeFileSync(`dist/${SETTINGS_SCHEMA_FILE}`, `${JSON.stringify(settingsJsonSchema(), null, 2)}\n`);
       copyFileSync('helper/stim-footprint.swift', 'dist/stim-footprint.swift');
       copyFileSync('helper/stim-clonefile.c', 'dist/stim-clonefile.c');
+      copyFileSync('helper/stim-privsize.c', 'dist/stim-privsize.c');
       copyFileSync('helper/windows-report.ps1', 'dist/windows-report.ps1');
     },
   },

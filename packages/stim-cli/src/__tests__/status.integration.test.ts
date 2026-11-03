@@ -11,7 +11,7 @@ import { createServer } from 'http';
 import { Command } from 'commander';
 import { type ExecOptions, getExecutor, setExecutor, resetExecutor } from '../exec.ts';
 import { recordCreatedDevice } from '../devices/created-devices.ts';
-import { saveConfig, loadConfig } from '../workspace/config.ts';
+import { admissionLimits, saveConfig, loadConfig } from '../workspace/config.ts';
 import type { AddressInfo } from 'node:net';
 import assert from 'node:assert';
 import { captureProcessToken } from '../process-identity.ts';
@@ -157,6 +157,52 @@ test('status says nothing extra for a project that has only a Metro port', async
   const logs = await runStatus();
 
   expect(logs.some((l) => /!/.test(l))).toBe(false);
+});
+
+test('each workspace says its stage and how long it has been in it, and the idle stage names stim revive only after an idle stop', async () => {
+  const project = join(tmpHome, 'proj-idle');
+  const revivable = join(tmpHome, 'proj-revivable');
+  const dormant = join(tmpHome, 'proj-dormant');
+  const stopped = join(tmpHome, 'proj-stopped');
+  for (const dir of [project, revivable, dormant, stopped]) mkdirSync(dir);
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [project]: { label: 'idle', metroPort: 8083, platforms: {} },
+        [revivable]: { label: 'revivable', metroPort: 8086, platforms: {} },
+        [dormant]: { label: 'dormant', metroPort: 8084, platforms: {} },
+        [stopped]: { label: 'stopped', metroPort: 8085, platforms: {} },
+      },
+    }),
+  );
+  const idleStage = {
+    at: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+    idleMinutes: 15,
+    freedBytes: 1024,
+  };
+  writeWorkspaceState(project, { idleStage });
+  writeWorkspaceState(revivable, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
+  writeWorkspaceState(dormant, {
+    dormantStage: {
+      at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+      dormantDays: 3,
+      deletedDevices: [],
+      archived: false,
+    },
+  });
+
+  const lines = await runStatus();
+  const text = lines.join('\n');
+  const stages = lines.filter((line) => line.includes('stage: idle'));
+  expect(stages).toHaveLength(2);
+  expect(
+    stages.filter((line) => /stage: idle for 2h\b.*`stim ios` or `stim android` resumes it/.test(line)),
+  ).toHaveLength(1);
+  expect(stages.filter((line) => line.includes('`stim revive` resumes it'))).toHaveLength(1);
+  expect(text).toMatch(/stage: dormant for 72h\b/);
+  expect(text).toContain('stage: stopped');
+  expect(text).not.toContain('[idle]');
 });
 
 test('status detects the framework of an app registered only through a named port', async () => {
@@ -436,7 +482,7 @@ test('status --json sets memoryMb from the footprint helper, compiling it once i
   expect(calls.filter((call) => call === 'stim-footprint')).toHaveLength(2);
 });
 
-test('status --json reports the machine load against server.maxLoadPerCore, and slot usage only for a set cap', async () => {
+test('status --json reports the machine load against server.maxLoadPerCore, and slot usage under set and derived caps', async () => {
   saveConfig(makeConfig({ concurrency: { maxBuilds: 2 }, server: { maxLoadPerCore: 1.5 } }));
   const cpus = availableParallelism();
   const before = (loadavg()[1] ?? 0) / cpus;
@@ -448,7 +494,12 @@ test('status --json reports the machine load against server.maxLoadPerCore, and 
   expect(capacity.load.loadPerCore).toBeLessThanOrEqual(Math.ceil(Math.max(before, after) * 10) / 10);
   expect(capacity.load.state).toBe(capacity.load.loadPerCore >= 1.5 ? 'busy' : 'free');
   expect(capacity.builds).toEqual({ max: 2, inUse: 0, holders: [] });
-  expect(capacity).not.toHaveProperty('devices');
+  expect(capacity.devices).toEqual({ max: admissionLimits().maxDevices, inUse: 0, holders: [] });
+  const plain = (await runStatus()).join('\n');
+  expect(plain).toContain('builds 0/2 (concurrency.maxBuilds)');
+  expect(plain).toContain(
+    `devices 0/${admissionLimits().maxDevices} (derived; set concurrency.maxDevices to override)`,
+  );
 });
 
 test('without the helper, owners carry RSS and environments keep the estimate', async () => {
@@ -845,6 +896,8 @@ test('a running build reports what its build tool is doing only while it compile
       outcomeKnown: true,
       detail: { unit: 'targets', done: 0, total: 3 },
     });
+
+    expect((await runStatus(process.platform)).join('\n')).toContain('stage: running');
 
     progress.step('install');
     expect((await runStatusJson(process.platform)).environments[0].build).toMatchObject({ phase: 'install' });
@@ -1583,8 +1636,8 @@ test.each([undefined, 'idle' as const, 'reclaimed for a waiting run' as const, "
       reason === 'reclaimed for a waiting run'
         ? 'reclaimed for a waiting run'
         : reason === "Metro's idle stop"
-          ? "with Metro's idle stop; metro.idleStopMinutes"
-          : 'devices.idleShutdownMinutes',
+          ? "with Metro's idle stop; idle.minutes"
+          : 'idle.minutes',
     );
     const payload = await runStatusJson();
     expect(

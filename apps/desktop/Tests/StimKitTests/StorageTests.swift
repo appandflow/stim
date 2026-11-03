@@ -414,33 +414,6 @@ import Testing
   }
 }
 
-@Suite struct AutopilotTests {
-  @Test func proposesGcDeleteOnlyUnderTheBudget() throws {
-    let gib: Int64 = 1_073_741_824
-    let json = """
-      {"sections":{
-        "linkedWorktrees":[{"path":"/w","mergedInto":"origin/main","willRemove":true},{"path":"/x","willRemove":false}],
-        "parkedSimulators":[{"udid":"U","bytes":1000000000}],
-        "workspaceBuildOutputs":[{"projectRoot":"/a","bytes":25000000000,"willClear":true},
-          {"projectRoot":"/b","bytes":9,"willClear":true},{"projectRoot":"/c","bytes":5,"willClear":false}]}}
-      """
-    let report = try JSONDecoder().decode(GcReport.self, from: Data(json.utf8))
-    #expect(PressurePlan.make(freeBytes: 25 * gib, minimumFreeGb: 20, hardFloorGb: 5, report: report) == nil)
-    #expect(PressurePlan.make(freeBytes: gib, minimumFreeGb: 0, hardFloorGb: 0, report: report) == nil)
-
-    let plan = try #require(PressurePlan.make(freeBytes: 12 * gib, minimumFreeGb: 20, hardFloorGb: 5, report: report))
-    #expect(!plan.belowHardFloor)
-    #expect(plan.headline == "Disk 12.0 GB free, under the 20 GB Stim budget")
-    #expect(
-      plan.proposal
-        == "Clear the build outputs of 2 idle workspaces, remove 1 merged worktree and delete 1 unused owned device to free about 26 GB."
-    )
-
-    let bare = try #require(PressurePlan.make(freeBytes: 4 * gib, minimumFreeGb: 20, hardFloorGb: 5, report: nil))
-    #expect(bare.isEmpty && bare.belowHardFloor)
-  }
-}
-
 @Suite struct GcDeleteScopeTests {
   @Test func selectsACacheAloneByNameElseByDirectory() {
     let gradle = GcReport.Cache(name: "Gradle build cache", dir: "/g", bytes: nil, note: nil, willEmpty: nil)
@@ -461,7 +434,6 @@ import Testing
     #expect(
       GcPreview.deleteArguments(after: ["gc", "--json", "--cache", "Xcode CAS"])
         == ["gc", "--json", "--cache", "Xcode CAS", "--delete"])
-    #expect(GcPreview.deleteArguments(after: ["gc", "--idle", "1h"]) == nil)
     #expect(GcPreview.deleteArguments(after: ["gc", "--delete"]) == nil)
   }
 }
@@ -470,12 +442,12 @@ import Testing
   @Test func readsABudgetSetByAnEnvironmentVariable() throws {
     let json = """
       {"files":{},"unknown":[],"settings":[
-        {"key":"budget.minFreeDiskGb","value":"40","origin":"env","layers":{}},
-        {"key":"budget.hardFloorDiskGb","value":5,"origin":"default","layers":{}}]}
+        {"key":"disk.minFreeGb","value":"40","origin":"env","layers":{}},
+        {"key":"disk.hardFloorGb","value":5,"origin":"default","layers":{}}]}
       """
     let payload = try JSONDecoder().decode(SettingsPayload.self, from: Data(json.utf8))
-    #expect(payload.entry("budget.minFreeDiskGb")?.number == 40)
-    #expect(payload.entry("budget.hardFloorDiskGb")?.number == 5)
+    #expect(payload.entry("disk.minFreeGb")?.number == 40)
+    #expect(payload.entry("disk.hardFloorGb")?.number == 5)
   }
 }
 
@@ -491,7 +463,6 @@ import Testing
     #expect(changes(["worktree", "remove"]))
     #expect(changes(["ports", "release", "bench"]))
     #expect(changes(["gc", "--delete", "--json"]))
-    #expect(changes(["gc", "--idle", "30m", "--json"]))
     #expect(changes(["settings", "set", "gc.worktreeGraceMinutes", "0", "--scope", "machine"]))
   }
 

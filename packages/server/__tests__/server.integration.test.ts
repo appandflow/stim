@@ -1409,6 +1409,62 @@ describe('pairing', () => {
       }
     },
   );
+  it('keeps sessions and revokes nothing while the Stim home is away, then serves again once it is back', async () => {
+    const port = await start();
+    const { keyPair } = await pair(port);
+    const live = await returning(port, keyPair);
+    const waiting = await connect(port, undefined, { keyPair });
+    const revoke = vi.spyOn(DeviceHost.prototype, 'revoke');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const health = async () => (await fetch(`http://127.0.0.1:${port}/health`)).status;
+    const home = join(root, 'home');
+    try {
+      renameSync(home, `${home}.away`);
+      for (let tries = 0; tries < 300 && (await health()) !== 503; tries++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(await (await fetch(`http://127.0.0.1:${port}/health`)).json()).toMatchObject({
+        startup: { state: 'degraded', cause: 'home-unreadable' },
+      });
+      const reply = waiting.request('hello', { client: CLIENT });
+      expect(await Promise.race([reply, waiting.closedWith])).not.toHaveProperty('result');
+      expect(await waiting.closedWith).toEqual({ code: 4401, reason: 'home-unavailable' });
+      await expect(connect(port, undefined, { keyPair })).rejects.toThrow('503');
+      expect(live.socket.readyState).toBe(WebSocket.OPEN);
+      expect(revoke).not.toHaveBeenCalled();
+
+      renameSync(`${home}.away`, home);
+      for (let tries = 0; tries < 300 && (await health()) !== 200; tries++)
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(await health()).toBe(200);
+      expect(logged).toHaveBeenCalledWith('stim-server: the Stim home answers again; serving clients.');
+      expect(live.socket.readyState).toBe(WebSocket.OPEN);
+      (await returning(port, keyPair)).socket.close();
+    } finally {
+      revoke.mockRestore();
+      logged.mockRestore();
+    }
+  });
+
+  it('still closes hosted devices when it stops while the Stim home is away', async () => {
+    const port = await start();
+    const home = join(root, 'home');
+    const hostedClose = vi.spyOn(DeviceHost.prototype, 'close');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      renameSync(home, `${home}.away`);
+      for (let tries = 0; tries < 300; tries++) {
+        if ((await fetch(`http://127.0.0.1:${port}/health`)).status === 503) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect((await fetch(`http://127.0.0.1:${port}/health`)).status).toBe(503);
+      await server?.close();
+      server = null;
+      expect(hostedClose).toHaveBeenCalledOnce();
+    } finally {
+      hostedClose.mockRestore();
+      logged.mockRestore();
+    }
+  });
 });
 
 describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
@@ -1463,7 +1519,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
       writeFileSync(path, `${JSON.stringify(record)}\n`);
     }
     const port = await start({
-      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
     const { token } = createPairingToken(Date.now(), capabilitiesFor(true));
     const remote = await connect(port, undefined, { secret: token, keyPair: generateNoiseKeyPair() });
@@ -1558,7 +1614,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const before = readFileSync(config, 'utf8');
@@ -1609,7 +1665,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const before = readFileSync(config, 'utf8');
@@ -1723,7 +1779,7 @@ describe.skipIf(process.platform === 'win32')('Desktop reports', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const client = await desktop();
@@ -1839,7 +1895,7 @@ if (delayed) {
           HOME: root,
           USERPROFILE: root,
           PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
-          STIM_MAINTENANCE: 'off',
+          STIM_DAEMON: 'off',
         },
       });
       const client = await desktop();
@@ -1893,7 +1949,7 @@ if (delayed) {
         HOME: root,
         USERPROFILE: root,
         PATH: [tools, dirname(process.execPath), '/usr/bin', '/bin'].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const client = await desktop();
@@ -1988,7 +2044,7 @@ if (delayed) {
   it('applies the report byte quota to both get and pushed errors', async () => {
     await start({
       commandLimits: { maxOutputBytes: 1 },
-      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_MAINTENANCE: 'off' },
+      env: { HOME: root, USERPROFILE: root, PATH: dirname(process.execPath), STIM_DAEMON: 'off' },
     });
     const client = await desktop();
     expect(await client.request('desktop.reports.get', { report: 'gc' })).toMatchObject({
@@ -2029,7 +2085,7 @@ const timer = setInterval(() => {
         PATH: bin + ':' + process.env.PATH,
         REPORT_GIT_JOBS: jobs,
         REPORT_RELEASE: release,
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const client = await desktop();
@@ -2066,7 +2122,7 @@ require('node:net').createServer().listen(0, '127.0.0.1');
         USERPROFILE: root,
         PATH: bin + ':' + process.env.PATH,
         REPORT_GIT_JOBS: jobs,
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const first = await desktop();
@@ -2539,7 +2595,7 @@ describe('hosted device sessions', () => {
     'keeps a hosted session while its client stays connected and stops it after the client is gone',
     async () => {
       const port = await start({
-        env: { STIM_MAINTENANCE: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
+        env: { STIM_DAEMON: 'on', STIM_MAINTENANCE_IDLE_STOP_HOURS: '0.0002' },
         hostedIdleSweepMs: 50,
       });
       const { client, id } = await linkedSession(port);
@@ -3817,6 +3873,7 @@ describe('offloaded builds', () => {
     { skip: !fakeTailscale },
     async (dropEvents) => {
       registryWatch.dropEvents = dropEvents;
+      configure({ server: { maxLoadPerCore: 100_000 }, concurrency: { maxBuilds: 2 } });
       const port = await start({ env: { FAKE_WORKER_HANG: '1' }, buildLimits: { killGraceMs: 100 } });
       const { client, id } = await buildClient(port);
       await client.request('build.sync', { repo: 'app-1', files: [file('a', 'x')], done: true });
@@ -4722,7 +4779,7 @@ describe('status views', () => {
       event: 'machine',
       subscription: 's1',
       seq: 0,
-      machine: { ...machine, maintenance: null },
+      machine: { ...machine, maintenance: null, daemon: null },
     });
   });
 
@@ -5268,7 +5325,7 @@ describe('archived reads', () => {
     for (const { filter, args } of cases) {
       const expected = execFileSync(process.execPath, [fileURLToPath(cli), 'logs', '--json', '--tail=5000', ...args], {
         cwd: workspace,
-        env: { ...process.env, STIM_MAINTENANCE: 'off' },
+        env: { ...process.env, STIM_DAEMON: 'off' },
         encoding: 'utf8',
       })
         .split('\n')
@@ -5633,7 +5690,7 @@ describe('machine.details', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     const first = await authed(port);
@@ -5676,7 +5733,7 @@ describe('machine.details', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
         FAKE_TAILSCALE_CWDS: join(root, 'doctor-cwds'),
       },
     });
@@ -5708,7 +5765,7 @@ describe('machine.details', () => {
   it('keeps the stats when gc fails, and says why gc is missing', async () => {
     const port = await start({
       commandLimits: { maxOutputBytes: 1 },
-      env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' },
+      env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' },
     });
     const client = await authed(port);
     expect(await client.request('machine.details')).toMatchObject({
@@ -5852,13 +5909,13 @@ describe('stats.get and settings.get', () => {
   });
 
   it('reads settings with the server environment and reports a refusal with its code and remedy', async () => {
-    const port = await start({ env: { STIM_BUDGET_MIN_FREE_DISK_GB: 'lots' } });
+    const port = await start({ env: { STIM_DISK_MIN_FREE_GB: 'lots' } });
     const client = await authed(port);
     expect(await client.request('settings.get', { workspace })).toMatchObject({
       error: {
         code: 'stim-failed',
         message: expect.stringMatching(
-          /^STIM_BAD_ARG: Invalid STIM_BUDGET_MIN_FREE_DISK_GB value "lots"\. Expected a number, 0 or more\. Fix the environment variable/,
+          /^STIM_BAD_ARG: Invalid STIM_DISK_MIN_FREE_GB value "lots"\. Expected a number, 0 or more\. Fix the environment variable/,
         ),
       },
     });
@@ -5924,7 +5981,7 @@ describe('stats.get and settings.get', () => {
         HOME: root,
         USERPROFILE: root,
         PATH: [root, dirname(process.execPath)].join(delimiter),
-        STIM_MAINTENANCE: 'off',
+        STIM_DAEMON: 'off',
       },
     });
     rmSync(join(root, 'fake-stim.mjs'));
@@ -7806,6 +7863,10 @@ const timer = setInterval(() => {
         JSON.stringify({
           projects: { [workspace]: { platforms: { android: { avdName: avd, owned: true } } } },
         }),
+      );
+      writeFileSync(
+        join(root, 'home', 'created-devices.json'),
+        JSON.stringify({ version: 1, ios: [], android: [avd], web: [] }),
       );
       const port = await start({
         env: { ANDROID_HOME: sdk, ANDROID_AVD_HOME: avds, PATH: `${bin}:${process.env.PATH}` },
@@ -11944,7 +12005,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
 
   it('copies real ignored state and streams its result without running the CLI', async () => {
     const linked = warmingFixture();
-    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
     expect(await client.request('desktop.worktree.warm.subscribe', { cwd: linked })).toHaveProperty(
@@ -12093,7 +12154,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree warming', () => 
           }),
       };
     });
-    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const claim = tryAcquireClaim({
       root: join(home, 'warm-locks', `${workspaceName(workspace)}.lock`),
       mode: 'exclusive',
@@ -12230,7 +12291,7 @@ describe.skipIf(process.platform === 'win32')('Desktop worktree removal', () => 
         },
       }),
     );
-    return { linked, git, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+    return { linked, git, env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } };
   }
 
   async function remove(client: Client, params: unknown) {
@@ -12410,7 +12471,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
         caches: [{ name: 'rpc-fixture', dir: cache, prune: 'entries' }],
       }),
     );
-    return { home, cache, artifact, env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } };
+    return { home, cache, artifact, env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } };
   }
 
   async function ended(client: Client) {
@@ -12480,8 +12541,7 @@ describe.skipIf(process.platform === 'win32')('Desktop GC mutation', () => {
       { cwd: workspace, delete: 'yes' },
       { cwd: workspace, worktrees: 1 },
       { cwd: workspace, olderThan: 1.5 },
-      { cwd: workspace, idleMs: 0 },
-      { cwd: workspace, idleMs: 1.5 },
+      { cwd: workspace, idleMs: 60_000 },
       { cwd: workspace, signal: {} },
     ])
       expect(await client.request('desktop.gc.subscribe', params)).toHaveProperty('error.code', 'bad-request');
@@ -12634,7 +12694,7 @@ setInterval(() => {}, 1000);
 describe.skipIf(process.platform === 'win32')('Desktop machine access requests', () => {
   it('returns an in-process setup report without exposing its ticket or running the CLI', async () => {
     writeFileSync(join(workspace, 'package.json'), JSON.stringify({ dependencies: { 'react-native': '*' } }));
-    await start({ env: { HOME: root, USERPROFILE: root, STIM_MAINTENANCE: 'off' } });
+    await start({ env: { HOME: root, USERPROFILE: root, STIM_DAEMON: 'off' } });
     const client = await desktop();
     rmSync(join(root, 'fake-stim.mjs'));
     const ticket = 'a'.repeat(42) + 'A';

@@ -334,7 +334,7 @@ export const REBUILD_COST: string =
   'are off), so that build recompiles Swift. The next stim macos in a cleared workspace is a full Swift build.';
 
 /** How long after its last ios, android or macos run a workspace keeps its build outputs. */
-export const LIGHTEN_AFTER_MS: number = 15 * 60_000;
+const LIGHTEN_AFTER_MS = 15 * 60_000;
 
 const BUILD_CHECKS = { devServer: false, hosted: false, managedLocks: false } as const;
 const BUILD_IN_PROGRESS = 'a build is in progress';
@@ -449,7 +449,8 @@ const gitRead = (operation?: StimContext, signal?: AbortSignal) => ({
   declareFor: operation,
 });
 
-function outputPaths(dir: string): string[] {
+/** The regenerable build outputs Stim keeps for a workspace in its workspace directory. */
+export function workspaceOutputPaths(dir: string): string[] {
   const paths = WORKSPACE_OUTPUT_DIRS.map((name) => join(dir, name)).filter((path) => existsSync(path));
   const macos = join(dir, 'macos');
   try {
@@ -528,7 +529,7 @@ export function collectWorkspaceOutputs({
       .filter((entry) => entry.projectRoot === null || isOnMountedVolume(entry.projectRoot, mountedVolumes))
       .map((entry) => {
         const inTreeDirs = inTree.get(entry.dir) ?? [];
-        return Object.assign({}, entry, { inTreeDirs, paths: [...outputPaths(entry.dir), ...inTreeDirs] });
+        return Object.assign({}, entry, { inTreeDirs, paths: [...workspaceOutputPaths(entry.dir), ...inTreeDirs] });
       })
       .filter((entry) => entry.paths.length > 0);
   const report = (
@@ -653,7 +654,7 @@ export async function clearWorkspaceOutputs(
           for (const path of lighten ? existingDirsOf(root, ARTIFACT_DIRS.build) : [])
             inTree.push({ path, problem: await regenerableDirProblem(root, path, signal) });
           for (const path of [
-            ...outputPaths(entry.dir),
+            ...workspaceOutputPaths(entry.dir),
             ...inTree.filter((dir) => !dir.problem).map((dir) => dir.path),
           ]) {
             signal?.throwIfAborted();

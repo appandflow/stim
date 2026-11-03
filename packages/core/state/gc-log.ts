@@ -10,6 +10,7 @@ export interface GcLogOptions {
   worktrees?: boolean;
   olderThan?: number;
   cache?: string;
+  /** Written by `stim gc --idle`, which no longer exists; older records keep it. */
   idleMs?: number;
 }
 

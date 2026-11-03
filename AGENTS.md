@@ -351,8 +351,10 @@ outside it moves to its own issue and pull request.
   protected path, and offers no separate setting, so a private `TMPDIR` lets
   concurrent builds race on the shared repository cache. `gc` cleans the
   `TemporaryDirectory.*` entries SwiftPM leaves.
-- **Concurrency limits.** Build and device caps are opt-in through config or
-  environment variables.
+- **Concurrency limits.** Every native build and every boot of an owned
+  device takes a slot under caps derived from the machine; config or
+  environment variables override them. Waiters queue in arrival order in claim
+  files, which stay the record when no daemon runs.
 - **Settings registry.** `packages/core/state/settings-registry.ts` defines
   every project and machine setting: type, layers, default, environment
   override, and sensitivity. Validation, doctor, `stim settings`, the shipped
@@ -612,10 +614,11 @@ when teardown fails so `gc` can find the device later.
 
 Stim parks an eligible owned simulator or emulator it no longer needs instead
 of deleting it, up to a per-platform configured maximum, and adopts a compatible
-parked one before creating. Under disk pressure level 2 or 3 it deletes instead
-of parking. Owned devices are disposable: automatic maintenance and `gc
---delete` delete the owned devices of an idle workspace, never of one that is in
-use, leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
+parked one before creating. While the disk pressure level is high or critical it
+deletes instead of parking. Owned devices are disposable: the stim-daemon's
+dormant stage and pressure ladder, automatic maintenance and `gc --delete`
+delete the owned devices of an idle workspace, never of one that is in use,
+leased, driven, locked or pinned by `maintenance.keep`. Parking keeps the device's apps and data; the pool
 record names the installed app and its cache key. Parked devices are
 Stim-owned and listed in the pool record. Adoption removes other third-party
 apps except iOS XCUITest runners (`*.xctrunner`) and clears the adopting app's data before launch, on every adoption, and
@@ -627,8 +630,9 @@ matches the system image and recorded AVD creation settings and keeps the AVD
 name. When an adopted emulator lacks room on `/data` for the install, trim app
 caches, then wipe its user data through centralized teardown. Delete parked
 devices only by eviction, adoption-time reconciliation of a listed unavailable
-simulator, `gc --delete`, or automatic maintenance at disk pressure level 2 or
-in its age sweep after `maintenance.olderThanDays`; erase them only with `gc --cache parked
+simulator, `gc --delete`, the stim-daemon's pressure ladder at high or critical
+disk pressure, or automatic maintenance's age sweep after
+`maintenance.olderThanDays`; erase them only with `gc --cache parked
 --delete`. Every route uses centralized teardown and ownership revalidation.
 `gc --delete` deletes parked hosted devices through their owning session home.
 

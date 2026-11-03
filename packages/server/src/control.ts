@@ -512,6 +512,8 @@ export interface ControlOptions {
   conflict: (deviceId: string, conflict: ControlConflict) => void;
   /** Test switch: resolves a `physical` target to an emulator the workspace leases, driven over adb. */
   adbEmulators?: boolean;
+  /** Hears each input this hub forwards, so the viewer record dates the device's last use. */
+  onInput?: (device: Device) => void;
 }
 
 const STATUS_WAIT_MS = 60_000;
@@ -794,6 +796,7 @@ export class ControlHub {
       void this.end(session, 'device-gone', message);
       return Promise.resolve({ code: 'unknown-session', message });
     }
+    this.options.onInput?.(session.device);
     if (command.input === 'simulator') return this.simulator(session, command);
     if (command.input === 'posture' && session.device.platform === 'ios') {
       const udid = session.device.udid;

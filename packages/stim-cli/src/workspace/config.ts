@@ -30,6 +30,7 @@ export {
   allMetroPorts,
   configCorruptRepair,
   findEnclosingWorktreeRoot,
+  admissionLimits,
   getConcurrencyLimits,
   getConfigPath,
   getPlatformDeviceLimits,

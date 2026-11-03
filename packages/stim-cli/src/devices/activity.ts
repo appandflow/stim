@@ -12,6 +12,7 @@ import { workspaceLogsDir } from '../workspace/paths.ts';
 import { readWorkspaceState } from '../workspace/workspace-state.ts';
 import {
   agentDeviceStateDirs,
+  readInteractions,
   readViewedDevices,
   type ActivityDriver,
   type ActivityRecencyBasis,
@@ -30,16 +31,23 @@ interface ActivityEvidence {
   recency: { basis: ActivityRecencyBasis; at: number }[];
 }
 
+/** Evidence `recent` reports but that never counts as activity: a device's own logs. */
+const NOT_ACTIVITY: ReadonlySet<ActivityRecencyBasis> = new Set(['device-log']);
+
 function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivity {
   const last = evidence.recency.reduce<{ basis: string; at: number } | null>(
-    (best, entry) => (Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best),
+    (best, entry) =>
+      !NOT_ACTIVITY.has(entry.basis) && Number.isFinite(entry.at) && (!best || entry.at > best.at) ? entry : best,
     null,
   );
   const recent: Partial<Record<ActivityRecencyBasis, string>> = {};
   for (const { basis, at } of evidence.recency) {
     if (Number.isFinite(at) && !(Date.parse(recent[basis] ?? '') >= at)) recent[basis] = new Date(at).toISOString();
   }
-  const lastActivityAt = last ? { lastActivityAt: new Date(last.at).toISOString(), recent } : {};
+  const lastActivityAt = {
+    ...(last ? { lastActivityAt: new Date(last.at).toISOString() } : {}),
+    ...(Object.keys(recent).length ? { recent } : {}),
+  };
   const [first] = evidence.drivers;
   if (first) {
     const { basis: _basis, ...driver } = first;
@@ -58,12 +66,6 @@ function classifyActivity(evidence: ActivityEvidence, now: number): DeviceActivi
     ...lastActivityAt,
     basis: [...new Set(evidence.recency.map((entry) => entry.basis))],
   };
-}
-
-export function idleForMs(activity: DeviceActivity | null | undefined, now: number): number | null {
-  if (activity?.state !== 'idle' || !activity.lastActivityAt) return null;
-  const at = Date.parse(activity.lastActivityAt);
-  return Number.isFinite(at) ? Math.max(0, now - at) : null;
 }
 
 interface PidStart {
@@ -498,28 +500,11 @@ export function createActivityReaderAsync(
   };
 }
 
-function workspaceDeviceRecency(root: string, logs: readonly string[]): ActivityEvidence['recency'] {
-  const recency: ActivityEvidence['recency'] = [];
-  const usedAt = Date.parse(String(readWorkspaceState(root)?.lastUsedAt ?? ''));
-  if (Number.isFinite(usedAt)) recency.push({ basis: 'workspace-use', at: usedAt });
-  for (const file of logs) {
-    try {
-      recency.push({ basis: 'device-log', at: statSync(join(workspaceLogsDir(root), file)).mtimeMs });
-    } catch {}
-  }
-  return recency;
-}
-
-/**
- * The newest workspace use or change to its in-app or native device logs. `countDeviceLogs: false` leaves the native
- * device log out.
- */
-export function workspaceDeviceLastUseAt(
-  root: string,
-  { countDeviceLogs = true }: { countDeviceLogs?: boolean } = {},
-): number {
-  const times = workspaceDeviceRecency(root, countDeviceLogs ? ['client.ndjson', 'device.ndjson'] : ['client.ndjson'])
-    .map(({ at }) => at)
+/** The newest Stim command in the workspace or use of its focused Simulator or emulator window. */
+export function workspaceDeviceLastUseAt(root: string): number {
+  const state = readWorkspaceState(root);
+  const times = [String(state?.lastUsedAt ?? ''), ...Object.values(readInteractions(state))]
+    .map((at) => Date.parse(at))
     .filter(Number.isFinite);
   return times.length ? Math.max(...times) : NaN;
 }
@@ -586,8 +571,9 @@ export function createActivityReader({
     }
 
     viewed ??= viewers();
-    if (viewed.some((device) => device.platform === target.platform && device.id === target.id)) {
-      evidence.recency.push({ basis: 'viewer', at: now });
+    for (const device of viewed) {
+      if (device.platform !== target.platform || device.id !== target.id || !device.lastInputAt) continue;
+      evidence.recency.push({ basis: 'viewer', at: Date.parse(device.lastInputAt) });
     }
 
     const processes = tables.host();

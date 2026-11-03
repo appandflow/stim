@@ -5,7 +5,7 @@ public enum UsageThresholds {
   public static let cpuCriticalFraction = 0.95
 
   /// Below this, the disk stat warns. Also Stim's fixed display floor for "low disk" (distinct
-  /// from a project's configurable `budget.hardFloorDiskGb`).
+  /// from the configurable `disk.hardFloorGb`).
   public static let lowDiskBytes: Int64 = 20_000_000_000
   /// A quarter of `lowDiskBytes`, so the compact stat also has a critical tier before
   /// `lowDiskBytes` bites.

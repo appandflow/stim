@@ -133,7 +133,7 @@ test.each(['candidate discovery', 'candidate classification', 'build state', 'un
       const measured = await measureWorktreeSweep(report);
       actual = { buildState: measured.worktrees[0]?.buildState?.dirs ?? null, unlisted: measured.unlisted };
       expected = {
-        buildState: phase === 'build state' ? [{ path: '.build', bytes: number }] : null,
+        buildState: phase === 'build state' ? [{ path: '.build', bytes: number, privateBytes: null }] : null,
         unlisted: [{ path: join(root, '.worktrees', 'lost'), repository: root, bytes: number }],
       };
     }

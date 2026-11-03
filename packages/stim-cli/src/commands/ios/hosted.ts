@@ -49,7 +49,6 @@ export async function finishHostedIosRun({
   | 'startedAt'
   | 'closeWriter'
   | 'recordRun'
-  | 'reclaimed'
   | 'devServer'
   | 'devicePlacement'
 > & {

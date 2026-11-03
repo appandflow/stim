@@ -20,6 +20,7 @@ import {
   isJsonObject,
   isSensitiveReference,
   REPLACED_SETTINGS,
+  removedSettingWords,
   replacementAdvice,
   SETTING_SCOPES,
   settingDefinition,
@@ -31,16 +32,20 @@ import {
 import { stimDesktopInstalledAsync } from '../devices/stim-desktop.ts';
 import { deleteTurnedOffRecordings, recordingLayers } from './recordings.ts';
 
-export function requireSetting(key: string, raw?: string): SettingDefinition {
+export function requireSetting(key: string, raw?: string, scope?: string): SettingDefinition {
   const setting = settingDefinition(key);
   if (setting) return setting;
   const replaced = Object.hasOwn(REPLACED_SETTINGS, key) ? REPLACED_SETTINGS[key] : undefined;
   if (replaced) {
-    const command = replacementAdvice(key, raw)?.command;
+    const layer = (SETTING_SCOPES as readonly string[]).includes(scope ?? '') ? (scope as SettingScope) : undefined;
+    const command = replacementAdvice(key, raw, layer)?.command;
+    const unset = `run \`stim settings unset ${key}\` to remove the leftover key`;
     throw new SettingsRefusal(
       'STIM_BAD_ARG',
-      `${JSON.stringify(key)} was replaced by ${replaced.key} and is no longer read by Stim.`,
-      `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then run \`stim settings unset ${key}\` to remove the leftover key.`,
+      `${removedSettingWords(JSON.stringify(key), replaced)}.`,
+      replaced.key
+        ? `${command ? `Run \`${command}\`` : `Set ${replaced.key} (\`stim guide settings\` lists its values)`}, then ${unset}.`
+        : `${unset.charAt(0).toUpperCase()}${unset.slice(1)}.`,
     );
   }
   throw new SettingsRefusal(
@@ -208,7 +213,7 @@ export async function mutateSetting(
 ): Promise<SettingWriteResult> {
   signal?.throwIfAborted();
   const { key } = request;
-  const setting = requireSetting(key, request.action === 'set' ? request.value : undefined);
+  const setting = requireSetting(key, request.action === 'set' ? request.value : undefined, request.scope);
   const scope = readScope(request.scope, setting);
   const value = request.action === 'set' ? parseSettingValue(setting, request.value) : undefined;
   if (setting.sensitive && scope === 'committed' && value !== undefined && !isSensitiveReference(value)) {
@@ -253,7 +258,8 @@ function configTarget(context: SettingsContext, scope: SettingScope): ConfigSett
 
 export interface ReplacedSettingRemoval {
   key: string;
-  replacedBy: string;
+  /** The setting that replaced it; null when nothing did. */
+  replacedBy: string | null;
   removed: Array<{ scope: SettingScope; file: string }>;
 }
 
@@ -281,5 +287,5 @@ export async function unsetReplacedSetting(
         : target && (await writeConfigSettingAsync(target, key, undefined, signal));
     if (changed) removed.push({ scope: entry.scope, file: entry.file });
   }
-  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? key, removed };
+  return { key, replacedBy: REPLACED_SETTINGS[key]?.key ?? null, removed };
 }

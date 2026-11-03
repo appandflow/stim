@@ -1,3 +1,4 @@
+import { isScopedHome } from '@stim-cli/core';
 import { loadConfig } from '@stim-cli/core/state';
 import { readCreatedDevices } from './created-devices.ts';
 
@@ -28,8 +29,13 @@ function recordedAsOwned(platform: DevicePlatform, id: string): boolean {
   return false;
 }
 
+/**
+ * Whether this Stim home created the device: its created-devices ledger lists it, or, while `STIM_HOME` is unset,
+ * its config records it as owned from before the ledger. A scoped home owns only what its ledger lists.
+ */
 function isStimOwnedDevice(platform: DevicePlatform, id: string): boolean {
-  return readCreatedDevices()[platform].has(id) || recordedAsOwned(platform, id);
+  if (readCreatedDevices()[platform].has(id)) return true;
+  return !isScopedHome() && recordedAsOwned(platform, id);
 }
 
 export function isStimOwnedSim(sim: { udid: string; name?: string | null }): boolean {

@@ -37,8 +37,7 @@ import {
   type SourceCheckout,
   type WorktreeEntry,
 } from '../workspace/worktree.ts';
-import { measureDisk } from './measure.ts';
-import { lowestFree } from './pressure.ts';
+import { lowestFree, measureDisk } from './measure.ts';
 
 const PACKAGE_PARENTS = ['apps', 'packages'];
 const SCAN_DEPTH: Record<ArtifactKind, number> = { build: 3, dependencies: 1 };
@@ -101,7 +100,10 @@ function artifactWorktree(
   return { path: entry.path, linked: entry.path !== source.path, locked: Boolean(entry.locked), keys };
 }
 
-async function artifactWorktreesAsync(signal: AbortSignal, operation?: StimContext): Promise<ArtifactWorktree[]> {
+export async function artifactWorktreesAsync(
+  signal: AbortSignal,
+  operation?: StimContext,
+): Promise<ArtifactWorktree[]> {
   const found = new Map<string, ArtifactWorktree>();
   for (const root of scopedRoots(await candidateRootsAsync(operation), operation?.env)) {
     signal.throwIfAborted();
@@ -202,7 +204,7 @@ function keptReason(
   const written = reads ? reads.written : newestWrite(path, SCAN_DEPTH[kind]);
   if (!activity || written === null) return 'its last activity cannot be read';
   const last = Math.max(activity.at, written);
-  if (now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
+  if (windowMs > 0 && now - last < windowMs) return `used within the last ${Math.round(windowMs / 60_000)} minutes`;
   return null;
 }
 
@@ -348,6 +350,8 @@ export async function clearArtifact(
     /** Keep dependencies that worktree warm could not restore, instead of deleting them without a restore record. */
     requireRestorable?: boolean;
     restoreCache?: Parameters<typeof restoreProblem>[1];
+    /** Why the workspace is no longer idle, asked again under its native-run claim; null when it still is. */
+    recheck?: (workspace: string) => Promise<string | null>;
   },
 ): Promise<{ status: 'done' | 'kept'; bytes: number; detail: string }> {
   const worktree = options.worktrees
@@ -381,6 +385,8 @@ export async function clearArtifact(
       ...(key ? { locked: key } : {}),
     });
     if (reason) return reason;
+    const late = key && options.recheck ? await options.recheck(key) : null;
+    if (late) return late;
     const record = kind === 'dependencies' && !unrestorable;
     if (record) recordLightened(candidate.keys, candidate.path);
     rmSync(candidate.path, { recursive: true, force: true });

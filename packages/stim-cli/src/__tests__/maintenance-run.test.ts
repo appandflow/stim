@@ -10,23 +10,20 @@ import {
   maintenanceNdjsonFile,
   maintenanceRunClaims,
   readMaintenanceState,
-  maintenanceAttemptFile,
   workspaceLogsDir,
   sharedCompilationCache,
 } from '@stim-cli/core/state';
 import { runMaintenance } from '../maintenance/run.ts';
 import { resolveMaintenanceSettings } from '../maintenance/settings.ts';
 import * as measurements from '../maintenance/measure.ts';
-import * as budget from '../budget.ts';
 import * as preview from '../maintenance/preview.ts';
 import { cacheClaimRoot } from '../cache/cache-claim.ts';
 import { maintenanceStatus } from '../maintenance/status.ts';
 import { releaseClaim, tryAcquireClaim } from '../ownership-claim.ts';
 import { runGc } from '../commands/gc.ts';
 import statusCommand from '../commands/status.ts';
-import macosCommand from '../commands/macos.ts';
-import { triggerMaintenance } from '../maintenance/trigger.ts';
-import { resetExecutor, setExecutor, type Executor } from '../exec.ts';
+import { warnCriticalDisk } from '../maintenance/trigger.ts';
+import { resetExecutor, setExecutor } from '../exec.ts';
 import { makeChildProcess } from './_factories.ts';
 
 const disk = vi.hoisted(() => ({ full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false }));
@@ -61,8 +58,8 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'stim-maintenance-run-'));
   process.env.STIM_HOME = home;
-  process.env.STIM_MAINTENANCE = 'report';
-  process.env.STIM_BUDGET_MIN_FREE_DISK_GB = '20';
+  process.env.STIM_DAEMON = 'report';
+  process.env.STIM_DISK_MIN_FREE_GB = '20';
   setExecutor({
     run: () => '',
     runQuiet: () => null,
@@ -84,32 +81,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   rmSync(home, { recursive: true, force: true });
   Object.assign(disk, { full: false, reserve: '', code: 'ENOSPC', partialReserveWrite: false });
-  for (const key of ['STIM_HOME', 'STIM_MAINTENANCE', 'STIM_BUDGET_MIN_FREE_DISK_GB', 'STIM_BUDGET_HARD_FLOOR_DISK_GB'])
+  for (const key of ['STIM_HOME', 'STIM_DAEMON', 'STIM_DISK_MIN_FREE_GB', 'STIM_DISK_HARD_FLOOR_GB'])
     delete process.env[key];
+  process.env.STIM_DAEMON = 'off';
   process.exitCode = 0;
-});
-
-test('report-only child passes dryRun to every budget step and stamps checks before running them', async () => {
-  const original = budget.enforceBudget;
-  const seen: boolean[] = [];
-  vi.spyOn(budget, 'enforceBudget').mockImplementation((args, overrides) =>
-    original(args, {
-      ...overrides,
-      step: async (step, context) => {
-        seen.push(context.dryRun);
-        expect(readMaintenanceState()?.lastAt.pressure).toEqual(expect.any(Number));
-        return { targets: step === 'workspace-outputs' ? ['/idle'] : [], failures: 0 };
-      },
-    }),
-  );
-  await runMaintenance('status');
-  expect(seen).toEqual([true, true, true, true]);
-  const state = readMaintenanceState()!;
-  expect(state.lastPass).toMatchObject({ mode: 'report', freedBytes: 0, stopped: 0, actions: 1 });
-  expect(state.plan).toContainEqual(expect.objectContaining({ kind: 'would-clear-outputs', target: '/idle' }));
-  expect(readFileSync(maintenanceNdjsonFile(), 'utf8')).not.toContain('maintenance_check');
-  await runMaintenance('status');
-  expect(seen).toHaveLength(4);
 });
 
 test('load deferral leaves the size check due and a failing pressure check is not retried by the next command', async () => {
@@ -192,61 +167,27 @@ test('an unresolved claim produces only one child crash-log line', async () => {
   expect(err).not.toHaveBeenCalled();
 });
 
-test('status JSON stays a single payload while its preAction hook starts a detached child, and gc JSON starts none', async () => {
-  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
-  setExecutor({
-    run: () => '',
-    runQuiet: () => null,
-    runFile: () => '',
-    runFileQuiet: () => null,
-    findExecutable: () => null,
-    spawn,
-  });
+test('status and gc JSON each stay a single payload under the preAction disk warning', async () => {
   const out = vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
   const program = new Command();
   statusCommand(program);
-  program.hook('preAction', () => triggerMaintenance('status', { argv: ['status', '--json'] }));
+  program.hook('preAction', () => warnCriticalDisk(['status', '--json']));
   await program.parseAsync(['status', '--json'], { from: 'user' });
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     environments: [],
     maintenance: { mode: 'report', running: null },
+    daemon: { mode: 'report', running: null },
   });
   out.mockClear();
-  rmSync(maintenanceAttemptFile());
-  triggerMaintenance('gc', { argv: ['gc', '--json'] });
+  warnCriticalDisk(['gc', '--json']);
   await runGc({ json: true, cache: 'recordings' });
   expect(out).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({
     mode: 'dry-run',
     maintenance: { note: expect.stringContaining('no pass has run yet') },
   });
-  expect(spawn).toHaveBeenCalledTimes(1);
-  expect(spawn).toHaveBeenCalledWith(
-    expect.anything(),
-    expect.anything(),
-    expect.objectContaining({ detached: true, stdio: ['ignore', expect.any(Number), expect.any(Number)] }),
-  );
-  expect(existsSync(maintenanceAttemptFile())).toBe(false);
-});
-
-test('a macOS plan preAction hook never starts maintenance or writes its attempt and log', async () => {
-  const spawn = vi.fn<Executor['spawn']>(() => makeChildProcess());
-  setExecutor({ spawn });
-  vi.spyOn(process, 'cwd').mockReturnValue(home);
-  const out = vi.spyOn(console, 'log').mockImplementation(() => {});
-  vi.spyOn(console, 'error').mockImplementation(() => {});
-  const argv = ['macos', '--plan', '--json'];
-  const program = new Command();
-  macosCommand(program);
-  program.hook('preAction', (_command, action) => triggerMaintenance(action.name(), { argv }));
-  await program.parseAsync(argv, { from: 'user' });
-  expect(out).toHaveBeenCalledTimes(1);
-  expect(JSON.parse(String(out.mock.calls[0]![0]))).toMatchObject({ code: 'STIM_BAD_ARG' });
-  expect(spawn).not.toHaveBeenCalled();
-  expect(existsSync(maintenanceAttemptFile())).toBe(false);
-  expect(existsSync(maintenanceChildLogFile())).toBe(false);
 });
 
 test.each([
@@ -303,7 +244,7 @@ test.each([
 });
 
 test('cached Swift CAS observations refresh build protection before each plan', async () => {
-  process.env.STIM_BUDGET_HARD_FLOOR_DISK_GB = '5';
+  process.env.STIM_DISK_HARD_FLOOR_GB = '5';
   vi.spyOn(measurements, 'measurePressure').mockReturnValue({
     disk: [],
     memory: { level: 'normal', availableBytes: null, pressured: false },
@@ -321,12 +262,7 @@ test('cached Swift CAS observations refresh build protection before each plan', 
     },
   ];
   const settings = { ...resolveMaintenanceSettings(), swiftCompilationCacheMaxGb: 15 };
-  const emergency = {
-    disk: [{ volume: '/', freeMb: 1024 }],
-    memory: { level: 'normal' as const, availableBytes: null, pressured: false },
-    warningSince: null,
-  };
-  expect((await preview.plannedMaintenance(emergency, sizes, settings)).actions).toContainEqual(
+  expect((await preview.plannedMaintenance(sizes, settings)).actions).toContainEqual(
     expect.objectContaining({ kind: 'would-empty-cache' }),
   );
   const build = tryAcquireClaim({
@@ -336,31 +272,28 @@ test('cached Swift CAS observations refresh build protection before each plan', 
   }).acquired;
   const using = `the ios build (pid ${process.pid} in /w/app) may be using it`;
   try {
-    const busy = await preview.plannedMaintenance(emergency, sizes, settings);
+    const busy = await preview.plannedMaintenance(sizes, settings);
     expect(busy.actions).toEqual([]);
     expect(busy.skips).toContainEqual(expect.objectContaining({ target: sharedCompilationCache(), reason: using }));
-    expect(busy.blocked).toContainEqual(
-      `the Swift compilation cache (16.0G) can only be emptied whole and is kept: ${using}`,
-    );
   } finally {
     releaseClaim(build);
   }
 });
 
 test('invalid maintenance settings are explained in status and gc rather than silently reported as off', async () => {
-  process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES = 'bad';
+  process.env.STIM_MAINTENANCE_SWEEP_HOURS = 'bad';
   try {
     expect(maintenanceStatus()).toMatchObject({
       mode: 'off',
-      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
+      invalid: expect.stringContaining('maintenance.sweepHours'),
     });
     expect(await preview.previewMaintenance()).toMatchObject({
       mode: 'off',
-      invalid: expect.stringContaining('maintenance.sizeCheckMinutes'),
-      note: expect.stringContaining('maintenance.sizeCheckMinutes'),
+      invalid: expect.stringContaining('maintenance.sweepHours'),
+      note: expect.stringContaining('maintenance.sweepHours'),
     });
   } finally {
-    delete process.env.STIM_MAINTENANCE_SIZE_CHECK_MINUTES;
+    delete process.env.STIM_MAINTENANCE_SWEEP_HOURS;
   }
 });
 

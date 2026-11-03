@@ -9,15 +9,11 @@ import { readWorkspaceState, withWorkspaceStateLockAsync } from '../workspace/wo
 import { supervisorError } from './errors.ts';
 import { requestDevServerStop, withdrawDevServerStopRequest, type StopRequester } from './stop-cause.ts';
 
-export type OwnedMetroStop =
+type OwnedMetroStop =
   | { status: 'stopped' | 'not-running' }
   | { status: 'unverified' | 'external' | 'stuck' | 'port-occupied'; reason: string };
 
-export async function stopOwnedMetro(
-  root: string,
-  requester: StopRequester,
-  signal?: AbortSignal,
-): Promise<OwnedMetroStop> {
+async function stopOwnedMetro(root: string, requester: StopRequester, signal?: AbortSignal): Promise<OwnedMetroStop> {
   const resolve = async (port: number, probeSignal?: AbortSignal) => {
     throwIfCancelled(probeSignal, 'Metro reset');
     const result = await resolveProjectMetro(port, root, {
