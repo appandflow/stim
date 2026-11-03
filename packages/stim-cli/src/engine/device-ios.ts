@@ -162,6 +162,7 @@ function startIosCreation(
   const done = withDeviceBootAdmission(
     { platform: 'ios', key: uncreatedDeviceKey() },
     async (admitted) => {
+      deviceSlotWait?.signal?.throwIfAborted();
       const sim = await create();
       admitted.rekey(sim.udid);
       created(sim);

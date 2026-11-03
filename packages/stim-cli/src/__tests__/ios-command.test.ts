@@ -1505,6 +1505,78 @@ describe('the device preparation step', () => {
       expect(waiting.calls.args['storeBuild']).toEqual(existing.calls.args['storeBuild']);
     });
 
+    test('a build that fails while the simulator is still queued abandons the queue and creates nothing', async () => {
+      reserve();
+      let slotSignal: AbortSignal | undefined;
+      const { exitCode, calls } = await run(
+        {},
+        {
+          ensureOwnedDevice: async (args) => {
+            const policy = args.flags?.deviceSlotWait;
+            slotSignal = policy?.signal;
+            policy?.waitingFor?.({
+              kind: 'device-slot',
+              inUse: 1,
+              max: 1,
+              since: new Date().toISOString(),
+              position: 1,
+              resource: 'booted devices',
+            });
+            const created = new Promise<never>((_resolve, reject) => {
+              policy?.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+            });
+            return { owned: true, creating: { runtimeId: RUNTIME_ID, created } };
+          },
+          buildIos: async () => makeIosBuildFailure({ code: 'STIM_BUILD_FAILED' }),
+        },
+      );
+      expect(exitCode).toBe(1);
+      expect(slotSignal?.aborted).toBe(true);
+      expect(calls.order).not.toContain('ensureBooted');
+    });
+
+    test('a build that fails after the simulator was admitted waits for its creation and ledger entry before the run exits', async () => {
+      reserve();
+      let ledgerWritten = false;
+      let writeLedger!: () => void;
+      let markBuilt!: () => void;
+      const built = new Promise<void>((resolve) => {
+        markBuilt = resolve;
+      });
+      let ledgerAtExit: boolean | undefined;
+      const pending = run(
+        {},
+        {
+          ensureOwnedDevice: async () => ({
+            owned: true,
+            creating: {
+              runtimeId: RUNTIME_ID,
+              created: new Promise((resolve) => {
+                writeLedger = () => {
+                  ledgerWritten = true;
+                  resolve({ deviceUdid: UDID, deviceName: 'stim-fixture', owned: true, created: true });
+                };
+              }),
+            },
+          }),
+          buildIos: async () => {
+            markBuilt();
+            return makeIosBuildFailure({ code: 'STIM_BUILD_FAILED' });
+          },
+        },
+        () => {
+          ledgerAtExit = ledgerWritten;
+        },
+      );
+      await built;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(ledgerAtExit).toBeUndefined();
+      writeLedger();
+      const { exitCode } = await pending;
+      expect(exitCode).toBe(1);
+      expect(ledgerAtExit).toBe(true);
+    });
+
     test('a creation that fails during the build refuses with its code after the build, before any boot or install', async () => {
       reserve();
       const creation = pendingCreation();

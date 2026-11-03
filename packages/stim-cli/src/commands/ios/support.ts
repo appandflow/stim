@@ -381,6 +381,8 @@ interface IosDeviceWaitRun {
   policy: DeviceSlotWaitPolicy;
   record: RunRecorder['record'];
   booting(pending: { done: Promise<unknown> } | undefined): void;
+  /** A simulator creation the run cannot abandon: `finish` waits for it to settle, queued or not. */
+  creating(pending: Promise<unknown>): void;
   finish(): Promise<void>;
 }
 
@@ -426,16 +428,14 @@ export interface PendingOwnedDevice {
 export function pendOwnedDevice(
   device: OwnedDeviceRecord,
   settle: (device: OwnedDeviceRecord) => void,
-  waitRun: Pick<IosDeviceWaitRun, 'booting'>,
+  waitRun: Pick<IosDeviceWaitRun, 'creating'>,
 ): PendingOwnedDevice | null {
   if (!device.creating) {
     settle(device);
     return null;
   }
   const { runtimeId, created } = device.creating;
-  const booted = created.then((prepared) => prepared.booting?.done);
-  booted.catch(() => {});
-  waitRun.booting({ done: booted });
+  waitRun.creating(created);
   const settled = created.then((prepared) => settle(prepared));
   settled.catch(() => {});
   return { runtimeId, created: settled };
@@ -460,6 +460,7 @@ export function createIosDeviceWaitRun(
   const controller = new AbortController();
   let waiting = false;
   let boot: Promise<unknown> | undefined;
+  let creation: Promise<unknown> | undefined;
   let outcome: Parameters<RunRecorder['record']>[0] | undefined;
   return {
     policy: {
@@ -478,9 +479,13 @@ export function createIosDeviceWaitRun(
     booting(pending) {
       boot ??= pending?.done;
     },
+    creating(pending) {
+      creation = pending;
+    },
     async finish() {
       const queued = waiting;
       controller.abort();
+      await creation?.catch(() => {});
       if (queued) await boot?.catch(() => {});
       if (outcome) stats.record(outcome);
     },

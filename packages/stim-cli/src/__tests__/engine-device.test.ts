@@ -1275,6 +1275,29 @@ describe('ensureOwnedDevice: ios', () => {
     }
   });
 
+  test('a run abandoned after its boot slot was granted creates no simulator and frees the slot', async () => {
+    const root = projectDir();
+    const { run, exec } = iosExecutor([]);
+    setExecutor(exec);
+    const abandon = new AbortController();
+    try {
+      await expect(
+        ensureOwnedDevice({
+          platform: 'ios',
+          projectPath: root,
+          label: 'app',
+          settings: {},
+          flags: { deviceSlotWait: { signal: abandon.signal, onBootStart: () => abandon.abort() } },
+        }),
+      ).rejects.toThrow('aborted');
+      expect(run.some((cmd) => cmd.includes('simctl create'))).toBe(false);
+      expect(readClaimSet(join(tmpHome, 'device-boots')).live).toEqual([]);
+      expect(getProject(root)?.platforms?.ios).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test('a pending creation that fails after the run queued rejects with its cause and frees the slot', async () => {
     const root = projectDir();
     process.env.STIM_MAX_DEVICES = '8';
