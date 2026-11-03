@@ -41,7 +41,7 @@ public struct ClipboardTooLarge: Error, Equatable, LocalizedError, Sendable {
     }
   }
 
-  public var access = Access.none
+  @Published public var access = Access.none
   public weak var stream: PhysicalStream?
 
   public init() {}
