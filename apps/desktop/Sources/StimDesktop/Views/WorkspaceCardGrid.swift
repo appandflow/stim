@@ -17,12 +17,19 @@ final class WorkspaceCardChoices: ObservableObject {
   }
 }
 
+extension WallCard {
+  /// Where a card opens: a paired machine's workspace opens on its own screen; nil for this Mac's.
+  var pairedDestination: SidebarItem? {
+    owner.isLocal ? nil : .pairedWorkspace(WorkspaceKey(owner: owner, path: apps[0].workspace.path))
+  }
+}
+
 struct WorkspaceCardGrid: View {
   var cards: [WallCard]
   @ObservedObject var store: StatusStore
   var metrics: MetricsStore
   var open: (WallCard) -> Void
-  var openDevice: (String, String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
   var openLogs: (String) -> Void
   @State private var width: CGFloat = 1000
 
@@ -46,18 +53,20 @@ struct WorkspaceCardView: View {
   var store: StatusStore
   var usage: [String: UsageHistory]
   var open: () -> Void
-  var openDevice: (String, String) -> Void
+  var openDevice: (WorkspaceKey, String) -> Void
   var openLogs: (String) -> Void
   @ObservedObject private var choices = WorkspaceCardChoices.shared
   @AppStorage(AppPreferences.Key.tileSize) private var tileSize = TileSize.medium
   @State private var pressed = false
   @State private var mediaWidth: CGFloat = 420
 
-  private var choiceKey: String { card.page.identity }
+  private var choiceKey: String { card.choiceKey }
 
   var body: some View {
     let showLogs = { (app: Workspace) in openLogs(app.path) }
-    if card.isMultiApp {
+    if !card.owner.isLocal {
+      content.contextMenu { openWorkspace }
+    } else if card.isMultiApp {
       WorktreeActions(page: card.page, openLogs: showLogs) { menu in
         content.contextMenu {
           openWorkspace
@@ -94,14 +103,16 @@ struct WorkspaceCardView: View {
     Card(border: Palette.border) {
       VStack(alignment: .leading, spacing: 0) {
         VStack(alignment: .leading, spacing: Space.md) {
+          if let machine = card.machine { MachineBadge(machine: machine) }
           Button {
             pressed = false
             open()
           } label: {
             WorkspaceHeader(
-              env: env, project: store.project(of: env), usage: usage[env.path],
+              env: env, project: card.owner.isLocal ? store.project(of: env) : env.project ?? Project(fallbackFor: env.path),
+              usage: card.owner.isLocal ? usage[env.path] : nil,
               showsProgress: selected != nil && !tileShowsBuild,
-              openLogs: { openLogs(env.path) })
+              openLogs: { card.owner.isLocal ? openLogs(env.path) : open() })
           }
           .buttonStyle(CardPressStyle())
           .accessibilityLabel(env.names.title)
@@ -154,8 +165,10 @@ struct WorkspaceCardView: View {
     let env = option.app.workspace
     switch option.kind {
     case .device(let device):
-      Button("Open Device Viewer", systemImage: "rectangle.expand.vertical") { openDevice(env.path, device.id) }
-      if DeviceTileMenu.applies(to: device, owner: .local) {
+      Button("Open Device Viewer", systemImage: "rectangle.expand.vertical") {
+        openDevice(WorkspaceKey(owner: card.owner, path: env.path), device.id)
+      }
+      if DeviceTileMenu.applies(to: device, owner: card.owner) {
         Divider()
         DeviceTileMenuItems(
           device: device, workspace: env.path, building: env.runningBuild(for: device) != nil, choice: nil,
@@ -170,16 +183,16 @@ struct WorkspaceCardView: View {
       switch selected.kind {
       case .device(let device):
         Button {
-          openDevice(env.path, device.id)
+          openDevice(WorkspaceKey(owner: card.owner, path: env.path), device.id)
         } label: {
           DeviceTile(
-            device: device, screenHeight: CGFloat(tileSize.screenHeight), workspace: env.path,
+            device: device, owner: card.owner, screenHeight: CGFloat(tileSize.screenHeight), workspace: env.path,
             build: env.runningBuild(for: device), showsCovers: true, maxWidth: mediaWidth,
             pausesWhenOffscreen: true, embedded: true)
         }
         .buttonStyle(CardPressStyle(highlightsDevice: true))
         .contextMenu { deviceMenu(selected) }
-        .id(selected.id)
+        .id(card.owner.scoped(selected.id))
       }
     } else {
       status
