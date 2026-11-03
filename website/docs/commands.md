@@ -2123,8 +2123,11 @@ An orphaned device is one this Stim home created that no workspace references.
 `gc` shows the size of an orphaned or stale owned device: for a simulator, the
 data size `simctl` reports; for an AVD, the size of its directory. Other
 devices whose names start with `stim-` appear under "Unrecognized stim-\*
-devices" with the command that deletes them; `gc` never deletes them. See
-[owned devices](./owned-devices.md).
+devices" with the command that deletes them; `gc` never deletes them. It also
+lists, under "Simulator launchd folders with no simulator", the
+`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>` folders whose UDID
+has no simulator in Xcode's device set, with their sizes, and never deletes
+them either. See [owned devices](./owned-devices.md).
 
 A workspace directory is orphaned when the project root its `workspace.json`
 records is gone from a mounted volume and no registry entry names it. Deleting

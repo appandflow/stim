@@ -1037,6 +1037,10 @@ RULES
                               Stim home has no record of creating; never
                               deleted, run command yourself (rm -rf <dir>
                               for AVD data with no registration)
+    simulatorLaunchdFolders { udid, path, bytes, command }  launchd folders
+                              under /private/var/tmp whose UDID has no
+                              simulator in Xcode's device set; never deleted,
+                              bytes null when du did not answer
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
     finishedDevices         { kind, id, name, project, slot, bytes, reason }
