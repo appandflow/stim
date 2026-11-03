@@ -74,6 +74,52 @@ test('STIM_MAINTENANCE in the environment is reported with daemon.mode and STIM_
   ]);
 });
 
+test.each([
+  [
+    'maintenance.mode off in the machine config',
+    'machine' as const,
+    { maintenance: { mode: 'off' } },
+    'Run `stim settings set daemon.mode off`, then `stim settings unset maintenance.mode`.',
+  ],
+  [
+    'metro.idleStopMinutes 0 in .stim.json',
+    'committed' as const,
+    { metro: { idleStopMinutes: 0 } },
+    'Run `stim settings set idle.minutes 0 --scope committed`, then `stim settings unset metro.idleStopMinutes`.',
+  ],
+])('%s costs: the commands that act refuse while it is there', (_, scope, settings, fix) => {
+  const findings = checkMachineSettings({
+    settings,
+    layers: [{ scope, file: MACHINE, settings }],
+    projectRoot: '/app',
+    exists: () => false,
+    env: {},
+  });
+  expect(findings).toEqual([expect.objectContaining({ level: 'cost', fix })]);
+});
+
+test('an old value that turned nothing off, or sits in a layer it was never read from, stays a note', () => {
+  expect(check({ maintenance: { mode: 'on' } })).toEqual([expect.objectContaining({ level: 'note' })]);
+  expect(check({ metro: { idleStopMinutes: 0 } })).toEqual([expect.objectContaining({ level: 'note' })]);
+});
+
+test('maintenance.idleStopHours 0 costs until idle.dormantDays is set, since it still stops hosted sessions', () => {
+  const settings = { maintenance: { idleStopHours: 0 } };
+  expect(check(settings)).toEqual([
+    expect.objectContaining({ level: 'cost', fix: expect.stringContaining('`stim settings set idle.dormantDays 0`') }),
+  ]);
+  expect(
+    checkMachineSettings({
+      settings,
+      layers: [{ scope: 'machine', file: MACHINE, settings }],
+      projectRoot: '/app',
+      exists: () => false,
+      env: {},
+      machineConfig: { ...settings, idle: { dormantDays: 0 } },
+    }),
+  ).toEqual([]);
+});
+
 describe('against a config file on disk', () => {
   let home: string;
   let project: string;

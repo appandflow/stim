@@ -1436,8 +1436,9 @@ captured"  (in metro.ndjson, bare RN)
   set\` and \`get\` refuse a removed setting, naming what replaced it, and
   \`start\`, \`ios\`, \`android\`, \`web\`, \`macos\`, \`revive\` and \`gc\` refuse
   while the environment sets a removed setting's variable, such as
-  STIM_MAINTENANCE; unset it, or set its replacement, such as STIM_DAEMON
-  (\`guide settings\`, REMOVED SETTINGS).
+  STIM_MAINTENANCE, or a config file still holds a removed setting's old value
+  that turned something off; unset it, or set its replacement, such as
+  STIM_DAEMON or daemon.mode (\`guide settings\`, REMOVED SETTINGS).
   A working directory with no supported project above it gets the same
   STIM_NO_PROJECT refusal from \`start\`, \`ios\`, \`android\`, \`stop\`,
   \`reload\`, \`logs\`, \`doctor\` and \`device lock|unlock\`. With \`--json\` the { code, message, remedy } object

@@ -38,7 +38,15 @@ export function spawnsDaemon(
   return platform !== 'win32' && daemonMode(env) !== 'off';
 }
 
-const GOVERNED_COMMANDS = new Set(['start', 'ios', 'android', 'web', 'macos', 'revive', 'gc']);
+export const GOVERNED_COMMANDS: ReadonlySet<string> = new Set([
+  'start',
+  'ios',
+  'android',
+  'web',
+  'macos',
+  'revive',
+  'gc',
+]);
 
 /**
  * The refusal for a command the daemon, the pressure ladder or automatic maintenance governs while the environment
