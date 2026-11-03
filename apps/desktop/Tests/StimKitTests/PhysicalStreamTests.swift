@@ -151,7 +151,7 @@ import Testing
     let plain = try #require(server.take("input.clipboard.set"))
     #expect(plain.params == ["session": .string("c1"), "text": .string("h\u{e9}llo\n\u{1F600}")])
     plain.reply.resume(returning: .object([:]))
-    try await set.value
+    _ = try await set.value
 
     let paste = Task { try await stream.setClipboard("x", paste: true) }
     await settle()
@@ -179,7 +179,7 @@ import Testing
     let accepted = Task { try await stream.setClipboard(atLimit, paste: false) }
     await settle()
     try #require(server.take("input.clipboard.set")).reply.resume(returning: .object([:]))
-    try await accepted.value
+    _ = try await accepted.value
 
     let wide = String(repeating: "\u{e9}", count: 4097)
     await #expect(throws: ClipboardTooLarge(bytes: wide.utf8.count)) { try await stream.setClipboard(wide, paste: false) }
