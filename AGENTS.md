@@ -527,7 +527,7 @@ outside it moves to its own issue and pull request.
   with the last share, and after a crash on the next start, only while the
   serve config still holds exactly that route. A share never starts the
   recorder or capture before a signed-in viewer connects. The viewer's
-  stylesheet and script are two fixed bundled files served without a token
+  stylesheet and its two scripts are fixed bundled files served without a token
   under `/s/assets/`; they carry no share data. A workspace whose
   device is a hosted session is shared through this client's own device-host
   connection (one host frame subscription per codec for all viewers, control through
