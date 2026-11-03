@@ -1,5 +1,5 @@
 import type { StimContext } from '@stim-cli/core';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { setExecutor, resetExecutor } from '../exec.ts';
@@ -431,30 +431,34 @@ test.each([
   }
 });
 
-test('a launchd folder that cannot be removed leaves a warning, and the delete still completes', async () => {
-  recordCreatedDevice('ios', LAUNCHD_UDID);
-  const root = mkdtempSync(join(tmpdir(), 'stim-launchd-'));
-  const notDirectory = join(root, 'file');
-  writeFileSync(notDirectory, '');
-  const { calls } = ownedSimExecutor(LAUNCHD_UDID);
-  const warnings: string[] = [];
-  const operation: StimContext = {
-    home: join(root, 'stim'),
-    cwd: root,
-    projectRoot: root,
-    buildCache: null,
-    runId: 'launchd-warning',
-    env: { ...process.env },
-    signal: new AbortController().signal,
-    output: (stream, text) => {
-      if (stream === 'stderr') warnings.push(text);
-    },
-  };
-  try {
-    await deleteIosSim(LAUNCHD_UDID, operation, { launchdOverridesRoot: notDirectory });
-    expect(calls).toContain(`xcrun simctl delete ${LAUNCHD_UDID}`);
-    expect(warnings).toEqual([expect.stringMatching(/^warning: could not remove .*SimDevice\.A48B2B1E.*\n$/)]);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test.skipIf(process.getuid?.() === 0 || process.platform === 'win32')(
+  'a launchd folder that cannot be removed leaves a warning, and the delete still completes',
+  async () => {
+    recordCreatedDevice('ios', LAUNCHD_UDID);
+    const { root, folder } = launchdFixture();
+    chmodSync(folder, 0o500);
+    const { calls } = ownedSimExecutor(LAUNCHD_UDID);
+    const warnings: string[] = [];
+    const operation: StimContext = {
+      home: join(root, 'stim'),
+      cwd: root,
+      projectRoot: root,
+      buildCache: null,
+      runId: 'launchd-warning',
+      env: { ...process.env },
+      signal: new AbortController().signal,
+      output: (stream, text) => {
+        if (stream === 'stderr') warnings.push(text);
+      },
+    };
+    try {
+      await deleteIosSim(LAUNCHD_UDID, operation, { launchdOverridesRoot: root });
+      expect(calls).toContain(`xcrun simctl delete ${LAUNCHD_UDID}`);
+      expect(warnings).toEqual([expect.stringMatching(/^warning: could not remove .*SimDevice\.A48B2B1E.*\n$/)]);
+      expect(existsSync(join(folder, 'launchd.log'))).toBe(true);
+    } finally {
+      chmodSync(folder, 0o700);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
