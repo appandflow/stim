@@ -1100,15 +1100,20 @@ its tile menu and wall context menu. The sheet takes the options
 of `stim share`: view only or **Let viewers tap, type and press buttons**, an expiry
 from 15 minutes to 8 hours (60 minutes by default), and a **Generated** password
 (the default), one you **Choose** (8 to 128 characters) or **None**, which warns
-that the link alone opens the share. It sends `share.start` over the local Unix
+that the link alone opens the share. With control and a password, a
+**View-only password** picker (**Off**, **Generated** or **Choose**) adds a second
+password that only watches; the sheet offers it only when the local server's hello
+lists the `share-view-password` feature, and sends it as `share.start`'s
+`view: { password? }`. It sends `share.start` over the local Unix
 socket and shows the link and, for a generated password, the password, each with a
-Copy button. The password appears once: Desktop keeps neither it nor a chosen
+Copy button (**Control password** and **View password** when there are two). The password appears once: Desktop keeps neither it nor a chosen
 one, and the sheet's state is dropped when it closes. Physical devices, hosted
 devices and macOS apps have no Share item.
 
 **Stim > Settings > Web Shares** lists the server's live shares, read with
 `share.list` every 5 seconds: one section per workspace, one row per share with
-its platform, **View only** or **View and control**, **No password** when it has none,
+its platform, **View only**, **View and control** or **View and control, view password**,
+**No password** when it has none,
 viewers and time left. Each row has **Stop**, which sends `share.stop` with the
 workspace and the share's `id`; a workspace with several shares also has **Stop All**
 in its header, which sends the workspace alone. When the local server's hello lacks

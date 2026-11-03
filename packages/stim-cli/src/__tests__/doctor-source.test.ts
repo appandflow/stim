@@ -186,30 +186,33 @@ describe('the source checkout on disk', () => {
     expect(await inspectPrebuildRecords({ root: app, host: 'darwin' })).toEqual([]);
   });
 
-  test('missing dependencies and Pods with a broken link are read the way the findings read them', async () => {
+  function podsApp(): void {
     expoApp();
     write('package-lock.json', '{}');
     write('ios/Podfile.lock', 'PODS: []\n');
     mkdirSync(join(app, 'ios', 'Pods', 'Headers'), { recursive: true });
-    symlinkSync(join(app, 'gone.h'), join(app, 'ios', 'Pods', 'Headers', 'gone.h'));
-    const read = (tracked: boolean) => {
-      if (tracked) execFileSync('git', ['-C', app, 'add', '-f', 'ios/Podfile.lock']);
-      return inspectSourceFacts({ root: app, repoRoot: app, host: 'darwin', iosProjectPath: 'ios' });
-    };
-    const untracked = await read(false);
+  }
+
+  const readFacts = (tracked: boolean, platform?: 'android') => {
+    if (tracked) execFileSync('git', ['-C', app, 'add', '-f', 'ios/Podfile.lock']);
+    return inspectSourceFacts({ root: app, repoRoot: app, platform, host: 'darwin', iosProjectPath: 'ios' });
+  };
+
+  test('missing dependencies and a missing Pods manifest are read the way the findings read them', async () => {
+    podsApp();
+    const untracked = await readFacts(false);
     expect(untracked.deps).toMatchObject({ command: 'npm ci', reason: 'missing' });
-    expect(untracked.pods).toMatchObject({ broken: true, state: 'missing', iosTracked: false });
-    expect((await read(true)).pods?.iosTracked).toBe(true);
-    expect(
-      (
-        await inspectSourceFacts({
-          root: app,
-          repoRoot: app,
-          platform: 'android',
-          host: 'darwin',
-          iosProjectPath: 'ios',
-        })
-      ).pods,
-    ).toBeNull();
+    expect(untracked.pods).toMatchObject({ state: 'missing', iosTracked: false });
+    expect((await readFacts(true)).pods?.iosTracked).toBe(true);
+    expect((await readFacts(true, 'android')).pods).toBeNull();
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'Pods with a broken link are reported as broken (find -L over ios/Pods, which exists only on macOS; skipped on win32)',
+    async () => {
+      podsApp();
+      symlinkSync(join(app, 'gone.h'), join(app, 'ios', 'Pods', 'Headers', 'gone.h'));
+      expect((await readFacts(false)).pods).toMatchObject({ broken: true, state: 'missing' });
+    },
+  );
 });

@@ -50,10 +50,6 @@ export function measureDisk(config: Config | null): Promise<DaemonMeasurement['d
   return readVolumeSpaceAsync([configDir(), ...Object.keys(config?.projects ?? {}), buildWorkerRoot(config)]);
 }
 
-export function lowestFreeMb(disk: DaemonMeasurement['disk']): number {
-  return disk.length ? Math.min(...disk.map((volume) => volume.freeMb)) : Infinity;
-}
-
 /** macOS memory pressure and available memory, or free memory elsewhere. */
 export async function measureMemory(): Promise<DaemonMeasurement['memory']> {
   const [level, availableBytes] = await Promise.all([readHostMemoryPressureAsync(), availableMemory()]);

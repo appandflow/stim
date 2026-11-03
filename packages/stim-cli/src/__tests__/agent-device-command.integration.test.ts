@@ -105,6 +105,9 @@ test('agent-device --help needs no workspace', () => {
   expect(JSON.parse(result.stdout)).toEqual({ argv: ['--help'], stateDir: null });
 });
 
-test('an agent-device killed by a signal exits with 128 plus the signal, as a shell reports it', () => {
-  expect(run(['die']).status).toBe(143);
-});
+test.skipIf(process.platform === 'win32')(
+  'an agent-device killed by a signal exits with 128 plus the signal, as a shell reports it (Windows has no POSIX signals, process.kill ends the child with code 1; skipped on win32)',
+  () => {
+    expect(run(['die']).status).toBe(143);
+  },
+);
