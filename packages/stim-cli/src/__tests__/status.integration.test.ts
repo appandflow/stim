@@ -160,16 +160,28 @@ test('status says nothing extra for a project that has only a Metro port', async
 });
 
 test('the idle stage line names stim revive only when the dev server recorded an idle stop', async () => {
-  const project = join(tmpHome, 'proj-idle');
-  mkdirSync(project);
-  saveConfig(makeConfig({ version: 2, projects: { [project]: { label: 'idle', metroPort: 8083, platforms: {} } } }));
+  const unrecorded = join(tmpHome, 'proj-idle');
+  const recorded = join(tmpHome, 'proj-revivable');
+  mkdirSync(unrecorded);
+  mkdirSync(recorded);
+  saveConfig(
+    makeConfig({
+      version: 2,
+      projects: {
+        [unrecorded]: { label: 'idle', metroPort: 8083, platforms: {} },
+        [recorded]: { label: 'revivable', metroPort: 8084, platforms: {} },
+      },
+    }),
+  );
   const idleStage = { at: '2026-11-02T10:00:00.000Z', idleMinutes: 15, freedBytes: 1024 };
-  writeWorkspaceState(project, { idleStage });
+  writeWorkspaceState(unrecorded, { idleStage });
+  writeWorkspaceState(recorded, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
 
-  expect((await runStatus()).join('\n')).toContain('`stim ios` or `stim android` resumes it');
+  const stages = (await runStatus()).filter((line) => line.includes('stage: idle'));
 
-  writeWorkspaceState(project, { idleStage, devServerStop: { reason: 'idle', at: idleStage.at, idleMinutes: 15 } });
-  expect((await runStatus()).join('\n')).toContain('`stim revive` resumes it');
+  expect(stages).toHaveLength(2);
+  expect(stages.filter((line) => line.includes('`stim ios` or `stim android` resumes it'))).toHaveLength(1);
+  expect(stages.filter((line) => line.includes('`stim revive` resumes it'))).toHaveLength(1);
 });
 
 test('status detects the framework of an app registered only through a named port', async () => {

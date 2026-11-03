@@ -442,6 +442,14 @@ export class ShareHub {
     return rows;
   }
 
+  async stopOne(workspace: string, id: string, message = 'The share was stopped.'): Promise<ShareRow | null> {
+    const share = [...this.shares.values()].find((candidate) => candidate.id === id);
+    if (!share || share.request.workspace !== workspace) return null;
+    const row = this.row(share);
+    await this.end(share, message);
+    return row;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     await this.opening?.catch(() => {});

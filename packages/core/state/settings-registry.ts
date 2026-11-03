@@ -79,7 +79,7 @@ export interface SettingWriteResult {
 
 export const REMOTE_DEVICE_BACKENDS: readonly RemoteDeviceBackend[] = ['proxy', 'eas'] as const;
 
-export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop'] as const;
+export const IOS_SIMULATOR_APPS = ['xcode', 'siniulator', 'stim-desktop', 'none'] as const;
 
 export const ANDROID_EMULATOR_APPS = ['emulator', 'stim-desktop'] as const;
 
@@ -610,7 +610,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     scopes: MACHINE,
     default: 'xcode',
     desktopDefault: 'stim-desktop',
-    description: 'App that displays an owned iOS simulator; stim-desktop by default when Stim Desktop is installed',
+    description:
+      'App that displays an owned iOS simulator, or none to open no viewer; stim-desktop by default when Stim Desktop is installed',
   },
   {
     key: 'androidEmulatorApp',
