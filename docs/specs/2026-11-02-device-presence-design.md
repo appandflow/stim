@@ -78,7 +78,7 @@ A participant is one source of input on one device:
 
 | Kind     | Who                                     | Name shown to share viewers                       | Name shown to Desktop and phone |
 | -------- | --------------------------------------- | ------------------------------------------------- | ------------------------------- |
-| `viewer` | a web share session                     | its chosen name or `Guest N`                      | the same, after "Web share:"    |
+| `viewer` | a web share socket                      | its chosen name or `Guest N`                      | the same, after "Web share:"    |
 | `host`   | a Desktop or phone control session      | `Host`                                            | the paired device name          |
 | `agent`  | agent-device, from records or the proxy | `Agent` plus the command, such as `Agent · press` | the same                        |
 
@@ -87,7 +87,7 @@ Ids are opaque per device (`v3`, `c12`, `a1`) and never reveal cookies, session 
 ### 3.2 Names and colors
 
 - The login form gets an optional "Your name" field. A passwordless share asks on the viewer page instead and sends
-  `{type: 'name', name}` over the socket. Without a name the server assigns `Guest N`, N counting up per share.
+  `{type: 'name', name}` over the socket. Without a name the server assigns `Guest N`, N the lowest number no session of the share uses.
 - Server-side cleanup: NFC, strip control and format characters (bidi overrides included), collapse whitespace, trim,
   then 1 to 24 code points; anything else falls back to `Guest N`. One rename per 5 s per session. Clients render
   names with `textContent` only.
@@ -98,7 +98,9 @@ Ids are opaque per device (`v3`, `c12`, `a1`) and never reveal cookies, session 
 
 ### 3.3 View and control passwords
 
-- `share.sessions` becomes a `Map` from cookie digest to `{access: 'view' | 'control', participant, name, color}`.
+- `share.sessions` becomes a `Map` from cookie digest to `{access: 'view' | 'control', name, color}`. Each socket of
+  a session is its own participant (section 2), so two tabs on one cookie share a name and color but hold the pointer
+  separately.
   The cookie stays an opaque random token; the access level never travels in it. The URL token stays the outer
   secret: no password works without it.
 - Login compares the given password with both digests, always both, with `timingSafeEqual`, and grants the access of
@@ -106,8 +108,8 @@ Ids are opaque per device (`v3`, `c12`, `a1`) and never reveal cookies, session 
   window: a guess is not aimed at a particular password.
 - A passwordless share now sets a cookie on its first page load, with no login, so a viewer keeps its name and color
   across reconnects. Today's table keeps 32 sessions and evicts the oldest, so anyone with the link could evict real
-  viewers by reloading. Passwordless sessions therefore evict only sessions with no open socket, and a new one is
-  refused while all 32 have one; password sessions keep today's rule.
+  viewers by reloading. Passwordless sessions therefore evict only sessions with no open socket (at most 5 have one,
+  `maxViewers`); password sessions keep today's rule.
 - **Upgrade.** A view-only viewer of a control share sees "Have the control password?" in the bar. Entering it posts
   the same login with the existing cookie; on a match the server raises that session to `control`, keeping its name
   and color, and the page reloads. Sessions are never downgraded.
@@ -216,7 +218,7 @@ The first event after subscribing lists every present participant. The web share
 
 The worker's `ControlHub` is the authority, so the worker publishes. `device-host.input.touch` takes an optional
 `participant: {id, kind, name}` from clients that see the worker's `presence` feature. The worker prefixes the id with
-the client's key so clients cannot impersonate each other's participants, applies the same name cleanup, and assigns
+the client's key and the host control session so clients cannot impersonate each other's participants, applies the same name cleanup, and assigns
 colors itself. Presence events reach the client on its existing `device-host.frames.subscribe` subscription; the
 client server passes them to its share sockets and relayed subscribers. Worker-side inputs (a person on the worker's
 Desktop, the worker's hosted agent) appear too. A worker without the feature yields no presence; viewers still see
@@ -277,7 +279,9 @@ listens on a loopback port and carries each connection over an authenticated `de
   another local user who cannot read the file cannot use the port.
 - **Who listens.** The relay must outlive an idle stop, or revive on first action cannot work. The supervisor stops
   with Metro, and the stim-daemon exits once nothing runs. Recommended: the stim-daemon hosts the relays and stays up
-  while any workspace has an open agent route; `stim stop` and `worktree remove` close it (open question 5).
+  while any workspace has an open agent route, a change to its exit rule (today it exits once nothing runs); `stim
+stop` and `worktree remove` close the route (open question 5). With `daemon.mode off` (the CI default) and on
+  Windows there is no daemon: Stim reports no `remoteConfig`, and agents keep the state-dir path with its boot hook.
 - **Interface.** `stim ios|android --json` and `status --json` report `agentDevice.remoteConfig` (a file path) next to
   `agentDevice.stateDir`. The guide tells agents to use `--remote-config` exactly as for hosted devices. No new
   command or flag. The config holds a per-workspace token; the file is mode 0600 in the workspace's agent-device
@@ -327,7 +331,8 @@ listens on a loopback port and carries each connection over an authenticated `de
   website pages follow.
 - Phase 1 changes a share's authentication (a second password, cookies on passwordless shares) and phase 3 adds a
   loopback listener; both get `review: needs-human`. Phase 1 also updates the "Web shares" rule in AGENTS.md, which
-  describes one password.
+  describes one password. Phase 3 adds an AGENTS.md rule for the local agent relay and the local-only `agent.link`
+  method, and the daemon's new exit rule.
 
 ## 9. Privacy and safety
 
