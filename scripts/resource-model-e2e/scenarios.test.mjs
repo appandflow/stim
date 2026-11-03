@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { UsageError, parseArgs } from './args.mjs';
 import { createAssertions, STATUS } from './assertions.mjs';
 import { renderReport, resultLine } from './report.mjs';
-import { removalState } from './workspaces.mjs';
+import { removalState, restoreProjectLockfile } from './workspaces.mjs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { assertSteps } from './scenarios/disk.mjs';
 import { batchAssertions } from './scenarios/stress.mjs';
 import { remoteArguments, workspaceClosure } from './ssh.mjs';
 import { stimEnvironment, parseJsonOutput } from './stim.mjs';
@@ -211,6 +215,104 @@ describe('teardown of a vanished volume', () => {
     expect(line).toMatch(/^INCOMPLETE/);
     expect(line).toContain('the host was left unclean');
     expect(line).toContain('/Volumes/x/home, /Volumes/x/wt-01');
+  });
+});
+
+const probe = (exitCode, code = null, free = 4.5, freeBefore = 6) => ({
+  free,
+  freeBefore,
+  result: { ok: exitCode === 0, code: exitCode, json: code ? { code } : null },
+});
+const floorStep = { label: '5 GB', gb: 4.5, refuses: true };
+
+function stepVerdict(steps) {
+  const assertions = createAssertions();
+  assertSteps({ assertions }, steps);
+  return assertions.list[0].status;
+}
+
+describe('the hard-floor step', () => {
+  it('passes when a probe that succeeded by freeing space is followed by one that refuses', () => {
+    expect(
+      stepVerdict([
+        { step: floorStep, probes: [probe(0, null, 4.5, 6), probe(1, 'STIM_LOW_DISK')], inFlight: true, events: [] },
+      ]),
+    ).toBe(STATUS.pass);
+  });
+
+  it('passes when the first probe already refuses, and fails when no probe refuses', () => {
+    expect(stepVerdict([{ step: floorStep, probes: [probe(1, 'STIM_LOW_DISK')], inFlight: true, events: [] }])).toBe(
+      STATUS.pass,
+    );
+    expect(stepVerdict([{ step: floorStep, probes: [probe(0), probe(0), probe(0)], inFlight: true, events: [] }])).toBe(
+      STATUS.fail,
+    );
+  });
+
+  it('fails when a probe fails for another reason before the refusal', () => {
+    expect(
+      stepVerdict([
+        { step: floorStep, probes: [probe(1, 'STIM_BAD_ARG'), probe(1, 'STIM_LOW_DISK')], inFlight: true, events: [] },
+      ]),
+    ).toBe(STATUS.fail);
+  });
+
+  it('still requires the steps above the floor to succeed on the first probe', () => {
+    const above = { label: '19 GB', gb: 19, refuses: false };
+    expect(stepVerdict([{ step: above, probes: [probe(0)], inFlight: true, events: [] }])).toBe(STATUS.pass);
+    expect(stepVerdict([{ step: above, probes: [probe(1, 'STIM_LOW_DISK')], inFlight: true, events: [] }])).toBe(
+      STATUS.fail,
+    );
+  });
+});
+
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: 'pipe' });
+
+describe('the project lockfile', () => {
+  const setup = () => {
+    const root = mkdtempSync(join(tmpdir(), 'lockfile-'));
+    const project = join(root, 'project');
+    mkdirSync(join(project, 'ios'), { recursive: true });
+    git(project, 'init', '-q');
+    writeFileSync(join(project, 'ios', 'Podfile.lock'), 'committed\n');
+    git(project, 'add', '.');
+    git(project, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init');
+    return { root, project };
+  };
+
+  it('restores a modified committed ios/Podfile.lock and keeps the file it replaced', async () => {
+    const { root, project } = setup();
+    try {
+      const events = [];
+      const ctx = { project, out: join(root, 'out'), emit: (kind, msg) => events.push(msg) };
+      expect(await restoreProjectLockfile(ctx)).toBe(false);
+      writeFileSync(join(project, 'ios', 'Podfile.lock'), 'modified\n');
+      expect(await restoreProjectLockfile(ctx)).toBe(true);
+      expect(readFileSync(join(project, 'ios', 'Podfile.lock'), 'utf8')).toBe('committed\n');
+      expect(readFileSync(join(root, 'out', 'restored', 'ios-Podfile.lock.original'), 'utf8')).toBe('modified\n');
+      expect(events).toHaveLength(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves a staged version staged and does not overwrite an earlier kept file in a reused out directory', async () => {
+    const { root, project } = setup();
+    try {
+      const ctx = { project, out: join(root, 'out'), emit() {} };
+      writeFileSync(join(project, 'ios', 'Podfile.lock'), 'staged\n');
+      git(project, 'add', 'ios/Podfile.lock');
+      writeFileSync(join(project, 'ios', 'Podfile.lock'), 'working\n');
+      expect(await restoreProjectLockfile(ctx)).toBe(true);
+      expect(git(project, 'show', ':ios/Podfile.lock').toString()).toBe('staged\n');
+      writeFileSync(join(project, 'ios', 'Podfile.lock'), 'working again\n');
+      expect(await restoreProjectLockfile(ctx)).toBe(true);
+      const kept = join(root, 'out', 'restored');
+      expect(readFileSync(join(kept, 'ios-Podfile.lock.original'), 'utf8')).toBe('working\n');
+      expect(readFileSync(join(kept, 'ios-Podfile.lock.original.1'), 'utf8')).toBe('working again\n');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

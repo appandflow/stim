@@ -9,6 +9,8 @@ import { parseCsv, parseLoad1 } from './platform.mjs';
 import { run, sleep } from './shell.mjs';
 
 export const TICK_MS = 60_000;
+// The daemon ticks every 5 minutes while nothing runs in the home and pressure is normal (section 1 of docs/specs/2026-11-02-resource-model-design.md as amended 2026-11-02, in the pressure ladder pull request, #4835), and every minute otherwise.
+export const QUIET_TICK_MS = 5 * 60_000;
 export const POLL_MS = 15_000;
 const DEFAULT_IDLE_WINDOW_MS = 15 * 60_000;
 
