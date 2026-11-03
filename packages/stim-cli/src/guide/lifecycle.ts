@@ -2366,7 +2366,8 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
      home. With no daemon holding the home (always on Windows), they run
      automatic maintenance and the ladder from rung 2 in the command before
      building, unless daemon.mode is off; the idle stage of rung 1 is the
-     daemon's alone.
+     daemon's, and a command with no daemon runs it only for owned devices
+     whose workspace has no running dev server (IDLE SHUTDOWN below).
 
   DORMANT STAGE: a workspace with nothing running and no activity for
   idle.dormantDays (3; fractions allowed; 0 never) goes dormant: its owned
@@ -2403,8 +2404,12 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   status\` shows "shut down after 15m idle" on the device until the next
   \`ios\`, \`android\` or \`revive\` run boots it again. With daemon.mode off,
   or while no daemon runs, the workspace's supervisor checks once a minute and
-  shuts its own devices down after idle.minutes; a device with no supervisor
-  then stays booted. Change the clock with
+  shuts its own devices down after idle.minutes. A device whose workspace has
+  no running dev server is shut down by the idle stage that the next command
+  runs in its own process (stim doctor, start, ios and android; on Windows also
+  a background process that every other top-level command but guide, settings,
+  help, gc and agent-device starts, at most once a minute), never for that
+  command's own workspace; with no daemon nothing times it between commands. Change the clock with
   \`stim settings set idle.minutes <minutes> --scope machine\`; 0 turns idle
   and dormant off, and an explicit 0 stays 0.
 

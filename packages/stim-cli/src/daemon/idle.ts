@@ -55,6 +55,10 @@ export interface IdlePassInput {
   act: boolean;
   /** Set while the pressure level is high or critical: the idle stage then takes every workspace idle 2 minutes. */
   pressure?: { level: 'high' | 'critical'; reasons: string[] };
+  /** Leaves out every workspace whose dev server runs, whose own supervisor times its idle stop. */
+  unsupervised?: boolean;
+  /** A workspace the pass never takes: the one the running command belongs to. */
+  protectedRoot?: string;
   log: (level: 'info' | 'warn' | 'error', event: string, msg: string, fields?: Record<string, unknown>) => void;
 }
 
@@ -94,6 +98,7 @@ function supervisorOf(path: string, project: ProjectRecord) {
  * owned device it cannot see, or `idle.minutes` 0.
  */
 async function candidate(path: string, project: ProjectRecord, input: IdlePassInput): Promise<Candidate> {
+  if (input.protectedRoot && canonicalPath(input.protectedRoot) === canonicalPath(path)) return { runs: false };
   const supervisor = supervisorOf(path, project);
   const state = readWorkspaceState(path);
   const booted = input.devices.filter((device) => device.project === path && ownedHere(device));
@@ -101,6 +106,7 @@ async function candidate(path: string, project: ProjectRecord, input: IdlePassIn
   const ownsIos = slots.some(({ platforms }) => platforms.ios?.owned === true);
   const orphan = supervisor.status === 'stale' ? survivingServer(state?.supervisor) : null;
   const serving = supervisor.status === 'ours' || supervisor.status === 'unverified' || orphan !== null;
+  if (input.unsupervised && serving) return { runs: false };
   if (ownsIos && input.sims === null)
     return { runs: true, kept: `its simulators cannot be listed (${input.simsError ?? 'unknown error'})` };
   if (!serving && booted.length === 0) {

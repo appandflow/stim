@@ -610,7 +610,10 @@ pass on each of its ticks when a check is due, so the disk check runs each
 minute while anything runs in the Stim home even when no command does. While
 no daemon holds the home (on Windows, which has none, or when it cannot
 start), `stim doctor` runs the same pass in its own process, and `stim start`,
-`stim ios` and `stim android` run it before they build. Passes follow
+`stim ios` and `stim android` run it before they build; on Windows every other
+top-level command except `stim guide`, `stim settings`, `stim help`, `stim gc`
+and `stim agent-device` starts it in a background process, at most once a
+minute. Passes follow
 [`daemon.mode`](./settings.md#stim-daemon): in the default `on` mode a pass
 removes what `stim gc --delete` would remove, under the caps in
 [settings](./settings.md#automatic-maintenance); in `report` mode it only
@@ -678,7 +681,7 @@ In `on` mode a pass works through these steps, cheapest to rebuild first:
    unpinned Gradle versions unmodified for `maintenance.gradleVersionIdleDays`,
    Stim TMPDIR leftovers unmodified for 24 hours, and the worktree trash.
 
-The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android`; never at a
+The daily sweep runs every `maintenance.sweepHours` (24) on a [stim-daemon](./settings.md#stim-daemon) tick, or, while no daemon holds the home, in `stim doctor`, `stim start`, `stim ios` or `stim android` (on Windows also in the background process other top-level commands start); never at a
 set hour. It waits while the one-minute load is above 4 per core.
 `maintenance.olderThanDays` (7) is the age for steps 2, 3, 5 and 6; set it to 0
 and the sweep removes nothing in them by age. Step 1, step 7, finished
@@ -740,7 +743,8 @@ warning on stderr. `stim start`, `stim ios` and `stim android` refuse with
 the ladder ran. While no daemon holds the home (on Windows, which has none, or
 when it cannot start), those three commands run the ladder in their own
 process before they build, from rung 2: the idle stage of rung 1 is the
-daemon's alone.
+daemon's, and a command with no daemon runs it only for owned devices whose
+workspace has no running dev server (see [idle stop](./dev-server-and-logs.md#idle-stop)).
 
 `stim gc` shows what the ladder would do now at high and at critical, whatever
 the machine measures, rung by rung with what each action would free, and each
