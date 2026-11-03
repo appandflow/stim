@@ -34,7 +34,14 @@ const KEYFRAME_RETRY_MS = 1000;
 const RECONNECT_FIRST_MS = 1000;
 const RECONNECT_MAX_MS = 15_000;
 const RECONNECT_WINDOW_MS = 3 * 60_000;
-const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unknown-session', 'protocol-unsupported']);
+const FATAL_HOST_ERRORS = new Set<string>(['forbidden', 'unauthorized', 'unknown-session', 'protocol-unsupported']);
+
+/** A host answer a retry cannot change: the approval ended, or the session is gone. */
+class FatalHostError extends Error {}
+
+const hostError = (error: ProtocolError): Error =>
+  FATAL_HOST_ERRORS.has(error.code) ? new FatalHostError(error.message) : new Error(error.message);
+
 export const CONGESTION_NOTICE_MS = 250;
 type Placement = { machine: string; session: string };
 type RelayTarget = { platform: 'ios' | 'android' | 'macos'; slot: string };
@@ -179,7 +186,7 @@ export class Upstream {
     this.connectMs = Date.now() - started;
     const reply = await this.request('hello', { client: { name: 'stim-server', version }, access: capability });
     this.helloMs = Date.now() - started - this.connectMs;
-    if ('error' in reply) throw new Error(reply.error.message);
+    if ('error' in reply) throw hostError(reply.error);
     if (
       !isJsonObject(reply.result) ||
       !Array.isArray(reply.result.capabilities) ||
@@ -286,7 +293,7 @@ export class HostConnections {
     try {
       const credential = readDeviceHostMachines().find((entry) => entry.machine === host.machine);
       if (!credential || credential.state !== 'approved' || !credential.serverKey)
-        throw new Error('no approved device-host credential');
+        throw new FatalHostError('no approved device-host credential');
       const found = machineEndpoint(
         credential.machine,
         parseMachine(credential.machine)?.transport === 'tailscale' ? await this.options.status() : null,
@@ -332,7 +339,7 @@ export class HostConnections {
         { host: host.machine, ms: Date.now() - started, error: reason.slice(0, 200) },
         true,
       );
-      throw new Error(reason, { cause });
+      throw cause instanceof FatalHostError ? new FatalHostError(reason, { cause }) : new Error(reason, { cause });
     }
   }
 
@@ -439,6 +446,7 @@ export class HostedRelay {
       if (!local) return this.releaseAfter(lease, 'device-host.unsubscribe', { subscription: upstream });
       const subscription = local;
       let hostSubscription = upstream;
+      const videoMode = reply.result.video;
       let leased = lease;
       let reconnecting = false;
       const gate = new VideoGate(DEFAULT_VIDEO_LIMITS.congestedBytes);
@@ -545,17 +553,18 @@ export class HostedRelay {
           try {
             next = await this.connect(host);
             const state = await next.connection.request('device-host.attach', { session: host.session });
-            if ('error' in state)
-              throw Object.assign(new Error(state.error.message), { fatal: FATAL_HOST_ERRORS.has(state.error.code) });
+            if (!this.frames.has(subscription) || this.closed) return next.release();
+            if ('error' in state) throw hostError(state.error);
             if (isJsonObject(state.result) && state.result.state === 'stopped')
-              throw Object.assign(new Error('the hosted session stopped'), { fatal: true });
+              throw new FatalHostError('the hosted session stopped');
             if (!isJsonObject(state.result) || state.result.state !== 'ready')
               throw new Error('the hosted session is not ready');
             const again = await next.connection.request('device-host.frames.subscribe', subscribeParams);
-            if ('error' in again)
-              throw Object.assign(new Error(again.error.message), { fatal: FATAL_HOST_ERRORS.has(again.error.code) });
+            if ('error' in again) throw hostError(again.error);
             if (!isJsonObject(again.result) || typeof again.result.subscription !== 'string')
               throw new Error('the host sent no subscription');
+            if ((again.result.video === 'h264') !== (videoMode === 'h264'))
+              throw new FatalHostError('the host streams another video format now');
             if (!this.frames.has(subscription) || this.closed)
               return this.releaseAfter(next, 'device-host.unsubscribe', { subscription: again.result.subscription });
             leased = next;
@@ -569,8 +578,8 @@ export class HostedRelay {
             return;
           } catch (cause) {
             next?.release();
-            const fatal = (cause as { fatal?: boolean }).fatal === true;
-            if (fatal || Date.now() + delay >= deadline) return failed(`${reason}; ${(cause as Error).message}`);
+            if (cause instanceof FatalHostError || Date.now() + delay >= deadline)
+              return failed(`${reason}; ${(cause as Error).message}`);
           }
         }
       };
