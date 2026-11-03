@@ -174,12 +174,24 @@ async function claimTaken({ settled, exited }: ReturnType<typeof spawnDaemon>): 
 }
 
 /**
+ * Waits up to `CLAIM_WAIT_MS` for the daemon taking over this home to take its claim. True once it does, and also
+ * while the takeover still runs, so no command starts a daemon or runs the passes in its place meanwhile; false when
+ * the takeover ended without a daemon.
+ */
+async function handoverSettled(): Promise<boolean> {
+  const deadline = Date.now() + CLAIM_WAIT_MS;
+  while (!daemonLive() && handoverInProgress() && Date.now() < deadline)
+    await new Promise((done) => setTimeout(done, CLAIM_POLL_MS));
+  return daemonLive() || handoverInProgress();
+}
+
+/**
  * Makes sure this home's daemon runs before a command creates running state: tells a live one about the contact so
  * it does not exit under the command, or starts one in the mode this command resolves, `STIM_DAEMON` included, and
  * waits up to five seconds for it to take the claim. An installed build replaces a live daemon that reports no installed
  * build or an older Stim version: the daemon keeps serving the command while a new one from this build waits to take
- * over after its current tick. A development build never replaces a daemon, and no command starts a second
- * replacement while one takes over. Returns whether a daemon holds the home; a claim Stim cannot resolve is reported
+ * over after its current tick. A development build never replaces a daemon, and no command starts a daemon while
+ * one takes over. Returns whether a daemon holds the home; a claim Stim cannot resolve is reported
  * and counts as held.
  */
 export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promise<boolean> {
@@ -204,6 +216,7 @@ export async function ensureDaemon(env: NodeJS.ProcessEnv = process.env): Promis
         spawnDaemon(env, mode, running.pid);
       return true;
     }
+    if (handoverInProgress() && (await handoverSettled())) return true;
     return await claimTaken(spawnDaemon(env, mode));
   } catch {
     return false;

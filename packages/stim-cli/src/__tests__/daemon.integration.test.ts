@@ -571,6 +571,41 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readClaimSet(daemonClaimRoot()).live).toEqual([]);
   }, 20_000);
 
+  test('a command arriving while a successor takes over starts no daemon and leaves the claim to the successor', async () => {
+    const spawned: (readonly string[])[] = [];
+    setExecutor({
+      ...getExecutor(),
+      spawn(_file, args = []) {
+        spawned.push(args);
+        return spawnChild(process.execPath, ['-e', ''], { stdio: 'ignore' });
+      },
+    });
+    onTestFinished(() => resetExecutor());
+    const taking = tryAcquireClaim({
+      root: daemonHandoverClaimRoot(),
+      mode: 'exclusive',
+      label: 'stim-daemon handover',
+    });
+    assert(taking.acquired);
+    onTestFinished(() => {
+      releaseClaim(taking.acquired);
+    });
+
+    const command = ensureDaemon({ ...process.env, STIM_HOME: home, STIM_DAEMON: 'on' });
+    await new Promise((done) => setTimeout(done, 300));
+    const successor = runDaemon({ tickMs: 60_000 });
+    expect(await command).toBe(true);
+    expect(spawned).toEqual([]);
+    expect(readClaimSet(daemonClaimRoot()).live.map((claim) => claim.owner.pid)).toEqual([process.pid]);
+
+    await listening();
+    expect(await askDaemon('handover', 1000, { pid: process.pid, build: null })).toEqual({
+      op: 'handover',
+      accepted: true,
+    });
+    await successor;
+  }, 20_000);
+
   test('a dev-build daemon hands over to an installed build only after the tick in progress, and queued runs keep their places', async () => {
     normalMeasurement();
     let entered!: () => void;
