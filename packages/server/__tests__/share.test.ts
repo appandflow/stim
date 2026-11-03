@@ -895,6 +895,28 @@ describe('a web share', () => {
     expect(f.routeCloses).toBe(2);
   });
 
+  it('offers rotation on a local simulator, and not on a physical device', async () => {
+    const page = async (overrides: Partial<ShareRequest>) => {
+      const share = await started(f, overrides);
+      const url = local(share, f.hub.port ?? 0);
+      return (await http(url, { cookie: await login(url, share.password ?? '') })).body;
+    };
+    expect(await page({})).toContain('data-can-rotate="true"');
+    f.status({
+      environments: [{ path: WORKSPACE }],
+      deviceLeases: [
+        {
+          holder: WORKSPACE,
+          platform: 'android',
+          id: 'PHONE-1',
+          expired: false,
+          expiresAt: new Date(Date.now() + 1e6).toISOString(),
+        },
+      ],
+    } as never);
+    expect(await page({ platform: 'android', physical: true })).toContain('data-can-rotate="false"');
+  });
+
   it('refuses a device the workspace does not own and control of a physical iPhone', async () => {
     expect(await f.hub.start(shareRequest({ platform: 'android' }))).toMatchObject({ code: 'action-failed' });
     expect(await f.hub.start(shareRequest({ physical: true, control: true }))).toMatchObject({ code: 'bad-request' });
@@ -941,6 +963,21 @@ describe('a web share', () => {
       expect(f.hub.unrecordedTargets()).toEqual(new Set());
       socket.close();
       await vi.waitFor(() => expect(record.unsubscribed).toBe(1));
+    });
+
+    it('offers rotation on a hosted simulator, and not on a hosted emulator, which the host refuses', async () => {
+      const page = async (platform: 'ios' | 'android') => {
+        f.status({
+          environments: [
+            { path: WORKSPACE, [platform]: { owned: false, host: { machine: 'mini', session: 's', device: {} } } },
+          ],
+        } as never);
+        const share = await started(f, { platform });
+        const url = local(share, f.hub.port ?? 0);
+        return (await http(url, { cookie: await login(url, share.password ?? '') })).body;
+      };
+      expect(await page('ios')).toContain('data-can-rotate="true"');
+      expect(await page('android')).toContain('data-can-rotate="false"');
     });
 
     it('refuses a session that is not ready, and ends when the session is replaced or gone', async () => {

@@ -8,6 +8,21 @@ public enum SimulatorRotation {
   private static let lock = NSLock()
   private static var sent: [String: UInt32] = [:]
 
+  /// The UIDeviceOrientation this process last turned the simulator to, or nil before it did.
+  /// CoreSimulator reports only the foreground app's orientation, so this is the one record of the device's.
+  public static func orientation(udid: String) -> UInt32? {
+    lock.lock()
+    defer { lock.unlock() }
+    return sent[udid]
+  }
+
+  /// Drops the remembered orientation of a simulator that shut down: it boots upright.
+  public static func forget(udid: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    sent[udid] = nil
+  }
+
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
     guard let device = CoreSimulator.device(udid: udid) else { return false }
     let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }
@@ -81,4 +96,17 @@ func quarterTurn(from orientation: UInt32, clockwise: Bool) -> UInt32 {
   let counterclockwise: [UInt32] = [1, 3, 2, 4]
   let index = counterclockwise.firstIndex(of: orientation) ?? 0
   return counterclockwise[(index + (clockwise ? 3 : 1)) % 4]
+}
+
+/// The UIInterfaceOrientation a single-panel screen is drawn in. A portrait app keeps its portrait
+/// framebuffer on a rotated device, so the device orientation turns it, as Simulator.app does. An app
+/// that turned itself keeps its own orientation.
+func screenOrientation(app: UInt32, device: UInt32?) -> UInt32 {
+  guard app == 1, let device else { return app }
+  switch device {
+  case 3: return 4
+  case 4: return 3
+  case 2: return 2
+  default: return 1
+  }
 }

@@ -82,9 +82,10 @@ holds:
 - **Hardware buttons** (Home and Lock on iOS; Back, Home and Apps on Android),
   with `--control`.
 - **Rotate left and right**, with `--control`, for an owned simulator or
-  emulator. A physical device rotates only in hand. The picture turns only when
-  the app in front supports the new orientation (and, on an emulator, auto-rotate
-  is on); a portrait-only app stays upright.
+  emulator. A physical device rotates only in hand. On an iOS simulator the
+  device turns as in Simulator.app, so a portrait-only app shows sideways in a
+  turned frame. On an emulator the picture turns only when the app in front
+  supports the new orientation and auto-rotate is on.
 - **Fullscreen.**
 
 Everyone watching sees who touches the screen: a colored dot with the person's

@@ -773,6 +773,7 @@ export class ShareHub {
       if (admitted) {
         const { platform, control, physical } = share.request;
         const access = this.accessOf(share, admitted.login);
+        const rotate = !physical && !(share.host && platform === 'android');
         return this.respond(
           response,
           200,
@@ -783,7 +784,7 @@ export class ShareHub {
             askName: share.passwordDigest === null,
             platform,
             buttons: BUTTONS[platform],
-            rotate: !physical,
+            rotate,
           }),
         );
       }

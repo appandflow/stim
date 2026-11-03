@@ -1773,7 +1773,9 @@ not on any remote"  (worktree remove)
   inputs: Stim has no prebuild record for it, its last prebuild did not
   finish, or the record names an earlier native fingerprint. Warm does not
   copy it, so the first \`stim <platform>\` in this worktree generates it
-  fresh. Nothing to fix. To let later warms copy it, delete <platform>/ in
+  fresh. For ios that includes a fresh \`pod install\`, so the worktree's
+  Pods are a private copy rather than a clone. Nothing to fix. To let later
+  warms copy it, delete <platform>/ in
   the source checkout and run \`stim <platform>\` there, so Stim generates it
   fresh and records that.
 
