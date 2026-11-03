@@ -318,6 +318,10 @@ let socket = null;
 let pending = Promise.resolve();
 
 function connect(codec) {
+  roster.clear();
+  me = null;
+  overlay.clear();
+  renderRoster();
   const current = new WebSocket(socketUrl + (codec === 'h264' ? '?codec=h264' : ''));
   socket = current;
   body.dataset.codec = codec;

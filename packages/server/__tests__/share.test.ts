@@ -32,6 +32,8 @@ interface Fixture {
   releases: string[];
   /** A holder name the fake control hub turns every touch away for. */
   busy: string | null;
+  /** Holds the fake control hub's `begin` until it resolves. */
+  beginGate: Promise<void> | null;
   presence: PresenceHub;
   routeOpens: number[];
   routeCloses: number;
@@ -63,6 +65,7 @@ function fixture(): Fixture {
     inputBy: [],
     releases: [],
     busy: null,
+    beginGate: null,
     presence: new PresenceHub(),
     routeOpens: [],
     routeCloses: 0,
@@ -94,6 +97,7 @@ function fixture(): Fixture {
     },
     control: {
       begin: async (_owner, target) => {
+        await f.beginGate;
         f.begins.push(target);
         f.exemptAtBegin.push([...f.hub.unrecordedTargets()]);
         if (f.refuseControl) return { code: 'device-busy', message: 'This device is driven by Stim Desktop.' };
@@ -667,6 +671,27 @@ describe('a web share', () => {
       socket.close();
       await vi.waitFor(() => expect(f.releases).toEqual(['Guest 1']));
     });
+  });
+
+  it('sends nothing for a viewer that left while its first input waited for the control session', async () => {
+    const share = await started(f, { control: true });
+    const url = local(share, f.hub.port ?? 0);
+    let open: () => void = () => {};
+    f.beginGate = new Promise((resolve) => {
+      open = resolve;
+    });
+    const cookie = await login(url, share.password ?? '');
+    const { socket } = await connect(url, { origin: origin(url), cookie });
+    const stays = await connect(url, { origin: origin(url), cookie });
+    socket.send(JSON.stringify({ type: 'touch', phase: 'down', x: 0.5, y: 0.5 }));
+    await new Promise((resolve) => setImmediate(resolve));
+    socket.close();
+    await vi.waitFor(() => expect(f.hub.list()[0]?.viewers).toBe(1));
+    open();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(f.inputs).toEqual([]);
+    stays.socket.close();
   });
 
   describe('on a share without a login', () => {

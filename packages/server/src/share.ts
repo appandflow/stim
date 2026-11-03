@@ -1054,7 +1054,7 @@ export class ShareHub {
               : { button: fields.button };
     if (method === 'input.button' && !BUTTONS[share.request.platform].includes(String(fields.button))) return;
     const session = await this.controlSession(share, viewer);
-    if (!session || share.ended) return;
+    if (!session || share.ended || !share.viewers.has(viewer)) return;
     const parsed = parseInput(method, { ...params, session }, (name) => share.source.targetOf(share.owner, name));
     if ('code' in parsed) return;
     const command: InputCommand = parsed.value.command;

@@ -259,6 +259,10 @@ function createOverlay(canvas, reduced) {
       people.delete(id);
       kick();
     },
+    clear() {
+      people.clear();
+      kick();
+    },
   };
 }
 
