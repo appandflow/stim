@@ -29,6 +29,7 @@ describe('the machine list of Stim homes', () => {
     root = join(dir, 'machine-homes');
     previous = {
       HOME: process.env.HOME,
+      USERPROFILE: process.env.USERPROFILE,
       STIM_HOME: process.env.STIM_HOME,
       [STIM_HOMES_TEST_GUARD_ROOT_ENV]: process.env[STIM_HOMES_TEST_GUARD_ROOT_ENV],
     };
@@ -135,6 +136,7 @@ describe('the machine list of Stim homes', () => {
 
     beforeEach(() => {
       process.env.HOME = join(dir, 'user');
+      process.env.USERPROFILE = join(dir, 'user');
       home = join(dir, 'scratch');
       mkdirSync(home, { recursive: true });
       process.env.STIM_HOME = home;

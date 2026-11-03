@@ -93,13 +93,20 @@ afterEach(() => {
   rmSync(base, { recursive: true, force: true });
 });
 
-test('a conflict with Podfile.lock updates only the named pods, and retries the clean install once links stay broken', async () => {
-  symlinkSync(join(app, 'gone.h'), join(app, 'ios', 'Pods', 'Headers', 'gone.h'));
-  mockChildren({ 'pod install --clean-install': { code: 1, out: CONFLICT } });
-  expect(await repair(facts())).toBe(0);
-  expect(podCommands()).toEqual(['install --clean-install', 'update FirebaseCoreExtension', 'install --clean-install']);
-  expect(notes.join('\n')).toContain('updating only that pod');
-});
+test.skipIf(process.platform === 'win32')(
+  'a conflict with Podfile.lock updates only the named pods, and retries the clean install once links stay broken (find -L over ios/Pods, which exists only on macOS; skipped on win32)',
+  async () => {
+    symlinkSync(join(app, 'gone.h'), join(app, 'ios', 'Pods', 'Headers', 'gone.h'));
+    mockChildren({ 'pod install --clean-install': { code: 1, out: CONFLICT } });
+    expect(await repair(facts())).toBe(0);
+    expect(podCommands()).toEqual([
+      'install --clean-install',
+      'update FirebaseCoreExtension',
+      'install --clean-install',
+    ]);
+    expect(notes.join('\n')).toContain('updating only that pod');
+  },
+);
 
 test('a conflict the update resolves is not retried when no link is broken', async () => {
   mockChildren({ 'pod install': { code: 1, out: CONFLICT } });
