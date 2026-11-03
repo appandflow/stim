@@ -1,6 +1,6 @@
 #!/bin/bash
-# Adds one Sparkle item to the appcast on the desktop-latest release and checks that the item is still
-# there afterwards. Another run's upload can replace the file between the download and the upload, so a
+# Adds one Sparkle item to the appcast on the desktop-latest release and checks that the merged file is still
+# served afterwards. Another run's upload can replace the file between the download and the upload, so a
 # lost update is merged again.
 # usage: scripts/desktop-publish-appcast.sh <item.xml> <merged-appcast-output>
 # environment: GH_TOKEN, GH_REPO, APPCAST_URL, optional DESKTOP_NEXT_KEEP
@@ -39,13 +39,15 @@ for attempt in 1 2 3 4 5; do
   fi
   gh release upload desktop-latest --clobber "$dir/appcast.xml"
   fetch "$dir/served.xml"
-  if node "$script" list --current "$dir/served.xml" | cut -f3 | grep -qxF "$version"; then
+  node "$script" list --current "$dir/appcast.xml" > "$dir/expected.txt"
+  node "$script" list --current "$dir/served.xml" > "$dir/served.txt"
+  if cmp -s "$dir/expected.txt" "$dir/served.txt"; then
     cp "$dir/served.xml" "$output"
     echo "desktop-latest's appcast.xml serves:"
-    node "$script" list --current "$dir/served.xml"
+    cat "$dir/served.txt"
     exit 0
   fi
-  echo "::warning::$version is missing from the appcast after attempt $attempt; another run replaced it. Merging again."
+  echo "::warning::The served appcast differs from the one uploaded after attempt $attempt; another run replaced it. Merging again."
   sleep $((attempt * 5))
 done
 echo "::error::Could not add $version to the appcast on desktop-latest."
