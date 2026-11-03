@@ -1644,8 +1644,12 @@ RULES
                    when that step did. Meanwhile phase above follows it as
                    prebuild, pods or compile.
   waitingFor       optional { kind: "build-slot" | "device-slot", inUse, max,
-                   since } for a slot wait, independently of phase. since is
-                   ISO. Overlapping waits show the first, then the remaining one.
+                   since, position, resource } for a slot wait, independently
+                   of phase. since is ISO; position is the run's 1-based place
+                   in its queue; resource names what it waits for, such as
+                   "build slots", "booted devices", "boots in flight",
+                   "memory" or "device count". Overlapping waits show the
+                   first, then the remaining one.
   waitingOn        while phase is "wait" and the holder is known: { path },
                    the workspace whose build of the same artifact this run
                    waits for; absent otherwise. The lock is machine-wide, so
@@ -1846,9 +1850,9 @@ RULES
   figure, including an environment's memoryMb, is held on its own (see
   \`guide lifecycle\`), so the sums can differ from what they sum.
 
-  capacity.load is always present. capacity.builds is present only while
-  concurrency.maxBuilds is set, capacity.devices only while
-  concurrency.maxDevices is set, and capacity.platformDevices only for the
+  capacity.load, capacity.builds and capacity.devices are always present:
+  builds and devices carry the derived caps when concurrency.maxBuilds and
+  concurrency.maxDevices are 0. capacity.platformDevices lists only the
   platforms whose cap is set (see \`guide lifecycle concurrency\`):
 
   load     { cpus, loadPerCore, busyAt, limit, state }. loadPerCore is the
@@ -2044,12 +2048,10 @@ CAPACITY REFUSALS
   Recording is best effort and does not change the refusal. Plain stats
   output is unchanged.
   capacityWaits?: [{ at, kind: "device-wait", platform: "ios" | "android",
-                    ms, max, workspace, reclaimed? }]
+                    ms, max, workspace }]
   Each owned-device slot wait records its whole elapsed milliseconds,
   including waits that time out or fail. It has the same 50-event, 7-day
   retention, newest-first order, workspace id and best-effort recording.
-  reclaimed is the whole count of devices shut down for the waiting run,
-  omitted when zero. Plain stats reports waits with a positive reclaim count.
   It is omitted when empty.
 
 AGENT-DEVICE DISK USAGE

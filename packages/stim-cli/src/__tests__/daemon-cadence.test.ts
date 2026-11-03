@@ -63,9 +63,10 @@ test('a quiet home with a workspace not yet dormant keeps the daemon at the 5-mi
   recordWorkspaceUse(root, new Date(started - MINUTE_MS));
 
   let exited = false;
-  const daemon = runDaemon({ mode: 'on' }).then(() => {
+  const daemon = (async () => {
+    await runDaemon({ mode: 'on' });
     exited = true;
-  });
+  })();
   await vi.advanceTimersByTimeAsync(MINUTE_MS);
   await vi.waitFor(() => expect(ticks()).toHaveLength(1));
   expect(readDaemonSnapshot()).toMatchObject({ intervalMs: 5 * MINUTE_MS });

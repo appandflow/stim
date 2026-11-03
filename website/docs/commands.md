@@ -1879,16 +1879,14 @@ placements. Placements include `slotWaitMs` and `deviceSlotWaitMs` as whole mill
 
 Owned-device waits print the count, holder workspace names and elapsed time
 at once and about every 10 seconds on stderr. Status JSON includes optional
-`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since }`
+`build.waitingFor: { kind: "build-slot" | "device-slot", inUse, max, since, position, resource }`
 without changing the build phase. Overlapping waits show the one that started
 first, then the remaining wait.
 
 The optional top-level JSON `capacityWaits` lists each owned-device slot wait:
-`{ at, kind: "device-wait", platform, ms, max, workspace, reclaimed? }`. `ms` is whole
+`{ at, kind: "device-wait", platform, ms, max, workspace }`. `ms` is whole
 elapsed milliseconds, including waits that time out or fail. The list keeps
 the last 50 events from 7 days, newest first, and is omitted when empty.
-`reclaimed` is the whole count of devices shut down for that waiting run,
-omitted when zero. Plain stats reports waits with positive reclaim counts.
 Recording is best effort.
 
 The optional top-level JSON `capacityRefusals` lists the last 50 device

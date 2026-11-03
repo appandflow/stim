@@ -972,10 +972,6 @@ export function idleMinutesSetting(settings: SettingsObject): number {
   return Math.min(metroIdleStopMinutesSetting(settings), deviceIdleShutdownMinutesSetting(settings));
 }
 
-export function deviceReclaimIdleMinutesSetting(settings: SettingsObject): number {
-  return minutesSetting(settings, 'devices', 'reclaimIdleMinutes');
-}
-
 export function maintenanceKeepSetting(settings: SettingsObject): boolean {
   const value = settingValueAt(settings, 'maintenance.keep');
   return value !== undefined && value !== false;

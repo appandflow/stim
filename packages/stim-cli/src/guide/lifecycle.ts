@@ -741,8 +741,8 @@ The same setup serves macos --remote and macos.remote. Approval is separate from
 and phone control. Set ios.remote to the machine name for a default (machine scope for every app on this machine);
 no flag or setting runs here. eas and proxy keep their remote backend meanings.
 --remote auto (or ios.remote = auto / android.remote = auto) stays here when
-there is a free concurrency.maxDevices slot and platform cap slot (0 means unlimited), no device
-waiter ahead, normal host memory pressure, no budget shortfall,
+there is a free concurrency.maxDevices slot (derived from RAM when 0) and platform cap slot (0 means
+no per-platform cap), no device waiter ahead, normal host memory pressure, disk pressure normal,
 and 5-minute load per core below server.maxLoadPerCore. Without remote.machines,
 auto and remote are local and remote-only refuses with STIM_HOSTING_REFUSED. An unknown local device count also stays local; boot admission
 still decides. The default without a flag or setting stays local. remote.devicePoolDisabled excludes

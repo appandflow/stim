@@ -1300,9 +1300,10 @@ with `STIM_AT_CAPACITY`. When no host could ever take the run (none configured,
 unreachable, or declined for another reason such as paused), it refuses at once with
 `STIM_HOSTING_REFUSED`, naming each skipped host and its reason. `--plan` never waits.
 
-Auto stays local when the device cap has room (0 means unlimited), no run is
-queued ahead, host memory pressure is normal, the budget has no
-shortfall, and five-minute load per core is below `server.maxLoadPerCore`.
+Auto stays local when the device cap has room (`concurrency.maxDevices`,
+derived from RAM when 0), no run is queued ahead, host memory pressure is
+normal, disk pressure is normal, and five-minute load per core is below
+`server.maxLoadPerCore`.
 An unknown device count stays local for the binding boot admission to decide.
 A recorded hosted session is reused regardless of load; a live local owned
 slot stays here. A stopped hosted session places again, while an unreachable

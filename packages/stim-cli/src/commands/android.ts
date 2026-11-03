@@ -42,7 +42,6 @@ import { findProjectRoot, projectShortcut } from '../workspace/project.ts';
 import {
   resolveCacheProviderConfig,
   resolveSettings,
-  deviceReclaimIdleMinutesSetting,
   metroWarmupUrlSetting,
   metroPortSetting,
   projectSettingsContextAsync,
@@ -958,7 +957,6 @@ export async function runAndroid(options: RunAndroidOptions = {} as RunAndroidOp
     automatic: plan.target.kind === 'hosted' && plan.target.machine === 'auto',
     signal: runCancellationSignal(context),
     waitMs: plan.deviceSlotWaitMs,
-    reclaimIdleMinutes: deviceReclaimIdleMinutesSetting(settings),
     waitingFor: (info: Parameters<typeof progress.waitingFor>[0]) => progress.waitingFor(info, 'device-slot'),
     onBootStart: () => progress.bootStarted(),
     onWait: (ms: number) => {
