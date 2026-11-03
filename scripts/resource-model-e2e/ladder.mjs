@@ -95,7 +95,7 @@ export function ladderActions({ daemonText = '', workspaceLogs = [] }) {
 const hms = (ms) => new Date(ms).toISOString().slice(11, 19);
 const nameOf = (path) => (path ? path.split('/').at(-1) : 'shared');
 
-export function checkLadderOrder({ actions, ticks }) {
+export function checkLadderOrder({ actions, ticks }, { skipWorkspaces = [] } = {}) {
   const evidence = actions.map(
     (a) => `${hms(a.ts)} rung ${a.rung} ${a.kind} ${nameOf(a.target)} (${a.bytes} bytes freed, ${a.source})`,
   );
@@ -111,8 +111,10 @@ export function checkLadderOrder({ actions, ticks }) {
       }
     }
   };
+  const notes = [];
   const byTick = new Map();
-  for (const action of actions) {
+  if (!ticks.length) notes.push('the daemon log has no tick records, so the within-tick rule was not checked');
+  for (const action of ticks.length ? actions : []) {
     const index = ticks.findIndex((tick) => tick >= action.ts);
     const key = index === -1 ? ticks.length : index;
     byTick.set(key, [...(byTick.get(key) ?? []), action]);
@@ -120,9 +122,14 @@ export function checkLadderOrder({ actions, ticks }) {
   for (const [key, list] of byTick)
     inOrder(list, `within the tick ending ${key < ticks.length ? hms(ticks[key]) : 'after the last logged tick'}`);
   const byWorkspace = new Map();
-  for (const action of actions.filter((a) => a.workspace)) {
+  if (skipWorkspaces.length) {
+    notes.push(
+      `not checked per workspace, because the scenario starts and stops them: ${skipWorkspaces.map(nameOf).join(', ')}`,
+    );
+  }
+  for (const action of actions.filter((a) => a.workspace && !skipWorkspaces.includes(a.workspace))) {
     byWorkspace.set(action.workspace, [...(byWorkspace.get(action.workspace) ?? []), action]);
   }
   for (const [workspace, list] of byWorkspace) inOrder(list, `for ${nameOf(workspace)}`);
-  return { verdict: violations.length ? 'fail' : 'pass', rungs, evidence: [...evidence, ...violations] };
+  return { verdict: violations.length ? 'fail' : 'pass', rungs, evidence: [...evidence, ...notes, ...violations] };
 }

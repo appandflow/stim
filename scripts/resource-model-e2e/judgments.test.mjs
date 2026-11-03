@@ -98,6 +98,27 @@ describe('idle timing judgment', () => {
     });
     expect(verdict).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 14 * MIN });
   });
+  describe('dormancy with a quiet daemon', () => {
+    const window = 20 * MIN;
+    const judge = (afterMs, previousAfterMs = null) =>
+      judgeIdleTiming({
+        ...base,
+        windowMs: window,
+        tickMs: MIN,
+        lateTickMs: 5 * MIN,
+        previousPollStartMs: previousAfterMs === null ? null : base.commandEndMs + previousAfterMs,
+        idlePollStartMs: base.commandEndMs + afterMs - 2000,
+        idlePollEndMs: base.commandEndMs + afterMs,
+      });
+    it('allows up to the window plus the quiet tick, and no more', () => {
+      expect(judge(24.5 * MIN, 24 * MIN).ok).toBe(true);
+      expect(judge(26.5 * MIN, 25.5 * MIN).ok).toBe(false);
+    });
+    it('does not let the quiet tick move the earliest time: a delete on the 15 minute idle clock fails', () => {
+      expect(judge(15.3 * MIN)).toMatchObject({ ok: false, early: true, earliest: base.commandEndMs + 19 * MIN });
+      expect(judge(19.2 * MIN).ok).toBe(true);
+    });
+  });
   describe('an idle stop before the window ends', () => {
     const idleAt = base.commandEndMs + 3 * MIN;
     const judge = (pressureLevel, when = idleAt) =>
@@ -251,6 +272,30 @@ describe('ladder order from the daemon log', () => {
       tick(30),
     ].join('\n');
     expect(checkLadderOrder(ladderActions({ daemonText: text })).verdict).toBe('fail');
+  });
+
+  it('skips the within-tick rule, and says so, when the log has no tick records', () => {
+    const text = [
+      idle(1000, A04),
+      action(2000, 4, 'dormant-stage', A04, { workspace: A04 }),
+      action(3000, 3, 'empty-cache', '/h/cc'),
+    ].join('\n');
+    const verdict = checkLadderOrder(ladderActions({ daemonText: text }));
+    expect(verdict.verdict).toBe('pass');
+    expect(verdict.evidence.some((e) => e.includes('no tick records'))).toBe(true);
+  });
+
+  it('leaves out the workspaces the scenario starts and stops again', () => {
+    const text = [
+      action(10, 4, 'dormant-stage', A04, { workspace: A04 }),
+      tick(15),
+      idle(20_000, A04),
+      tick(20_100),
+      idle(30_000, A05),
+      tick(30_100),
+    ].join('\n');
+    expect(checkLadderOrder(ladderActions({ daemonText: text })).verdict).toBe('fail');
+    expect(checkLadderOrder(ladderActions({ daemonText: text }), { skipWorkspaces: [A04] }).verdict).toBe('pass');
   });
 
   it('fails when a workspace is idled after it went dormant, and has no verdict with one rung', () => {

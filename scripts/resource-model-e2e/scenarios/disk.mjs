@@ -350,7 +350,7 @@ export async function runDisk(ctx) {
     await Promise.race([Promise.all([chain.done, cold?.done]), sleep(BUILD_WAIT_MS, ctx.signal)]);
     beat.open = false;
 
-    const order = checkLadderOrder(readLadder(ctx, [builder, ...tracked]));
+    const order = checkLadderOrder(readLadder(ctx, [builder, ...tracked]), { skipWorkspaces: [probe.path] });
     const title = 'the ladder acts in rung order by the daemon log: within each tick, and for each workspace';
     if (order.verdict === 'unavailable') {
       ctx.assertions.unavailable(SCENARIO, 'freed-order', title, [

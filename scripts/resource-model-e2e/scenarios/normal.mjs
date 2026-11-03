@@ -4,6 +4,7 @@ import { outcome, STATUS, judgeIdleTiming } from '../assertions.mjs';
 import {
   POLL_MS,
   QUIET_TICK_MS,
+  TICK_MS,
   assertIdleDown,
   launch,
   loadGate,
@@ -72,7 +73,8 @@ async function dormantPhase(ctx, live, reviveEndMs) {
         lastActivityMs: null,
         readAtMs: ctx.record(workspace).revivedAt ?? reviveEndMs,
         windowMs,
-        tickMs: QUIET_TICK_MS,
+        tickMs: TICK_MS,
+        lateTickMs: QUIET_TICK_MS,
         previousPollStartMs: previousPollStartMs.get(workspace.label),
         idlePollStartMs: hit.startedAt,
         idlePollEndMs: hit.endedAt,

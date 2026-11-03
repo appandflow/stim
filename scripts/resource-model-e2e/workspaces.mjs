@@ -1,4 +1,13 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  rmdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import {
@@ -82,20 +91,23 @@ async function prepareNativeDirs(ctx, workspace) {
 
 const PODFILE_LOCK = 'ios/Podfile.lock';
 
+function freePath(base) {
+  if (!existsSync(base)) return base;
+  for (let n = 1; ; n++) if (!existsSync(`${base}.${n}`)) return `${base}.${n}`;
+}
+
 // Rung 5 of the pressure ladder deletes a workspace's Pods only when its ios/Podfile.lock equals the source checkout's,
-// and the worktrees carry the committed one; the file it replaces is kept in <out>/restored.
+// and the worktrees carry the committed one; the file it replaces is kept in <out>/restored, under a new name when
+// that directory already holds one. Only the working-tree file changes, so a staged version stays staged.
 export async function restoreProjectLockfile(ctx) {
   const { project, emit, out } = ctx;
-  const tracked = await run('git', ['ls-files', '--error-unmatch', PODFILE_LOCK], { cwd: project });
-  if (tracked.code !== 0) return false;
-  const same = await run('git', ['diff', '--quiet', 'HEAD', '--', PODFILE_LOCK], { cwd: project });
-  if (same.code === 0) return false;
-  const kept = join(out, 'restored', 'ios-Podfile.lock.original');
+  const committed = await run('git', ['show', `HEAD:${PODFILE_LOCK}`], { cwd: project });
+  const file = join(project, PODFILE_LOCK);
+  if (committed.code !== 0 || !existsSync(file) || readFileSync(file, 'utf8') === committed.stdout) return false;
+  const kept = freePath(join(out, 'restored', 'ios-Podfile.lock.original'));
   mkdirSync(dirname(kept), { recursive: true });
-  copyFileSync(join(project, PODFILE_LOCK), kept);
-  const restored = await run('git', ['checkout', 'HEAD', '--', PODFILE_LOCK], { cwd: project });
-  if (restored.code !== 0)
-    throw new HarnessError(`could not restore ${PODFILE_LOCK} in ${project}: ${restored.stderr.trim()}`);
+  copyFileSync(file, kept);
+  writeFileSync(file, committed.stdout);
   emit(
     'setup',
     `restored the committed ${PODFILE_LOCK} in the project (it differed from HEAD); the previous file is kept at ${kept}`,
