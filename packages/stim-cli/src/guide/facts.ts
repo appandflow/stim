@@ -1,9 +1,9 @@
-import { RECENT_LAUNCH_MS } from '../status.ts';
-import type { GuideTopic } from './types.ts';
+import { RECENT_LAUNCH_MS } from "../status.ts";
+import type { GuideTopic } from "./types.ts";
 
 const facts: GuideTopic = {
   summary:
-    'The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `revive`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract',
+    "The --json payloads: `start`, `ios`, `android`, `web`, `ios|android --plan`, `reload`, `revive`, `stop`, `status`, `doctor`, `device lock`/`unlock`, `device location|permission|push|network`, `gc`, and the error contract",
   preamble: () => `SLOTS
 Named ios/android runs add slot to their JSON facts. Default-run fields remain
 compatible. status adds a slots array per environment with each named slot's
@@ -172,7 +172,7 @@ leased until <time>" for each one.`,
   sections: {
     payloads: {
       summary:
-        'every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules',
+        "every field of the start, ios, android, macos, web, reload and revive payloads, the error contract, the device rules",
       body: () => `  stim start --json
 
   port            the Metro port RESERVED for this workspace
@@ -711,7 +711,8 @@ RULES
     creates, boots, or deletes.`,
     },
     devmenu: {
-      summary: 'why the Expo dev menu or Tools button is or is not over the app, per platform and device kind',
+      summary:
+        "why the Expo dev menu or Tools button is or is not over the app, per platform and device kind",
       body: () => `  EVERY DEV-CLIENT DEEP LINK CARRIES disableOnboarding=1
   INSIDE ITS PROJECT URL
   (\`...?url=http%3A%2F%2Fhost%3Aport%2F%3FdisableOnboarding%3D1&disableFab=1\`),
@@ -839,7 +840,8 @@ RULES
   full commands.`,
     },
     gc: {
-      summary: 'the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals',
+      summary:
+        "the gc report payload: mode, sections, reasons, failures, results, inventory, and the gc refusals",
       body: () => `  stim gc [--delete] [--older-than <days>] [--cache <name|all|workspaces|recordings|parked>]
           [--worktrees] --json
 
@@ -1283,7 +1285,8 @@ RULES
 
   A warm records warming under its own ownership claim, so a warm that was
   killed or failed reads as idle, never as warming. Plain \`stim status\`
-  marks the workspace [warming: <step>], [ready] or [idle].
+  marks the workspace [warming: <step>] or [ready], and its stage line says
+  whether it is running, idle, dormant or stopped.
 
   Each environment carries issues, the things in that workspace that need
   the user, and warnings, its error and warning issues as text ("<slot>: "
@@ -1981,7 +1984,8 @@ RULES
   machine is not null, with no other subprocess.`,
     },
     plan: {
-      summary: 'the ios and android --plan payload: fingerprint, cacheHit, prebuild, missReason, expectedMs and basis',
+      summary:
+        "the ios and android --plan payload: fingerprint, cacheHit, prebuild, missReason, expectedMs and basis",
       body: () => `  stim ios --plan --json            # or: stim android --plan --json
 
   { platform, slot?, fingerprint, cacheKey, cacheHit, provider,
@@ -2027,7 +2031,8 @@ RULES
   lifecycle builds\`.`,
     },
     stats: {
-      summary: 'the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate',
+      summary:
+        "the stats payload, what counts as a run, hit, miss and failed, timeSavedMs, the heartbeat estimate",
       body: () => `  stim stats --json
 
   { "version": 1,

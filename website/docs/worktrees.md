@@ -1,7 +1,7 @@
 ---
-title: 'Worktree isolation'
+title: "Worktree isolation"
 sidebar_position: 2
-description: 'Parallel worktrees that share expensive build caches'
+description: "Parallel worktrees that share expensive build caches"
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -253,7 +253,7 @@ environment's `phase`:
 
 `phaseSince` is when the warm started or finished. A warm that fails or is
 killed reads as `idle`, never as `warming`. Plain `stim status` marks the
-workspace `[warming: copy]`, `[ready]` or `[idle]`. A warm that finds no app
+workspace `[warming: copy]` or `[ready]`. A warm that finds no app
 registers nothing, and the worktree stays in `unprovisionedWorktrees` until
 `start`, `ios`, `android`, or `doctor` registers it.
 

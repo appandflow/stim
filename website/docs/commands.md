@@ -1,7 +1,7 @@
 ---
-title: 'Command reference'
+title: "Command reference"
 sidebar_position: 1
-description: 'Every Stim command and option'
+description: "Every Stim command and option"
 ---
 
 import StimTabs from '@site/src/components/StimTabs';
@@ -242,7 +242,12 @@ its reported load:
   "state": "approved",
   "offloadable": false,
   "reasons": ["Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"],
-  "problems": [{ "code": "stim-build", "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here" }],
+  "problems": [
+    {
+      "code": "stim-build",
+      "reason": "Stim build 6bbe9103995f7eb6 there, e7749c9011f4d423 here"
+    }
+  ],
   "capacity": {
     "running": 0,
     "max": 1,
@@ -1334,7 +1339,12 @@ atomically. A committed write keeps the file's other keys and indentation.
 ```json
 {
   "project": "/path/to/app",
-  "files": { "machine": "...", "workspace": "...", "repo": "...", "committed": "..." },
+  "files": {
+    "machine": "...",
+    "workspace": "...",
+    "repo": "...",
+    "committed": "..."
+  },
   "settings": [
     {
       "key": "ios.runtime",
@@ -1343,7 +1353,9 @@ atomically. A committed write keeps the file's other keys and indentation.
       "layers": { "repo": "26.2", "committed": "26.0" }
     }
   ],
-  "unknown": [{ "key": "bogus", "scope": "committed", "file": "...", "value": true }]
+  "unknown": [
+    { "key": "bogus", "scope": "committed", "file": "...", "value": true }
+  ]
 }
 ```
 
@@ -1422,8 +1434,9 @@ only for live environments; `stim status --watch` shows it for every worktree. S
 fields.
 
 Each workspace is marked with its lifecycle phase: `[warming: <step>]` while
-`stim worktree warm` runs in it, `[ready]` after a warm until its first run,
-or `[idle]`. An active workspace (phase `live`) has no marker. In `--json`, each environment
+`stim worktree warm` runs in it, or `[ready]` after a warm until its first run.
+Other workspaces have no marker; their `stage:` line says whether they are running,
+idle, dormant or stopped. In `--json`, each environment
 carries `phase` (`warming`, `ready`, `live` or `idle`), `phaseSince` and, while
 warming, `warmStep`; see
 [Parallel environments](./worktrees.md#parallel-environments).
@@ -1779,8 +1792,16 @@ one) carries `missReason`: why the cache had no app for it.
   "kind": "changed",
   "summary": "native dependency added: expo-clipboard",
   "changes": [
-    { "source": "node_modules/expo-clipboard/ios", "change": "added", "category": "native-dependency" },
-    { "source": "expoAutolinkingConfig:ios", "change": "changed", "category": "autolinking" }
+    {
+      "source": "node_modules/expo-clipboard/ios",
+      "change": "added",
+      "category": "native-dependency"
+    },
+    {
+      "source": "expoAutolinkingConfig:ios",
+      "change": "changed",
+      "category": "autolinking"
+    }
   ],
   "changeCount": 2,
   "baseline": { "fingerprint": "5f9c79...", "from": "workspace" },
@@ -2318,7 +2339,13 @@ prints, for example:
   "results": [],
   "sections": {
     "deadProjects": [{ "path": "/path/to/removed-app" }],
-    "orphanedWorkspaces": [{ "dir": "~/.stim/workspaces/old--1a2b", "projectRoot": "/path/to/old", "bytes": 52428800 }],
+    "orphanedWorkspaces": [
+      {
+        "dir": "~/.stim/workspaces/old--1a2b",
+        "projectRoot": "/path/to/old",
+        "bytes": 52428800
+      }
+    ],
     "linkedWorktrees": [
       {
         "path": "/path/to/feature",
@@ -2420,7 +2447,11 @@ prints, for example:
         "dir": "/Users/example/.agent-device",
         "present": true,
         "bytes": 8192,
-        "sessions": { "dir": "/Users/example/.agent-device/sessions", "bytes": 4096, "count": 1 },
+        "sessions": {
+          "dir": "/Users/example/.agent-device/sessions",
+          "bytes": 4096,
+          "count": 1
+        },
         "logs": { "dir": "/Users/example/.agent-device/logs", "bytes": 4096 },
         "other": { "bytes": 0, "largest": [] }
       },
