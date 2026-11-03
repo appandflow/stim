@@ -229,6 +229,20 @@ test('concurrent reservations refuse only when the port range is exhausted', asy
   ]);
 });
 
+test('a reservation skips a port its claim refuses as another workspace named port', async () => {
+  const projects: Config['projects'] = {};
+  for (let port = 8082; port < 8281; port++)
+    projects[join(tmpHome, `held-${port}`)] = { metroPort: port, platforms: {} };
+  projects[join(tmpHome, 'named')] = { metroPort: null, platforms: {}, ports: { api: 8281 } };
+  saveConfig({ version: 2, projects, repos: {} });
+  const root = join(tmpHome, 'x');
+  upsertProject(root, { bundleId: 'a', androidPackage: 'a', isExpo: false });
+  await expect(reserveMetroPort(root, async () => true, allFree)).rejects.toThrow(
+    'Found no free Metro port between 8082 and 8281',
+  );
+  expect(getProject(root)?.metroPort).toBeFalsy();
+});
+
 test('reserveMetroPort records a pinned port and refuses one another workspace reserved', async () => {
   upsertProject('/a', { bundleId: 'a', androidPackage: 'a', isExpo: false });
   upsertProject('/b', { bundleId: 'b', androidPackage: 'b', isExpo: false });

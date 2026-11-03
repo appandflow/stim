@@ -1795,7 +1795,7 @@ not on any remote"  (worktree remove)
   have, which is exactly what these carry warnings report.`,
     },
     environment: {
-      summary: 'npx registry E401/E404, the Node floor, no free Metro port, the reservation race',
+      summary: 'npx registry E401/E404, the Node floor, no free Metro port',
       separator: '--- ENVIRONMENT ---',
       body: () => `"npm error code E401 / E404" while \`npx\` resolves the stim package
   The repo probably pins a private registry in \`.npmrc\`, so \`npx\` looked for
