@@ -284,36 +284,211 @@ const roster = new Map();
 const rosterList = document.getElementById('roster');
 const eye = document.getElementById('eye');
 
-function renderRoster() {
-  const items = [...roster.values()]
-    .toSorted((a, b) => Number(Boolean(b.self)) - Number(Boolean(a.self)))
-    .map((entry) => {
+const peopleBox = document.getElementById('people');
+const peopleButton = document.getElementById('people-button');
+const peoplePanel = document.getElementById('people-panel');
+const peopleTitle = document.getElementById('people-title');
+const peopleList = document.getElementById('people-list');
+const people = globalThis.stimPeople;
+const shareControl = control || viewOnly;
+const RENAME_MS = 5000;
+const TOUCH_MS = 10000;
+const NAME_MAX = 24;
+let lastRenameAt = -Infinity;
+const touchTimers = new Map();
+
+function paint(element, color) {
+  element.style.background = window.PALETTE[color % window.PALETTE.length];
+  element.style.color = window.PALETTE_TEXT[color % window.PALETTE_TEXT.length];
+}
+
+function avatar(row) {
+  const item = document.createElement('span');
+  item.className = 'avatar';
+  paint(item, row.color);
+  item.textContent = row.initial;
+  return item;
+}
+
+const selfRow = document.createElement('li');
+const selfAvatar = document.createElement('span');
+selfAvatar.className = 'avatar';
+const selfInfo = document.createElement('span');
+selfInfo.className = 'person';
+const selfName = document.createElement('span');
+selfName.className = 'person-name';
+const selfRole = document.createElement('span');
+selfRole.className = 'person-role';
+selfInfo.append(selfName, selfRole);
+const changeName = document.createElement('button');
+changeName.type = 'button';
+changeName.className = 'link';
+changeName.textContent = 'Change name';
+const nameEdit = document.createElement('form');
+nameEdit.className = 'person-edit';
+nameEdit.hidden = true;
+const editInput = document.createElement('input');
+editInput.className = 'field';
+editInput.maxLength = NAME_MAX;
+editInput.autocomplete = 'nickname';
+editInput.setAttribute('aria-label', 'Your name');
+const editSave = document.createElement('button');
+editSave.type = 'submit';
+editSave.className = 'primary small';
+editSave.textContent = 'Save';
+const editCancel = document.createElement('button');
+editCancel.type = 'button';
+editCancel.className = 'link';
+editCancel.textContent = 'Cancel';
+const editNote = document.createElement('p');
+editNote.className = 'person-note';
+editNote.setAttribute('role', 'status');
+nameEdit.append(editInput, editSave, editCancel, editNote);
+selfRow.append(selfAvatar, selfInfo, changeName, nameEdit);
+
+function editing(on) {
+  selfInfo.hidden = on;
+  changeName.hidden = on;
+  nameEdit.hidden = !on;
+  editNote.textContent = '';
+  if (on) {
+    editInput.value = me ? me.name : '';
+    editInput.focus();
+    editInput.select();
+  } else if (peoplePanel.contains(document.activeElement) || document.activeElement === document.body) {
+    changeName.focus();
+  }
+}
+
+function describe(row) {
+  const name = document.createElement('span');
+  name.className = 'person-name';
+  if (row.kind === 'viewer') name.textContent = row.name;
+  else {
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    paint(tag, row.color);
+    tag.textContent = row.name;
+    name.append(tag);
+  }
+  if (row.self) {
+    const mark = document.createElement('span');
+    mark.className = 'you-mark';
+    mark.textContent = ' (you)';
+    name.append(mark);
+  }
+  return name;
+}
+
+function renderPeople() {
+  const rows = people.peopleRows([...roster.values()], shareControl);
+  peopleBox.hidden = rows.length === 0;
+  peopleTitle.textContent = people.peopleCount(rows.length);
+  peopleButton.setAttribute('aria-label', `People: ${peopleTitle.textContent}`);
+  const own = rows.find((row) => row.self);
+  const items = rows
+    .filter((row) => !row.self)
+    .map((row) => {
       const item = document.createElement('li');
-      item.style.background = window.PALETTE[entry.color % window.PALETTE.length];
-      item.style.color = window.PALETTE_TEXT[entry.color % window.PALETTE_TEXT.length];
-      item.textContent = [...entry.name][0] ? [...entry.name][0].toUpperCase() : '?';
-      item.title = entry.name + (entry.self ? ' (you)' : '') + (entry.viewOnly ? ', view only' : '');
-      if (entry.self) item.classList.add('you');
-      if (entry.viewOnly) item.append(eye.content.cloneNode(true));
+      const info = document.createElement('span');
+      info.className = 'person';
+      const role = document.createElement('span');
+      role.className = 'person-role';
+      role.textContent = row.role;
+      info.append(describe(row), role);
+      item.append(avatar(row), info);
       return item;
     });
+  if (own) {
+    paint(selfAvatar, own.color);
+    selfAvatar.textContent = own.initial;
+    selfName.replaceChildren(...describe(own).childNodes);
+    selfRole.textContent = own.role;
+  }
+  for (const child of peopleList.querySelectorAll(':scope > li')) if (child !== selfRow) child.remove();
+  if (!own) selfRow.remove();
+  else if (peopleList.firstChild !== selfRow) peopleList.prepend(selfRow);
+  peopleList.append(...items);
+}
+
+function renderRoster() {
+  const items = people.peopleRows([...roster.values()], shareControl).map((row) => {
+    const item = avatar(row);
+    if (row.self) item.classList.add('you');
+    if (row.viewOnly) item.append(eye.content.cloneNode(true));
+    return item;
+  });
   rosterList.replaceChildren(...items);
+  renderPeople();
 }
 
 function showPresence(participants) {
   for (const participant of participants) {
-    if (participant.touch === null) roster.delete(participant.id);
-    else {
+    if (participant.touch === null) {
+      roster.delete(participant.id);
+      clearTimeout(touchTimers.get(participant.id));
+      touchTimers.delete(participant.id);
+    } else {
+      const known = roster.get(participant.id);
+      const phase = participant.touch ? participant.touch.phase : null;
       roster.set(participant.id, {
         name: participant.name,
         color: participant.color,
+        kind: participant.kind,
         viewOnly: participant.viewOnly === true,
+        touching: phase === null ? known?.touching === true : phase !== 'up',
       });
+      if (phase !== null) {
+        clearTimeout(touchTimers.get(participant.id));
+        if (phase !== 'up') {
+          touchTimers.set(
+            participant.id,
+            setTimeout(() => {
+              const entry = roster.get(participant.id);
+              if (entry) roster.set(participant.id, { ...entry, touching: false });
+              renderRoster();
+            }, TOUCH_MS),
+          );
+        }
+      }
     }
   }
   renderRoster();
   overlay.presence(participants);
 }
+
+function setPeopleOpen(open, restoreFocus) {
+  peoplePanel.hidden = !open;
+  peopleButton.setAttribute('aria-expanded', String(open));
+  if (!open) {
+    editing(false);
+    if (restoreFocus) peopleButton.focus();
+  }
+}
+
+peopleButton.addEventListener('click', () => setPeopleOpen(peoplePanel.hidden, false));
+peopleBox.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !peoplePanel.hidden) {
+    event.stopPropagation();
+    setPeopleOpen(false, true);
+  }
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!peoplePanel.hidden && !peopleBox.contains(event.target)) setPeopleOpen(false, false);
+});
+changeName.addEventListener('click', () => editing(true));
+editCancel.addEventListener('click', () => editing(false));
+nameEdit.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const name = editInput.value.trim();
+  if (!name || (me && name === me.name)) return editing(false);
+  if (Date.now() - lastRenameAt < RENAME_MS) {
+    editNote.textContent = 'You can change your name again in a few seconds.';
+    return;
+  }
+  chooseName(name);
+  editing(false);
+});
 
 const socketUrl = location.href
   .replace(/#.*$/, '')
@@ -322,8 +497,15 @@ const socketUrl = location.href
 let socket = null;
 let pending = Promise.resolve();
 
+function sendName(name) {
+  lastRenameAt = Date.now();
+  send({ type: 'name', name });
+}
+
 function connect(codec) {
   roster.clear();
+  for (const timer of touchTimers.values()) clearTimeout(timer);
+  touchTimers.clear();
   me = null;
   overlay.clear();
   renderRoster();
@@ -332,7 +514,7 @@ function connect(codec) {
   body.dataset.codec = codec;
   current.binaryType = 'arraybuffer';
   current.addEventListener('open', () => {
-    if (chosenName) send({ type: 'name', name: chosenName });
+    if (chosenName) sendName(chosenName);
   });
   current.addEventListener('message', (event) => {
     if (current !== socket) return;
@@ -453,7 +635,7 @@ function chooseName(name) {
     /* the name is still used for this page */
   }
   nameForm.hidden = true;
-  if (name) send({ type: 'name', name });
+  if (name) sendName(name);
 }
 if (body.dataset.askName === 'true') {
   const remembered = rememberedName();
