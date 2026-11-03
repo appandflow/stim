@@ -170,6 +170,37 @@ describe.skipIf(process.platform === 'win32')('the stim-daemon (skipped on win32
     expect(readDaemonSnapshot()).toMatchObject({ mode: 'on', intervalMs: 250, workspaces: [] });
   }, 20_000);
 
+  test('a tick that blocks the event loop reports the stall in its daemon_tick record', async () => {
+    const measureTick = measure.measureTick;
+    const normal = vi.spyOn(measure, 'measureTick').mockImplementation(async (...args) => {
+      const measured = await measureTick(...args);
+      return {
+        ...measured,
+        measurement: {
+          ...measured.measurement,
+          disk: [{ volume: '/', freeMb: 500_000 }],
+          memory: { level: 'normal', availableBytes: 8 * 1024 ** 3, totalBytes: 16 * 1024 ** 3 },
+        },
+      };
+    });
+    const blocking = vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(async () => {
+      const until = Date.now() + 300;
+      while (Date.now() < until);
+    });
+    onTestFinished(() => {
+      normal.mockRestore();
+      blocking.mockRestore();
+    });
+    await runDaemon({ tickMs: 50 });
+    const tick = daemonLog()
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .find((record) => record.event === 'daemon_tick');
+    expect(tick?.eventLoopDelay.maxMs).toBeGreaterThanOrEqual(250);
+    expect(tick?.phases.maintenanceMs).toBeGreaterThanOrEqual(300);
+  }, 20_000);
+
   test('a tick that fails hands the timers back: the daemon releases its claim and exits instead of holding it idle', async () => {
     writeFileSync(join(home, 'config.json'), '{ not json');
     await runDaemon({ tickMs: 50 });

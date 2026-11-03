@@ -292,6 +292,40 @@ describe.skipIf(process.platform === 'win32')(
       await vi.waitFor(() => expect(exited).toBe(true));
       await daemon;
     });
+
+    test('the daemon_tick record carries how long each phase of the tick took', async () => {
+      saveConfig({ version: 2, projects: {}, repos: {} });
+      const measured = await measure.measureTick(null, Date.now());
+      vi.spyOn(measure, 'measureTick').mockImplementation(
+        () => new Promise((resolve) => setTimeout(() => resolve(measured), 7000)),
+      );
+      vi.spyOn(maintenanceRun, 'runMaintenance').mockImplementation(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+      );
+      const daemon = runDaemon({ mode: 'on' });
+      await vi.advanceTimersByTimeAsync(MINUTE_MS + 10_000);
+      await vi.waitFor(() => expect(ticks()).toHaveLength(1));
+      const record = readFileSync(daemonNdjsonFile(), 'utf8')
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .find((entry) => entry.event === 'daemon_tick');
+      expect(record).toMatchObject({
+        tickMs: 10_000,
+        phases: {
+          measureMs: 7000,
+          idleMs: 0,
+          dormantMs: 0,
+          dependenciesMs: 0,
+          ladderMs: 0,
+          maintenanceMs: 3000,
+          reclaimMs: 0,
+        },
+        eventLoopDelay: { maxMs: expect.any(Number), p99Ms: expect.any(Number) },
+      });
+      await vi.advanceTimersByTimeAsync(2 * 5 * MINUTE_MS);
+      await daemon;
+    });
   },
 );
 

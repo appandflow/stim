@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { connect, createServer, type Server, type Socket } from 'node:net';
 import { dirname, resolve } from 'node:path';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { LOG_ROTATE_BYTES } from '@stim-cli/core';
 import {
@@ -191,6 +192,8 @@ export async function runDaemon({
     writer.close();
     return;
   }
+  const loopDelay = monitorEventLoopDelay();
+  loopDelay.enable();
   const path = daemonSocket();
   const waiters: Record<Resource, Socket[]> = { build: [], boot: [] };
   const wokenAt = new WeakMap<Socket, number>();
@@ -271,6 +274,7 @@ export async function runDaemon({
   const shutdown = (why: string, level: Level = 'info') => {
     if (closing) return;
     closing = true;
+    loopDelay.disable();
     interrupt?.();
     server.close();
     for (const waiter of [...waiters.build, ...waiters.boot, ...tickReplies]) waiter.destroy();
@@ -329,20 +333,24 @@ export async function runDaemon({
     let alive: string | null;
     let pending: string | null = null;
     let wentDormant = false;
+    let phases: Record<string, number> = {};
     try {
-      const { config, now, measured, workspaces, pressure, actions } = await runHomePasses({
+      const passes = await runHomePasses({
         act: mode === 'on',
         trigger: 'daemon',
         log,
         memoryWarningSince: lastSnapshot?.pressure?.memoryWarningSince ?? null,
       });
+      const { config, now, measured, workspaces, pressure, actions } = passes;
       scheduleDependencyMeasures();
+      const reclaimStarted = performance.now();
       const reclaimed = await reclaimForBootWaiters({
         devices: measured.devices,
         sims: measured.sims,
         act: mode === 'on',
         log,
       });
+      phases = { ...passes.phases, reclaimMs: Math.round(performance.now() - reclaimStarted) };
       if (reclaimed) {
         actions.push(reclaimed);
         if (reclaimed.outcome === 'done') wakeOldest('boot');
@@ -411,11 +419,22 @@ export async function runDaemon({
     if (closing) break;
     const idle = !alive && !pending && !wentDormant && Date.now() - contactSince >= tickMs;
     emptyTicks = idle ? emptyTicks + 1 : 0;
+    const tookMs = Math.round(performance.now() - tickStarted);
+    await new Promise((done) => setTimeout(done, 0));
     log(
       'debug',
       'daemon_tick',
-      `tick ${Math.round(performance.now() - tickStarted)}ms; ${alive ?? (pending ? `nothing running; ${pending}, next tick in ${Math.round(interval / 60_000)} minutes` : 'nothing running')}`,
+      `tick ${tookMs}ms; ${alive ?? (pending ? `nothing running; ${pending}, next tick in ${Math.round(interval / 60_000)} minutes` : 'nothing running')}`,
+      {
+        tickMs: tookMs,
+        phases,
+        eventLoopDelay: {
+          maxMs: Math.round(loopDelay.max / 1e6),
+          p99Ms: Math.round(loopDelay.percentile(99) / 1e6),
+        },
+      },
     );
+    loopDelay.reset();
     if (emptyTicks >= EMPTY_TICKS_BEFORE_EXIT) {
       shutdown('nothing runs in this Stim home');
       break;
