@@ -154,7 +154,15 @@ test.skipIf(process.platform === 'win32')(
       let stdout = '';
       child.stdout.on('data', (chunk: Buffer) => (stdout += chunk));
       await new Promise((resolve) => child.once('close', resolve));
-      expect(JSON.parse(stdout).argv).toEqual(['press', '@e1', '--json', '--remote-config', config]);
+      expect(JSON.parse(stdout).argv).toEqual([
+        'press',
+        '@e1',
+        '--json',
+        '--session',
+        'stim-default-ios',
+        '--remote-config',
+        config,
+      ]);
       expect(published).toEqual([
         { workspace: app, platform: 'ios', command: 'press', phase: 'start' },
         { workspace: app, platform: 'ios', command: 'press', phase: 'end' },

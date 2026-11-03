@@ -102,8 +102,14 @@ describe('planAgentDevice', () => {
       remoteConfig: '/stim/hosted-ios/default/c.json',
     };
     expect(args([hosted], ['press', '@e1', '--remote-config', '/stim/hosted-ios/default/c.json'])).toEqual({
-      args: ['press', '@e1', '--remote-config', '/stim/hosted-ios/default/c.json'],
+      args: ['press', '@e1', '--session', 'stim-default-ios', '--remote-config', '/stim/hosted-ios/default/c.json'],
       session: null,
+    });
+    expect(args([hosted], ['snapshot', '-i', '--session', 'mine'])).toMatchObject({
+      args: ['snapshot', '-i', '--session', 'mine', '--remote-config', '/stim/hosted-ios/default/c.json'],
+    });
+    expect(args([hosted], ['device', 'status'])).toMatchObject({
+      args: ['device', 'status', '--remote-config', '/stim/hosted-ios/default/c.json'],
     });
     expect(args([{ ...hosted, remoteConfig: null }], ['snapshot'])).toMatchObject({
       refusal: { code: 'STIM_NO_DEVICE' },
