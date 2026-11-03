@@ -37,21 +37,92 @@ export function diffState(previous, next, at) {
   return events;
 }
 
-export function checkRungOrder(events, toleranceMs) {
-  const first = new Map();
-  for (const event of events.toSorted((a, b) => a.at - b.at)) if (!first.has(event.rung)) first.set(event.rung, event);
-  const rungs = [...first.keys()].toSorted((a, b) => a - b);
-  const evidence = rungs.map(
-    (rung) =>
-      `rung ${rung} first freed at ${new Date(first.get(rung).at).toISOString().slice(11, 19)}: ${first.get(rung).kind} (${first.get(rung).workspace ?? 'shared'})`,
+const parseLines = (text) =>
+  text.split('\n').flatMap((line) => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
+
+const DUPLICATE_MS = 3000;
+
+export function ladderActions({ daemonText = '', workspaceLogs = [] }) {
+  const ticks = [];
+  const found = [];
+  const take = (record, source, hint) => {
+    const workspace = record.workspace ?? hint ?? null;
+    if (record.event === 'workspace_idle') {
+      found.push({
+        ts: record.ts,
+        rung: 1,
+        kind: 'idle-stage',
+        workspace,
+        target: workspace,
+        bytes: record.freedBytes ?? 0,
+        source,
+      });
+    } else if (record.event === 'pressure_action' && record.outcome === 'done' && Number.isInteger(record.rung)) {
+      found.push({
+        ts: record.ts,
+        rung: record.rung,
+        kind: record.kind,
+        workspace,
+        target: record.target ?? workspace,
+        bytes: record.bytes ?? 0,
+        source,
+      });
+    }
+  };
+  for (const record of parseLines(daemonText)) {
+    if (record.event === 'daemon_tick') ticks.push(record.ts);
+    else take(record, 'daemon');
+  }
+  for (const { workspace, text } of workspaceLogs)
+    for (const record of parseLines(text)) take(record, 'workspace log', workspace);
+  const actions = [];
+  for (const action of found.toSorted((a, b) => a.ts - b.ts)) {
+    const twin = actions.find(
+      (kept) =>
+        kept.kind === action.kind && kept.target === action.target && Math.abs(kept.ts - action.ts) < DUPLICATE_MS,
+    );
+    if (!twin) actions.push(action);
+  }
+  return { actions, ticks: ticks.toSorted((a, b) => a - b) };
+}
+
+const hms = (ms) => new Date(ms).toISOString().slice(11, 19);
+const nameOf = (path) => (path ? path.split('/').at(-1) : 'shared');
+
+export function checkLadderOrder({ actions, ticks }) {
+  const evidence = actions.map(
+    (a) => `${hms(a.ts)} rung ${a.rung} ${a.kind} ${nameOf(a.target)} (${a.bytes} bytes freed, ${a.source})`,
   );
+  const rungs = [...new Set(actions.map((a) => a.rung))].toSorted((x, y) => x - y);
   if (rungs.length < 2) return { verdict: 'unavailable', rungs, evidence };
   const violations = [];
-  for (let i = 0; i < rungs.length; i++) {
-    for (let j = i + 1; j < rungs.length; j++) {
-      if (first.get(rungs[i]).at > first.get(rungs[j]).at + toleranceMs)
-        violations.push(`rung ${rungs[j]} freed before rung ${rungs[i]}`);
+  const inOrder = (list, where) => {
+    for (let i = 1; i < list.length; i++) {
+      if (list[i].rung < list[i - 1].rung) {
+        violations.push(
+          `${where}: rung ${list[i].rung} (${nameOf(list[i].target)}) at ${hms(list[i].ts)} after rung ${list[i - 1].rung} (${nameOf(list[i - 1].target)}) at ${hms(list[i - 1].ts)}`,
+        );
+      }
     }
+  };
+  const byTick = new Map();
+  for (const action of actions) {
+    const index = ticks.findIndex((tick) => tick >= action.ts);
+    const key = index === -1 ? ticks.length : index;
+    byTick.set(key, [...(byTick.get(key) ?? []), action]);
   }
+  for (const [key, list] of byTick)
+    inOrder(list, `within the tick ending ${key < ticks.length ? hms(ticks[key]) : 'after the last logged tick'}`);
+  const byWorkspace = new Map();
+  for (const action of actions.filter((a) => a.workspace)) {
+    byWorkspace.set(action.workspace, [...(byWorkspace.get(action.workspace) ?? []), action]);
+  }
+  for (const [workspace, list] of byWorkspace) inOrder(list, `for ${nameOf(workspace)}`);
   return { verdict: violations.length ? 'fail' : 'pass', rungs, evidence: [...evidence, ...violations] };
 }

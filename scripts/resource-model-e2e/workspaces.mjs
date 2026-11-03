@@ -80,8 +80,32 @@ async function prepareNativeDirs(ctx, workspace) {
   return { dangling: before, remaining: after };
 }
 
+const PODFILE_LOCK = 'ios/Podfile.lock';
+
+// Rung 5 of the pressure ladder deletes a workspace's Pods only when its ios/Podfile.lock equals the source checkout's,
+// and the worktrees carry the committed one; the file it replaces is kept in <out>/restored.
+export async function restoreProjectLockfile(ctx) {
+  const { project, emit, out } = ctx;
+  const tracked = await run('git', ['ls-files', '--error-unmatch', PODFILE_LOCK], { cwd: project });
+  if (tracked.code !== 0) return false;
+  const same = await run('git', ['diff', '--quiet', 'HEAD', '--', PODFILE_LOCK], { cwd: project });
+  if (same.code === 0) return false;
+  const kept = join(out, 'restored', 'ios-Podfile.lock.original');
+  mkdirSync(dirname(kept), { recursive: true });
+  copyFileSync(join(project, PODFILE_LOCK), kept);
+  const restored = await run('git', ['checkout', 'HEAD', '--', PODFILE_LOCK], { cwd: project });
+  if (restored.code !== 0)
+    throw new HarnessError(`could not restore ${PODFILE_LOCK} in ${project}: ${restored.stderr.trim()}`);
+  emit(
+    'setup',
+    `restored the committed ${PODFILE_LOCK} in the project (it differed from HEAD); the previous file is kept at ${kept}`,
+  );
+  return true;
+}
+
 export async function createWorkspaces(ctx, count) {
   const { project, stim, emit } = ctx;
+  await restoreProjectLockfile(ctx);
   const head = (await run('git', ['rev-parse', 'HEAD'], { cwd: project })).stdout.trim();
   const parent = ctx.workDir;
   mkdirSync(parent, { recursive: true });
