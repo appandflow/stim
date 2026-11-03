@@ -858,13 +858,18 @@ function FreeItemRow({ row, home }: { row: FreeRow; home: string | null | undefi
 
 function worktreeLine(row: WorktreeRow): string | null {
   const nodeModules = sizeLabel(row.nodeModules);
+  const shared = row.nodeModulesShared ? sizeLabel(row.nodeModulesShared) : null;
   const deviceSize = sizeLabel(row.devices);
   const devices = plural(row.deviceCount, { one: `device ${deviceSize}`, other: `# devices ${deviceSize}` });
   const outputs = sizeLabel(row.outputs);
   const logs = sizeLabel(row.logs);
   const parts = [
     row.inCheckout,
-    row.nodeModules ? t`node_modules ${nodeModules}` : null,
+    row.nodeModules !== null && (row.nodeModules > 0 || shared)
+      ? shared
+        ? t`node_modules ${nodeModules} (${shared} shared)`
+        : t`node_modules ${nodeModules}`
+      : null,
     row.devices ? devices : null,
     row.outputs ? t`outputs ${outputs}` : null,
     row.logs ? t`logs ${logs}` : null,

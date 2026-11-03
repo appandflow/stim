@@ -271,13 +271,28 @@ private struct DiskCard: View {
             }
             .accessibilityElement(children: .combine)
           }
+          if let shared = breakdown.sharedNodeModules, shared > 0 {
+            HStack(spacing: Space.sm) {
+              StatusDot(color: Palette.tertiary, filled: false)
+              Text("Shared with other folders")
+              Spacer(minLength: Space.sm)
+              Text(Format.fileSize(Int64(shared))).monospacedDigit()
+            }
+            .foregroundStyle(Palette.tertiary)
+            .accessibilityElement(children: .combine)
+            .help(
+              "node_modules files that copy-on-write clones or hard links share with other folders. They are on disk once and are not counted above."
+            )
+          }
         }
         .font(.stim(.footnote))
       }
       .padding(Space.md)
       .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .help("The worktree folder, with node_modules counted on its own, plus Stim's build folder for this workspace")
+    .help(
+      "The worktree folder, with node_modules counted on its own and without files cloned from other folders, plus Stim's build folder for this workspace"
+    )
   }
 }
 

@@ -2,9 +2,9 @@ import AppKit
 import StimKit
 import StimStores
 
-/// Disk sizes Stim Desktop measures itself with `du`, and open pull requests from `gh`. Each path is sized by
-/// its own `du` and published as it finishes, so one slow tree delays only its own row. Results are kept for
-/// `maxAge`, so opening the Storage view never waits on them.
+/// Disk sizes Stim Desktop measures itself with `du`, except the node_modules sizes `stim status` already reports,
+/// and open pull requests from `gh`. Each path is sized by its own `du` and published as it finishes, so one slow
+/// tree delays only its own row. Results are kept for `maxAge`, so opening the Storage view never waits on them.
 @MainActor
 final class StorageStore: ObservableObject {
   static let maxAge: TimeInterval = 15 * 60
@@ -46,7 +46,8 @@ final class StorageStore: ObservableObject {
     let unprovisioned = status.payload?.unprovisionedWorktrees ?? []
     let repositories = Set(environments.compactMap { $0.worktree?.repository } + unprovisioned.compactMap(\.repository))
     let modules = Set(
-      environments.map { "\($0.worktree?.path ?? $0.path)/node_modules" } + unprovisioned.map { "\($0.path)/node_modules" })
+      environments.filter { $0.statusNodeModules == nil }.map { "\($0.worktree?.path ?? $0.path)/node_modules" }
+        + unprovisioned.map { "\($0.path)/node_modules" })
     loadingPulls = true
     disk = DiskMeasurements(pending: Set(modules))
     let environment = environment

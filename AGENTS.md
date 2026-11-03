@@ -528,7 +528,8 @@ outside it moves to its own issue and pull request.
   shares on a separate loopback listener, not the Noise protocol: per share
   the viewer page, the frames of its one device and, with control, input to
   that device through `ControlHub` (on a simulator, emulator or Android phone that includes
-  its clipboard: a viewer's paste and a copy of the device's text, never logged), behind a 256-bit URL token, a generated
+  its clipboard: a viewer's paste, and the viewer's own sync or copy of the device's text, never logged; a sync poll
+  never starts a control session or keeps one alive), behind a 256-bit URL token, a generated
   password and an HttpOnly Secure SameSite=Strict session cookie. A control
   share can also have a second, view-only password (`--view-password`): login
   compares both digests, always both, with `timingSafeEqual`; the cookie stays an

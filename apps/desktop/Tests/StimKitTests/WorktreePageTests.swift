@@ -103,6 +103,22 @@ struct WorktreePageTests {
     #expect(WorktreePage.summedHistory([[], [4]]) == [4])
   }
 
+  @Test func unifiedDiskLeavesSharedNodeModulesOutOfEachApp() throws {
+    func app(_ name: String, private privateBytes: String) throws -> Workspace {
+      try JSONDecoder().decode(
+        Workspace.self,
+        from: Data(
+          #"{"path":"/w/apps/\#(name)","live":true,"warnings":[],"worktree":{"path":"/w"},"disk":{"worktreeBytes":1600,"nodeModulesBytes":1500,\#(privateBytes)"buildBytes":100}}"#
+            .utf8))
+    }
+    let a = try app("a", private: #""nodeModulesPrivateBytes":10,"#)
+    let cloned = try #require(
+      WorktreePage(path: "/w/apps/a", environments: [a, try app("b", private: #""nodeModulesPrivateBytes":20,"#)]))
+    #expect(cloned.usage(machine: nil).diskBytes == 320)
+    let older = try #require(WorktreePage(path: "/w/apps/a", environments: [a, try app("b", private: "")]))
+    #expect(older.usage(machine: nil).diskBytes == 1800)
+  }
+
   @Test func mergedDevicesKeepTheirOwnerAndSingleAppOrder() throws {
     let environments = try JSONDecoder().decode(
       [Workspace].self,
