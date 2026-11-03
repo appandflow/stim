@@ -258,12 +258,14 @@ the workflow, stop the workspace and the specific unit you created:
   while one of its devices is driven, a live agent-device session included,
   or its activity is unknown (\`guide facts status\`; on Windows, which has
   no ps, the host driver-process probe is skipped), while simctl or adb cannot
-  list its devices, while its owned Chrome or a hosted device runs, while
-  maintenance.keep pins it, and while a \`stim start\` holds its metro-start
-  lock. A dev server whose requests Stim cannot see (metro.command, or an
-  Expo SDK before 54) never stops for being idle. The pass records
-  workspace_idle and supervisor_stopped lines in metro.ndjson, devServerStop
-  and idleStage in state.json, so \`status\` shows the idle stage and
+  list its devices, while its owned Chrome or a hosted device runs, while a
+  web share of it is live (\`guide share\`; stim share stop or its expiry
+  ends that), while maintenance.keep pins it, and while a \`stim start\`
+  holds its metro-start lock. A dev server whose requests Stim cannot see
+  (metro.command, or an Expo SDK before 54) never stops for being idle. The
+  pass records workspace_idle and supervisor_stopped lines in metro.ndjson,
+  devServerStop and idleStage in state.json, so \`status\` shows the idle
+  stage and
   "stopped (idle)" rather than a crash. With daemon.mode off, or while no
   daemon runs, the supervisor applies the same clock to itself and its
   devices, without deleting build outputs (\`guide settings\`). The next

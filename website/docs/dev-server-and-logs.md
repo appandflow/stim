@@ -134,8 +134,8 @@ while a bundle is being served, while a build or another `stim ios`,
 `stim android` or `stim stop` runs in the workspace, while one of its devices is
 driven, by an agent-device session too, or its activity cannot be read, while
 the simulator or emulator list cannot be read, while its owned Chrome or a
-hosted device runs, while `maintenance.keep` pins it, or while `stim start` is
-running. The daemon checks all of this again under the workspace's locks just
+hosted device runs, while a [web share](./share.md) of it is live, while
+`maintenance.keep` pins it, or while `stim start` is running. The daemon checks all of this again under the workspace's locks just
 before it acts. A dev server whose requests Stim cannot see, `metro.command`
 or an Expo SDK before 54, never stops for being idle. Set `idle.minutes` to
 `0` to keep everything running. Under disk or memory pressure the

@@ -709,8 +709,8 @@ and above normal runs one ladder top-down until the level clears:
 | 6    | Idle Gradle and Kotlin daemons, unpinned Gradle versions, TMPDIR leftovers, the worktree trash      | Same                                                                                                                    |
 
 Each rung measures free disk and memory again first, never touches a
-workspace with a build, a driver, a lease or lock, a hosted placement or
-`maintenance.keep`, and takes the longest-idle workspace first. A level raised
+workspace with a build, a driver, a lease or lock, a live web share, a hosted
+placement or `maintenance.keep`, and takes the longest-idle workspace first. A level raised
 by memory alone runs only the idle stage and the Gradle daemons. The age sweep
 runs rung 6 daily. A directory is cleared only when it is a real directory
 inside its worktree, git tracks nothing in it, and its worktree is not in use,

@@ -69,8 +69,15 @@ A workspace's last activity is the newest of:
 Never activity: device logs, in-app console logs (`client.ndjson`), Metro and Expo stdout, collector events, log mtimes.
 
 Blockers keep a workspace in its stage: a build in progress, a live driver (agent-device claim or lease, driver
-process, Android instrumentation), a held device lease, a hosted placement, unreadable evidence (fail closed), and
-`maintenance.keep`.
+process, Android instrumentation), a held device lease, a live web share, a hosted placement, unreadable evidence (fail
+closed), and `maintenance.keep`.
+
+Amended 2026-11-02 (approved): a web share (`stim share`) that has started, not ended and not passed its expiry is a
+blocker for the idle stage, every pressure rung and the dormant stage, whether or not a viewer is connected. The
+activity reader asks this home's stim-server for `share.list`. No running stim-server means no share, since a share
+lives only in its server's memory; a list a running server cannot give keeps the workspace. With no daemon, the
+supervisor fallback reads it before its own idle stop and device shutdown. `stim share stop` or the expiry lets the idle
+stage proceed.
 
 Per-slot exceptions: none. Release and native-process slots use signals 1 and 3 to 6; their app has no Metro, so 2
 never fires. This replaces the #4799 rule that device logs count for those slots.

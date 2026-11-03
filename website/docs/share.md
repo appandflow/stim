@@ -100,6 +100,18 @@ With `--control`, click the screen to tap and type with the keyboard.
   approval. The session must be ready. The share ends when the session stops
   or is replaced, and `stim share list` does not show the Mac.
 
+## A live share keeps its workspace up
+
+While a share is live, the [idle stage](./dev-server-and-logs.md#idle-stop),
+the [pressure ladder](./build-caches.md#disk-pressure) and the
+[dormant stage](./owned-devices.md#cleanup-behavior) leave its workspace
+running, whether or not anyone is watching. Frames streamed to viewers are not
+activity, so the share alone holds it. `stim status` names the share on the
+workspace's stage line, and the `stim-daemon` logs it as `workspace_kept`.
+Run `stim share stop`, or let the share expire, and a workspace with no
+activity for `idle.minutes` goes idle on the daemon's next tick. When
+stim-server cannot list its shares, Stim keeps the workspace running.
+
 ## Options
 
 | Option                | Meaning                                                                                           |

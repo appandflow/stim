@@ -66,6 +66,18 @@ WHAT IT NEEDS
   its connection fails; control the host refuses reaches the viewer as
   "Control is not available right now".
 
+A LIVE SHARE KEEPS ITS WORKSPACE UP
+
+A share that has not ended or expired keeps its workspace out of the idle
+stage, the pressure ladder and the dormant stage, whether or not anyone
+watches; with no stim-daemon, the dev server's supervisor keeps it up too.
+Frames streamed to viewers are not activity, so the share alone holds it.
+The stage line of stim status and the daemon's workspace_kept log name the
+share. stim share stop or the share's expiry lets the idle stage proceed: a
+workspace with no activity for idle.minutes goes idle on the next tick. When
+stim-server cannot list its shares, the workspace stays up (guide lifecycle
+budget).
+
 CUSTOM DOMAIN (PROXY MODE)
 
 Without Tailscale, for example on a cloud VM with Caddy, serve the share

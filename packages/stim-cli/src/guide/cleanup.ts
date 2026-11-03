@@ -72,8 +72,8 @@ server stops, the owned devices shut down through centralized teardown
 (never deleted), and the port is released; device leases stay. A build, a
 held native-run or metro-start lock, a build lock or slot, a running macOS
 app, a remote (EAS) session, an unexpired device lease, a managed tunnel
-or remote lock, a running owned Chrome, a device driver other than
-agent-device, a live agent-device claim with no session activity to judge,
+or remote lock, a running owned Chrome, a live web share (guide share), a
+device driver other than agent-device, a live agent-device claim with no session activity to judge,
 device activity, an emulator list or an emulator's AVD name that cannot be read keeps
 the workspace;
 the check decides again under the native-run and metro-start locks. Each stop
@@ -753,8 +753,8 @@ THE PRESSURE LADDER
   empties the Metro and compilation caches, takes every idle workspace
   dormant and deletes the node_modules and Pods of idle linked worktrees. It
   runs whatever daemon.mode says, never touches a workspace with a blocker
-  (a build, a driver, a lease or lock, a hosted placement, unreadable
-  evidence, maintenance.keep), and logs each action to
+  (a build, a driver, a lease or lock, a live web share, a hosted placement,
+  unreadable evidence, maintenance.keep), and logs each action to
   $STIM_HOME/daemon/daemon.ndjson with trigger gc. A workspace this run made
   dormant keeps its node_modules and Pods until a later run, because its
   stage record counts as use for 2 minutes. \`stim revive\` resumes an idle

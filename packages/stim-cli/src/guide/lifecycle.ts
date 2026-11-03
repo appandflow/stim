@@ -2256,9 +2256,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   The daemon line of \`stim status\` and \`daemon.pressure\` in its --json show
   the level and why. Above normal, the tick runs the ladder top-down until the
   level clears. Each rung measures again before it acts, never touches a
-  workspace with a blocker (a build, a driver, a lease or lock, a hosted
-  placement, unreadable evidence, maintenance.keep), and takes the
-  longest-idle workspace first:
+  workspace with a blocker (a build, a driver, a lease or lock, a live web
+  share, a hosted placement, unreadable evidence, maintenance.keep), and
+  takes the longest-idle workspace first:
 
     1. idle stage: every workspace idle 2 minutes or more goes into the idle
        stage now (\`guide metro\`, IDLE STOP), and the regenerable build
@@ -2314,8 +2314,9 @@ ADMISSION: DERIVED CONCURRENCY LIMITS
   for idle.minutes, the stim-daemon shuts its owned simulators and emulators
   down together with its dev server, in the idle stage (\`guide metro\`, IDLE
   STOP), whether or not a dev server runs. A device stays booted while it is
-  driven, locked or leased, while a build runs in its workspace, and while its
-  activity is unknown. Activity is the workspace's Stim commands and native
+  driven, locked or leased, while a build runs in its workspace, while a web
+  share of its workspace is live (\`guide share\`), and while its activity is
+  unknown. Activity is the workspace's Stim commands and native
   runs, Metro requests, agent-device actions, input a stim-server client sent
   to the device (the phone app's or Stim Desktop's controls; frames streamed
   without input do not count), a stim device lock, and, on macOS, a person
