@@ -357,6 +357,7 @@ final class SimulatorSource {
       }
       self.displays = []
       self.reportedDisplay = nil
+      SimulatorRotation.forget(udid: self.udid)
       DispatchQueue.main.async {
         MainActor.assumeIsolated {
           self.releaseDuo(self.duo?.configure(nil))

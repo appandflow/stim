@@ -16,6 +16,13 @@ public enum SimulatorRotation {
     return sent[udid]
   }
 
+  /// Drops the remembered orientation of a simulator that shut down: it boots upright.
+  public static func forget(udid: String) {
+    lock.lock()
+    defer { lock.unlock() }
+    sent[udid] = nil
+  }
+
   public static func rotate(udid: String, clockwise: Bool) -> Bool {
     guard let device = CoreSimulator.device(udid: udid) else { return false }
     let displays = CoreSimulator.displays(udid: udid).filter { $0.screenProperties?.screenType == 0 }

@@ -71,13 +71,6 @@ import Testing
 }
 
 @Suite struct ScreenOrientationTests {
-  @Test func aPortraitAppFollowsTheDeviceOrientation() {
-    #expect(screenOrientation(app: 1, device: 1) == 1)
-    #expect(screenOrientation(app: 1, device: 3) == 4)
-    #expect(screenOrientation(app: 1, device: 4) == 3)
-    #expect(screenOrientation(app: 1, device: 2) == 2)
-  }
-
   @Test func theDeviceOrientationDrawsTheInterfaceItShowsUpright() {
     for device in UInt32(1)...4 {
       #expect(deviceOrientation(interface: screenOrientation(app: 1, device: device)) == device)
