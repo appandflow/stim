@@ -159,6 +159,10 @@ about 50 ms; when it starts capture, the first frame takes several seconds.
 
 ## Requirements
 
+- **macOS or Linux.** `stim` reaches the stim-server through its local socket,
+  which Windows does not have. On Windows every `stim share` action refuses at
+  once with `STIM_SHARE_REFUSED` and starts no server; run `stim share` on the
+  macOS host that runs the device.
 - **stim-server** for this Stim home. When none runs (no Stim Desktop or
   background service), `stim share` starts one in the background as
   `stim-server --share`: loopback only, from the `@stim-cli/server` package of

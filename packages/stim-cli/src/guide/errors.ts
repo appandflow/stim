@@ -1188,8 +1188,10 @@ so a Debug run on one is wired to a LAN origin instead of localhost.`,
   tailnet admin enables it; Stim never changes tailnet settings), every Funnel
   port already serves something (free one, see tailscale serve status), a
   route claim left by a crash cannot be resolved (follow the claim remedy in
-  the message), or the running stim-server predates web shares (update it).
-  See stim guide share.`,
+  the message), the running stim-server predates web shares (update it), or
+  the machine runs Windows, which has no local stim-server socket (every
+  stim share action refuses at once, starting nothing; run it from the macOS
+  host that runs the device). See stim guide share.`,
     },
     STIM_RELOAD_STOPPED: {
       summary: 'the recorded app is gone, its device is not live and owned, or the process could not be proven',
