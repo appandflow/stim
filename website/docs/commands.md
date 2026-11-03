@@ -1750,9 +1750,10 @@ In `--json`, each environment carries `build`: `null`, or
 `phase` is one of `prepare`, `cleanup`, `cache-lookup`, `wait`, `prebuild`, `pods`,
 `compile`, `device`, `install` and `launch`. Creating, adopting or booting the
 owned simulator or emulator before the cache lookup counts as `prepare`,
-including a new device's wait for a boot slot.
+except a new iOS simulator that waits to boot (a full device cap, a boot slot or
+memory): the run builds for any simulator while it waits.
 `device` starts once the app is ready and covers waiting for the device (its
-boot, adoption cleanup, or a physical device's lease and connection check); a
+boot, adoption cleanup, a new simulator's creation, or a physical device's lease and connection check); a
 boot that finishes during the build adds no `device` time. `state` is `running` while the run's
 `native-run.lock` claim is live, `stale` when that run was killed (the next run
 replaces the record), and `unknown` when the claim cannot be read. `outcome` is
@@ -2156,8 +2157,11 @@ An orphaned device is one this Stim home created that no workspace references.
 `gc` shows the size of an orphaned or stale owned device: for a simulator, the
 data size `simctl` reports; for an AVD, the size of its directory. Other
 devices whose names start with `stim-` appear under "Unrecognized stim-\*
-devices" with the command that deletes them; `gc` never deletes them. See
-[owned devices](./owned-devices.md).
+devices" with the command that deletes them; `gc` never deletes them. It also
+lists, under "Simulator launchd folders with no simulator", the
+`/private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid>` folders whose UDID
+has no simulator in Xcode's device set, with their sizes, and never deletes
+them either. See [owned devices](./owned-devices.md).
 
 A workspace directory is orphaned when the project root its `workspace.json`
 records is gone from a mounted volume and no registry entry names it. Deleting

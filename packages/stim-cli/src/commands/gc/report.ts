@@ -37,6 +37,7 @@ import type {
   DeviceLeaseGarbage,
   ParkedAvdReport,
   ParkedSimReport,
+  SimulatorLaunchdFolder,
   StaleDeviceRecord,
   StaleProjectDevice,
   UnverifiedDevice,
@@ -77,6 +78,7 @@ export interface GcReport {
   otherHomes?: OtherHome[];
   orphanedDevices: OrphanedDevice[];
   unverifiedDevices: UnverifiedDevice[];
+  simulatorLaunchdFolders: SimulatorLaunchdFolder[];
   staleDevices: StaleProjectDevice[];
   finishedDevices: FinishedDevice[];
   ownedDeviceDisk: OwnedDeviceDisk[];
@@ -253,6 +255,7 @@ export function formatGcReport(
     otherHomes,
     orphanedDevices = [],
     unverifiedDevices = [],
+    simulatorLaunchdFolders,
     staleDevices = [],
     finishedDevices,
     ownedDeviceDisk,
@@ -369,6 +372,8 @@ export function formatGcReport(
     }
     lines.push('              run that yourself if you no longer need it');
   }
+
+  lines.push(...launchdFolderLines(simulatorLaunchdFolders));
 
   if (staleDevices.length) {
     lines.push(`Stale owned devices (${staleDevices.length}) - workspace unused for ${olderThan ?? '?'}d or more:`);
@@ -506,6 +511,19 @@ function leaseGarbageLines({ expired, kept }: DeviceLeaseGarbage): string[] {
     for (const entry of kept) lines.push(`  ${entry.name}: ${entry.reason}`);
   }
   return lines;
+}
+
+function launchdFolderLines(folders: readonly SimulatorLaunchdFolder[] = []): string[] {
+  if (folders.length === 0) return [];
+  const sizes = folders.map((folder) => folder.bytes);
+  const total = sizes.every((bytes) => bytes !== null)
+    ? `, ${formatBytes(sizes.reduce((sum, bytes) => sum + bytes, 0))}`
+    : '';
+  return [
+    `Simulator launchd folders with no simulator (${folders.length}${total}) - NOT deleted; simctl delete leaves /private/var/tmp/com.apple.CoreSimulator.SimDevice.<udid> behind:`,
+    ...folders.map((folder) => `  ${folder.udid}${folder.bytes === null ? '' : ` - ${formatBytes(folder.bytes)}`}`),
+    '              rm -rf <path> once its simulator is gone for good; a simulator in another simctl device set is not in this list',
+  ];
 }
 
 function deviceSizeSuffix(device: { kind: 'ios' | 'android'; bytes?: number }): string {
@@ -741,6 +759,7 @@ export interface GcJsonSections {
     directory: string | null;
   }[];
   unverifiedDevices: { kind: 'ios' | 'android'; id: string; name: string; command: string }[];
+  simulatorLaunchdFolders: { udid: string; path: string; bytes: number | null; command: string }[];
   staleDevices: {
     kind: 'ios' | 'android';
     id: string;
@@ -852,6 +871,7 @@ export function gcReportSections({
   otherHomes = [],
   orphanedDevices = [],
   unverifiedDevices = [],
+  simulatorLaunchdFolders = [],
   staleDevices = [],
   finishedDevices = [],
   ownedDeviceDisk = [],
@@ -927,6 +947,12 @@ export function gcReportSections({
       id: d.id,
       name: d.name,
       command: unverifiedDeviceCommand(d),
+    })),
+    simulatorLaunchdFolders: simulatorLaunchdFolders.map(({ udid, path, bytes }) => ({
+      udid,
+      path,
+      bytes,
+      command: `rm -rf ${JSON.stringify(path)}`,
     })),
     staleDevices: staleDevices.map((d) => ({
       kind: d.kind,

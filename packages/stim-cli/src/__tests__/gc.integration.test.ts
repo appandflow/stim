@@ -3455,6 +3455,7 @@ describe('gc --json', () => {
       'otherHomes',
       'orphanedDevices',
       'unverifiedDevices',
+      'simulatorLaunchdFolders',
       'staleDevices',
       'finishedDevices',
       'ownedDeviceDisk',

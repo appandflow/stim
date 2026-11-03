@@ -1037,6 +1037,10 @@ RULES
                               Stim home has no record of creating; never
                               deleted, run command yourself (rm -rf <dir>
                               for AVD data with no registration)
+    simulatorLaunchdFolders { udid, path, bytes, command }  launchd folders
+                              under /private/var/tmp whose UDID has no
+                              simulator in Xcode's device set; never deleted,
+                              bytes null when du did not answer
     staleDevices            { kind, id, name, project, slot, idleDays,
                               bytes }  only with --older-than
     finishedDevices         { kind, id, name, project, slot, bytes, reason }
@@ -1601,12 +1605,14 @@ RULES
                    pause during cleanup. wait is waiting on another
                    workspace's build of the same fingerprint. Creating,
                    adopting or booting the owned simulator or emulator
-                   before the cache lookup is prepare time, including a
-                   new device's wait for a boot slot. device starts
+                   before the cache lookup is prepare time, except a new
+                   simulator that waits to boot: the run builds while it
+                   waits. device starts
                    once the app is ready and covers waiting for the
-                   device: its boot, adoption cleanup, or a physical
-                   device's lease and connection check. A boot that
-                   finishes during the build adds no device time. For a
+                   device: its boot, adoption cleanup, a new simulator's
+                   creation after the build, or a physical device's lease
+                   and connection check. A boot that finishes during the
+                   build adds no device time. For a
                    device hosted on another machine, device covers reserving
                    and preparing it there, install covers delivering the
                    app, and launch starts when the host launches it. An
